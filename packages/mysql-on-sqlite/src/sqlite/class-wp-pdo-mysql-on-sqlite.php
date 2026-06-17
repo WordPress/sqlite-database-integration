@@ -3972,6 +3972,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function translate_expr( WP_Parser_Node $node ): ?string {
 		$children = $node->get_children();
+		$last     = end( $children );
+		if (
+			count( $children ) >= 3
+			&& $children[1] instanceof WP_MySQL_Token
+			&& WP_MySQL_Lexer::IS_SYMBOL === $children[1]->id
+			&& $last instanceof WP_MySQL_Token
+			&& WP_MySQL_Lexer::UNKNOWN_SYMBOL === $last->id
+		) {
+			$left    = $this->translate( $children[0] );
+			$has_not = null !== $node->get_first_child_node( 'notRule' );
+
+			return sprintf( '(%s) IS %sNULL', $left, $has_not ? 'NOT ' : '' );
+		}
+
 		if (
 			3 === count( $children )
 			&& $children[1] instanceof WP_MySQL_Token

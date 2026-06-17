@@ -10642,12 +10642,14 @@ END;
 	}
 
 	public function testSqlancerBooleanOperators(): void {
-		$result = $this->assertQuery( 'SELECT (2 XOR 3) AS both_true, (1 XOR 0) AS one_true, (1 && 0) AS and_symbol, (! 1) AS not_symbol, (NULL XOR 1) AS null_xor' );
+		$result = $this->assertQuery( 'SELECT (2 XOR 3) AS both_true, (1 XOR 0) AS one_true, (1 && 0) AS and_symbol, (! 1) AS not_symbol, (NULL IS UNKNOWN) AS null_unknown, (1 IS NOT UNKNOWN) AS one_not_unknown, (NULL XOR 1) AS null_xor' );
 
 		$this->assertSame( '0', $result[0]->both_true );
 		$this->assertSame( '1', $result[0]->one_true );
 		$this->assertSame( '0', $result[0]->and_symbol );
 		$this->assertSame( '0', $result[0]->not_symbol );
+		$this->assertSame( '1', $result[0]->null_unknown );
+		$this->assertSame( '1', $result[0]->one_not_unknown );
 		$this->assertNull( $result[0]->null_xor );
 	}
 

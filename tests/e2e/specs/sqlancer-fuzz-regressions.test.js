@@ -71,7 +71,7 @@ sdi_sqlancer_query( "REPLACE LOW_PRIORITY INTO $table(c0) VALUES(3), (4), (5)" )
 sdi_sqlancer_query( "REPLACE INTO $table(c0) VALUES(NULL)" );
 
 $bit_count_row = $wpdb->get_row( "SELECT DISTINCTROW COUNT(*) AS rows_count, BIT_COUNT(-1) AS negative_bits, MAX(GREATEST(NULL, c0)) AS greatest_with_null FROM $table", ARRAY_A );
-$boolean_row = $wpdb->get_row( "SELECT (2 XOR 3) AS both_true, (1 XOR 0) AS one_true, (1 && 0) AS and_symbol, (! 1) AS not_symbol, (NULL XOR 1) AS null_xor", ARRAY_A );
+$boolean_row = $wpdb->get_row( "SELECT (2 XOR 3) AS both_true, (1 XOR 0) AS one_true, (1 && 0) AS and_symbol, (! 1) AS not_symbol, (NULL IS UNKNOWN) AS null_unknown, (1 IS NOT UNKNOWN) AS one_not_unknown, (NULL XOR 1) AS null_xor", ARRAY_A );
 echo 'SQLANCER_JSON:' . wp_json_encode( $row ) . PHP_EOL;
 echo 'SQLANCER_BIT_COUNT_JSON:' . wp_json_encode( $bit_count_row ) . PHP_EOL;
 echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
@@ -127,6 +127,8 @@ echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
 			one_true: '1',
 			and_symbol: '0',
 			not_symbol: '0',
+			null_unknown: '1',
+			one_not_unknown: '1',
 			null_xor: null,
 		} );
 	} );
