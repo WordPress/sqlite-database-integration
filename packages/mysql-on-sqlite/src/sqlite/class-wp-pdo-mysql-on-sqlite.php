@@ -4551,6 +4551,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		if ( $cast_type->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
 			return sprintf( 'CAST(%s AS TEXT) COLLATE BINARY', $this->translate( $expr ) );
 		}
+		if (
+			$cast_type->has_child_token( WP_MySQL_Lexer::SIGNED_SYMBOL )
+			|| $cast_type->has_child_token( WP_MySQL_Lexer::UNSIGNED_SYMBOL )
+		) {
+			// @TODO: Emulate UNSIGNED overflow wrapping.
+			return sprintf( '_mysql_cast_integer(%s)', $this->translate( $expr ) );
+		}
 		return sprintf( 'CAST(%s AS %s)', $this->translate( $expr ), $this->translate( $cast_type ) );
 	}
 

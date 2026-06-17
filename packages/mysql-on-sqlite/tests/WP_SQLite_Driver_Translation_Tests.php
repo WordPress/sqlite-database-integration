@@ -114,7 +114,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		);
 
 		$this->assertQuery(
-			"SELECT CAST('-10' AS INTEGER) AS `CONVERT('-10', SIGNED)`",
+			"SELECT _mysql_cast_integer('-10') AS `CONVERT('-10', SIGNED)`",
 			"SELECT CONVERT('-10', SIGNED)"
 		);
 

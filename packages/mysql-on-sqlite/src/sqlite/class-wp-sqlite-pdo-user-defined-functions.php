@@ -113,6 +113,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'version'                      => 'version',
 
 		// Internal helper functions.
+		'_mysql_cast_integer'          => '_mysql_cast_integer',
 		'_mysql_count_distinct_tuple'  => '_mysql_count_distinct_tuple',
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
 	);
@@ -156,6 +157,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'bit_count'                    => true,
 		'datediff'                     => true,
 		'locate'                       => true,
+		'_mysql_cast_integer'          => true,
 		'_mysql_count_distinct_tuple'  => true,
 		'_helper_like_to_glob_pattern' => true,
 	);
@@ -285,6 +287,32 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			$value >>= 1;
 		}
 		return $count;
+	}
+
+	/**
+	 * Emulate the integer conversion used by MySQL SIGNED/UNSIGNED casts.
+	 *
+	 * MySQL rounds numeric values, but parses string values through their
+	 * leading integer text. SQLite's plain integer cast always truncates.
+	 *
+	 * @param int|float|string|null $value Value to cast.
+	 *
+	 * @return int|null Integer cast value, or null for null input.
+	 */
+	public function _mysql_cast_integer( $value ) {
+		if ( null === $value ) {
+			return null;
+		}
+
+		if ( is_int( $value ) ) {
+			return $value;
+		}
+
+		if ( is_float( $value ) ) {
+			return (int) round( $value, 0, PHP_ROUND_HALF_UP );
+		}
+
+		return (int) $value;
 	}
 
 	/**

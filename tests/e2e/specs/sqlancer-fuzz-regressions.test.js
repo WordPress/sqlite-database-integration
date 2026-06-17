@@ -97,12 +97,22 @@ sdi_sqlancer_query( "ALTER TABLE $rename_table STATS_PERSISTENT 0, RENAME $renam
 $rename_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count FROM $renamed_table", ARRAY_A );
 sdi_sqlancer_query( "ALTER TABLE $renamed_table FORCE, ROW_FORMAT DEFAULT, COMPRESSION 'LZ4', INSERT_METHOD NO, PACK_KEYS 0, CHECKSUM 0, ALGORITHM COPY, RENAME TO $rename_table" );
 
+$cast_table = $wpdb->prefix . 'sqlancer_cast_signed';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $cast_table" );
+sdi_sqlancer_query( "CREATE TABLE $cast_table(c0 SMALLINT UNIQUE KEY)" );
+sdi_sqlancer_query( "INSERT INTO $cast_table(c0) VALUES(NULL)" );
+$cast_row = $wpdb->get_row( "SELECT CAST(0.8338761836534807 AS SIGNED) AS rounded_real, CAST('0.8338761836534807' AS SIGNED) AS truncated_text, ( EXISTS (SELECT 1 WHERE FALSE)) IN (CAST(IFNULL($cast_table.c0, 0.8338761836534807) AS SIGNED)) AS predicate_value FROM $cast_table", ARRAY_A );
+sdi_sqlancer_query( "UPDATE $cast_table SET c0=\\"\\" WHERE ( EXISTS (SELECT 1 WHERE FALSE)) IN (CAST(IFNULL($cast_table.c0, 0.8338761836534807) AS SIGNED))" );
+$cast_after_update_row = $wpdb->get_row( "SELECT c0 FROM $cast_table", ARRAY_A );
+
 echo 'SQLANCER_JSON:' . wp_json_encode( $row ) . PHP_EOL;
 echo 'SQLANCER_BIT_COUNT_JSON:' . wp_json_encode( $bit_count_row ) . PHP_EOL;
 echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
 echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
 echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
+echo 'SQLANCER_CAST_SIGNED_JSON:' . wp_json_encode( $cast_row ) . PHP_EOL;
+echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_update_row ) . PHP_EOL;
 `,
 			],
 			{
@@ -207,5 +217,47 @@ echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
 				rows_count: '1',
 			}
 		);
+
+		const castSignedJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_CAST_SIGNED_JSON:' )
+			);
+
+		expect( castSignedJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				castSignedJsonLine.replace(
+					'SQLANCER_CAST_SIGNED_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			rounded_real: '1',
+			truncated_text: '0',
+			predicate_value: '0',
+		} );
+
+		const castSignedAfterUpdateJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith(
+					'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:'
+				)
+			);
+
+		expect( castSignedAfterUpdateJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				castSignedAfterUpdateJsonLine.replace(
+					'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			c0: null,
+		} );
 		} );
 	} );

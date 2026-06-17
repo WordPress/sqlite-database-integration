@@ -10700,6 +10700,24 @@ END;
 		$this->assertSame( '1', $result[0]->rows_count );
 	}
 
+	public function testSqlancerCastSignedRoundsNumericValuesInPredicates(): void {
+		$result = $this->assertQuery( "SELECT CAST(0.8338761836534807 AS SIGNED) AS rounded_real, CAST('0.8338761836534807' AS SIGNED) AS truncated_text" );
+
+		$this->assertSame( '1', $result[0]->rounded_real );
+		$this->assertSame( '0', $result[0]->truncated_text );
+
+		$this->assertQuery( 'CREATE TABLE t0(c0 SMALLINT UNIQUE KEY)' );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(NULL)' );
+
+		$result = $this->assertQuery( 'SELECT ( EXISTS (SELECT 1 WHERE FALSE)) IN (CAST(IFNULL(t0.c0, 0.8338761836534807) AS SIGNED)) AS predicate_value FROM t0' );
+		$this->assertSame( '0', $result[0]->predicate_value );
+
+		$this->assertQuery( 'UPDATE t0 SET c0="" WHERE ( EXISTS (SELECT 1 WHERE FALSE)) IN (CAST(IFNULL(t0.c0, 0.8338761836534807) AS SIGNED))' );
+		$result = $this->assertQuery( 'SELECT c0 FROM t0' );
+
+		$this->assertNull( $result[0]->c0 );
+	}
+
 	public function testInsertIntoSetSyntax(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (
