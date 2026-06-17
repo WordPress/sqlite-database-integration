@@ -7,6 +7,7 @@ SQLANCER_REPO="${SQLANCER_REPO:-https://github.com/sqlancer/sqlancer.git}"
 SQLANCER_IMAGE="${SQLANCER_IMAGE:-maven:3.9-eclipse-temurin-21}"
 MYSQL_IMAGE="${MYSQL_IMAGE:-mysql:8.4}"
 MYSQL_PASSWORD="${MYSQL_PASSWORD:-sqlancer}"
+MYSQL_TMPFS_SIZE="${MYSQL_TMPFS_SIZE:-1024m}"
 RANDOM_SEED="${RANDOM_SEED:-20260617}"
 NUM_QUERIES="${NUM_QUERIES:-200}"
 MAX_GENERATED_DATABASES="${MAX_GENERATED_DATABASES:-1}"
@@ -49,19 +50,20 @@ docker network create "$NETWORK" >/dev/null
 docker run -d --rm \
 	--name "$MYSQL_CONTAINER" \
 	--network "$NETWORK" \
+	--tmpfs "/var/lib/mysql:rw,size=$MYSQL_TMPFS_SIZE" \
 	-e MYSQL_ROOT_PASSWORD="$MYSQL_PASSWORD" \
 	-e MYSQL_ROOT_HOST=% \
 	"$MYSQL_IMAGE" \
 	--mysql-native-password=ON >/dev/null
 
 for _ in $(seq 1 60); do
-	if docker run --rm --network "$NETWORK" "$MYSQL_IMAGE" mysqladmin ping -h"$MYSQL_CONTAINER" -uroot -p"$MYSQL_PASSWORD" --silent >/dev/null 2>&1; then
+	if docker run --rm --network "$NETWORK" --tmpfs /var/lib/mysql:rw,size=16m "$MYSQL_IMAGE" mysqladmin ping -h"$MYSQL_CONTAINER" -uroot -p"$MYSQL_PASSWORD" --silent >/dev/null 2>&1; then
 		break
 	fi
 	sleep 1
 done
 
-docker run --rm --network "$NETWORK" "$MYSQL_IMAGE" mysqladmin ping -h"$MYSQL_CONTAINER" -uroot -p"$MYSQL_PASSWORD" --silent >/dev/null
+docker run --rm --network "$NETWORK" --tmpfs /var/lib/mysql:rw,size=16m "$MYSQL_IMAGE" mysqladmin ping -h"$MYSQL_CONTAINER" -uroot -p"$MYSQL_PASSWORD" --silent >/dev/null
 
 docker run --rm \
 	--network "$NETWORK" \
