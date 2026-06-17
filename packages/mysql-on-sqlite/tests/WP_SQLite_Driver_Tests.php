@@ -10683,6 +10683,17 @@ END;
 		$this->assertSame( '1', $result[0]->ref0 );
 	}
 
+	public function testSqlancerOrderingIntegerExpressionIsExpression(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 INT)' );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1)' );
+
+		$result = $this->assertQuery( 'SELECT DISTINCTROW NULL AS ref0, (- (-681681867)) AS ref1, MAX(CAST(CAST((NULL) IS NOT FALSE AS SIGNED) AS SIGNED)) AS ref2 FROM t0 GROUP BY NULL, (- (-681681867))' );
+
+		$this->assertNull( $result[0]->ref0 );
+		$this->assertSame( '681681867', $result[0]->ref1 );
+		$this->assertSame( '1', $result[0]->ref2 );
+	}
+
 	public function testSqlancerCountDistinctMultipleExpressionsUsesTupleIdentity(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 INT, c1 TEXT)' );
 		$this->assertQuery( "INSERT INTO t0(c0, c1) VALUES(1, 'a'), (1, 'a'), (1, 'b'), (NULL, 'b'), (2, NULL)" );

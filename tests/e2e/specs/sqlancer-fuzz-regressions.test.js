@@ -79,6 +79,7 @@ sdi_sqlancer_query( "DROP TABLE IF EXISTS $order_table" );
 sdi_sqlancer_query( "CREATE TABLE $order_table(c0 INT)" );
 sdi_sqlancer_query( "INSERT INTO $order_table(c0) VALUES(NULL)" );
 $order_negative_row = $wpdb->get_row( "SELECT (+ ( EXISTS (SELECT 1))) AS ref0 FROM $order_table WHERE (+ (BIT_COUNT(1371172065))) GROUP BY (+ ( EXISTS (SELECT 1))) ORDER BY -1173568737 LIMIT 4374681039449100574", ARRAY_A );
+$ordering_expression_row = $wpdb->get_row( "SELECT DISTINCTROW NULL AS ref0, (- (-681681867)) AS ref1, MAX(CAST(CAST((NULL) IS NOT FALSE AS SIGNED) AS SIGNED)) AS ref2 FROM $order_table GROUP BY NULL, (- (-681681867))", ARRAY_A );
 
 $index_table = $wpdb->prefix . 'sqlancer_expr_index';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $index_table" );
@@ -115,6 +116,7 @@ echo 'SQLANCER_JSON:' . wp_json_encode( $row ) . PHP_EOL;
 echo 'SQLANCER_BIT_COUNT_JSON:' . wp_json_encode( $bit_count_row ) . PHP_EOL;
 echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
 echo 'SQLANCER_ORDER_NEGATIVE_JSON:' . wp_json_encode( $order_negative_row ) . PHP_EOL;
+echo 'SQLANCER_ORDERING_EXPRESSION_JSON:' . wp_json_encode( $ordering_expression_row ) . PHP_EOL;
 echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
 echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
@@ -192,6 +194,27 @@ echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_upd
 			)
 		).toEqual( {
 			ref0: '1',
+		} );
+
+		const orderingExpressionJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_ORDERING_EXPRESSION_JSON:' )
+			);
+
+		expect( orderingExpressionJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				orderingExpressionJsonLine.replace(
+					'SQLANCER_ORDERING_EXPRESSION_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			ref0: null,
+			ref1: '681681867',
+			ref2: '1',
 		} );
 
 		const indexJsonLine = output

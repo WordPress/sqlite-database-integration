@@ -5980,15 +5980,19 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * Translate an ORDER BY or GROUP BY expression.
 	 *
 	 * SQLite treats integer constants in ORDER BY and GROUP BY as select-list
-	 * ordinals. MySQL accepts negative integer constants as expressions, so
-	 * force those through SQLite's expression path.
+	 * ordinals. MySQL only uses bare unsigned integer constants as ordinals, so
+	 * force signed, parenthesized, and arithmetic integer constants through
+	 * SQLite's expression path.
 	 *
 	 * @param  WP_Parser_Node $expr The expression AST node.
 	 * @return string              The translated ORDER BY or GROUP BY expression.
 	 */
 	private function translate_ordering_expression( WP_Parser_Node $expr ): string {
 		$translated = $this->translate( $expr );
-		if ( preg_match( '/^-\\s*\\d+$/', $translated ) ) {
+		if (
+			! preg_match( '/^\d+$/', $translated )
+			&& preg_match( '/^[\s()+-]*\d[\d\s()+-]*$/', $translated )
+		) {
 			return '0 + ' . $translated;
 		}
 
