@@ -196,36 +196,36 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 		$this->assertQuery(
 			$is_values_naming_supported
-				? 'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true'
-				: 'INSERT INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
+				? "INSERT INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (VALUES ( 1 )) WHERE true"
+				: "INSERT INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true",
 			'INSERT INTO t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
 			$is_values_naming_supported
-				? 'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true'
-				: 'INSERT INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
+				? "INSERT INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (VALUES ( 1 )) WHERE true"
+				: "INSERT INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true",
 			'INSERT INTO wp.t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
 			$is_values_naming_supported
-				? 'INSERT INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (VALUES ( 1 , 2 )) WHERE true'
-				: 'INSERT INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (SELECT NULL AS `column1`, NULL AS `column2` WHERE FALSE UNION ALL VALUES ( 1 , 2 )) WHERE true',
+				? "INSERT INTO `t` (`c1`, `c2`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END, CASE WHEN TYPEOF(`column2`) = 'blob' THEN `column2` ELSE _mysql_save_integer(`column2`) END FROM (VALUES ( 1 , 2 )) WHERE true"
+				: "INSERT INTO `t` (`c1`, `c2`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END, CASE WHEN TYPEOF(`column2`) = 'blob' THEN `column2` ELSE _mysql_save_integer(`column2`) END FROM (SELECT NULL AS `column1`, NULL AS `column2` WHERE FALSE UNION ALL VALUES ( 1 , 2 )) WHERE true",
 			'INSERT INTO t (c1, c2) VALUES (1, 2)'
 		);
 
 		$this->assertQuery(
 			$is_values_naming_supported
-				? 'INSERT INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 ) , ( 2 )) WHERE true'
-				: 'INSERT INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 ) , ( 2 )) WHERE true',
+				? "INSERT INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (VALUES ( 1 ) , ( 2 )) WHERE true"
+				: "INSERT INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 ) , ( 2 )) WHERE true",
 			'INSERT INTO t (c) VALUES (1), (2)'
 		);
 
 		$this->assertQuery(
 			array(
 				'SELECT * FROM (SELECT * FROM `t2`) LIMIT 1',
-				'INSERT INTO `t1` (`c1`, `c2`) SELECT `c1`, `c2` FROM (SELECT * FROM `t2`) WHERE true',
+				"INSERT INTO `t1` (`c1`, `c2`) SELECT CASE WHEN TYPEOF(`c1`) = 'blob' THEN `c1` ELSE _mysql_save_integer(`c1`) END, CASE WHEN TYPEOF(`c2`) = 'blob' THEN `c2` ELSE _mysql_save_integer(`c2`) END FROM (SELECT * FROM `t2`) WHERE true",
 			),
 			'INSERT INTO t1 SELECT * FROM t2'
 		);
@@ -278,36 +278,36 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 
 		$this->assertQuery(
 			$is_values_naming_supported
-				? 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true'
-				: 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
+				? "REPLACE INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (VALUES ( 1 )) WHERE true"
+				: "REPLACE INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true",
 			'REPLACE INTO t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
 			$is_values_naming_supported
-				? 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 )) WHERE true'
-				: 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true',
+				? "REPLACE INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (VALUES ( 1 )) WHERE true"
+				: "REPLACE INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 )) WHERE true",
 			'REPLACE INTO wp.t (c) VALUES (1)'
 		);
 
 		$this->assertQuery(
 			$is_values_naming_supported
-				? 'REPLACE INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (VALUES ( 1 , 2 )) WHERE true'
-				: 'REPLACE INTO `t` (`c1`, `c2`) SELECT `column1`, `column2` FROM (SELECT NULL AS `column1`, NULL AS `column2` WHERE FALSE UNION ALL VALUES ( 1 , 2 )) WHERE true',
+				? "REPLACE INTO `t` (`c1`, `c2`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END, CASE WHEN TYPEOF(`column2`) = 'blob' THEN `column2` ELSE _mysql_save_integer(`column2`) END FROM (VALUES ( 1 , 2 )) WHERE true"
+				: "REPLACE INTO `t` (`c1`, `c2`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END, CASE WHEN TYPEOF(`column2`) = 'blob' THEN `column2` ELSE _mysql_save_integer(`column2`) END FROM (SELECT NULL AS `column1`, NULL AS `column2` WHERE FALSE UNION ALL VALUES ( 1 , 2 )) WHERE true",
 			'REPLACE INTO t (c1, c2) VALUES (1, 2)'
 		);
 
 		$this->assertQuery(
 			$is_values_naming_supported
-				? 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (VALUES ( 1 ) , ( 2 )) WHERE true'
-				: 'REPLACE INTO `t` (`c`) SELECT `column1` FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 ) , ( 2 )) WHERE true',
+				? "REPLACE INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (VALUES ( 1 ) , ( 2 )) WHERE true"
+				: "REPLACE INTO `t` (`c`) SELECT CASE WHEN TYPEOF(`column1`) = 'blob' THEN `column1` ELSE _mysql_save_integer(`column1`) END FROM (SELECT NULL AS `column1` WHERE FALSE UNION ALL VALUES ( 1 ) , ( 2 )) WHERE true",
 			'REPLACE INTO t (c) VALUES (1), (2)'
 		);
 
 		$this->assertQuery(
 			array(
 				'SELECT * FROM (SELECT * FROM `t2`) LIMIT 1',
-				'REPLACE INTO `t1` (`c1`, `c2`) SELECT `c1`, `c2` FROM (SELECT * FROM `t2`) WHERE true',
+				"REPLACE INTO `t1` (`c1`, `c2`) SELECT CASE WHEN TYPEOF(`c1`) = 'blob' THEN `c1` ELSE _mysql_save_integer(`c1`) END, CASE WHEN TYPEOF(`c2`) = 'blob' THEN `c2` ELSE _mysql_save_integer(`c2`) END FROM (SELECT * FROM `t2`) WHERE true",
 			),
 			'REPLACE INTO t1 SELECT * FROM t2'
 		);
@@ -356,63 +356,63 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t2 (id INT, c1 INT, c2 INT)' );
 
 		$this->assertQuery(
-			'UPDATE `t` SET `c` = 1',
+			"UPDATE `t` SET `c` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END",
 			'UPDATE t SET c = 1'
 		);
 
 		$this->assertQuery(
-			'UPDATE `t` SET `c` = 1',
+			"UPDATE `t` SET `c` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END",
 			'UPDATE wp.t SET c = 1'
 		);
 
 		$this->assertQuery(
-			'UPDATE `t` SET `c1` = 1, `c2` = 2',
+			"UPDATE `t` SET `c1` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END, `c2` = CASE WHEN TYPEOF(2) = 'blob' THEN 2 ELSE _mysql_save_integer(2) END",
 			'UPDATE t SET c1 = 1, c2 = 2'
 		);
 
 		$this->assertQuery(
-			'UPDATE `t` SET `c` = 1 WHERE `c` = 2',
+			"UPDATE `t` SET `c` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END WHERE `c` = 2",
 			'UPDATE t SET c = 1 WHERE c = 2'
 		);
 
 		// UPDATE with a table alias.
 		$this->assertQuery(
-			'UPDATE `t` AS `a` SET `c` = 1 WHERE `a`.`c` = 2',
+			"UPDATE `t` AS `a` SET `c` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END WHERE `a`.`c` = 2",
 			'UPDATE t AS a SET c = 1 WHERE a.c = 2'
 		);
 
 		$this->assertQuery(
-			'UPDATE `t` AS `a` SET `c` = 1 WHERE `a`.`c` = 2',
+			"UPDATE `t` AS `a` SET `c` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END WHERE `a`.`c` = 2",
 			'UPDATE t AS a SET a.c = 1 WHERE a.c = 2'
 		);
 
 		// UPDATE with LIMIT.
 		$this->assertQuery(
-			'UPDATE `t` SET `c` = 1 WHERE rowid IN ( SELECT rowid FROM `t` LIMIT 1 )',
+			"UPDATE `t` SET `c` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END WHERE rowid IN ( SELECT rowid FROM `t` LIMIT 1 )",
 			'UPDATE t SET c = 1 LIMIT 1'
 		);
 
 		// UPDATE with ORDER BY and LIMIT.
 		$this->assertQuery(
-			'UPDATE `t` SET `c` = 1 WHERE rowid IN ( SELECT rowid FROM `t` ORDER BY `c` ASC LIMIT 1 )',
+			"UPDATE `t` SET `c` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END WHERE rowid IN ( SELECT rowid FROM `t` ORDER BY `c` ASC LIMIT 1 )",
 			'UPDATE t SET c = 1 ORDER BY c ASC LIMIT 1'
 		);
 
 		// UPDATE with multiple tables.
 		$this->assertQuery(
-			'UPDATE `t1` SET `id` = 1 FROM `t2` WHERE `t1`.`c` = `t2`.`c`',
+			"UPDATE `t1` SET `id` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END FROM `t2` WHERE `t1`.`c` = `t2`.`c`",
 			'UPDATE t1, t2 SET t1.id = 1 WHERE t1.c = t2.c'
 		);
 
 		// UPDATE with JOIN.
 		$this->assertQuery(
-			'UPDATE `t1` SET `id` = 1 FROM `t2` WHERE `t1`.`c` = 2 AND `t1`.`c` = `t2`.`c`',
+			"UPDATE `t1` SET `id` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END FROM `t2` WHERE `t1`.`c` = 2 AND `t1`.`c` = `t2`.`c`",
 			'UPDATE t1 JOIN t2 ON t1.c = t2.c SET t1.id = 1 WHERE t1.c = 2'
 		);
 
 		// UPDATE with JOIN using a derived table.
 		$this->assertQuery(
-			'UPDATE `t1` SET `id` = 1 FROM ( SELECT * FROM `t2` ) AS `t2` WHERE `t1`.`c` = 2 AND `t1`.`c` = `t2`.`c`',
+			"UPDATE `t1` SET `id` = CASE WHEN TYPEOF(1) = 'blob' THEN 1 ELSE _mysql_save_integer(1) END FROM ( SELECT * FROM `t2` ) AS `t2` WHERE `t1`.`c` = 2 AND `t1`.`c` = `t2`.`c`",
 			'UPDATE t1 JOIN ( SELECT * FROM t2 ) AS t2 ON t1.c = t2.c SET t1.id = 1 WHERE t1.c = 2'
 		);
 	}

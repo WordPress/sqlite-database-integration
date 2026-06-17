@@ -6708,8 +6708,8 @@ QUERY
 		$this->assertEquals(
 			array(
 				'seqno' => '1',
-				'cid'   => '1',
-				'name'  => 'name',
+				'cid'   => '-2',
+				'name'  => null,
 				'desc'  => '1',
 				'coll'  => 'NOCASE',
 				'key'   => '1',
@@ -12017,8 +12017,8 @@ END;
 			$this->assertQuery( 'UPDATE t SET value = 0x05' );
 			$this->assertQuery( "UPDATE t SET value = x'06'" );
 		} else {
-			// TODO: These are supported in MySQL:
-			$this->assertQueryError( "UPDATE t SET value = '4.5'", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store REAL value in INTEGER column t.value' );
+			$this->assertQuery( "UPDATE t SET value = '4.5'" );
+			$this->assertSame( '5', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
 			$this->assertQueryError( 'UPDATE t SET value = 0x05', 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
 			$this->assertQueryError( "UPDATE t SET value = x'06'", 'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store BLOB value in INTEGER column t.value' );
 		}

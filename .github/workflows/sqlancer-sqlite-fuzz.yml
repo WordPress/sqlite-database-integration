@@ -1,6 +1,9 @@
 name: SQLancer SQLite Fuzz
 
 on:
+  push:
+    branches:
+      - codex/sqlancer-sqlite-fuzz
   schedule:
     # Bounded recurring fuzzing. GitHub Actions cannot run forever, so this
     # workflow rotates deterministic seeds/oracles on a schedule.

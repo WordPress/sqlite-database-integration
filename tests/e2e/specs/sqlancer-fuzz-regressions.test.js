@@ -1,28 +1,16 @@
 /**
- * External dependencies
- */
-import { execFileSync } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-/**
  * WordPress dependencies
  */
 import { test, expect } from '@wordpress/e2e-test-utils-playwright';
 
-const repoRoot = path.resolve(
-	path.dirname( fileURLToPath( import.meta.url ) ),
-	'../../..'
-);
-const wordpressPath = path.join( repoRoot, 'wordpress' );
-
 test.describe( 'SQLancer fuzz regressions', () => {
-	test( 'replays reduced INSERT and DELETE modifier failures', () => {
+	test( 'replays reduced INSERT and DELETE modifier failures', async () => {
+		const { execFileSync } = await import( 'node:child_process' );
 		const output = execFileSync(
 			'npm',
 			[
 				'--prefix',
-				wordpressPath,
+				'wordpress',
 				'run',
 				'env:cli',
 				'--',
@@ -244,10 +232,10 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 `,
 			],
 			{
-				cwd: repoRoot,
+				cwd: process.cwd(),
 				encoding: 'utf8',
 			}
-		);
+			);
 
 		const jsonLine = output
 			.trim()
