@@ -101,6 +101,12 @@ sdi_sqlancer_query( "CREATE INDEX i0 ON $index_table(((IF(NULL, $index_table.c1,
 sdi_sqlancer_query( "ALTER TABLE $index_table DISABLE KEYS" );
 $index_row = $wpdb->get_row( "SHOW INDEX FROM $index_table WHERE Key_name = 'i0'", ARRAY_A );
 
+$literal_index_table = $wpdb->prefix . 'sqlancer_literal_index';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $literal_index_table" );
+sdi_sqlancer_query( "CREATE TABLE $literal_index_table(c1 MEDIUMINT UNIQUE KEY COLUMN_FORMAT DEFAULT COMMENT 'asdf')" );
+sdi_sqlancer_query( "CREATE UNIQUE INDEX i_sqlancer_literal ON $literal_index_table(('+4')) VISIBLE" );
+$literal_index_row = $wpdb->get_row( "SHOW INDEX FROM $literal_index_table WHERE Key_name = 'i_sqlancer_literal'", ARRAY_A );
+
 $count_distinct_table = $wpdb->prefix . 'sqlancer_count_distinct';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $count_distinct_table" );
 sdi_sqlancer_query( "CREATE TABLE $count_distinct_table(c0 INT, c1 TEXT)" );
@@ -140,6 +146,7 @@ echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
 echo 'SQLANCER_ORDER_NEGATIVE_JSON:' . wp_json_encode( $order_negative_row ) . PHP_EOL;
 echo 'SQLANCER_ORDERING_EXPRESSION_JSON:' . wp_json_encode( $ordering_expression_row ) . PHP_EOL;
 echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
+echo 'SQLANCER_LITERAL_INDEX_JSON:' . wp_json_encode( $literal_index_row ) . PHP_EOL;
 echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_DROP_INDEX_JSON:' . wp_json_encode( $rename_drop_index_row ) . PHP_EOL;
@@ -306,6 +313,29 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 		expect( indexRow.Expression ).toContain( 'IF(NULL' );
 		expect( indexRow.Expression ).toContain( 'sqlancer_expr_index . c1' );
 		expect( indexRow.Expression ).toContain( 'sqlancer_expr_index . c0' );
+
+		const literalIndexJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_LITERAL_INDEX_JSON:' )
+			);
+
+		expect( literalIndexJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				literalIndexJsonLine.replace(
+					'SQLANCER_LITERAL_INDEX_JSON:',
+					''
+				)
+			)
+		).toEqual(
+			expect.objectContaining( {
+				Key_name: 'i_sqlancer_literal',
+				Column_name: null,
+				Expression: "'+4'",
+			} )
+		);
 
 		const countDistinctJsonLine = output
 			.trim()

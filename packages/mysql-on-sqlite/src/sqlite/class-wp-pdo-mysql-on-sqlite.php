@@ -2716,10 +2716,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$key_part .= ' ' . $this->translate( $direction );
 				}
 			} else {
-				$key_part = $this->dequalify_index_expression(
-					$this->translate( $key_part_node ),
-					$table_name
-				);
+				$key_part = $this->translate_index_expression( $key_part_node, $table_name );
 			}
 			$key_parts[] = $key_part;
 		}
@@ -2747,7 +2744,57 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$ast  = $this->create_parser( 'SELECT ' . $expression )->parse();
 		$expr = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
 
-		return $this->dequalify_index_expression( $this->translate( $expr ), $table_name );
+		return $this->translate_index_expression( $expr, $table_name );
+	}
+
+	/**
+	 * Translate a functional index expression for SQLite CREATE INDEX.
+	 *
+	 * SQLite resolves bare single-quoted string literals in CREATE INDEX
+	 * expressions as identifiers, so force literal-only text expressions to
+	 * stay text-valued.
+	 *
+	 * @param  WP_Parser_Node $node       The MySQL expression AST node.
+	 * @param  string         $table_name The table being indexed.
+	 * @return string                     The translated SQLite expression.
+	 */
+	private function translate_index_expression( WP_Parser_Node $node, string $table_name ): string {
+		$expression = $this->dequalify_index_expression( $this->translate( $node ), $table_name );
+
+		if ( $this->is_text_literal_index_expression( $node ) ) {
+			return sprintf( 'CAST(%s AS TEXT)', $expression );
+		}
+
+		return $expression;
+	}
+
+	/**
+	 * Check whether an index expression is only a text string literal.
+	 *
+	 * @param  WP_Parser_Node $node The expression AST node.
+	 * @return bool                Whether the expression is a text string literal.
+	 */
+	private function is_text_literal_index_expression( WP_Parser_Node $node ): bool {
+		if ( 'textStringLiteral' === $node->rule_name ) {
+			return true;
+		}
+
+		$children = $node->get_children();
+
+		if ( 1 === count( $children ) && $children[0] instanceof WP_Parser_Node ) {
+			return $this->is_text_literal_index_expression( $children[0] );
+		}
+
+		if (
+			3 === count( $children )
+			&& $children[0] instanceof WP_MySQL_Token && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $children[0]->id
+			&& $children[1] instanceof WP_Parser_Node
+			&& $children[2] instanceof WP_MySQL_Token && WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $children[2]->id
+		) {
+			return $this->is_text_literal_index_expression( $children[1] );
+		}
+
+		return false;
 	}
 
 	/**
