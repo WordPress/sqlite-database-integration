@@ -10653,6 +10653,18 @@ END;
 		$this->assertNull( $result[0]->null_xor );
 	}
 
+	public function testSqlancerFunctionalIndexRecordsExpressionMetadata(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 DOUBLE, c1 DOUBLE)' );
+		$this->assertQuery( 'CREATE INDEX i0 ON t0(((IF(NULL, t0.c1, t0.c0)))) ALGORITHM DEFAULT' );
+		$this->assertQuery( 'ALTER TABLE t0 DISABLE KEYS' );
+
+		$result = $this->assertQuery( 'SHOW INDEX FROM t0' );
+
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->Column_name );
+		$this->assertSame( '(IF(NULL , t0 . c1 , t0 . c0))', $result[0]->Expression );
+	}
+
 	public function testInsertIntoSetSyntax(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (

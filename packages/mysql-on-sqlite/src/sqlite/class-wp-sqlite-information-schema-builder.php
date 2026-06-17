@@ -1648,7 +1648,9 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// Get first index column data type (needed for index type).
 		$first_column_name  = $this->get_index_column_name( $key_parts[0] );
-		$first_column_type  = $column_info_map[ $first_column_name ]['DATA_TYPE'] ?? null;
+		$first_column_type  = null === $first_column_name
+			? null
+			: ( $column_info_map[ $first_column_name ]['DATA_TYPE'] ?? null );
 		$has_spatial_column = null !== $first_column_type && $this->is_spatial_data_type( $first_column_type );
 
 		$non_unique      = $this->get_index_non_unique( $keyword );
@@ -1660,26 +1662,29 @@ class WP_SQLite_Information_Schema_Builder {
 		foreach ( $key_parts as $i => $key_part ) {
 			$column_name = $key_part_column_names[ $i ];
 			$collation   = $this->get_index_column_collation( $key_part, $index_type );
-			$column_info = $column_info_map[ $column_name ] ?? null;
+			$column_info = null === $column_name ? null : ( $column_info_map[ $column_name ] ?? null );
 
-			if ( null === $column_info ) {
-				throw WP_SQLite_Information_Schema_Exception::key_column_not_found( $column_name );
-			}
-
-			if (
-				'PRIMARY' === $index_name
-				|| 'NO' === $column_info_map[ $column_name ]['IS_NULLABLE']
-			) {
-				$nullable = '';
-			} else {
+			if ( null === $column_name ) {
 				$nullable = 'YES';
-			}
+				$sub_part = null;
+			} elseif ( null === $column_info ) {
+				throw WP_SQLite_Information_Schema_Exception::key_column_not_found( $column_name );
+			} else {
+				if (
+					'PRIMARY' === $index_name
+					|| 'NO' === $column_info_map[ $column_name ]['IS_NULLABLE']
+				) {
+					$nullable = '';
+				} else {
+					$nullable = 'YES';
+				}
 
-			$sub_part = $this->get_index_column_sub_part(
-				$key_part,
-				$column_info_map[ $column_name ]['CHARACTER_MAXIMUM_LENGTH'],
-				$has_spatial_column
-			);
+				$sub_part = $this->get_index_column_sub_part(
+					$key_part,
+					$column_info_map[ $column_name ]['CHARACTER_MAXIMUM_LENGTH'],
+					$has_spatial_column
+				);
+			}
 
 			$statistics_data[] = array(
 				'table_schema'  => self::SAVED_DATABASE_NAME,
@@ -1698,7 +1703,7 @@ class WP_SQLite_Information_Schema_Builder {
 				'comment'       => '', // not implemented
 				'index_comment' => $index_comment,
 				'is_visible'    => 'YES', // @TODO: Save actual visibility value.
-				'expression'    => null, // @TODO
+				'expression'    => $this->get_index_expression( $key_part ),
 			);
 
 			$seq_in_index += 1;
@@ -2857,6 +2862,19 @@ class WP_SQLite_Information_Schema_Builder {
 			return null;
 		}
 		return $this->get_value( $node->get_first_descendant_node( 'identifier' ) );
+	}
+
+	/**
+	 * Extract index expression from a functional index part.
+	 *
+	 * @param  WP_Parser_Node $node The key part or expression AST node.
+	 * @return string|null          The expression as stored in information schema.
+	 */
+	private function get_index_expression( WP_Parser_Node $node ): ?string {
+		if ( 'keyPart' === $node->rule_name ) {
+			return null;
+		}
+		return $this->serialize_mysql_expression( $node );
 	}
 
 	/**

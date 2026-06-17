@@ -31,13 +31,33 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	public static function register_for( $pdo ): self {
 		$instance = new self();
 		foreach ( $instance->functions as $f => $t ) {
+			$flags = isset( $instance->deterministic_functions[ $f ] )
+				? self::get_sqlite_deterministic_flag()
+				: 0;
 			if ( $pdo instanceof PDO\SQLite ) {
-				$pdo->createFunction( $f, array( $instance, $t ) );
+				$pdo->createFunction( $f, array( $instance, $t ), -1, $flags );
 			} else {
-				$pdo->sqliteCreateFunction( $f, array( $instance, $t ) );
+				$pdo->sqliteCreateFunction( $f, array( $instance, $t ), -1, $flags );
 			}
 		}
 		return $instance;
+	}
+
+	/**
+	 * Gets the SQLite deterministic UDF flag across supported PHP versions.
+	 *
+	 * @return int The deterministic flag, or 0 when unavailable.
+	 */
+	private static function get_sqlite_deterministic_flag(): int {
+		if ( defined( 'Pdo\Sqlite::DETERMINISTIC' ) ) {
+			return constant( 'Pdo\Sqlite::DETERMINISTIC' );
+		}
+
+		if ( defined( 'PDO::SQLITE_DETERMINISTIC' ) ) {
+			return constant( 'PDO::SQLITE_DETERMINISTIC' );
+		}
+
+		return 0;
 	}
 
 	/**
@@ -94,6 +114,48 @@ class WP_SQLite_PDO_User_Defined_Functions {
 
 		// Internal helper functions.
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
+	);
+
+	/**
+	 * Pure UDFs that SQLite may use in schema-level expressions.
+	 *
+	 * SQLite requires functions used in index expressions to be marked
+	 * deterministic. Time, random, lock, and stateful functions stay excluded.
+	 *
+	 * @var array<string, bool>
+	 */
+	private $deterministic_functions = array(
+		'month'                        => true,
+		'monthnum'                     => true,
+		'year'                         => true,
+		'day'                          => true,
+		'hour'                         => true,
+		'minute'                       => true,
+		'second'                       => true,
+		'week'                         => true,
+		'weekday'                      => true,
+		'dayofweek'                    => true,
+		'dayofmonth'                   => true,
+		'md5'                          => true,
+		'from_unixtime'                => true,
+		'isnull'                       => true,
+		'if'                           => true,
+		'regexp'                       => true,
+		'field'                        => true,
+		'log'                          => true,
+		'least'                        => true,
+		'greatest'                     => true,
+		'ucase'                        => true,
+		'lcase'                        => true,
+		'unhex'                        => true,
+		'from_base64'                  => true,
+		'to_base64'                    => true,
+		'inet_ntoa'                    => true,
+		'inet_aton'                    => true,
+		'bit_count'                    => true,
+		'datediff'                     => true,
+		'locate'                       => true,
+		'_helper_like_to_glob_pattern' => true,
 	);
 
 	/**

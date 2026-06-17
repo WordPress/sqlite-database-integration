@@ -2662,6 +2662,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$is_unique  = $create_index->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
 
 		// Get the key parts.
+		$key_parts         = array();
 		$key_list_variants = $target->get_first_child_node( 'keyListVariants' );
 		$key_list_nodes    = $key_list_variants->get_first_child_node()->get_child_nodes();
 		foreach ( $key_list_nodes as $key_list_node ) {
@@ -2678,7 +2679,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$key_part .= ' ' . $this->translate( $direction );
 				}
 			} else {
-				$key_part = $this->translate( $key_part_node );
+				$key_part = $this->dequalify_index_expression(
+					$this->translate( $key_part_node ),
+					$table_name
+				);
 			}
 			$key_parts[] = $key_part;
 		}
@@ -2692,6 +2696,38 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->translate( $target->get_first_child_node( 'tableRef' ) ),
 				implode( ', ', $key_parts )
 			)
+		);
+	}
+
+	/**
+	 * Translate a stored functional index expression for SQLite CREATE INDEX.
+	 *
+	 * @param  string $expression The MySQL expression stored in information schema.
+	 * @param  string $table_name The table being indexed.
+	 * @return string             The translated SQLite expression.
+	 */
+	private function translate_stored_index_expression( string $expression, string $table_name ): string {
+		$ast  = $this->create_parser( 'SELECT ' . $expression )->parse();
+		$expr = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
+
+		return $this->dequalify_index_expression( $this->translate( $expr ), $table_name );
+	}
+
+	/**
+	 * Remove the current table qualifier from an SQLite index expression.
+	 *
+	 * SQLite prohibits the "." operator in index expressions, while MySQL allows
+	 * references such as t0.c0 in functional index definitions.
+	 *
+	 * @param  string $expression The translated SQLite expression.
+	 * @param  string $table_name The table being indexed.
+	 * @return string             The expression with current-table qualifiers removed.
+	 */
+	private function dequalify_index_expression( string $expression, string $table_name ): string {
+		return str_replace(
+			$this->quote_sqlite_identifier( $table_name ) . '.',
+			'',
+			$expression
 		);
 	}
 
@@ -6438,8 +6474,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$info = $constraint[1];
 
 			$column_list = array_map(
-				function ( $column ) {
-					$fragment = $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+				function ( $column ) use ( $table_name ) {
+					if ( null === $column['COLUMN_NAME'] ) {
+						$fragment = $this->translate_stored_index_expression(
+							$column['EXPRESSION'],
+							$table_name
+						);
+					} else {
+						$fragment = $this->quote_sqlite_identifier( $column['COLUMN_NAME'] );
+					}
+
 					if ( 'D' === $column['COLLATION'] ) {
 						$fragment .= ' DESC';
 					}
