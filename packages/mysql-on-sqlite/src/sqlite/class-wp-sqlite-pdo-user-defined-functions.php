@@ -84,6 +84,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'to_base64'                    => 'to_base64',
 		'inet_ntoa'                    => 'inet_ntoa',
 		'inet_aton'                    => 'inet_aton',
+		'bit_count'                    => 'bit_count',
 		'datediff'                     => 'datediff',
 		'locate'                       => 'locate',
 		'utc_date'                     => 'utc_date',
@@ -197,6 +198,29 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function md5( $field ) {
 		return md5( $field );
+	}
+
+	/**
+	 * Emulate MySQL BIT_COUNT().
+	 *
+	 * @param int|float|string|null $value Value to inspect.
+	 *
+	 * @return int|null Number of set bits, or null for null input.
+	 */
+	public function bit_count( $value ) {
+		if ( null === $value ) {
+			return null;
+		}
+
+		$value = (int) $value;
+		$count = 0;
+		for ( $i = 0; $i < 64; ++$i ) {
+			if ( 0 !== ( $value & 1 ) ) {
+				++$count;
+			}
+			$value >>= 1;
+		}
+		return $count;
 	}
 
 	/**
@@ -693,6 +717,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function least() {
 		$arg_list = func_get_args();
+		if ( in_array( null, $arg_list, true ) ) {
+			return null;
+		}
 
 		return min( $arg_list );
 	}
@@ -706,6 +733,9 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function greatest() {
 		$arg_list = func_get_args();
+		if ( in_array( null, $arg_list, true ) ) {
+			return null;
+		}
 
 		return max( $arg_list );
 	}

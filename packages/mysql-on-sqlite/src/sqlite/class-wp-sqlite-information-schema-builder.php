@@ -1557,7 +1557,7 @@ class WP_SQLite_Information_Schema_Builder {
 		bool $nullable
 	): ?array {
 		// Handle inline PRIMARY KEY and UNIQUE constraints.
-		$has_inline_primary_key = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL );
+		$has_inline_primary_key = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
 		$has_inline_unique_key  = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
 		if ( $has_inline_primary_key || $has_inline_unique_key ) {
 			$index_name = $has_inline_primary_key ? 'PRIMARY' : $column_name;
@@ -2114,7 +2114,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
 			// PRIMARY KEY columns are always NOT NULL.
-			if ( $attr->has_child_token( WP_MySQL_Lexer::KEY_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
 				return 'NO';
 			}
 
@@ -2137,9 +2137,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 */
 	private function get_column_key( WP_Parser_Node $node ): string {
 		// 1. PRI: Column is a primary key or its any component.
-		if (
-			null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL )
-		) {
+		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
 			return 'PRI';
 		}
 

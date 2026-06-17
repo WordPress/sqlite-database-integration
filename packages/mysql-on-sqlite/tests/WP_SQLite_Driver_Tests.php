@@ -10551,6 +10551,106 @@ END;
 		$this->assertEquals( 'c', $res[2]->name );
 	}
 
+	public function testSqlancerInsertIgnoreCoercesInvalidNumericValues(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 DECIMAL ZEROFILL COLUMN_FORMAT DEFAULT)' );
+
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		if ( ! $is_legacy_sqlite ) {
+			$this->assertQueryError(
+				'INSERT INTO t0(c0) VALUES("ds")',
+				'SQLSTATE[23000]: Integrity constraint violation: 19 cannot store TEXT value in REAL column t0.c0'
+			);
+		}
+
+		$this->assertQuery( 'INSERT IGNORE INTO t0(c0) VALUES("ds")' );
+		$result = $this->assertQuery( 'SELECT c0, c0 + 0 AS numeric_value FROM t0' );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( 0.0, (float) $result[0]->numeric_value );
+
+		$this->assertQuery( 'INSERT DELAYED IGNORE INTO t0(c0) VALUES(0.23742865885084252)' );
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count FROM t0' );
+
+		$this->assertSame( '2', $result[0]->rows_count );
+	}
+
+	public function testSqlancerDeleteIgnoreDropsIgnoredRows(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 DECIMAL)' );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );
+
+		$this->assertQuery( 'DELETE IGNORE FROM t0 WHERE c0 = 1' );
+		$result = $this->assertQuery( 'SELECT c0 FROM t0 ORDER BY c0' );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( 2.0, (float) $result[0]->c0 );
+	}
+
+	public function testSqlancerDeleteWithBitCountPredicate(): void {
+		$result = $this->assertQuery( 'SELECT BIT_COUNT(NULL) AS null_bits, BIT_COUNT(0) AS zero_bits, BIT_COUNT(7) AS seven_bits, BIT_COUNT(-1) AS negative_bits' );
+
+		$this->assertNull( $result[0]->null_bits );
+		$this->assertSame( '0', $result[0]->zero_bits );
+		$this->assertSame( '3', $result[0]->seven_bits );
+		$this->assertSame( '64', $result[0]->negative_bits );
+
+		$this->assertQuery( "CREATE TABLE t0(c0 INT(95) ZEROFILL UNIQUE KEY COMMENT 'asdf' STORAGE DISK COLUMN_FORMAT FIXED)" );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );
+
+		$this->assertQuery( 'DELETE LOW_PRIORITY FROM t0 WHERE BIT_COUNT(NULL)' );
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count FROM t0' );
+
+		$this->assertSame( '2', $result[0]->rows_count );
+	}
+
+	public function testSqlancerSetGlobalServerVariableIsAccepted(): void {
+		$this->assertQuery( 'SET GLOBAL myisam_sort_buffer_size = 5931344759664966748' );
+		$result = $this->assertQuery( 'SELECT 1 AS still_connected' );
+
+		$this->assertSame( '1', $result[0]->still_connected );
+	}
+
+	public function testSqlancerReplaceLowPriorityDropsInsertModifier(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 INT)' );
+		$this->assertQuery( 'REPLACE LOW_PRIORITY INTO t0(c0) VALUES(0.8086755056097884), (0.16838264227471722), (0.7427700179628559)' );
+		$result = $this->assertQuery( 'SELECT GROUP_CONCAT(c0 ORDER BY rowid) AS saved_values FROM t0' );
+
+		$this->assertSame( '1,0,1', $result[0]->saved_values );
+	}
+
+	public function testSqlancerInlineUniqueKeyAllowsReplaceNullValues(): void {
+		$this->assertQuery( "CREATE TABLE t0(c0 INT(95) ZEROFILL UNIQUE KEY COMMENT 'asdf' STORAGE DISK COLUMN_FORMAT FIXED)" );
+
+		$columns = $this->assertQuery( 'SHOW COLUMNS FROM t0' );
+		$this->assertSame( 'YES', $columns[0]->Null );
+		$this->assertSame( 'UNI', $columns[0]->Key );
+
+		$this->assertQuery( 'REPLACE INTO t0(c0) VALUES(NULL)' );
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count, SUM(c0 IS NULL) AS null_rows FROM t0' );
+
+		$this->assertSame( '1', $result[0]->rows_count );
+		$this->assertSame( '1', $result[0]->null_rows );
+	}
+
+	public function testSqlancerGreatestFunctionCallUsesUdf(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 INT)' );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );
+
+		$result = $this->assertQuery( 'SELECT DISTINCTROW MAX(GREATEST(NULL, t0.c0)) AS greatest_with_null, LEAST(NULL, 1) AS least_with_null FROM t0' );
+
+		$this->assertNull( $result[0]->greatest_with_null );
+		$this->assertNull( $result[0]->least_with_null );
+	}
+
+	public function testSqlancerBooleanOperators(): void {
+		$result = $this->assertQuery( 'SELECT (2 XOR 3) AS both_true, (1 XOR 0) AS one_true, (1 && 0) AS and_symbol, (! 1) AS not_symbol, (NULL XOR 1) AS null_xor' );
+
+		$this->assertSame( '0', $result[0]->both_true );
+		$this->assertSame( '1', $result[0]->one_true );
+		$this->assertSame( '0', $result[0]->and_symbol );
+		$this->assertSame( '0', $result[0]->not_symbol );
+		$this->assertNull( $result[0]->null_xor );
+	}
+
 	public function testInsertIntoSetSyntax(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (
@@ -11371,7 +11471,7 @@ END;
 		$this->assertSame( '1', $result[4]->value );
 		$this->assertSame( '2', $result[5]->value );
 		$this->assertSame( '3', $result[6]->value );
-		$this->assertSame( '4', $result[7]->value ); // TODO: 5 in MySQL
+		$this->assertSame( '5', $result[7]->value );
 		$this->assertSame( '0', $result[8]->value ); // TODO: 5 in MySQL
 		$this->assertSame( '0', $result[9]->value ); // TODO: 6 in MySQL
 		$this->assertQuery( 'DROP TABLE t' );
@@ -11936,7 +12036,7 @@ END;
 		$this->assertSame( '3', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
 
 		$this->assertQuery( "UPDATE t SET value = '4.5'" );
-		$this->assertSame( '4', $this->assertQuery( 'SELECT * FROM t' )[0]->value ); // TODO: 5 in MySQL
+		$this->assertSame( '5', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
 
 		$this->assertQuery( 'UPDATE t SET value = 0x05' );
 		$this->assertSame( '0', $this->assertQuery( 'SELECT * FROM t' )[0]->value ); // TODO: 5 in MySQL

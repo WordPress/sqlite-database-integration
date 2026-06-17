@@ -1881,6 +1881,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
 		$parts                   = array();
 		$on_conflict_update_list = null;
+		$ignore_errors           = $node->has_child_token( WP_MySQL_Lexer::IGNORE_SYMBOL );
 		foreach ( $node->get_children() as $child ) {
 			$is_token = $child instanceof WP_MySQL_Token;
 			$is_node  = $child instanceof WP_Parser_Node;
@@ -1897,13 +1898,25 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				}
 			}
 
-			// Skip the SET keyword in "INSERT INTO ... SET ..." syntax.
-			if ( $is_token && WP_MySQL_Lexer::SET_SYMBOL === $child->id ) {
+			// Skip the SET keyword in "INSERT INTO ... SET ..." syntax and
+			// the legacy DELAYED modifier that MySQL now treats as a no-op.
+			if (
+				$is_token
+				&& (
+					WP_MySQL_Lexer::SET_SYMBOL === $child->id
+					|| WP_MySQL_Lexer::DELAYED_SYMBOL === $child->id
+					|| WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $child->id
+					|| WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL === $child->id
+				)
+			) {
+				continue;
+			}
+			if ( $is_node && 'insertLockOption' === $child->rule_name ) {
 				continue;
 			}
 
 			if ( $is_token && WP_MySQL_Lexer::IGNORE_SYMBOL === $child->id ) {
-				// Translate "UPDATE IGNORE" to "UPDATE OR IGNORE".
+				// Translate "INSERT IGNORE" to "INSERT OR IGNORE".
 				$parts[] = 'OR IGNORE';
 			} elseif (
 				$is_node
@@ -1915,7 +1928,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			) {
 				$table_ref  = $node->get_first_child_node( 'tableRef' );
 				$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
-				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child );
+				$parts[]    = $this->translate_insert_or_replace_body( $table_name, $child, $ignore_errors );
 			} elseif ( $is_node && 'insertUpdateList' === $child->rule_name ) {
 				/*
 				 * Translate "ON DUPLICATE KEY UPDATE" to "ON CONFLICT DO UPDATE SET".
@@ -2372,7 +2385,13 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			return;
 		}
 
-		$query                       = $this->translate( $node );
+		$query                       = 'DELETE FROM ' . $this->translate_sequence(
+			array(
+				$table_ref,
+				$node->get_first_child_node( 'tableAlias' ),
+				$node->get_first_child_node( 'whereClause' ),
+			)
+		);
 		$this->last_result_statement = $this->execute_sqlite_query( $query );
 	}
 
@@ -3504,7 +3523,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$this->session_system_variables[ $name ] = $value;
 			}
 		} elseif ( WP_MySQL_Lexer::GLOBAL_SYMBOL === $type ) {
-			throw $this->new_not_supported_exception( "SET statement type: 'GLOBAL'" );
+			// MySQL accepts many GLOBAL server variable assignments. SQLite has
+			// no server-global state, so accept them as no-ops for compatibility.
 		} elseif ( WP_MySQL_Lexer::PERSIST_SYMBOL === $type ) {
 			throw $this->new_not_supported_exception( "SET statement type: 'PERSIST'" );
 		} elseif ( WP_MySQL_Lexer::PERSIST_ONLY_SYMBOL === $type ) {
@@ -3717,6 +3737,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 		$rule_name = $node->rule_name;
 		switch ( $rule_name ) {
+			case 'expr':
+				return $this->translate_expr( $node );
 			case 'queryExpression':
 				return $this->translate_query_expression( $node );
 			case 'querySpecification':
@@ -3943,6 +3965,32 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Translate a MySQL expression to SQLite.
+	 *
+	 * @param WP_Parser_Node $node The "expr" AST node.
+	 * @return string|null         The translated expression.
+	 */
+	private function translate_expr( WP_Parser_Node $node ): ?string {
+		$children = $node->get_children();
+		if (
+			3 === count( $children )
+			&& $children[1] instanceof WP_MySQL_Token
+			&& WP_MySQL_Lexer::XOR_SYMBOL === $children[1]->id
+		) {
+			$left  = $this->translate( $children[0] );
+			$right = $this->translate( $children[2] );
+
+			return sprintf(
+				'((%1$s) OR (%2$s)) AND NOT ((%1$s) AND (%2$s))',
+				$left,
+				$right
+			);
+		}
+
+		return $this->translate_sequence( $children );
+	}
+
+	/**
 	 * Translate a MySQL token to SQLite.
 	 *
 	 * @param  WP_MySQL_Token $token The MySQL token to translate.
@@ -4003,6 +4051,15 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 * statement translation and then removed from the output here.
 				 */
 				return null;
+			case WP_MySQL_Lexer::DISTINCT_SYMBOL:
+				if ( 'DISTINCTROW' === strtoupper( $token->get_value() ) ) {
+					return 'DISTINCT';
+				}
+				return $token->get_value();
+			case WP_MySQL_Lexer::LOGICAL_AND_OPERATOR:
+				return 'AND';
+			case WP_MySQL_Lexer::LOGICAL_NOT_OPERATOR:
+				return 'NOT';
 			default:
 				return $token->get_value();
 		}
@@ -4644,7 +4701,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				);
 				return $this->quote_sqlite_value( $value );
 			default:
-				return $this->translate_sequence( $node->get_children() );
+				return sprintf( '%s(%s)', strtolower( $name ), implode( ', ', $args ) );
 		}
 	}
 
@@ -5226,16 +5283,18 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function translate_insert_or_replace_body(
 		string $table_name,
-		WP_Parser_Node $node
+		WP_Parser_Node $node,
+		bool $ignore_errors = false
 	): string {
 		// This method is always used with the main database.
 		$database = $this->get_saved_db_name( $this->main_db_name );
 
 		// Check if strict mode is enabled.
-		$is_strict_mode = (
+		$is_strict_mode        = (
 			$this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
 			|| $this->is_sql_mode_active( 'STRICT_ALL_TABLES' )
 		);
+		$use_implicit_defaults = ! $is_strict_mode || $ignore_errors;
 
 		// Get column metadata for the target table from the information schema.
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
@@ -5312,12 +5371,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$columns = array_values(
 			array_filter(
 				$columns,
-				function ( $column ) use ( $is_strict_mode, $insert_map ) {
+				function ( $column ) use ( $use_implicit_defaults, $insert_map ) {
 					$is_omitted = ! isset( $insert_map[ $column['COLUMN_NAME'] ] );
 					if ( ! $is_omitted ) {
 						return true;
 					}
-					if ( $is_strict_mode ) {
+					if ( ! $use_implicit_defaults ) {
 						return false;
 					}
 					$is_nullable  = 'YES' === $column['IS_NULLABLE'];
@@ -5404,7 +5463,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				// When a column value is included, we need to apply type casting.
 				$position          = array_search( $column['COLUMN_NAME'], $insert_list, true );
 				$identifier        = $this->quote_sqlite_identifier( $select_list[ $position ] );
-				$value             = $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier );
+				$value             = $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier, $ignore_errors );
 				$is_auto_increment = str_contains( $column['EXTRA'], 'auto_increment' );
 
 				/*
@@ -5433,7 +5492,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 */
 				$is_insert_from_select = 'insertQueryExpression' === $node->rule_name;
 				if (
-					! $is_strict_mode
+					$use_implicit_defaults
 					&& ! $is_auto_increment
 					&& $is_insert_from_select
 					&& 'NO' === $column['IS_NULLABLE']
@@ -5931,7 +5990,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function cast_value_for_saving(
 		string $mysql_data_type,
-		string $translated_value
+		string $translated_value,
+		bool $ignore_errors = false
 	): string {
 		// TODO: This is also a good place to implement checks for maximum column
 		//       lengths with truncating or bailing out depending on the SQL mode.
@@ -6005,7 +6065,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 				// In strict mode, invalid date/time values are rejected.
 				// In non-strict mode, they get an IMPLICIT DEFAULT value.
-				if ( $is_strict_mode ) {
+				if ( $is_strict_mode && ! $ignore_errors ) {
 					$fallback = sprintf(
 						"THROW('Incorrect %s value: ''' || %s || '''')",
 						$mysql_data_type,
@@ -6069,7 +6129,34 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 *       all special cases. We may improve this further to accept
 				 *       BLOBs for numeric types, and other special behaviors.
 				 */
-				if ( ! $is_strict_mode || 'TEXT' === $sqlite_data_type || 'BLOB' === $sqlite_data_type ) {
+				$is_integer_type = in_array(
+					$mysql_data_type,
+					array(
+						'bit',
+						'bool',
+						'boolean',
+						'tinyint',
+						'smallint',
+						'mediumint',
+						'int',
+						'integer',
+						'bigint',
+					),
+					true
+				);
+				if ( $is_integer_type ) {
+					if ( ! $is_strict_mode || $ignore_errors ) {
+						return sprintf( 'CAST(ROUND(%s) AS INTEGER)', $translated_value );
+					}
+					return sprintf(
+						"CASE WHEN TYPEOF(%s) IN ('integer', 'real') THEN CAST(ROUND(%s) AS INTEGER) ELSE %s END",
+						$translated_value,
+						$translated_value,
+						$translated_value
+					);
+				}
+
+				if ( ! $is_strict_mode || $ignore_errors || 'TEXT' === $sqlite_data_type || 'BLOB' === $sqlite_data_type ) {
 					return sprintf( 'CAST(%s AS %s)', $translated_value, $sqlite_data_type );
 				}
 				return $translated_value;
