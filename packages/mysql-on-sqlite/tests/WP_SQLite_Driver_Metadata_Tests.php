@@ -2221,6 +2221,23 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testInformationSchemaDropUniqueKeyAfterTableRename(): void {
+		$this->assertQuery( 'CREATE TABLE t (c0 DOUBLE UNIQUE, c1 FLOAT UNIQUE, c2 MEDIUMTEXT)' );
+		$this->assertQuery( 'ALTER TABLE t RENAME TO t4' );
+
+		$indexes = $this->engine->execute_sqlite_query( "PRAGMA index_list('t4')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertContains( 't__c1', array_column( $indexes, 'name' ) );
+
+		$this->assertQuery( 'DROP INDEX c1 ON t4 LOCK=SHARED' );
+
+		$indexes = $this->engine->execute_sqlite_query( "PRAGMA index_list('t4')" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertNotContains( 't__c1', array_column( $indexes, 'name' ) );
+		$this->assertContains( 't__c0', array_column( $indexes, 'name' ) );
+
+		$result = $this->assertQuery( "SHOW INDEX FROM t4 WHERE Key_name = 'c1'" );
+		$this->assertCount( 0, $result );
+	}
+
 	public function testInformationSchemaAlterTableDropConstraint(): void {
 		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
 		$this->assertQuery(

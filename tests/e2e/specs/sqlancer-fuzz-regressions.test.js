@@ -104,6 +104,15 @@ sdi_sqlancer_query( "ALTER TABLE $rename_table STATS_PERSISTENT 0, RENAME $renam
 $rename_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count FROM $renamed_table", ARRAY_A );
 sdi_sqlancer_query( "ALTER TABLE $renamed_table FORCE, ROW_FORMAT DEFAULT, COMPRESSION 'LZ4', INSERT_METHOD NO, PACK_KEYS 0, CHECKSUM 0, ALGORITHM COPY, RENAME TO $rename_table" );
 
+$rename_index_table = $wpdb->prefix . 'sqlancer_rename_index_t0';
+$renamed_index_table = $wpdb->prefix . 'sqlancer_rename_index_t4';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $rename_index_table" );
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $renamed_index_table" );
+sdi_sqlancer_query( "CREATE TABLE $rename_index_table(c0 DOUBLE UNIQUE NULL, c1 FLOAT NULL UNIQUE KEY, c2 MEDIUMTEXT)" );
+sdi_sqlancer_query( "ALTER TABLE $rename_index_table RENAME TO $renamed_index_table" );
+sdi_sqlancer_query( "DROP INDEX c1 ON $renamed_index_table LOCK=SHARED" );
+$rename_drop_index_row = $wpdb->get_row( "SHOW INDEX FROM $renamed_index_table WHERE Key_name = 'c1'", ARRAY_A );
+
 $cast_table = $wpdb->prefix . 'sqlancer_cast_signed';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $cast_table" );
 sdi_sqlancer_query( "CREATE TABLE $cast_table(c0 SMALLINT UNIQUE KEY)" );
@@ -120,6 +129,7 @@ echo 'SQLANCER_ORDERING_EXPRESSION_JSON:' . wp_json_encode( $ordering_expression
 echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
 echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . PHP_EOL;
 echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
+echo 'SQLANCER_RENAME_DROP_INDEX_JSON:' . wp_json_encode( $rename_drop_index_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_JSON:' . wp_json_encode( $cast_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_update_row ) . PHP_EOL;
 `,
@@ -266,6 +276,23 @@ echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_upd
 				rows_count: '1',
 			}
 		);
+
+		const renameDropIndexJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_RENAME_DROP_INDEX_JSON:' )
+			);
+
+		expect( renameDropIndexJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				renameDropIndexJsonLine.replace(
+					'SQLANCER_RENAME_DROP_INDEX_JSON:',
+					''
+				)
+			)
+		).toBeNull();
 
 		const castSignedJsonLine = output
 			.trim()

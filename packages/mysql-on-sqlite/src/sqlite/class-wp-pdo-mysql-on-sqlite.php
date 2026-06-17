@@ -2782,8 +2782,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			throw $this->new_access_denied_to_information_schema_exception();
 		}
 
-		$this->information_schema_builder->record_drop_index( $node );
-
 		$table_name = $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 		$index_name = $this->unquote_sqlite_identifier(
 			$this->translate( $drop_index->get_first_child_node( 'indexRef' ) )
@@ -2795,18 +2793,64 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * the table without the PRIMARY KEY using the updated information schema.
 		 */
 		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
+			$this->information_schema_builder->record_drop_index( $node );
 			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
 			$this->recreate_table_from_information_schema( $table_is_temporary, $table_name );
 			return;
 		}
 
-		$sqlite_index_name = $this->get_sqlite_index_name( $table_name, $index_name );
+		$sqlite_index_name = $this->resolve_sqlite_index_name( $table_name, $index_name );
+		$this->information_schema_builder->record_drop_index( $node );
 		$this->execute_sqlite_query(
 			sprintf(
 				'DROP INDEX %s',
 				$this->quote_sqlite_identifier( $sqlite_index_name )
 			)
 		);
+	}
+
+	/**
+	 * Resolve the current physical SQLite index name for a MySQL table-local index.
+	 *
+	 * SQLite leaves index object names unchanged when a table is renamed, while
+	 * MySQL keeps index names scoped to the renamed table. Prefer the expected
+	 * current table prefix, but fall back to an existing index on the table with
+	 * the same stored MySQL index-name suffix.
+	 *
+	 * @param string $table_name The MySQL table name.
+	 * @param string $index_name The MySQL index name.
+	 * @return string            The SQLite index name to use.
+	 */
+	private function resolve_sqlite_index_name( string $table_name, string $index_name ): string {
+		$expected_sqlite_index_name = $this->get_sqlite_index_name( $table_name, $index_name );
+		$matching_index_names       = array();
+		$index_name_suffix          = '__' . $index_name;
+
+		$indexes = $this->execute_sqlite_query(
+			sprintf(
+				'PRAGMA index_list(%s)',
+				$this->quote_sqlite_identifier( $table_name )
+			)
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		foreach ( $indexes as $index ) {
+			if ( $expected_sqlite_index_name === $index['name'] ) {
+				return $expected_sqlite_index_name;
+			}
+
+			if (
+				strlen( $index['name'] ) >= strlen( $index_name_suffix )
+				&& substr( $index['name'], -strlen( $index_name_suffix ) ) === $index_name_suffix
+			) {
+				$matching_index_names[] = $index['name'];
+			}
+		}
+
+		if ( 1 === count( $matching_index_names ) ) {
+			return $matching_index_names[0];
+		}
+
+		return $expected_sqlite_index_name;
 	}
 
 	/**
