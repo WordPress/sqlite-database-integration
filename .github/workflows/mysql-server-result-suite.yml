@@ -223,6 +223,7 @@ jobs:
               --extern password=root \
               --extern database=test \
               --force \
+              --max-test-fail=1000 \
               --timer \
               --parallel=1 \
               --client-bindir="$MYSQL_CLIENT_BINDIR" \
