@@ -2604,6 +2604,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WooCommerce product lookup REPLACE statements coerce empty decimal strings.
+	 */
+	public function test_woocommerce_product_lookup_replace_coerces_empty_decimal_strings(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+
+		$driver->query(
+			'CREATE TABLE wptests_wc_product_meta_lookup_prices (
+				`product_id` bigint(20) unsigned NOT NULL,
+				`min_price` decimal(19,4) DEFAULT NULL,
+				`max_price` decimal(19,4) DEFAULT NULL,
+				`average_rating` decimal(3,2) NOT NULL DEFAULT 0,
+				PRIMARY KEY (`product_id`)
+			)'
+		);
+
+		$replace = "REPLACE INTO `wptests_wc_product_meta_lookup_prices` (`product_id`, `min_price`, `max_price`, `average_rating`) VALUES (109, '', '', '4.50')";
+
+		$this->assertSame( 1, $driver->query( $replace ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 2, $queries );
+		$this->assertStringContainsString( $this->get_expected_mysql_numeric_cast_sql( "''" ), $queries[1]['sql'] );
+
+		$rows = $driver->query( 'SELECT min_price, max_price, average_rating FROM wptests_wc_product_meta_lookup_prices WHERE product_id = 109' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 0.0, (float) $rows[0]->min_price );
+		$this->assertSame( 0.0, (float) $rows[0]->max_price );
+		$this->assertSame( 4.5, (float) $rows[0]->average_rating );
+	}
+
+	/**
 	 * Tests non-strict REPLACE applies omitted NOT NULL defaults on insert and conflict paths.
 	 */
 	public function test_non_strict_replace_appends_omitted_not_null_defaults_from_mysql_metadata(): void {
@@ -5637,6 +5670,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT session_value, session_expiry FROM "wptests_woocommerce_sessions" WHERE session_key = \'session-key\'',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
+
+		$count_rows = $driver->query( "SELECT COUNT(*) AS session_count FROM \"wptests_woocommerce_sessions\" WHERE session_key = 'session-key'" );
+
+		$this->assertCount( 1, $count_rows );
+		$this->assertSame( '1', $count_rows[0]->session_count );
+		$this->assertSame(
+			'SELECT COUNT(*) AS session_count FROM "wptests_woocommerce_sessions" WHERE session_key = \'session-key\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
 	}
 
 	/**
@@ -7456,6 +7498,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '4', $rows[0]->attempts );
 		$this->assertSame( 'second', $rows[0]->payload );
+	}
+
+	/**
+	 * Tests WooCommerce reserved-stock INSERT SELECT upserts with FROM DUAL predicates.
+	 */
+	public function test_woocommerce_reserved_stock_insert_select_on_duplicate_key_update(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_wc_reserved_stock (
+				`order_id` bigint(20) unsigned NOT NULL,
+				`product_id` bigint(20) unsigned NOT NULL,
+				`stock_quantity` double NOT NULL DEFAULT 0,
+				`timestamp` datetime NOT NULL DEFAULT "0000-00-00 00:00:00",
+				`expires` datetime NOT NULL DEFAULT "0000-00-00 00:00:00",
+				PRIMARY KEY (`order_id`, `product_id`)
+			)'
+		);
+
+		$insert = 'INSERT INTO wptests_wc_reserved_stock (order_id, product_id, stock_quantity, timestamp, expires)
+			SELECT 5001, 89, 2, NOW(), ( NOW() + INTERVAL 10 MINUTE ) FROM DUAL
+			WHERE ( SELECT 12 FOR UPDATE ) - ( SELECT IFNULL(SUM(stock_quantity), 0) FROM wptests_wc_reserved_stock WHERE product_id = 89 FOR UPDATE ) >= 2
+			ON DUPLICATE KEY UPDATE expires = VALUES(expires), stock_quantity = VALUES(stock_quantity)';
+
+		$translate = new ReflectionMethod( WP_PostgreSQL_Driver::class, 'translate_mysql_on_duplicate_key_update_query' );
+		$upsert    = $translate->invoke( $driver, $insert );
+
+		$this->assertIsArray( $upsert );
+		$this->assertTrue( $upsert['upsert_select_materialized'] );
+		$this->assertStringContainsString( "INTERVAL '1 minute'", $upsert['materialize_statements'][1] );
+		$this->assertStringNotContainsString( 'INTERVAL 10 MINUTE', $upsert['materialize_statements'][1] );
+		$this->assertStringNotContainsString( 'FOR UPDATE', $upsert['materialize_statements'][1] );
+		$this->assertSame(
+			'INSERT INTO "wptests_wc_reserved_stock" ("order_id", "product_id", "stock_quantity", "timestamp", "expires") SELECT "__wp_pg_upsert_rows"."order_id", "__wp_pg_upsert_rows"."product_id", "__wp_pg_upsert_rows"."stock_quantity", "__wp_pg_upsert_rows"."timestamp", "__wp_pg_upsert_rows"."expires" FROM "__wp_pg_upsert_select_9a6b0de90d5c" AS "__wp_pg_upsert_rows" WHERE 1 = 1 ON CONFLICT ("order_id", "product_id") DO UPDATE SET "expires" = excluded."expires", "stock_quantity" = excluded."stock_quantity"',
+			$upsert['mutation_statements'][0]
+		);
 	}
 
 	/**
@@ -11218,7 +11296,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'SELECT COUNT (*) FROM wptests_comments WHERE "comment_post_ID" = 1 AND comment_approved = \'1\'',
+					'sql'    => 'SELECT COUNT(*) FROM wptests_comments WHERE "comment_post_ID" = 1 AND comment_approved = \'1\'',
 					'params' => array(),
 				),
 			),
@@ -14607,6 +14685,32 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
 		$this->assertSame( '2', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests FOUND_ROWS supports aliases used by WooCommerce report queries.
+	 */
+	public function test_found_rows_query_supports_alias_projection(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL, post_date TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status, post_date) VALUES (1, 'shop_order', 'wc-completed', '2024-01-01 00:00:00')" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status, post_date) VALUES (2, 'shop_order', 'wc-completed', '2024-01-02 00:00:00')" );
+
+		$rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE wptests_posts.post_type = 'shop_order'
+			ORDER BY wptests_posts.ID ASC
+			LIMIT 0, 1"
+		);
+
+		$this->assertCount( 1, $rows );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertSame( '2', $found_rows[0]->found_rows );
+		$this->assertSame( 'found_rows', $driver->get_last_column_meta()[0]['name'] );
 	}
 
 	/**

@@ -712,11 +712,12 @@ class WP_PostgreSQL_Driver {
 			return $this->execute_mysql_truncate_table_query( $truncate_table_query );
 		}
 
-		if ( $this->is_found_rows_query( $query ) ) {
-			$this->last_result      = array( (object) array( 'FOUND_ROWS()' => (string) $this->last_found_rows ) );
+		$found_rows_column = $this->get_found_rows_query_column_name( $query );
+		if ( null !== $found_rows_column ) {
+			$this->last_result      = array( (object) array( $found_rows_column => (string) $this->last_found_rows ) );
 			$this->last_column_meta = array(
 				array(
-					'name'             => 'FOUND_ROWS()',
+					'name'             => $found_rows_column,
 					'table'            => '',
 					'mysqli:orgtable'  => '',
 					'mysqli:orgname'   => 'FOUND_ROWS()',
@@ -10970,6 +10971,17 @@ $wp_mysql_on_update$',
 		$column_type = trim( (string) $column_type );
 
 		return (bool) preg_match( '/^(?:bigint|int|integer|mediumint|smallint|tinyint)(?:\(\d+\))?$/', $column_type );
+	}
+
+	/**
+	 * Check whether a MySQL column type is a non-integer numeric family type.
+	 *
+	 * @param string $column_type MySQL column type.
+	 * @return bool Whether the type is numeric-like but not integer-like.
+	 */
+	private function is_mysql_non_integer_numeric_family_column_type( string $column_type ): bool {
+		$base_type = $this->get_base_mysql_dml_column_type( $column_type );
+		return in_array( $base_type, array( 'decimal', 'double', 'float', 'numeric', 'real' ), true );
 	}
 
 	/**
@@ -29408,6 +29420,11 @@ WHERE option_name IN (
 			return $value_sql;
 		}
 
+		$value_sql = $this->get_non_strict_mysql_dml_numeric_literal_sql_for_column( $column_metadata, $tokens, $start, $end );
+		if ( null !== $value_sql ) {
+			return $value_sql;
+		}
+
 		return $this->get_non_strict_mysql_dml_integer_literal_sql_for_column( $column_metadata, $tokens, $start, $end );
 	}
 
@@ -29497,6 +29514,33 @@ WHERE option_name IN (
 
 		return $this->get_postgresql_mysql_integer_cast_sql(
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end )
+		);
+	}
+
+	/**
+	 * Get a non-strict MySQL-compatible decimal/float literal for a column.
+	 *
+	 * @param array            $column_metadata Column metadata row.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First value token position.
+	 * @param int              $end             Final value token position, exclusive.
+	 * @return string|null PostgreSQL value SQL, or null when the literal does not need normalization.
+	 */
+	private function get_non_strict_mysql_dml_numeric_literal_sql_for_column( array $column_metadata, array $tokens, int $start, int $end ): ?string {
+		if ( ! $this->is_mysql_non_integer_numeric_family_column_type( (string) ( $column_metadata['column_type'] ?? '' ) ) ) {
+			return null;
+		}
+
+		if ( ! $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
+			return null;
+		}
+
+		if ( 1 === preg_match( '/^[[:space:]]*[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:[eE][+-]?[0-9]+)?[[:space:]]*$/', $tokens[ $start ]->get_value() ) ) {
+			return null;
+		}
+
+		return $this->get_postgresql_mysql_numeric_cast_sql(
+			$this->translate_mysql_token_to_postgresql( $tokens[ $start ] )
 		);
 	}
 
@@ -42984,7 +43028,7 @@ FROM (
 	}
 
 	/**
-	 * Validate the supported COUNT(identifier) projection shape.
+	 * Validate the supported COUNT(identifier|*) projection shape.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First projection token position.
@@ -42996,7 +43040,10 @@ FROM (
 			! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ] )
 			|| WP_MySQL_Lexer::COUNT_SYMBOL !== $tokens[ $start ]->id
 			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $start + 1 ]->id
-			|| null === $this->get_mysql_identifier_token_value( $tokens[ $start + 2 ] )
+			|| (
+				WP_MySQL_Lexer::MULT_OPERATOR !== $tokens[ $start + 2 ]->id
+				&& null === $this->get_mysql_identifier_token_value( $tokens[ $start + 2 ] )
+			)
 			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $start + 3 ]->id
 		) {
 			return false;
@@ -43021,9 +43068,12 @@ FROM (
 	 */
 	private function translate_simple_select_projection_to_postgresql( array $tokens, int $start, int $end ): string {
 		if ( $this->is_supported_simple_select_count_projection( $tokens, $start, $end ) ) {
-			$sql = sprintf(
+			$count_argument_sql = WP_MySQL_Lexer::MULT_OPERATOR === $tokens[ $start + 2 ]->id
+				? '*'
+				: $this->translate_mysql_identifier_token_to_postgresql( $tokens[ $start + 2 ] );
+			$sql                = sprintf(
 				'COUNT(%s)',
-				$this->translate_mysql_identifier_token_to_postgresql( $tokens[ $start + 2 ] )
+				$count_argument_sql
 			);
 
 			if ( $start + 6 === $end ) {
@@ -47486,6 +47536,9 @@ FROM (
 				$translated_fragment = $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_infix_interval_expression_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_date_arithmetic_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
@@ -47505,6 +47558,9 @@ FROM (
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_variable_reference_to_postgresql( $tokens, $i );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_select_row_locking_clause_to_empty_postgresql( $tokens, $i, $end );
 			}
 
 			$append_no_backslash_like_escape = false;
@@ -47620,6 +47676,37 @@ FROM (
 				WP_MySQL_Lexer::WHERE_SYMBOL,
 			),
 			true
+		);
+	}
+
+	/**
+	 * Erase supported MySQL SELECT row-locking clauses in nested translated ranges.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First locking token position.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when not a locking clause.
+	 */
+	private function translate_mysql_select_row_locking_clause_to_empty_postgresql( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| ! (
+				WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::LOCK_SYMBOL === $tokens[ $position ]->id
+			)
+		) {
+			return null;
+		}
+
+		$after_locking = $this->parse_supported_mysql_select_row_locking_clause( $tokens, $position, $end );
+		if ( null === $after_locking ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => '',
+			'token_id' => $tokens[ $position ]->id,
+			'position' => $after_locking - 1,
 		);
 	}
 
@@ -51400,6 +51487,137 @@ $wp_mysql_validate_temporal$'
 	}
 
 	/**
+	 * Translate MySQL expr +/- INTERVAL value unit date arithmetic.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First expression token.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_infix_interval_expression_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_infix_interval_expression_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+		$value_sql      = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['interval_value_start'],
+			$bounds['interval_value_end']
+		);
+		$interval_sql   = $bounds['interval_sql'] ?? $this->get_postgresql_mysql_interval_sql( $value_sql, $bounds['interval_unit'] );
+
+		return array(
+			'sql'      => sprintf(
+				'(%1$s %2$s %3$s)',
+				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+				$bounds['operator'],
+				$interval_sql
+			),
+			'token_id' => $tokens[ $position ]->id,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL infix interval expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First expression token.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return array{operator: string, expression_start: int, expression_end: int, interval_value_start: int, interval_value_end: int, interval_unit: string, interval_sql?: string, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_infix_interval_expression_bounds( array $tokens, int $position, int $end ): ?array {
+		if (
+			isset( $tokens[ $position ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
+		) {
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+			if ( null === $after_close ) {
+				return null;
+			}
+
+			$inner = $this->get_mysql_infix_interval_expression_bounds( $tokens, $position + 1, $after_close - 1 );
+			if ( null === $inner || $inner['close'] !== $after_close - 2 ) {
+				return null;
+			}
+
+			$inner['close'] = $after_close - 1;
+			return $inner;
+		}
+
+		$expression = $this->get_mysql_infix_interval_left_expression_bounds( $tokens, $position, $end );
+		if ( null === $expression ) {
+			return null;
+		}
+
+		$operator_position = $expression['end'];
+		if (
+			! isset( $tokens[ $operator_position ] )
+			|| ! in_array( $tokens[ $operator_position ]->id, array( WP_MySQL_Lexer::PLUS_OPERATOR, WP_MySQL_Lexer::MINUS_OPERATOR ), true )
+		) {
+			return null;
+		}
+
+		$interval = $this->get_mysql_interval_argument_bounds( $tokens, $operator_position + 1, $end );
+		if ( null === $interval ) {
+			return null;
+		}
+
+		$bounds = array(
+			'operator'             => WP_MySQL_Lexer::MINUS_OPERATOR === $tokens[ $operator_position ]->id ? '-' : '+',
+			'expression_start'     => $expression['start'],
+			'expression_end'       => $expression['end'],
+			'interval_value_start' => $interval['value_start'],
+			'interval_value_end'   => $interval['value_end'],
+			'interval_unit'        => $interval['unit'],
+			'close'                => $end - 1,
+		);
+
+		if ( isset( $interval['sql'] ) ) {
+			$bounds['interval_sql'] = $interval['sql'];
+		}
+
+		return $bounds;
+	}
+
+	/**
+	 * Get the left expression bounds for a supported MySQL infix interval expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First expression token.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return array{start: int, end: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_infix_interval_left_expression_bounds( array $tokens, int $position, int $end ): ?array {
+		if ( $position >= $end || ! isset( $tokens[ $position ] ) ) {
+			return null;
+		}
+
+		$common_function = $this->get_mysql_common_function_bounds( $tokens, $position, $end );
+		if ( null !== $common_function ) {
+			return array(
+				'start' => $position,
+				'end'   => $common_function['close'] + 1,
+			);
+		}
+
+		if ( null !== $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $position, $end ) ) {
+			return array(
+				'start' => $position,
+				'end'   => $position + 1,
+			);
+		}
+
+		return null;
+	}
+
+	/**
 	 * Check whether a range contains an unsupported MySQL date arithmetic call.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -54057,6 +54275,7 @@ $wp_mysql_validate_temporal$'
 				array(
 					WP_MySQL_Lexer::COMMENT_SYMBOL,
 					WP_MySQL_Lexer::STATUS_SYMBOL,
+					WP_MySQL_Lexer::TIMESTAMP_SYMBOL,
 					WP_MySQL_Lexer::VALUE_SYMBOL,
 				),
 				true
@@ -54852,12 +55071,12 @@ $wp_mysql_validate_temporal$'
 	}
 
 	/**
-	 * Check whether a query asks for MySQL FOUND_ROWS().
+	 * Get the result column name for a MySQL FOUND_ROWS() query.
 	 *
 	 * @param string $query MySQL query.
-	 * @return bool Whether the query is SELECT FOUND_ROWS().
+	 * @return string|null Result column name, or null when the query is not SELECT FOUND_ROWS().
 	 */
-	private function is_found_rows_query( string $query ): bool {
+	private function get_found_rows_query_column_name( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if (
 			! isset( $tokens[0], $tokens[1], $tokens[2], $tokens[3] )
@@ -54867,10 +55086,31 @@ $wp_mysql_validate_temporal$'
 			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[2]->id
 			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[3]->id
 		) {
-			return false;
+			return null;
 		}
 
-		return $this->is_at_mysql_query_end( $tokens, 4 );
+		if ( $this->is_at_mysql_query_end( $tokens, 4 ) ) {
+			return 'FOUND_ROWS()';
+		}
+
+		if (
+			isset( $tokens[4], $tokens[5] )
+			&& WP_MySQL_Lexer::AS_SYMBOL === $tokens[4]->id
+			&& null !== $this->get_mysql_identifier_token_value( $tokens[5] )
+			&& $this->is_at_mysql_query_end( $tokens, 6 )
+		) {
+			return $this->get_mysql_identifier_token_value( $tokens[5] );
+		}
+
+		if (
+			isset( $tokens[4] )
+			&& null !== $this->get_mysql_identifier_token_value( $tokens[4] )
+			&& $this->is_at_mysql_query_end( $tokens, 5 )
+		) {
+			return $this->get_mysql_identifier_token_value( $tokens[4] );
+		}
+
+		return null;
 	}
 
 	/**
