@@ -105,6 +105,11 @@ jobs:
               ln -sf "$client_path" "$client_bindir/$client"
             fi
           done
+          cat > "$client_bindir/mysql_ssl_rsa_setup" <<'SH'
+          #!/usr/bin/env bash
+          exit 0
+          SH
+          chmod +x "$client_bindir/mysql_ssl_rsa_setup"
 
           echo "MYSQL_CLIENT_BINDIR=$client_bindir" >> "$GITHUB_ENV"
 
