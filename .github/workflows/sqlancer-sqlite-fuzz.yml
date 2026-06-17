@@ -1,0 +1,231 @@
+name: SQLancer SQLite Fuzz
+
+on:
+  schedule:
+    # Bounded recurring fuzzing. GitHub Actions cannot run forever, so this
+    # workflow rotates deterministic seeds/oracles on a schedule.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      oracle:
+        description: 'SQLancer MySQL oracle to run, or auto to rotate by run number.'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - FUZZER
+          - TLP_WHERE
+          - PQS
+          - DQP
+          - DQE
+      seed:
+        description: 'Optional deterministic SQLancer seed.'
+        required: false
+        default: ''
+      num_queries:
+        description: 'Optional query count. Defaults are chosen per oracle.'
+        required: false
+        default: ''
+      max_generated_databases:
+        description: 'Maximum generated databases.'
+        required: false
+        default: '1'
+      append_findings:
+        description: 'Append replay failures to tests/fuzz/sqlancer-findings.md on an automation PR.'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  fuzz:
+    name: SQLancer ${{ github.event_name == 'workflow_dispatch' && inputs.oracle || 'auto' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write # Required to push the findings branch.
+      pull-requests: write # Required to open/update the findings PR.
+
+    env:
+      FINDINGS_BRANCH: automation/sqlancer-sqlite-fuzz-findings
+      FINDINGS_FILE: tests/fuzz/sqlancer-findings.md
+      INPUT_ORACLE: ${{ github.event_name == 'workflow_dispatch' && inputs.oracle || 'auto' }}
+      INPUT_SEED: ${{ github.event_name == 'workflow_dispatch' && inputs.seed || '' }}
+      INPUT_NUM_QUERIES: ${{ github.event_name == 'workflow_dispatch' && inputs.num_queries || '' }}
+      INPUT_MAX_GENERATED_DATABASES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_generated_databases || '1' }}
+      INPUT_APPEND_FINDINGS: ${{ github.event_name != 'workflow_dispatch' || inputs.append_findings }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install Composer dependencies (root)
+        uses: ramsey/composer-install@v3
+        with:
+          ignore-cache: 'yes'
+          composer-options: '--optimize-autoloader'
+
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          ignore-cache: 'yes'
+          composer-options: '--optimize-autoloader'
+
+      - name: Choose fuzz settings
+        id: settings
+        run: |
+          set -euo pipefail
+
+          ORACLES=( FUZZER TLP_WHERE PQS DQP DQE )
+          DEFAULT_QUERIES=( 10000 3000 1000 300 300 )
+
+          ORACLE="$INPUT_ORACLE"
+          if [ -z "$ORACLE" ] || [ "$ORACLE" = 'auto' ]; then
+            INDEX=$(( GITHUB_RUN_NUMBER % ${#ORACLES[@]} ))
+            ORACLE="${ORACLES[$INDEX]}"
+          fi
+
+          NUM_QUERIES="$INPUT_NUM_QUERIES"
+          if [ -z "$NUM_QUERIES" ]; then
+            NUM_QUERIES=1000
+            for i in "${!ORACLES[@]}"; do
+              if [ "${ORACLES[$i]}" = "$ORACLE" ]; then
+                NUM_QUERIES="${DEFAULT_QUERIES[$i]}"
+                break
+              fi
+            done
+          fi
+
+          SEED="$INPUT_SEED"
+          if [ -z "$SEED" ]; then
+            SEED=$(( 20270000 + GITHUB_RUN_NUMBER ))
+          fi
+
+          MAX_GENERATED_DATABASES="$INPUT_MAX_GENERATED_DATABASES"
+          if [ -z "$MAX_GENERATED_DATABASES" ]; then
+            MAX_GENERATED_DATABASES=1
+          fi
+
+          ARTIFACTS_DIR="$RUNNER_TEMP/sqlancer-artifacts-$ORACLE-$SEED"
+
+          {
+            echo "oracle=$ORACLE"
+            echo "seed=$SEED"
+            echo "num_queries=$NUM_QUERIES"
+            echo "max_generated_databases=$MAX_GENERATED_DATABASES"
+            echo "artifacts_dir=$ARTIFACTS_DIR"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "SQLANCER_MYSQL_ORACLE=$ORACLE"
+            echo "RANDOM_SEED=$SEED"
+            echo "NUM_QUERIES=$NUM_QUERIES"
+            echo "MAX_GENERATED_DATABASES=$MAX_GENERATED_DATABASES"
+            echo "ARTIFACTS_DIR=$ARTIFACTS_DIR"
+          } >> "$GITHUB_ENV"
+
+      - name: Run SQLancer replay
+        id: fuzz
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p "$ARTIFACTS_DIR"
+          ./bin/run-sqlancer-sqlite-fuzz.sh > "$ARTIFACTS_DIR/runner-output.txt" 2>&1
+          STATUS=$?
+          cat "$ARTIFACTS_DIR/runner-output.txt"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit "$STATUS"
+
+      - name: Detect replay failure
+        id: replay_failure
+        if: steps.fuzz.outputs.status != '0'
+        run: |
+          if grep -q '^FAIL line [0-9][0-9]*:' "$ARTIFACTS_DIR/runner-output.txt"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload SQLancer artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlancer-${{ steps.settings.outputs.oracle }}-${{ steps.settings.outputs.seed }}
+          path: ${{ steps.settings.outputs.artifacts_dir }}
+          if-no-files-found: ignore
+
+      - name: Append replay failure to findings branch
+        if: steps.replay_failure.outputs.found == 'true' && env.INPUT_APPEND_FINDINGS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin "$FINDINGS_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$FINDINGS_BRANCH"
+            git checkout "origin/$FINDINGS_BRANCH" -- "$FINDINGS_FILE" || true
+          fi
+
+          php tests/fuzz/append-sqlancer-finding.php \
+            --output="$ARTIFACTS_DIR/runner-output.txt" \
+            --findings="$FINDINGS_FILE" \
+            --oracle="$SQLANCER_MYSQL_ORACLE" \
+            --seed="$RANDOM_SEED" \
+            --num-queries="$NUM_QUERIES" \
+            --max-generated-databases="$MAX_GENERATED_DATABASES" \
+            --artifacts="$ARTIFACTS_DIR" \
+            --commit="$GITHUB_SHA" \
+            --run-url="$RUN_URL"
+
+          if git diff --quiet -- "$FINDINGS_FILE"; then
+            echo "No new finding to commit."
+            exit 0
+          fi
+
+          git checkout -B "$FINDINGS_BRANCH"
+          git add "$FINDINGS_FILE"
+          git commit -m "Record SQLancer SQLite fuzz finding"
+          git push --set-upstream origin "$FINDINGS_BRANCH"
+
+          PR_BODY=$'This PR is maintained by the scheduled SQLancer SQLite fuzz workflow.\n\nIt appends newly found MySQL-accepted SQLite replay failures to `tests/fuzz/sqlancer-findings.md`. Each entry still needs a human reduction and a follow-up fix that moves the reduced case into the SQLancer regression tests.'
+
+          if gh pr view "$FINDINGS_BRANCH" --json number >/dev/null 2>&1; then
+            gh pr edit "$FINDINGS_BRANCH" \
+              --title "Record SQLancer SQLite fuzz findings" \
+              --body "$PR_BODY"
+          else
+            gh pr create \
+              --head "$FINDINGS_BRANCH" \
+              --base "${{ github.event.repository.default_branch }}" \
+              --title "Record SQLancer SQLite fuzz findings" \
+              --body "$PR_BODY"
+          fi
+
+      - name: Fail when fuzzing finds or hits an error
+        if: steps.fuzz.outputs.status != '0'
+        run: |
+          if [ "${{ steps.replay_failure.outputs.found }}" = 'true' ]; then
+            echo "SQLancer found a SQLite replay failure. See uploaded artifacts and the findings PR."
+          else
+            echo "SQLancer failed before producing a SQLite replay failure. See uploaded artifacts."
+          fi
+          exit "${{ steps.fuzz.outputs.status }}"

@@ -55,6 +55,9 @@ composer run wp-test-start              # Start WordPress environment (Docker)
 composer run wp-test-php                # Run WordPress PHPUnit tests
 composer run wp-test-e2e                # Run WordPress E2E tests (Playwright)
 composer run wp-test-clean              # Clean up WordPress environment (Docker and DB)
+
+# SQLancer fuzzing
+bin/run-sqlancer-sqlite-fuzz.sh         # Generate MySQL SQLancer queries and replay MySQL-accepted statements through SQLite
 ```
 
 ## Release workflow
