@@ -10898,6 +10898,39 @@ END;
 		$this->assertNull( $result[0]->c0 );
 	}
 
+	public function testWordPressMetaQueryIntegerCastsCompareAgainstQuotedValues(): void {
+		$this->assertQuery( 'CREATE TABLE t0(meta_value LONGTEXT)' );
+		$this->assertQuery( "INSERT INTO t0(meta_value) VALUES('1'), ('10'), ('100')" );
+
+		$result = $this->assertQuery( "SELECT meta_value FROM t0 WHERE CAST(meta_value AS SIGNED) > '0' ORDER BY CAST(meta_value AS SIGNED)" );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'meta_value' => '1',
+				),
+				(object) array(
+					'meta_value' => '10',
+				),
+				(object) array(
+					'meta_value' => '100',
+				),
+			),
+			$result
+		);
+
+		$result = $this->assertQuery( "SELECT meta_value FROM t0 WHERE CAST(meta_value AS SIGNED) BETWEEN '9' AND '12'" );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'meta_value' => '10',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testSqlancerIfUsesMysqlNumericTruthinessInFunctionalIndexes(): void {
 		$result = $this->assertQuery( "SELECT IF((- (732094579)), CAST(NULL AS SIGNED), 9) AS negative_truthy, IF(0, 1, 2) AS zero_falsy, IF(NULL, 1, 2) AS null_falsy, IF('1abc', 1, 2) AS leading_numeric_truthy, IF('abc', 1, 2) AS non_numeric_falsy" );
 
