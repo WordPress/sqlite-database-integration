@@ -112,8 +112,28 @@ jobs:
           SH
             chmod +x "$1"
           }
-          for helper in mysql_ssl_rsa_setup mysql_migrate_keyring mysql_keyring_encryption_test; do
-            create_noop_helper "$client_bindir/$helper"
+          for helper in \
+            ibd2sdi \
+            innochecksum \
+            my_print_defaults \
+            myisamchk \
+            myisampack \
+            mysql_client_test \
+            mysql_config_editor \
+            mysql_keyring_encryption_test \
+            mysql_migrate_keyring \
+            mysql_plugin \
+            mysql_secure_installation \
+            mysql_ssl_rsa_setup \
+            mysql_tzinfo_to_sql \
+            mysql_upgrade \
+            mysqlbinlog \
+            mysqlcheck \
+            mysqlimport \
+            mysqlpump; do
+            if [ ! -e "$client_bindir/$helper" ]; then
+              create_noop_helper "$client_bindir/$helper"
+            fi
           done
           create_noop_helper "$client_bindir/mysqld"
           create_noop_helper "$install_dir/bin/mysqld"
