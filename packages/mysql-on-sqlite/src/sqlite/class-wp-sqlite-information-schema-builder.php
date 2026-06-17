@@ -792,6 +792,236 @@ class WP_SQLite_Information_Schema_Builder {
 				)
 			);
 		}
+
+		$this->record_rename_table_in_index_expressions( $table_is_temporary, $old_table_name, $new_table_name );
+	}
+
+	/**
+	 * Update table-qualified column references in functional index expressions.
+	 *
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $old_table_name     The old table name.
+	 * @param string $new_table_name     The new table name.
+	 */
+	private function record_rename_table_in_index_expressions(
+		bool $table_is_temporary,
+		string $old_table_name,
+		string $new_table_name
+	): void {
+		$statistics_table_name = $this->get_table_name( $table_is_temporary, 'statistics' );
+		$statistics            = $this->connection->query(
+			'
+				SELECT rowid, expression
+				FROM ' . $this->connection->quote_identifier( $statistics_table_name ) . '
+				WHERE table_schema = ?
+				AND table_name = ?
+				AND expression IS NOT NULL
+			',
+			array( self::SAVED_DATABASE_NAME, $new_table_name )
+		)->fetchAll(
+			PDO::FETCH_ASSOC // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+		);
+
+		foreach ( $statistics as $statistics_item ) {
+			$expression = $this->rewrite_table_qualifier_in_expression(
+				$statistics_item['EXPRESSION'],
+				$old_table_name,
+				$new_table_name
+			);
+
+			if ( $expression === $statistics_item['EXPRESSION'] ) {
+				continue;
+			}
+
+			$this->connection->query(
+				sprintf(
+					'UPDATE %s SET expression = ? WHERE rowid = ?',
+					$this->connection->quote_identifier( $statistics_table_name )
+				),
+				array( $expression, $statistics_item['rowid'] )
+			);
+		}
+	}
+
+	/**
+	 * Rewrite table-qualified references outside quoted string literals.
+	 *
+	 * Stored expression metadata is serialized from MySQL tokens. Table
+	 * qualifiers may be bare identifiers or backtick-quoted identifiers, while
+	 * string literal contents must be preserved exactly.
+	 *
+	 * @param string $expression     The stored MySQL expression.
+	 * @param string $old_table_name The old table name.
+	 * @param string $new_table_name The new table name.
+	 * @return string The expression with table qualifiers rewritten.
+	 */
+	private function rewrite_table_qualifier_in_expression(
+		string $expression,
+		string $old_table_name,
+		string $new_table_name
+	): string {
+		$result = '';
+		$length = strlen( $expression );
+
+		for ( $i = 0; $i < $length; ) {
+			$char = $expression[ $i ];
+
+			if ( "'" === $char || '"' === $char ) {
+				$end     = $this->find_quoted_string_end( $expression, $i, $char );
+				$result .= substr( $expression, $i, $end - $i );
+				$i       = $end;
+				continue;
+			}
+
+			if ( '`' === $char ) {
+				$identifier = $this->read_backtick_identifier( $expression, $i );
+				$next       = $identifier['end'];
+				$dot_offset = $this->find_following_dot_offset( $expression, $next );
+
+				if ( $identifier['value'] === $old_table_name && null !== $dot_offset ) {
+					$result .= '`' . str_replace( '`', '``', $new_table_name ) . '`';
+					$i       = $next;
+					continue;
+				}
+
+				$result .= substr( $expression, $i, $next - $i );
+				$i       = $next;
+				continue;
+			}
+
+			if ( $this->is_mysql_identifier_start( $char ) ) {
+				$next = $i + 1;
+				while ( $next < $length && $this->is_mysql_identifier_part( $expression[ $next ] ) ) {
+					++$next;
+				}
+
+				$identifier = substr( $expression, $i, $next - $i );
+				$dot_offset = $this->find_following_dot_offset( $expression, $next );
+
+				if ( $identifier === $old_table_name && null !== $dot_offset ) {
+					$result .= $new_table_name;
+					$i       = $next;
+					continue;
+				}
+
+				$result .= $identifier;
+				$i       = $next;
+				continue;
+			}
+
+			$result .= $char;
+			++$i;
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Find the end offset of a single- or double-quoted string.
+	 *
+	 * @param string $expression The expression being scanned.
+	 * @param int    $start      The quote start offset.
+	 * @param string $quote      The quote character.
+	 * @return int The offset immediately after the quoted string.
+	 */
+	private function find_quoted_string_end( string $expression, int $start, string $quote ): int {
+		$length = strlen( $expression );
+
+		for ( $i = $start + 1; $i < $length; ++$i ) {
+			if ( '\\' === $expression[ $i ] ) {
+				++$i;
+				continue;
+			}
+
+			if ( $quote !== $expression[ $i ] ) {
+				continue;
+			}
+
+			if ( $i + 1 < $length && $quote === $expression[ $i + 1 ] ) {
+				++$i;
+				continue;
+			}
+
+			return $i + 1;
+		}
+
+		return $length;
+	}
+
+	/**
+	 * Read a backtick-quoted identifier.
+	 *
+	 * @param string $expression The expression being scanned.
+	 * @param int    $start      The identifier start offset.
+	 * @return array{value:string,end:int} The unescaped identifier and end offset.
+	 */
+	private function read_backtick_identifier( string $expression, int $start ): array {
+		$value  = '';
+		$length = strlen( $expression );
+
+		for ( $i = $start + 1; $i < $length; ++$i ) {
+			if ( '`' !== $expression[ $i ] ) {
+				$value .= $expression[ $i ];
+				continue;
+			}
+
+			if ( $i + 1 < $length && '`' === $expression[ $i + 1 ] ) {
+				$value .= '`';
+				++$i;
+				continue;
+			}
+
+			return array(
+				'value' => $value,
+				'end'   => $i + 1,
+			);
+		}
+
+		return array(
+			'value' => $value,
+			'end'   => $length,
+		);
+	}
+
+	/**
+	 * Find the next non-whitespace character when it is a dot.
+	 *
+	 * @param string $expression The expression being scanned.
+	 * @param int    $offset     The starting offset.
+	 * @return int|null The dot offset, or null when no dot follows.
+	 */
+	private function find_following_dot_offset( string $expression, int $offset ): ?int {
+		$length = strlen( $expression );
+
+		while ( $offset < $length && ctype_space( $expression[ $offset ] ) ) {
+			++$offset;
+		}
+
+		if ( $offset < $length && '.' === $expression[ $offset ] ) {
+			return $offset;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check if a character can start a bare MySQL identifier.
+	 *
+	 * @param string $char The character.
+	 * @return bool Whether the character can start a bare identifier.
+	 */
+	private function is_mysql_identifier_start( string $char ): bool {
+		return '_' === $char || '$' === $char || ctype_alpha( $char );
+	}
+
+	/**
+	 * Check if a character can be part of a bare MySQL identifier.
+	 *
+	 * @param string $char The character.
+	 * @return bool Whether the character can be part of a bare identifier.
+	 */
+	private function is_mysql_identifier_part( string $char ): bool {
+		return '_' === $char || '$' === $char || ctype_alnum( $char );
 	}
 
 	/**

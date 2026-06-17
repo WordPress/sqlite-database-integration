@@ -10739,6 +10739,29 @@ END;
 		$this->assertSame( '(IF(NULL , t0 . c1 , t0 . c0))', $result[0]->Expression );
 	}
 
+	public function testSqlancerRenamedFunctionalIndexRebuildUsesCurrentTableQualifier(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 DECIMAL UNIQUE)' );
+		$this->assertQuery( "CREATE INDEX i0 USING HASH ON t0((((CASE 0 WHEN t0.c0 THEN ('tx') LIKE (t0.c0) ELSE t0.c0 END))))" );
+		$this->assertQuery( 'ALTER TABLE t0 FORCE, RENAME t2' );
+
+		$result = $this->assertQuery( "SHOW INDEX FROM t2 WHERE Key_name = 'i0'" );
+
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->Column_name );
+		$this->assertStringContainsString( 't2 . c0', $result[0]->Expression );
+		$this->assertStringNotContainsString( 't0 . c0', $result[0]->Expression );
+
+		$this->assertQuery( 'TRUNCATE TABLE t2' );
+		$this->assertQuery( "ALTER TABLE t2 COMPRESSION 'LZ4', PACK_KEYS 0, INSERT_METHOD NO, RENAME t0, STATS_AUTO_RECALC DEFAULT, FORCE, ROW_FORMAT DYNAMIC, ALGORITHM INPLACE, DELAY_KEY_WRITE 1, CHECKSUM 0" );
+
+		$result = $this->assertQuery( "SHOW INDEX FROM t0 WHERE Key_name = 'i0'" );
+
+		$this->assertCount( 1, $result );
+		$this->assertNull( $result[0]->Column_name );
+		$this->assertStringContainsString( 't0 . c0', $result[0]->Expression );
+		$this->assertStringNotContainsString( 't2 . c0', $result[0]->Expression );
+	}
+
 	public function testSqlancerGroupByNegativeIntegerLiteralIsExpression(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 INT)' );
 		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );

@@ -122,6 +122,17 @@ sdi_sqlancer_query( "CREATE INDEX i0 ON $index_table(((IF(NULL, $index_table.c1,
 sdi_sqlancer_query( "ALTER TABLE $index_table DISABLE KEYS" );
 $index_row = $wpdb->get_row( "SHOW INDEX FROM $index_table WHERE Key_name = 'i0'", ARRAY_A );
 
+$renamed_functional_index_table = $wpdb->prefix . 'sqlancer_renamed_functional_index_t0';
+$renamed_functional_index_target = $wpdb->prefix . 'sqlancer_renamed_functional_index_t2';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $renamed_functional_index_table" );
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $renamed_functional_index_target" );
+sdi_sqlancer_query( "CREATE TABLE $renamed_functional_index_table(c0 DECIMAL UNIQUE)" );
+sdi_sqlancer_query( "CREATE INDEX i_sqlancer_renamed_functional USING HASH ON $renamed_functional_index_table((((CASE 0 WHEN $renamed_functional_index_table.c0 THEN ('tx') LIKE ($renamed_functional_index_table.c0) ELSE $renamed_functional_index_table.c0 END))))" );
+sdi_sqlancer_query( "ALTER TABLE $renamed_functional_index_table FORCE, RENAME $renamed_functional_index_target" );
+sdi_sqlancer_query( "TRUNCATE TABLE $renamed_functional_index_target" );
+sdi_sqlancer_query( "ALTER TABLE $renamed_functional_index_target COMPRESSION 'LZ4', PACK_KEYS 0, INSERT_METHOD NO, RENAME $renamed_functional_index_table, STATS_AUTO_RECALC DEFAULT, FORCE, ROW_FORMAT DYNAMIC, ALGORITHM INPLACE, DELAY_KEY_WRITE 1, CHECKSUM 0" );
+$renamed_functional_index_row = $wpdb->get_row( "SHOW INDEX FROM $renamed_functional_index_table WHERE Key_name = 'i_sqlancer_renamed_functional'", ARRAY_A );
+
 $literal_index_table = $wpdb->prefix . 'sqlancer_literal_index';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $literal_index_table" );
 sdi_sqlancer_query( "CREATE TABLE $literal_index_table(c1 MEDIUMINT UNIQUE KEY COLUMN_FORMAT DEFAULT COMMENT 'asdf')" );
@@ -173,6 +184,7 @@ echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
 echo 'SQLANCER_ORDER_NEGATIVE_JSON:' . wp_json_encode( $order_negative_row ) . PHP_EOL;
 echo 'SQLANCER_ORDERING_EXPRESSION_JSON:' . wp_json_encode( $ordering_expression_row ) . PHP_EOL;
 echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
+echo 'SQLANCER_RENAMED_FUNCTIONAL_INDEX_JSON:' . wp_json_encode( $renamed_functional_index_row ) . PHP_EOL;
 echo 'SQLANCER_LITERAL_INDEX_JSON:' . wp_json_encode( $literal_index_row ) . PHP_EOL;
 echo 'SQLANCER_REDUNDANT_INDEX_JSON:' . wp_json_encode( $redundant_index_rows ) . PHP_EOL;
 echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . PHP_EOL;
@@ -430,6 +442,33 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 		expect( indexRow.Expression ).toContain( 'IF(NULL' );
 		expect( indexRow.Expression ).toContain( 'sqlancer_expr_index . c1' );
 		expect( indexRow.Expression ).toContain( 'sqlancer_expr_index . c0' );
+
+		const renamedFunctionalIndexJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_RENAMED_FUNCTIONAL_INDEX_JSON:' )
+			);
+
+		expect( renamedFunctionalIndexJsonLine ).toBeTruthy();
+		const renamedFunctionalIndexRow = JSON.parse(
+			renamedFunctionalIndexJsonLine.replace(
+				'SQLANCER_RENAMED_FUNCTIONAL_INDEX_JSON:',
+				''
+			)
+		);
+		expect( renamedFunctionalIndexRow ).toEqual(
+			expect.objectContaining( {
+				Key_name: 'i_sqlancer_renamed_functional',
+				Column_name: null,
+			} )
+		);
+		expect( renamedFunctionalIndexRow.Expression ).toContain(
+			'sqlancer_renamed_functional_index_t0 . c0'
+		);
+		expect( renamedFunctionalIndexRow.Expression ).not.toContain(
+			'sqlancer_renamed_functional_index_t2 . c0'
+		);
 
 		const literalIndexJsonLine = output
 			.trim()
