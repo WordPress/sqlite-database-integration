@@ -62,6 +62,18 @@ sdi_sqlancer_query( "CREATE TABLE $integer_string_table(c0 BIGINT(154) UNIQUE KE
 sdi_sqlancer_query( "REPLACE LOW_PRIORITY INTO $integer_string_table(c0) VALUES(\\"0.690236950119983\\")" );
 $integer_string_row = $wpdb->get_row( "SELECT c0 FROM $integer_string_table", ARRAY_A );
 
+$decimal_scale_table = $wpdb->prefix . 'sqlancer_decimal_scale_t0';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $decimal_scale_table" );
+sdi_sqlancer_query( "CREATE TABLE $decimal_scale_table(c0 DECIMAL COMMENT 'asdf' COLUMN_FORMAT DYNAMIC UNIQUE PRIMARY KEY STORAGE MEMORY)" );
+sdi_sqlancer_query( "DROP INDEX c0 ON $decimal_scale_table" );
+sdi_sqlancer_query( "INSERT DELAYED IGNORE INTO $decimal_scale_table(c0) VALUES(901185469)" );
+sdi_sqlancer_query( "DELETE LOW_PRIORITY FROM $decimal_scale_table WHERE (! ( EXISTS (SELECT 1 WHERE FALSE)))" );
+sdi_sqlancer_query( "REPLACE LOW_PRIORITY INTO $decimal_scale_table(c0) VALUES(\\"0.04610308300972621\\")" );
+sdi_sqlancer_query( "INSERT IGNORE INTO $decimal_scale_table(c0) VALUES(0.38956910632549635)" );
+$decimal_scale_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, c0 FROM $decimal_scale_table GROUP BY c0", ARRAY_A );
+sdi_sqlancer_query( "UPDATE $decimal_scale_table SET c0=-271461335" );
+$decimal_scale_after_update_row = $wpdb->get_row( "SELECT c0 FROM $decimal_scale_table", ARRAY_A );
+
 $memory_default_table = $wpdb->prefix . 'sqlancer_memory_implicit_default';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $memory_default_table" );
 sdi_sqlancer_query( "CREATE TABLE $memory_default_table(c0 BIGINT ZEROFILL COMMENT 'asdf' COLUMN_FORMAT DYNAMIC PRIMARY KEY) ENGINE = MEMORY, AUTO_INCREMENT = 4115509118782610296" );
@@ -160,6 +172,8 @@ echo 'SQLANCER_RENAME_DROP_INDEX_JSON:' . wp_json_encode( $rename_drop_index_row
 echo 'SQLANCER_CAST_SIGNED_JSON:' . wp_json_encode( $cast_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_update_row ) . PHP_EOL;
 echo 'SQLANCER_INTEGER_STRING_JSON:' . wp_json_encode( $integer_string_row ) . PHP_EOL;
+echo 'SQLANCER_DECIMAL_SCALE_JSON:' . wp_json_encode( $decimal_scale_row ) . PHP_EOL;
+echo 'SQLANCER_DECIMAL_SCALE_AFTER_UPDATE_JSON:' . wp_json_encode( $decimal_scale_after_update_row ) . PHP_EOL;
 echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . PHP_EOL;
 `,
 			],
@@ -199,6 +213,47 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 			)
 		).toEqual( {
 			c0: '1',
+		} );
+
+		const decimalScaleJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_DECIMAL_SCALE_JSON:' )
+			);
+
+		expect( decimalScaleJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				decimalScaleJsonLine.replace(
+					'SQLANCER_DECIMAL_SCALE_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			rows_count: '1',
+			c0: '0',
+		} );
+
+		const decimalScaleAfterUpdateJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith(
+					'SQLANCER_DECIMAL_SCALE_AFTER_UPDATE_JSON:'
+				)
+			);
+
+		expect( decimalScaleAfterUpdateJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				decimalScaleAfterUpdateJsonLine.replace(
+					'SQLANCER_DECIMAL_SCALE_AFTER_UPDATE_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			c0: '-271461335',
 		} );
 
 		const memoryDefaultJsonLine = output

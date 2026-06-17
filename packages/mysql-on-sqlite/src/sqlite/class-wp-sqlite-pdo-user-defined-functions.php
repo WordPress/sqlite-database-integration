@@ -115,6 +115,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		// Internal helper functions.
 		'_mysql_cast_integer'          => '_mysql_cast_integer',
 		'_mysql_save_integer'          => '_mysql_save_integer',
+		'_mysql_save_decimal'          => '_mysql_save_decimal',
 		'_mysql_count_distinct_tuple'  => '_mysql_count_distinct_tuple',
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
 	);
@@ -160,6 +161,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'locate'                       => true,
 		'_mysql_cast_integer'          => true,
 		'_mysql_save_integer'          => true,
+		'_mysql_save_decimal'          => true,
 		'_mysql_count_distinct_tuple'  => true,
 		'_helper_like_to_glob_pattern' => true,
 	);
@@ -343,6 +345,36 @@ class WP_SQLite_PDO_User_Defined_Functions {
 
 		if ( is_string( $value ) && is_numeric( $value ) ) {
 			return (int) round( (float) $value, 0, PHP_ROUND_HALF_UP );
+		}
+
+		return $value;
+	}
+
+	/**
+	 * Emulate decimal conversion used when MySQL saves values to DECIMAL columns.
+	 *
+	 * MySQL rounds numeric values and numeric strings to the column scale.
+	 * Non-numeric strings are returned unchanged so SQLite STRICT tables can
+	 * reject them.
+	 *
+	 * @param int|float|string|null $value Value to cast.
+	 * @param int|float|string|null $scale Decimal scale.
+	 *
+	 * @return int|float|string|null Rounded decimal value, original string, or null.
+	 */
+	public function _mysql_save_decimal( $value, $scale ) {
+		if ( null === $value ) {
+			return null;
+		}
+
+		$scale = max( 0, (int) $scale );
+
+		if ( is_int( $value ) || is_float( $value ) ) {
+			return round( $value, $scale, PHP_ROUND_HALF_UP );
+		}
+
+		if ( is_string( $value ) && is_numeric( $value ) ) {
+			return round( (float) $value, $scale, PHP_ROUND_HALF_UP );
 		}
 
 		return $value;

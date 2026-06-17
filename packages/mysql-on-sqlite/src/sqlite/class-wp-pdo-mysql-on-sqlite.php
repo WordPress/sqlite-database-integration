@@ -5594,7 +5594,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$tables_table  = $this->information_schema_builder->get_table_name( $is_temporary, 'tables' );
 		$columns       = $this->execute_sqlite_query(
 			'
-				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, extra
+				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, numeric_scale, extra
 				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
@@ -5777,7 +5777,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$value             = $this->cast_value_for_saving(
 					$column['DATA_TYPE'],
 					$identifier,
-					$ignore_errors || $use_non_transactional_multi_row_defaults
+					$ignore_errors || $use_non_transactional_multi_row_defaults,
+					null === $column['NUMERIC_SCALE'] ? null : (int) $column['NUMERIC_SCALE']
 				);
 				$is_auto_increment = str_contains( $column['EXTRA'], 'auto_increment' );
 
@@ -5983,7 +5984,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
 			'
-				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, data_type, column_default
+				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, data_type, numeric_scale, column_default
 				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
@@ -6024,9 +6025,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				);
 			}
 
-			$data_type   = $column_info['DATA_TYPE'];
-			$is_nullable = 'YES' === $column_info['IS_NULLABLE'];
-			$default     = $column_info['COLUMN_DEFAULT'];
+			$data_type     = $column_info['DATA_TYPE'];
+			$numeric_scale = null === $column_info['NUMERIC_SCALE'] ? null : (int) $column_info['NUMERIC_SCALE'];
+			$is_nullable   = 'YES' === $column_info['IS_NULLABLE'];
+			$default       = $column_info['COLUMN_DEFAULT'];
 
 			// Get the UPDATE value. It's either an expression or a DEFAULT keyword.
 			if ( null === $expr ) {
@@ -6037,7 +6039,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 
 			// Apply type casting.
-			$value = $this->cast_value_for_saving( $data_type, $value );
+			$value = $this->cast_value_for_saving( $data_type, $value, false, $numeric_scale );
 
 			/*
 			 * In MySQL non-STRICT mode, when a column is declared as NOT NULL,
@@ -6381,7 +6383,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private function cast_value_for_saving(
 		string $mysql_data_type,
 		string $translated_value,
-		bool $ignore_errors = false
+		bool $ignore_errors = false,
+		?int $numeric_scale = null
 	): string {
 		// TODO: This is also a good place to implement checks for maximum column
 		//       lengths with truncating or bailing out depending on the SQL mode.
@@ -6543,6 +6546,20 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 						$translated_value,
 						$translated_value,
 						$translated_value
+					);
+				}
+
+				if ( 'decimal' === $mysql_data_type ) {
+					$numeric_scale = $numeric_scale ?? 0;
+					if ( ! $is_strict_mode || $ignore_errors ) {
+						return sprintf( 'CAST(ROUND(%s, %d) AS %s)', $translated_value, $numeric_scale, $sqlite_data_type );
+					}
+					return sprintf(
+						"CASE WHEN TYPEOF(%s) = 'blob' THEN %s ELSE _mysql_save_decimal(%s, %d) END",
+						$translated_value,
+						$translated_value,
+						$translated_value,
+						$numeric_scale
 					);
 				}
 

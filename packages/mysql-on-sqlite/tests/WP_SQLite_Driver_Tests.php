@@ -10608,6 +10608,27 @@ END;
 		$this->assertSame( '1', $result[0]->c0 );
 	}
 
+	public function testSqlancerDecimalScaleIsAppliedBeforeUniqueChecks(): void {
+		$this->assertQuery( "CREATE TABLE t0(c0 DECIMAL COMMENT 'asdf' COLUMN_FORMAT DYNAMIC UNIQUE PRIMARY KEY STORAGE MEMORY)" );
+		$this->assertQuery( 'DROP INDEX c0 ON t0' );
+		$this->assertQuery( 'INSERT DELAYED IGNORE INTO t0(c0) VALUES(901185469)' );
+		$this->assertQuery( 'DELETE LOW_PRIORITY FROM t0 WHERE (! ( EXISTS (SELECT 1 WHERE FALSE)))' );
+		$this->assertQuery( 'REPLACE LOW_PRIORITY INTO t0(c0) VALUES("0.04610308300972621")' );
+		$this->assertQuery( 'INSERT IGNORE INTO t0(c0) VALUES(0.38956910632549635)' );
+
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count, c0 FROM t0 GROUP BY c0' );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->rows_count );
+		$this->assertSame( '0', (string) (int) $result[0]->c0 );
+
+		$this->assertQuery( 'UPDATE t0 SET c0=-271461335' );
+		$result = $this->assertQuery( 'SELECT c0 FROM t0' );
+
+		$this->assertCount( 1, $result );
+		$this->assertSame( '-271461335', (string) (int) $result[0]->c0 );
+	}
+
 	public function testSqlancerDeleteIgnoreDropsIgnoredRows(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 DECIMAL)' );
 		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );
