@@ -72,6 +72,7 @@ sdi_sqlancer_query( "REPLACE INTO $table(c0) VALUES(NULL)" );
 
 $bit_count_row = $wpdb->get_row( "SELECT DISTINCTROW COUNT(*) AS rows_count, BIT_COUNT(-1) AS negative_bits, MAX(GREATEST(NULL, c0)) AS greatest_with_null FROM $table", ARRAY_A );
 $boolean_row = $wpdb->get_row( "SELECT (2 XOR 3) AS both_true, (1 XOR 0) AS one_true, (1 && 0) AS and_symbol, (! 1) AS not_symbol, (NULL IS UNKNOWN) AS null_unknown, (1 IS NOT UNKNOWN) AS one_not_unknown, (NULL XOR 1) AS null_xor", ARRAY_A );
+sdi_sqlancer_query( "SELECT -272848287 AS ref0 FROM $table GROUP BY -272848287" );
 
 $index_table = $wpdb->prefix . 'sqlancer_expr_index';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $index_table" );
@@ -80,10 +81,17 @@ sdi_sqlancer_query( "CREATE INDEX i0 ON $index_table(((IF(NULL, $index_table.c1,
 sdi_sqlancer_query( "ALTER TABLE $index_table DISABLE KEYS" );
 $index_row = $wpdb->get_row( "SHOW INDEX FROM $index_table WHERE Key_name = 'i0'", ARRAY_A );
 
+$count_distinct_table = $wpdb->prefix . 'sqlancer_count_distinct';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $count_distinct_table" );
+sdi_sqlancer_query( "CREATE TABLE $count_distinct_table(c0 INT, c1 TEXT)" );
+sdi_sqlancer_query( "INSERT INTO $count_distinct_table(c0, c1) VALUES(1, 'a'), (1, 'a'), (1, 'b'), (NULL, 'b'), (2, NULL)" );
+$count_distinct_row = $wpdb->get_row( "SELECT COUNT(DISTINCT c0, c1) AS tuple_count FROM $count_distinct_table", ARRAY_A );
+
 echo 'SQLANCER_JSON:' . wp_json_encode( $row ) . PHP_EOL;
 echo 'SQLANCER_BIT_COUNT_JSON:' . wp_json_encode( $bit_count_row ) . PHP_EOL;
 echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
 echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
+echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . PHP_EOL;
 `,
 			],
 			{
@@ -157,5 +165,24 @@ echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
 		expect( indexRow.Expression ).toContain( 'IF(NULL' );
 		expect( indexRow.Expression ).toContain( 'sqlancer_expr_index . c1' );
 		expect( indexRow.Expression ).toContain( 'sqlancer_expr_index . c0' );
+
+		const countDistinctJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_COUNT_DISTINCT_JSON:' )
+			);
+
+		expect( countDistinctJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				countDistinctJsonLine.replace(
+					'SQLANCER_COUNT_DISTINCT_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			tuple_count: '2',
+		} );
 		} );
 	} );

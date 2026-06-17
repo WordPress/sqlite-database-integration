@@ -113,6 +113,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'version'                      => 'version',
 
 		// Internal helper functions.
+		'_mysql_count_distinct_tuple'  => '_mysql_count_distinct_tuple',
 		'_helper_like_to_glob_pattern' => '_helper_like_to_glob_pattern',
 	);
 
@@ -155,6 +156,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'bit_count'                    => true,
 		'datediff'                     => true,
 		'locate'                       => true,
+		'_mysql_count_distinct_tuple'  => true,
 		'_helper_like_to_glob_pattern' => true,
 	);
 
@@ -283,6 +285,22 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			$value >>= 1;
 		}
 		return $count;
+	}
+
+	/**
+	 * Build an internal key for MySQL COUNT(DISTINCT expr, ...).
+	 *
+	 * @return string|null Serialized tuple key, or null when any argument is null.
+	 */
+	public function _mysql_count_distinct_tuple() {
+		$args = func_get_args();
+		foreach ( $args as $arg ) {
+			if ( null === $arg ) {
+				return null;
+			}
+		}
+
+		return serialize( $args );
 	}
 
 	/**

@@ -10665,6 +10665,24 @@ END;
 		$this->assertSame( '(IF(NULL , t0 . c1 , t0 . c0))', $result[0]->Expression );
 	}
 
+	public function testSqlancerGroupByNegativeIntegerLiteralIsExpression(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 INT)' );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1), (2)' );
+
+		$result = $this->assertQuery( 'SELECT -272848287 AS ref0 FROM t0 GROUP BY -272848287 LIMIT 5406272978560205348 OFFSET 6829953128963339467' );
+
+		$this->assertSame( array(), $result );
+	}
+
+	public function testSqlancerCountDistinctMultipleExpressionsUsesTupleIdentity(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 INT, c1 TEXT)' );
+		$this->assertQuery( "INSERT INTO t0(c0, c1) VALUES(1, 'a'), (1, 'a'), (1, 'b'), (NULL, 'b'), (2, NULL)" );
+
+		$result = $this->assertQuery( 'SELECT COUNT(DISTINCT c0, c1) AS tuple_count FROM t0' );
+
+		$this->assertSame( '2', $result[0]->tuple_count );
+	}
+
 	public function testInsertIntoSetSyntax(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (

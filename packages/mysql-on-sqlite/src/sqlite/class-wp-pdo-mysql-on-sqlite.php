@@ -3882,6 +3882,8 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				return $this->translate_runtime_function_call( $node );
 			case 'functionCall':
 				return $this->translate_function_call( $node );
+			case 'sumExpr':
+				return $this->translate_sum_expr( $node );
 			case 'substringFunction':
 				$nodes = $node->get_child_nodes();
 				if ( count( $nodes ) === 2 ) {
@@ -4379,9 +4381,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 */
 				$group_by_list = $group_by->get_first_child_node( 'orderList' );
 				foreach ( $group_by_list->get_child_nodes() as $group_by_item ) {
-					$group_by_expr                 = $group_by_item->get_first_child_node( 'expr' );
-					$disambiguated_item            = $this->disambiguate_item( $disambiguation_map, $group_by_expr );
-					$disambiguated_group_by_list[] = $disambiguated_item ?? $this->translate( $group_by_expr );
+					$group_by_expr      = $group_by_item->get_first_child_node( 'expr' );
+					$disambiguated_item = $this->disambiguate_item( $disambiguation_map, $group_by_expr );
+
+					$disambiguated_group_by_list[] = $disambiguated_item
+						?? $this->translate_group_by_expression( $group_by_expr );
 				}
 				$group_by_clause = 'GROUP BY ' . implode( ', ', $disambiguated_group_by_list );
 			}
@@ -4637,6 +4641,48 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate a MySQL aggregate expression to SQLite.
+	 *
+	 * @param  WP_Parser_Node $node       The "sumExpr" AST node.
+	 * @return string                     The translated value.
+	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 */
+	private function translate_sum_expr( WP_Parser_Node $node ): string {
+		$aggregate = $node->get_first_child_token();
+		if (
+			! $aggregate
+			|| WP_MySQL_Lexer::COUNT_SYMBOL !== $aggregate->id
+			|| ! $node->has_child_token( WP_MySQL_Lexer::DISTINCT_SYMBOL )
+		) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		$expr_list = $node->get_first_child_node( 'exprList' );
+		if ( ! $expr_list ) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		$exprs = $expr_list->get_child_nodes( 'expr' );
+		if ( count( $exprs ) < 2 ) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		$args        = array();
+		$null_checks = array();
+		foreach ( $exprs as $expr ) {
+			$arg           = $this->translate( $expr );
+			$args[]        = $arg;
+			$null_checks[] = sprintf( '%s IS NULL', $arg );
+		}
+
+		return sprintf(
+			'COUNT(DISTINCT CASE WHEN %s THEN NULL ELSE _mysql_count_distinct_tuple(%s) END)',
+			implode( ' OR ', $null_checks ),
+			implode( ', ', $args )
+		);
 	}
 
 	/**
@@ -5884,6 +5930,25 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			return $select_item_matches[0];
 		}
 		return null;
+	}
+
+	/**
+	 * Translate a GROUP BY expression.
+	 *
+	 * SQLite treats integer constants in GROUP BY as select-list ordinals. MySQL
+	 * accepts negative integer constants as expressions, so force those through
+	 * SQLite's expression path.
+	 *
+	 * @param  WP_Parser_Node $expr The expression AST node.
+	 * @return string              The translated GROUP BY expression.
+	 */
+	private function translate_group_by_expression( WP_Parser_Node $expr ): string {
+		$translated = $this->translate( $expr );
+		if ( preg_match( '/^-\\s*\\d+$/', $translated ) ) {
+			return '0 + ' . $translated;
+		}
+
+		return $translated;
 	}
 
 	/**
