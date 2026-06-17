@@ -5483,6 +5483,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Get column metadata for the target table from the information schema.
 		$is_temporary  = $this->information_schema_builder->temporary_table_exists( $table_name );
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
+		$tables_table  = $this->information_schema_builder->get_table_name( $is_temporary, 'tables' );
 		$columns       = $this->execute_sqlite_query(
 			'
 				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, column_default, data_type, extra
@@ -5504,6 +5505,24 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				'42S02'
 			);
 		}
+
+		$table_engine = $this->execute_sqlite_query(
+			'
+				SELECT engine
+				FROM ' . $this->quote_sqlite_identifier( $tables_table ) . '
+				WHERE table_schema = ?
+				AND table_name = ?
+			',
+			array( $database, $table_name )
+		)->fetchColumn();
+
+		$use_non_transactional_multi_row_defaults = (
+			$is_strict_mode
+			&& ! $ignore_errors
+			&& false !== $table_engine
+			&& $this->is_non_transactional_table_engine( $table_engine )
+			&& $this->is_multi_row_insert_values( $node )
+		);
 
 		// Get a list of columns that are targeted by the INSERT or REPLACE query.
 		// This is either an explicit column list, or all columns of the table.
@@ -5647,7 +5666,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				// When a column value is included, we need to apply type casting.
 				$position          = array_search( $column['COLUMN_NAME'], $insert_list, true );
 				$identifier        = $this->quote_sqlite_identifier( $select_list[ $position ] );
-				$value             = $this->cast_value_for_saving( $column['DATA_TYPE'], $identifier, $ignore_errors );
+				$value             = $this->cast_value_for_saving(
+					$column['DATA_TYPE'],
+					$identifier,
+					$ignore_errors || $use_non_transactional_multi_row_defaults
+				);
 				$is_auto_increment = str_contains( $column['EXTRA'], 'auto_increment' );
 
 				/*
@@ -5679,6 +5702,24 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$use_implicit_defaults
 					&& ! $is_auto_increment
 					&& $is_insert_from_select
+					&& 'NO' === $column['IS_NULLABLE']
+				) {
+					$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
+					if ( null !== $implicit_default ) {
+						$value = sprintf( 'COALESCE(%s, %s)', $value, $this->quote_sqlite_value( $implicit_default ) );
+					}
+				}
+
+				/*
+				 * In strict mode, MySQL still keeps preceding rows for multi-row
+				 * writes to non-transactional tables. If a later row saves an
+				 * invalid value to a NOT NULL column, MySQL stores the column's
+				 * implicit default and emits a warning rather than rolling back
+				 * the statement.
+				 */
+				if (
+					$use_non_transactional_multi_row_defaults
+					&& ! $is_auto_increment
 					&& 'NO' === $column['IS_NULLABLE']
 				) {
 					$implicit_default = self::DATA_TYPE_IMPLICIT_DEFAULT_MAP[ $column['DATA_TYPE'] ] ?? null;
@@ -5746,6 +5787,40 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$fragment .= ' FROM (' . $from . ') WHERE true';
 
 		return $fragment;
+	}
+
+	/**
+	 * Check whether a table engine is non-transactional.
+	 *
+	 * @param  string $table_engine The information schema table engine.
+	 * @return bool                 Whether the engine is non-transactional.
+	 */
+	private function is_non_transactional_table_engine( string $table_engine ): bool {
+		return in_array( strtoupper( $table_engine ), array( 'MEMORY', 'MYISAM' ), true );
+	}
+
+	/**
+	 * Check whether an INSERT/REPLACE body contains multiple VALUES rows.
+	 *
+	 * @param  WP_Parser_Node $node The INSERT/REPLACE body node.
+	 * @return bool                 Whether the node is a multi-row VALUES body.
+	 */
+	private function is_multi_row_insert_values( WP_Parser_Node $node ): bool {
+		if ( 'insertFromConstructor' !== $node->rule_name ) {
+			return false;
+		}
+
+		$insert_values = $node->get_first_child_node( 'insertValues' );
+		if ( null === $insert_values ) {
+			return false;
+		}
+
+		$value_list = $insert_values->get_first_child_node( 'valueList' );
+		if ( null === $value_list ) {
+			return false;
+		}
+
+		return count( $value_list->get_child_nodes( 'values' ) ) > 1;
 	}
 
 	/**

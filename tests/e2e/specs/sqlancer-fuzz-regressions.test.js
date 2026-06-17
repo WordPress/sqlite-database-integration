@@ -62,6 +62,13 @@ sdi_sqlancer_query( "CREATE TABLE $integer_string_table(c0 BIGINT(154) UNIQUE KE
 sdi_sqlancer_query( "REPLACE LOW_PRIORITY INTO $integer_string_table(c0) VALUES(\\"0.690236950119983\\")" );
 $integer_string_row = $wpdb->get_row( "SELECT c0 FROM $integer_string_table", ARRAY_A );
 
+$memory_default_table = $wpdb->prefix . 'sqlancer_memory_implicit_default';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $memory_default_table" );
+sdi_sqlancer_query( "CREATE TABLE $memory_default_table(c0 BIGINT ZEROFILL COMMENT 'asdf' COLUMN_FORMAT DYNAMIC PRIMARY KEY) ENGINE = MEMORY, AUTO_INCREMENT = 4115509118782610296" );
+sdi_sqlancer_query( "REPLACE INTO $memory_default_table(c0) VALUES(0.5986269975342084), (4.1155091187826104E18), (NULL)" );
+$memory_default_rows = $wpdb->get_results( "SELECT c0 FROM $memory_default_table ORDER BY c0", ARRAY_A );
+sdi_sqlancer_query( "REPLACE INTO $memory_default_table(c0) VALUES(0.5853108370608123), (\\"4115509118782610296\\"), (1862704922), (\\"0.27004938366761855\\"), (\\"dwHq\\")" );
+
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $table" );
 sdi_sqlancer_query( "CREATE TABLE $table(c0 DECIMAL)" );
 sdi_sqlancer_query( "INSERT INTO $table(c0) VALUES(1), (2)" );
@@ -139,6 +146,7 @@ echo 'SQLANCER_RENAME_DROP_INDEX_JSON:' . wp_json_encode( $rename_drop_index_row
 echo 'SQLANCER_CAST_SIGNED_JSON:' . wp_json_encode( $cast_row ) . PHP_EOL;
 echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_update_row ) . PHP_EOL;
 echo 'SQLANCER_INTEGER_STRING_JSON:' . wp_json_encode( $integer_string_row ) . PHP_EOL;
+echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . PHP_EOL;
 `,
 			],
 			{
@@ -178,6 +186,33 @@ echo 'SQLANCER_INTEGER_STRING_JSON:' . wp_json_encode( $integer_string_row ) . P
 		).toEqual( {
 			c0: '1',
 		} );
+
+		const memoryDefaultJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_MEMORY_DEFAULT_JSON:' )
+			);
+
+		expect( memoryDefaultJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				memoryDefaultJsonLine.replace(
+					'SQLANCER_MEMORY_DEFAULT_JSON:',
+					''
+				)
+			)
+		).toEqual( [
+			{
+				c0: '0',
+			},
+			{
+				c0: '1',
+			},
+			{
+				c0: '4115509118782610432',
+			},
+		] );
 
 		const bitCountJsonLine = output
 			.trim()
