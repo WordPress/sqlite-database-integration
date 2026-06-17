@@ -5906,7 +5906,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * @return bool                 Whether the engine is non-transactional.
 	 */
 	private function is_non_transactional_table_engine( string $table_engine ): bool {
-		return in_array( strtoupper( $table_engine ), array( 'MEMORY', 'MYISAM' ), true );
+		return in_array( strtoupper( $table_engine ), array( 'HEAP', 'MEMORY', 'MYISAM' ), true );
 	}
 
 	/**

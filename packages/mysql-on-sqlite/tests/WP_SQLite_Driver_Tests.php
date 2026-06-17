@@ -10629,6 +10629,18 @@ END;
 		$this->assertSame( '-271461335', (string) (int) $result[0]->c0 );
 	}
 
+	public function testSqlancerHeapDecimalMultiRowReplaceUsesImplicitDefaultForInvalidValues(): void {
+		$this->assertQuery( "CREATE TABLE t0(c0 DECIMAL COLUMN_FORMAT FIXED STORAGE MEMORY COMMENT 'asdf' UNIQUE KEY) ENGINE = HEAP" );
+		$this->assertQuery( "REPLACE DELAYED INTO t0(c0) VALUES(652769770), (''), (NULL)" );
+
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS row_count, SUM(c0 = 0) AS zero_rows, SUM(c0 IS NULL) AS null_rows, MAX(c0) AS max_value FROM t0' );
+
+		$this->assertSame( '3', $result[0]->row_count );
+		$this->assertSame( '1', $result[0]->zero_rows );
+		$this->assertSame( '1', $result[0]->null_rows );
+		$this->assertSame( '652769770', (string) (int) $result[0]->max_value );
+	}
+
 	public function testSqlancerZerofillInsertIgnoreClipsNegativeValuesBeforeUniqueUpdate(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 DOUBLE ZEROFILL UNIQUE, c1 FLOAT, c2 DECIMAL UNIQUE KEY)' );
 		$this->assertQuery( 'INSERT IGNORE INTO t0(c1, c0) VALUES(-255822003, "-1773731655"), (0.3800962993552307, NULL), (NULL, "¹"), (802484078, "&g瞟Xx8-U"), (1992718239, "")' );

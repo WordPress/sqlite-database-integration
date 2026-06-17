@@ -74,6 +74,12 @@ $decimal_scale_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, c0 FROM $de
 sdi_sqlancer_query( "UPDATE $decimal_scale_table SET c0=-271461335" );
 $decimal_scale_after_update_row = $wpdb->get_row( "SELECT c0 FROM $decimal_scale_table", ARRAY_A );
 
+$heap_decimal_table = $wpdb->prefix . 'sqlancer_heap_decimal_replace';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $heap_decimal_table" );
+sdi_sqlancer_query( "CREATE TABLE $heap_decimal_table(c0 DECIMAL COLUMN_FORMAT FIXED STORAGE MEMORY COMMENT 'asdf' UNIQUE KEY) ENGINE = HEAP" );
+sdi_sqlancer_query( "REPLACE DELAYED INTO $heap_decimal_table(c0) VALUES(652769770), (''), (NULL)" );
+$heap_decimal_row = $wpdb->get_row( "SELECT COUNT(*) AS row_count, SUM(c0 = 0) AS zero_rows, SUM(c0 IS NULL) AS null_rows, MAX(c0) AS max_value FROM $heap_decimal_table", ARRAY_A );
+
 $unsigned_zerofill_table = $wpdb->prefix . 'sqlancer_unsigned_zerofill_t0';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $unsigned_zerofill_table" );
 sdi_sqlancer_query( "CREATE TABLE $unsigned_zerofill_table(c0 DOUBLE ZEROFILL UNIQUE, c1 FLOAT, c2 DECIMAL UNIQUE KEY)" );
@@ -201,6 +207,7 @@ echo 'SQLANCER_CAST_SIGNED_AFTER_UPDATE_JSON:' . wp_json_encode( $cast_after_upd
 echo 'SQLANCER_INTEGER_STRING_JSON:' . wp_json_encode( $integer_string_row ) . PHP_EOL;
 echo 'SQLANCER_DECIMAL_SCALE_JSON:' . wp_json_encode( $decimal_scale_row ) . PHP_EOL;
 echo 'SQLANCER_DECIMAL_SCALE_AFTER_UPDATE_JSON:' . wp_json_encode( $decimal_scale_after_update_row ) . PHP_EOL;
+echo 'SQLANCER_HEAP_DECIMAL_JSON:' . wp_json_encode( $heap_decimal_row ) . PHP_EOL;
 echo 'SQLANCER_UNSIGNED_ZEROFILL_JSON:' . wp_json_encode( $unsigned_zerofill_row ) . PHP_EOL;
 echo 'SQLANCER_UNSIGNED_ZEROFILL_AFTER_UPDATE_JSON:' . wp_json_encode( $unsigned_zerofill_after_update_row ) . PHP_EOL;
 echo 'SQLANCER_SIGNED_SMALLINT_JSON:' . wp_json_encode( $signed_smallint_row ) . PHP_EOL;
@@ -284,6 +291,28 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 			)
 		).toEqual( {
 			c0: '-271461335',
+		} );
+
+		const heapDecimalJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_HEAP_DECIMAL_JSON:' )
+			);
+
+		expect( heapDecimalJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				heapDecimalJsonLine.replace(
+					'SQLANCER_HEAP_DECIMAL_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			row_count: '3',
+			zero_rows: '1',
+			null_rows: '1',
+			max_value: '652769770',
 		} );
 
 		const unsignedZerofillJsonLine = output
