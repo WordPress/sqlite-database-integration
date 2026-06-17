@@ -5588,6 +5588,58 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests WooCommerce-style session upserts with WordPress %i double-quoted table identifiers.
+	 */
+	public function test_double_quoted_table_identifier_upsert_and_select_are_translated(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			'CREATE TABLE wptests_woocommerce_sessions (
+				session_id INTEGER PRIMARY KEY,
+				session_key TEXT NOT NULL UNIQUE,
+				session_value TEXT NOT NULL,
+				session_expiry INTEGER NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wptests_woocommerce_sessions (
+				session_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				session_key char(32) NOT NULL,
+				session_value longtext NOT NULL,
+				session_expiry bigint(20) unsigned NOT NULL,
+				PRIMARY KEY (session_id),
+				UNIQUE KEY session_key (session_key)
+			)'
+		);
+
+		$upsert = "INSERT INTO \"wptests_woocommerce_sessions\" (`session_key`, `session_value`, `session_expiry`)
+			VALUES ('session-key', 'first', 1781870576)
+			ON DUPLICATE KEY UPDATE `session_value` = VALUES(`session_value`), `session_expiry` = VALUES(`session_expiry`)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_woocommerce_sessions" ("session_key", "session_value", "session_expiry") VALUES (\'session-key\', \'first\', 1781870576) ON CONFLICT ("session_key") DO UPDATE SET "session_value" = excluded."session_value", "session_expiry" = excluded."session_expiry"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$duplicate_upsert = "INSERT INTO \"wptests_woocommerce_sessions\" (`session_key`, `session_value`, `session_expiry`)
+			VALUES ('session-key', 'second', 1781870577)
+			ON DUPLICATE KEY UPDATE `session_value` = VALUES(`session_value`), `session_expiry` = VALUES(`session_expiry`)";
+
+		$this->assertSame( 1, $driver->query( $duplicate_upsert ) );
+
+		$rows = $driver->query( "SELECT session_value, session_expiry FROM \"wptests_woocommerce_sessions\" WHERE session_key = 'session-key'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'second', $rows[0]->session_value );
+		$this->assertSame( '1781870577', $rows[0]->session_expiry );
+		$this->assertSame(
+			'SELECT session_value, session_expiry FROM "wptests_woocommerce_sessions" WHERE session_key = \'session-key\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
 	 * Tests LAST_INSERT_ID(id) duplicate updates preserve target-row references in expressions.
 	 */
 	public function test_upsert_last_insert_id_values_and_row_count_readback_after_duplicate_update(): void {

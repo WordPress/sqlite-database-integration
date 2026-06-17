@@ -45996,7 +45996,7 @@ FROM (
 	 * @return string|null Table name, or null when unsupported.
 	 */
 	private function parse_mysql_main_database_table_name( array $tokens, int &$position ): ?string {
-		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		$first_identifier = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null, true );
 		if ( null === $first_identifier ) {
 			return null;
 		}
@@ -46006,7 +46006,7 @@ FROM (
 			return $first_identifier;
 		}
 
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null, true );
 		if ( null === $table_name || 0 !== strcasecmp( $first_identifier, $this->main_db_name ) ) {
 			return null;
 		}
@@ -46124,7 +46124,15 @@ FROM (
 			&& isset( $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
 		) {
+			if ( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[ $start + 2 ]->id ) {
+				return $this->connection->quote_identifier( $tokens[ $start + 2 ]->get_value() );
+			}
+
 			return $this->translate_mysql_identifier_token_to_postgresql( $tokens[ $start + 2 ] );
+		}
+
+		if ( isset( $tokens[ $start ] ) && WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[ $start ]->id ) {
+			return $this->connection->quote_identifier( $tokens[ $start ]->get_value() );
 		}
 
 		return $this->translate_mysql_identifier_token_to_postgresql( $tokens[ $start ] ?? null );
