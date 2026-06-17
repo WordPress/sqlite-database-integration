@@ -10666,11 +10666,11 @@ END;
 
 		$result = $this->assertQuery( 'SELECT GROUP_CONCAT(c0) AS saved_values, SUM(c0) AS sum_value, SUM(DISTINCT c0) AS sum_distinct_value, COUNT(*) AS row_count FROM (SELECT c0 FROM t0 ORDER BY c0) ordered_values' );
 
-		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
-		$this->assertSame( $is_legacy_sqlite ? '-32768,0,1,2,32767' : '-32768,1,2,32767', $result[0]->saved_values );
+		$is_sqlite_327 = version_compare( $this->engine->get_sqlite_version(), '3.31.0', '<' );
+		$this->assertSame( $is_sqlite_327 ? '-32768,0,1,2,32767' : '-32768,1,2,32767', $result[0]->saved_values );
 		$this->assertSame( '2', $result[0]->sum_value );
 		$this->assertSame( '2', $result[0]->sum_distinct_value );
-		$this->assertSame( $is_legacy_sqlite ? '5' : '4', $result[0]->row_count );
+		$this->assertSame( $is_sqlite_327 ? '5' : '4', $result[0]->row_count );
 	}
 
 	public function testSqlancerDeleteIgnoreDropsIgnoredRows(): void {
