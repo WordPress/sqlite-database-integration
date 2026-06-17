@@ -10664,7 +10664,7 @@ END;
 		$this->assertQuery( 'CREATE TABLE t0(c0 SMALLINT(107) COLUMN_FORMAT DYNAMIC PRIMARY KEY UNIQUE KEY)' );
 		$this->assertQuery( "INSERT IGNORE INTO t0(c0) VALUES(1375461291), (-627010191), (32190009), (0.7902617242915789), ('-1e500'), ('2jc7hoh\r'), (2052592843)" );
 
-		$result = $this->assertQuery( 'SELECT GROUP_CONCAT(c0 ORDER BY c0) AS saved_values, SUM(c0) AS sum_value, SUM(DISTINCT c0) AS sum_distinct_value, COUNT(*) AS row_count FROM t0' );
+		$result = $this->assertQuery( 'SELECT GROUP_CONCAT(c0) AS saved_values, SUM(c0) AS sum_value, SUM(DISTINCT c0) AS sum_distinct_value, COUNT(*) AS row_count FROM (SELECT c0 FROM t0 ORDER BY c0) ordered_values' );
 
 		$this->assertSame( '-32768,1,2,32767', $result[0]->saved_values );
 		$this->assertSame( '2', $result[0]->sum_value );
@@ -10710,7 +10710,7 @@ END;
 	public function testSqlancerReplaceLowPriorityDropsInsertModifier(): void {
 		$this->assertQuery( 'CREATE TABLE t0(c0 INT)' );
 		$this->assertQuery( 'REPLACE LOW_PRIORITY INTO t0(c0) VALUES(0.8086755056097884), (0.16838264227471722), (0.7427700179628559)' );
-		$result = $this->assertQuery( 'SELECT GROUP_CONCAT(c0 ORDER BY rowid) AS saved_values FROM t0' );
+		$result = $this->assertQuery( 'SELECT GROUP_CONCAT(c0) AS saved_values FROM (SELECT c0 FROM t0 ORDER BY rowid) ordered_values' );
 
 		$this->assertSame( '1,0,1', $result[0]->saved_values );
 	}
@@ -10795,7 +10795,7 @@ END;
 		$this->assertQuery( 'DROP INDEX i1 ON t0 ALGORITHM=DEFAULT' );
 		$this->assertQuery( 'INSERT LOW_PRIORITY INTO t0(c0) VALUES(0.6904897792105997)' );
 
-		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count, GROUP_CONCAT(SUBSTR(c0, 1, 3) ORDER BY c0) AS saved_prefixes FROM t0' );
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count, GROUP_CONCAT(saved_prefix) AS saved_prefixes FROM (SELECT SUBSTR(c0, 1, 3) AS saved_prefix FROM t0 ORDER BY c0) ordered_prefixes' );
 
 		$this->assertSame( '2', $result[0]->rows_count );
 		$this->assertSame( '0.6,0.7', $result[0]->saved_prefixes );
