@@ -83,6 +83,12 @@ $unsigned_zerofill_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count, SUM(c0 
 sdi_sqlancer_query( "UPDATE $unsigned_zerofill_table SET c2=0.3350118396679408, c1=8.02484078E8 WHERE $unsigned_zerofill_table.c0" );
 $unsigned_zerofill_after_update_row = $wpdb->get_row( "SELECT COUNT(*) AS updated_rows, MAX(c2) AS c2 FROM $unsigned_zerofill_table WHERE c2 IS NOT NULL", ARRAY_A );
 
+$signed_smallint_table = $wpdb->prefix . 'sqlancer_signed_smallint_sum';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $signed_smallint_table" );
+sdi_sqlancer_query( "CREATE TABLE $signed_smallint_table(c0 SMALLINT(107) COLUMN_FORMAT DYNAMIC PRIMARY KEY UNIQUE KEY)" );
+sdi_sqlancer_query( "INSERT IGNORE INTO $signed_smallint_table(c0) VALUES(1375461291), (-627010191), (32190009), (0.7902617242915789), ('-1e500'), ('2jc7hoh\r'), (2052592843)" );
+$signed_smallint_row = $wpdb->get_row( "SELECT GROUP_CONCAT(c0 ORDER BY c0) AS saved_values, SUM(c0) AS sum_value, SUM(DISTINCT c0) AS sum_distinct_value, COUNT(*) AS row_count FROM $signed_smallint_table", ARRAY_A );
+
 $memory_default_table = $wpdb->prefix . 'sqlancer_memory_implicit_default';
 sdi_sqlancer_query( "DROP TABLE IF EXISTS $memory_default_table" );
 sdi_sqlancer_query( "CREATE TABLE $memory_default_table(c0 BIGINT ZEROFILL COMMENT 'asdf' COLUMN_FORMAT DYNAMIC PRIMARY KEY) ENGINE = MEMORY, AUTO_INCREMENT = 4115509118782610296" );
@@ -197,6 +203,7 @@ echo 'SQLANCER_DECIMAL_SCALE_JSON:' . wp_json_encode( $decimal_scale_row ) . PHP
 echo 'SQLANCER_DECIMAL_SCALE_AFTER_UPDATE_JSON:' . wp_json_encode( $decimal_scale_after_update_row ) . PHP_EOL;
 echo 'SQLANCER_UNSIGNED_ZEROFILL_JSON:' . wp_json_encode( $unsigned_zerofill_row ) . PHP_EOL;
 echo 'SQLANCER_UNSIGNED_ZEROFILL_AFTER_UPDATE_JSON:' . wp_json_encode( $unsigned_zerofill_after_update_row ) . PHP_EOL;
+echo 'SQLANCER_SIGNED_SMALLINT_JSON:' . wp_json_encode( $signed_smallint_row ) . PHP_EOL;
 echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . PHP_EOL;
 `,
 			],
@@ -321,6 +328,28 @@ echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . 
 		).toEqual( {
 			updated_rows: '1',
 			c2: '0',
+		} );
+
+		const signedSmallintJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) =>
+				line.startsWith( 'SQLANCER_SIGNED_SMALLINT_JSON:' )
+			);
+
+		expect( signedSmallintJsonLine ).toBeTruthy();
+		expect(
+			JSON.parse(
+				signedSmallintJsonLine.replace(
+					'SQLANCER_SIGNED_SMALLINT_JSON:',
+					''
+				)
+			)
+		).toEqual( {
+			saved_values: '-32768,1,2,32767',
+			sum_value: '2',
+			sum_distinct_value: '2',
+			row_count: '4',
 		} );
 
 		const memoryDefaultJsonLine = output

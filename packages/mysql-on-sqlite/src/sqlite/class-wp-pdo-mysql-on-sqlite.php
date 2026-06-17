@@ -6542,7 +6542,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				);
 				if ( $is_integer_type ) {
 					if ( ! $is_strict_mode || $ignore_errors ) {
-						return $this->clamp_unsigned_save_value(
+						return $this->clamp_integer_save_value(
 							sprintf( 'CAST(ROUND(%s) AS INTEGER)', $translated_value ),
 							$mysql_data_type,
 							$column_type
@@ -6582,6 +6582,94 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					return $value;
 				}
 				return $translated_value;
+		}
+	}
+
+	/**
+	 * Clamp values saved to integer columns in tolerant writes.
+	 *
+	 * MySQL clips out-of-range integer values in non-strict or IGNORE writes.
+	 * SQLite STRICT integer columns accept any 64-bit integer, so apply MySQL's
+	 * smaller type bounds before saving.
+	 *
+	 * @param string      $value           SQL expression for the already-cast value.
+	 * @param string      $mysql_data_type MySQL data type.
+	 * @param string|null $column_type     Full MySQL column type.
+	 * @return string SQL expression with integer clipping when needed.
+	 */
+	private function clamp_integer_save_value( string $value, string $mysql_data_type, ?string $column_type ): string {
+		$bounds = $this->get_integer_save_bounds( $mysql_data_type, $column_type );
+		if ( null === $bounds ) {
+			return $this->clamp_unsigned_save_value( $value, $mysql_data_type, $column_type );
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %1$s < %2$s THEN %2$s WHEN %1$s > %3$s THEN %3$s ELSE %1$s END',
+			$value,
+			$bounds['min'],
+			$bounds['max']
+		);
+	}
+
+	/**
+	 * Get MySQL integer type bounds that SQLite can represent exactly.
+	 *
+	 * @param string      $mysql_data_type MySQL data type.
+	 * @param string|null $column_type     Full MySQL column type.
+	 * @return array{min:string,max:string}|null Integer bounds, or null when unknown.
+	 */
+	private function get_integer_save_bounds( string $mysql_data_type, ?string $column_type ): ?array {
+		$is_unsigned = null !== $column_type && (
+			str_contains( strtolower( $column_type ), 'unsigned' )
+			|| str_contains( strtolower( $column_type ), 'zerofill' )
+		);
+
+		switch ( $mysql_data_type ) {
+			case 'bool':
+			case 'boolean':
+			case 'tinyint':
+				return $is_unsigned
+					? array(
+						'min' => '0',
+						'max' => '255',
+					)
+					: array(
+						'min' => '-128',
+						'max' => '127',
+					);
+			case 'smallint':
+				return $is_unsigned
+					? array(
+						'min' => '0',
+						'max' => '65535',
+					)
+					: array(
+						'min' => '-32768',
+						'max' => '32767',
+					);
+			case 'mediumint':
+				return $is_unsigned
+					? array(
+						'min' => '0',
+						'max' => '16777215',
+					)
+					: array(
+						'min' => '-8388608',
+						'max' => '8388607',
+					);
+			case 'int':
+			case 'integer':
+				return $is_unsigned
+					? array(
+						'min' => '0',
+						'max' => '4294967295',
+					)
+					: array(
+						'min' => '-2147483648',
+						'max' => '2147483647',
+					);
+			default:
+				return null;
 		}
 	}
 
