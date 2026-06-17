@@ -9,6 +9,8 @@ test.describe( 'SQLancer fuzz regressions', () => {
 		const repoRoot =
 			process.env.GITHUB_WORKSPACE ||
 			process.cwd().replace( /\/tests\/e2e$/, '' );
+		const shellQuote = ( value ) =>
+			"'" + value.replace( /'/g, "'\\''" ) + "'";
 		const output = execFileSync(
 			'npm',
 			[
@@ -18,7 +20,7 @@ test.describe( 'SQLancer fuzz regressions', () => {
 				'env:cli',
 				'--',
 				'eval',
-				`
+				shellQuote( `
 global $wpdb;
 
 $table = $wpdb->prefix . 'sqlancer_t0';
@@ -232,7 +234,7 @@ echo 'SQLANCER_UNSIGNED_ZEROFILL_JSON:' . wp_json_encode( $unsigned_zerofill_row
 echo 'SQLANCER_UNSIGNED_ZEROFILL_AFTER_UPDATE_JSON:' . wp_json_encode( $unsigned_zerofill_after_update_row ) . PHP_EOL;
 echo 'SQLANCER_SIGNED_SMALLINT_JSON:' . wp_json_encode( $signed_smallint_row ) . PHP_EOL;
 echo 'SQLANCER_MEMORY_DEFAULT_JSON:' . wp_json_encode( $memory_default_rows ) . PHP_EOL;
-`,
+` ),
 			],
 			{
 				cwd: repoRoot,
