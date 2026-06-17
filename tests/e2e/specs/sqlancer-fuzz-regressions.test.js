@@ -87,11 +87,22 @@ sdi_sqlancer_query( "CREATE TABLE $count_distinct_table(c0 INT, c1 TEXT)" );
 sdi_sqlancer_query( "INSERT INTO $count_distinct_table(c0, c1) VALUES(1, 'a'), (1, 'a'), (1, 'b'), (NULL, 'b'), (2, NULL)" );
 $count_distinct_row = $wpdb->get_row( "SELECT COUNT(DISTINCT c0, c1) AS tuple_count FROM $count_distinct_table", ARRAY_A );
 
+$rename_table = $wpdb->prefix . 'sqlancer_rename_t0';
+$renamed_table = $wpdb->prefix . 'sqlancer_rename_t2';
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $rename_table" );
+sdi_sqlancer_query( "DROP TABLE IF EXISTS $renamed_table" );
+sdi_sqlancer_query( "CREATE TABLE $rename_table(c0 DOUBLE)" );
+sdi_sqlancer_query( "INSERT INTO $rename_table(c0) VALUES(1565814287)" );
+sdi_sqlancer_query( "ALTER TABLE $rename_table STATS_PERSISTENT 0, RENAME $renamed_table, FORCE, ROW_FORMAT COMPACT" );
+$rename_row = $wpdb->get_row( "SELECT COUNT(*) AS rows_count FROM $renamed_table", ARRAY_A );
+sdi_sqlancer_query( "ALTER TABLE $renamed_table FORCE, ROW_FORMAT DEFAULT, COMPRESSION 'LZ4', INSERT_METHOD NO, PACK_KEYS 0, CHECKSUM 0, ALGORITHM COPY, RENAME TO $rename_table" );
+
 echo 'SQLANCER_JSON:' . wp_json_encode( $row ) . PHP_EOL;
 echo 'SQLANCER_BIT_COUNT_JSON:' . wp_json_encode( $bit_count_row ) . PHP_EOL;
 echo 'SQLANCER_BOOLEAN_JSON:' . wp_json_encode( $boolean_row ) . PHP_EOL;
 echo 'SQLANCER_INDEX_JSON:' . wp_json_encode( $index_row ) . PHP_EOL;
 echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . PHP_EOL;
+echo 'SQLANCER_RENAME_JSON:' . wp_json_encode( $rename_row ) . PHP_EOL;
 `,
 			],
 			{
@@ -184,5 +195,17 @@ echo 'SQLANCER_COUNT_DISTINCT_JSON:' . wp_json_encode( $count_distinct_row ) . P
 		).toEqual( {
 			tuple_count: '2',
 		} );
+
+		const renameJsonLine = output
+			.trim()
+			.split( /\r?\n/ )
+			.find( ( line ) => line.startsWith( 'SQLANCER_RENAME_JSON:' ) );
+
+		expect( renameJsonLine ).toBeTruthy();
+		expect( JSON.parse( renameJsonLine.replace( 'SQLANCER_RENAME_JSON:', '' ) ) ).toEqual(
+			{
+				rows_count: '1',
+			}
+		);
 		} );
 	} );

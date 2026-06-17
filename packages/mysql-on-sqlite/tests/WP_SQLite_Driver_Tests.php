@@ -10683,6 +10683,23 @@ END;
 		$this->assertSame( '2', $result[0]->tuple_count );
 	}
 
+	public function testSqlancerAlterTableBareRenameChangesTableName(): void {
+		$this->assertQuery( 'CREATE TABLE t0(c0 DOUBLE)' );
+		$this->assertQuery( 'INSERT INTO t0(c0) VALUES(1565814287)' );
+		$this->assertQuery( 'ALTER TABLE t0 STATS_PERSISTENT 0, RENAME t2, FORCE, ROW_FORMAT COMPACT' );
+
+		$result = $this->assertQuery( "SELECT COUNT(*) AS tables_count FROM information_schema.TABLES WHERE TABLE_NAME = 't2'" );
+		$this->assertSame( '1', $result[0]->tables_count );
+
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count FROM t2' );
+		$this->assertSame( '1', $result[0]->rows_count );
+
+		$this->assertQuery( "ALTER TABLE t2 FORCE, ROW_FORMAT DEFAULT, COMPRESSION 'LZ4', INSERT_METHOD NO, PACK_KEYS 0, CHECKSUM 0, ALGORITHM COPY, RENAME TO t0" );
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS rows_count FROM t0' );
+
+		$this->assertSame( '1', $result[0]->rows_count );
+	}
+
 	public function testInsertIntoSetSyntax(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (

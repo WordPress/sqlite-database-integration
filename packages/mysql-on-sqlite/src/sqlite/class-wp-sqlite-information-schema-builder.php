@@ -762,6 +762,39 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
+	 * Record an ALTER TABLE rename in the information schema.
+	 *
+	 * @param bool   $table_is_temporary Whether the table is temporary.
+	 * @param string $old_table_name     The old table name.
+	 * @param string $new_table_name     The new table name.
+	 */
+	public function record_rename_table( bool $table_is_temporary, string $old_table_name, string $new_table_name ): void {
+		foreach ( array( 'tables', 'columns', 'statistics', 'table_constraints', 'key_column_usage' ) as $table ) {
+			$this->update_values(
+				$this->get_table_name( $table_is_temporary, $table ),
+				array(
+					'table_name' => $new_table_name,
+				),
+				array(
+					'table_name' => $old_table_name,
+				)
+			);
+		}
+
+		foreach ( array( 'referential_constraints', 'key_column_usage' ) as $table ) {
+			$this->update_values(
+				$this->get_table_name( $table_is_temporary, $table ),
+				array(
+					'referenced_table_name' => $new_table_name,
+				),
+				array(
+					'referenced_table_name' => $old_table_name,
+				)
+			);
+		}
+	}
+
+	/**
 	 * Analyze DROP TABLE statement and record data in the information schema.
 	 *
 	 * @param WP_Parser_Node $node The "dropStatement" AST node with "dropTable" child.

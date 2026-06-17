@@ -2481,6 +2481,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		}
 
 		$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
+		$new_table_name     = $this->get_alter_table_rename_name( $node );
 
 		// Save all column names from the original table.
 		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
@@ -2550,8 +2551,44 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Apply AUTO_INCREMENT = N table option, if any.
 		$this->apply_auto_increment_table_option( $table_is_temporary, $table_name, $node );
 
+		if ( null !== $new_table_name && $new_table_name !== $table_name ) {
+			$this->execute_sqlite_query(
+				sprintf(
+					'ALTER TABLE %s RENAME TO %s',
+					$this->quote_sqlite_identifier( $table_name ),
+					$this->quote_sqlite_identifier( $new_table_name )
+				)
+			);
+			$this->information_schema_builder->record_rename_table( $table_is_temporary, $table_name, $new_table_name );
+		}
+
 		// @TODO: Consider using a "fast path" for ALTER TABLE statements that
 		//        consist only of operations that SQLite's ALTER TABLE supports.
+	}
+
+	/**
+	 * Get the target table name from an ALTER TABLE rename action.
+	 *
+	 * @param  WP_Parser_Node $node The "alterStatement" AST node.
+	 * @return string|null          The target table name, or null when no table rename is present.
+	 */
+	private function get_alter_table_rename_name( WP_Parser_Node $node ): ?string {
+		foreach ( $node->get_descendant_nodes( 'alterListItem' ) as $action ) {
+			$first_token = $action->get_first_child_token();
+			if (
+				! $first_token
+				|| WP_MySQL_Lexer::RENAME_SYMBOL !== $first_token->id
+				|| ! $action->has_child_node( 'tableName' )
+			) {
+				continue;
+			}
+
+			return $this->unquote_sqlite_identifier(
+				$this->translate( $action->get_first_child_node( 'tableName' ) )
+			);
+		}
+
+		return null;
 	}
 
 	/**
