@@ -42715,7 +42715,7 @@ $wp_mysql_on_update$',
 
 		$this->assertStringContainsString( 'pg_catalog.pg_trigger tr', $describe_sql );
 		$this->assertStringContainsString(
-			'tr.tgname = \'__wp_pg_on_update_\' || md5(c.table_schema || CHR(0) || c.table_name || CHR(0) || c.column_name)',
+			'tr.tgname = \'__wp_pg_on_update_\' || md5(convert_to(c.table_schema, \'UTF8\') || decode(\'00\', \'hex\') || convert_to(c.table_name, \'UTF8\') || decode(\'00\', \'hex\') || convert_to(c.column_name, \'UTF8\'))',
 			$describe_sql
 		);
 		$this->assertStringContainsString( '\'on update CURRENT_TIMESTAMP\'', $describe_sql );

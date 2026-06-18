@@ -5436,6 +5436,26 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Get the PostgreSQL SQL expression matching the PHP ON UPDATE trigger hash.
+	 *
+	 * PostgreSQL text values cannot contain NUL bytes, so build the md5 input as
+	 * bytea instead of using CHR(0) text separators.
+	 *
+	 * @param string $table_schema_sql SQL expression for the backend schema.
+	 * @param string $table_name_sql   SQL expression for the table name.
+	 * @param string $column_name_sql  SQL expression for the column name.
+	 * @return string PostgreSQL SQL expression.
+	 */
+	private function get_postgresql_on_update_current_timestamp_trigger_hash_sql( string $table_schema_sql, string $table_name_sql, string $column_name_sql ): string {
+		return sprintf(
+			'md5(convert_to(%1$s, \'UTF8\') || decode(\'00\', \'hex\') || convert_to(%2$s, \'UTF8\') || decode(\'00\', \'hex\') || convert_to(%3$s, \'UTF8\'))',
+			$table_schema_sql,
+			$table_name_sql,
+			$column_name_sql
+		);
+	}
+
+	/**
 	 * Get the metadata schema name for an active temporary table.
 	 *
 	 * @param string $table_name Table name.
@@ -14417,7 +14437,7 @@ $wp_mysql_primary_index_comment$',
 					ON a.attrelid = t.oid
 				INNER JOIN pg_catalog.pg_trigger tr
 					ON tr.tgrelid = t.oid
-					AND tr.tgname = \'__wp_pg_on_update_\' || md5(n.nspname || CHR(0) || t.relname || CHR(0) || a.attname)
+					AND tr.tgname = \'__wp_pg_on_update_\' || ' . $this->get_postgresql_on_update_current_timestamp_trigger_hash_sql( 'n.nspname', 't.relname', 'a.attname' ) . '
 				WHERE n.nspname = ?
 					AND t.relname = ?
 					AND t.relkind IN (\'r\', \'p\')
@@ -44154,10 +44174,15 @@ END',
 			ON tr.tgrelid = t.oid
 		WHERE n.nspname = %1$s.table_schema
 			AND t.relname = %1$s.table_name
-			AND tr.tgname = \'__wp_pg_on_update_\' || md5(%1$s.table_schema || CHR(0) || %1$s.table_name || CHR(0) || %1$s.column_name)
+			AND tr.tgname = \'__wp_pg_on_update_\' || %2$s
 			AND NOT tr.tgisinternal
 	)',
-				$alias
+				$alias,
+				$this->get_postgresql_on_update_current_timestamp_trigger_hash_sql(
+					$alias . '.table_schema',
+					$alias . '.table_name',
+					$alias . '.column_name'
+				)
 			);
 
 			return sprintf(
