@@ -139,6 +139,9 @@ fn sql_modes_mask(sql_modes: &[String]) -> i64 {
             "IGNORE_SPACE" => mask |= SQL_MODE_IGNORE_SPACE,
             "NO_BACKSLASH_ESCAPES" => mask |= SQL_MODE_NO_BACKSLASH_ESCAPES,
             "ANSI_QUOTES" => mask |= SQL_MODE_ANSI_QUOTES,
+            "ANSI" => {
+                mask |= SQL_MODE_PIPES_AS_CONCAT | SQL_MODE_IGNORE_SPACE | SQL_MODE_ANSI_QUOTES
+            }
             _ => {}
         }
     }

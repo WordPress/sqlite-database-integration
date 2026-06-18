@@ -435,6 +435,23 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertSame( 'a"b', $token->get_value() );
 	}
 
+	public function test_composite_ansi_mode_expands_to_lexer_component_modes(): void {
+		// ANSI_QUOTES: a double-quoted sequence is a quoted identifier.
+		$lexer = new WP_MySQL_Lexer( '"foo"', 80038, array( 'ANSI' ) );
+		$this->assertTrue( $lexer->next_token() );
+		$this->assertSame( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, $lexer->get_token()->id );
+
+		// PIPES_AS_CONCAT: "||" is the string concatenation operator.
+		$lexer = new WP_MySQL_Lexer( '||', 80038, array( 'ANSI' ) );
+		$this->assertTrue( $lexer->next_token() );
+		$this->assertSame( WP_MySQL_Lexer::CONCAT_PIPES_SYMBOL, $lexer->get_token()->id );
+
+		// IGNORE_SPACE: whitespace is permitted between a function name and "(".
+		$lexer = new WP_MySQL_Lexer( 'COUNT (1)', 80038, array( 'ANSI' ) );
+		$this->assertTrue( $lexer->next_token() );
+		$this->assertSame( WP_MySQL_Lexer::COUNT_SYMBOL, $lexer->get_token()->id );
+	}
+
 	private function get_token_names( array $token_types ): array {
 		return array_map(
 			function ( $token_type ) {

@@ -3203,6 +3203,44 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( 42, $results[0]->{'my col'} );
 	}
 
+	public function testCompositeAnsiModeEnablesAnsiQuotes() {
+		$this->assertQuery( "SET sql_mode = 'ANSI'" );
+
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('alpha', 'one');"
+		);
+
+		$this->assertQuery( 'SELECT "option_name" AS "name" FROM _options WHERE "option_value" = \'one\';' );
+		$results = $this->last_result;
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'alpha', $results[0]->name );
+	}
+
+	public function testCompositeAnsiModeExpandsToComponentModes() {
+		$this->assertQuery( "SET sql_mode = 'ANSI'" );
+
+		// The composite ANSI mode is retained alongside its component modes.
+		$this->assertTrue( $this->engine->is_sql_mode_active( 'ANSI' ) );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$results = $this->last_result;
+		$this->assertSame(
+			'REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI',
+			$results[0]->mode
+		);
+	}
+
+	public function testCompositeAnsiModeExpandsAlongsideOtherModes() {
+		$this->assertQuery( "SET sql_mode = 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES,ANSI'" );
+
+		// The expanded modes are returned in MySQL's canonical bitmask order.
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$results = $this->last_result;
+		$this->assertSame(
+			'REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI,STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION',
+			$results[0]->mode
+		);
+	}
+
 	public function testCaseInsensitiveSelect() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (

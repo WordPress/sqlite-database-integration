@@ -348,6 +348,17 @@ class WP_MySQL_Lexer {
 				$this->sql_modes |= self::SQL_MODE_NO_BACKSLASH_ESCAPES;
 			} elseif ( 'ANSI_QUOTES' === $sql_mode ) {
 				$this->sql_modes |= self::SQL_MODE_ANSI_QUOTES;
+			} elseif ( 'ANSI' === $sql_mode ) {
+				/*
+				 * Expand the composite ANSI mode into its lexer-relevant components.
+				 * The ANSI mode also implies REAL_AS_FLOAT and ONLY_FULL_GROUP_BY,
+				 * which do not affect the lexer.
+				 *
+				 * See: https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_ansi
+				 */
+				$this->sql_modes |= self::SQL_MODE_PIPES_AS_CONCAT
+					| self::SQL_MODE_IGNORE_SPACE
+					| self::SQL_MODE_ANSI_QUOTES;
 			}
 		}
 
