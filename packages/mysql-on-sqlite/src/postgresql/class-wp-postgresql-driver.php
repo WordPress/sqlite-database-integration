@@ -4700,8 +4700,16 @@ class WP_PostgreSQL_Driver {
 		$definitions = $this->get_postgresql_information_schema_compatibility_view_definitions();
 		$relations   = array_keys( $definitions );
 
+		$statements = array();
+		foreach ( $this->get_direct_information_schema_hidden_table_names() as $table_name ) {
+			$statements[] = sprintf(
+				'DROP TABLE IF EXISTS %s',
+				$this->connection->quote_identifier( $table_name )
+			);
+		}
+
 		$statements = array_merge(
-			$this->get_postgresql_legacy_mysql_metadata_table_drop_statements(),
+			$statements,
 			array(
 				$this->get_postgresql_information_schema_compatibility_schema_statement(),
 				$this->get_postgresql_information_schema_compatibility_schema_comment_statement(),
@@ -4715,24 +4723,6 @@ class WP_PostgreSQL_Driver {
 		$this->postgresql_information_schema_compatibility_view_relations_discovered = true;
 		$this->postgresql_information_schema_compatibility_views_ensured             = true;
 		$this->sync_postgresql_mysql_compatibility_settings();
-	}
-
-	/**
-	 * Get statements that remove legacy PostgreSQL metadata side tables.
-	 *
-	 * @return string[] DROP TABLE statements.
-	 */
-	private function get_postgresql_legacy_mysql_metadata_table_drop_statements(): array {
-		$statements = array();
-
-		foreach ( $this->get_direct_information_schema_hidden_table_names() as $table_name ) {
-			$statements[] = sprintf(
-				'DROP TABLE IF EXISTS %s',
-				$this->connection->quote_identifier( $table_name )
-			);
-		}
-
-		return $statements;
 	}
 
 	/**
