@@ -40449,6 +40449,13 @@ WHERE option_name IN (
 			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
 
+		if (
+			! $this->should_use_postgresql_catalog_metadata()
+			&& in_array( $view, explode( ' ', 'files tablespaces_extensions tablespaces innodb_tables innodb_tablespaces innodb_tablespaces_brief innodb_datafiles innodb_indexes innodb_fields innodb_columns partitions user_privileges schema_privileges table_privileges column_privileges role_table_grants role_column_grants role_routine_grants applicable_roles administrable_role_authorizations enabled_roles views parameters columns_extensions table_constraints_extensions schemata_extensions view_table_usage view_routine_usage st_geometry_columns innodb_lock_waits column_statistics' ), true )
+		) {
+			return $this->get_direct_information_schema_empty_relation_sql( $view );
+		}
+
 		$method = 'get_direct_information_schema_' . $view . '_relation_sql';
 		return method_exists( $this, $method ) ? $this->$method() : null;
 	}
@@ -41660,10 +41667,6 @@ WHERE s.schema_name = \'information_schema\'
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_files_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'files' );
-		}
-
 		return 'SELECT
 	CAST(ts.oid AS bigint) AS "FILE_ID",
 	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "FILE_NAME",
@@ -41712,10 +41715,6 @@ WHERE s.schema_name = \'information_schema\'
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_tablespaces_extensions_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'tablespaces_extensions' );
-		}
-
 		return 'SELECT
 	ts.spcname AS "TABLESPACE_NAME",
 	NULL AS "ENGINE_ATTRIBUTE"
@@ -41731,10 +41730,6 @@ FROM pg_catalog.pg_tablespace ts';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_tablespaces_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'tablespaces' );
-		}
-
 		return 'SELECT
 	ts.spcname AS "TABLESPACE_NAME",
 	\'InnoDB\' AS "ENGINE",
@@ -41754,10 +41749,6 @@ FROM pg_catalog.pg_tablespace ts';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_innodb_tables_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'innodb_tables' );
-		}
-
 		return sprintf(
 			'SELECT
 	CAST(c.oid AS bigint) AS "TABLE_ID",
@@ -41798,10 +41789,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_innodb_tablespaces_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'innodb_tablespaces' );
-		}
-
 		return 'SELECT
 	CAST(ts.oid AS bigint) AS "SPACE",
 	ts.spcname AS "NAME",
@@ -41827,10 +41814,6 @@ FROM pg_catalog.pg_tablespace ts';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_innodb_tablespaces_brief_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'innodb_tablespaces_brief' );
-		}
-
 		return 'SELECT
 	CAST(ts.oid AS bigint) AS "SPACE",
 	ts.spcname AS "NAME",
@@ -41846,10 +41829,6 @@ FROM pg_catalog.pg_tablespace ts';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_innodb_datafiles_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'innodb_datafiles' );
-		}
-
 		return 'SELECT
 	CAST(ts.oid AS bigint) AS "SPACE",
 	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"
@@ -41862,10 +41841,6 @@ FROM pg_catalog.pg_tablespace ts';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_innodb_indexes_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'innodb_indexes' );
-		}
-
 		return sprintf(
 			'SELECT
 	CAST(idx_class.oid AS bigint) AS "INDEX_ID",
@@ -41903,10 +41878,6 @@ WHERE table_class.relkind IN (\'r\', \'p\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_innodb_fields_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'innodb_fields' );
-		}
-
 		return sprintf(
 			'SELECT
 	CAST(idx_class.oid AS bigint) AS "INDEX_ID",
@@ -41938,10 +41909,6 @@ WHERE table_class.relkind IN (\'r\', \'p\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_innodb_columns_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'innodb_columns' );
-		}
-
 		return sprintf(
 			'SELECT
 	CAST(c.oid AS bigint) AS "TABLE_ID",
@@ -41990,10 +41957,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_partitions_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'partitions' );
-		}
-
 		return sprintf(
 			'SELECT
 		\'def\' AS "TABLE_CATALOG",
@@ -42242,10 +42205,6 @@ FROM pg_catalog.pg_available_extensions ae';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_user_privileges_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'user_privileges' );
-		}
-
 		return 'SELECT
 	pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%\'\'\' AS "GRANTEE",
 	\'def\' AS "TABLE_CATALOG",
@@ -42264,10 +42223,6 @@ WHERE d.datname = current_database()';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_schema_privileges_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'schema_privileges' );
-		}
-
 		return sprintf(
 			'SELECT
 	pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%%\'\'\' AS "GRANTEE",
@@ -42291,10 +42246,6 @@ WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_table_privileges_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'table_privileges' );
-		}
-
 		return sprintf(
 			'SELECT
 	pg_catalog.quote_literal(tp.grantee) || \'@\'\'%%\'\'\' AS "GRANTEE",
@@ -42318,10 +42269,6 @@ WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_column_privileges_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'column_privileges' );
-		}
-
 		return sprintf(
 			'SELECT
 	pg_catalog.quote_literal(cp.grantee) || \'@\'\'%%\'\'\' AS "GRANTEE",
@@ -42346,10 +42293,6 @@ WHERE cp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_role_table_grants_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'role_table_grants' );
-		}
-
 		return sprintf(
 			'SELECT
 	rtg.grantor AS "GRANTOR",
@@ -42376,10 +42319,6 @@ WHERE rtg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_role_column_grants_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'role_column_grants' );
-		}
-
 		return sprintf(
 			'SELECT
 	rcg.grantor AS "GRANTOR",
@@ -42407,10 +42346,6 @@ WHERE rcg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_role_routine_grants_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'role_routine_grants' );
-		}
-
 		return sprintf(
 			'SELECT
 	rrg.grantor AS "GRANTOR",
@@ -42439,10 +42374,6 @@ WHERE rrg.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_applicable_roles_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'applicable_roles' );
-		}
-
 		return 'SELECT
 	ar.grantee AS "USER",
 	\'%\' AS "HOST",
@@ -42462,10 +42393,6 @@ FROM information_schema.applicable_roles ar';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_administrable_role_authorizations_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'administrable_role_authorizations' );
-		}
-
 		return 'SELECT
 	ara.grantee AS "USER",
 	\'%\' AS "HOST",
@@ -42485,10 +42412,6 @@ FROM information_schema.administrable_role_authorizations ara';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_enabled_roles_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'enabled_roles' );
-		}
-
 		return 'SELECT
 	er.role_name AS "ROLE_NAME",
 	\'%\' AS "ROLE_HOST",
@@ -42503,10 +42426,6 @@ FROM information_schema.enabled_roles er';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_views_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'views' );
-		}
-
 		return sprintf(
 			'SELECT
 	\'def\' AS "TABLE_CATALOG",
@@ -42636,10 +42555,6 @@ WHERE r.routine_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_parameters_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'parameters' );
-		}
-
 		return sprintf(
 			'SELECT
 	\'def\' AS "SPECIFIC_CATALOG",
@@ -42698,10 +42613,6 @@ WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_columns_extensions_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'columns_extensions' );
-		}
-
 		return sprintf(
 			'SELECT
 	\'def\' AS "TABLE_CATALOG",
@@ -42725,10 +42636,6 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_table_constraints_extensions_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'table_constraints_extensions' );
-		}
-
 		return sprintf(
 			'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
@@ -42754,10 +42661,6 @@ WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_schemata_extensions_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'schemata_extensions' );
-		}
-
 		return sprintf(
 			'SELECT
 	\'def\' AS "CATALOG_NAME",
@@ -42776,10 +42679,6 @@ WHERE s.schema_name = \'information_schema\'
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_view_table_usage_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'view_table_usage' );
-		}
-
 		return sprintf(
 			'SELECT
 	\'def\' AS "VIEW_CATALOG",
@@ -42807,10 +42706,6 @@ WHERE vtu.view_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_view_routine_usage_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'view_routine_usage' );
-		}
-
 		return sprintf(
 			'SELECT
 	\'def\' AS "TABLE_CATALOG",
@@ -42837,10 +42732,6 @@ WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_st_geometry_columns_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'st_geometry_columns' );
-		}
-
 		$geometry_types     = array( 'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geomcollection', 'geometrycollection' );
 		$geometry_domains   = array();
 		$geometry_type_case = array();
@@ -42949,10 +42840,6 @@ FROM pg_catalog.pg_get_keywords() k';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_innodb_lock_waits_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'innodb_lock_waits' );
-		}
-
 		return 'SELECT
 	CAST(waiting.pid AS text) AS "REQUESTING_TRX_ID",
 	pg_catalog.concat_ws(
@@ -44699,10 +44586,6 @@ FROM index_columns',
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_column_statistics_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'column_statistics' );
-		}
-
 		return sprintf(
 			'SELECT
 	%1$s AS "SCHEMA_NAME",
