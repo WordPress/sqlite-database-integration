@@ -5917,6 +5917,23 @@ class WP_MySQL_On_SQLite extends PDO {
 			);
 		}
 
+		/*
+		 * MySQL retains composite SQL modes while enabling their component modes.
+		 * Store both so "@@sql_mode" and individual mode checks match MySQL, even
+		 * though not all resulting modes are respected by the emulation yet.
+		 *
+		 * See:
+		 *   https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sql-mode-combo
+		 *   https://github.com/mysql/mysql-server/blob/8.4/sql/sys_vars.cc
+		 */
+		if ( ( $sql_modes & self::SQL_MODES['ANSI'] ) !== 0 ) {
+			$sql_modes |= self::SQL_MODES['REAL_AS_FLOAT']
+				| self::SQL_MODES['PIPES_AS_CONCAT']
+				| self::SQL_MODES['ANSI_QUOTES']
+				| self::SQL_MODES['IGNORE_SPACE']
+				| self::SQL_MODES['ONLY_FULL_GROUP_BY'];
+		}
+
 		$this->active_sql_modes = $sql_modes;
 	}
 
