@@ -21448,7 +21448,7 @@ ORDER BY t."TRIGGER_NAME"';
 		e."COLLATION_CONNECTION" AS "collation_connection",
 		e."DATABASE_COLLATION" AS "Database Collation"
 	FROM (
-' . $this->get_direct_information_schema_events_relation_sql() . '
+' . $this->get_direct_information_schema_empty_relation_sql( 'events' ) . '
 	) e
 	WHERE e."EVENT_SCHEMA" = ?
 	ORDER BY e."EVENT_NAME"';
@@ -40445,6 +40445,10 @@ WHERE option_name IN (
 			return $this->get_direct_information_schema_status_relation_sql();
 		}
 
+		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) ) {
+			return $this->get_direct_information_schema_empty_relation_sql( $view );
+		}
+
 		$method = 'get_direct_information_schema_' . $view . '_relation_sql';
 		return method_exists( $this, $method ) ? $this->$method() : null;
 	}
@@ -41651,19 +41655,6 @@ WHERE s.schema_name = \'information_schema\'
 	}
 
 	/**
-	 * Build the MySQL-shaped information_schema.EVENTS relation.
-	 *
-	 * PostgreSQL has no built-in event scheduler equivalent, and CREATE EVENT is
-	 * unsupported by this driver. Expose the MySQL metadata surface as an empty
-	 * direct relation instead of maintaining side metadata.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_events_relation_sql(): string {
-		return $this->get_direct_information_schema_empty_relation_sql( 'events' );
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.FILES relation.
 	 *
 	 * @return string Relation SQL.
@@ -41991,28 +41982,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 	AND c.relname NOT IN (%1$s)',
 			$this->get_direct_information_schema_hidden_table_list_sql()
 		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.OPTIMIZER_TRACE relation.
-	 *
-	 * PostgreSQL does not expose MySQL optimizer trace session state.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_optimizer_trace_relation_sql(): string {
-		return $this->get_direct_information_schema_empty_relation_sql( 'optimizer_trace' );
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.PROFILING relation.
-	 *
-	 * PostgreSQL has no equivalent to MySQL's deprecated profiling session table.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_profiling_relation_sql(): string {
-		return $this->get_direct_information_schema_empty_relation_sql( 'profiling' );
 	}
 
 	/**
@@ -43030,28 +42999,6 @@ JOIN pg_catalog.pg_locks blocking
 	AND waiting.objid IS NOT DISTINCT FROM blocking.objid
 	AND waiting.objsubid IS NOT DISTINCT FROM blocking.objsubid
 WHERE NOT waiting.granted';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.RESOURCE_GROUPS relation.
-	 *
-	 * PostgreSQL has no MySQL resource group metadata equivalent.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_resource_groups_relation_sql(): string {
-		return $this->get_direct_information_schema_empty_relation_sql( 'resource_groups' );
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.USER_ATTRIBUTES relation.
-	 *
-	 * PostgreSQL roles do not expose MySQL user attribute JSON metadata.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_user_attributes_relation_sql(): string {
-		return $this->get_direct_information_schema_empty_relation_sql( 'user_attributes' );
 	}
 
 	/**
