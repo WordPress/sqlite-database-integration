@@ -325,6 +325,30 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	public function test_get_value_preserves_non_utf8_bytes_in_string_literals(): void {
+		// A quoted literal may legitimately carry non-UTF-8 bytes (binary or
+		// other-charset payloads). Value extraction must return them unchanged.
+		$raw    = chr( 0xFF ) . chr( 0xFE );
+		$tokens = ( new WP_MySQL_Lexer( "SELECT '$raw'" ) )->remaining_tokens();
+		$this->assertSame( $raw, $tokens[1]->get_value() );
+
+		// A backslash escape strips the backslash and preserves the following non-UTF-8 byte.
+		$tokens = ( new WP_MySQL_Lexer( "SELECT '\\" . chr( 0xE9 ) . "'" ) )->remaining_tokens();
+		$this->assertSame( chr( 0xE9 ), $tokens[1]->get_value() );
+
+		// Valid multibyte UTF-8 still round-trips.
+		$tokens = ( new WP_MySQL_Lexer( "SELECT 'café 🙂'" ) )->remaining_tokens();
+		$this->assertSame( 'café 🙂', $tokens[1]->get_value() );
+	}
+
+	public function test_get_value_unescapes_newlines_and_multibyte_characters(): void {
+		$tokens = ( new WP_MySQL_Lexer( "SELECT '\\\n'" ) )->remaining_tokens();
+		$this->assertSame( "\n", $tokens[1]->get_value() );
+
+		$tokens = ( new WP_MySQL_Lexer( "SELECT '\\🙂'" ) )->remaining_tokens();
+		$this->assertSame( '🙂', $tokens[1]->get_value() );
+	}
+
 	/**
 	 * Test that a chunk boundary splitting a quoted string with a trailing
 	 * backslash does not cause an out-of-bounds string access.
