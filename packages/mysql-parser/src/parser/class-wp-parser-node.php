@@ -1,105 +1,59 @@
 <?php
 
 /**
- * A node in parse tree.
+ * A node in the parse tree.
  *
- * This class represents a node in the parse tree that is produced by WP_Parser.
- * A node corresponds to the related grammar rule that was matched by the parser.
- * Each node can contain children, consisting of other nodes and grammar tokens.
- * In this way, a parser node constitutes a recursive structure that represents
- * a parse (sub)tree at each level of the full grammar tree.
+ * This class represents a node in the parse tree that the parser produces. A
+ * node corresponds to the grammar rule it was reduced by, and holds its
+ * children: other nodes and grammar tokens. A node is thus a recursive
+ * structure representing a parse (sub)tree at each level of the grammar tree.
+ *
+ * It is a generic primitive, independent of any specific grammar.
  */
-class WP_Parser_Node {
+final class WP_Parser_Node {
 	/**
-	 * @TODO: Review and document these properties and their visibility.
+	 * The grammar symbol number of the rule this node was reduced by.
+	 *
+	 * Public for direct, allocation-free access on the parser's hot path.
+	 *
+	 * @var int
 	 */
 	public $rule_id;
-	public $rule_name;
-	protected $children = array();
 
-	public function __construct( $rule_id, $rule_name ) {
+	/**
+	 * The grammar rule name this node was reduced by.
+	 *
+	 * Public for direct, allocation-free access on the parser's hot path.
+	 *
+	 * @var string
+	 */
+	public $rule_name;
+
+	/**
+	 * The node's children, in source order: other nodes and grammar tokens.
+	 *
+	 * @var array<WP_Parser_Node|WP_Parser_Token>
+	 */
+	private $children = array();
+
+	/**
+	 * @param int                                   $rule_id   Grammar symbol number of the rule.
+	 * @param string                                $rule_name Grammar rule name.
+	 * @param array<WP_Parser_Node|WP_Parser_Token> $children  The node's children, in source order.
+	 */
+	public function __construct( $rule_id, $rule_name, array $children = array() ) {
 		$this->rule_id   = $rule_id;
 		$this->rule_name = $rule_name;
-	}
-
-	public function append_child( $node ) {
-		$this->children[] = $node;
+		$this->children  = $children;
 	}
 
 	/**
-	 * Flatten the matched rule fragments as if their children were direct
-	 * descendants of the current rule.
+	 * Append a child node or token to this node.
 	 *
-	 * What are rule fragments?
-	 *
-	 * When we initially parse the grammar file, it has compound rules such
-	 * as this one:
-	 *
-	 *      query ::= EOF | ((simpleStatement | beginWork) ((SEMICOLON_SYMBOL EOF?) | EOF))
-	 *
-	 * Building a parser that can understand such rules is way more complex than building
-	 * a parser that only follows simple rules, so we flatten those compound rules into
-	 * simpler ones. The above rule would be flattened to:
-	 *
-	 *      query ::= EOF | %query0
-	 *      %query0 ::= %%query01 %%query02
-	 *      %%query01 ::= simpleStatement | beginWork
-	 *      %%query02 ::= SEMICOLON_SYMBOL EOF_zero_or_one | EOF
-	 *      EOF_zero_or_one ::= EOF | ε
-	 *
-	 * This factorization happens in "convert-grammar.php".
-	 *
-	 * "Fragments" are intermediate artifacts whose names are not in the original grammar.
-	 * They are extremely useful for the parser, but the API consumer should never have to
-	 * worry about them. Fragment names start with a percent sign ("%").
-	 *
-	 * The code below inlines every fragment back in its parent rule.
-	 *
-	 * We could optimize this. The current $match may be discarded later on so any inlining
-	 * effort here would be wasted. However, inlining seems cheap and doing it bottom-up here
-	 * is **much** easier than reprocessing the parse tree top-down later on.
-	 *
-	 * The following parse tree:
-	 *
-	 * [
-	 *      'query' => [
-	 *          [
-	 *              '%query01' => [
-	 *                  [
-	 *                      'simpleStatement' => [
-	 *                          MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-	 *                      ],
-	 *                      '%query02' => [
-	 *                          [
-	 *                              'simpleStatement' => [
-	 *                                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-	 *                          ]
-	 *                      ],
-	 *                  ]
-	 *              ]
-	 *          ]
-	 *      ]
-	 * ]
-	 *
-	 * Would be inlined as:
-	 *
-	 * [
-	 *      'query' => [
-	 *          [
-	 *              'simpleStatement' => [
-	 *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-	 *              ]
-	 *          ],
-	 *          [
-	 *              'simpleStatement' => [
-	 *                  MySQLToken(MySQLLexer::WITH_SYMBOL, 'WITH')
-	 *              ]
-	 *          ]
-	 *      ]
-	 * ]
+	 * @param WP_Parser_Node|WP_Parser_Token $child The child to append.
 	 */
-	public function merge_fragment( $node ) {
-		$this->children = array_merge( $this->children, $node->children );
+	public function append_child( $child ) {
+		$this->children[] = $child;
 	}
 
 	/**
@@ -203,8 +157,7 @@ class WP_Parser_Node {
 	 * @return WP_Parser_Node|null    The first matching descendant node; null when no descendants are found.
 	 */
 	public function get_first_descendant_node( ?string $rule_name = null ): ?WP_Parser_Node {
-		for ( $i = 0; $i < count( $this->children ); $i++ ) {
-			$child = $this->children[ $i ];
+		foreach ( $this->children as $child ) {
 			if ( ! $child instanceof WP_Parser_Node ) {
 				continue;
 			}
@@ -229,8 +182,7 @@ class WP_Parser_Node {
 	 * @return WP_Parser_Token|null The first matching descendant token; null when no descendants are found.
 	 */
 	public function get_first_descendant_token( ?int $token_id = null ): ?WP_Parser_Token {
-		for ( $i = 0; $i < count( $this->children ); $i++ ) {
-			$child = $this->children[ $i ];
+		foreach ( $this->children as $child ) {
 			if ( $child instanceof WP_Parser_Token ) {
 				if ( null === $token_id || $child->id === $token_id ) {
 					return $child;

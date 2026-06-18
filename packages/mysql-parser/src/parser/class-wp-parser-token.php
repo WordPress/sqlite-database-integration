@@ -3,10 +3,10 @@
 /**
  * A token, representing a leaf in the parse tree.
  *
- * This class represents a token that is consumed and recognized by WP_Parser.
- * In a parse tree, a token represent a leaf, that is, a node without children.
- * It is a simple generic container for a token ID and value, that can be used
- * as a base class and extended for specific use cases.
+ * This class represents a token that the parser consumes. In a parse tree, a
+ * token represents a leaf, that is, a node without children. It is a simple
+ * generic container for a token ID and value, that can be used as a base class
+ * and extended for specific use cases.
  */
 class WP_Parser_Token {
 	/**

@@ -3,10 +3,10 @@
 /**
  * MySQL token.
  *
- * This class represents a MySQL SQL token that is produced by WP_MySQL_Lexer,
- * and consumed by WP_MySQL_Parser during the parsing process.
+ * This class represents a MySQL SQL token that is produced by WP_MySQL_Lexer
+ * and consumed by WP_Parser during the parsing process.
  */
-class WP_MySQL_Token extends WP_Parser_Token {
+final class WP_MySQL_Token extends WP_Parser_Token {
 	/**
 	 * Whether the NO_BACKSLASH_ESCAPES SQL mode is enabled.
 	 *
