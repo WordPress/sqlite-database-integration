@@ -496,6 +496,11 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		}
 		$mysql_type = strtolower( $mysql_type );
 
+		if ( str_starts_with( $mysql_type, 'bit' ) ) {
+			// BIT columns are stored as INTEGER in SQLite.
+			return "b'" . decbin( (int) $default_value ) . "'";
+		}
+
 		/*
 		 * In MySQL, geometry columns can't have a default value.
 		 *

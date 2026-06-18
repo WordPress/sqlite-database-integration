@@ -265,6 +265,39 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
+	public function testReconstructBitDefaultValuesFromMysqlDataTypesCache(): void {
+		$connection = $this->engine->get_connection();
+
+		$connection->query( self::CREATE_DATA_TYPES_CACHE_TABLE_SQL );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'zero', 'bit(1)')" );
+		$connection->query( "INSERT INTO _mysql_data_types_cache (`table`, column_or_index, mysql_type) VALUES ('t', 'five', 'bit(4)')" );
+
+		// BIT columns are stored as INTEGER in SQLite.
+		$connection->query(
+			'
+			CREATE TABLE t (
+				zero INTEGER DEFAULT 0,
+				five INTEGER DEFAULT 5
+			)
+		'
+		);
+
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					"  `zero` bit(1) DEFAULT b'0',",
+					"  `five` bit(4) DEFAULT b'101'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
 	public function testDefaultValueEscaping(): void {
 		$this->engine->get_connection()->query(
 			"
