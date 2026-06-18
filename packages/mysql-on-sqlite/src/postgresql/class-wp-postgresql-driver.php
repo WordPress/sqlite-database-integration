@@ -4450,10 +4450,6 @@ class WP_PostgreSQL_Driver {
 			)
 		);
 
-		$this->ensure_mysql_column_metadata_column( 'character_set_name', 'TEXT' );
-		$this->ensure_mysql_column_metadata_column( 'collation_name', 'TEXT' );
-		$this->ensure_mysql_column_metadata_column( 'column_comment', 'TEXT NOT NULL DEFAULT \'\'' );
-
 		$this->connection->query(
 			sprintf(
 				'CREATE TABLE IF NOT EXISTS %s (
@@ -4474,8 +4470,6 @@ class WP_PostgreSQL_Driver {
 				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 			)
 		);
-		$this->ensure_mysql_index_metadata_column( 'index_comment', 'TEXT NOT NULL DEFAULT \'\'' );
-		$this->ensure_mysql_index_metadata_column( 'collation', 'TEXT' );
 
 		$this->connection->query(
 			sprintf(
@@ -4672,92 +4666,6 @@ class WP_PostgreSQL_Driver {
 				),
 				true
 			);
-	}
-
-	/**
-	 * Add a MySQL column metadata field when upgrading an existing side table.
-	 *
-	 * @param string $column_name Column name.
-	 * @param string $column_type Column type SQL.
-	 */
-	private function ensure_mysql_column_metadata_column( string $column_name, string $column_type ): void {
-		$this->ensure_mysql_metadata_column( self::MYSQL_COLUMN_METADATA_TABLE, $column_name, $column_type );
-	}
-
-	/**
-	 * Add a MySQL index metadata field when upgrading an existing side table.
-	 *
-	 * @param string $column_name Column name.
-	 * @param string $column_type Column type SQL.
-	 */
-	private function ensure_mysql_index_metadata_column( string $column_name, string $column_type ): void {
-		$this->ensure_mysql_metadata_column( self::MYSQL_INDEX_METADATA_TABLE, $column_name, $column_type );
-	}
-
-	/**
-	 * Add a metadata field when upgrading an existing side table.
-	 *
-	 * @param string $metadata_table Metadata side-table name.
-	 * @param string $column_name    Column name.
-	 * @param string $column_type    Column type SQL.
-	 */
-	private function ensure_mysql_metadata_column( string $metadata_table, string $column_name, string $column_type ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
-		if ( $this->mysql_metadata_column_exists( $metadata_table, $column_name ) ) {
-			return;
-		}
-
-		$this->connection->query(
-			sprintf(
-				'ALTER TABLE %s ADD COLUMN %s %s',
-				$this->connection->quote_identifier( $metadata_table ),
-				$this->connection->quote_identifier( $column_name ),
-				$column_type
-			)
-		);
-	}
-
-	/**
-	 * Check whether a metadata side-table field exists.
-	 *
-	 * @param string $metadata_table Metadata side-table name.
-	 * @param string $column_name    Column name.
-	 * @return bool Whether the column exists.
-	 */
-	private function mysql_metadata_column_exists( string $metadata_table, string $column_name ): bool {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		if ( 'sqlite' === $driver_name ) {
-			$stmt = $this->connection->query(
-				sprintf(
-					'PRAGMA table_info(%s)',
-					$this->connection->quote_identifier( $metadata_table )
-				)
-			);
-
-			foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
-				if ( isset( $column['name'] ) && $column_name === $column['name'] ) {
-					return true;
-				}
-			}
-
-			return false;
-		}
-
-		$stmt = $this->connection->query(
-			'SELECT EXISTS (
-				SELECT 1
-				FROM information_schema.columns
-				WHERE table_schema = current_schema()
-					AND table_name = ?
-					AND column_name = ?
-			)',
-			array( $metadata_table, $column_name )
-		);
-
-		return (bool) $stmt->fetchColumn();
 	}
 
 	/**
@@ -5769,19 +5677,6 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Delete index side metadata when the legacy side-table path is active.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $index_name   Index name.
-	 */
-	private function delete_mysql_index_metadata_if_table_exists( string $table_schema, string $table_name, string $index_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->delete_mysql_index_metadata( $table_schema, $table_name, $index_name );
-	}
-
-	/**
 	 * Remove MySQL metadata for a standalone DROP INDEX statement.
 	 *
 	 * @param array $metadata DROP INDEX metadata.
@@ -6185,21 +6080,6 @@ $wp_mysql_on_update$',
 		}
 
 		return true;
-	}
-
-	/**
-	 * Check whether a generated MySQL timestamp default can be reconstructed from PostgreSQL catalogs.
-	 *
-	 * PostgreSQL catalogs preserve the translated expression, not MySQL's
-	 * spelling, so NOW() defaults are recoverable as canonical
-	 * CURRENT_TIMESTAMP defaults.
-	 *
-	 * @param string $column_default MySQL-facing default metadata.
-	 * @return bool Whether the catalog path can preserve the default semantics.
-	 */
-	private function is_postgresql_catalog_recoverable_mysql_current_timestamp_default_metadata( string $column_default ): bool {
-		return $this->is_mysql_current_timestamp_default_metadata( $column_default )
-			|| 1 === preg_match( '/^now(?:\((?:[0-6])?\))?$/i', $column_default );
 	}
 
 	/**
@@ -10999,17 +10879,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Resolve an ALTER TABLE target to the supported backend table name.
-	 *
-	 * @param array{schema: string|null, table: string} $table_reference Parsed table reference.
-	 * @return string Table name.
-	 */
-	private function get_mysql_dbdelta_alter_table_target_name( array $table_reference ): string {
-		$this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
-		return $table_reference['table'];
-	}
-
-	/**
 	 * Check whether ALTER actions contain unsupported MySQL column attributes.
 	 *
 	 * @param WP_MySQL_Token[]                 $tokens Clause token stream.
@@ -13416,131 +13285,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Translate ALTER TABLE MODIFY COLUMN clauses.
-	 *
-	 * Action Scheduler emits comma-separated MODIFY COLUMN clauses for datetime
-	 * null/default adjustments. Treat each one like CHANGE COLUMN without a
-	 * rename and keep unsupported ALTER fragments visible by returning null.
-	 *
-	 * @param string $table_name Table name.
-	 * @param string $clause     ALTER TABLE clause fragment.
-	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
-	 */
-	private function translate_mysql_dbdelta_modify_column_alter_query( string $table_name, string $clause ): ?array {
-		$tokens        = $this->get_mysql_tokens( $clause );
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 0 );
-		if ( null === $statement_end ) {
-			return null;
-		}
-
-		$ranges = $this->split_top_level_mysql_arguments( $tokens, 0, $statement_end );
-		if ( null === $ranges || array() === $ranges ) {
-			return null;
-		}
-
-		$statements = array();
-		$columns    = array();
-		foreach ( $ranges as $range ) {
-			$position = $range['start'];
-			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::MODIFY_SYMBOL !== $tokens[ $position ]->id ) {
-				return null;
-			}
-
-			++$position;
-			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
-				++$position;
-			}
-
-			if ( $position >= $range['end'] ) {
-				return null;
-			}
-
-			$definition = $this->get_mysql_token_range_bytes( $clause, $tokens, $position, $range['end'] );
-			try {
-				$column = $this->translate_mysql_column_definition_fragment( $definition );
-			} catch ( InvalidArgumentException $e ) {
-				return null;
-			}
-			if ( null === $column ) {
-				return null;
-			}
-
-			$statements = $this->prepend_mysql_column_helper_type_statements( $statements, $column );
-
-			$column_name                = $column['metadata']['name'];
-			$column_type                = $this->get_translated_column_type_from_definition_line( $column['sql'] );
-			$preserve_existing_identity = $this->should_preserve_existing_identity_integer_column_change(
-				'public',
-				$table_name,
-				$column_name,
-				$column['metadata']
-			);
-			if ( $this->should_drop_identity_for_non_auto_increment_column_change( 'public', $table_name, $column_name, $column['metadata'] ) ) {
-				$statements[] = sprintf(
-					'ALTER TABLE %s ALTER COLUMN %s DROP IDENTITY IF EXISTS',
-					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier( $column_name )
-				);
-			}
-			if ( '' !== $column_type && ! $preserve_existing_identity ) {
-				$statements[] = sprintf(
-					'ALTER TABLE %s ALTER COLUMN %s TYPE %s',
-					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier( $column_name ),
-					$column_type
-				);
-			}
-
-			$statements[] = sprintf(
-				'ALTER TABLE %s ALTER COLUMN %s %s NOT NULL',
-				$this->connection->quote_identifier( $table_name ),
-				$this->connection->quote_identifier( $column_name ),
-				'NO' === ( $column['metadata']['nullable'] ?? 'YES' ) ? 'SET' : 'DROP'
-			);
-
-			$default_sql = $this->get_translated_column_default_from_definition_line( $column['sql'] );
-			if ( ! $preserve_existing_identity ) {
-				if ( null !== $default_sql ) {
-					$statements[] = sprintf(
-						'ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s',
-						$this->connection->quote_identifier( $table_name ),
-						$this->connection->quote_identifier( $column_name ),
-						$default_sql
-					);
-				} else {
-					$statements[] = sprintf(
-						'ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT',
-						$this->connection->quote_identifier( $table_name ),
-						$this->connection->quote_identifier( $column_name )
-					);
-				}
-			}
-
-			if ( $this->should_add_identity_for_auto_increment_column_change( 'public', $table_name, $column_name, $column['metadata'] ) ) {
-				$statements[] = sprintf(
-					'ALTER TABLE %s ALTER COLUMN %s ADD GENERATED BY DEFAULT AS IDENTITY',
-					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier( $column_name )
-				);
-			}
-
-			$columns[] = array(
-				'old_column' => $column_name,
-				'column'     => $column['metadata'],
-			);
-		}
-
-		return array(
-			'statements' => $statements,
-			'metadata'   => array(
-				'operation' => 'change_columns',
-				'table'     => $table_name,
-				'columns'   => $columns,
-			),
-		);
-	}
-
-	/**
 	 * Check whether an AUTO_INCREMENT CHANGE COLUMN should leave PostgreSQL identity DDL untouched.
 	 *
 	 * @param string $table_schema Table schema.
@@ -15070,33 +14814,6 @@ $wp_mysql_primary_index_comment$',
 				WP_MySQL_Lexer::NOW_SYMBOL === $token->id
 				&& 'CURRENT_TIMESTAMP' === strtoupper( $token->get_value() )
 			);
-	}
-
-	/**
-	 * Parse a comma-separated list of simple MySQL identifiers.
-	 *
-	 * @param string $identifiers Identifier list.
-	 * @return string[]|null Identifier values, or null when unsupported.
-	 */
-	private function parse_mysql_identifier_csv( string $identifiers ): ?array {
-		$values = array();
-
-		foreach ( explode( ',', $identifiers ) as $identifier ) {
-			$identifier = trim( $identifier );
-			if ( preg_match( '/^`([^`]+)`$/', $identifier, $matches ) ) {
-				$values[] = $matches[1];
-				continue;
-			}
-
-			if ( preg_match( '/^[A-Za-z0-9_]+$/', $identifier ) ) {
-				$values[] = $identifier;
-				continue;
-			}
-
-			return null;
-		}
-
-		return $values;
 	}
 
 	/**
@@ -17508,58 +17225,6 @@ $wp_mysql_primary_index_comment$',
 
 		$position = $after_close;
 		return $values;
-	}
-
-	/**
-	 * Parse a safe simple WHERE filter for dynamic SHOW result sets.
-	 *
-	 * @param WP_MySQL_Token[]    $tokens          MySQL lexer token stream.
-	 * @param int                 $position        WHERE token position.
-	 * @param array<string,string> $allowed_columns Allowed output columns keyed by lower-case name.
-	 * @param string[]            $numeric_columns Output columns that may compare against an unsigned integer literal.
-	 * @return array{column: string, operator: string, value: string}|null Parsed filter, or null when unsupported.
-	 */
-	private function get_mysql_show_where_filter( array $tokens, int $position, array $allowed_columns, array $numeric_columns = array() ): ?array {
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ], $tokens[ $position + 3 ] )
-			|| WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id
-			|| ! $this->is_at_mysql_query_end( $tokens, $position + 4 )
-		) {
-			return null;
-		}
-
-		$column = $this->get_mysql_show_output_column_name( $tokens[ $position + 1 ], $allowed_columns );
-		if ( null === $column ) {
-			return null;
-		}
-
-		$operator_token = $tokens[ $position + 2 ];
-		$value_token    = $tokens[ $position + 3 ];
-		if ( WP_MySQL_Lexer::EQUAL_OPERATOR === $operator_token->id ) {
-			if ( $this->is_mysql_quoted_text_token( $value_token ) ) {
-				$value = $value_token->get_value();
-			} elseif (
-				in_array( $column, $numeric_columns, true )
-				&& $this->is_mysql_unsigned_integer_token( $value_token )
-			) {
-				$value = $value_token->get_value();
-			} else {
-				return null;
-			}
-
-			$operator = '=';
-		} elseif ( WP_MySQL_Lexer::LIKE_SYMBOL === $operator_token->id && $this->is_mysql_quoted_text_token( $value_token ) ) {
-			$operator = 'like';
-			$value    = $value_token->get_value();
-		} else {
-			return null;
-		}
-
-		return array(
-			'column'   => $column,
-			'operator' => $operator,
-			'value'    => $value,
-		);
 	}
 
 	/**
@@ -33299,48 +32964,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Append metadata-derived defaults for omitted NOT NULL columns in non-strict DML.
-	 *
-	 * @param string     $table_name      Table name.
-	 * @param string[]   $columns         DML columns, mutated when defaults are appended.
-	 * @param string[]   $values          DML values, mutated when defaults are appended.
-	 * @param array|null $column_metadata Optional ordered column metadata rows.
-	 */
-	private function append_non_strict_dml_defaults_for_omitted_columns( string $table_name, array &$columns, array &$values, ?array $column_metadata = null ): void {
-		if ( $this->is_mysql_strict_sql_mode_active() ) {
-			return;
-		}
-
-		$supplied_columns = array();
-		foreach ( $columns as $column ) {
-			$supplied_columns[ strtolower( (string) $column ) ] = true;
-		}
-
-		if ( null === $column_metadata ) {
-			if ( null === $column_metadata ) {
-				$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
-			}
-		}
-
-		foreach ( $column_metadata as $column_metadata_row ) {
-			$column_name = (string) ( $column_metadata_row['column_name'] ?? '' );
-			if ( '' === $column_name || isset( $supplied_columns[ strtolower( $column_name ) ] ) ) {
-				continue;
-			}
-
-			$default_sql = $this->get_non_strict_dml_default_sql_for_column( $column_metadata_row );
-			if ( null === $default_sql ) {
-				continue;
-			}
-
-			$columns[] = $column_name;
-			$values[]  = $default_sql;
-
-			$supplied_columns[ strtolower( $column_name ) ] = true;
-		}
-	}
-
-	/**
 	 * Append metadata-derived defaults to every VALUES row for omitted NOT NULL columns.
 	 *
 	 * @param string     $table_name      Table name.
@@ -33756,15 +33379,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Validate a strict-mode MySQL DATE literal.
-	 *
-	 * @param string $value Unquoted literal value.
-	 */
-	private function validate_strict_mysql_dml_date_value( string $value ): void {
-		$this->get_strict_mysql_dml_date_storage_value( $value );
-	}
-
-	/**
 	 * Get strict-mode storage value for a MySQL DATETIME/TIMESTAMP literal.
 	 *
 	 * @param string $base_type Base MySQL column type.
@@ -33790,16 +33404,6 @@ WHERE option_name IN (
 
 		$this->validate_strict_mysql_dml_date_parts( $base_type, $value, $parts['year'], $parts['month'], $parts['day'] );
 		return $normalized_value;
-	}
-
-	/**
-	 * Validate a strict-mode MySQL DATETIME/TIMESTAMP literal.
-	 *
-	 * @param string $base_type Base MySQL column type.
-	 * @param string $value     Unquoted literal value.
-	 */
-	private function validate_strict_mysql_dml_datetime_value( string $base_type, string $value ): void {
-		$this->get_strict_mysql_dml_datetime_storage_value( $base_type, $value );
 	}
 
 	/**
@@ -35054,23 +34658,6 @@ WHERE option_name IN (
 
 		return $constant_value['is_null']
 			|| $this->is_mysql_intrinsically_valid_canonical_temporal_value( $constant_value['value'] );
-	}
-
-	/**
-	 * Get a known-valid canonical temporal text expression value.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First value token position.
-	 * @param int              $end    Final value token position, exclusive.
-	 * @return string|null Temporal value, or null when not known-valid canonical temporal text.
-	 */
-	private function get_mysql_intrinsically_valid_temporal_text_expression_value( array $tokens, int $start, int $end ): ?string {
-		$constant_value = $this->get_mysql_constant_string_expression_value( $tokens, $start, $end );
-		if ( null === $constant_value || $constant_value['is_null'] ) {
-			return null;
-		}
-
-		return $this->is_mysql_intrinsically_valid_canonical_temporal_value( $constant_value['value'] ) ? $constant_value['value'] : null;
 	}
 
 	/**
@@ -40238,18 +39825,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Check whether a JOIN predicate range is simple enough for source rewriting.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First token position.
-	 * @param int              $end    Final token position, exclusive.
-	 * @return bool Whether the range is supported.
-	 */
-	private function is_direct_information_schema_join_predicate_range_supported( array $tokens, int $start, int $end ): bool {
-		return null !== $this->get_direct_information_schema_join_predicate_range_data( $tokens, $start, $end, array(), array() );
-	}
-
-	/**
 	 * Get validation and replacement data for a supported information_schema JOIN predicate.
 	 *
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
@@ -41855,28 +41430,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Get PostgreSQL view-install statements for catalog-backed information_schema relations.
-	 *
-	 * @return string[] Schema/view creation statements.
-	 */
-	private function get_postgresql_information_schema_compatibility_view_statements(): array {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return array();
-		}
-
-		$statements = array(
-			$this->get_postgresql_information_schema_compatibility_schema_statement(),
-			$this->get_postgresql_information_schema_compatibility_schema_comment_statement(),
-		);
-
-		foreach ( $this->get_postgresql_information_schema_compatibility_view_definitions() as $definition ) {
-			$statements[] = $definition;
-		}
-
-		return $statements;
-	}
-
-	/**
 	 * Get the PostgreSQL compatibility schema creation statement.
 	 *
 	 * @return string Schema creation statement.
@@ -42029,10 +41582,6 @@ WHERE option_name IN (
 
 		try {
 			foreach ( $this->get_direct_information_schema_relation_names() as $relation ) {
-				if ( in_array( $relation, $this->get_postgresql_information_schema_compatibility_view_excluded_relations(), true ) ) {
-					continue;
-				}
-
 				$relation_sql = in_array( $relation, array( 'global_variables', 'session_variables' ), true )
 					? $this->get_postgresql_information_schema_variables_compatibility_relation_sql(
 						'global_variables' === $relation ? 'global' : 'session'
@@ -42054,15 +41603,6 @@ WHERE option_name IN (
 		}
 
 		return $definitions;
-	}
-
-	/**
-	 * Get direct information_schema relations excluded from PostgreSQL compatibility views.
-	 *
-	 * @return string[] Lowercase relation names.
-	 */
-	private function get_postgresql_information_schema_compatibility_view_excluded_relations(): array {
-		return array();
 	}
 
 	/**
@@ -42946,13 +42486,9 @@ WHERE option_name IN (
 	 * @return string[] Table names.
 	 */
 	private function get_direct_information_schema_hidden_table_names(): array {
-		return array(
-			self::MYSQL_COLUMN_METADATA_TABLE,
-			self::MYSQL_INDEX_METADATA_TABLE,
-			self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			self::MYSQL_CHECK_METADATA_TABLE,
-			self::MYSQL_CHARSET_METADATA_TABLE,
-			self::MYSQL_TABLE_METADATA_TABLE,
+		return array_merge(
+			$this->get_mysql_schema_side_metadata_table_names(),
+			array( self::MYSQL_CHARSET_METADATA_TABLE )
 		);
 	}
 
@@ -52002,73 +51538,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
-	 * Parse a parenthesized single-row MySQL VALUES list.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position Current token position, updated on success.
-	 * @return array{values: string[], ranges: array[]}|null Translated SQL values and token ranges, or null when unsupported.
-	 */
-	private function parse_mysql_value_list_with_ranges( array $tokens, int &$position ): ?array {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		++$position;
-		$values      = array();
-		$ranges      = array();
-		$value_start = $position;
-		$depth       = 0;
-
-		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $position ]->id ) {
-			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-				++$depth;
-				++$position;
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $position ]->id ) {
-				if ( 0 === $depth ) {
-					if ( $value_start === $position ) {
-						return null;
-					}
-
-					$values[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $position );
-					$ranges[] = array(
-						'start' => $value_start,
-						'end'   => $position,
-					);
-					++$position;
-					return array(
-						'values' => $values,
-						'ranges' => $ranges,
-					);
-				}
-
-				--$depth;
-				++$position;
-				continue;
-			}
-
-			if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
-				if ( $value_start === $position ) {
-					return null;
-				}
-
-				$values[]    = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $value_start, $position );
-				$ranges[]    = array(
-					'start' => $value_start,
-					'end'   => $position,
-				);
-				$value_start = $position + 1;
-			}
-
-			++$position;
-		}
-
-		return null;
-	}
-
-	/**
 	 * Locate the top-level ON DUPLICATE KEY UPDATE clause.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -58176,66 +57645,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 		$items = $this->split_top_level_mysql_arguments( $tokens, $start + 2, $end );
 		return null !== $items && ! empty( $items );
-	}
-
-	/**
-	 * Translate a safe DML ORDER BY clause.
-	 *
-	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
-	 * @param int              $start      ORDER token position.
-	 * @param int              $end        Final clause token position, exclusive.
-	 * @param string           $table_name Table name.
-	 * @param string|null      $alias      Optional table alias.
-	 * @return string|null PostgreSQL ORDER BY clause SQL, or null when unsupported.
-	 */
-	private function translate_simple_dml_order_by_clause_to_postgresql( array $tokens, int $start, int $end, string $table_name, ?string $alias ): ?string {
-		if (
-			$start + 2 >= $end
-			|| WP_MySQL_Lexer::ORDER_SYMBOL !== ( $tokens[ $start ]->id ?? null )
-			|| WP_MySQL_Lexer::BY_SYMBOL !== ( $tokens[ $start + 1 ]->id ?? null )
-		) {
-			return null;
-		}
-
-		$items    = array();
-		$position = $start + 2;
-		while ( $position < $end ) {
-			$item_start = $position;
-			$reference  = $this->parse_mysql_column_reference( $tokens, $position, $end );
-			if ( null === $reference ) {
-				return null;
-			}
-
-			if (
-				null !== $reference['qualifier']
-				&& ! $this->is_mysql_dml_table_qualifier( $reference['qualifier'], $table_name, $alias )
-			) {
-				return null;
-			}
-
-			$position = $reference['end'];
-			if (
-				$position < $end
-				&& (
-					WP_MySQL_Lexer::ASC_SYMBOL === ( $tokens[ $position ]->id ?? null )
-					|| WP_MySQL_Lexer::DESC_SYMBOL === ( $tokens[ $position ]->id ?? null )
-				)
-			) {
-				++$position;
-			}
-
-			$items[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $item_start, $position );
-			if ( $position === $end ) {
-				break;
-			}
-
-			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
-				return null;
-			}
-			++$position;
-		}
-
-		return empty( $items ) ? null : ' ORDER BY ' . implode( ', ', $items );
 	}
 
 	/**

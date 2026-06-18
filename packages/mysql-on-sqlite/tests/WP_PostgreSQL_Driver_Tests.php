@@ -22346,19 +22346,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'public'
 				);
 			},
-			'ensure_mysql_metadata_column'                 => function (): void {
-				$this->ensure_mysql_metadata_column(
-					WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-					'catalog_side_column',
-					'TEXT'
-				);
-			},
-			'mysql_metadata_column_exists'                 => function (): void {
-				$this->mysql_metadata_column_exists(
-					WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-					'catalog_side_column'
-				);
-			},
 			'insert_mysql_column_metadata'                 => function (): void {
 				$this->insert_mysql_column_metadata( 'public', 'catalog_side_table', array( 'name' => 'id' ) );
 			},
@@ -22390,9 +22377,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			},
 			'delete_mysql_index_metadata'                  => function (): void {
 				$this->delete_mysql_index_metadata( 'public', 'catalog_side_table', 'id_idx' );
-			},
-			'delete_mysql_index_metadata_if_table_exists'  => function (): void {
-				$this->delete_mysql_index_metadata_if_table_exists( 'public', 'catalog_side_table', 'id_idx' );
 			},
 			'rename_mysql_index_metadata'                  => function (): void {
 				$this->rename_mysql_index_metadata( 'public', 'catalog_side_table', 'old_idx', 'id_idx' );
@@ -34405,13 +34389,6 @@ $wp_mysql_on_update$',
 			$driver,
 			WP_PostgreSQL_Driver::class
 		);
-		$get_statements  = Closure::bind(
-			function (): array {
-				return $this->get_postgresql_information_schema_compatibility_view_statements();
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
 		$get_relations   = Closure::bind(
 			function (): array {
 				return $this->get_direct_information_schema_relation_names();
@@ -34420,7 +34397,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::class
 		);
 		$definitions     = $get_definitions();
-		$statements      = $get_statements();
 		$relations       = $get_relations();
 		$metadata_tables = array(
 			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
@@ -34449,15 +34425,6 @@ $wp_mysql_on_update$',
 		$this->assertArrayHasKey( 'session_status', $definitions );
 		$this->assertArrayHasKey( 'session_variables', $definitions );
 		$this->assertArrayHasKey( 'global_variables', $definitions );
-		$this->assertSame(
-			'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"',
-			$statements[0]
-		);
-		$this->assertSame(
-			'COMMENT ON SCHEMA "__wp_mysql_information_schema" IS \'wordpress/mysql-on-sqlite:postgresql-information-schema-compatibility:v1\'',
-			$statements[1]
-		);
-		$this->assertCount( count( $definitions ) + 2, $statements );
 
 		foreach ( $definitions as $relation => $definition ) {
 			$this->assertStringStartsWith(
