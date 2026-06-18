@@ -34576,9 +34576,9 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Tests fresh drivers discover already-installed PostgreSQL information_schema compatibility views.
+	 * Tests fresh drivers refresh partial PostgreSQL information_schema compatibility views.
 	 */
-	public function test_direct_information_schema_sources_discover_existing_postgresql_compatibility_views(): void {
+	public function test_direct_information_schema_sources_refresh_partial_postgresql_compatibility_views(): void {
 		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
 			/**
 			 * Captured query SQL strings.
@@ -34633,16 +34633,16 @@ $wp_mysql_on_update$',
 		$tables_sql   = $this->get_last_single_postgresql_sql( $driver );
 
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', $captured_sql );
-		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', $captured_sql );
+		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', $captured_sql );
 		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $tables_sql );
 		$this->assertStringNotContainsString( 'FROM information_schema.tables t', $tables_sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $tables_sql );
 	}
 
 	/**
-	 * Tests fresh drivers ignore unversioned PostgreSQL information_schema compatibility views.
+	 * Tests fresh drivers refresh unversioned PostgreSQL information_schema compatibility views.
 	 */
-	public function test_direct_information_schema_sources_ignore_unversioned_postgresql_compatibility_views(): void {
+	public function test_direct_information_schema_sources_refresh_unversioned_postgresql_compatibility_views(): void {
 		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
 			/**
 			 * Captured query SQL strings.
@@ -34693,9 +34693,9 @@ $wp_mysql_on_update$',
 		$tables_sql   = $this->get_last_single_postgresql_sql( $driver );
 
 		$this->assertStringContainsString( "obj_description(n.oid, 'pg_namespace')", $captured_sql );
-		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', $captured_sql );
-		$this->assertStringNotContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $tables_sql );
-		$this->assertStringContainsString( 'FROM information_schema.tables t', $tables_sql );
+		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', $captured_sql );
+		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $tables_sql );
+		$this->assertStringNotContainsString( 'FROM information_schema.tables t', $tables_sql );
 	}
 
 	/**
@@ -34794,9 +34794,9 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Tests partial compatibility view discovery syncs settings used by those views.
+	 * Tests partial compatibility view refresh syncs settings used by those views.
 	 */
-	public function test_direct_information_schema_sources_sync_settings_after_discovering_partial_postgresql_compatibility_views(): void {
+	public function test_direct_information_schema_sources_sync_settings_after_refreshing_partial_postgresql_compatibility_views(): void {
 		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
 			/**
 			 * Captured query SQL strings.
@@ -34885,7 +34885,7 @@ $wp_mysql_on_update$',
 			$connection->get_setting_params()
 		);
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', implode( "\n", $connection->get_queries() ) );
-		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', implode( "\n", $connection->get_queries() ) );
+		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', implode( "\n", $connection->get_queries() ) );
 		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $sql );
 		$this->assertStringNotContainsString( 'FROM information_schema.tables', $sql );
 	}

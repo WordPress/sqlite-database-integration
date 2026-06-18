@@ -40418,6 +40418,20 @@ WHERE option_name IN (
 			$this->discover_postgresql_information_schema_compatibility_view_relations();
 		}
 
+		if (
+			$this->should_use_postgresql_catalog_metadata()
+			&& ! $this->postgresql_information_schema_compatibility_views_ensured
+		) {
+			$logged_queries = $this->last_postgresql_queries;
+			try {
+				$this->ensure_postgresql_information_schema_compatibility_views();
+			} catch ( Throwable $e ) {
+				// Keep direct catalog rewrites available for restricted or fixture connections.
+			} finally {
+				$this->last_postgresql_queries = $logged_queries;
+			}
+		}
+
 		if ( ! isset( $this->postgresql_information_schema_compatibility_view_relations[ $relation ] ) ) {
 			return null;
 		}
