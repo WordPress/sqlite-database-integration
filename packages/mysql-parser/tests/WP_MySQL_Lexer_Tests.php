@@ -85,6 +85,25 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	public function test_ignore_space_does_not_absorb_whitespace_into_function_identifiers(): void {
+		// COUNT is a function keyword (SYM_FN). Under IGNORE_SPACE, "COUNT" that is
+		// not followed by "(" is a plain identifier, and its byte range must exclude
+		// the trailing whitespace that the mode skips while peeking for "(".
+		foreach ( array( 'SELECT COUNT FROM t', "SELECT COUNT\t\n FROM t" ) as $sql ) {
+			$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+			$this->assertSame( 'IDENTIFIER', $tokens[1]->get_name(), $sql );
+			$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
+			$this->assertSame( 5, $tokens[1]->length, $sql );
+		}
+
+		// When "(" does follow across whitespace, COUNT stays a function keyword and
+		// its byte range still excludes the whitespace.
+		$tokens = ( new WP_MySQL_Lexer( 'SELECT COUNT (1)', 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 5, $tokens[1]->length );
+		$this->assertNotSame( 'IDENTIFIER', $tokens[1]->get_name() );
+		$this->assertSame( 'OPEN_PAR_SYMBOL', $tokens[2]->get_name() );
+	}
+
 	public function test_at_name_splits_into_at_and_ident(): void {
 		$tokens = ( new WP_MySQL_Lexer( 'SELECT @var1' ) )->remaining_tokens();
 		$this->assertSame( 'AT_SIGN_SYMBOL', $tokens[1]->get_name() );
