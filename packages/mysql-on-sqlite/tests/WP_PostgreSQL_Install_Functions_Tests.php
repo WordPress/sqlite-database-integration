@@ -272,9 +272,10 @@ class WP_PostgreSQL_Install_Catalog_Test_Connection extends WP_PostgreSQL_Connec
 				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 			) as $metadata_table
 		) {
-			if ( 1 === preg_match( '/\b(?:CREATE|ALTER|DROP|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ) ) {
+			if ( 1 === preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ) ) {
 				throw new RuntimeException( 'Hidden metadata table SQL was not expected during PostgreSQL install.' );
 			}
 		}
@@ -356,11 +357,17 @@ PHP
 				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 			) as $metadata_table
 		) {
+			$this->assertStringContainsString(
+				'DROP TABLE IF EXISTS "' . $metadata_table . '"',
+				$sql,
+				$metadata_table
+			);
 			$this->assertSame(
 				0,
-				preg_match( '/\b(?:CREATE|ALTER|DROP|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
+				preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
 				$metadata_table
 			);
 		}
@@ -418,9 +425,10 @@ class WP_PostgreSQL_Install_View_Reuse_Test_Connection extends WP_PostgreSQL_Con
 				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 			) as $metadata_table
 		) {
-			if ( 1 === preg_match( '/\b(?:CREATE|ALTER|DROP|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ) ) {
+			if ( 1 === preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ) ) {
 				throw new RuntimeException( 'Hidden metadata table SQL was not expected during PostgreSQL install.' );
 			}
 		}
@@ -528,11 +536,17 @@ PHP
 				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 			) as $metadata_table
 		) {
+			$this->assertStringContainsString(
+				'DROP TABLE IF EXISTS "' . $metadata_table . '"',
+				$sql,
+				$metadata_table
+			);
 			$this->assertSame(
 				0,
-				preg_match( '/\b(?:CREATE|ALTER|DROP|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
+				preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
 				$metadata_table
 			);
 		}

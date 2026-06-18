@@ -33335,6 +33335,8 @@ $wp_mysql_on_update$',
 		$driver->ensure_postgresql_information_schema_compatibility_views();
 		$setup_sql = implode( "\n", $connection->get_queries() );
 
+		$this->assertStringContainsString( 'DROP TABLE IF EXISTS "__wp_postgresql_mysql_table_metadata"', $setup_sql );
+		$this->assertStringContainsString( 'DROP TABLE IF EXISTS "__wp_postgresql_mysql_column_metadata"', $setup_sql );
 		$this->assertStringContainsString( 'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"', $setup_sql );
 		$this->assertStringContainsString( 'COMMENT ON SCHEMA "__wp_mysql_information_schema"', $setup_sql );
 		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', $setup_sql );
@@ -33896,6 +33898,8 @@ $wp_mysql_on_update$',
 
 		$ensure_sql = implode( "\n", $connection->get_queries() );
 		$this->assertStringNotContainsString( 'SELECT c.relname', $ensure_sql );
+		$this->assertStringContainsString( 'DROP TABLE IF EXISTS "__wp_postgresql_mysql_table_metadata"', $ensure_sql );
+		$this->assertStringContainsString( 'DROP TABLE IF EXISTS "__wp_postgresql_mysql_column_metadata"', $ensure_sql );
 		$this->assertStringContainsString( 'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"', $ensure_sql );
 		$this->assertStringContainsString( 'COMMENT ON SCHEMA "__wp_mysql_information_schema"', $ensure_sql );
 		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', $ensure_sql );
