@@ -24,21 +24,12 @@ if ( ! class_exists( 'WP_PostgreSQL_Driver', false ) ) {
  * of reusing the SQLite file-backed connection path.
  */
 class WP_PostgreSQL_DB extends wpdb {
-	const MYSQL_CHARSET_METADATA_TABLE = '__wp_postgresql_mysql_charset_metadata';
-
 	/**
 	 * Database handle.
 	 *
 	 * @var WP_PostgreSQL_Driver|null
 	 */
 	protected $dbh;
-
-	/**
-	 * MySQL charset metadata for PostgreSQL temporary tables.
-	 *
-	 * @var array
-	 */
-	private $postgresql_temporary_charset_metadata = array();
 
 	/**
 	 * Request-local MySQL charset metadata keyed by normalized table name.
@@ -53,13 +44,6 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @var array
 	 */
 	private $postgresql_column_length_cache = array();
-
-	/**
-	 * Cached existence state for the PostgreSQL MySQL charset metadata table.
-	 *
-	 * @var bool|null
-	 */
-	private $postgresql_charset_metadata_table_exists = null;
 
 	/**
 	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
@@ -563,7 +547,10 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
-	 * Store MySQL charset metadata for a successfully created PostgreSQL table.
+	 * Refresh MySQL charset metadata caches for a created PostgreSQL table.
+	 *
+	 * Temporary and permanent table metadata is loaded back through the driver's
+	 * SHOW FULL COLUMNS catalog path.
 	 *
 	 * @param string $query Original MySQL CREATE TABLE query.
 	 */
@@ -586,89 +573,15 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		if ( $this->is_postgresql_create_temporary_table_query( $query ) ) {
-			try {
-				$metadata = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $query );
-				foreach ( $metadata as $table ) {
-					if ( empty( $table['table_name'] ) ) {
-						continue;
-					}
-
-					$table_name = (string) $table['table_name'];
-					$tablekey   = $this->get_postgresql_metadata_key( $table_name );
-					$this->clear_postgresql_table_charset_cache( array( $table_name ) );
-
-					$rows = array();
-					foreach ( (array) ( $table['columns'] ?? array() ) as $column ) {
-						$rows[] = array(
-							'column_name'    => (string) $column['name'],
-							'column_type'    => (string) $column['type'],
-							'collation_name' => $column['collation'],
-						);
-					}
-
-					$columns = $this->format_postgresql_charset_column_rows( $rows );
-					if ( ! empty( $columns ) ) {
-						$this->postgresql_temporary_charset_metadata[ $tablekey ] = $columns;
-					}
-				}
-			} catch ( Throwable $e ) {
-				return;
-			}
 			return;
 		}
 
 		try {
 			$metadata = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $query );
-			if ( empty( $metadata ) ) {
-				return;
-			}
-
-			$this->ensure_postgresql_charset_metadata_table();
-
 			foreach ( $metadata as $table ) {
-				if ( empty( $table['table_name'] ) ) {
-					continue;
+				if ( ! empty( $table['table_name'] ) ) {
+					$this->clear_postgresql_table_charset_cache( array( (string) $table['table_name'] ) );
 				}
-
-				$table_name = (string) $table['table_name'];
-				$this->dbh->get_connection()->query(
-					'DELETE FROM ' . $this->quote_identifier( self::MYSQL_CHARSET_METADATA_TABLE ) . '
-					WHERE table_schema = current_schema()
-						AND lower(table_name) = lower(?)',
-					array( $table_name )
-				);
-
-				foreach ( (array) ( $table['columns'] ?? array() ) as $column ) {
-					$this->dbh->get_connection()->query(
-						'INSERT INTO ' . $this->quote_identifier( self::MYSQL_CHARSET_METADATA_TABLE ) . ' (
-							table_schema,
-							table_name,
-							column_name,
-							ordinal_position,
-							column_type,
-							character_set_name,
-							collation_name
-						) VALUES (
-							current_schema(),
-							?,
-							?,
-							?,
-							?,
-							?,
-							?
-						)',
-						array(
-							$table_name,
-							(string) $column['name'],
-							(int) $column['ordinal'],
-							(string) $column['type'],
-							$column['charset'],
-							$column['collation'],
-						)
-					);
-				}
-
-				$this->clear_postgresql_table_charset_cache( array( $table_name ) );
 			}
 		} catch ( Throwable $e ) {
 			return;
@@ -691,27 +604,6 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		$this->clear_postgresql_table_charset_cache( $tables );
-
-		if ( $this->is_postgresql_drop_temporary_table_query( $query ) ) {
-			return;
-		}
-
-		try {
-			if ( ! $this->postgresql_charset_metadata_table_exists() ) {
-				return;
-			}
-
-			foreach ( $tables as $table ) {
-				$this->dbh->get_connection()->query(
-					'DELETE FROM ' . $this->quote_identifier( self::MYSQL_CHARSET_METADATA_TABLE ) . '
-					WHERE table_schema = current_schema()
-						AND lower(table_name) = lower(?)',
-					array( $table )
-				);
-			}
-		} catch ( Throwable $e ) {
-			return;
-		}
 	}
 
 	/**
@@ -722,14 +614,10 @@ class WP_PostgreSQL_DB extends wpdb {
 	private function clear_postgresql_table_charset_cache( array $tables ): void {
 		foreach ( $tables as $table ) {
 			$tablekey = $this->get_postgresql_metadata_key( (string) $table );
-			if ( self::MYSQL_CHARSET_METADATA_TABLE === $this->normalize_postgresql_table_name( (string) $table ) ) {
-				$this->postgresql_charset_metadata_table_exists = null;
-			}
 
 			unset(
 				$this->table_charset[ $tablekey ],
 				$this->col_meta[ $tablekey ],
-				$this->postgresql_temporary_charset_metadata[ $tablekey ],
 				$this->postgresql_column_charset_metadata_cache[ $tablekey ],
 				$this->postgresql_column_length_cache[ $tablekey ]
 			);
@@ -744,26 +632,6 @@ class WP_PostgreSQL_DB extends wpdb {
 		$this->col_meta                                 = array();
 		$this->postgresql_column_charset_metadata_cache = array();
 		$this->postgresql_column_length_cache           = array();
-		$this->postgresql_charset_metadata_table_exists = null;
-	}
-
-	/**
-	 * Ensure the PostgreSQL side table for MySQL charset metadata exists.
-	 */
-	private function ensure_postgresql_charset_metadata_table(): void {
-		$this->dbh->get_connection()->query(
-			'CREATE TABLE IF NOT EXISTS ' . $this->quote_identifier( self::MYSQL_CHARSET_METADATA_TABLE ) . ' (
-				table_schema text NOT NULL,
-				table_name text NOT NULL,
-				column_name text NOT NULL,
-				ordinal_position integer NOT NULL,
-				column_type text NOT NULL,
-				character_set_name text,
-				collation_name text,
-				PRIMARY KEY (table_schema, table_name, column_name)
-			)'
-		);
-		$this->postgresql_charset_metadata_table_exists = true;
 	}
 
 	/**
@@ -875,53 +743,6 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
-	 * Check whether a DROP TABLE query targets temporary tables.
-	 *
-	 * @param string $query DROP TABLE query.
-	 * @return bool Whether the query is DROP TEMPORARY TABLE.
-	 */
-	private function is_postgresql_drop_temporary_table_query( string $query ): bool {
-		if ( ! class_exists( 'WP_MySQL_Lexer', false ) ) {
-			return false;
-		}
-
-		$tokens = $this->get_postgresql_mysql_tokens( $query );
-
-		return isset( $tokens[0], $tokens[1], $tokens[2] )
-			&& WP_MySQL_Lexer::DROP_SYMBOL === $tokens[0]->id
-			&& WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id
-			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id;
-	}
-
-	/**
-	 * Check whether the side table for MySQL charset metadata exists.
-	 *
-	 * @return bool Whether the metadata table exists in the current schema.
-	 */
-	private function postgresql_charset_metadata_table_exists(): bool {
-		if ( null !== $this->postgresql_charset_metadata_table_exists ) {
-			return $this->postgresql_charset_metadata_table_exists;
-		}
-
-		try {
-			$stmt = $this->dbh->get_connection()->query(
-				'SELECT EXISTS (
-					SELECT 1
-					FROM information_schema.tables
-					WHERE table_schema = current_schema()
-						AND table_name = ?
-				)',
-				array( self::MYSQL_CHARSET_METADATA_TABLE )
-			);
-			$this->postgresql_charset_metadata_table_exists = (bool) $stmt->fetchColumn();
-		} catch ( Throwable $e ) {
-			$this->postgresql_charset_metadata_table_exists = false;
-		}
-
-		return $this->postgresql_charset_metadata_table_exists;
-	}
-
-	/**
 	 * Load MySQL-compatible column metadata for a PostgreSQL table.
 	 *
 	 * @param string $table Table name.
@@ -944,19 +765,14 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		if ( null !== $temp_schema ) {
-			if ( array_key_exists( $tablekey, $this->postgresql_temporary_charset_metadata ) ) {
-				$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $this->postgresql_temporary_charset_metadata[ $tablekey ];
+			$columns = $this->get_driver_postgresql_column_charset_metadata( $table );
+			if ( false !== $columns && ! empty( $columns ) ) {
+				$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $columns;
 				return $this->postgresql_column_charset_metadata_cache[ $tablekey ];
 			}
 
 			$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $this->get_native_postgresql_column_charset_metadata( $table, $temp_schema );
 			return $this->postgresql_column_charset_metadata_cache[ $tablekey ];
-		}
-
-		$columns = $this->get_stored_postgresql_column_charset_metadata( $table );
-		if ( false !== $columns && ! empty( $columns ) ) {
-			$this->postgresql_column_charset_metadata_cache[ $tablekey ] = $columns;
-			return $columns;
 		}
 
 		$columns = $this->get_driver_postgresql_column_charset_metadata( $table );
@@ -994,34 +810,6 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		return false === $schema ? null : (string) $schema;
-	}
-
-	/**
-	 * Load previously stored MySQL charset metadata.
-	 *
-	 * @param string $table Table name.
-	 * @return array|false Column metadata, or false when unavailable.
-	 */
-	private function get_stored_postgresql_column_charset_metadata( string $table ) {
-		if ( ! $this->postgresql_charset_metadata_table_exists() ) {
-			return false;
-		}
-
-		try {
-			$stmt = $this->dbh->get_connection()->query(
-				'SELECT column_name, column_type, collation_name
-				FROM ' . $this->quote_identifier( self::MYSQL_CHARSET_METADATA_TABLE ) . '
-				WHERE table_schema = current_schema()
-					AND lower(table_name) = lower(?)
-				ORDER BY ordinal_position',
-				array( $this->normalize_postgresql_table_name( $table ) )
-			);
-			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-		} catch ( Throwable $e ) {
-			return false;
-		}
-
-		return $this->format_postgresql_charset_column_rows( $rows );
 	}
 
 	/**

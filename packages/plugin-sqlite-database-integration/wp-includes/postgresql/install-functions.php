@@ -18,14 +18,16 @@ if ( ! function_exists( 'postgresql_make_db_current_silent' ) ) {
 
 		$translator = new WP_PostgreSQL_Create_Table_Translator();
 		$schema     = 'all' === $tables ? wp_get_db_schema() : wp_get_db_schema( $tables );
-		$statements = $translator->translate_schema( $schema );
+		$statements = $wpdb->dbh instanceof WP_PostgreSQL_Driver
+			? $translator->extract_create_table_statements( $schema )
+			: $translator->translate_schema( $schema );
 
 		foreach ( $statements as $statement ) {
 			$statement_succeeded = false;
 
 			try {
 				if ( $wpdb->dbh instanceof WP_PostgreSQL_Driver ) {
-					$wpdb->dbh->get_connection()->query( $statement );
+					$wpdb->dbh->query( $statement );
 					$statement_succeeded = true;
 				} else {
 					// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Generated from parsed WordPress schema DDL.
@@ -46,7 +48,7 @@ if ( ! function_exists( 'postgresql_make_db_current_silent' ) ) {
 		}
 
 		if ( $wpdb->dbh instanceof WP_PostgreSQL_Driver ) {
-			$wpdb->dbh->store_mysql_schema_metadata( $schema );
+			$wpdb->dbh->ensure_postgresql_information_schema_compatibility_views();
 		}
 
 		return true;

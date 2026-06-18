@@ -10,6 +10,8 @@
 class WP_PostgreSQL_Create_Table_Translator {
 	const MYSQL_GRAMMAR_PATH = __DIR__ . '/../mysql/mysql-grammar.php';
 
+	private const MYSQL_HELPER_TYPE_COMMENT_PREFIX = '__wp_mysql_column_type:';
+
 	const CHARSET_DEFAULT_COLLATION_MAP = array(
 		'ascii'   => 'ascii_general_ci',
 		'big5'    => 'big5_chinese_ci',
@@ -78,6 +80,104 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return $statements;
+	}
+
+	/**
+	 * Extract original MySQL CREATE TABLE statements from a schema string.
+	 *
+	 * @param string $sql MySQL schema SQL.
+	 * @return string[] MySQL CREATE TABLE statements.
+	 */
+	public function extract_create_table_statements( string $sql ): array {
+		$parser     = $this->create_parser( $sql );
+		$statements = array();
+
+		while ( $parser->next_query() ) {
+			$ast = $parser->get_query_ast();
+			if ( ! $ast || ! $ast->has_child() ) {
+				continue;
+			}
+
+			$create_table = $this->get_create_table_node( $ast );
+			if ( ! $create_table ) {
+				continue;
+			}
+
+			$statements[] = rtrim( substr( $sql, $ast->get_start(), $ast->get_length() ), " \t\n\r\0\x0B;" );
+		}
+
+		return $statements;
+	}
+
+	/**
+	 * Get PostgreSQL helper type statements needed by a MySQL schema.
+	 *
+	 * @param string $sql MySQL schema SQL.
+	 * @return string[] PostgreSQL helper statements.
+	 */
+	public function get_postgresql_mysql_helper_type_statements( string $sql ): array {
+		$statements = array();
+
+		foreach ( $this->extract_schema_metadata( $sql, false ) as $table ) {
+			foreach ( $table['columns'] as $column ) {
+				$column_type = trim( (string) ( $column['type'] ?? '' ) );
+				if ( preg_match( '/^enum\(.+\)$/i', $column_type ) ) {
+					$type_name = $this->get_postgresql_mysql_enum_type( $column_type );
+					if ( isset( $statements[ $type_name ] ) ) {
+						continue;
+					}
+
+					$statements[ $type_name ] = array(
+						sprintf(
+							'DO $wp_mysql_enum_type$
+BEGIN
+	CREATE TYPE %s AS ENUM (%s);
+EXCEPTION WHEN duplicate_object THEN
+	NULL;
+END;
+$wp_mysql_enum_type$',
+							$this->quote_identifier( $type_name ),
+							implode( ', ', $this->get_postgresql_mysql_enum_labels( $column_type ) )
+						),
+					);
+					continue;
+				}
+
+				if ( preg_match( '/^set\(.+\)$/i', $column_type ) ) {
+					$type_name = $this->get_postgresql_mysql_set_domain_type( $column_type );
+					if ( isset( $statements[ $type_name ] ) ) {
+						continue;
+					}
+
+					$statements[ $type_name ] = array(
+						sprintf(
+							'DO $wp_mysql_set_domain$
+BEGIN
+	CREATE DOMAIN %s AS text;
+EXCEPTION WHEN duplicate_object THEN
+	NULL;
+END;
+$wp_mysql_set_domain$',
+							$this->quote_identifier( $type_name )
+						),
+						sprintf(
+							'COMMENT ON DOMAIN %s IS %s',
+							$this->quote_identifier( $type_name ),
+							$this->quote_string_literal( self::MYSQL_HELPER_TYPE_COMMENT_PREFIX . base64_encode( $column_type ) )
+						),
+					);
+				}
+			}
+		}
+
+		$flattened = array();
+		foreach ( $statements as $type_statements ) {
+			foreach ( $type_statements as $statement ) {
+				$flattened[] = $statement;
+			}
+		}
+
+		return $flattened;
 	}
 
 	/**
@@ -315,12 +415,13 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$data_type         = $field_definition->get_first_child_node( 'dataType' );
 		$is_serial         = $this->is_serial_data_type( $data_type );
 		$is_auto_increment = $is_serial || null !== $field_definition->get_first_descendant_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL );
+		$mysql_column_type = $this->get_mysql_column_type( $data_type, $field_definition );
 		$has_not_null      = false;
 		$has_primary_key   = false;
 		$has_unique_key    = false;
 		$parts             = array(
 			$this->quote_identifier( $name ),
-			$this->translate_data_type( $data_type, $is_auto_increment ),
+			$this->translate_data_type( $data_type, $is_auto_increment, $mysql_column_type ),
 		);
 
 		$column_attributes = $field_definition->get_child_nodes( 'columnAttribute' );
@@ -329,7 +430,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 				continue;
 			}
 
-			if ( $attribute->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) {
+			if ( $this->is_not_null_column_attribute( $attribute ) ) {
 				$has_not_null = true;
 				$parts[]      = 'NOT NULL';
 				continue;
@@ -343,7 +444,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 			if ( $attribute->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
 				$has_unique_key = true;
-				$parts[]        = 'UNIQUE';
+				$parts[]        = 'CONSTRAINT ' . $this->quote_identifier( $name ) . ' UNIQUE';
 				continue;
 			}
 
@@ -376,7 +477,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			}
 
 			if ( ! $has_primary_key && ! $has_unique_key ) {
-				$parts[] = 'UNIQUE';
+				$parts[] = 'CONSTRAINT ' . $this->quote_identifier( $name ) . ' UNIQUE';
 			}
 		}
 
@@ -395,6 +496,37 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Check whether a field definition has an explicit NOT NULL attribute.
+	 *
+	 * @param WP_Parser_Node $field_definition Field definition node.
+	 * @return bool Whether the column is explicitly NOT NULL.
+	 */
+	private function has_not_null_column_attribute( WP_Parser_Node $field_definition ): bool {
+		foreach ( $field_definition->get_child_nodes( 'columnAttribute' ) as $attribute ) {
+			if ( $this->is_not_null_column_attribute( $attribute ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a column attribute is NOT NULL.
+	 *
+	 * @param WP_Parser_Node $attribute Column attribute node.
+	 * @return bool Whether the attribute is NOT NULL.
+	 */
+	private function is_not_null_column_attribute( WP_Parser_Node $attribute ): bool {
+		if ( $attribute->get_first_child_node( 'constraintEnforcement' ) ) {
+			return false;
+		}
+
+		return null !== $attribute->get_first_descendant_token( WP_MySQL_Lexer::NOT_SYMBOL )
+			&& null !== $attribute->get_first_descendant_token( WP_MySQL_Lexer::NULL_SYMBOL );
 	}
 
 	/**
@@ -469,9 +601,9 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 * @param string         $table_name    Table name used for implicit constraint names.
 	 * @param int            $check_ordinal Next implicit CHECK ordinal.
 	 * @param bool           $not_enforced  Whether enforcement was represented by a following sibling node.
-	 * @return string|null PostgreSQL CHECK constraint SQL, or null for metadata-only checks.
+	 * @return string PostgreSQL CHECK constraint SQL.
 	 */
-	private function translate_check_constraint_definition( WP_Parser_Node $node, string $table_name, int &$check_ordinal, bool $not_enforced = false ): ?string {
+	private function translate_check_constraint_definition( WP_Parser_Node $node, string $table_name, int &$check_ordinal, bool $not_enforced = false ): string {
 		$check_constraint = 'checkConstraint' === $node->rule_name ? $node : $node->get_first_child_node( 'checkConstraint' );
 		if ( ! $check_constraint ) {
 			throw new InvalidArgumentException( 'Expected CHECK constraint node.' );
@@ -480,7 +612,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		$constraint_name = $this->get_check_constraint_name( $node, $table_name, $check_ordinal );
 		$expression      = $this->translate_check_constraint_expression( $check_constraint );
 		if ( $not_enforced || $this->is_check_constraint_not_enforced( $node ) ) {
-			return null;
+			$expression = 'true';
 		}
 
 		return sprintf(
@@ -1107,19 +1239,23 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 *
 	 * @param WP_Parser_Node|null $data_type         Data type node.
 	 * @param bool                $is_auto_increment Whether AUTO_INCREMENT is present.
+	 * @param string|null         $mysql_column_type MySQL-facing column type.
 	 * @return string PostgreSQL data type.
 	 */
-	private function translate_data_type( ?WP_Parser_Node $data_type, bool $is_auto_increment ): string {
+	private function translate_data_type( ?WP_Parser_Node $data_type, bool $is_auto_increment, ?string $mysql_column_type = null ): string {
 		if ( ! $data_type ) {
 			throw new InvalidArgumentException( 'Column definition is missing a data type.' );
 		}
 
-		$type = $this->get_normalized_mysql_data_type( $data_type );
-		if ( 'bigint' === $type ) {
+		$type                = $this->get_normalized_mysql_data_type( $data_type );
+		$integer_domain_type = $is_auto_increment ? null : $this->get_postgresql_mysql_integer_domain_type( $mysql_column_type );
+		if ( null !== $integer_domain_type ) {
+			$postgresql_type = $integer_domain_type;
+		} elseif ( in_array( $type, array( 'bigint', 'int8' ), true ) ) {
 			$postgresql_type = 'bigint';
 		} elseif ( 'serial' === $type ) {
 			$postgresql_type = 'bigint';
-		} elseif ( in_array( $type, array( 'bit', 'bool', 'boolean', 'int', 'integer', 'mediumint', 'smallint', 'tinyint' ), true ) ) {
+		} elseif ( in_array( $type, array( 'bit', 'bool', 'boolean', 'int', 'int1', 'int2', 'int3', 'int4', 'integer', 'mediumint', 'smallint', 'tinyint' ), true ) ) {
 			$postgresql_type = 'integer';
 		} elseif ( in_array( $type, array( 'varchar', 'char' ), true ) ) {
 			$length = $this->get_field_length( $data_type );
@@ -1128,19 +1264,29 @@ class WP_PostgreSQL_Create_Table_Translator {
 			}
 			$postgresql_type = $length ? sprintf( '%s(%d)', $type, $length ) : $type;
 		} elseif (
-			in_array( $type, array( 'tinytext', 'text', 'mediumtext', 'longtext', 'json', 'datetime', 'timestamp', 'date', 'time', 'year' ), true )
+			in_array( $type, array( 'tinytext', 'mediumtext', 'longtext', 'json', 'datetime', 'timestamp', 'date', 'time', 'year' ), true )
 			|| $this->is_mysql_spatial_column_type( $type )
 		) {
+			$postgresql_type = $this->get_postgresql_mysql_text_domain_type( $type, $data_type );
+		} elseif ( 'text' === $type ) {
 			$postgresql_type = 'text';
-		} elseif ( in_array( $type, array( 'enum', 'set' ), true ) ) {
-			$postgresql_type = 'text';
+		} elseif ( 'enum' === $type ) {
+			$postgresql_type = $this->get_postgresql_mysql_enum_type( $mysql_column_type );
+		} elseif ( 'set' === $type ) {
+			$postgresql_type = $this->get_postgresql_mysql_set_domain_type( $mysql_column_type );
 		} elseif ( in_array( $type, array( 'binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob' ), true ) ) {
-			$postgresql_type = 'bytea';
+			$postgresql_type = $this->get_postgresql_mysql_binary_domain_type( $type, $mysql_column_type );
 		} elseif ( in_array( $type, array( 'float', 'double', 'real' ), true ) ) {
-			$precision_fragment = $this->get_numeric_precision_fragment( $data_type );
-			$postgresql_type    = '' === $precision_fragment ? 'double precision' : 'numeric' . $precision_fragment;
+			$numeric_domain_type = $this->get_postgresql_mysql_numeric_domain_type( $type, $mysql_column_type );
+			if ( null !== $numeric_domain_type ) {
+				$postgresql_type = $numeric_domain_type;
+			} else {
+				$precision_fragment = $this->get_numeric_precision_fragment( $data_type );
+				$postgresql_type    = '' === $precision_fragment ? 'double precision' : 'numeric' . $precision_fragment;
+			}
 		} elseif ( in_array( $type, array( 'dec', 'decimal', 'fixed', 'numeric' ), true ) ) {
-			$postgresql_type = 'numeric' . $this->get_numeric_precision_fragment( $data_type );
+			$numeric_domain_type = $this->get_postgresql_mysql_numeric_domain_type( $type, $mysql_column_type );
+			$postgresql_type     = null !== $numeric_domain_type ? $numeric_domain_type : 'numeric' . $this->get_numeric_precision_fragment( $data_type );
 		} else {
 			throw new InvalidArgumentException( sprintf( 'Unsupported MySQL column type for PostgreSQL install DDL: %s.', $type ) );
 		}
@@ -1150,6 +1296,131 @@ class WP_PostgreSQL_Create_Table_Translator {
 		}
 
 		return $postgresql_type;
+	}
+
+	/**
+	 * Get a deterministic PostgreSQL enum type name for a MySQL ENUM definition.
+	 *
+	 * @param string|null $mysql_column_type MySQL-facing column type.
+	 * @return string PostgreSQL enum type name.
+	 */
+	private function get_postgresql_mysql_enum_type( ?string $mysql_column_type ): string {
+		$mysql_column_type = trim( (string) $mysql_column_type );
+		if ( ! preg_match( '/^enum\(.+\)$/i', $mysql_column_type ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL ENUM column type for PostgreSQL install DDL.' );
+		}
+
+		return '__wp_mysql_enum_' . substr( md5( $mysql_column_type ), 0, 16 );
+	}
+
+	/**
+	 * Get a deterministic PostgreSQL domain type name for a MySQL SET definition.
+	 *
+	 * @param string|null $mysql_column_type MySQL-facing column type.
+	 * @return string PostgreSQL domain type name.
+	 */
+	private function get_postgresql_mysql_set_domain_type( ?string $mysql_column_type ): string {
+		$mysql_column_type = trim( (string) $mysql_column_type );
+		if ( ! preg_match( '/^set\(.+\)$/i', $mysql_column_type ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL SET column type for PostgreSQL install DDL.' );
+		}
+
+		return '__wp_mysql_set_' . substr( md5( $mysql_column_type ), 0, 16 );
+	}
+
+	/**
+	 * Get a PostgreSQL integer-domain type that preserves a lossy MySQL integer type in catalogs.
+	 *
+	 * @param string|null $mysql_column_type MySQL-facing column type.
+	 * @return string|null PostgreSQL domain type, or null when native PostgreSQL type metadata is enough.
+	 */
+	private function get_postgresql_mysql_integer_domain_type( ?string $mysql_column_type ): ?string {
+		$mysql_column_type = strtolower( trim( (string) $mysql_column_type ) );
+		if ( ! preg_match( '/^(bit|bool|boolean|tinyint|smallint|mediumint|int|int1|int2|int3|int4|int8|integer|bigint)(?:\((\d+)\))?( unsigned)?$/', $mysql_column_type, $matches ) ) {
+			return null;
+		}
+
+		$type        = 'integer' === $matches[1] ? 'int' : $matches[1];
+		$length      = $matches[2] ?? '';
+		$is_unsigned = isset( $matches[3] ) && '' !== $matches[3];
+		if ( '' === $length && ! $is_unsigned && in_array( $type, array( 'int', 'bigint' ), true ) ) {
+			return null;
+		}
+
+		$parts = array( '__wp_mysql', $type );
+		if ( '' !== $length ) {
+			$parts[] = $length;
+		}
+		if ( $is_unsigned ) {
+			$parts[] = 'unsigned';
+		}
+
+		return implode( '_', $parts );
+	}
+
+	/**
+	 * Get a PostgreSQL text-domain type that preserves a lossy MySQL type in catalogs.
+	 *
+	 * @param string         $type      Normalized MySQL type.
+	 * @param WP_Parser_Node $data_type Data type node.
+	 * @return string PostgreSQL domain type.
+	 */
+	private function get_postgresql_mysql_text_domain_type( string $type, WP_Parser_Node $data_type ): string {
+		if ( in_array( $type, array( 'datetime', 'timestamp', 'time' ), true ) ) {
+			$precision = $this->get_temporal_precision_fragment( $data_type );
+			if ( '' !== $precision ) {
+				return sprintf( '__wp_mysql_%s_%d', $type, (int) trim( $precision, '()' ) );
+			}
+		}
+
+		return '__wp_mysql_' . $type;
+	}
+
+	/**
+	 * Get a PostgreSQL binary-domain type that preserves a lossy MySQL binary/blob type in catalogs.
+	 *
+	 * @param string $type              Normalized MySQL type.
+	 * @param string $mysql_column_type MySQL-facing column type.
+	 * @return string PostgreSQL domain type.
+	 */
+	private function get_postgresql_mysql_binary_domain_type( string $type, string $mysql_column_type ): string {
+		if ( preg_match( '/^(binary|varbinary)\((\d+)\)$/', strtolower( trim( $mysql_column_type ) ), $matches ) ) {
+			return sprintf( '__wp_mysql_%s_%d', $matches[1], (int) $matches[2] );
+		}
+
+		return '__wp_mysql_' . $type;
+	}
+
+	/**
+	 * Get a PostgreSQL numeric-domain type that preserves lossy MySQL numeric type spelling in catalogs.
+	 *
+	 * @param string      $type              Normalized MySQL type.
+	 * @param string|null $mysql_column_type MySQL-facing column type.
+	 * @return string|null PostgreSQL domain type, or null when native PostgreSQL type metadata is enough.
+	 */
+	private function get_postgresql_mysql_numeric_domain_type( string $type, ?string $mysql_column_type ): ?string {
+		$mysql_column_type = strtolower( trim( (string) $mysql_column_type ) );
+		if ( ! preg_match( '/^(dec|fixed|float|double|real|numeric)(?:\((\d+)(?:,(\d+))?\))?$/', $mysql_column_type, $matches ) ) {
+			return null;
+		}
+
+		if ( 'decimal' === $type ) {
+			return null;
+		}
+
+		if ( in_array( $type, array( 'double', 'numeric' ), true ) && ! isset( $matches[2] ) ) {
+			return null;
+		}
+
+		$parts = array( '__wp_mysql', $matches[1] );
+		if ( isset( $matches[2] ) && '' !== $matches[2] ) {
+			$parts[] = (string) (int) $matches[2];
+		}
+		if ( isset( $matches[3] ) && '' !== $matches[3] ) {
+			$parts[] = (string) (int) $matches[3];
+		}
+
+		return implode( '_', $parts );
 	}
 
 	/**
@@ -1738,7 +2009,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 			$if_not_exists ? 'IF NOT EXISTS ' : '',
 			$this->quote_identifier( $table_name . '__' . $index_name ),
 			$this->quote_identifier( $table_name ),
-			implode( ', ', $this->quote_key_parts( $table_constraint, $table_constraint->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ), true, $column_types ) )
+			implode( ', ', $this->quote_key_parts( $table_constraint, true, true, $column_types ) )
 		);
 	}
 
@@ -2061,6 +2332,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 		if ( ! $element_list ) {
 			return array(
 				'table_name' => $table_name,
+				'charset'    => $table_charset,
+				'collation'  => $table_collation,
 				'comment'    => $table_comment,
 				'columns'    => array(),
 			);
@@ -2093,7 +2366,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 				);
 
 				if ( $include_indexes ) {
-					$column_metadata['nullable'] = $is_serial || $is_inline_primary || ( $field_definition && $field_definition->get_first_descendant_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) ? 'NO' : 'YES';
+					$column_metadata['nullable'] = $is_serial || $is_inline_primary || ( $field_definition && $this->has_not_null_column_attribute( $field_definition ) ) ? 'NO' : 'YES';
 					$column_metadata['default']  = $field_definition ? $this->get_column_default_metadata( $field_definition ) : null;
 					$column_metadata['extra']    = $field_definition ? $this->get_column_extra_metadata( $field_definition, $is_serial ) : '';
 				}
@@ -2158,6 +2431,8 @@ class WP_PostgreSQL_Create_Table_Translator {
 
 		$metadata = array(
 			'table_name' => $table_name,
+			'charset'    => $table_charset,
+			'collation'  => $table_collation,
 			'comment'    => $table_comment,
 			'columns'    => $columns,
 		);
@@ -2186,11 +2461,19 @@ class WP_PostgreSQL_Create_Table_Translator {
 			throw new InvalidArgumentException( 'Expected CHECK constraint node.' );
 		}
 
-		return array(
+		$check_clause            = $this->render_check_constraint_expression( $check_constraint, false );
+		$postgresql_check_clause = $this->render_check_constraint_expression( $check_constraint, true );
+		$metadata                = array(
 			'name'         => $this->get_check_constraint_name( $node, $table_name, $check_ordinal ),
-			'check_clause' => $this->render_check_constraint_expression( $check_constraint, false ),
+			'check_clause' => $check_clause,
 			'enforced'     => ( $not_enforced || $this->is_check_constraint_not_enforced( $node ) ) ? 'NO' : 'YES',
 		);
+
+		if ( trim( $check_clause ) !== trim( $postgresql_check_clause ) ) {
+			$metadata['postgresql_check_clause'] = $postgresql_check_clause;
+		}
+
+		return $metadata;
 	}
 
 	/**
@@ -3184,7 +3467,7 @@ class WP_PostgreSQL_Create_Table_Translator {
 		if ( null === $length && in_array( $type, array( 'binary', 'bit', 'char' ), true ) ) {
 			$length = 1;
 		}
-		if ( null !== $length && in_array( $type, array( 'bigint', 'binary', 'bit', 'char', 'int', 'mediumint', 'smallint', 'tinyint', 'varbinary', 'varchar' ), true ) ) {
+		if ( null !== $length && in_array( $type, array( 'bigint', 'binary', 'bit', 'char', 'int', 'int1', 'int2', 'int3', 'int4', 'int8', 'mediumint', 'smallint', 'tinyint', 'varbinary', 'varchar' ), true ) ) {
 			$type = sprintf( '%s(%d)', $type, $length );
 		}
 
@@ -3233,13 +3516,17 @@ class WP_PostgreSQL_Create_Table_Translator {
 	private function get_normalized_mysql_long_data_type( WP_Parser_Node $data_type ): ?string {
 		$tokens = $data_type->get_descendant_tokens();
 		if (
-			! isset( $tokens[0], $tokens[1] )
+			! isset( $tokens[0] )
 			|| WP_MySQL_Lexer::LONG_SYMBOL !== $tokens[0]->id
 		) {
 			return null;
 		}
 
-		if ( WP_MySQL_Lexer::VARBINARY_SYMBOL === $tokens[1]->id ) {
+		if ( ! isset( $tokens[1] ) ) {
+			return 'mediumtext';
+		}
+
+		if ( in_array( $tokens[1]->id, array( WP_MySQL_Lexer::BYTE_SYMBOL, WP_MySQL_Lexer::VARBINARY_SYMBOL ), true ) ) {
 			return 'mediumblob';
 		}
 
@@ -3297,6 +3584,25 @@ class WP_PostgreSQL_Create_Table_Translator {
 	 */
 	private function is_serial_data_type( ?WP_Parser_Node $data_type ): bool {
 		return $data_type && null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL );
+	}
+
+	/**
+	 * Extract PostgreSQL string literals from a normalized MySQL ENUM column type.
+	 *
+	 * @param string $mysql_column_type MySQL-facing ENUM column type.
+	 * @return string[] PostgreSQL quoted enum labels.
+	 */
+	private function get_postgresql_mysql_enum_labels( string $mysql_column_type ): array {
+		if ( 1 > preg_match_all( "/'((?:''|[^'])*)'/", $mysql_column_type, $matches ) ) {
+			throw new InvalidArgumentException( 'Unsupported MySQL ENUM column type for PostgreSQL install DDL.' );
+		}
+
+		$labels = array();
+		foreach ( $matches[1] as $label ) {
+			$labels[] = $this->quote_string_literal( str_replace( "''", "'", $label ) );
+		}
+
+		return $labels;
 	}
 
 	/**

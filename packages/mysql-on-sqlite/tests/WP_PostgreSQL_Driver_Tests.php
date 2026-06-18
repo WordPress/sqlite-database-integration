@@ -1859,6 +1859,413 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests ON DUPLICATE KEY UPDATE uses PostgreSQL catalogs without metadata tables for pgsql connections.
+	 */
+	public function test_upsert_uses_postgresql_catalog_unique_indexes_without_metadata_for_pgsql_connections(): void {
+		list( $driver, $connection, $pdo ) = $this->create_pgsql_catalog_unique_index_driver();
+
+		$pdo->exec(
+			'CREATE TABLE catalog_upsert_unique_slug (
+				pk INTEGER NOT NULL,
+				slug TEXT NOT NULL UNIQUE,
+				value TEXT NOT NULL
+			)'
+		);
+		$pdo->exec( "INSERT INTO catalog_upsert_unique_slug (pk, slug, value) VALUES (1, 'same', 'old')" );
+
+		$upsert = "INSERT INTO catalog_upsert_unique_slug (pk, slug, value) VALUES (2, 'same', 'new')
+			ON DUPLICATE KEY UPDATE value = VALUES(value)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame(
+			'INSERT INTO "catalog_upsert_unique_slug" ("pk", "slug", "value") VALUES (2, \'same\', \'new\') ON CONFLICT ("slug") DO UPDATE SET "value" = excluded."value"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertNotEmpty( $connection->get_catalog_index_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		$rows = $driver->query( 'SELECT pk, slug, value FROM catalog_upsert_unique_slug ORDER BY slug' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'pk'    => '1',
+					'slug'  => 'same',
+					'value' => 'new',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests REPLACE ... VALUES uses PostgreSQL catalogs without metadata tables for pgsql connections.
+	 */
+	public function test_replace_values_uses_postgresql_catalog_unique_indexes_without_metadata_for_pgsql_connections(): void {
+		list( $driver, $connection, $pdo ) = $this->create_pgsql_catalog_unique_index_driver();
+
+		$pdo->exec(
+			'CREATE TABLE catalog_replace_unique_slug (
+				pk INTEGER NOT NULL,
+				slug TEXT NOT NULL UNIQUE,
+				value TEXT NOT NULL
+			)'
+		);
+		$pdo->exec( "INSERT INTO catalog_replace_unique_slug (pk, slug, value) VALUES (1, 'same', 'old')" );
+
+		$replace = "REPLACE INTO catalog_replace_unique_slug (pk, slug, value) VALUES (2, 'same', 'new'), (3, 'other', 'created')";
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'DELETE FROM "catalog_replace_unique_slug" WHERE ("slug" = \'same\') OR ("slug" = \'other\')',
+				'INSERT INTO "catalog_replace_unique_slug" ("pk", "slug", "value") VALUES (2, \'same\', \'new\'), (3, \'other\', \'created\')',
+			)
+		);
+		$this->assertNotEmpty( $connection->get_catalog_index_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		$rows = $driver->query( 'SELECT pk, slug, value FROM catalog_replace_unique_slug ORDER BY slug' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'pk'    => '3',
+					'slug'  => 'other',
+					'value' => 'created',
+				),
+				(object) array(
+					'pk'    => '2',
+					'slug'  => 'same',
+					'value' => 'new',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests columnless REPLACE ... VALUES uses PostgreSQL catalogs without metadata tables.
+	 */
+	public function test_columnless_replace_values_uses_postgresql_catalog_metadata_without_metadata_tables(): void {
+		list( $driver, $connection, $pdo ) = $this->create_pgsql_catalog_unique_index_driver();
+
+		$pdo->exec(
+			'CREATE TABLE catalog_replace_columnless_unique_slug (
+				pk INTEGER NOT NULL,
+				slug TEXT NOT NULL UNIQUE,
+				value TEXT NOT NULL
+			)'
+		);
+		$pdo->exec( "INSERT INTO catalog_replace_columnless_unique_slug (pk, slug, value) VALUES (1, 'same', 'old')" );
+
+		$replace = "REPLACE INTO catalog_replace_columnless_unique_slug VALUES (2, 'same', 'new'), (3, 'other', 'created')";
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'DELETE FROM "catalog_replace_columnless_unique_slug" WHERE ("slug" = \'same\') OR ("slug" = \'other\')',
+				'INSERT INTO "catalog_replace_columnless_unique_slug" ("pk", "slug", "value") VALUES (2, \'same\', \'new\'), (3, \'other\', \'created\')',
+			)
+		);
+		$this->assertNotEmpty( $connection->get_catalog_index_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		$rows = $pdo->query( 'SELECT pk, slug, value FROM catalog_replace_columnless_unique_slug ORDER BY slug' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'pk'    => '3',
+					'slug'  => 'other',
+					'value' => 'created',
+				),
+				(object) array(
+					'pk'    => '2',
+					'slug'  => 'same',
+					'value' => 'new',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests REPLACE uses the selected PostgreSQL catalog schema after USE.
+	 */
+	public function test_replace_values_uses_current_postgresql_catalog_schema_after_use_without_metadata_tables(): void {
+		$pdo        = $this->create_pgsql_reporting_sqlite_pdo();
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_column_queries = array();
+
+			/**
+			 * Captured unique-index catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_index_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed current-schema REPLACE metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_column_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( array( 'plugin_schema', 'catalog_current_schema_replace' ) !== $params ) {
+						throw new RuntimeException( 'Columnless REPLACE metadata should resolve against the selected PostgreSQL schema.' );
+					}
+
+					return parent::query(
+						"SELECT 'pk' AS column_name, 1 AS ordinal_position, 'integer' AS column_type, 'NO' AS is_nullable, NULL AS column_default, '' AS extra
+						UNION ALL SELECT 'slug', 2, 'text', 'NO', NULL, ''
+						UNION ALL SELECT 'value', 3, 'text', 'NO', NULL, ''"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->catalog_index_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( array( 'plugin_schema', 'catalog_current_schema_replace', 'catalog_current_schema_replace', 'catalog_current_schema_replace' ) !== $params ) {
+						throw new RuntimeException( 'REPLACE unique-index metadata should resolve against the selected PostgreSQL schema: ' . json_encode( $params ) );
+					}
+
+					return parent::query(
+						"SELECT 'slug_key' AS key_name, 'slug' AS column_name, 'BTREE' AS index_type, NULL AS sub_part"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_column_queries(): array {
+				return $this->catalog_column_queries;
+			}
+
+			/**
+			 * Get captured unique-index catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_index_queries(): array {
+				return $this->catalog_index_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS plugin_schema" );
+		$pdo->exec(
+			'CREATE TABLE plugin_schema.catalog_current_schema_replace (
+				pk INTEGER NOT NULL,
+				slug TEXT NOT NULL UNIQUE,
+				value TEXT NOT NULL
+			)'
+		);
+		$pdo->exec( "INSERT INTO plugin_schema.catalog_current_schema_replace (pk, slug, value) VALUES (1, 'same', 'old')" );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+
+		$replace = "REPLACE INTO catalog_current_schema_replace VALUES (2, 'same', 'new'), (3, 'other', 'created')";
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'DELETE FROM "plugin_schema"."catalog_current_schema_replace" WHERE ("slug" = \'same\') OR ("slug" = \'other\')',
+				'INSERT INTO "plugin_schema"."catalog_current_schema_replace" ("pk", "slug", "value") VALUES (2, \'same\', \'new\'), (3, \'other\', \'created\')',
+			)
+		);
+		$this->assertNotEmpty( $connection->get_catalog_column_queries() );
+		$this->assertNotEmpty( $connection->get_catalog_index_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		$rows = $pdo->query( 'SELECT pk, slug, value FROM plugin_schema.catalog_current_schema_replace ORDER BY slug' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'pk'    => '3',
+					'slug'  => 'other',
+					'value' => 'created',
+				),
+				(object) array(
+					'pk'    => '2',
+					'slug'  => 'same',
+					'value' => 'new',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests REPLACE ... SELECT uses PostgreSQL catalogs without metadata tables for pgsql connections.
+	 */
+	public function test_replace_select_uses_postgresql_catalog_unique_indexes_without_metadata_for_pgsql_connections(): void {
+		list( $driver, $connection, $pdo ) = $this->create_pgsql_catalog_unique_index_driver();
+
+		$pdo->exec(
+			'CREATE TABLE catalog_replace_select_unique_slug (
+				pk INTEGER NOT NULL,
+				slug TEXT NOT NULL UNIQUE,
+				value TEXT NOT NULL
+			)'
+		);
+		$pdo->exec(
+			'CREATE TABLE catalog_replace_select_source (
+				pk INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$pdo->exec( "INSERT INTO catalog_replace_select_unique_slug (pk, slug, value) VALUES (1, 'same', 'old')" );
+		$pdo->exec( "INSERT INTO catalog_replace_select_source (pk, slug, value) VALUES (2, 'same', 'new'), (3, 'other', 'created')" );
+
+		$replace = 'REPLACE INTO catalog_replace_select_unique_slug (pk, slug, value)
+			SELECT pk, slug, value FROM catalog_replace_select_source';
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$sql = $this->assert_last_replace_select_materialized_sql( $driver, 'catalog_replace_select_unique_slug' );
+		$this->assertStringContainsString( '"__wp_pg_replace_target"."slug" = "__wp_pg_replace_rows"."slug"', implode( "\n", $sql ) );
+		$this->assertNotEmpty( $connection->get_catalog_index_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		$rows = $driver->query( 'SELECT pk, slug, value FROM catalog_replace_select_unique_slug ORDER BY slug' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'pk'    => '3',
+					'slug'  => 'other',
+					'value' => 'created',
+				),
+				(object) array(
+					'pk'    => '2',
+					'slug'  => 'same',
+					'value' => 'new',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests columnless REPLACE ... SELECT uses PostgreSQL catalogs without metadata tables.
+	 */
+	public function test_columnless_replace_select_uses_postgresql_catalog_metadata_without_metadata_tables(): void {
+		list( $driver, $connection, $pdo ) = $this->create_pgsql_catalog_unique_index_driver();
+
+		$pdo->exec(
+			'CREATE TABLE catalog_replace_select_columnless_unique_slug (
+				pk INTEGER NOT NULL,
+				slug TEXT NOT NULL UNIQUE,
+				value TEXT NOT NULL
+			)'
+		);
+		$pdo->exec(
+			'CREATE TABLE catalog_replace_select_columnless_source (
+				pk INTEGER NOT NULL,
+				slug TEXT NOT NULL,
+				value TEXT NOT NULL
+			)'
+		);
+		$pdo->exec( "INSERT INTO catalog_replace_select_columnless_unique_slug (pk, slug, value) VALUES (1, 'same', 'old')" );
+		$pdo->exec( "INSERT INTO catalog_replace_select_columnless_source (pk, slug, value) VALUES (2, 'same', 'new'), (3, 'other', 'created')" );
+
+		$replace = 'REPLACE INTO catalog_replace_select_columnless_unique_slug
+			SELECT pk, slug, value FROM catalog_replace_select_columnless_source';
+
+		$this->assertSame( 3, $driver->query( $replace ) );
+		$sql = $this->assert_last_replace_select_materialized_sql( $driver, 'catalog_replace_select_columnless_unique_slug' );
+		$this->assertStringContainsString(
+			' AS SELECT ' . $this->get_expected_mysql_integer_cast_sql( 'pk' ) . ' AS "pk" , CAST(slug AS text) AS "slug" , CAST(value AS text) AS "value" FROM catalog_replace_select_columnless_source',
+			$sql[1]
+		);
+		$this->assertStringContainsString( '"__wp_pg_replace_target"."slug" = "__wp_pg_replace_rows"."slug"', implode( "\n", $sql ) );
+		$this->assertNotEmpty( $connection->get_catalog_index_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		$rows = $pdo->query( 'SELECT pk, slug, value FROM catalog_replace_select_columnless_unique_slug ORDER BY slug' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'pk'    => '3',
+					'slug'  => 'other',
+					'value' => 'created',
+				),
+				(object) array(
+					'pk'    => '2',
+					'slug'  => 'same',
+					'value' => 'new',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
 	 * Tests deterministic REPLACE ... VALUES deletes rows matching any unique key.
 	 */
 	public function test_replace_values_deletes_conflicts_across_multiple_unique_keys(): void {
@@ -3259,7 +3666,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'CREATE INDEX "wptests_standalone_index__idx_value" ON "wptests_standalone_index" ("value" DESC)',
+					'sql'    => 'CREATE INDEX "wptests_standalone_index__idx_value" ON "wptests_standalone_index" (SUBSTR(CAST("value" AS text), 1, 16) DESC)',
 					'params' => array(),
 				),
 			),
@@ -3393,6 +3800,380 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_standalone_index_options' );
 		$this->assertSame( array( 'idx_visible' ), array_column( $indexes, 'key_name' ) );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed standalone CREATE INDEX uses catalogs without metadata tables.
+	 */
+	public function test_standalone_create_index_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table mutation was not expected for catalog-backed CREATE INDEX.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+						return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query( 'SELECT ? AS column_type', array( 'text' ) );
+				}
+
+				if ( 0 === strpos( $sql, 'CREATE INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+				/**
+				 * Get captured metadata-table catalog checks.
+				 *
+				 * @return array[] Catalog checks.
+				 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE public.catalog_pg_standalone_index (id INTEGER, value TEXT)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE INDEX idx_value ON catalog_pg_standalone_index (value(16)) COMMENT "Lookup"' )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "catalog_pg_standalone_index__idx_value" ON "public"."catalog_pg_standalone_index" (SUBSTR(CAST("value" AS text), 1, 16))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "public"."catalog_pg_standalone_index__idx_value" IS \'Lookup\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE INDEX idx_plain ON catalog_pg_standalone_index (value)' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "catalog_pg_standalone_index__idx_plain" ON "public"."catalog_pg_standalone_index" ("value")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests standalone CREATE INDEX uses the selected PostgreSQL catalog schema.
+	 */
+	public function test_standalone_create_index_uses_current_postgresql_catalog_schema_after_use(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table mutation was not expected for catalog-backed CREATE INDEX.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+						return parent::query( 'SELECT ? AS column_type', array( 'text' ) );
+				}
+
+				if ( 'CREATE INDEX "plugin_table__value_idx" ON "plugin_schema"."plugin_table" ("value")' === $sql ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 'CREATE INDEX "plugin_table__explicit_idx" ON "plugin_schema"."plugin_table" ("value")' === $sql ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'CREATE INDEX ' ) || 0 === strpos( $sql, 'COMMENT ON INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+				/**
+				 * Get captured metadata-table catalog checks.
+				 *
+				 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertSame( array( 'wptests', 'plugin_schema' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE INDEX value_idx ON plugin_table (value) COMMENT "Lookup"' )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "plugin_table__value_idx" ON "plugin_schema"."plugin_table" ("value")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "plugin_schema"."plugin_table__value_idx" IS \'Lookup\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( 0, $driver->query( 'CREATE INDEX explicit_idx ON plugin_schema.plugin_table (value) COMMENT "Explicit"' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "plugin_table__explicit_idx" ON "plugin_schema"."plugin_table" ("value")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "plugin_schema"."plugin_table__explicit_idx" IS \'Explicit\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+	}
+
+	/**
+	 * Tests pgsql catalog CREATE FULLTEXT/SPATIAL INDEX uses placeholder indexes without metadata tables.
+	 */
+	public function test_standalone_metadata_only_create_index_uses_postgresql_catalog_placeholders_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table mutation was not expected for catalog-backed FULLTEXT/SPATIAL CREATE INDEX.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if (
+					'CREATE INDEX "catalog_pg_search_geo__body_fulltext" ON "public"."catalog_pg_search_geo" (SUBSTR(CAST("body" AS text), 1, 191))' === $sql
+					|| 'CREATE INDEX "catalog_pg_search_geo__shape_spatial" ON "public"."catalog_pg_search_geo" (SUBSTR(CAST("shape" AS text), 1, 32))' === $sql
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE public.catalog_pg_search_geo (id INTEGER, body TEXT, shape TEXT)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE FULLTEXT INDEX body_fulltext ON catalog_pg_search_geo (body)' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "catalog_pg_search_geo__body_fulltext" ON "public"."catalog_pg_search_geo" (SUBSTR(CAST("body" AS text), 1, 191))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "public"."catalog_pg_search_geo__body_fulltext" IS \'__wp_mysql_index_type:RlVMTFRFWFQ=\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE SPATIAL INDEX shape_spatial ON catalog_pg_search_geo (shape)' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "catalog_pg_search_geo__shape_spatial" ON "public"."catalog_pg_search_geo" (SUBSTR(CAST("shape" AS text), 1, 32))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "public"."catalog_pg_search_geo__shape_spatial" IS \'__wp_mysql_index_type:U1BBVElBTA==\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -3689,6 +4470,216 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_standalone_drop_index' );
 		$this->assertSame( array( 'PRIMARY' ), array_column( $indexes, 'key_name' ) );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed DROP INDEX uses catalogs without metadata tables.
+	 */
+	public function test_drop_index_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/drop-index queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed DROP INDEX.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'DROP INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE public.catalog_pg_drop_index (id INTEGER, value TEXT, value_two TEXT)' );
+
+		$this->assertSame( 0, $driver->query( 'DROP INDEX idx_value ON catalog_pg_drop_index' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "public"."catalog_pg_drop_index__idx_value"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_pg_drop_index DROP INDEX idx_value_two' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "public"."catalog_pg_drop_index__idx_value_two"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests DROP INDEX uses the selected PostgreSQL catalog schema.
+	 */
+	public function test_drop_index_uses_current_postgresql_catalog_schema_after_use(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/drop-index queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed DROP INDEX.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'DROP INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertSame( array( 'wptests', 'plugin_schema' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertSame( 0, $driver->query( 'DROP INDEX value_idx ON plugin_table' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "plugin_schema"."plugin_table__value_idx"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( 0, $driver->query( 'DROP INDEX explicit_idx ON plugin_schema.plugin_table' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP INDEX "plugin_schema"."plugin_table__explicit_idx"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 	}
 
 	/**
@@ -4072,6 +5063,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'sql'    => 'ALTER TABLE "wptests_alter_check" ADD CONSTRAINT "wptests_alter_check_chk_2" CHECK (id > 1)',
 					'params' => array(),
 				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_check" ADD CONSTRAINT "max_id" CHECK (true)',
+					'params' => array(),
+				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
@@ -4126,6 +5121,244 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$driver->get_last_postgresql_queries()
 		);
 		$this->assertSame( array(), $this->get_mysql_check_metadata_rows( $driver, 'wptests_alter_check' ) );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE DROP CHECK uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_drop_check_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured CHECK catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $check_catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/drop-CHECK queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden CHECK metadata table access was not expected for catalog-backed DROP CHECK.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_constraint con' ) && false !== strpos( $sql, 'con.contype = \'c\'' ) ) {
+					$this->check_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'positive_score' === (string) ( $params[2] ?? '' )
+							? "SELECT 'positive_score' AS constraint_name, 'score > 0' AS check_clause, 'YES' AS enforced"
+							: 'SELECT NULL AS constraint_name WHERE 0 = 1'
+					);
+				}
+
+				if ( 'ALTER TABLE "catalog_drop_check" DROP CONSTRAINT "positive_score"' === $sql ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured CHECK catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_check_catalog_queries(): array {
+				return $this->check_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_drop_check (score INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_drop_check DROP CHECK positive_score' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_drop_check" DROP CONSTRAINT "positive_score"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+			$this->assertNotEmpty( $connection->get_check_catalog_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD CHECK uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_add_check_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured CHECK-name catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $check_name_catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-CHECK queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden CHECK metadata table access was not expected for catalog-backed ADD CHECK.' );
+				}
+
+				if ( false !== strpos( $sql, 'information_schema.table_constraints' ) && false !== strpos( $sql, "constraint_type = 'CHECK'" ) ) {
+					$this->check_name_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( "SELECT 'catalog_add_check_chk_2' AS constraint_name" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( 'ALTER TABLE "catalog_add_check" ADD CONSTRAINT "catalog_add_check_chk_3" CHECK (score > 0)' === $sql ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured CHECK-name catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_check_name_catalog_queries(): array {
+				return $this->check_name_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_add_check (score INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_add_check ADD CHECK (score > 0)' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_add_check" ADD CONSTRAINT "catalog_add_check_chk_3" CHECK (score > 0)',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 1, $connection->get_check_name_catalog_queries() );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -4312,6 +5545,169 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests DROP TABLE uses the selected PostgreSQL catalog schema.
+	 */
+	public function test_drop_table_uses_current_postgresql_catalog_schema_after_use(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured ON UPDATE trigger catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $trigger_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/drop-table queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if (
+					false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE )
+					|| false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
+					|| false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE )
+					|| false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+					|| false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE )
+				) {
+					throw new RuntimeException( 'Hidden schema metadata table access was not expected for catalog-backed DROP TABLE.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_trigger tr' ) ) {
+					$this->trigger_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'plugin_table' === (string) ( $params[1] ?? '' )
+							? "SELECT 'updated_at' AS attname"
+							: 'SELECT NULL AS attname WHERE 0 = 1'
+					);
+				}
+
+				if (
+					0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'DROP FUNCTION IF EXISTS ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'DROP TABLE ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured ON UPDATE trigger catalog checks.
+			 *
+			 * @return array[] Trigger catalog checks.
+			 */
+			public function get_trigger_catalog_checks(): array {
+				return $this->trigger_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertSame( array( 'wptests', 'plugin_schema' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertSame( 0, $driver->query( 'DROP TABLE plugin_table' ) );
+		$hash = md5( "plugin_schema\0plugin_table\0updated_at" );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $hash . '" ON "plugin_schema"."plugin_table"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP FUNCTION IF EXISTS "plugin_schema"."__wp_pg_on_update_fn_' . $hash . '"()',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP TABLE "plugin_schema"."plugin_table"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( 0, $driver->query( 'DROP TABLE IF EXISTS plugin_schema.plugin_table_two' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP TABLE IF EXISTS "plugin_schema"."plugin_table_two"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertCount( 2, $connection->get_trigger_catalog_checks() );
+		$this->assertStringContainsString( 'pg_catalog.pg_trigger tr', $connection->get_trigger_catalog_checks()[0]['sql'] );
+		$this->assertSame( array( 'plugin_schema', 'plugin_table' ), $connection->get_trigger_catalog_checks()[0]['params'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_trigger tr', $connection->get_trigger_catalog_checks()[1]['sql'] );
+		$this->assertSame( array( 'plugin_schema', 'plugin_table_two' ), $connection->get_trigger_catalog_checks()[1]['params'] );
+	}
+
+	/**
 	 * Tests unsupported standalone index DDL fails before backend execution.
 	 */
 	public function test_standalone_index_unsupported_syntax_does_not_reach_backend(): void {
@@ -4456,7 +5852,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'CREATE INDEX "wptests_create_hash_index__value_hash" ON "wptests_create_hash_index" ("value")',
+					'sql'    => 'CREATE INDEX "wptests_create_hash_index__value_hash" ON "wptests_create_hash_index" (SUBSTR(CAST("value" AS text), 1, 191))',
 					'params' => array(),
 				),
 			),
@@ -4492,7 +5888,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_create_search_geo\" (\n  \"id\" integer NOT NULL,\n  \"body\" text,\n  \"shape\" text NOT NULL\n)",
+					'sql'    => "CREATE TABLE \"wptests_create_search_geo\" (\n  \"id\" integer NOT NULL,\n  \"body\" text,\n  \"shape\" __wp_mysql_point NOT NULL\n)",
 					'params' => array(),
 				),
 			),
@@ -4569,9 +5965,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests CREATE TABLE zero-date defaults stay text-backed while SHOW CREATE preserves MySQL metadata.
+	 * Tests CREATE TABLE zero-date defaults use temporal domains while SHOW CREATE preserves MySQL metadata.
 	 */
-	public function test_create_table_zero_date_defaults_are_text_and_show_create_preserves_mysql_shape(): void {
+	public function test_create_table_zero_date_defaults_use_domains_and_show_create_preserves_mysql_shape(): void {
 		$driver = $this->create_driver();
 
 		$this->assertSame(
@@ -4589,7 +5985,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_zero_dates\" (\n  \"id\" integer NOT NULL,\n  \"created_date\" text NOT NULL DEFAULT '0000-00-00',\n  \"created_at\" text NOT NULL DEFAULT '0000-00-00 00:00:00',\n  \"updated_at\" text NOT NULL DEFAULT '0000-00-00 00:00:00',\n  PRIMARY KEY (\"id\")\n)",
+					'sql'    => "CREATE TABLE \"wptests_zero_dates\" (\n  \"id\" integer NOT NULL,\n  \"created_date\" __wp_mysql_date NOT NULL DEFAULT '0000-00-00',\n  \"created_at\" __wp_mysql_datetime NOT NULL DEFAULT '0000-00-00 00:00:00',\n  \"updated_at\" __wp_mysql_timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',\n  PRIMARY KEY (\"id\")\n)",
 					'params' => array(),
 				),
 			),
@@ -4654,7 +6050,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_json_check\" (\n  \"id\" integer NOT NULL,\n  \"data\" text CONSTRAINT \"wptests_json_check_chk_1\" CHECK ((CASE WHEN data IS NULL THEN NULL ELSE (CAST(data AS jsonb) IS NOT NULL) END))\n)",
+					'sql'    => "CREATE TABLE \"wptests_json_check\" (\n  \"id\" integer NOT NULL,\n  \"data\" __wp_mysql_json CONSTRAINT \"wptests_json_check_chk_1\" CHECK ((CASE WHEN data IS NULL THEN NULL ELSE (CAST(data AS jsonb) IS NOT NULL) END))\n)",
 					'params' => array(),
 				),
 			),
@@ -4716,6 +6112,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				),
 			),
 			$driver->get_last_postgresql_queries()
+		);
+	}
+
+	/**
+	 * Tests simple SELECT uses the selected PostgreSQL catalog schema after USE.
+	 */
+	public function test_simple_select_uses_current_postgresql_catalog_schema_after_use(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed schema existence queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$pdo        = $connection->get_pdo();
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS plugin_schema" );
+		$pdo->exec( 'CREATE TABLE plugin_schema.catalog_current_schema_select (id INTEGER NOT NULL, title TEXT NOT NULL)' );
+		$pdo->exec( "INSERT INTO plugin_schema.catalog_current_schema_select (id, title) VALUES (1, 'plugin')" );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+
+		$rows = $driver->query( 'SELECT id, title FROM catalog_current_schema_select' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'plugin', $rows[0]->title );
+		$this->assertSame(
+			'SELECT id, title FROM "plugin_schema"."catalog_current_schema_select"',
+			$this->get_last_single_postgresql_sql( $driver )
 		);
 	}
 
@@ -5741,6 +7185,97 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			'INSERT INTO "wp_acid_upsert" ("slug", "hits", "updated_at") VALUES (\'same\', 2, __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)) ON CONFLICT ("slug") DO UPDATE SET "id" = "wp_acid_upsert"."id", "hits" = "wp_acid_upsert"."hits" + excluded."hits", "updated_at" = excluded."updated_at"',
 			$translation['sql']
+		);
+	}
+
+	/**
+	 * Tests LAST_INSERT_ID(id) upserts use PostgreSQL catalogs without metadata tables.
+	 */
+	public function test_upsert_last_insert_id_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		list( $driver, $connection, $pdo ) = $this->create_pgsql_catalog_identity_unique_upsert_driver();
+
+		$pdo->exec(
+			'CREATE TABLE wp_acid_upsert (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				slug TEXT NOT NULL UNIQUE,
+				hits INTEGER NOT NULL DEFAULT 0,
+				updated_at TEXT NOT NULL
+			)'
+		);
+		$pdo->exec( "INSERT INTO wp_acid_upsert (id, slug, hits, updated_at) VALUES (7, 'same', 1, '0000-00-00 00:00:00')" );
+
+		$upsert = "INSERT INTO wp_acid_upsert (slug, hits, updated_at) VALUES ('same', 2, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), hits = hits + VALUES(hits), updated_at = VALUES(updated_at)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+		$this->assertSame(
+			'INSERT INTO "wp_acid_upsert" ("slug", "hits", "updated_at") VALUES (\'same\', 2, \'2001-01-01 00:00:00\') ON CONFLICT ("slug") DO UPDATE SET "id" = "wp_acid_upsert"."id", "hits" = "wp_acid_upsert"."hits" + excluded."hits", "updated_at" = excluded."updated_at"',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $driver->query(
+			"SELECT LAST_INSERT_ID() AS last_id, ROW_COUNT() AS row_count_value, hits, updated_at
+			FROM wp_acid_upsert
+			WHERE slug = 'same'"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->last_id );
+		$this->assertSame( '1', $rows[0]->row_count_value );
+		$this->assertSame( '3', $rows[0]->hits );
+		$this->assertSame( '2001-01-01 00:00:00', $rows[0]->updated_at );
+		$this->assertNotEmpty( $connection->get_catalog_column_queries() );
+		$this->assertNotEmpty( $connection->get_catalog_index_queries() );
+		$this->assertSame( 0, $connection->get_sequence_sync_query_count() );
+	}
+
+	/**
+	 * Tests columnless SELECT-sourced LAST_INSERT_ID(id) upserts use PostgreSQL catalogs.
+	 */
+	public function test_columnless_insert_select_upsert_last_insert_id_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		list( $driver, $connection, $pdo ) = $this->create_pgsql_catalog_identity_unique_upsert_driver();
+
+		$pdo->exec(
+			'CREATE TABLE wp_acid_upsert (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				slug TEXT NOT NULL UNIQUE,
+				hits INTEGER NOT NULL DEFAULT 0,
+				updated_at TEXT NOT NULL
+			)'
+		);
+		$pdo->exec( "INSERT INTO wp_acid_upsert (id, slug, hits, updated_at) VALUES (7, 'same', 1, '0000-00-00 00:00:00')" );
+
+		$upsert = "INSERT INTO wp_acid_upsert
+			SELECT NULL, 'same', 2, '2001-01-01 00:00:00' FROM DUAL
+			ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), hits = hits + VALUES(hits), updated_at = VALUES(updated_at)";
+
+		$this->assertSame( 1, $driver->query( $upsert ) );
+		$this->assertSame( 7, $driver->get_insert_id() );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'ON CONFLICT ("slug") DO UPDATE', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"id" = "wp_acid_upsert"."id"', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"hits" = "wp_acid_upsert"."hits" + excluded."hits"', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"updated_at" = excluded."updated_at"', $queries[0]['sql'] );
+
+		$rows = $driver->query(
+			"SELECT LAST_INSERT_ID() AS last_id, ROW_COUNT() AS row_count_value, hits, updated_at
+			FROM wp_acid_upsert
+			WHERE slug = 'same'"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->last_id );
+		$this->assertSame( '1', $rows[0]->row_count_value );
+		$this->assertSame( '3', $rows[0]->hits );
+		$this->assertSame( '2001-01-01 00:00:00', $rows[0]->updated_at );
+		$this->assertNotEmpty( $connection->get_catalog_column_queries() );
+		$this->assertNotEmpty( $connection->get_catalog_index_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
 		);
 	}
 
@@ -8620,6 +10155,136 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests UPDATE and DELETE use the selected PostgreSQL catalog schema after USE.
+	 */
+	public function test_update_and_delete_use_current_postgresql_catalog_schema_after_use_without_metadata_tables(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed DML metadata queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed current-schema UPDATE metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( array( 'plugin_schema', 'catalog_current_schema_update_delete' ) !== array_slice( $params, 0, 2 ) ) {
+						throw new RuntimeException( 'UPDATE metadata should resolve against the selected PostgreSQL schema: ' . json_encode( $params ) );
+					}
+
+					if ( 3 === count( $params ) ) {
+						$column_type = 'id' === (string) $params[2] ? 'int' : 'text';
+						return parent::query( "SELECT '{$column_type}' AS column_type" );
+					}
+
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'int' AS column_type,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra
+						UNION ALL
+						SELECT
+							'status' AS column_name,
+							2 AS ordinal_position,
+							'text' AS column_type,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$pdo        = $connection->get_pdo();
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS plugin_schema" );
+		$pdo->exec( 'CREATE TABLE plugin_schema.catalog_current_schema_update_delete (id INTEGER NOT NULL, status TEXT NOT NULL)' );
+		$pdo->exec( "INSERT INTO plugin_schema.catalog_current_schema_update_delete (id, status) VALUES (1, 'stale'), (2, 'keep')" );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertSame( 1, $driver->query( "UPDATE catalog_current_schema_update_delete SET status = 'updated' WHERE id = 1" ) );
+		$this->assertSame(
+			'UPDATE "plugin_schema"."catalog_current_schema_update_delete" SET "status" = \'updated\' WHERE (id = 1) AND ("status" IS DISTINCT FROM (\'updated\'))',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertNotEmpty( $connection->get_catalog_queries() );
+
+		$this->assertSame( 1, $driver->query( "DELETE FROM catalog_current_schema_update_delete WHERE status = 'keep'" ) );
+		$this->assertSame(
+			'DELETE FROM "plugin_schema"."catalog_current_schema_update_delete" WHERE status = \'keep\'',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $pdo->query( 'SELECT id, status FROM plugin_schema.catalog_current_schema_update_delete ORDER BY id' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'     => '1',
+					'status' => 'updated',
+				),
+			),
+			$rows
+		);
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
 	 * Tests UPDATE IGNORE skips rows that would violate unique constraints.
 	 */
 	public function test_update_ignore_unique_conflict_returns_zero_and_preserves_rows(): void {
@@ -8889,6 +10554,251 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$rows = $driver->query( 'SELECT id, status FROM wptests_update_joined ORDER BY id' );
 		$this->assertSame( 'publish', $rows[0]->status );
 		$this->assertSame( 'draft', $rows[1]->status );
+	}
+
+	/**
+	 * Tests joined UPDATE sources use the selected PostgreSQL catalog schema after USE.
+	 */
+	public function test_joined_update_uses_current_postgresql_catalog_schema_after_use_without_metadata_tables(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed DML metadata queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed current-schema joined UPDATE metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( 'plugin_schema' !== (string) ( $params[0] ?? '' ) ) {
+						throw new RuntimeException( 'Joined UPDATE metadata should resolve against the selected PostgreSQL schema: ' . json_encode( $params ) );
+					}
+
+					if ( 3 === count( $params ) && false !== strpos( $sql, 'SELECT c.column_name' ) ) {
+						return parent::query( 'SELECT ? AS column_name', array( $params[2] ) );
+					}
+
+					$column_type = in_array( strtolower( (string) ( $params[2] ?? '' ) ), array( 'id', 'post_id' ), true )
+						? 'int'
+						: 'text';
+
+					return parent::query( "SELECT '{$column_type}' AS column_type" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$pdo        = $connection->get_pdo();
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS plugin_schema" );
+		$pdo->exec( 'CREATE TABLE plugin_schema.catalog_current_schema_join_target (id INTEGER NOT NULL, status TEXT NOT NULL)' );
+		$pdo->exec( 'CREATE TABLE plugin_schema.catalog_current_schema_join_source (post_id INTEGER NOT NULL, meta_key TEXT NOT NULL, meta_value TEXT NOT NULL)' );
+		$pdo->exec( "INSERT INTO plugin_schema.catalog_current_schema_join_target (id, status) VALUES (1, 'draft'), (2, 'draft')" );
+		$pdo->exec( "INSERT INTO plugin_schema.catalog_current_schema_join_source (post_id, meta_key, meta_value) VALUES (1, '_status', 'publish'), (2, '_other', 'private')" );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+
+		$update = "UPDATE catalog_current_schema_join_target AS p JOIN catalog_current_schema_join_source AS pm ON p.id = pm.post_id SET p.status = pm.meta_value WHERE pm.meta_key = '_status'";
+
+		$this->assertSame( 1, $driver->query( $update ) );
+		$this->assertSame(
+			'UPDATE "plugin_schema"."catalog_current_schema_join_target" AS "p" SET "status" = pm.meta_value FROM "plugin_schema"."catalog_current_schema_join_source" AS "pm" WHERE (p.id = pm.post_id) AND (pm.meta_key = \'_status\') AND ("p"."status" IS DISTINCT FROM (pm.meta_value))',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+		$this->assertNotEmpty( $connection->get_catalog_queries() );
+
+		$rows = $pdo->query( 'SELECT id, status FROM plugin_schema.catalog_current_schema_join_target ORDER BY id' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'     => '1',
+					'status' => 'publish',
+				),
+				(object) array(
+					'id'     => '2',
+					'status' => 'draft',
+				),
+			),
+			$rows
+		);
+	}
+
+	/**
+	 * Tests derived joined UPDATE sources use the selected PostgreSQL catalog schema after USE.
+	 */
+	public function test_derived_joined_update_sources_use_current_postgresql_catalog_schema_after_use_without_metadata_tables(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed DML metadata queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed current-schema derived joined UPDATE metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( 'plugin_schema' !== (string) ( $params[0] ?? '' ) ) {
+						throw new RuntimeException( 'Derived joined UPDATE metadata should resolve against the selected PostgreSQL schema: ' . json_encode( $params ) );
+					}
+
+					if ( 2 === count( $params ) ) {
+						return parent::query(
+							"SELECT 'id' AS column_name, 1 AS ordinal_position, 'int' AS column_type, 'NO' AS is_nullable, NULL AS column_default, '' AS extra
+							UNION ALL SELECT 'status', 2, 'text', 'NO', NULL, ''
+							UNION ALL SELECT 'post_id', 1, 'int', 'NO', NULL, ''
+							UNION ALL SELECT 'meta_key', 2, 'text', 'NO', NULL, ''
+							UNION ALL SELECT 'meta_value', 3, 'text', 'NO', NULL, ''"
+						);
+					}
+
+					if ( 3 === count( $params ) && false !== strpos( $sql, 'SELECT c.column_name' ) ) {
+						return parent::query( 'SELECT ? AS column_name', array( $params[2] ) );
+					}
+
+					$column_type = in_array( strtolower( (string) ( $params[2] ?? '' ) ), array( 'id', 'post_id' ), true )
+						? 'int'
+						: 'text';
+
+					return parent::query( "SELECT '{$column_type}' AS column_type" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+
+		$ordered_update = "UPDATE catalog_current_schema_join_target AS p
+			JOIN catalog_current_schema_join_source AS pm ON p.id = pm.post_id
+			SET p.status = pm.meta_value
+			WHERE pm.meta_key = '_status'
+			ORDER BY pm.meta_value ASC
+			LIMIT 1";
+
+		$ordered_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			$ordered_update
+		);
+
+		$this->assertNotNull( $ordered_sql );
+		$this->assertStringContainsString( 'UPDATE "plugin_schema"."catalog_current_schema_join_target" AS "p"', $ordered_sql );
+		$this->assertStringContainsString( 'FROM "plugin_schema"."catalog_current_schema_join_target" AS "p" JOIN "plugin_schema"."catalog_current_schema_join_source" AS "pm" ON p.id = pm.post_id', $ordered_sql );
+		$this->assertStringContainsString( 'ORDER BY pm.meta_value ASC LIMIT 1', $ordered_sql );
+
+		$outer_update = "UPDATE catalog_current_schema_join_target AS p
+			LEFT JOIN catalog_current_schema_join_source AS pm ON p.id = pm.post_id
+			SET p.status = pm.meta_value
+			WHERE p.status = 'draft'";
+
+		$outer_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			$outer_update
+		);
+
+		$this->assertNotNull( $outer_sql );
+		$this->assertStringContainsString( 'UPDATE "plugin_schema"."catalog_current_schema_join_target" AS "p"', $outer_sql );
+		$this->assertStringContainsString( 'FROM "plugin_schema"."catalog_current_schema_join_target" AS "p" LEFT JOIN "plugin_schema"."catalog_current_schema_join_source" AS "pm" ON p.id = pm.post_id', $outer_sql );
+		$this->assertNotEmpty( $connection->get_catalog_queries() );
 	}
 
 	/**
@@ -10469,6 +12379,107 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertNotNull( $limit_only_sql );
 		$this->assertStringContainsString( "WHERE p.status = 'stale' LIMIT 2", $limit_only_sql );
 		$this->assertStringNotContainsString( 'ORDER BY', $limit_only_sql );
+	}
+
+	/**
+	 * Tests multi-target DELETE uses the selected PostgreSQL catalog schema after USE.
+	 */
+	public function test_mysql_multi_target_delete_uses_current_postgresql_catalog_schema_after_use_without_metadata_tables(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed current-schema multi-target DELETE metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( 'plugin_schema' !== (string) ( $params[0] ?? '' ) ) {
+						throw new RuntimeException( 'Multi-target DELETE metadata should resolve against the selected PostgreSQL schema: ' . json_encode( $params ) );
+					}
+
+					if ( 3 === count( $params ) && false !== strpos( $sql, 'SELECT c.column_name' ) ) {
+						return parent::query( 'SELECT ? AS column_name', array( $params[2] ) );
+					}
+
+					$column_type = in_array( strtolower( (string) ( $params[2] ?? '' ) ), array( 'id', 'parent_id' ), true )
+						? 'int'
+						: 'text';
+
+					return parent::query( "SELECT '{$column_type}' AS column_type" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+
+		$delete = "DELETE p
+			FROM catalog_current_schema_delete_parent AS p
+			JOIN catalog_current_schema_delete_child AS c ON c.parent_id = p.id
+			WHERE p.status = 'stale'";
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_multi_target_delete_query',
+			$delete
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'FROM "plugin_schema"."catalog_current_schema_delete_parent" AS "p" JOIN "plugin_schema"."catalog_current_schema_delete_child" AS "c" ON c.parent_id = p.id', $sql );
+		$this->assertStringContainsString( 'DELETE FROM "plugin_schema"."catalog_current_schema_delete_parent" AS "p" USING mysql_delete_rows', $sql );
+		$this->assertNotEmpty( $connection->get_catalog_queries() );
 	}
 
 	/**
@@ -17634,6 +19645,73 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW COLUMNS accepts PostgreSQL catalog schemas for pgsql connections.
+	 */
+	public function test_show_columns_accepts_postgresql_catalog_schema_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed SHOW COLUMNS catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM show_columns_rows' ) ) {
+					return parent::query(
+						"SELECT
+							'plugin_id' AS \"Field\",
+							'int' AS \"Type\",
+							'NO' AS \"Null\",
+							'PRI' AS \"Key\",
+							NULL AS \"Default\",
+							'auto_increment' AS \"Extra\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM plugin_schema.plugin_options' );
+
+		$this->assertCount( 1, $columns );
+		$this->assertSame( 'plugin_id', $columns[0]->Field );
+		$this->assertSame( 'PRI', $columns[0]->Key );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'FROM requested_table rt', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'information_schema.columns c', $queries[0]['sql'] );
+		$this->assertSame( array( 'plugin_schema', 'plugin_options' ), $queries[0]['params'] );
+
+		try {
+			$driver->query( 'SHOW COLUMNS FROM pg_catalog.pg_class' );
+			$this->fail( 'Expected internal PostgreSQL schema SHOW COLUMNS statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW COLUMNS statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests SHOW FIELDS accepts MySQL table qualification forms.
 	 */
 	public function test_show_fields_accepts_table_qualification_forms(): void {
@@ -17846,6 +19924,1611 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed CHANGE COLUMN uses catalogs without metadata tables.
+	 */
+	public function test_change_column_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/change-column queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed CHANGE COLUMN.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_trigger tr' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
+					if ( isset( $params[2] ) ) {
+						if ( 'old_status' === (string) $params[2] ) {
+							if ( false !== strpos( $sql, ' AS column_type' ) ) {
+								return parent::query( 'SELECT ? AS column_type', array( 'varchar(20)' ) );
+							}
+
+							return parent::query( 'SELECT ? AS column_name', array( 'old_status' ) );
+						}
+
+						return parent::query( 'SELECT NULL AS column_name WHERE 0 = 1' );
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER TABLE "catalog_change_column" ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'DROP FUNCTION IF EXISTS ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertSame(
+			0,
+			$driver->query( "ALTER TABLE catalog_change_column CHANGE COLUMN old_status status varchar(100) NULL DEFAULT 'open' COMMENT 'Visible status'" )
+		);
+		$hash = md5( "public\0catalog_change_column\0old_status" );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_column" RENAME COLUMN "old_status" TO "status"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_column" ALTER COLUMN "status" TYPE varchar(100)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_column" ALTER COLUMN "status" DROP NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_column" ALTER COLUMN "status" SET DEFAULT \'open\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $hash . '" ON "public"."catalog_change_column"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP FUNCTION IF EXISTS "public"."__wp_pg_on_update_fn_' . $hash . '"()',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."catalog_change_column"."status" IS \'Visible status\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CHANGE/MODIFY inline indexes use catalogs without metadata tables.
+	 */
+	public function test_change_column_inline_indexes_use_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/change-column-inline-index queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed CHANGE/MODIFY inline indexes.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) && isset( $params[2] ) ) {
+					if ( in_array( (string) $params[2], array( 'a', 'b' ), true ) ) {
+						if ( false !== strpos( $sql, ' AS column_type' ) ) {
+							return parent::query( 'SELECT ? AS column_type', array( 'integer' ) );
+						}
+
+						return parent::query( 'SELECT ? AS column_name', array( (string) $params[2] ) );
+					}
+
+					return parent::query( 'SELECT NULL AS column_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'ALTER TABLE "catalog_change_inline_keys" ' )
+					|| 'CREATE UNIQUE INDEX "catalog_change_inline_keys__b" ON "catalog_change_inline_keys" ("b")' === $sql
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_change_inline_keys (a INTEGER, b INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_change_inline_keys CHANGE COLUMN a a INT PRIMARY KEY' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "a" TYPE integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "a" SET NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "a" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ADD PRIMARY KEY ("a")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."catalog_change_inline_keys"."a" IS NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_change_inline_keys MODIFY COLUMN b INT UNIQUE' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "b" TYPE integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "b" DROP NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "b" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE UNIQUE INDEX "catalog_change_inline_keys__b" ON "catalog_change_inline_keys" ("b")',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."catalog_change_inline_keys"."b" IS NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CHANGE/MODIFY inline CHECK uses catalogs without metadata tables.
+	 */
+	public function test_change_column_inline_check_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/change-column-inline-CHECK queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed CHANGE/MODIFY inline CHECK.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) && isset( $params[2] ) ) {
+					if ( 'score' === (string) $params[2] ) {
+						if ( false !== strpos( $sql, ' AS column_type' ) ) {
+							return parent::query( 'SELECT ? AS column_type', array( 'integer' ) );
+						}
+
+						return parent::query( 'SELECT ? AS column_name', array( 'score' ) );
+					}
+
+					return parent::query( 'SELECT NULL AS column_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'ALTER TABLE "catalog_change_inline_check" ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON CONSTRAINT ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_change_inline_check (score INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_change_inline_check MODIFY COLUMN score INT CHECK (score > 0) NOT ENFORCED' )
+		);
+
+		$sql = $driver->get_last_postgresql_queries();
+		$this->assertCount( 6, $sql );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_check" ALTER COLUMN "score" TYPE integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_check" ALTER COLUMN "score" DROP NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_check" ALTER COLUMN "score" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_check" ADD CONSTRAINT "catalog_change_inline_check_chk_1" CHECK (true)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."catalog_change_inline_check"."score" IS NULL',
+					'params' => array(),
+				),
+			),
+			array_slice( $sql, 0, 5 )
+		);
+		$this->assertStringContainsString(
+			'COMMENT ON CONSTRAINT "catalog_change_inline_check_chk_1" ON "public"."catalog_change_inline_check" IS ',
+			$sql[5]['sql']
+		);
+		$this->assertStringContainsString( '__wp_mysql_check_clause:score > 0', $sql[5]['sql'] );
+		$this->assertStringContainsString( '__wp_mysql_check_enforced:NO', $sql[5]['sql'] );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed identity CHANGE COLUMN uses catalogs without metadata tables.
+	 */
+	public function test_change_column_identity_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/identity-change-column queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed identity CHANGE COLUMN.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'SELECT c.column_name' )
+				) {
+					if ( isset( $params[2] ) && 'legacy_id' === (string) $params[2] ) {
+						return parent::query( 'SELECT ? AS column_name', array( 'legacy_id' ) );
+					}
+
+					return parent::query( 'SELECT NULL AS column_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && isset( $params[2] ) && 'legacy_id' === (string) $params[2] ) {
+					return parent::query(
+						'SELECT
+							? AS data_type,
+							? AS is_identity,
+							NULL AS column_default,
+							NULL AS mysql_column_type,
+							NULL AS mysql_extra',
+						array( 'bigint', 'YES' )
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
+					if ( isset( $params[2] ) && 'legacy_id' === (string) $params[2] ) {
+						if ( false !== strpos( $sql, ' AS column_type' ) ) {
+							return parent::query( 'SELECT ? AS column_type', array( 'bigint(20)' ) );
+						}
+
+						return parent::query( 'SELECT ? AS column_name', array( 'legacy_id' ) );
+					}
+
+					return parent::query( 'SELECT NULL AS column_name WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER TABLE "catalog_identity" ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'DO $wp_mysql_identity_sequence_comment$' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_identity CHANGE COLUMN legacy_id id int NOT NULL AUTO_INCREMENT' )
+		);
+		$this->assertSame(
+			'ALTER TABLE "catalog_identity" RENAME COLUMN "legacy_id" TO "id"',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
+		$this->assertSame(
+			'ALTER TABLE "catalog_identity" ALTER COLUMN "id" SET NOT NULL',
+			$driver->get_last_postgresql_queries()[1]['sql']
+		);
+		$this->assertSame(
+			'COMMENT ON COLUMN "public"."catalog_identity"."id" IS NULL',
+			$driver->get_last_postgresql_queries()[2]['sql']
+		);
+		$this->assertStringNotContainsString(
+			'DO $wp_mysql_identity_sequence_comment$',
+			implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) )
+		);
+		$this->assertSame(
+			array(
+				array( 'params' => array() ),
+				array( 'params' => array() ),
+				array( 'params' => array() ),
+			),
+			array_map(
+				static function ( array $query ): array {
+					return array( 'params' => $query['params'] );
+				},
+				$driver->get_last_postgresql_queries()
+			)
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CHANGE COLUMN drops identity when AUTO_INCREMENT is removed.
+	 */
+	public function test_change_column_drops_identity_when_auto_increment_removed_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured identity catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $identity_catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/identity-drop queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed identity DROP.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'SELECT c.column_name' )
+				) {
+					return parent::query(
+						isset( $params[2] ) && 'id' === (string) $params[2]
+							? 'SELECT \'id\' AS column_name'
+							: 'SELECT NULL AS column_name WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && isset( $params[2] ) && 'id' === (string) $params[2] ) {
+					$this->identity_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'SELECT
+							\'integer\' AS data_type,
+							\'YES\' AS is_identity,
+							NULL AS column_default,
+							\'int\' AS mysql_column_type,
+							NULL AS mysql_extra'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
+					return parent::query( 'SELECT NULL AS column_name WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER TABLE "catalog_identity_plain" ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured identity catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_identity_catalog_queries(): array {
+				return $this->identity_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_identity_plain CHANGE COLUMN id id int NOT NULL' )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_identity_plain" ALTER COLUMN "id" DROP IDENTITY IF EXISTS',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_identity_plain" ALTER COLUMN "id" TYPE integer',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_identity_plain" ALTER COLUMN "id" SET NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_identity_plain" ALTER COLUMN "id" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."catalog_identity_plain"."id" IS NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 1, $connection->get_identity_catalog_queries() );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $connection->get_identity_catalog_queries()[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pg_catalog.pg_get_serial_sequence', $connection->get_identity_catalog_queries()[0]['sql'] );
+		$this->assertSame( array( 'public', 'catalog_identity_plain', 'id' ), $connection->get_identity_catalog_queries()[0]['params'] );
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests dbDelta identity lookups prefer PostgreSQL catalogs over hidden column metadata.
+	 */
+	public function test_existing_dbdelta_identity_metadata_prefers_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed identity metadata catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'information_schema.columns' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'SELECT
+							\'bigint\' AS data_type,
+							\'YES\' AS is_identity,
+							NULL AS column_default,
+							\'bigint unsigned\' AS mysql_column_type,
+							NULL AS mysql_extra'
+					);
+				}
+
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed identity lookup.' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_row    = Closure::bind(
+			function (): ?array {
+				return $this->get_existing_dbdelta_column_identity_metadata( 'public', 'catalog_identity', 'legacy_id' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$row = $get_row();
+
+		$this->assertSame( 'bigint', $row['data_type'] );
+		$this->assertSame( 'YES', $row['is_identity'] );
+		$this->assertSame( 'bigint unsigned', $row['mysql_column_type'] );
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 1, $catalog_queries );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pg_catalog.pg_get_serial_sequence', $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'catalog_identity', 'legacy_id' ), $catalog_queries[0]['params'] );
+	}
+
+	/**
+	 * Tests missing dbDelta identity catalog metadata does not fall back to hidden column metadata.
+	 */
+	public function test_existing_dbdelta_identity_metadata_catalog_miss_does_not_fall_back_to_hidden_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed identity metadata catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'information_schema.columns' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS data_type WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for missing catalog-backed identity lookup.' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_row    = Closure::bind(
+			function (): ?array {
+				return $this->get_existing_dbdelta_column_identity_metadata( 'public', 'catalog_identity', 'missing_id' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$this->assertNull( $get_row() );
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 1, $catalog_queries );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pg_catalog.pg_get_serial_sequence', $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'catalog_identity', 'missing_id' ), $catalog_queries[0]['params'] );
+	}
+
+	/**
+	 * Tests unrecognized dbDelta metadata does not initialize hidden tables in catalog mode.
+	 */
+	public function test_unrecognized_dbdelta_metadata_does_not_initialize_hidden_metadata_tables_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute queries while blocking hidden metadata-table initialization.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table initialization was not expected for catalog-backed dbDelta metadata.' );
+					}
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$apply      = Closure::bind(
+			function (): void {
+				$this->apply_mysql_dbdelta_alter_metadata(
+					array(
+						'operation' => 'unsupported_fixture',
+						'schema'    => 'public',
+						'table'     => 'catalog_dbdelta_unknown',
+					)
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$apply();
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests real PostgreSQL catalog mode cannot initialize hidden metadata tables.
+	 */
+	public function test_metadata_table_initializer_fails_for_pgsql_catalog_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection( array( 'pdo' => $pdo ) );
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$ensure     = Closure::bind(
+			function (): void {
+				$this->ensure_mysql_schema_metadata_tables();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		try {
+			$ensure();
+			$this->fail( 'Expected PostgreSQL catalog metadata mode to reject hidden table initialization.' );
+		} catch ( LogicException $e ) {
+			$this->assertSame( 'PostgreSQL catalog metadata must not initialize hidden MySQL metadata tables.', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests explicit PostgreSQL catalog metadata sync cannot fall back to hidden side tables.
+	 */
+	public function test_postgresql_catalog_schema_sync_requires_catalog_connection(): void {
+		$driver = $this->create_driver();
+		$pdo    = $driver->get_connection()->get_pdo();
+		$sync   = Closure::bind(
+			function (): void {
+				$this->sync_postgresql_catalog_schema_metadata( 'CREATE TABLE catalog_sync_requires_pgsql (id int NOT NULL)' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		try {
+			$sync();
+			$this->fail( 'Expected explicit PostgreSQL catalog metadata sync to require a catalog connection.' );
+		} catch ( LogicException $e ) {
+			$this->assertSame( 'PostgreSQL catalog metadata sync requires a PostgreSQL catalog connection.', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests direct side metadata helpers fail for PostgreSQL catalog connections.
+	 */
+	public function test_side_metadata_helpers_fail_for_pgsql_catalog_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection( array( 'pdo' => $pdo ) );
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$helpers    = array(
+			'insert_mysql_table_metadata'                  => function (): void {
+				$this->insert_mysql_table_metadata( 'public', 'catalog_side_table', array() );
+			},
+			'update_mysql_table_comment_metadata'          => function (): void {
+				$this->update_mysql_table_comment_metadata( 'public', 'catalog_side_table', '' );
+			},
+			'delete_mysql_schema_metadata_for_tables'      => function (): void {
+				$this->delete_mysql_schema_metadata_for_tables( array( 'catalog_side_table' ), 'public' );
+			},
+			'delete_mysql_schema_metadata_targets'         => function (): void {
+				$this->delete_mysql_schema_metadata_for_table_targets(
+					array(
+						array(
+							'schema' => 'public',
+							'table'  => 'catalog_side_table',
+						),
+					)
+				);
+			},
+			'store_mysql_schema_metadata_for_schema'       => function (): void {
+				$this->store_mysql_schema_metadata_for_schema(
+					'CREATE TABLE catalog_side_table (id bigint NOT NULL)',
+					'public'
+				);
+			},
+			'ensure_mysql_metadata_column'                 => function (): void {
+				$this->ensure_mysql_metadata_column(
+					WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+					'catalog_side_column',
+					'TEXT'
+				);
+			},
+			'mysql_metadata_column_exists'                 => function (): void {
+				$this->mysql_metadata_column_exists(
+					WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+					'catalog_side_column'
+				);
+			},
+			'insert_mysql_column_metadata'                 => function (): void {
+				$this->insert_mysql_column_metadata( 'public', 'catalog_side_table', array( 'name' => 'id' ) );
+			},
+			'delete_mysql_column_metadata'                 => function (): void {
+				$this->delete_mysql_column_metadata( 'public', 'catalog_side_table', 'id' );
+			},
+			'rename_mysql_column_metadata'                 => function (): void {
+				$this->rename_mysql_column_metadata( 'public', 'catalog_side_table', 'old_id', 'id' );
+			},
+			'insert_mysql_index_metadata'                  => function (): void {
+				$this->insert_mysql_index_metadata(
+					'public',
+					'catalog_side_table',
+					array(
+						'name'       => 'id_idx',
+						'ordinal'    => 1,
+						'non_unique' => '1',
+						'index_type' => 'BTREE',
+						'columns'    => array(
+							array(
+								'seq_in_index' => 1,
+								'column_name'  => 'id',
+								'collation'    => 'A',
+								'sub_part'     => null,
+							),
+						),
+					)
+				);
+			},
+			'delete_mysql_index_metadata'                  => function (): void {
+				$this->delete_mysql_index_metadata( 'public', 'catalog_side_table', 'id_idx' );
+			},
+			'delete_mysql_index_metadata_if_table_exists'  => function (): void {
+				$this->delete_mysql_index_metadata_if_table_exists( 'public', 'catalog_side_table', 'id_idx' );
+			},
+			'rename_mysql_index_metadata'                  => function (): void {
+				$this->rename_mysql_index_metadata( 'public', 'catalog_side_table', 'old_idx', 'id_idx' );
+			},
+			'rename_mysql_index_metadata_if_table_exists'  => function (): void {
+				$this->rename_mysql_index_metadata_if_table_exists( 'public', 'catalog_side_table', 'old_idx', 'id_idx' );
+			},
+			'insert_mysql_foreign_key_metadata'            => function (): void {
+				$this->insert_mysql_foreign_key_metadata(
+					'public',
+					'catalog_side_table',
+					array(
+						'name'               => 'fk_id',
+						'columns'            => array( 'parent_id' ),
+						'referenced_schema'  => 'public',
+						'referenced_table'   => 'parent',
+						'referenced_columns' => array( 'id' ),
+						'update_rule'        => 'NO ACTION',
+						'delete_rule'        => 'NO ACTION',
+					)
+				);
+			},
+			'insert_mysql_check_metadata'                  => function (): void {
+				$this->insert_mysql_check_metadata(
+					'public',
+					'catalog_side_table',
+					array(
+						'name'         => 'chk_id',
+						'check_clause' => 'id > 0',
+						'enforced'     => 'YES',
+					)
+				);
+			},
+			'delete_mysql_check_metadata'                  => function (): void {
+				$this->delete_mysql_check_metadata( 'public', 'catalog_side_table', 'chk_id' );
+			},
+			'delete_mysql_check_metadata_if_table_exists'  => function (): void {
+				$this->delete_mysql_check_metadata_if_table_exists( 'public', 'catalog_side_table', 'chk_id' );
+			},
+			'get_next_mysql_check_metadata_ordinal'        => function (): void {
+				$this->get_next_mysql_check_metadata_ordinal( 'public', 'catalog_side_table' );
+			},
+			'delete_mysql_foreign_key_metadata'            => function (): void {
+				$this->delete_mysql_foreign_key_metadata( 'public', 'catalog_side_table', 'fk_id' );
+			},
+			'delete_mysql_foreign_key_metadata_if_table_exists' => function (): void {
+				$this->delete_mysql_foreign_key_metadata_if_table_exists( 'public', 'catalog_side_table', 'fk_id' );
+			},
+			'delete_mysql_foreign_key_metadata_for_column' => function (): void {
+				$this->delete_mysql_foreign_key_metadata_for_column( 'public', 'catalog_side_table', 'parent_id' );
+			},
+			'rename_mysql_foreign_key_column_metadata'     => function (): void {
+				$this->rename_mysql_foreign_key_column_metadata( 'public', 'catalog_side_table', 'old_id', 'id' );
+			},
+			'rename_mysql_referenced_foreign_key_column_metadata' => function (): void {
+				$this->rename_mysql_referenced_foreign_key_column_metadata( 'public', 'parent', 'old_id', 'id' );
+			},
+			'get_next_mysql_foreign_key_ordinal'           => function (): void {
+				$this->get_next_mysql_foreign_key_ordinal( 'public', 'catalog_side_table' );
+			},
+			'delete_mysql_index_metadata_for_column'       => function (): void {
+				$this->delete_mysql_index_metadata_for_column( 'public', 'catalog_side_table', 'id' );
+			},
+			'rename_mysql_index_column_metadata'           => function (): void {
+				$this->rename_mysql_index_column_metadata( 'public', 'catalog_side_table', 'old_id', 'id' );
+			},
+			'get_next_mysql_column_ordinal'                => function (): void {
+				$this->get_next_mysql_column_ordinal( 'public', 'catalog_side_table' );
+			},
+			'get_existing_mysql_column_ordinal'            => function (): void {
+				$this->get_existing_mysql_column_ordinal( 'public', 'catalog_side_table', 'id' );
+			},
+			'get_next_mysql_index_ordinal'                 => function (): void {
+				$this->get_next_mysql_index_ordinal( 'public', 'catalog_side_table' );
+			},
+			'get_mysql_column_nullable'                    => function (): void {
+				$this->get_mysql_column_nullable( 'public', 'catalog_side_table', 'id' );
+			},
+		);
+
+		$guarded_helpers             = array();
+		$unguarded_initializer_calls = array();
+		$reflection                  = new ReflectionClass( WP_PostgreSQL_Driver::class );
+		foreach ( $reflection->getMethods( ReflectionMethod::IS_PRIVATE ) as $method ) {
+			$method_name = $method->getName();
+			if ( 'assert_mysql_schema_side_metadata_allowed' === $method_name ) {
+				continue;
+			}
+
+			$source = file( (string) $method->getFileName() );
+			$this->assertIsArray( $source );
+			$method_source = implode(
+				'',
+				array_slice(
+					$source,
+					$method->getStartLine() - 1,
+					$method->getEndLine() - $method->getStartLine() + 1
+				)
+			);
+			if ( false !== strpos( $method_source, 'assert_mysql_schema_side_metadata_allowed()' ) ) {
+				$guarded_helpers[] = $method_name;
+			}
+
+			if (
+				'ensure_mysql_schema_metadata_tables' !== $method_name
+				&& false !== strpos( $method_source, 'ensure_mysql_schema_metadata_tables()' )
+				&& false === strpos( $method_source, 'assert_mysql_schema_side_metadata_allowed()' )
+				&& false === strpos( $method_source, 'should_use_postgresql_catalog_metadata()' )
+			) {
+				$unguarded_initializer_calls[] = $method_name;
+			}
+		}
+		sort( $guarded_helpers );
+		sort( $unguarded_initializer_calls );
+
+		$covered_helpers = array_keys( $helpers );
+		sort( $covered_helpers );
+
+		$this->assertSame(
+			array(),
+			array_values( array_diff( $guarded_helpers, $covered_helpers ) ),
+			'Every direct hidden side-metadata helper guard should have explicit PostgreSQL catalog fail-closed coverage.'
+		);
+
+		$this->assertSame(
+			array(),
+			$unguarded_initializer_calls,
+			'Every hidden metadata initializer caller must either fail through the side-metadata guard or branch to PostgreSQL catalogs.'
+		);
+
+		foreach ( $helpers as $helper_name => $helper ) {
+			$call = Closure::bind( $helper, $driver, WP_PostgreSQL_Driver::class );
+
+			try {
+				$call();
+				$this->fail( sprintf( 'Expected %s to reject hidden metadata access.', $helper_name ) );
+			} catch ( LogicException $e ) {
+				$this->assertSame( 'PostgreSQL catalog metadata must not access hidden MySQL metadata tables.', $e->getMessage(), $helper_name );
+			}
+		}
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests non-recoverable CREATE TABLE metadata fails without hidden side tables in catalog mode.
+	 */
+	public function test_nonrecoverable_create_table_metadata_fails_without_hidden_metadata_tables_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured SQL queries.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute queries while blocking hidden metadata-table initialization.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table initialization was not expected for catalog-backed CREATE TABLE metadata.' );
+					}
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured SQL queries.
+			 *
+			 * @return string[] Captured queries.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		try {
+			$driver->query( 'CREATE TABLE catalog_bad_metadata (created date ON UPDATE CURRENT_TIMESTAMP)' );
+			$this->fail( 'Expected non-recoverable PostgreSQL catalog metadata to fail.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.', $e->getMessage() );
+		}
+
+		$this->assertSame( array(), $connection->get_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests non-recoverable ALTER ADD COLUMN metadata fails without hidden side tables in catalog mode.
+	 */
+	public function test_nonrecoverable_add_column_metadata_fails_without_hidden_metadata_tables_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute queries while blocking hidden metadata-table initialization.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table initialization was not expected for catalog-backed ALTER metadata.' );
+					}
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$apply      = Closure::bind(
+			function (): void {
+				$this->apply_mysql_add_column_metadata(
+					'public',
+					'catalog_bad_metadata',
+					array(
+						'column' => array(
+							'name'     => 'created',
+							'type'     => 'date',
+							'nullable' => 'YES',
+							'default'  => null,
+							'extra'    => 'on update CURRENT_TIMESTAMP',
+							'comment'  => '',
+						),
+					)
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		try {
+			$apply();
+			$this->fail( 'Expected non-recoverable PostgreSQL catalog metadata to fail.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests non-recoverable ALTER ADD CHECK metadata fails without hidden side tables in catalog mode.
+	 */
+	public function test_nonrecoverable_add_check_metadata_fails_without_hidden_metadata_tables_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute queries while blocking hidden metadata-table initialization.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table initialization was not expected for catalog-backed CHECK metadata.' );
+					}
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$apply      = Closure::bind(
+			function (): void {
+				$this->apply_mysql_add_check_metadata(
+					'public',
+					'catalog_bad_metadata',
+					array(
+						'name'         => 'bad_check',
+						'check_clause' => '',
+						'enforced'     => 'YES',
+					)
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		try {
+			$apply();
+			$this->fail( 'Expected non-recoverable PostgreSQL catalog metadata to fail.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
 	 * Tests CHANGE COLUMN preserves existing identity DDL while updating MySQL metadata.
 	 */
 	public function test_change_column_auto_increment_integer_family_preserves_identity_ddl_and_metadata(): void {
@@ -17984,7 +21667,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "scheduled_date_gmt" TYPE text',
+					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "scheduled_date_gmt" TYPE __wp_mysql_datetime',
 					'params' => array(),
 				),
 				array(
@@ -17996,7 +21679,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "last_attempt_gmt" TYPE text',
+					'sql'    => 'ALTER TABLE "wptests_actionscheduler_actions" ALTER COLUMN "last_attempt_gmt" TYPE __wp_mysql_datetime',
 					'params' => array(),
 				),
 				array(
@@ -18117,7 +21800,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "payload" TYPE text',
+					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "payload" TYPE __wp_mysql_json',
 					'params' => array(),
 				),
 				array(
@@ -18153,7 +21836,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "settings" TYPE text',
+					'sql'    => 'ALTER TABLE "wptests_json_alter" ALTER COLUMN "settings" TYPE __wp_mysql_longtext',
 					'params' => array(),
 				),
 				array(
@@ -18200,7 +21883,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'ALTER TABLE "wptests_plugin_alter" ADD COLUMN "flag" integer NOT NULL DEFAULT \'0\'',
+					'sql'    => 'ALTER TABLE "wptests_plugin_alter" ADD COLUMN "flag" __wp_mysql_tinyint_1 NOT NULL DEFAULT \'0\'',
 					'params' => array(),
 				),
 				array(
@@ -18261,6 +21944,1142 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_alter_hash_index' );
 		$this->assertSame( array( 'value_hash' ), array_column( $indexes, 'key_name' ) );
 		$this->assertSame( array( 'BTREE' ), array_column( $indexes, 'index_type' ) );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD INDEX uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_add_index_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-index queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed ADD INDEX.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query( "SELECT 'value' AS column_name" );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_alter_add_index (id INTEGER, value TEXT)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_alter_add_index ADD INDEX value_idx (value(16)) COMMENT "Lookup"' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "catalog_alter_add_index__value_idx" ON "catalog_alter_add_index" (SUBSTR(CAST("value" AS text), 1, 16))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "public"."catalog_alter_add_index__value_idx" IS \'Lookup\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_alter_add_index ADD INDEX plain_idx (value)' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "catalog_alter_add_index__plain_idx" ON "catalog_alter_add_index" ("value")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 2, $connection->get_catalog_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD FULLTEXT/SPATIAL INDEX uses catalog placeholders.
+	 */
+	public function test_alter_table_add_metadata_only_indexes_uses_postgresql_catalog_placeholders_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-index queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed ADD FULLTEXT/SPATIAL INDEX.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$column_name = (string) end( $params );
+					return parent::query( 'SELECT ? AS column_name', array( $column_name ) );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE INDEX ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_alter_metadata_only_indexes (id INTEGER, body TEXT, shape TEXT)' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'ALTER TABLE catalog_alter_metadata_only_indexes
+					ADD FULLTEXT KEY body_fulltext (body) COMMENT "Search docs",
+					ADD SPATIAL INDEX shape_spatial (shape)'
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE INDEX "catalog_alter_metadata_only_indexes__body_fulltext" ON "catalog_alter_metadata_only_indexes" (SUBSTR(CAST("body" AS text), 1, 191))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "catalog_alter_metadata_only_indexes__shape_spatial" ON "catalog_alter_metadata_only_indexes" (SUBSTR(CAST("shape" AS text), 1, 32))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "public"."catalog_alter_metadata_only_indexes__body_fulltext" IS E\'__wp_mysql_index_type:RlVMTFRFWFQ=\\nSearch docs\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "public"."catalog_alter_metadata_only_indexes__shape_spatial" IS \'__wp_mysql_index_type:U1BBVElBTA==\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertGreaterThanOrEqual( 2, count( $connection->get_catalog_queries() ) );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD COLUMN uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_add_column_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-column queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed ADD COLUMN.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_trigger tr' ) ) {
+					return parent::query( 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'id' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'id' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_add_column (id INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( "ALTER TABLE catalog_add_column ADD COLUMN note varchar(100) DEFAULT 'fresh' COMMENT 'Note column'" )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_add_column" ADD COLUMN "note" varchar(100) DEFAULT \'fresh\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."catalog_add_column"."note" IS \'Note column\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD COLUMN creates catalog-visible enum/set helpers.
+	 */
+	public function test_alter_table_add_enum_and_set_columns_uses_postgresql_helper_types_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-column helper type queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed helper type ADD COLUMN.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'id' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'id' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'DO $wp_mysql_enum_type$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_set_domain$' )
+					|| 0 === strpos( $sql, 'COMMENT ON DOMAIN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_alter_helper_types (id INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( "ALTER TABLE catalog_alter_helper_types ADD COLUMN status enum('draft','published') NOT NULL DEFAULT 'draft'" )
+		);
+		$enum_sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertCount( 2, $enum_sql );
+		$this->assertStringContainsString( 'DO $wp_mysql_enum_type$', $enum_sql[0] );
+		$this->assertStringContainsString( 'CREATE TYPE "__wp_mysql_enum_02ccf983d79439de" AS ENUM (\'draft\', \'published\')', $enum_sql[0] );
+		$this->assertSame(
+			'ALTER TABLE "catalog_alter_helper_types" ADD COLUMN "status" __wp_mysql_enum_02ccf983d79439de NOT NULL DEFAULT \'draft\'',
+			$enum_sql[1]
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( "ALTER TABLE catalog_alter_helper_types ADD COLUMN flags set('featured','archived') DEFAULT 'featured'" )
+		);
+		$set_sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertCount( 3, $set_sql );
+		$this->assertStringContainsString( 'DO $wp_mysql_set_domain$', $set_sql[0] );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_set_3c255ba5f59d3194" AS text', $set_sql[0] );
+		$this->assertSame(
+			'COMMENT ON DOMAIN "__wp_mysql_set_3c255ba5f59d3194" IS \'__wp_mysql_column_type:c2V0KCdmZWF0dXJlZCcsJ2FyY2hpdmVkJyk=\'',
+			$set_sql[1]
+		);
+		$this->assertSame(
+			'ALTER TABLE "catalog_alter_helper_types" ADD COLUMN "flags" __wp_mysql_set_3c255ba5f59d3194 DEFAULT \'featured\'',
+			$set_sql[2]
+		);
+		$this->assertStringNotContainsString( 'COMMENT ON COLUMN "public"."catalog_alter_helper_types"', implode( "\n", array_merge( $enum_sql, $set_sql ) ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", array_merge( $enum_sql, $set_sql ) ) );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD COLUMN creates ON UPDATE triggers without metadata tables.
+	 */
+	public function test_alter_table_add_on_update_column_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-column ON UPDATE queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed ADD COLUMN ON UPDATE.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'id' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'id' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'DO $wp_mysql_text_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_integer_domain$' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+					|| 0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'CREATE TRIGGER ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_add_on_update_column (id INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_add_on_update_column ADD COLUMN touched timestamp NULL ON UPDATE CURRENT_TIMESTAMP' )
+		);
+
+		$hash = md5( "public\0catalog_add_on_update_column\0touched" );
+		$sql  = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertSame( 'ALTER TABLE "catalog_add_on_update_column" ADD COLUMN "touched" __wp_mysql_timestamp', $sql[0] );
+		$this->assertStringNotContainsString( 'COMMENT ON COLUMN "public"."catalog_add_on_update_column"."touched"', implode( "\n", $sql ) );
+		$this->assertContains( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $hash . '" ON "public"."catalog_add_on_update_column"', $sql );
+		$this->assertContains(
+			'CREATE TRIGGER "__wp_pg_on_update_' . $hash . '" BEFORE UPDATE ON "public"."catalog_add_on_update_column" FOR EACH ROW EXECUTE FUNCTION "public"."__wp_pg_on_update_fn_' . $hash . '"()',
+			$sql
+		);
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD COLUMN inline CHECK uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_add_column_inline_check_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-column-CHECK queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed ADD COLUMN inline CHECK.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.table_constraints' ) && false !== strpos( $sql, "constraint_type = 'CHECK'" ) ) {
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'id' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'id' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 'ALTER TABLE "catalog_inline_check" ADD COLUMN "score" integer CONSTRAINT "catalog_inline_check_chk_1" CHECK (score > 0)' === $sql ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_inline_check (id INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_inline_check ADD COLUMN score int CHECK (score > 0)' )
+		);
+			$this->assertSame(
+				array(
+					array(
+						'sql'    => 'ALTER TABLE "catalog_inline_check" ADD COLUMN "score" integer CONSTRAINT "catalog_inline_check_chk_1" CHECK (score > 0)',
+						'params' => array(),
+					),
+				),
+				$driver->get_last_postgresql_queries()
+			);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD COLUMN inline indexes use catalogs without metadata tables.
+	 */
+	public function test_alter_table_add_column_inline_indexes_use_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-column-unique queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed ADD COLUMN inline UNIQUE.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							in_array( (string) $params[2], array( 'id', 'slug' ), true )
+								? 'SELECT NULL AS column_name WHERE 0 = 1'
+								: 'SELECT ? AS column_name',
+							in_array( (string) $params[2], array( 'id', 'slug' ), true ) ? array() : array( (string) $params[2] )
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query( 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				if ( 'ALTER TABLE "catalog_inline_unique" ADD COLUMN "slug" varchar(100) CONSTRAINT "slug" UNIQUE' === $sql ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 'ALTER TABLE "catalog_inline_unique" ADD COLUMN "id" integer PRIMARY KEY' === $sql ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_inline_unique (id INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_inline_unique ADD COLUMN slug varchar(100) UNIQUE' )
+		);
+			$this->assertSame(
+				array(
+					array(
+						'sql'    => 'ALTER TABLE "catalog_inline_unique" ADD COLUMN "slug" varchar(100) CONSTRAINT "slug" UNIQUE',
+						'params' => array(),
+					),
+				),
+				$driver->get_last_postgresql_queries()
+			);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_inline_unique ADD COLUMN id int PRIMARY KEY' )
+		);
+			$this->assertSame(
+				array(
+					array(
+						'sql'    => 'ALTER TABLE "catalog_inline_unique" ADD COLUMN "id" integer PRIMARY KEY',
+						'params' => array(),
+					),
+				),
+				$driver->get_last_postgresql_queries()
+			);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD COLUMN inline foreign key uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_add_column_inline_foreign_key_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured foreign-key catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $foreign_key_catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-column-foreign-key queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed ADD COLUMN inline foreign key.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_constraint con' ) && false !== strpos( $sql, 'con.contype = \'f\'' ) ) {
+					$this->foreign_key_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( false !== strpos( $sql, 'LOWER(con.conname)' ) ) {
+						return parent::query( 'SELECT 1 WHERE 0 = 1' );
+					}
+
+					return parent::query( 'SELECT NULL AS conname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'parent_id' === (string) $params[2]
+								? 'SELECT NULL AS column_name WHERE 0 = 1'
+								: 'SELECT ? AS column_name',
+							'parent_id' === (string) $params[2] ? array() : array( (string) $params[2] )
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 'ALTER TABLE "catalog_inline_fk" ADD COLUMN "parent_id" integer CONSTRAINT "catalog_inline_fk_ibfk_1" REFERENCES "catalog_fk_parent" ("id") ON DELETE CASCADE ON UPDATE SET NULL' === $sql ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured foreign-key catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_foreign_key_catalog_queries(): array {
+				return $this->foreign_key_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_fk_parent (id INTEGER PRIMARY KEY)' );
+		$pdo->exec( 'CREATE TABLE catalog_inline_fk (id INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'ALTER TABLE catalog_inline_fk
+					ADD COLUMN parent_id int REFERENCES catalog_fk_parent (id)
+					ON DELETE CASCADE ON UPDATE SET NULL'
+			)
+		);
+			$this->assertSame(
+				array(
+					array(
+						'sql'    => 'ALTER TABLE "catalog_inline_fk" ADD COLUMN "parent_id" integer CONSTRAINT "catalog_inline_fk_ibfk_1" REFERENCES "catalog_fk_parent" ("id") ON DELETE CASCADE ON UPDATE SET NULL',
+						'params' => array(),
+					),
+				),
+				$driver->get_last_postgresql_queries()
+			);
+
+		$this->assertNotEmpty( $connection->get_foreign_key_catalog_queries() );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE ADD COLUMN identity uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_add_identity_column_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/add-identity-column queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed ADD identity COLUMN.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
+					return parent::query( 'SELECT NULL AS column_name WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER TABLE "catalog_add_identity" ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'DO $wp_mysql_identity_sequence_comment$' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_add_identity ADD COLUMN seq int NOT NULL AUTO_INCREMENT' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_add_identity" ADD COLUMN "seq" integer GENERATED BY DEFAULT AS IDENTITY NOT NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -18853,7 +23672,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_alias_create\" (\n  \"flags\" integer,\n  \"enabled\" integer,\n  \"amount\" numeric(10,2),\n  \"fixed_value\" numeric(8,3),\n  \"real_value\" double precision\n)",
+					'sql'    => "CREATE TABLE \"wptests_alias_create\" (\n  \"flags\" __wp_mysql_bit_10,\n  \"enabled\" __wp_mysql_bool,\n  \"amount\" __wp_mysql_dec_10_2,\n  \"fixed_value\" __wp_mysql_fixed_8_3,\n  \"real_value\" __wp_mysql_real\n)",
 					'params' => array(),
 				),
 			),
@@ -18886,7 +23705,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_json_create\" (\n  \"id\" integer NOT NULL,\n  \"payload\" text DEFAULT NULL\n)",
+					'sql'    => "CREATE TABLE \"wptests_json_create\" (\n  \"id\" integer NOT NULL,\n  \"payload\" __wp_mysql_json DEFAULT NULL\n)",
 					'params' => array(),
 				),
 			),
@@ -18948,7 +23767,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_on_update_create\" (\n  \"id\" integer NOT NULL,\n  \"updated\" text\n)",
+					'sql'    => "CREATE TABLE \"wptests_on_update_create\" (\n  \"id\" integer NOT NULL,\n  \"updated\" __wp_mysql_timestamp\n)",
 					'params' => array(),
 				),
 			),
@@ -19000,7 +23819,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( 'ALTER TABLE wptests_on_update_alter ADD COLUMN touched timestamp NULL ON UPDATE CURRENT_TIMESTAMP' );
 
 		$this->assertSame(
-			'ALTER TABLE "wptests_on_update_alter" ADD COLUMN "touched" text',
+			'ALTER TABLE "wptests_on_update_alter" ADD COLUMN "touched" __wp_mysql_timestamp',
 			$driver->get_last_postgresql_queries()[0]['sql']
 		);
 		$this->assertStringContainsString( 'CREATE OR REPLACE FUNCTION "__wp_pg_on_update_fn_', $driver->get_last_postgresql_queries()[1]['sql'] );
@@ -19018,7 +23837,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( 'ALTER TABLE wptests_on_update_alter CHANGE COLUMN touched touched timestamp NULL' );
 
 		$queries = $driver->get_last_postgresql_queries();
-		$this->assertSame( 'ALTER TABLE "wptests_on_update_alter" ALTER COLUMN "touched" TYPE text', $queries[0]['sql'] );
+		$this->assertSame( 'ALTER TABLE "wptests_on_update_alter" ALTER COLUMN "touched" TYPE __wp_mysql_timestamp', $queries[0]['sql'] );
 		$this->assertSame( 'ALTER TABLE "wptests_on_update_alter" ALTER COLUMN "touched" DROP NOT NULL', $queries[1]['sql'] );
 		$this->assertSame( 'ALTER TABLE "wptests_on_update_alter" ALTER COLUMN "touched" DROP DEFAULT', $queries[2]['sql'] );
 		$this->assertStringContainsString( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_', $queries[3]['sql'] );
@@ -19046,7 +23865,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $statements );
 		$this->assertStringContainsString(
-			'"updated" text NOT NULL DEFAULT TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			'"updated" __wp_mysql_timestamp NOT NULL DEFAULT TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
 			$statements[0]
 		);
 
@@ -19070,15 +23889,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertCount( 1, $statements );
 		$this->assertStringContainsString(
-			'"created" text NOT NULL DEFAULT LEFT(TO_CHAR(CURRENT_TIMESTAMP(6) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 26)',
+			'"created" __wp_mysql_timestamp_6 NOT NULL DEFAULT LEFT(TO_CHAR(CURRENT_TIMESTAMP(6) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 26)',
 			$statements[0]
 		);
 		$this->assertStringContainsString(
-			'"updated" text NOT NULL DEFAULT LEFT(TO_CHAR(CURRENT_TIMESTAMP(3) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 23)',
+			'"updated" __wp_mysql_timestamp_3 NOT NULL DEFAULT LEFT(TO_CHAR(CURRENT_TIMESTAMP(3) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 23)',
 			$statements[0]
 		);
 		$this->assertStringContainsString(
-			'"expires" text NOT NULL DEFAULT (LEFT(TO_CHAR((CURRENT_TIMESTAMP(2) AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 second\')), \'YYYY-MM-DD HH24:MI:SS.US\'), 22))',
+			'"expires" __wp_mysql_datetime_2 NOT NULL DEFAULT (LEFT(TO_CHAR((CURRENT_TIMESTAMP(2) AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 second\')), \'YYYY-MM-DD HH24:MI:SS.US\'), 22))',
 			$statements[0]
 		);
 
@@ -19119,7 +23938,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$statements[0]
 		);
 		$this->assertStringContainsString(
-			'"col2" text NOT NULL DEFAULT (TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 year\')), \'YYYY-MM-DD HH24:MI:SS\'))',
+			'"col2" __wp_mysql_datetime NOT NULL DEFAULT (TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 year\')), \'YYYY-MM-DD HH24:MI:SS\'))',
 			$statements[0]
 		);
 		$this->assertStringContainsString(
@@ -19170,7 +23989,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_generated_default_alter" ADD COLUMN "col2" text NOT NULL DEFAULT (TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 year\')), \'YYYY-MM-DD HH24:MI:SS\'))',
+					'sql'    => 'ALTER TABLE "wptests_generated_default_alter" ADD COLUMN "col2" __wp_mysql_datetime NOT NULL DEFAULT (TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 year\')), \'YYYY-MM-DD HH24:MI:SS\'))',
 					'params' => array(),
 				),
 				array(
@@ -19259,7 +24078,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_long_alias_create\" (\n  \"notes\" text,\n  \"raw_data\" bytea\n)",
+					'sql'    => "CREATE TABLE \"wptests_long_alias_create\" (\n  \"notes\" __wp_mysql_mediumtext,\n  \"raw_data\" __wp_mysql_mediumblob\n)",
 					'params' => array(),
 				),
 			),
@@ -19304,39 +24123,39 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "flags" integer',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "flags" __wp_mysql_bit_10',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "enabled" integer NOT NULL DEFAULT \'0\'',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "enabled" __wp_mysql_bool NOT NULL DEFAULT \'0\'',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "toggled" integer',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "toggled" __wp_mysql_boolean',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "amount" numeric(10,2)',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "amount" __wp_mysql_dec_10_2',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "fixed_value" numeric(8,3)',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "fixed_value" __wp_mysql_fixed_8_3',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "real_value" double precision',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "real_value" __wp_mysql_real',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "payload" text DEFAULT NULL',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "payload" __wp_mysql_json DEFAULT NULL',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "notes" text',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "notes" __wp_mysql_mediumtext',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "raw_data" bytea',
+					'sql'    => 'ALTER TABLE "wptests_alias_alter" ADD COLUMN "raw_data" __wp_mysql_mediumblob',
 					'params' => array(),
 				),
 			),
@@ -19694,15 +24513,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "id" integer PRIMARY KEY',
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "id" __wp_mysql_int_11 PRIMARY KEY',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "slug" varchar(100) UNIQUE',
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "slug" varchar(100) CONSTRAINT "slug" UNIQUE',
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "parent_id" integer CONSTRAINT "wptests_alter_inline_child_ibfk_2" REFERENCES "wptests_inline_parent" ("id") ON DELETE CASCADE ON UPDATE SET NULL',
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_child" ADD COLUMN "parent_id" __wp_mysql_int_11 CONSTRAINT "wptests_alter_inline_child_ibfk_2" REFERENCES "wptests_inline_parent" ("id") ON DELETE CASCADE ON UPDATE SET NULL',
 					'params' => array(),
 				),
 			),
@@ -19796,7 +24615,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests ALTER TABLE ADD COLUMN NOT ENFORCED CHECK constraints are metadata-only.
+	 * Tests ALTER TABLE ADD COLUMN NOT ENFORCED CHECK constraints use PostgreSQL placeholders.
 	 */
 	public function test_alter_table_add_column_supports_not_enforced_inline_check_constraint(): void {
 		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
@@ -19809,7 +24628,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alter_inline_check" ADD COLUMN "score" integer',
+					'sql'    => 'ALTER TABLE "wptests_alter_inline_check" ADD COLUMN "score" integer CONSTRAINT "wptests_alter_inline_check_chk_1" CHECK (true)',
 					'params' => array(),
 				),
 			),
@@ -19968,6 +24787,325 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$show_create = $driver->query( 'SHOW CREATE TABLE wptests_fk_drop_child' );
 		$this->assertStringNotContainsString( 'FOREIGN KEY', $show_create[0]->{'Create Table'} );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE foreign keys use catalogs without metadata tables.
+	 */
+	public function test_alter_table_foreign_keys_use_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured foreign-key catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $foreign_key_catalog_queries = array();
+
+			/**
+			 * Whether the fixture foreign key exists in the simulated catalog.
+			 *
+			 * @var bool
+			 */
+			private $foreign_key_added = false;
+
+			/**
+			 * Execute fixture-backed catalog/foreign-key queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden foreign-key metadata table access was not expected for catalog-backed ALTER TABLE FOREIGN KEY.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query( 'SELECT ? AS column_name', array( (string) ( $params[2] ?? '' ) ) );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_constraint con' ) && false !== strpos( $sql, 'con.contype = \'f\'' ) ) {
+					$this->foreign_key_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						$this->foreign_key_added && 'fk_catalog_parent' === (string) ( $params[2] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER TABLE "catalog_fk_child" ADD CONSTRAINT "fk_catalog_parent"' ) ) {
+					$this->foreign_key_added = true;
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 'ALTER TABLE "catalog_fk_child" DROP CONSTRAINT "fk_catalog_parent"' === $sql ) {
+					$this->foreign_key_added = false;
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured foreign-key catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_foreign_key_catalog_queries(): array {
+				return $this->foreign_key_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_fk_parent (id INTEGER PRIMARY KEY)' );
+		$pdo->exec( 'CREATE TABLE catalog_fk_child (id INTEGER, parent_id INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'ALTER TABLE catalog_fk_child
+					ADD CONSTRAINT fk_catalog_parent FOREIGN KEY (parent_id)
+					REFERENCES catalog_fk_parent (id)
+					ON DELETE CASCADE ON UPDATE SET NULL'
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_fk_child" ADD CONSTRAINT "fk_catalog_parent" FOREIGN KEY ("parent_id") REFERENCES "catalog_fk_parent" ("id") ON DELETE CASCADE ON UPDATE SET NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_fk_child DROP FOREIGN KEY fk_catalog_parent' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_fk_child" DROP CONSTRAINT "fk_catalog_parent"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+			$this->assertNotEmpty( $connection->get_foreign_key_catalog_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed unnamed ALTER TABLE foreign keys generate names from catalogs.
+	 */
+	public function test_alter_table_unnamed_foreign_key_uses_postgresql_catalog_names_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured foreign-key catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $foreign_key_catalog_queries = array();
+
+			/**
+			 * Whether the generated fixture foreign key exists in the simulated catalog.
+			 *
+			 * @var bool
+			 */
+			private $foreign_key_added = false;
+
+			/**
+			 * Execute fixture-backed catalog/foreign-key queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden foreign-key metadata table access was not expected for catalog-backed unnamed ALTER TABLE FOREIGN KEY.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query( 'SELECT ? AS column_name', array( (string) ( $params[2] ?? '' ) ) );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_constraint con' ) && false !== strpos( $sql, 'con.contype = \'f\'' ) ) {
+					$this->foreign_key_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( false !== strpos( $sql, 'LOWER(con.conname)' ) ) {
+						return parent::query(
+							$this->foreign_key_added && 'catalog_fk_child_ibfk_3' === (string) ( $params[2] ?? '' )
+								? 'SELECT 1'
+								: 'SELECT 1 WHERE 0 = 1'
+						);
+					}
+
+					return parent::query( "SELECT 'catalog_fk_child_ibfk_2' AS conname" );
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER TABLE "catalog_fk_child" ADD CONSTRAINT "catalog_fk_child_ibfk_3"' ) ) {
+					$this->foreign_key_added = true;
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 'ALTER TABLE "catalog_fk_child" DROP CONSTRAINT "catalog_fk_child_ibfk_3"' === $sql ) {
+					$this->foreign_key_added = false;
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured foreign-key catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_foreign_key_catalog_queries(): array {
+				return $this->foreign_key_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_fk_parent (id INTEGER PRIMARY KEY)' );
+		$pdo->exec( 'CREATE TABLE catalog_fk_child (id INTEGER, parent_id INTEGER)' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'ALTER TABLE catalog_fk_child
+					ADD FOREIGN KEY (parent_id)
+					REFERENCES catalog_fk_parent (id)'
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_fk_child" ADD CONSTRAINT "catalog_fk_child_ibfk_3" FOREIGN KEY ("parent_id") REFERENCES "catalog_fk_parent" ("id")',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_fk_child DROP FOREIGN KEY catalog_fk_child_ibfk_3' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_fk_child" DROP CONSTRAINT "catalog_fk_child_ibfk_3"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+			$this->assertNotEmpty( $connection->get_foreign_key_catalog_queries() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -20347,6 +25485,425 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed ALTER TABLE DROP COLUMN uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_drop_column_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/drop-column queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed DROP COLUMN.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'DROP FUNCTION IF EXISTS ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'obsolete' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'obsolete' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_drop_column (id INTEGER, obsolete TEXT)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_drop_column DROP COLUMN obsolete' ) );
+		$hash = md5( "public\0catalog_drop_column\0obsolete" );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_drop_column" DROP COLUMN "obsolete"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $hash . '" ON "public"."catalog_drop_column"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP FUNCTION IF EXISTS "public"."__wp_pg_on_update_fn_' . $hash . '"()',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( array( 'id' ), $pdo->query( 'SELECT name FROM pragma_table_info(\'catalog_drop_column\')' )->fetchAll( PDO::FETCH_COLUMN ) );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests DROP COLUMN cleans ON UPDATE triggers from catalogs when column metadata is absent.
+	 */
+	public function test_alter_table_drop_column_uses_postgresql_catalog_on_update_trigger_when_column_metadata_is_absent_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed mixed catalog/side-table DROP COLUMN queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for mixed catalog-backed DROP COLUMN.' );
+				}
+
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table access was not expected for mixed catalog-backed DROP COLUMN.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT ? AS relname', array( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_trigger tr' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'WITH index_columns AS' ) && false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) ) {
+					return parent::query(
+						'SELECT
+							NULL AS key_name,
+							NULL AS index_ordinal,
+							NULL AS seq_in_index,
+							NULL AS column_name,
+							NULL AS non_unique,
+							NULL AS index_type,
+							NULL AS "collation",
+							NULL AS sub_part,
+							NULL AS index_comment
+						WHERE 0 = 1'
+					);
+				}
+
+				if (
+					0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'DROP FUNCTION IF EXISTS ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'obsolete' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'obsolete' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_drop_column_partial_metadata (id INTEGER, obsolete TEXT)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_drop_column_partial_metadata DROP COLUMN obsolete' ) );
+		$hash = md5( "public\0catalog_drop_column_partial_metadata\0obsolete" );
+		$sql  = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertContains( 'ALTER TABLE "catalog_drop_column_partial_metadata" DROP COLUMN "obsolete"', $sql );
+		$this->assertContains( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $hash . '" ON "public"."catalog_drop_column_partial_metadata"', $sql );
+		$this->assertContains( 'DROP FUNCTION IF EXISTS "public"."__wp_pg_on_update_fn_' . $hash . '"()', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame( array( 'id' ), $pdo->query( 'SELECT name FROM pragma_table_info(\'catalog_drop_column_partial_metadata\')' )->fetchAll( PDO::FETCH_COLUMN ) );
+	}
+
+	/**
+	 * Tests ALTER TABLE can re-add an index removed by a dropped column using PostgreSQL catalogs.
+	 */
+	public function test_alter_table_drop_indexed_column_then_readd_same_index_name_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured catalog index metadata queries.
+			 *
+			 * @var array[]
+			 */
+			private $index_catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/drop-add-index queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed DROP COLUMN and ADD INDEX.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'WITH index_columns AS' ) && false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) ) {
+					$this->index_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT
+							'lookup' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'obsolete' AS column_name,
+							'1' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS \"collation\",
+							NULL AS sub_part,
+							'' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) && in_array( (string) $params[2], array( 'obsolete', 'replacement' ), true ) ) {
+						return parent::query( 'SELECT ? AS column_name', array( (string) $params[2] ) );
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->index_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'DROP FUNCTION IF EXISTS ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured catalog index metadata queries.
+			 *
+			 * @return array[] Catalog index queries.
+			 */
+			public function get_index_catalog_queries(): array {
+				return $this->index_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_drop_readd_index (id INTEGER, obsolete TEXT, replacement TEXT)' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'ALTER TABLE catalog_drop_readd_index
+					DROP COLUMN obsolete,
+					ADD INDEX lookup (replacement)'
+			)
+		);
+
+		$sql  = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$hash = md5( "public\0catalog_drop_readd_index\0obsolete" );
+		$this->assertStringContainsString( 'WITH index_columns AS', $sql[0] );
+		$this->assertContains( 'ALTER TABLE "catalog_drop_readd_index" DROP COLUMN "obsolete"', $sql );
+			$this->assertContains( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $hash . '" ON "public"."catalog_drop_readd_index"', $sql );
+			$this->assertContains( 'DROP FUNCTION IF EXISTS "public"."__wp_pg_on_update_fn_' . $hash . '"()', $sql );
+			$this->assertContains( 'CREATE INDEX "catalog_drop_readd_index__lookup" ON "catalog_drop_readd_index" ("replacement")', $sql );
+			$this->assertStringNotContainsString( 'COMMENT ON INDEX "public"."catalog_drop_readd_index__lookup"', implode( "\n", $sql ) );
+			$this->assertSame( array( 'id', 'replacement' ), $pdo->query( 'SELECT name FROM pragma_table_info(\'catalog_drop_readd_index\')' )->fetchAll( PDO::FETCH_COLUMN ) );
+		$this->assertSame( array( 'catalog_drop_readd_index__lookup' ), $pdo->query( "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN ) );
+		$this->assertCount( 1, $connection->get_index_catalog_queries() );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
 	 * Tests ALTER TABLE RENAME COLUMN updates backend and MySQL metadata.
 	 */
 	public function test_alter_table_rename_column_updates_backend_and_metadata(): void {
@@ -20403,6 +25960,239 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( '  KEY `old_parent_idx` (`parent_id`)', $create_table );
 		$this->assertStringContainsString( '  CONSTRAINT `fk_old_parent` FOREIGN KEY (`parent_id`) REFERENCES `wptests_rename_column_parent` (`id`)', $create_table );
 		$this->assertStringNotContainsString( '`old_parent`', $create_table );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE RENAME COLUMN uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_rename_column_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/rename-column queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed RENAME COLUMN.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'old_name' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'old_name' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_rename_column (old_name TEXT)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_rename_column RENAME COLUMN old_name TO new_name' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_rename_column" RENAME COLUMN "old_name" TO "new_name"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( array( 'new_name' ), $pdo->query( 'SELECT name FROM pragma_table_info(\'catalog_rename_column\')' )->fetchAll( PDO::FETCH_COLUMN ) );
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed RENAME COLUMN moves ON UPDATE triggers using catalogs.
+	 */
+	public function test_alter_table_rename_column_moves_on_update_trigger_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/rename-column trigger queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed RENAME COLUMN trigger migration.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_trigger tr' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'DROP FUNCTION IF EXISTS ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+					|| 0 === strpos( $sql, 'CREATE TRIGGER ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'old_updated' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'old_updated' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_rename_on_update (old_updated TEXT)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_rename_on_update RENAME COLUMN old_updated TO new_updated' ) );
+
+		$old_hash = md5( "public\0catalog_rename_on_update\0old_updated" );
+		$new_hash = md5( "public\0catalog_rename_on_update\0new_updated" );
+		$sql      = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertSame( 'ALTER TABLE "catalog_rename_on_update" RENAME COLUMN "old_updated" TO "new_updated"', $sql[0] );
+		$this->assertContains( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $old_hash . '" ON "public"."catalog_rename_on_update"', $sql );
+		$this->assertContains( 'DROP FUNCTION IF EXISTS "public"."__wp_pg_on_update_fn_' . $old_hash . '"()', $sql );
+		$this->assertContains( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $new_hash . '" ON "public"."catalog_rename_on_update"', $sql );
+		$this->assertContains(
+			'CREATE TRIGGER "__wp_pg_on_update_' . $new_hash . '" BEFORE UPDATE ON "public"."catalog_rename_on_update" FOR EACH ROW EXECUTE FUNCTION "public"."__wp_pg_on_update_fn_' . $new_hash . '"()',
+			$sql
+		);
+		$this->assertSame( array( 'new_updated' ), $pdo->query( 'SELECT name FROM pragma_table_info(\'catalog_rename_on_update\')' )->fetchAll( PDO::FETCH_COLUMN ) );
+			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -20483,6 +26273,122 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_rename_index' )[0]->{'Create Table'};
 		$this->assertStringContainsString( '  KEY `new_slug_idx` (`slug`)', $create_table );
 		$this->assertStringNotContainsString( 'old_slug_idx', $create_table );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE RENAME INDEX uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_rename_index_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/rename-index queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed RENAME INDEX.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( ! isset( $params[2] ) ) {
+						return parent::query( 'SELECT 1' );
+					}
+
+					return parent::query(
+						'slug_idx' === strtolower( (string) $params[2] )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE public.catalog_rename_index (id INTEGER, slug TEXT)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_rename_index RENAME INDEX slug_idx TO slug_lookup' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER INDEX "public"."catalog_rename_index__slug_idx" RENAME TO "catalog_rename_index__slug_lookup"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 3, $catalog_queries );
+		$this->assertSame( array( 'public', 'catalog_rename_index' ), $catalog_queries[0]['params'] );
+		$this->assertSame( array( 'public', 'catalog_rename_index', 'slug_idx', 'slug_idx', 'slug_idx' ), $catalog_queries[1]['params'] );
+		$this->assertSame( array( 'public', 'catalog_rename_index', 'slug_lookup', 'slug_lookup', 'slug_lookup' ), $catalog_queries[2]['params'] );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -20680,6 +26586,404 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed RENAME TABLE discovers index renames from catalogs.
+	 */
+	public function test_rename_table_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured PostgreSQL catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog and index rename queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed RENAME TABLE.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_trigger tr' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( "SELECT 'created_at' AS attname" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT 'catalog_rename_old__created_at_idx' AS relname
+						UNION ALL
+						SELECT 'catalog_rename_old__value_idx' AS relname"
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'DROP FUNCTION IF EXISTS ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+					|| 0 === strpos( $sql, 'CREATE TRIGGER ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE public.catalog_rename_old (id INTEGER, value TEXT, created_at TEXT)' );
+
+		$this->assertSame( 0, $driver->query( 'RENAME TABLE catalog_rename_old TO catalog_rename_new' ) );
+
+		$old_hash = md5( "public\0catalog_rename_old\0created_at" );
+		$new_hash = md5( "public\0catalog_rename_new\0created_at" );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "public"."catalog_rename_old" RENAME TO "catalog_rename_new"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $old_hash . '" ON "public"."catalog_rename_new"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP FUNCTION IF EXISTS "public"."__wp_pg_on_update_fn_' . $old_hash . '"()',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE OR REPLACE FUNCTION "public"."__wp_pg_on_update_fn_' . $new_hash . '"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $wp_mysql_on_update$
+BEGIN
+  IF NEW."created_at" IS NOT DISTINCT FROM OLD."created_at"
+     AND to_jsonb(NEW) - \'created_at\' IS DISTINCT FROM to_jsonb(OLD) - \'created_at\' THEN
+    NEW."created_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\');
+  END IF;
+  RETURN NEW;
+END;
+$wp_mysql_on_update$',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $new_hash . '" ON "public"."catalog_rename_new"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE TRIGGER "__wp_pg_on_update_' . $new_hash . '" BEFORE UPDATE ON "public"."catalog_rename_new" FOR EACH ROW EXECUTE FUNCTION "public"."__wp_pg_on_update_fn_' . $new_hash . '"()',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER INDEX "public"."catalog_rename_old__created_at_idx" RENAME TO "catalog_rename_new__created_at_idx"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER INDEX "public"."catalog_rename_old__value_idx" RENAME TO "catalog_rename_new__value_idx"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 2, $catalog_queries );
+		$this->assertStringContainsString( 'pg_catalog.pg_trigger tr', $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'catalog_rename_old' ), $catalog_queries[0]['params'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $catalog_queries[1]['sql'] );
+		$this->assertSame( array( 'public', 'catalog_rename_old', 'catalog_rename_old__', 'catalog_rename_old__' ), $catalog_queries[1]['params'] );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed RENAME TABLE catalog failure does not inspect hidden metadata tables.
+	 */
+	public function test_rename_table_catalog_index_fallback_skips_absent_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog and rename queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed RENAME TABLE fallback.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					throw new PDOException( 'catalog index lookup unavailable' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE public.catalog_rename_fallback_old (id INTEGER, value TEXT)' );
+
+		$this->assertSame( 0, $driver->query( 'RENAME TABLE catalog_rename_fallback_old TO catalog_rename_fallback_new' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "public"."catalog_rename_fallback_old" RENAME TO "catalog_rename_fallback_new"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests RENAME TABLE uses the selected PostgreSQL catalog schema.
+	 */
+	public function test_rename_table_uses_current_postgresql_catalog_schema_after_use(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured PostgreSQL catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog and rename queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) && false === strpos( $sql, 'pg_catalog.pg_class c' ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed RENAME TABLE.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						sprintf(
+							"SELECT '%svalue_idx' AS relname",
+							(string) ( $params[2] ?? '' )
+						)
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER TABLE ' ) || 0 === strpos( $sql, 'ALTER INDEX ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertSame( array( 'wptests', 'plugin_schema' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertSame( 0, $driver->query( 'RENAME TABLE plugin_rename_old TO plugin_rename_new' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "plugin_schema"."plugin_rename_old" RENAME TO "plugin_rename_new"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER INDEX "plugin_schema"."plugin_rename_old__value_idx" RENAME TO "plugin_rename_new__value_idx"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame( 0, $driver->query( 'RENAME TABLE plugin_schema.plugin_explicit_old TO plugin_schema.plugin_explicit_new' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "plugin_schema"."plugin_explicit_old" RENAME TO "plugin_explicit_new"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER INDEX "plugin_schema"."plugin_explicit_old__value_idx" RENAME TO "plugin_explicit_new__value_idx"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 2, $catalog_queries );
+		$this->assertSame( array( 'plugin_schema', 'plugin_rename_old', 'plugin_rename_old__', 'plugin_rename_old__' ), $catalog_queries[0]['params'] );
+		$this->assertSame( array( 'plugin_schema', 'plugin_explicit_old', 'plugin_explicit_old__', 'plugin_explicit_old__' ), $catalog_queries[1]['params'] );
+	}
+
+	/**
 	 * Tests multi-pair RENAME TABLE applies table, index, and FK metadata left-to-right.
 	 */
 	public function test_multi_pair_rename_table_updates_indexes_and_foreign_key_metadata(): void {
@@ -20835,6 +27139,166 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed ALTER COLUMN defaults use catalogs without metadata tables.
+	 */
+	public function test_alter_table_column_default_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Captured generated default comment cleanup statements.
+			 *
+			 * @var array[]
+			 */
+			private $default_comment_updates = array();
+
+			/**
+			 * Execute fixture-backed catalog/default queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed ALTER COLUMN DEFAULT.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'status' === (string) $params[2]
+								? 'SELECT ? AS column_name'
+								: 'SELECT NULL AS column_name WHERE 0 = 1',
+							'status' === (string) $params[2] ? array( (string) $params[2] ) : array()
+						);
+					}
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'ALTER TABLE "catalog_defaults" ALTER COLUMN "status" ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.col_description(c.oid, a.attnum)' ) ) {
+					return parent::query(
+						'SELECT ? AS column_comment',
+						array(
+							"__wp_mysql_column_default:REFURV9BRERfREFZKDEp\n__wp_mysql_column_type:dmFyY2hhcigyMCk=\nStatus note",
+						)
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON COLUMN "public"."catalog_defaults"."status" IS ' ) ) {
+					$this->default_comment_updates[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured generated default comment cleanup statements.
+			 *
+			 * @return array[] Comment cleanup statements.
+			 */
+			public function get_default_comment_updates(): array {
+				return $this->default_comment_updates;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "CREATE TABLE catalog_defaults (id INTEGER, status TEXT DEFAULT 'draft')" );
+
+		$this->assertSame( 0, $driver->query( "ALTER TABLE catalog_defaults ALTER COLUMN status SET DEFAULT 'published'" ) );
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 3, $queries );
+		$this->assertSame(
+			array(
+				'sql'    => 'ALTER TABLE "catalog_defaults" ALTER COLUMN "status" SET DEFAULT \'published\'',
+				'params' => array(),
+			),
+			$queries[0]
+		);
+		$this->assertStringContainsString( 'pg_catalog.col_description(c.oid, a.attnum)', $queries[1]['sql'] );
+		$this->assertSame( array( 'public', 'catalog_defaults', 'status' ), $queries[1]['params'] );
+		$this->assertStringStartsWith( 'COMMENT ON COLUMN "public"."catalog_defaults"."status" IS ', $queries[2]['sql'] );
+		$this->assertStringNotContainsString( '__wp_mysql_column_default:', $queries[2]['sql'] );
+		$this->assertStringContainsString( '__wp_mysql_column_type:dmFyY2hhcigyMCk=', $queries[2]['sql'] );
+		$this->assertStringContainsString( 'Status note', $queries[2]['sql'] );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_defaults ALTER COLUMN status DROP DEFAULT' ) );
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 3, $queries );
+		$this->assertSame(
+			array(
+				'sql'    => 'ALTER TABLE "catalog_defaults" ALTER COLUMN "status" DROP DEFAULT',
+				'params' => array(),
+			),
+			$queries[0]
+		);
+		$this->assertStringContainsString( 'pg_catalog.col_description(c.oid, a.attnum)', $queries[1]['sql'] );
+		$this->assertStringStartsWith( 'COMMENT ON COLUMN "public"."catalog_defaults"."status" IS ', $queries[2]['sql'] );
+		$this->assertStringNotContainsString( '__wp_mysql_column_default:', $queries[2]['sql'] );
+		$this->assertStringContainsString( '__wp_mysql_column_type:dmFyY2hhcigyMCk=', $queries[2]['sql'] );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertCount( 2, $connection->get_default_comment_updates() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
 	 * Tests MySQL table-option ALTER clauses are supported no-ops.
 	 */
 	public function test_alter_table_storage_options_are_supported_noops(): void {
@@ -20975,7 +27439,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'ALTER TABLE "wptests_alter_comment_metadata" ALTER COLUMN "id" TYPE integer',
+					'sql'    => 'ALTER TABLE "wptests_alter_comment_metadata" ALTER COLUMN "id" TYPE __wp_mysql_int_11',
 					'params' => array(),
 				),
 				array(
@@ -21039,6 +27503,103 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "  `note` varchar(100) DEFAULT NULL COMMENT 'Note column'", $create_table );
 		$this->assertStringContainsString( "  KEY `note_lookup` (`note`) COMMENT 'Note lookup'", $create_table );
 		$this->assertStringEndsWith( "COMMENT='New table'", $create_table );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed ALTER TABLE COMMENT uses catalogs without metadata tables.
+	 */
+	public function test_alter_table_comment_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden table metadata table access was not expected for catalog-backed ALTER TABLE COMMENT.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+					return parent::query(
+						"SELECT '__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=\nPrevious table note' AS table_comment"
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON TABLE ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( 'CREATE TABLE catalog_alter_comment (id INTEGER)' );
+
+		$this->assertSame( 0, $driver->query( "ALTER TABLE catalog_alter_comment COMMENT = 'Catalog table note'" ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => "COMMENT ON TABLE \"public\".\"catalog_alter_comment\" IS E'__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=\\nCatalog table note'",
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -21636,6 +28197,69 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW TABLES accepts PostgreSQL catalog schemas for pgsql connections.
+	 */
+	public function test_show_tables_accepts_postgresql_catalog_schema_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
+					return parent::query(
+						"SELECT 'plugin_options' AS \"Tables_in_plugin_schema\", 'BASE TABLE' AS \"Table_type\"
+						UNION ALL SELECT 'plugin_view', 'VIEW'"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$tables = $driver->query( 'SHOW FULL TABLES FROM plugin_schema' );
+
+		$this->assertCount( 2, $tables );
+		$this->assertSame( 'plugin_options', $tables[0]->Tables_in_plugin_schema );
+		$this->assertSame( 'BASE TABLE', $tables[0]->Table_type );
+		$this->assertSame( 'plugin_view', $tables[1]->Tables_in_plugin_schema );
+		$this->assertSame( 'VIEW', $tables[1]->Table_type );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'FROM information_schema.tables', $queries[0]['sql'] );
+		$this->assertSame( array( 'plugin_schema' ), $queries[0]['params'] );
+
+		try {
+			$driver->query( 'SHOW TABLES FROM pg_catalog' );
+			$this->fail( 'Expected internal PostgreSQL schema SHOW TABLES statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW TABLES statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests SHOW TABLES WHERE exact filters catalog rows with bound parameters.
 	 */
 	public function test_show_tables_where_exact_filters_catalog_rows(): void {
@@ -21915,6 +28539,158 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW TABLE STATUS uses PostgreSQL catalogs directly for pgsql connections.
+	 */
+	public function test_show_table_status_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed table status catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(pc.oid, \'pg_class\')' ) ) {
+					return parent::query(
+						"SELECT
+							'wptests_options' AS table_name,
+							'PostgreSQL table note' AS table_comment,
+							'latin1_swedish_ci' AS table_collation,
+							NULL AS identity_column"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_rows   = Closure::bind(
+			function (): array {
+				return $this->get_show_table_status_postgresql_catalog_rows( 'public' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$tables = $get_rows();
+
+			$this->assertCount( 1, $tables );
+			$this->assertSame( 'wptests_options', $tables[0]['table_name'] );
+			$this->assertSame( 'PostgreSQL table note', $tables[0]['table_comment'] );
+			$this->assertSame( 'latin1_swedish_ci', $tables[0]['table_collation'] );
+
+			$queries = $driver->get_last_postgresql_queries();
+			$this->assertCount( 1, $queries );
+			$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $queries[0]['sql'] );
+			$this->assertStringContainsString( 'AS table_collation', $queries[0]['sql'] );
+			$this->assertStringContainsString( 'FROM information_schema.columns table_collation_columns', $queries[0]['sql'] );
+			$this->assertStringContainsString( 'pg_catalog.pg_class pc', $queries[0]['sql'] );
+			$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
+			$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
+		$this->assertSame( 'public', $queries[0]['params'][0] );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed SHOW TABLE STATUS queries execute catalog SQL.
+	 */
+	public function test_show_table_status_query_executes_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed SHOW TABLE STATUS catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed SHOW TABLE STATUS.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if (
+					0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM information_schema.tables t' )
+					&& false !== strpos( $sql, 'pg_catalog.obj_description(pc.oid, \'pg_class\')' )
+				) {
+					return parent::query(
+						"SELECT
+							'wptests_options' AS table_name,
+							'PostgreSQL table note' AS table_comment,
+							'latin1_swedish_ci' AS table_collation,
+							NULL AS identity_column"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$tables = $driver->query( 'SHOW TABLE STATUS' );
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'wptests_options', $tables[0]->Name );
+		$this->assertSame( 'InnoDB', $tables[0]->Engine );
+		$this->assertSame( 'latin1_swedish_ci', $tables[0]->Collation );
+		$this->assertSame( 'PostgreSQL table note', $tables[0]->Comment );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_class pc', $sql );
+		$this->assertStringContainsString( 'AS table_collation', $sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+		}
+		$queries = $connection->get_queries();
+		$this->assertNotEmpty( $queries );
+		$this->assertSame( $sql, end( $queries ) );
+	}
+
+	/**
 	 * Tests SHOW TABLE STATUS accepts current database qualification forms.
 	 */
 	public function test_show_table_status_accepts_current_database_qualification_forms(): void {
@@ -21937,6 +28713,72 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			foreach ( $driver->get_last_postgresql_queries() as $postgresql_query ) {
 				$this->assertStringNotContainsString( 'SHOW TABLE STATUS', $postgresql_query['sql'], $query );
 			}
+		}
+	}
+
+	/**
+	 * Tests SHOW TABLE STATUS accepts PostgreSQL catalog schemas for pgsql connections.
+	 */
+	public function test_show_table_status_accepts_postgresql_catalog_schema_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed table status catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(pc.oid, \'pg_class\')' ) ) {
+					return parent::query(
+						"SELECT
+							'plugin_options' AS table_name,
+							'Plugin table note' AS table_comment,
+							'latin1_swedish_ci' AS table_collation,
+							NULL AS identity_column"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$tables = $driver->query( 'SHOW TABLE STATUS FROM plugin_schema' );
+
+			$this->assertCount( 1, $tables );
+			$this->assertSame( 'plugin_options', $tables[0]->Name );
+			$this->assertSame( 'Plugin table note', $tables[0]->Comment );
+			$this->assertSame( 'latin1_swedish_ci', $tables[0]->Collation );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $queries[0]['sql'] );
+		$this->assertSame( 'plugin_schema', $queries[0]['params'][0] );
+
+		try {
+			$driver->query( 'SHOW TABLE STATUS FROM pg_catalog' );
+			$this->fail( 'Expected internal PostgreSQL schema SHOW TABLE STATUS statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW TABLE STATUS statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		}
 	}
 
@@ -22173,6 +29015,489 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW CREATE TABLE uses PostgreSQL catalogs directly for pgsql connections.
+	 */
+	public function test_show_create_table_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed SHOW CREATE TABLE catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'bigint(20)' AS column_type,
+							NULL AS character_set_name,
+							NULL AS collation_name,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'auto_increment' AS extra,
+							'' AS column_comment
+						UNION ALL
+						SELECT
+							'title' AS column_name,
+							2 AS ordinal_position,
+							'varchar(191)' AS column_type,
+							'utf8mb4' AS character_set_name,
+							'utf8mb4_unicode_ci' AS collation_name,
+							'NO' AS is_nullable,
+							'' AS column_default,
+							'' AS extra,
+							'Title note' AS column_comment
+						UNION ALL
+						SELECT
+							'created_at' AS column_name,
+							3 AS ordinal_position,
+							'datetime' AS column_type,
+							NULL AS character_set_name,
+							NULL AS collation_name,
+							'NO' AS is_nullable,
+							'CURRENT_TIMESTAMP' AS column_default,
+							'' AS extra,
+							'Title note' AS column_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'id' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment
+						UNION ALL
+						SELECT
+							'title' AS key_name,
+							2 AS index_ordinal,
+							1 AS seq_in_index,
+							'title' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'Title index note' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					if ( false !== strpos( $sql, "con.contype = 'f'" ) ) {
+						return parent::query(
+							'SELECT
+								NULL AS constraint_name,
+								NULL AS constraint_ordinal,
+								NULL AS seq_in_index,
+								NULL AS column_name,
+								NULL AS referenced_table_schema,
+								NULL AS referenced_table_name,
+								NULL AS referenced_column_name,
+								NULL AS update_rule,
+								NULL AS delete_rule
+							WHERE 1 = 0'
+						);
+					}
+
+					return parent::query(
+						'SELECT
+							\'json_payload\' AS constraint_name,
+							3 AS constraint_ordinal,
+							\'json_valid(title)\' AS check_clause,
+							\'YES\' AS enforced'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+					return parent::query( "SELECT 'Native table note' AS table_comment" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_create = Closure::bind(
+			function (): string {
+				$this->collation = 'latin1_swedish_ci';
+				$schema          = 'public';
+				$table           = 'wptests_show_create';
+				$columns         = $this->get_show_create_table_column_catalog_rows( $schema, $table );
+				$indexes         = $this->get_show_create_table_index_catalog_rows( $schema, $table );
+				$foreign_keys    = $this->get_show_create_table_foreign_key_catalog_rows( $schema, $table );
+				$checks          = $this->get_show_create_table_check_constraint_catalog_rows( $schema, $table );
+				$table_metadata  = $this->get_show_create_table_table_catalog_metadata( $schema, $table );
+
+				return $this->get_mysql_create_table_statement_from_metadata(
+					$table,
+					$columns,
+					$indexes,
+					$foreign_keys,
+					$checks,
+					$table_metadata['comment'],
+					false,
+					$table_metadata['collation']
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$create_table = $get_create();
+		$this->assertStringContainsString( '  `id` bigint(20) NOT NULL AUTO_INCREMENT', $create_table );
+		$this->assertStringContainsString( "  `title` varchar(191) NOT NULL DEFAULT '' COMMENT 'Title note'", $create_table );
+		$this->assertStringContainsString( '  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'Title note\'', $create_table );
+		$this->assertStringContainsString( '  PRIMARY KEY (`id`)', $create_table );
+			$this->assertStringContainsString( "  UNIQUE KEY `title` (`title`) COMMENT 'Title index note'", $create_table );
+			$this->assertStringContainsString( '  CONSTRAINT `json_payload` CHECK (json_valid(title))', $create_table );
+			$this->assertStringContainsString( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci', $create_table );
+			$this->assertStringContainsString( "COMMENT='Native table note'", $create_table );
+			$this->assertStringNotContainsString( 'latin1_swedish_ci', $create_table );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 5, $queries );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'SUBSTRING(c.column_default FROM', $queries[0]['sql'] );
+		$this->assertStringContainsString( "THEN 'CURRENT_TIMESTAMP'", $queries[0]['sql'] );
+		$this->assertStringContainsString( "'CURRENT_TIMESTAMP(' || SUBSTRING(c.column_default FROM", $queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $queries[1]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(idx.oid, \'pg_class\')', $queries[1]['sql'] );
+		$this->assertStringContainsString( '__wp_mysql_index_sub_part:', $queries[1]['sql'] );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $queries[3]['sql'] );
+		$this->assertStringContainsString( '__wp_mysql_check_clause:', $queries[3]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(t.oid, \'pg_class\')', $queries[4]['sql'] );
+
+		foreach ( $queries as $query ) {
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $query['sql'] );
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed SHOW CREATE TABLE queries execute catalog SQL.
+	 */
+	public function test_show_create_table_query_executes_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed SHOW CREATE TABLE catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed SHOW CREATE TABLE.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'bigint(20)' AS column_type,
+							NULL AS character_set_name,
+							NULL AS collation_name,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'auto_increment' AS extra,
+							'' AS column_comment
+						UNION ALL
+						SELECT
+							'title' AS column_name,
+							2 AS ordinal_position,
+							'varchar(191)' AS column_type,
+							'utf8mb4' AS character_set_name,
+							'utf8mb4_unicode_ci' AS collation_name,
+							'NO' AS is_nullable,
+							'' AS column_default,
+							'' AS extra,
+							'Title note' AS column_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'id' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment
+						UNION ALL
+						SELECT
+							'title' AS key_name,
+							2 AS index_ordinal,
+							1 AS seq_in_index,
+							'title' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'Title index note' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					if ( false !== strpos( $sql, "con.contype = 'f'" ) ) {
+						return parent::query(
+							'SELECT
+								NULL AS constraint_name,
+								NULL AS constraint_ordinal,
+								NULL AS seq_in_index,
+								NULL AS column_name,
+								NULL AS referenced_table_schema,
+								NULL AS referenced_table_name,
+								NULL AS referenced_column_name,
+								NULL AS update_rule,
+								NULL AS delete_rule
+							WHERE 1 = 0'
+						);
+					}
+
+					return parent::query(
+						'SELECT
+							\'json_payload\' AS constraint_name,
+							3 AS constraint_ordinal,
+							\'json_valid(title)\' AS check_clause,
+							\'YES\' AS enforced'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+					return parent::query( "SELECT 'Native table note' AS table_comment, 'utf8mb4_unicode_ci' AS table_collation" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$tables = $driver->query( 'SHOW CREATE TABLE wptests_show_create' );
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'wptests_show_create', $tables[0]->Table );
+		$create_table = $tables[0]->{'Create Table'};
+		$this->assertStringContainsString( '  `id` bigint(20) NOT NULL AUTO_INCREMENT', $create_table );
+		$this->assertStringContainsString( "  `title` varchar(191) NOT NULL DEFAULT '' COMMENT 'Title note'", $create_table );
+		$this->assertStringContainsString( "  UNIQUE KEY `title` (`title`) COMMENT 'Title index note'", $create_table );
+		$this->assertStringContainsString( '  CONSTRAINT `json_payload` CHECK (json_valid(title))', $create_table );
+		$this->assertStringContainsString( "COMMENT='Native table note'", $create_table );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 5, $queries );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $queries[1]['sql'] );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(t.oid, \'pg_class\')', $queries[4]['sql'] );
+
+		foreach ( $queries as $query ) {
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $query['sql'] ) );
+			}
+		}
+		$captured_queries = $connection->get_queries();
+		$this->assertGreaterThan( count( $queries ), count( $captured_queries ) );
+		$this->assertSame( $queries[4]['sql'], end( $captured_queries ) );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE accepts PostgreSQL catalog schemas for pgsql connections.
+	 */
+	public function test_show_create_table_accepts_postgresql_catalog_schema_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed SHOW CREATE TABLE catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'bigint(20)' AS column_type,
+							NULL AS character_set_name,
+							NULL AS collation_name,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'auto_increment' AS extra,
+							'' AS column_comment
+						UNION ALL
+						SELECT
+							'label' AS column_name,
+							2 AS ordinal_position,
+							'varchar(191)' AS column_type,
+							'utf8mb4' AS character_set_name,
+							'utf8mb4_unicode_ci' AS collation_name,
+							'NO' AS is_nullable,
+							'' AS column_default,
+							'' AS extra,
+							'Label note' AS column_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'id' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					if ( false !== strpos( $sql, "con.contype = 'f'" ) ) {
+						return parent::query(
+							'SELECT
+								NULL AS constraint_name,
+								NULL AS constraint_ordinal,
+								NULL AS seq_in_index,
+								NULL AS column_name,
+								NULL AS referenced_table_schema,
+								NULL AS referenced_table_name,
+								NULL AS referenced_column_name,
+								NULL AS update_rule,
+								NULL AS delete_rule
+							WHERE 1 = 0'
+						);
+					}
+
+					return parent::query(
+						'SELECT
+							NULL AS constraint_name,
+							NULL AS constraint_ordinal,
+							NULL AS check_clause,
+							NULL AS enforced
+						WHERE 1 = 0'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+					return parent::query( "SELECT 'Plugin table note' AS table_comment" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$tables = $driver->query( 'SHOW CREATE TABLE plugin_schema.plugin_options' );
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'plugin_options', $tables[0]->Table );
+		$this->assertStringContainsString( 'CREATE TABLE `plugin_options`', $tables[0]->{'Create Table'} );
+		$this->assertStringContainsString( '  `id` bigint(20) NOT NULL AUTO_INCREMENT', $tables[0]->{'Create Table'} );
+		$this->assertStringContainsString( "  `label` varchar(191) NOT NULL DEFAULT '' COMMENT 'Label note'", $tables[0]->{'Create Table'} );
+		$this->assertStringContainsString( '  PRIMARY KEY (`id`)', $tables[0]->{'Create Table'} );
+		$this->assertStringContainsString( "COMMENT='Plugin table note'", $tables[0]->{'Create Table'} );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 5, $queries );
+		foreach ( $queries as $query ) {
+			$this->assertContains( 'plugin_schema', $query['params'] );
+			$this->assertContains( 'plugin_options', $query['params'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $query['sql'] );
+		}
+
+		try {
+			$driver->query( 'SHOW CREATE TABLE pg_catalog.pg_class' );
+			$this->fail( 'Expected internal PostgreSQL schema SHOW CREATE TABLE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW CREATE TABLE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
 	 * Tests SHOW CREATE TABLE includes CHECK constraints from PostgreSQL catalogs.
 	 */
 	public function test_show_create_table_includes_check_constraints(): void {
@@ -22201,9 +29526,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests NOT ENFORCED CHECK constraints are metadata-only and visible to MySQL introspection.
+	 * Tests NOT ENFORCED CHECK constraints are visible to MySQL introspection.
 	 */
-	public function test_create_table_not_enforced_check_constraints_are_metadata_only(): void {
+	public function test_create_table_not_enforced_check_constraints_are_visible_to_mysql_introspection(): void {
 		$driver = $this->create_driver();
 		$this->install_information_schema_fixture( $driver );
 
@@ -22218,7 +29543,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => "CREATE TABLE \"wptests_not_enforced_check\" (\n  \"id\" integer,\n  \"score\" integer CONSTRAINT \"wptests_not_enforced_check_chk_2\" CHECK (score > 0)\n)",
+					'sql'    => "CREATE TABLE \"wptests_not_enforced_check\" (\n  \"id\" integer CONSTRAINT \"wptests_not_enforced_check_chk_1\" CHECK (true),\n  \"score\" integer CONSTRAINT \"wptests_not_enforced_check_chk_2\" CHECK (score > 0),\n  CONSTRAINT \"score_ceiling\" CHECK (true)\n)",
 					'params' => array(),
 				),
 			),
@@ -22419,6 +29744,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( '  `TABLE_SCHEMA` varchar(512) DEFAULT NULL', $tables[0]->{'Create Table'} );
 		$this->assertStringContainsString( '  `TABLE_NAME` varchar(512) DEFAULT NULL', $tables[0]->{'Create Table'} );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame(
+			array(),
+			$driver->get_connection()->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -22893,6 +30222,91 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed SHOW PROCESSLIST uses native activity catalog rows.
+	 */
+	public function test_show_processlist_uses_postgresql_activity_catalog_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured activity catalog SQL.
+			 *
+			 * @var string
+			 */
+			private $activity_sql = '';
+
+			/**
+			 * Execute fixture-backed pg_stat_activity queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_stat_activity a' ) ) {
+					$this->activity_sql = $sql;
+					return parent::query(
+						"SELECT
+							42 AS \"Id\",
+							'wp_user' AS \"User\",
+							'localhost' AS \"Host\",
+							'wptests' AS \"db\",
+							'Query' AS \"Command\",
+							7 AS \"Time\",
+							'active' AS \"State\",
+							'SELECT * FROM wp_posts' AS \"Info\"
+						UNION ALL
+						SELECT
+							43 AS \"Id\",
+							'wp_user' AS \"User\",
+							'localhost' AS \"Host\",
+							'wptests' AS \"db\",
+							'Sleep' AS \"Command\",
+							12 AS \"Time\",
+							'idle' AS \"State\",
+							'SHOW PROCESSLIST' AS \"Info\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured activity catalog SQL.
+			 *
+			 * @return string Captured SQL.
+			 */
+			public function get_activity_sql(): string {
+				return $this->activity_sql;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$rows = $driver->query( "SHOW PROCESSLIST WHERE Command = 'Query' AND Info LIKE 'SELECT%' LIMIT 1" );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Id'      => '42',
+					'User'    => 'wp_user',
+					'Host'    => 'localhost',
+					'db'      => 'wptests',
+					'Command' => 'Query',
+					'Time'    => '7',
+					'State'   => 'active',
+					'Info'    => 'SELECT * FROM wp_posts',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( array( 'Id', 'User', 'Host', 'db', 'Command', 'Time', 'State', 'Info' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_stat_activity a', $connection->get_activity_sql() );
+		$this->assertStringContainsString( 'CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END AS "Command"', $connection->get_activity_sql() );
+		$this->assertStringContainsString( 'ORDER BY a.pid', $connection->get_activity_sql() );
+		$this->assertStringNotContainsString( '\'root\' AS "User"', $connection->get_activity_sql() );
+		$this->assertCount( 1, $driver->get_last_postgresql_queries() );
+		$this->assertSame( $connection->get_activity_sql(), $driver->get_last_postgresql_queries()[0]['sql'] );
+	}
+
+	/**
 	 * Tests unsupported SHOW PROCESSLIST clauses fail before backend execution.
 	 */
 	public function test_unsupported_show_processlist_clauses_fail_closed(): void {
@@ -23063,6 +30477,74 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed SHOW CHARACTER SET/COLLATION do not use hidden metadata.
+	 */
+	public function test_show_charset_and_collation_do_not_use_hidden_metadata_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured backend queries.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Capture unexpected backend queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for PostgreSQL-backed charset metadata.' );
+					}
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured backend query SQL.
+			 *
+			 * @return string[] Captured queries.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$character_sets = $driver->query( 'SHOW CHARACTER SET' );
+		$this->assertSame( array( 'binary', 'utf8', 'utf8mb4' ), array_column( $character_sets, 'Charset' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$collations = $driver->query( "SHOW COLLATION WHERE Charset = 'utf8mb4'" );
+		$this->assertSame(
+			array( 'utf8mb4_bin', 'utf8mb4_unicode_ci', 'utf8mb4_0900_ai_ci' ),
+			array_column( $collations, 'Collation' )
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame( array(), $connection->get_queries() );
+		$this->assertSame(
+			array(),
+			$connection->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
 	 * Tests SHOW DATABASES and SHOW SCHEMAS return MySQL-shaped database rows.
 	 */
 	public function test_show_databases_and_schemas_return_mysql_shaped_rows(): void {
@@ -23101,6 +30583,114 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$schemas = $driver->query( 'SHOW SCHEMAS' );
 		$this->assertEquals( $databases, $schemas );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed SHOW DATABASES/SCHEMAS uses native catalogs.
+	 */
+	public function test_show_databases_and_schemas_use_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, '__wp_postgresql_mysql_' ) ) {
+					throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed SHOW DATABASES.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT 'information_schema' AS \"Database\"
+						UNION ALL SELECT 'plugin_schema'
+						UNION ALL SELECT 'wptests'"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$databases = $driver->query( 'SHOW DATABASES' );
+
+		$this->assertEquals(
+			array(
+				(object) array( 'Database' => 'information_schema' ),
+				(object) array( 'Database' => 'plugin_schema' ),
+				(object) array( 'Database' => 'wptests' ),
+			),
+			$databases
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => $connection->get_catalog_queries()[0]['sql'],
+					'params' => array( 'wptests' ),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$plugin_rows = $driver->query( 'SHOW DATABASES LIKE "plugin%"' );
+		$this->assertEquals( array( (object) array( 'Database' => 'plugin_schema' ) ), $plugin_rows );
+
+		$selected_rows = $driver->query( "SHOW SCHEMAS WHERE Database = 'wptests' OR Database = 'information_schema'" );
+		$this->assertEquals(
+			array(
+				(object) array( 'Database' => 'information_schema' ),
+				(object) array( 'Database' => 'wptests' ),
+			),
+			$selected_rows
+		);
+		$this->assertCount( 3, $connection->get_catalog_queries() );
+
+		$catalog_query = $connection->get_catalog_queries()[0]['sql'];
+		$this->assertStringContainsString( 'FROM information_schema.schemata s', $catalog_query );
+		$this->assertStringContainsString( 'CASE WHEN s.schema_name = \'public\' THEN ? ELSE s.schema_name END AS "Database"', $catalog_query );
+		$this->assertStringContainsString( 'LEFT(s.schema_name, 3) <> \'pg_\'', $catalog_query );
+		$this->assertStringContainsString( 'ORDER BY "Database"', $catalog_query );
+		$this->assertStringNotContainsString( '__wp_postgresql_mysql_', $catalog_query );
 	}
 
 	/**
@@ -23203,6 +30793,113 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( array(), $driver->query( 'SHOW CREATE DATABASE missing_database' ) );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed SHOW CREATE DATABASE/SCHEMA uses native catalogs.
+	 */
+	public function test_show_create_database_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, '__wp_postgresql_mysql_' ) ) {
+					throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed SHOW CREATE DATABASE.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					$database = (string) ( $params[1] ?? '' );
+					return parent::query(
+						in_array( $database, array( 'wptests', 'plugin_schema', 'information_schema' ), true )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$rows = $driver->query( 'SHOW CREATE DATABASE wptests' );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wptests', $rows[0]->Database );
+		$this->assertSame(
+			'CREATE DATABASE `wptests` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+			$rows[0]->{'Create Database'}
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => $connection->get_catalog_queries()[0]['sql'],
+					'params' => array( 'wptests', 'wptests' ),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$schema_rows = $driver->query( 'SHOW CREATE SCHEMA plugin_schema', PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'Database'        => 'plugin_schema',
+					'Create Database' => 'CREATE DATABASE `plugin_schema` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				),
+			),
+			$schema_rows
+		);
+
+		$this->assertSame( array(), $driver->query( 'SHOW CREATE DATABASE missing_schema' ) );
+		$this->assertCount( 3, $connection->get_catalog_queries() );
+
+		$catalog_query = $connection->get_catalog_queries()[0]['sql'];
+		$this->assertStringContainsString( 'FROM information_schema.schemata s', $catalog_query );
+		$this->assertStringContainsString( 'CASE WHEN s.schema_name = \'public\' THEN ? ELSE s.schema_name END', $catalog_query );
+		$this->assertStringContainsString( 'LEFT(s.schema_name, 3) <> \'pg_\'', $catalog_query );
+		$this->assertStringNotContainsString( '__wp_postgresql_mysql_', $catalog_query );
 	}
 
 	/**
@@ -23328,6 +31025,115 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed SHOW PLUGINS uses extension catalog rows.
+	 */
+	public function test_show_plugins_uses_postgresql_extension_catalog_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured plugin catalog SQL.
+			 *
+			 * @var string
+			 */
+			private $plugin_sql = '';
+
+			/**
+			 * Execute fixture-backed pg_available_extensions queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'pg_catalog.pg_available_extensions' ) ) {
+					$this->plugin_sql = $sql;
+					return parent::query(
+						"SELECT
+							'pgcrypto' AS \"Name\",
+							'ACTIVE' AS \"Status\",
+							'EXTENSION' AS \"Type\",
+							NULL AS \"Library\",
+							'' AS \"License\"
+						UNION ALL
+						SELECT
+							'postgis' AS \"Name\",
+							'DISABLED' AS \"Status\",
+							'EXTENSION' AS \"Type\",
+							NULL AS \"Library\",
+							'' AS \"License\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured plugin catalog SQL.
+			 *
+			 * @return string Captured SQL.
+			 */
+			public function get_plugin_sql(): string {
+				return $this->plugin_sql;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$rows = $driver->query( "SHOW PLUGINS WHERE Type = 'EXTENSION' AND Status = 'ACTIVE'" );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Name'    => 'pgcrypto',
+					'Status'  => 'ACTIVE',
+					'Type'    => 'EXTENSION',
+					'Library' => null,
+					'License' => '',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( array( 'Name', 'Status', 'Type', 'Library', 'License' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( '1', $driver->query( 'SELECT FOUND_ROWS()' )[0]->{'FOUND_ROWS()'} );
+
+		$like_rows = $driver->query( "SHOW PLUGINS LIKE 'post%'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Name'    => 'postgis',
+					'Status'  => 'DISABLED',
+					'Type'    => 'EXTENSION',
+					'Library' => null,
+					'License' => '',
+				),
+			),
+			$like_rows
+		);
+
+		$assoc_rows = $driver->query( "SHOW PLUGINS WHERE BINARY Name = 'pgcrypto'", PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'Name'    => 'pgcrypto',
+					'Status'  => 'ACTIVE',
+					'Type'    => 'EXTENSION',
+					'Library' => null,
+					'License' => '',
+				),
+			),
+			$assoc_rows
+		);
+
+		$plugin_queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $plugin_queries );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_available_extensions ae', $plugin_queries[0]['sql'] );
+		$this->assertStringContainsString( 'p."PLUGIN_NAME" AS "Name"', $plugin_queries[0]['sql'] );
+		$this->assertStringContainsString( 'ORDER BY p."PLUGIN_NAME"', $plugin_queries[0]['sql'] );
+		$this->assertSame( $plugin_queries[0]['sql'], $connection->get_plugin_sql() );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $plugin_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $plugin_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $plugin_queries[0]['sql'] );
+	}
+
+	/**
 	 * Tests unsupported SHOW PLUGINS clauses fail before backend execution.
 	 */
 	public function test_unsupported_show_plugins_clauses_fail_closed(): void {
@@ -23345,6 +31151,240 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$this->fail( 'Expected unsupported SHOW PLUGINS statement to throw.' );
 			} catch ( InvalidArgumentException $e ) {
 				$this->assertSame( 'Unsupported SHOW PLUGINS statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests SHOW FUNCTION/PROCEDURE STATUS returns empty MySQL-shaped rows.
+	 */
+	public function test_show_routine_status_returns_empty_mysql_shaped_rows(): void {
+		$driver  = $this->create_driver();
+		$columns = array(
+			'Db',
+			'Name',
+			'Type',
+			'Definer',
+			'Modified',
+			'Created',
+			'Security_type',
+			'Comment',
+			'character_set_client',
+			'collation_connection',
+			'Database Collation',
+		);
+
+		$rows = $driver->query( 'SHOW FUNCTION STATUS' );
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'WHERE r."ROUTINE_TYPE" = ?', $queries[0]['sql'] );
+		$this->assertSame( array( 'FUNCTION' ), $queries[0]['params'] );
+
+		$procedure_rows = $driver->query( "SHOW PROCEDURE STATUS LIKE 'wp_%'" );
+		$this->assertSame( array(), $procedure_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array( 'PROCEDURE' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$where_rows = $driver->query( "SHOW FUNCTION STATUS WHERE Type = 'FUNCTION' AND Db = 'wptests'" );
+		$this->assertSame( array(), $where_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$assoc_rows = $driver->query( "SHOW FUNCTION STATUS WHERE BINARY Name = 'wp_slugify'", PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $assoc_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed SHOW FUNCTION/PROCEDURE STATUS uses information_schema routines.
+	 */
+	public function test_show_routine_status_uses_postgresql_information_schema_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured routine status catalog queries.
+			 *
+			 * @var array<int,array{sql:string,params:array}>
+			 */
+			private $routine_queries = array();
+
+			/**
+			 * Execute fixture-backed information_schema.routines queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed SHOW routine status.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.routines r' ) ) {
+					$this->routine_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					$routine_type = (string) ( $params[0] ?? '' );
+					if ( 'FUNCTION' === $routine_type ) {
+						return parent::query(
+							"SELECT
+								'wptests' AS \"Db\",
+								'wp_slugify' AS \"Name\",
+								'FUNCTION' AS \"Type\",
+								'postgres@localhost' AS \"Definer\",
+								'2026-06-18 12:10:00' AS \"Modified\",
+								'2026-06-18 12:00:00' AS \"Created\",
+								'DEFINER' AS \"Security_type\",
+								'' AS \"Comment\",
+								'utf8mb4' AS \"character_set_client\",
+								'utf8mb4_0900_ai_ci' AS \"collation_connection\",
+								'utf8mb4_0900_ai_ci' AS \"Database Collation\""
+						);
+					}
+
+					if ( 'PROCEDURE' === $routine_type ) {
+						return parent::query(
+							"SELECT
+								'wptests' AS \"Db\",
+								'wp_recount_terms' AS \"Name\",
+								'PROCEDURE' AS \"Type\",
+								'postgres@localhost' AS \"Definer\",
+								'2026-06-18 12:20:00' AS \"Modified\",
+								'2026-06-18 12:15:00' AS \"Created\",
+								'INVOKER' AS \"Security_type\",
+								'' AS \"Comment\",
+								'utf8mb4' AS \"character_set_client\",
+								'utf8mb4_0900_ai_ci' AS \"collation_connection\",
+								'utf8mb4_0900_ai_ci' AS \"Database Collation\""
+						);
+					}
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured routine status catalog queries.
+			 *
+			 * @return array<int,array{sql:string,params:array}> Captured queries.
+			 */
+			public function get_routine_queries(): array {
+				return $this->routine_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$rows = $driver->query( "SHOW FUNCTION STATUS WHERE Db = 'wptests' AND Name = 'wp_slugify'" );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Db'                   => 'wptests',
+					'Name'                 => 'wp_slugify',
+					'Type'                 => 'FUNCTION',
+					'Definer'              => 'postgres@localhost',
+					'Modified'             => '2026-06-18 12:10:00',
+					'Created'              => '2026-06-18 12:00:00',
+					'Security_type'        => 'DEFINER',
+					'Comment'              => '',
+					'character_set_client' => 'utf8mb4',
+					'collation_connection' => 'utf8mb4_0900_ai_ci',
+					'Database Collation'   => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( '1', $driver->query( 'SELECT FOUND_ROWS()' )[0]->{'FOUND_ROWS()'} );
+
+		$procedure_rows = $driver->query( "SHOW PROCEDURE STATUS LIKE 'wp_%'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Db'                   => 'wptests',
+					'Name'                 => 'wp_recount_terms',
+					'Type'                 => 'PROCEDURE',
+					'Definer'              => 'postgres@localhost',
+					'Modified'             => '2026-06-18 12:20:00',
+					'Created'              => '2026-06-18 12:15:00',
+					'Security_type'        => 'INVOKER',
+					'Comment'              => '',
+					'character_set_client' => 'utf8mb4',
+					'collation_connection' => 'utf8mb4_0900_ai_ci',
+					'Database Collation'   => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$procedure_rows
+		);
+
+		$assoc_rows = $driver->query( "SHOW FUNCTION STATUS WHERE BINARY Name = 'wp_slugify'", PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'Db'                   => 'wptests',
+					'Name'                 => 'wp_slugify',
+					'Type'                 => 'FUNCTION',
+					'Definer'              => 'postgres@localhost',
+					'Modified'             => '2026-06-18 12:10:00',
+					'Created'              => '2026-06-18 12:00:00',
+					'Security_type'        => 'DEFINER',
+					'Comment'              => '',
+					'character_set_client' => 'utf8mb4',
+					'collation_connection' => 'utf8mb4_0900_ai_ci',
+					'Database Collation'   => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$assoc_rows
+		);
+
+		$routine_queries = $connection->get_routine_queries();
+		$this->assertCount( 3, $routine_queries );
+		$this->assertStringContainsString( 'FROM information_schema.routines r', $routine_queries[0]['sql'] );
+		$this->assertStringContainsString( 'r."ROUTINE_NAME" AS "Name"', $routine_queries[0]['sql'] );
+		$this->assertStringContainsString( 'WHERE r."ROUTINE_TYPE" = ?', $routine_queries[0]['sql'] );
+		$this->assertStringContainsString( 'ORDER BY r."ROUTINE_SCHEMA", r."ROUTINE_NAME"', $routine_queries[0]['sql'] );
+		$this->assertSame( array( 'FUNCTION' ), $routine_queries[0]['params'] );
+		$this->assertSame( array( 'PROCEDURE' ), $routine_queries[1]['params'] );
+	}
+
+	/**
+	 * Tests unsupported SHOW FUNCTION/PROCEDURE STATUS clauses fail before backend execution.
+	 */
+	public function test_unsupported_show_routine_status_clauses_fail_closed(): void {
+		$cases = array(
+			'SHOW FUNCTION STATUS LIMIT 1'           => 'Unsupported SHOW FUNCTION STATUS statement.',
+			'SHOW FUNCTION STATUS LIKE Name'         => 'Unsupported SHOW FUNCTION STATUS statement.',
+			"SHOW FUNCTION STATUS WHERE Bogus = 'x'" => 'Unsupported SHOW FUNCTION STATUS statement.',
+			'SHOW PROCEDURE STATUS FROM wptests'     => 'Unsupported SHOW PROCEDURE STATUS statement.',
+			'SHOW PROCEDURE STATUS LIMIT 1'          => 'Unsupported SHOW PROCEDURE STATUS statement.',
+		);
+
+		foreach ( $cases as $query => $message ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW routine status statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
 			}
 		}
@@ -23379,7 +31419,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests USE information_schema changes current database state without backend execution.
 	 */
 	public function test_use_statement_accepts_information_schema_without_backend_execution(): void {
-		$driver = $this->create_driver();
+		$driver           = $this->create_driver();
+		$get_table_names  = static function ( array $rows ): array {
+			return array_map(
+				static function ( $row ): string {
+					return $row->Tables_in_information_schema;
+				},
+				$rows
+			);
+		};
+		$get_status_names = static function ( array $rows ): array {
+			return array_map(
+				static function ( $row ): string {
+					return $row->Name;
+				},
+				$rows
+			);
+		};
 		$this->install_information_schema_fixture( $driver );
 
 		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
@@ -23393,33 +31449,110 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$tables = $driver->query( 'SHOW TABLES' );
 
-		$this->assertSame( array(), $tables );
+		$this->assertContains( 'TABLES', $get_table_names( $tables ) );
+		$this->assertContains( 'COLUMNS', $get_table_names( $tables ) );
+		$this->assertContains( 'KEY_COLUMN_USAGE', $get_table_names( $tables ) );
+		$this->assertContains( 'VIEWS', $get_table_names( $tables ) );
 		$this->assertSame( 'Tables_in_information_schema', $driver->get_last_column_meta()[0]['name'] );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
 		$full_tables = $driver->query( 'SHOW FULL TABLES' );
 
-		$this->assertSame( array(), $full_tables );
+		$this->assertNotEmpty( $full_tables );
+		$this->assertSame( 'SYSTEM VIEW', $full_tables[0]->Table_type );
 		$this->assertSame( array( 'Tables_in_information_schema', 'Table_type' ), array_column( $driver->get_last_column_meta(), 'name' ) );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
 		$qualified_tables = $driver->query( 'SHOW TABLES FROM information_schema' );
 
-		$this->assertSame( array(), $qualified_tables );
+		$this->assertSame( $get_table_names( $tables ), $get_table_names( $qualified_tables ) );
 		$this->assertSame( 'Tables_in_information_schema', $driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$filtered_tables = $driver->query( "SHOW TABLES FROM information_schema LIKE 'TABLE%'" );
+
+		$this->assertSame(
+			array(
+				'TABLE_CONSTRAINTS',
+				'TABLE_CONSTRAINTS_EXTENSIONS',
+				'TABLE_PRIVILEGES',
+				'TABLES',
+				'TABLESPACES',
+				'TABLESPACES_EXTENSIONS',
+			),
+			$get_table_names( $filtered_tables )
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$system_views = $driver->query( "SHOW FULL TABLES FROM information_schema WHERE Table_type = 'SYSTEM VIEW'" );
+
+		$this->assertCount( count( $full_tables ), $system_views );
+		$this->assertSame( 'SYSTEM VIEW', $system_views[0]->Table_type );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
 		$table_status = $driver->query( 'SHOW TABLE STATUS' );
 
-		$this->assertSame( array(), $table_status );
+		$this->assertSame( $get_table_names( $tables ), $get_status_names( $table_status ) );
+		$this->assertSame( 'SYSTEM VIEW', $table_status[0]->Comment );
+		$this->assertNull( $table_status[0]->Engine );
 		$this->assertSame( $this->get_show_table_status_column_names(), array_column( $driver->get_last_column_meta(), 'name' ) );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
 		$qualified_table_status = $driver->query( 'SHOW TABLE STATUS FROM information_schema' );
 
-		$this->assertSame( array(), $qualified_table_status );
+		$this->assertSame( $get_status_names( $table_status ), $get_status_names( $qualified_table_status ) );
 		$this->assertSame( $this->get_show_table_status_column_names(), array_column( $driver->get_last_column_meta(), 'name' ) );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$filtered_table_status = $driver->query( "SHOW TABLE STATUS FROM information_schema LIKE 'TABLE%'" );
+
+		$this->assertSame(
+			array(
+				'TABLE_CONSTRAINTS',
+				'TABLE_CONSTRAINTS_EXTENSIONS',
+				'TABLE_PRIVILEGES',
+				'TABLES',
+				'TABLESPACES',
+				'TABLESPACES_EXTENSIONS',
+			),
+			$get_status_names( $filtered_table_status )
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$system_view_status = $driver->query( "SHOW TABLE STATUS FROM information_schema WHERE Comment = 'SYSTEM VIEW'" );
+
+		$this->assertCount( count( $table_status ), $system_view_status );
+		$this->assertSame( 'SYSTEM VIEW', $system_view_status[0]->Comment );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$indexes = $driver->query( 'SHOW INDEX FROM information_schema.tables' );
+
+		$this->assertSame( array(), $indexes );
+		$this->assertSame(
+			array(
+				'Table',
+				'Non_unique',
+				'Key_name',
+				'Seq_in_index',
+				'Column_name',
+				'Collation',
+				'Cardinality',
+				'Sub_part',
+				'Packed',
+				'Null',
+				'Index_type',
+				'Comment',
+				'Index_comment',
+				'Visible',
+				'Expression',
+			),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		$this->assertSame(
+			array(),
+			$driver->get_connection()->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 
 		$databases = $driver->query( 'SHOW DATABASES' );
 
@@ -23431,6 +31564,100 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$databases
 		);
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests USE accepts PostgreSQL catalog schemas for pgsql connections.
+	 */
+	public function test_use_statement_accepts_postgresql_catalog_schema_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
+					return parent::query( "SELECT 'plugin_options' AS \"Tables_in_plugin_schema\"" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM show_columns_rows' ) ) {
+					return parent::query(
+						"SELECT
+							'plugin_id' AS \"Field\",
+							'int' AS \"Type\",
+							'NO' AS \"Null\",
+							'PRI' AS \"Key\",
+							NULL AS \"Default\",
+							'auto_increment' AS \"Extra\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertCount( 1, $driver->get_last_postgresql_queries() );
+		$this->assertStringContainsString( 'FROM information_schema.schemata s', $driver->get_last_postgresql_queries()[0]['sql'] );
+		$this->assertSame( array( 'wptests', 'plugin_schema' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$database = $driver->query( 'SELECT DATABASE()' );
+
+		$this->assertSame( 'plugin_schema', $database[0]->{'DATABASE()'} );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$tables = $driver->query( 'SHOW TABLES' );
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'Tables_in_plugin_schema', $driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 'plugin_options', $tables[0]->Tables_in_plugin_schema );
+		$this->assertSame( array( 'plugin_schema' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM plugin_options' );
+
+		$this->assertCount( 1, $columns );
+		$this->assertSame( 'plugin_id', $columns[0]->Field );
+		$this->assertSame( array( 'plugin_schema', 'plugin_options' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertSame( 0, $driver->query( 'USE public' ) );
+		$database = $driver->query( 'SELECT DATABASE()' );
+		$this->assertSame( 'wptests', $database[0]->{'DATABASE()'} );
+
+		try {
+			$driver->query( 'USE pg_catalog' );
+			$this->fail( 'Expected internal PostgreSQL schema USE statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported USE statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
 	}
 
 	/**
@@ -23482,6 +31709,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->install_information_schema_fixture( $driver );
 		$this->install_direct_information_schema_options_metadata( $driver );
 
+		try {
+			$driver->query( 'SELECT variable_name FROM server_status' );
+			$this->fail( 'Expected unqualified server_status to be treated as an application table before USE information_schema.' );
+		} catch ( PDOException $e ) {
+			$this->assertStringContainsString( 'no such table: server_status', $e->getMessage() );
+		}
+
 		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
 
 		$columns = $driver->query(
@@ -23531,6 +31765,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$checks
 		);
+
+		$status = $driver->query(
+			"SELECT variable_name AS variable_name
+			FROM server_status
+			WHERE variable_name = 'Threads_connected'"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'variable_name' => 'Threads_connected',
+				),
+			),
+			$status
+		);
+		$this->assertStringContainsString(
+			'AS "server_status"',
+			$this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'AS "server_status"' )
+		);
+
+		$status_names = $driver->query( 'SELECT variable_name FROM server_status' );
+		$this->assertContains( 'Threads_connected', array_column( $status_names, 'VARIABLE_NAME' ) );
 	}
 
 	/**
@@ -23952,6 +32208,393 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed static information_schema relations remain stateless.
+	 */
+	public function test_direct_information_schema_static_relations_are_stateless_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute a query while rejecting hidden metadata table access.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed static information_schema queries.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if ( false !== strpos( $sql, 'pg_catalog.pg_available_extensions' ) ) {
+					return parent::query( 'SELECT 1 AS plugin_count' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$engines = $driver->query(
+			"SELECT ENGINE, SUPPORT
+			FROM information_schema.engines
+			WHERE ENGINE = 'InnoDB'"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'ENGINE'  => 'InnoDB',
+					'SUPPORT' => 'DEFAULT',
+				),
+			),
+			$engines
+		);
+		$engines_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( "'InnoDB' AS \"ENGINE\"", $engines_sql );
+
+		$variables = $driver->query(
+			"SELECT VARIABLE_VALUE
+			FROM information_schema.session_variables
+			WHERE VARIABLE_NAME = 'sql_mode'"
+		);
+
+		$this->assertCount( 1, $variables );
+		$this->assertSame( $driver->get_sql_mode(), $variables[0]->VARIABLE_VALUE );
+
+		$status = $driver->query(
+			"SELECT VARIABLE_VALUE
+			FROM information_schema.session_status
+			WHERE VARIABLE_NAME = 'Threads_running'"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'VARIABLE_VALUE' => '1',
+				),
+			),
+			$status
+		);
+
+		$plugins = $driver->query( 'SELECT COUNT(*) AS plugin_count FROM information_schema.plugins' );
+		$this->assertSame( '1', $plugins[0]->plugin_count );
+
+		$this->assertGreaterThanOrEqual( 4, count( $connection->get_queries() ) );
+		$this->assertSame(
+			array(),
+			$connection->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.PROCESSLIST is a native activity relation.
+	 */
+	public function test_direct_information_schema_processlist_uses_postgresql_activity_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_processlist_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_stat_activity a', $sql );
+		$this->assertStringContainsString( 'a.pid AS "ID"', $sql );
+		$this->assertStringContainsString( 'COALESCE(a.usename, CURRENT_USER) AS "USER"', $sql );
+		$this->assertStringContainsString( 'a.datname', $sql );
+		$this->assertStringContainsString( 'CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END AS "COMMAND"', $sql );
+		$this->assertStringContainsString( 'COALESCE(a.query, \'\') AS "INFO"', $sql );
+		$this->assertStringContainsString( 'WHERE a.datname IS NULL OR a.datname = current_database()', $sql );
+		$this->assertStringNotContainsString( '\'root\' AS "USER"', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.USER_PRIVILEGES reads database ACLs.
+	 */
+	public function test_direct_information_schema_user_privileges_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_user_privileges_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_database d', $sql );
+		$this->assertStringContainsString( 'pg_catalog.aclexplode(COALESCE(d.datacl, pg_catalog.acldefault(\'d\', d.datdba))) acl', $sql );
+		$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_roles grantee_role', $sql );
+		$this->assertStringContainsString( 'pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%\'\'\' AS "GRANTEE"', $sql );
+		$this->assertStringContainsString( '\'def\' AS "TABLE_CATALOG"', $sql );
+		$this->assertStringContainsString( 'acl.privilege_type AS "PRIVILEGE_TYPE"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"', $sql );
+		$this->assertStringContainsString( 'WHERE d.datname = current_database()', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.SCHEMA_PRIVILEGES reads schema ACLs.
+	 */
+	public function test_direct_information_schema_schema_privileges_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_schema_privileges_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_namespace n', $sql );
+		$this->assertStringContainsString( 'pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault(\'n\', n.nspowner))) acl', $sql );
+		$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_roles grantee_role', $sql );
+		$this->assertStringContainsString( 'pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%\'\'\' AS "GRANTEE"', $sql );
+		$this->assertStringContainsString( '\'def\' AS "TABLE_CATALOG"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN n.nspname = \'public\' THEN \'wptests\' ELSE n.nspname END AS "TABLE_SCHEMA"', $sql );
+		$this->assertStringContainsString( 'acl.privilege_type AS "PRIVILEGE_TYPE"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"', $sql );
+		$this->assertStringContainsString( 'LEFT(n.nspname, 3) <> \'pg_\'', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.TABLE_PRIVILEGES is a native catalog relation.
+	 */
+	public function test_direct_information_schema_table_privileges_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_table_privileges_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.table_privileges tp', $sql );
+		$this->assertStringContainsString( 'pg_catalog.quote_literal(tp.grantee) || \'@\'\'%\'\'\' AS "GRANTEE"', $sql );
+		$this->assertStringContainsString( '\'def\' AS "TABLE_CATALOG"', $sql );
+		$this->assertStringContainsString( 'tp.table_name AS "TABLE_NAME"', $sql );
+		$this->assertStringContainsString( 'tp.privilege_type AS "PRIVILEGE_TYPE"', $sql );
+		$this->assertStringContainsString( 'tp.is_grantable AS "IS_GRANTABLE"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN tp.table_schema = \'public\' THEN \'wptests\' ELSE tp.table_schema END AS "TABLE_SCHEMA"', $sql );
+		$this->assertStringContainsString( 'tp.table_name NOT IN', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.COLUMN_PRIVILEGES is a native catalog relation.
+	 */
+	public function test_direct_information_schema_column_privileges_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_column_privileges_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.column_privileges cp', $sql );
+		$this->assertStringContainsString( 'pg_catalog.quote_literal(cp.grantee) || \'@\'\'%\'\'\' AS "GRANTEE"', $sql );
+		$this->assertStringContainsString( '\'def\' AS "TABLE_CATALOG"', $sql );
+		$this->assertStringContainsString( 'cp.table_name AS "TABLE_NAME"', $sql );
+		$this->assertStringContainsString( 'cp.column_name AS "COLUMN_NAME"', $sql );
+		$this->assertStringContainsString( 'cp.privilege_type AS "PRIVILEGE_TYPE"', $sql );
+		$this->assertStringContainsString( 'cp.is_grantable AS "IS_GRANTABLE"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN cp.table_schema = \'public\' THEN \'wptests\' ELSE cp.table_schema END AS "TABLE_SCHEMA"', $sql );
+		$this->assertStringContainsString( 'cp.table_name NOT IN', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema role membership relations use native catalog views.
+	 */
+	public function test_direct_information_schema_role_membership_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$get_applicable_roles_sql = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_applicable_roles_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$applicable_roles_sql     = $get_applicable_roles_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.applicable_roles ar', $applicable_roles_sql );
+		$this->assertStringContainsString( 'ar.grantee AS "USER"', $applicable_roles_sql );
+		$this->assertStringContainsString( '\'%\' AS "HOST"', $applicable_roles_sql );
+		$this->assertStringContainsString( 'ar.grantee AS "GRANTEE"', $applicable_roles_sql );
+		$this->assertStringContainsString( 'ar.role_name AS "ROLE_NAME"', $applicable_roles_sql );
+		$this->assertStringContainsString( 'ar.is_grantable AS "IS_GRANTABLE"', $applicable_roles_sql );
+		$this->assertStringContainsString( '\'NO\' AS "IS_DEFAULT"', $applicable_roles_sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $applicable_roles_sql );
+
+		$get_administrable_roles_sql = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_administrable_role_authorizations_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$administrable_roles_sql     = $get_administrable_roles_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.administrable_role_authorizations ara', $administrable_roles_sql );
+		$this->assertStringContainsString( 'ara.grantee AS "USER"', $administrable_roles_sql );
+		$this->assertStringContainsString( 'ara.grantee AS "GRANTEE"', $administrable_roles_sql );
+		$this->assertStringContainsString( 'ara.role_name AS "ROLE_NAME"', $administrable_roles_sql );
+		$this->assertStringContainsString( 'ara.is_grantable AS "IS_GRANTABLE"', $administrable_roles_sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $administrable_roles_sql );
+
+		$get_enabled_roles_sql = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_enabled_roles_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$enabled_roles_sql     = $get_enabled_roles_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.enabled_roles er', $enabled_roles_sql );
+		$this->assertStringContainsString( 'er.role_name AS "ROLE_NAME"', $enabled_roles_sql );
+		$this->assertStringContainsString( '\'%\' AS "ROLE_HOST"', $enabled_roles_sql );
+		$this->assertStringContainsString( '\'NO\' AS "IS_DEFAULT"', $enabled_roles_sql );
+		$this->assertStringContainsString( '\'NO\' AS "IS_MANDATORY"', $enabled_roles_sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $enabled_roles_sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema role grant relations use native catalog views.
+	 */
+	public function test_direct_information_schema_role_grants_use_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$get_table_sql = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_role_table_grants_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$table_sql     = $get_table_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.role_table_grants rtg', $table_sql );
+		$this->assertStringContainsString( 'rtg.grantor AS "GRANTOR"', $table_sql );
+		$this->assertStringContainsString( '\'%\' AS "GRANTOR_HOST"', $table_sql );
+		$this->assertStringContainsString( 'rtg.grantee AS "GRANTEE"', $table_sql );
+		$this->assertStringContainsString( 'CASE WHEN rtg.table_schema = \'public\' THEN \'wptests\' ELSE rtg.table_schema END AS "TABLE_SCHEMA"', $table_sql );
+		$this->assertStringContainsString( 'rtg.table_name AS "TABLE_NAME"', $table_sql );
+		$this->assertStringContainsString( 'rtg.privilege_type AS "PRIVILEGE_TYPE"', $table_sql );
+		$this->assertStringContainsString( 'rtg.table_name NOT IN', $table_sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $table_sql );
+
+		$get_column_sql = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_role_column_grants_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$column_sql     = $get_column_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.role_column_grants rcg', $column_sql );
+		$this->assertStringContainsString( 'rcg.grantor AS "GRANTOR"', $column_sql );
+		$this->assertStringContainsString( 'rcg.grantee AS "GRANTEE"', $column_sql );
+		$this->assertStringContainsString( 'rcg.column_name AS "COLUMN_NAME"', $column_sql );
+		$this->assertStringContainsString( 'rcg.privilege_type AS "PRIVILEGE_TYPE"', $column_sql );
+		$this->assertStringContainsString( 'rcg.table_name NOT IN', $column_sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $column_sql );
+
+		$get_routine_sql = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_role_routine_grants_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$routine_sql     = $get_routine_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.role_routine_grants rrg', $routine_sql );
+		$this->assertStringContainsString( 'rrg.grantor AS "GRANTOR"', $routine_sql );
+		$this->assertStringContainsString( 'rrg.grantee AS "GRANTEE"', $routine_sql );
+		$this->assertStringContainsString( 'rrg.specific_name AS "SPECIFIC_NAME"', $routine_sql );
+		$this->assertStringContainsString( 'rrg.routine_name AS "ROUTINE_NAME"', $routine_sql );
+		$this->assertStringContainsString( 'rrg.privilege_type AS "PRIVILEGE_TYPE"', $routine_sql );
+		$this->assertStringContainsString( 'CASE WHEN rrg.specific_schema = \'public\' THEN \'wptests\' ELSE rrg.specific_schema END AS "SPECIFIC_SCHEMA"', $routine_sql );
+		$this->assertStringContainsString( 'CASE WHEN rrg.routine_schema = \'public\' THEN \'wptests\' ELSE rrg.routine_schema END AS "ROUTINE_SCHEMA"', $routine_sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $routine_sql );
+	}
+
+	/**
 	 * Tests information_schema.PLUGINS is exposed as an empty plugin metadata relation.
 	 */
 	public function test_direct_information_schema_plugins_relation_is_empty_and_queryable(): void {
@@ -24009,6 +32652,1696 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			array_column( $columns, 'Field' )
 		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.PLUGINS uses extension catalogs.
+	 */
+	public function test_direct_information_schema_plugins_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_plugins_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_available_extensions ae', $sql );
+		$this->assertStringContainsString( 'ae.name AS "PLUGIN_NAME"', $sql );
+		$this->assertStringContainsString( 'ae.installed_version', $sql );
+		$this->assertStringContainsString( 'CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END AS "PLUGIN_STATUS"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END AS "LOAD_OPTION"', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.FILES reads tablespaces from pg_catalog.
+	 */
+	public function test_direct_information_schema_files_uses_postgresql_tablespace_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_files_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $sql );
+		$this->assertStringContainsString( 'CAST(ts.oid AS bigint) AS "FILE_ID"', $sql );
+		$this->assertStringContainsString( 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "FILE_NAME"', $sql );
+		$this->assertStringContainsString( 'ts.spcname AS "TABLESPACE_NAME"', $sql );
+		$this->assertStringContainsString( '\'TABLESPACE\' AS "FILE_TYPE"', $sql );
+		$this->assertStringContainsString( '\'InnoDB\' AS "ENGINE"', $sql );
+		$this->assertStringContainsString( '\'NORMAL\' AS "STATUS"', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
+	}
+
+	/**
+	 * Tests information_schema.FILES is queryable with MySQL-shaped columns.
+	 */
+	public function test_direct_information_schema_files_returns_empty_mysql_shaped_rows_for_fallback_connections(): void {
+		$driver = $this->create_driver();
+
+		$files = $driver->query(
+			"SELECT FILE_ID, FILE_NAME, FILE_TYPE, TABLESPACE_NAME, ENGINE, STATUS
+			FROM information_schema.files
+			WHERE ENGINE = 'InnoDB'"
+		);
+
+		$this->assertSame( array(), $files );
+		$this->assertSame(
+			array( 'FILE_ID', 'FILE_NAME', 'FILE_TYPE', 'TABLESPACE_NAME', 'ENGINE', 'STATUS' ),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+
+		$columns = $driver->query( "SHOW COLUMNS FROM information_schema.files LIKE '%TIME%'" );
+		$this->assertSame(
+			array(
+				'CREATION_TIME',
+				'LAST_UPDATE_TIME',
+				'LAST_ACCESS_TIME',
+				'RECOVER_TIME',
+				'CREATE_TIME',
+				'UPDATE_TIME',
+				'CHECK_TIME',
+			),
+			array_column( $columns, 'Field' )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.TABLESPACES_EXTENSIONS reads tablespaces from pg_catalog.
+	 */
+	public function test_direct_information_schema_tablespaces_extensions_uses_postgresql_tablespace_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_tablespaces_extensions_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $sql );
+		$this->assertStringContainsString( 'ts.spcname AS "TABLESPACE_NAME"', $sql );
+		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.TABLESPACES reads tablespaces from pg_catalog.
+	 */
+	public function test_direct_information_schema_tablespaces_uses_postgresql_tablespace_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_tablespaces_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $sql );
+		$this->assertStringContainsString( 'ts.spcname AS "TABLESPACE_NAME"', $sql );
+		$this->assertStringContainsString( '\'InnoDB\' AS "ENGINE"', $sql );
+		$this->assertStringContainsString( '\'General\' AS "TABLESPACE_TYPE"', $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(ts.oid, \'pg_tablespace\')', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
+	}
+
+	/**
+	 * Tests information_schema.TABLESPACES_EXTENSIONS is queryable with MySQL-shaped columns.
+	 */
+	public function test_direct_information_schema_tablespaces_extensions_returns_empty_mysql_shaped_rows_for_fallback_connections(): void {
+		$driver = $this->create_driver();
+
+		$tablespaces = $driver->query(
+			'SELECT TABLESPACE_NAME, ENGINE_ATTRIBUTE
+			FROM information_schema.tablespaces_extensions
+			WHERE ENGINE_ATTRIBUTE IS NOT NULL'
+		);
+
+		$this->assertSame( array(), $tablespaces );
+		$this->assertSame(
+			array( 'TABLESPACE_NAME', 'ENGINE_ATTRIBUTE' ),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+
+		$columns = $driver->query( "SHOW COLUMNS FROM information_schema.tablespaces_extensions LIKE '%ATTRIBUTE'" );
+		$this->assertSame(
+			array( 'ENGINE_ATTRIBUTE' ),
+			array_column( $columns, 'Field' )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.COLUMN_STATISTICS reads pg_stats.
+	 */
+	public function test_direct_information_schema_column_statistics_uses_postgresql_stats_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_column_statistics_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_stats stats', $sql );
+		$this->assertStringContainsString( 'stats.tablename AS "TABLE_NAME"', $sql );
+		$this->assertStringContainsString( 'stats.attname AS "COLUMN_NAME"', $sql );
+		$this->assertStringContainsString( 'pg_catalog.json_build_object', $sql );
+		$this->assertStringContainsString( 'pg_catalog.to_json(stats.histogram_bounds)', $sql );
+		$this->assertStringContainsString( 'stats.tablename NOT IN', $sql );
+	}
+
+	/**
+	 * Tests information_schema.COLUMN_STATISTICS is queryable with MySQL-shaped columns.
+	 */
+	public function test_direct_information_schema_column_statistics_returns_empty_mysql_shaped_rows_for_fallback_connections(): void {
+		$driver = $this->create_driver();
+
+		$statistics = $driver->query(
+			"SELECT SCHEMA_NAME, TABLE_NAME, COLUMN_NAME, HISTOGRAM
+			FROM information_schema.column_statistics
+			WHERE TABLE_NAME = 't1'"
+		);
+
+		$this->assertSame( array(), $statistics );
+		$this->assertSame(
+			array( 'SCHEMA_NAME', 'TABLE_NAME', 'COLUMN_NAME', 'HISTOGRAM' ),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+	}
+
+	/**
+	 * Tests MySQL-only diagnostic information_schema relations are empty and queryable.
+	 */
+	public function test_direct_information_schema_mysql_diagnostic_relations_are_empty_and_queryable(): void {
+		$relations = array(
+			'optimizer_trace' => array(
+				'query'   => 'SELECT QUERY, TRACE, MISSING_BYTES_BEYOND_MAX_MEM_SIZE, INSUFFICIENT_PRIVILEGES FROM information_schema.optimizer_trace',
+				'columns' => array( 'QUERY', 'TRACE', 'MISSING_BYTES_BEYOND_MAX_MEM_SIZE', 'INSUFFICIENT_PRIVILEGES' ),
+			),
+			'profiling'       => array(
+				'query'   => 'SELECT QUERY_ID, STATE, DURATION, CPU_USER, SOURCE_LINE FROM information_schema.profiling',
+				'columns' => array( 'QUERY_ID', 'STATE', 'DURATION', 'CPU_USER', 'SOURCE_LINE' ),
+			),
+			'tablespaces'     => array(
+				'query'   => 'SELECT TABLESPACE_NAME, ENGINE, TABLESPACE_TYPE, TABLESPACE_COMMENT FROM information_schema.tablespaces',
+				'columns' => array( 'TABLESPACE_NAME', 'ENGINE', 'TABLESPACE_TYPE', 'TABLESPACE_COMMENT' ),
+			),
+		);
+
+		foreach ( $relations as $relation => $assertions ) {
+			$driver = $this->create_driver();
+			$rows   = $driver->query( $assertions['query'] );
+
+			$this->assertSame( array(), $rows, $relation );
+			$this->assertSame(
+				$assertions['columns'],
+				array_column( $driver->get_last_column_meta(), 'name' ),
+				$relation
+			);
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed TABLES joins with tablespace catalog relations stay stateless.
+	 */
+	public function test_direct_information_schema_tables_tablespaces_join_uses_stateless_relations_for_pgsql_connections(): void {
+		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+		$sql             = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_direct_information_schema_select_query',
+			'SELECT t.table_name, ts.tablespace_name
+			FROM information_schema.tables AS t
+			JOIN information_schema.tablespaces AS ts'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $sql );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $sql );
+		$this->assertStringContainsString( 'ts.spcname AS "TABLESPACE_NAME"', $sql );
+		$this->assertStringContainsString( 'AS "ts"', $sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed direct information_schema relation SQL does not read hidden metadata tables.
+	 */
+	public function test_direct_information_schema_catalog_relation_sql_does_not_read_hidden_metadata_tables_for_pgsql_connections(): void {
+		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql         = Closure::bind(
+			function ( string $relation ): ?string {
+				return $this->get_direct_information_schema_relation_sql( $relation );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_relations   = Closure::bind(
+			function (): array {
+				return $this->get_direct_information_schema_relation_names();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		foreach ( $get_relations() as $relation ) {
+			$sql = $get_sql( $relation );
+
+			$this->assertNotNull( $sql, $relation );
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertSame(
+					0,
+					preg_match( '/\b(?:FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
+					$relation . ' must not read ' . $metadata_table
+				);
+			}
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed empty information_schema relations are explicitly MySQL-only.
+	 */
+	public function test_direct_information_schema_pgsql_empty_relations_are_explicitly_mysql_only(): void {
+		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_relations   = Closure::bind(
+			function (): array {
+				return $this->get_direct_information_schema_relation_names();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_sql         = Closure::bind(
+			function ( string $relation ): ?string {
+				return $this->get_direct_information_schema_relation_sql( $relation );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$empty_allowlist = array(
+			'events',
+			'optimizer_trace',
+			'profiling',
+			'resource_groups',
+			'user_attributes',
+		);
+		$empty_relations = array();
+
+		foreach ( $get_relations() as $relation ) {
+			$sql = $get_sql( $relation );
+			$this->assertNotNull( $sql, $relation );
+
+			if ( 1 === preg_match( '/^SELECT\s+NULL AS "[A-Z0-9_]+"(?:,\s+NULL AS "[A-Z0-9_]+")*\s+WHERE 1 = 0$/s', $sql ) ) {
+				$empty_relations[] = $relation;
+			}
+		}
+
+		sort( $empty_relations );
+		sort( $empty_allowlist );
+
+		$this->assertSame( $empty_allowlist, $empty_relations );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed literal information_schema relations are explicit compatibility rows.
+	 */
+	public function test_direct_information_schema_pgsql_literal_relations_are_explicitly_stateless_compatibility_rows(): void {
+		$connection        = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver            = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_relations     = Closure::bind(
+			function (): array {
+				return $this->get_direct_information_schema_relation_names();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_sql           = Closure::bind(
+			function ( string $relation ): ?string {
+				return $this->get_direct_information_schema_relation_sql( $relation );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$literal_allowlist = array(
+			'character_sets',
+			'collation_character_set_applicability',
+			'collations',
+			'engines',
+			'global_status',
+			'global_variables',
+			'server_status',
+			'session_status',
+			'session_variables',
+		);
+		$literal_relations = array();
+
+		foreach ( $get_relations() as $relation ) {
+			$sql = $get_sql( $relation );
+			$this->assertNotNull( $sql, $relation );
+
+			if ( 1 === preg_match( '/^SELECT\s+NULL AS "[A-Z0-9_]+"(?:,\s+NULL AS "[A-Z0-9_]+")*\s+WHERE 1 = 0$/s', $sql ) ) {
+				continue;
+			}
+
+			$sql_without_literals = preg_replace( "/'(?:''|[^'])*'/", "''", $sql );
+			if ( 0 === preg_match( '/\bFROM\b/i', $sql_without_literals ) ) {
+				$this->assertStringStartsWith( 'SELECT ', $sql, $relation );
+				$literal_relations[] = $relation;
+			}
+		}
+
+		sort( $literal_relations );
+		sort( $literal_allowlist );
+
+		$this->assertSame( $literal_allowlist, $literal_relations );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.KEYWORDS uses the keyword catalog.
+	 */
+	public function test_direct_information_schema_keywords_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_keywords_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_get_keywords() k', $sql );
+		$this->assertStringContainsString( 'UPPER(k.word) AS "WORD"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN k.catcode = \'R\' THEN 1 ELSE 0 END AS "RESERVED"', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+		$this->assertStringNotContainsString( "'SELECT' AS \"WORD\"", $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema view definitions are catalog-backed.
+	 */
+	public function test_postgresql_information_schema_compatibility_view_definitions_are_catalog_backed(): void {
+		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_definitions = Closure::bind(
+			function (): array {
+				return $this->get_postgresql_information_schema_compatibility_view_definitions();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_statements  = Closure::bind(
+			function (): array {
+				return $this->get_postgresql_information_schema_compatibility_view_statements();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_relations   = Closure::bind(
+			function (): array {
+				return $this->get_direct_information_schema_relation_names();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$definitions     = $get_definitions();
+		$statements      = $get_statements();
+		$relations       = $get_relations();
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+		$expected_views  = $relations;
+		sort( $expected_views );
+		$actual_views = array_keys( $definitions );
+		sort( $actual_views );
+
+		$this->assertSame( $expected_views, $actual_views );
+		$this->assertArrayHasKey( 'tables', $definitions );
+		$this->assertArrayHasKey( 'columns', $definitions );
+		$this->assertArrayHasKey( 'keywords', $definitions );
+		$this->assertArrayHasKey( 'character_sets', $definitions );
+		$this->assertArrayHasKey( 'collations', $definitions );
+		$this->assertArrayHasKey( 'collation_character_set_applicability', $definitions );
+		$this->assertArrayHasKey( 'engines', $definitions );
+		$this->assertArrayHasKey( 'events', $definitions );
+		$this->assertArrayHasKey( 'optimizer_trace', $definitions );
+		$this->assertArrayHasKey( 'resource_groups', $definitions );
+		$this->assertArrayHasKey( 'session_status', $definitions );
+		$this->assertArrayHasKey( 'session_variables', $definitions );
+		$this->assertArrayHasKey( 'global_variables', $definitions );
+		$this->assertSame(
+			'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"',
+			$statements[0]
+		);
+		$this->assertSame(
+			'COMMENT ON SCHEMA "__wp_mysql_information_schema" IS \'wordpress/mysql-on-sqlite:postgresql-information-schema-compatibility:v1\'',
+			$statements[1]
+		);
+		$this->assertCount( count( $definitions ) + 2, $statements );
+
+		foreach ( $definitions as $relation => $definition ) {
+			$this->assertStringStartsWith(
+				'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."' . $relation . '" AS ',
+				$definition,
+				$relation
+			);
+
+			$sql_without_literals = preg_replace( "/'(?:''|[^'])*'/", "''", $definition );
+			$this->assertIsString( $sql_without_literals );
+			$this->assertSame( 1, preg_match( '/\bSELECT\b/i', $sql_without_literals ), $relation );
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertSame(
+					0,
+					preg_match( '/\b(?:FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $definition ),
+					$relation . ' must not read ' . $metadata_table
+				);
+			}
+		}
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_get_keywords() k', $definitions['keywords'] );
+		$this->assertStringContainsString( "'utf8mb4' AS \"CHARACTER_SET_NAME\"", $definitions['character_sets'] );
+		$this->assertStringContainsString( 'NULL AS "EVENT_CATALOG"', $definitions['events'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.database', true)", $definitions['tables'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.character_set_client', true)", $definitions['views'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.collation_connection', true)", $definitions['views'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.sql_mode', true)", $definitions['triggers'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.character_set_client', true)", $definitions['triggers'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.collation_connection', true)", $definitions['triggers'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.sql_mode', true)", $definitions['routines'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.character_set_client', true)", $definitions['routines'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.collation_connection', true)", $definitions['routines'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.session.sql_mode', true)", $definitions['session_variables'] );
+		$this->assertStringContainsString( "pg_catalog.current_setting('wp_mysql.global.time_zone', true)", $definitions['global_variables'] );
+	}
+
+	/**
+	 * Tests PostgreSQL compatibility view definitions do not bake setup-driver state.
+	 */
+	public function test_postgresql_information_schema_compatibility_view_definitions_do_not_bake_driver_state(): void {
+		$get_definitions = static function ( WP_PostgreSQL_Driver $driver ): array {
+			$callback = Closure::bind(
+				function (): array {
+					return $this->get_postgresql_information_schema_compatibility_view_definitions();
+				},
+				$driver,
+				WP_PostgreSQL_Driver::class
+			);
+
+			return $callback();
+		};
+		$stateful_driver = new WP_PostgreSQL_Driver(
+			new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+				array(
+					'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+				)
+			),
+			'setup_only_database'
+		);
+		$default_driver  = new WP_PostgreSQL_Driver(
+			new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+				array(
+					'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+				)
+			),
+			'wptests'
+		);
+
+		$stateful_driver->set_sql_mode( 'ANSI_QUOTES' );
+		$this->assertSame( 0, $stateful_driver->query( "SET SESSION time_zone = '+02:00'" ) );
+		$this->assertSame( 0, $stateful_driver->query( "SET GLOBAL time_zone = '+03:00'" ) );
+		$this->assertSame( 0, $stateful_driver->query( "SET NAMES 'utf8' COLLATE 'utf8_general_ci'" ) );
+
+		$stateful_definitions = $get_definitions( $stateful_driver );
+		$default_definitions  = $get_definitions( $default_driver );
+		$definition_sql       = implode( "\n", $stateful_definitions );
+
+		$this->assertSame( $default_definitions, $stateful_definitions );
+		$this->assertStringContainsString( 'current_database()', $definition_sql );
+		$this->assertStringNotContainsString( 'setup_only_database', $definition_sql );
+		$this->assertStringNotContainsString( '+02:00', $definition_sql );
+		$this->assertStringNotContainsString( '+03:00', $definition_sql );
+		$this->assertStringNotContainsString( 'ANSI_QUOTES', $definition_sql );
+	}
+
+	/**
+	 * Tests installed PostgreSQL information_schema compatibility views are used for runtime reads.
+	 */
+	public function test_direct_information_schema_sources_use_installed_postgresql_compatibility_views(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute a query while capturing generated SQL.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+
+				if ( 0 === strpos( $sql, 'SELECT ' ) ) {
+					return $this->get_pdo()->query( 'SELECT \'wptests_options\' AS "TABLE_NAME", \'utf8mb4\' AS "CHARACTER_SET_NAME"' );
+				}
+
+				return $this->get_pdo()->query( 'SELECT 1' );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->ensure_postgresql_information_schema_compatibility_views();
+		$setup_sql = implode( "\n", $connection->get_queries() );
+
+		$this->assertStringContainsString( 'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"', $setup_sql );
+		$this->assertStringContainsString( 'COMMENT ON SCHEMA "__wp_mysql_information_schema"', $setup_sql );
+		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', $setup_sql );
+		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."character_sets" AS', $setup_sql );
+		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."events" AS', $setup_sql );
+
+		$driver->query( "SELECT table_name FROM information_schema.tables WHERE table_name = 'wptests_options'" );
+
+		$tables_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $tables_sql );
+		$this->assertStringNotContainsString( 'FROM information_schema.tables t', $tables_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $tables_sql );
+
+		$driver->query( "SELECT character_set_name FROM information_schema.character_sets WHERE character_set_name = 'utf8mb4'" );
+
+		$character_sets_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."character_sets" AS "character_sets"', $character_sets_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $character_sets_sql );
+	}
+
+	/**
+	 * Tests fresh drivers discover already-installed PostgreSQL information_schema compatibility views.
+	 */
+	public function test_direct_information_schema_sources_discover_existing_postgresql_compatibility_views(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute a query while emulating installed compatibility views.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+
+				if ( false !== strpos( $sql, "obj_description(n.oid, 'pg_namespace')" ) ) {
+					return $this->get_pdo()->query( "SELECT 'wordpress/mysql-on-sqlite:postgresql-information-schema-compatibility:v1'" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) ) {
+					return $this->get_pdo()->query(
+						"SELECT 'tables' AS relname
+						UNION ALL SELECT 'columns'
+						UNION ALL SELECT 'keywords'"
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT ' ) ) {
+					return $this->get_pdo()->query( 'SELECT \'wptests_options\' AS "TABLE_NAME"' );
+				}
+
+				return $this->get_pdo()->query( 'SELECT 1' );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( "SELECT table_name FROM information_schema.tables WHERE table_name = 'wptests_options'" );
+
+		$captured_sql = implode( "\n", $connection->get_queries() );
+		$tables_sql   = $this->get_last_single_postgresql_sql( $driver );
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', $captured_sql );
+		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', $captured_sql );
+		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $tables_sql );
+		$this->assertStringNotContainsString( 'FROM information_schema.tables t', $tables_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $tables_sql );
+	}
+
+	/**
+	 * Tests fresh drivers ignore unversioned PostgreSQL information_schema compatibility views.
+	 */
+	public function test_direct_information_schema_sources_ignore_unversioned_postgresql_compatibility_views(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute a query while emulating stale installed compatibility views.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+
+				if ( false !== strpos( $sql, "obj_description(n.oid, 'pg_namespace')" ) ) {
+					return $this->get_pdo()->query( 'SELECT NULL' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) ) {
+					return $this->get_pdo()->query( "SELECT 'tables' AS relname" );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT ' ) ) {
+					return $this->get_pdo()->query( 'SELECT \'wptests_options\' AS "TABLE_NAME"' );
+				}
+
+				return $this->get_pdo()->query( 'SELECT 1' );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query( "SELECT table_name FROM information_schema.tables WHERE table_name = 'wptests_options'" );
+
+		$captured_sql = implode( "\n", $connection->get_queries() );
+		$tables_sql   = $this->get_last_single_postgresql_sql( $driver );
+
+		$this->assertStringContainsString( "obj_description(n.oid, 'pg_namespace')", $captured_sql );
+		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', $captured_sql );
+		$this->assertStringNotContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $tables_sql );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $tables_sql );
+	}
+
+	/**
+	 * Tests compatibility variable views read PostgreSQL-backed setting state.
+	 */
+	public function test_postgresql_information_schema_variable_views_use_postgresql_settings(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Captured set_config() parameters.
+			 *
+			 * @var array[]
+			 */
+			private $setting_params = array();
+
+			/**
+			 * Execute a query while emulating installed session variable views.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+
+				if ( false !== strpos( $sql, 'pg_catalog.set_config' ) ) {
+					$this->setting_params[] = $params;
+					return $this->get_pdo()->query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, "obj_description(n.oid, 'pg_namespace')" ) ) {
+					return $this->get_pdo()->query( "SELECT 'wordpress/mysql-on-sqlite:postgresql-information-schema-compatibility:v1'" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) ) {
+					return $this->get_pdo()->query( "SELECT 'session_variables' AS relname" );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT ' ) ) {
+					return $this->get_pdo()->query( 'SELECT \'+02:00\' AS "VARIABLE_VALUE"' );
+				}
+
+				return $this->get_pdo()->query( 'SELECT 1' );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+
+			/**
+			 * Get captured set_config() parameters.
+			 *
+			 * @return array[] Captured parameters.
+			 */
+			public function get_setting_params(): array {
+				return $this->setting_params;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->query(
+			"SELECT variable_value
+			FROM information_schema.session_variables
+			WHERE variable_name = 'time_zone'"
+		);
+
+		$this->assertSame( 0, $driver->query( "SET SESSION time_zone = '+02:00'" ) );
+
+		$this->assertContains(
+			array( 'wp_mysql.session.time_zone', '+02:00' ),
+			$connection->get_setting_params()
+		);
+
+		$variables = $driver->query(
+			"SELECT variable_value
+			FROM information_schema.session_variables
+			WHERE variable_name = 'time_zone'"
+		);
+		$sql       = $this->get_last_single_postgresql_sql( $driver );
+
+		$this->assertSame( '+02:00', $variables[0]->VARIABLE_VALUE );
+		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."session_variables" AS "session_variables"', $sql );
+		$this->assertStringNotContainsString( 'FROM information_schema.session_variables', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
+	}
+
+	/**
+	 * Tests partial compatibility view discovery syncs settings used by those views.
+	 */
+	public function test_direct_information_schema_sources_sync_settings_after_discovering_partial_postgresql_compatibility_views(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Captured set_config() parameters.
+			 *
+			 * @var array[]
+			 */
+			private $setting_params = array();
+
+			/**
+			 * Execute a query while emulating a partial existing compatibility view set.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+
+				if ( false !== strpos( $sql, 'pg_catalog.set_config' ) ) {
+					$this->setting_params[] = $params;
+					return $this->get_pdo()->query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, "obj_description(n.oid, 'pg_namespace')" ) ) {
+					return $this->get_pdo()->query( "SELECT 'wordpress/mysql-on-sqlite:postgresql-information-schema-compatibility:v1'" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) ) {
+					return $this->get_pdo()->query(
+						"SELECT 'tables' AS relname
+						UNION ALL SELECT 'session_variables'"
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT ' ) ) {
+					return $this->get_pdo()->query( 'SELECT \'wptests\' AS "TABLE_SCHEMA"' );
+				}
+
+				return $this->get_pdo()->query( 'SELECT 1' );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+
+			/**
+			 * Get captured set_config() parameters.
+			 *
+			 * @return array[] Captured parameters.
+			 */
+			public function get_setting_params(): array {
+				return $this->setting_params;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( "SET SESSION time_zone = '+02:00'" ) );
+		$this->assertSame( array(), $connection->get_setting_params() );
+
+		$tables = $driver->query(
+			"SELECT table_schema
+			FROM information_schema.tables
+			WHERE table_schema = 'wptests'"
+		);
+		$sql    = $this->get_last_single_postgresql_sql( $driver );
+
+		$this->assertSame( 'wptests', $tables[0]->TABLE_SCHEMA );
+		$this->assertContains(
+			array( 'wp_mysql.database', 'wptests' ),
+			$connection->get_setting_params()
+		);
+		$this->assertContains(
+			array( 'wp_mysql.session.time_zone', '+02:00' ),
+			$connection->get_setting_params()
+		);
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', implode( "\n", $connection->get_queries() ) );
+		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', implode( "\n", $connection->get_queries() ) );
+		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $sql );
+		$this->assertStringNotContainsString( 'FROM information_schema.tables', $sql );
+	}
+
+	/**
+	 * Tests complete compatibility view discovery syncs earlier MySQL variable state.
+	 */
+	public function test_direct_information_schema_sources_sync_variables_after_discovering_complete_postgresql_compatibility_views(): void {
+		$definition_driver = new WP_PostgreSQL_Driver(
+			new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+				array(
+					'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+				)
+			),
+			'wptests'
+		);
+		$get_definitions   = Closure::bind(
+			function (): array {
+				return $this->get_postgresql_information_schema_compatibility_view_definitions();
+			},
+			$definition_driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$installed_views   = array_keys( $get_definitions() );
+		$connection        = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ), $installed_views ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Captured set_config() parameters.
+			 *
+			 * @var array[]
+			 */
+			private $setting_params = array();
+
+			/**
+			 * Installed compatibility view relation names.
+			 *
+			 * @var string[]
+			 */
+			private $installed_relations;
+
+			/**
+			 * Constructor.
+			 *
+			 * @param array    $options             Connection options.
+			 * @param string[] $installed_relations Installed compatibility view relation names.
+			 */
+			public function __construct( array $options, array $installed_relations ) {
+				parent::__construct( $options );
+
+				$this->installed_relations = $installed_relations;
+			}
+
+			/**
+			 * Execute a query while emulating an existing complete compatibility view set.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+
+				if ( false !== strpos( $sql, 'pg_catalog.set_config' ) ) {
+					$this->setting_params[] = $params;
+					return $this->get_pdo()->query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, "obj_description(n.oid, 'pg_namespace')" ) ) {
+					return $this->get_pdo()->query( "SELECT 'wordpress/mysql-on-sqlite:postgresql-information-schema-compatibility:v1'" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) ) {
+					$selects = array();
+					foreach ( $this->installed_relations as $index => $relation ) {
+						$selects[] = 0 === $index
+							? sprintf( 'SELECT %s AS relname', $this->get_pdo()->quote( $relation ) )
+							: sprintf( 'SELECT %s', $this->get_pdo()->quote( $relation ) );
+					}
+
+					return $this->get_pdo()->query( implode( "\nUNION ALL ", $selects ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT ' ) ) {
+					return $this->get_pdo()->query( 'SELECT \'+02:00\' AS "VARIABLE_VALUE"' );
+				}
+
+				return $this->get_pdo()->query( 'SELECT 1' );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+
+			/**
+			 * Get captured set_config() parameters.
+			 *
+			 * @return array[] Captured parameters.
+			 */
+			public function get_setting_params(): array {
+				return $this->setting_params;
+			}
+		};
+		$driver            = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( "SET SESSION time_zone = '+02:00'" ) );
+		$this->assertSame( array(), $connection->get_setting_params() );
+
+		$variables = $driver->query(
+			"SELECT variable_value
+			FROM information_schema.session_variables
+			WHERE variable_name = 'time_zone'"
+		);
+		$sql       = $this->get_last_single_postgresql_sql( $driver );
+
+		$this->assertSame( '+02:00', $variables[0]->VARIABLE_VALUE );
+		$this->assertContains(
+			array( 'wp_mysql.database', 'wptests' ),
+			$connection->get_setting_params()
+		);
+		$this->assertContains(
+			array( 'wp_mysql.session.time_zone', '+02:00' ),
+			$connection->get_setting_params()
+		);
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', implode( "\n", $connection->get_queries() ) );
+		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."session_variables" AS "session_variables"', $sql );
+		$this->assertStringNotContainsString( 'FROM information_schema.session_variables', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
+	}
+
+	/**
+	 * Tests compatibility view installation refreshes a complete existing view set.
+	 */
+	public function test_ensure_postgresql_information_schema_compatibility_views_refreshes_existing_views(): void {
+		$definition_driver = new WP_PostgreSQL_Driver(
+			new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+				array(
+					'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+				)
+			),
+			'wptests'
+		);
+		$get_definitions   = Closure::bind(
+			function (): array {
+				return $this->get_postgresql_information_schema_compatibility_view_definitions();
+			},
+			$definition_driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$installed_views   = array_keys( $get_definitions() );
+		$connection        = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ), $installed_views ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Installed compatibility view relation names.
+			 *
+			 * @var string[]
+			 */
+			private $installed_relations;
+
+			/**
+			 * Constructor.
+			 *
+			 * @param array    $options             Connection options.
+			 * @param string[] $installed_relations Installed compatibility view relation names.
+			 */
+			public function __construct( array $options, array $installed_relations ) {
+				parent::__construct( $options );
+
+				$this->installed_relations = $installed_relations;
+			}
+
+			/**
+			 * Execute a query while emulating an existing complete compatibility view set.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = $sql;
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) ) {
+					$selects = array();
+					foreach ( $this->installed_relations as $index => $relation ) {
+						$selects[] = 0 === $index
+							? sprintf( 'SELECT %s AS relname', $this->get_pdo()->quote( $relation ) )
+							: sprintf( 'SELECT %s', $this->get_pdo()->quote( $relation ) );
+					}
+
+					return $this->get_pdo()->query( implode( "\nUNION ALL ", $selects ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT ' ) ) {
+					return $this->get_pdo()->query( 'SELECT \'wptests_options\' AS "TABLE_NAME"' );
+				}
+
+				return $this->get_pdo()->query( 'SELECT 1' );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver            = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->ensure_postgresql_information_schema_compatibility_views();
+
+		$ensure_sql = implode( "\n", $connection->get_queries() );
+		$this->assertStringNotContainsString( 'SELECT c.relname', $ensure_sql );
+		$this->assertStringContainsString( 'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"', $ensure_sql );
+		$this->assertStringContainsString( 'COMMENT ON SCHEMA "__wp_mysql_information_schema"', $ensure_sql );
+		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', $ensure_sql );
+		$this->assertStringContainsString( 'current_database()', $ensure_sql );
+
+		$driver->query( "SELECT table_name FROM information_schema.tables WHERE table_name = 'wptests_options'" );
+
+		$tables_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM "__wp_mysql_information_schema"."tables" AS "tables"', $tables_sql );
+		$this->assertStringNotContainsString( 'FROM information_schema.tables t', $tables_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $tables_sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed extension/usage information_schema relations read catalogs directly.
+	 */
+	public function test_direct_information_schema_extension_usage_relations_use_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function ( string $relation ): string {
+				return $this->get_direct_information_schema_relation_sql( $relation );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$columns_extensions_sql = $get_sql( 'columns_extensions' );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $columns_extensions_sql );
+		$this->assertStringContainsString( 'c.column_name AS "COLUMN_NAME"', $columns_extensions_sql );
+		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $columns_extensions_sql );
+		$this->assertStringContainsString( 'NULL AS "SECONDARY_ENGINE_ATTRIBUTE"', $columns_extensions_sql );
+		$this->assertStringContainsString( 'c.table_name NOT IN', $columns_extensions_sql );
+
+		$table_constraints_extensions_sql = $get_sql( 'table_constraints_extensions' );
+		$this->assertStringContainsString( 'FROM information_schema.table_constraints tc', $table_constraints_extensions_sql );
+		$this->assertStringContainsString( 'tc.table_name AS "TABLE_NAME"', $table_constraints_extensions_sql );
+		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $table_constraints_extensions_sql );
+		$this->assertStringContainsString( 'NULL AS "SECONDARY_ENGINE_ATTRIBUTE"', $table_constraints_extensions_sql );
+
+		$schemata_extensions_sql = $get_sql( 'schemata_extensions' );
+		$this->assertStringContainsString( 'FROM information_schema.schemata s', $schemata_extensions_sql );
+		$this->assertStringContainsString( 'NULL AS "OPTIONS"', $schemata_extensions_sql );
+
+		$view_table_usage_sql = $get_sql( 'view_table_usage' );
+		$this->assertStringContainsString( 'FROM information_schema.view_table_usage vtu', $view_table_usage_sql );
+		$this->assertStringContainsString( 'vtu.view_name AS "VIEW_NAME"', $view_table_usage_sql );
+		$this->assertStringContainsString( 'vtu.table_name AS "TABLE_NAME"', $view_table_usage_sql );
+
+		$view_routine_usage_sql = $get_sql( 'view_routine_usage' );
+		$this->assertStringContainsString( 'FROM information_schema.view_routine_usage vru', $view_routine_usage_sql );
+		$this->assertStringContainsString( 'vru.table_name AS "TABLE_NAME"', $view_routine_usage_sql );
+		$this->assertStringContainsString( 'vru.specific_name AS "SPECIFIC_NAME"', $view_routine_usage_sql );
+
+		$st_geometry_columns_sql = $get_sql( 'st_geometry_columns' );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $st_geometry_columns_sql );
+		$this->assertStringContainsString( '__wp_mysql_geometry', $st_geometry_columns_sql );
+		$this->assertStringContainsString( 'AS "GEOMETRY_TYPE_NAME"', $st_geometry_columns_sql );
+		$this->assertStringContainsString( 'c.table_name NOT IN', $st_geometry_columns_sql );
+	}
+
+	/**
+	 * Tests remaining corpus-referenced information_schema relations are queryable.
+	 */
+	public function test_direct_information_schema_remaining_mysql_metadata_relations_are_queryable(): void {
+		$driver = $this->create_driver();
+
+		$applicability = $driver->query(
+			'SELECT COLLATION_NAME, CHARACTER_SET_NAME
+			FROM information_schema.collation_character_set_applicability
+			ORDER BY COLLATION_NAME
+			LIMIT 1'
+		);
+		$this->assertCount( 1, $applicability );
+		$this->assertSame(
+			array( 'COLLATION_NAME', 'CHARACTER_SET_NAME' ),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+
+		$keywords = $driver->query( 'SELECT COUNT(*) AS keyword_count FROM information_schema.keywords' );
+		$this->assertGreaterThan( 0, (int) $keywords[0]->keyword_count );
+		$this->assertSame( array( 'keyword_count' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$relations = array(
+			'columns_extensions'           => array(
+				'query'   => "SELECT COLUMN_NAME, ENGINE_ATTRIBUTE, SECONDARY_ENGINE_ATTRIBUTE FROM information_schema.columns_extensions WHERE COLUMN_NAME = 'missing'",
+				'columns' => array( 'COLUMN_NAME', 'ENGINE_ATTRIBUTE', 'SECONDARY_ENGINE_ATTRIBUTE' ),
+			),
+			'table_constraints_extensions' => array(
+				'query'   => "SELECT CONSTRAINT_NAME, ENGINE_ATTRIBUTE, SECONDARY_ENGINE_ATTRIBUTE FROM information_schema.table_constraints_extensions WHERE CONSTRAINT_NAME = 'missing'",
+				'columns' => array( 'CONSTRAINT_NAME', 'ENGINE_ATTRIBUTE', 'SECONDARY_ENGINE_ATTRIBUTE' ),
+			),
+			'schemata_extensions'          => array(
+				'query'   => 'SELECT SCHEMA_NAME, OPTIONS FROM information_schema.schemata_extensions WHERE OPTIONS IS NOT NULL',
+				'columns' => array( 'SCHEMA_NAME', 'OPTIONS' ),
+			),
+			'view_table_usage'             => array(
+				'query'   => 'SELECT * FROM information_schema.view_table_usage',
+				'columns' => array( 'VIEW_CATALOG', 'VIEW_SCHEMA', 'VIEW_NAME', 'TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME' ),
+			),
+			'view_routine_usage'           => array(
+				'query'   => 'SELECT * FROM information_schema.view_routine_usage',
+				'columns' => array( 'TABLE_CATALOG', 'TABLE_SCHEMA', 'TABLE_NAME', 'SPECIFIC_CATALOG', 'SPECIFIC_SCHEMA', 'SPECIFIC_NAME' ),
+			),
+			'st_geometry_columns'          => array(
+				'query'   => 'SELECT TABLE_SCHEMA, COLUMN_NAME, GEOMETRY_TYPE_NAME FROM information_schema.st_geometry_columns',
+				'columns' => array( 'TABLE_SCHEMA', 'COLUMN_NAME', 'GEOMETRY_TYPE_NAME' ),
+			),
+			'innodb_lock_waits'            => array(
+				'query'   => 'SELECT * FROM information_schema.innodb_lock_waits',
+				'columns' => array( 'REQUESTING_TRX_ID', 'REQUESTED_LOCK_ID', 'BLOCKING_TRX_ID', 'BLOCKING_LOCK_ID' ),
+			),
+			'resource_groups'              => array(
+				'query'   => 'SELECT * FROM information_schema.resource_groups',
+				'columns' => array( 'RESOURCE_GROUP_NAME', 'RESOURCE_GROUP_TYPE', 'RESOURCE_GROUP_ENABLED', 'VCPU_IDS', 'THREAD_PRIORITY' ),
+			),
+			'user_attributes'              => array(
+				'query'   => "SELECT USER, HOST, ATTRIBUTE FROM information_schema.user_attributes WHERE USER LIKE 'missing%'",
+				'columns' => array( 'USER', 'HOST', 'ATTRIBUTE' ),
+			),
+		);
+
+		foreach ( $relations as $relation => $assertions ) {
+			$driver = $this->create_driver();
+			$rows   = $driver->query( $assertions['query'] );
+
+			$this->assertSame( array(), $rows, $relation );
+			$this->assertSame(
+				$assertions['columns'],
+				array_column( $driver->get_last_column_meta(), 'name' ),
+				$relation
+			);
+		}
+	}
+
+	/**
+	 * Tests MySQL server corpus information_schema relation names are direct relations.
+	 */
+	public function test_direct_information_schema_covers_mysql_server_suite_relation_names(): void {
+		$corpus = file_get_contents( __DIR__ . '/mysql/data/mysql-server-tests-queries.csv' );
+		$this->assertIsString( $corpus );
+
+		preg_match_all( '/information_schema\s*\.\s*[`"\']?([A-Za-z0-9_]+)/i', $corpus, $matches );
+
+		$corpus_relations = array();
+		foreach ( $matches[1] as $relation ) {
+			$corpus_relations[ strtolower( $relation ) ] = true;
+		}
+
+		$connection       = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver           = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_relations    = Closure::bind(
+			function (): array {
+				return $this->get_direct_information_schema_relation_names();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_relation_sql = Closure::bind(
+			function ( string $relation ): ?string {
+				return $this->get_direct_information_schema_relation_sql( $relation );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$supported_relations = array_fill_keys( $get_relations(), true );
+		$missing_relations   = array_values( array_diff( array_keys( $corpus_relations ), array_keys( $supported_relations ) ) );
+		sort( $missing_relations );
+
+		$this->assertSame( array(), $missing_relations );
+
+		foreach ( array_keys( $corpus_relations ) as $relation ) {
+			$this->assertNotNull( $get_relation_sql( $relation ), $relation );
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.INNODB_LOCK_WAITS reads lock waits from pg_catalog.
+	 */
+	public function test_direct_information_schema_innodb_lock_waits_uses_postgresql_lock_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_innodb_lock_waits_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_locks waiting', $sql );
+		$this->assertStringContainsString( 'JOIN pg_catalog.pg_locks blocking', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_blocking_pids(waiting.pid)', $sql );
+		$this->assertStringContainsString( 'CAST(waiting.pid AS text) AS "REQUESTING_TRX_ID"', $sql );
+		$this->assertStringContainsString( 'CAST(blocking.pid AS text) AS "BLOCKING_TRX_ID"', $sql );
+		$this->assertStringContainsString( 'pg_catalog.concat_ws', $sql );
+		$this->assertStringContainsString( 'waiting.transactionid IS NOT DISTINCT FROM blocking.transactionid', $sql );
+		$this->assertStringContainsString( 'WHERE NOT waiting.granted', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.INNODB_TABLES reads tables from pg_catalog.
+	 */
+	public function test_direct_information_schema_innodb_tables_uses_postgresql_class_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_innodb_tables_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', $sql );
+		$this->assertStringContainsString( 'JOIN pg_catalog.pg_namespace n', $sql );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_attribute a', $sql );
+		$this->assertStringContainsString( 'CAST(c.oid AS bigint) AS "TABLE_ID"', $sql );
+		$this->assertStringContainsString( 'c.relname AS "NAME"', $sql );
+		$this->assertStringContainsString( 'c.relname NOT IN', $sql );
+		$this->assertStringContainsString( '\'Dynamic\' AS "ROW_FORMAT"', $sql );
+	}
+
+	/**
+	 * Tests information_schema.INNODB_TABLES is queryable with MySQL-shaped columns.
+	 */
+	public function test_direct_information_schema_innodb_tables_returns_empty_mysql_shaped_rows_for_fallback_connections(): void {
+		$driver = $this->create_driver();
+
+		$tables = $driver->query(
+			"SELECT TABLE_ID, NAME, ROW_FORMAT
+			FROM information_schema.innodb_tables
+			WHERE NAME LIKE '%t1%'
+			ORDER BY TABLE_ID"
+		);
+
+		$this->assertSame( array(), $tables );
+		$this->assertSame(
+			array( 'TABLE_ID', 'NAME', 'ROW_FORMAT' ),
+			array_column( $driver->get_last_column_meta(), 'name' )
+		);
+
+		$columns = $driver->query( "SHOW COLUMNS FROM information_schema.innodb_tables LIKE '%VERSION%'" );
+		$this->assertSame(
+			array( 'TOTAL_ROW_VERSIONS' ),
+			array_column( $columns, 'Field' )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed InnoDB index and column metadata reads pg_catalog.
+	 */
+	public function test_direct_information_schema_innodb_index_column_relations_use_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function ( string $relation ): string {
+				return $this->get_direct_information_schema_relation_sql( $relation );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$indexes_sql = $get_sql( 'innodb_indexes' );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_index idx', $indexes_sql );
+		$this->assertStringContainsString( 'CAST(idx_class.oid AS bigint) AS "INDEX_ID"', $indexes_sql );
+		$this->assertStringContainsString( 'CAST(table_class.oid AS bigint) AS "TABLE_ID"', $indexes_sql );
+		$this->assertStringContainsString( 'idx.indnkeyatts AS bigint', $indexes_sql );
+
+		$fields_sql = $get_sql( 'innodb_fields' );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_index idx', $fields_sql );
+		$this->assertStringContainsString( 'JOIN pg_catalog.generate_series(0, idx.indnkeyatts - 1)', $fields_sql );
+		$this->assertStringContainsString( 'att.attname AS "NAME"', $fields_sql );
+
+		$columns_sql = $get_sql( 'innodb_columns' );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', $columns_sql );
+		$this->assertStringContainsString( 'JOIN pg_catalog.pg_attribute a', $columns_sql );
+		$this->assertStringContainsString( 'JOIN pg_catalog.pg_type typ', $columns_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_get_expr(def.adbin, def.adrelid) END AS "DEFAULT_VALUE"', $columns_sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed InnoDB information_schema joins use native catalog relations.
+	 */
+	public function test_direct_information_schema_innodb_joins_use_postgresql_catalog_for_pgsql_connections(): void {
+		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+		);
+		$sql             = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_direct_information_schema_select_query',
+			"SELECT i.name AS k, f.name AS c
+			FROM information_schema.innodb_tables AS t,
+				information_schema.innodb_indexes AS i,
+				information_schema.innodb_fields AS f
+			WHERE t.name = 'test/t1'
+				AND t.table_id = i.table_id
+				AND i.index_id = f.index_id
+			ORDER BY k, c"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', $sql );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_index idx', $sql );
+		$this->assertStringContainsString( 'JOIN pg_catalog.generate_series(0, idx.indnkeyatts - 1)', $sql );
+		$this->assertStringContainsString( '"t"."TABLE_ID" = "i"."TABLE_ID"', $sql );
+		$this->assertStringContainsString( '"i"."INDEX_ID" = "f"."INDEX_ID"', $sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+		}
+	}
+
+	/**
+	 * Tests InnoDB index and column information_schema relations are queryable.
+	 */
+	public function test_direct_information_schema_innodb_index_column_relations_return_empty_mysql_shaped_rows_for_fallback_connections(): void {
+		$relations = array(
+			'innodb_indexes' => array(
+				'query'   => 'SELECT INDEX_ID, NAME, TABLE_ID, MERGE_THRESHOLD FROM information_schema.innodb_indexes WHERE MERGE_THRESHOLD = 50',
+				'columns' => array( 'INDEX_ID', 'NAME', 'TABLE_ID', 'MERGE_THRESHOLD' ),
+			),
+			'innodb_fields'  => array(
+				'query'   => 'SELECT INDEX_ID, NAME, POS FROM information_schema.innodb_fields ORDER BY INDEX_ID, POS',
+				'columns' => array( 'INDEX_ID', 'NAME', 'POS' ),
+			),
+			'innodb_columns' => array(
+				'query'   => 'SELECT TABLE_ID, NAME, POS, DEFAULT_VALUE FROM information_schema.innodb_columns ORDER BY TABLE_ID, POS',
+				'columns' => array( 'TABLE_ID', 'NAME', 'POS', 'DEFAULT_VALUE' ),
+			),
+		);
+
+		foreach ( $relations as $relation => $assertions ) {
+			$driver = $this->create_driver();
+			$rows   = $driver->query( $assertions['query'] );
+
+			$this->assertSame( array(), $rows, $relation );
+			$this->assertSame(
+				$assertions['columns'],
+				array_column( $driver->get_last_column_meta(), 'name' ),
+				$relation
+			);
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed InnoDB tablespace relations read pg_catalog.
+	 */
+	public function test_direct_information_schema_innodb_tablespace_relations_use_postgresql_tablespace_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function ( string $relation ): string {
+				return $this->get_direct_information_schema_relation_sql( $relation );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$tablespaces_sql = $get_sql( 'innodb_tablespaces' );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $tablespaces_sql );
+		$this->assertStringContainsString( 'CAST(ts.oid AS bigint) AS "SPACE"', $tablespaces_sql );
+		$this->assertStringContainsString( 'ts.spcname AS "NAME"', $tablespaces_sql );
+		$this->assertStringContainsString( '\'normal\' AS "STATE"', $tablespaces_sql );
+
+		$brief_sql = $get_sql( 'innodb_tablespaces_brief' );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $brief_sql );
+		$this->assertStringContainsString( 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"', $brief_sql );
+
+		$datafiles_sql = $get_sql( 'innodb_datafiles' );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $datafiles_sql );
+		$this->assertStringContainsString( 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"', $datafiles_sql );
+	}
+
+	/**
+	 * Tests InnoDB tablespace information_schema relations are queryable.
+	 */
+	public function test_direct_information_schema_innodb_tablespace_relations_return_empty_mysql_shaped_rows_for_fallback_connections(): void {
+		$relations = array(
+			'innodb_tablespaces'       => array(
+				'query'   => 'SELECT NAME, SPACE_TYPE, STATE FROM information_schema.innodb_tablespaces WHERE SPACE_TYPE = \'Undo\' ORDER BY NAME',
+				'columns' => array( 'NAME', 'SPACE_TYPE', 'STATE' ),
+			),
+			'innodb_tablespaces_brief' => array(
+				'query'   => 'SELECT SPACE, NAME, PATH FROM information_schema.innodb_tablespaces_brief WHERE NAME LIKE \'ts%\'',
+				'columns' => array( 'SPACE', 'NAME', 'PATH' ),
+			),
+			'innodb_datafiles'         => array(
+				'query'   => 'SELECT SPACE, PATH FROM information_schema.innodb_datafiles',
+				'columns' => array( 'SPACE', 'PATH' ),
+			),
+		);
+
+		foreach ( $relations as $relation => $assertions ) {
+			$driver = $this->create_driver();
+			$rows   = $driver->query( $assertions['query'] );
+
+			$this->assertSame( array(), $rows, $relation );
+			$this->assertSame(
+				$assertions['columns'],
+				array_column( $driver->get_last_column_meta(), 'name' ),
+				$relation
+			);
+		}
 	}
 
 	/**
@@ -24178,6 +34511,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$this->assertSame( array(), $routine_parameters );
+		$this->assertSame(
+			array(),
+			$driver->get_connection()->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 	}
 
 	/**
@@ -24801,12 +35138,195 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW OPEN TABLES returns an empty MySQL-shaped result without PostgreSQL catalogs.
+	 */
+	public function test_show_open_tables_returns_empty_mysql_shaped_rows(): void {
+		$driver  = $this->create_driver();
+		$columns = array( 'Database', 'Table', 'In_use', 'Name_locked' );
+
+		$rows = $driver->query( 'SHOW OPEN TABLES' );
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$like_rows = $driver->query( "SHOW OPEN TABLES LIKE 'wp_%'" );
+		$this->assertSame( array(), $like_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$where_rows = $driver->query( "SHOW OPEN TABLES WHERE `Database` = 'wptests' AND `Table` = 'wptests_options'" );
+		$this->assertSame( array(), $where_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$assoc_rows = $driver->query( "SHOW OPEN TABLES WHERE BINARY `Table` = 'wptests_options'", PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $assoc_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed SHOW OPEN TABLES uses pg_catalog relation and lock rows.
+	 */
+	public function test_show_open_tables_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured SHOW OPEN TABLES catalog queries.
+			 *
+			 * @var array<int,array{sql:string,params:array}>
+			 */
+			private $open_table_queries = array();
+
+			/**
+			 * Execute fixture-backed pg_catalog SHOW OPEN TABLES queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed SHOW OPEN TABLES.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) ) {
+					$this->open_table_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT
+							'wptests' AS \"Database\",
+							'wptests_options' AS \"Table\",
+							'1' AS \"In_use\",
+							'0' AS \"Name_locked\"
+						UNION ALL
+						SELECT
+							'wptests' AS \"Database\",
+							'wptests_posts' AS \"Table\",
+							'0' AS \"In_use\",
+							'1' AS \"Name_locked\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured SHOW OPEN TABLES catalog queries.
+			 *
+			 * @return array<int,array{sql:string,params:array}> Captured queries.
+			 */
+			public function get_open_table_queries(): array {
+				return $this->open_table_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$rows = $driver->query( "SHOW OPEN TABLES WHERE `Database` = 'wptests' AND `Table` = 'wptests_options'" );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Database'    => 'wptests',
+					'Table'       => 'wptests_options',
+					'In_use'      => '1',
+					'Name_locked' => '0',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( '1', $driver->query( 'SELECT FOUND_ROWS()' )[0]->{'FOUND_ROWS()'} );
+
+		$like_rows = $driver->query( "SHOW OPEN TABLES FROM wptests LIKE 'wptests_p%'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Database'    => 'wptests',
+					'Table'       => 'wptests_posts',
+					'In_use'      => '0',
+					'Name_locked' => '1',
+				),
+			),
+			$like_rows
+		);
+
+		$assoc_rows = $driver->query( "SHOW OPEN TABLES WHERE BINARY `Table` = 'wptests_options'", PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'Database'    => 'wptests',
+					'Table'       => 'wptests_options',
+					'In_use'      => '1',
+					'Name_locked' => '0',
+				),
+			),
+			$assoc_rows
+		);
+
+		$open_table_queries = $connection->get_open_table_queries();
+		$this->assertCount( 3, $open_table_queries );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class c', $open_table_queries[0]['sql'] );
+		$this->assertStringContainsString( 'INNER JOIN pg_catalog.pg_namespace n', $open_table_queries[0]['sql'] );
+		$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_locks l', $open_table_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_backend_pid()', $open_table_queries[0]['sql'] );
+		$this->assertStringContainsString( 'c.relkind IN (\'r\', \'p\', \'v\', \'m\', \'f\')', $open_table_queries[0]['sql'] );
+		$this->assertStringContainsString( 'c.relname NOT IN', $open_table_queries[0]['sql'] );
+		$this->assertStringContainsString( 'ORDER BY c.relname', $open_table_queries[0]['sql'] );
+		$this->assertSame( array( 'public' ), $open_table_queries[0]['params'] );
+
+		try {
+			$driver->query( 'SHOW OPEN TABLES FROM pg_catalog' );
+			$this->fail( 'Expected internal PostgreSQL schema SHOW OPEN TABLES statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW OPEN TABLES statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests unsupported SHOW OPEN TABLES clauses fail before backend execution.
+	 */
+	public function test_unsupported_show_open_tables_clauses_fail_closed(): void {
+		$cases = array(
+			'SHOW OPEN TABLES LIMIT 1'           => 'Unsupported SHOW OPEN TABLES statement.',
+			'SHOW OPEN TABLES LIKE `Table`'      => 'Unsupported SHOW OPEN TABLES statement.',
+			"SHOW OPEN TABLES WHERE Bogus = 'x'" => 'Unsupported SHOW OPEN TABLES statement.',
+		);
+
+		foreach ( $cases as $query => $message ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW OPEN TABLES statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
 	 * Tests unimplemented MySQL SHOW and administration statements fail before backend execution.
 	 */
 	public function test_unimplemented_mysql_show_and_administration_statements_fail_closed(): void {
 		$cases = array(
-			'SHOW TRIGGERS'                          => 'Unsupported SHOW statement.',
-			'SHOW OPEN TABLES'                       => 'Unsupported SHOW statement.',
 			'SHOW ENGINE InnoDB STATUS'              => 'Unsupported SHOW statement.',
 			'CHECKSUM TABLE administration_existing' => 'Unsupported CHECKSUM TABLE statement.',
 			'FLUSH TABLES WITH READ LOCK'            => 'Unsupported FLUSH statement.',
@@ -24832,6 +35352,406 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			try {
 				$driver->query( $query );
 				$this->fail( 'Expected unsupported MySQL administration statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( $message, $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests SHOW TRIGGERS returns an empty MySQL-shaped trigger metadata result.
+	 */
+	public function test_show_triggers_returns_empty_mysql_shaped_rows(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query( 'SHOW TRIGGERS' );
+
+		$columns = array(
+			'Trigger',
+			'Event',
+			'Table',
+			'Statement',
+			'Timing',
+			'Created',
+			'sql_mode',
+			'Definer',
+			'character_set_client',
+			'collation_connection',
+			'Database Collation',
+		);
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'WHERE t."TRIGGER_SCHEMA" = ?', $queries[0]['sql'] );
+		$this->assertSame( array( 'wptests' ), $queries[0]['params'] );
+
+		$like_rows = $driver->query( "SHOW TRIGGERS LIKE 'trg_%'" );
+		$this->assertSame( array(), $like_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$where_rows = $driver->query( "SHOW TRIGGERS WHERE Event = 'INSERT' AND `Table` = 'wptests_options'" );
+		$this->assertSame( array(), $where_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$assoc_rows = $driver->query( "SHOW TRIGGERS FROM wptests WHERE BINARY `Trigger` = 'trg_options'", PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $assoc_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed SHOW TRIGGERS uses information_schema trigger rows.
+	 */
+	public function test_show_triggers_uses_postgresql_information_schema_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured trigger catalog SQL.
+			 *
+			 * @var array{sql:string,params:array}|null
+			 */
+			private $trigger_query = null;
+
+			/**
+			 * Execute fixture-backed information_schema.triggers queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed SHOW TRIGGERS.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.triggers t' ) ) {
+					$this->trigger_query = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+					return parent::query(
+						"SELECT
+							'trg_options_insert' AS \"Trigger\",
+							'INSERT' AS \"Event\",
+							'wptests_options' AS \"Table\",
+							'BEGIN END' AS \"Statement\",
+							'BEFORE' AS \"Timing\",
+							'2026-06-18 12:00:00' AS \"Created\",
+							'' AS \"sql_mode\",
+							'' AS \"Definer\",
+							'utf8mb4' AS \"character_set_client\",
+							'utf8mb4_0900_ai_ci' AS \"collation_connection\",
+							'utf8mb4_0900_ai_ci' AS \"Database Collation\"
+						UNION ALL
+						SELECT
+							'trg_posts_update' AS \"Trigger\",
+							'UPDATE' AS \"Event\",
+							'wptests_posts' AS \"Table\",
+							'BEGIN END' AS \"Statement\",
+							'AFTER' AS \"Timing\",
+							'2026-06-18 12:01:00' AS \"Created\",
+							'' AS \"sql_mode\",
+							'' AS \"Definer\",
+							'utf8mb4' AS \"character_set_client\",
+							'utf8mb4_0900_ai_ci' AS \"collation_connection\",
+							'utf8mb4_0900_ai_ci' AS \"Database Collation\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured trigger catalog query.
+			 *
+			 * @return array{sql:string,params:array}|null Captured query.
+			 */
+			public function get_trigger_query(): ?array {
+				return $this->trigger_query;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$rows = $driver->query( "SHOW TRIGGERS WHERE Event = 'INSERT' AND `Table` = 'wptests_options'" );
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Trigger'              => 'trg_options_insert',
+					'Event'                => 'INSERT',
+					'Table'                => 'wptests_options',
+					'Statement'            => 'BEGIN END',
+					'Timing'               => 'BEFORE',
+					'Created'              => '2026-06-18 12:00:00',
+					'sql_mode'             => '',
+					'Definer'              => '',
+					'character_set_client' => 'utf8mb4',
+					'collation_connection' => 'utf8mb4_0900_ai_ci',
+					'Database Collation'   => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( '1', $driver->query( 'SELECT FOUND_ROWS()' )[0]->{'FOUND_ROWS()'} );
+
+		$like_rows = $driver->query( "SHOW TRIGGERS FROM wptests LIKE 'trg_posts%'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Trigger'              => 'trg_posts_update',
+					'Event'                => 'UPDATE',
+					'Table'                => 'wptests_posts',
+					'Statement'            => 'BEGIN END',
+					'Timing'               => 'AFTER',
+					'Created'              => '2026-06-18 12:01:00',
+					'sql_mode'             => '',
+					'Definer'              => '',
+					'character_set_client' => 'utf8mb4',
+					'collation_connection' => 'utf8mb4_0900_ai_ci',
+					'Database Collation'   => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$like_rows
+		);
+
+		$assoc_rows = $driver->query( "SHOW TRIGGERS WHERE BINARY `Trigger` = 'trg_options_insert'", PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'Trigger'              => 'trg_options_insert',
+					'Event'                => 'INSERT',
+					'Table'                => 'wptests_options',
+					'Statement'            => 'BEGIN END',
+					'Timing'               => 'BEFORE',
+					'Created'              => '2026-06-18 12:00:00',
+					'sql_mode'             => '',
+					'Definer'              => '',
+					'character_set_client' => 'utf8mb4',
+					'collation_connection' => 'utf8mb4_0900_ai_ci',
+					'Database Collation'   => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$assoc_rows
+		);
+
+		$trigger_query = $connection->get_trigger_query();
+		$this->assertNotNull( $trigger_query );
+		$this->assertStringContainsString( 'FROM information_schema.triggers t', $trigger_query['sql'] );
+		$this->assertStringContainsString( 't."TRIGGER_NAME" AS "Trigger"', $trigger_query['sql'] );
+		$this->assertStringContainsString( 'WHERE t."TRIGGER_SCHEMA" = ?', $trigger_query['sql'] );
+		$this->assertStringContainsString( 'ORDER BY t."TRIGGER_NAME"', $trigger_query['sql'] );
+		$this->assertSame( array( 'wptests' ), $trigger_query['params'] );
+
+		try {
+			$driver->query( 'SHOW TRIGGERS FROM pg_catalog' );
+			$this->fail( 'Expected internal PostgreSQL schema SHOW TRIGGERS statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW TRIGGERS statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		}
+	}
+
+	/**
+	 * Tests information_schema.EVENTS is a stateless empty MySQL-shaped relation.
+	 */
+	public function test_direct_information_schema_events_returns_empty_mysql_shaped_rows(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query(
+			'SELECT EVENT_CATALOG, EVENT_SCHEMA, EVENT_NAME, STATUS
+			FROM information_schema.EVENTS
+			WHERE EVENT_SCHEMA = DATABASE()
+			ORDER BY EVENT_NAME'
+		);
+
+		$this->assertSame( array(), $rows );
+		$this->assertNotEmpty(
+			array_filter(
+				$driver->get_last_postgresql_queries(),
+				static function ( array $query ): bool {
+					return false !== strpos( $query['sql'], 'AS "events"' )
+						&& false !== strpos( $query['sql'], '"EVENT_NAME"' )
+						&& false !== strpos( $query['sql'], 'WHERE 1 = 0' );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Tests information_schema.PARTITIONS is a stateless empty MySQL-shaped relation.
+	 */
+	public function test_direct_information_schema_partitions_returns_empty_mysql_shaped_rows(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query(
+			'SELECT TABLE_SCHEMA, TABLE_NAME, PARTITION_NAME, PARTITION_METHOD
+			FROM information_schema.PARTITIONS
+			WHERE TABLE_SCHEMA = DATABASE()
+			ORDER BY TABLE_NAME, PARTITION_ORDINAL_POSITION'
+		);
+
+		$this->assertSame( array(), $rows );
+		$this->assertNotEmpty(
+			array_filter(
+				$driver->get_last_postgresql_queries(),
+				static function ( array $query ): bool {
+					return false !== strpos( $query['sql'], 'AS "partitions"' )
+						&& false !== strpos( $query['sql'], '"PARTITION_NAME"' )
+						&& false !== strpos( $query['sql'], 'WHERE 1 = 0' );
+				}
+			)
+		);
+
+		$count = $driver->query(
+			'SELECT COUNT(*) AS partition_count
+			FROM information_schema.partitions
+			WHERE PARTITION_NAME IS NOT NULL'
+		);
+
+		$this->assertCount( 1, $count );
+		$this->assertSame( '0', $count[0]->partition_count );
+
+		$this->assertSame( 0, $driver->query( 'USE information_schema' ) );
+
+		$columns = $driver->query( "SHOW COLUMNS FROM partitions LIKE 'PARTITION_%'" );
+		$this->assertSame(
+			array(
+				'PARTITION_NAME',
+				'PARTITION_ORDINAL_POSITION',
+				'PARTITION_METHOD',
+				'PARTITION_EXPRESSION',
+				'PARTITION_DESCRIPTION',
+				'PARTITION_COMMENT',
+			),
+			array_column( $columns, 'Field' )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.PARTITIONS uses native partition catalogs.
+	 */
+	public function test_direct_information_schema_partitions_uses_postgresql_partition_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_partitions_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_inherits inh', $sql );
+		$this->assertStringContainsString( 'JOIN pg_catalog.pg_class child_class', $sql );
+		$this->assertStringContainsString( 'JOIN pg_catalog.pg_class parent_class', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_get_partkeydef(parent_class.oid)', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_get_expr(child_class.relpartbound, child_class.oid) AS "PARTITION_DESCRIPTION"', $sql );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $sql );
+		$this->assertStringContainsString( 't.table_type = \'BASE TABLE\'', $sql );
+		$this->assertStringContainsString( '\'DEFAULT\' AS "TABLESPACE_NAME"', $sql );
+		$this->assertStringContainsString( 'UNION ALL', $sql );
+		foreach (
+			array(
+				WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+			) as $metadata_table
+		) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ), $metadata_table );
+		}
+	}
+
+	/**
+	 * Tests SHOW EVENTS returns empty MySQL-shaped rows without side metadata.
+	 */
+	public function test_show_events_returns_empty_mysql_shaped_rows(): void {
+		$driver  = $this->create_driver();
+		$columns = array(
+			'Db',
+			'Name',
+			'Definer',
+			'Time zone',
+			'Type',
+			'Execute at',
+			'Interval value',
+			'Interval field',
+			'Starts',
+			'Ends',
+			'Status',
+			'Originator',
+			'character_set_client',
+			'collation_connection',
+			'Database Collation',
+		);
+
+		$rows = $driver->query( 'SHOW EVENTS' );
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'WHERE e."EVENT_SCHEMA" = ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'WHERE 1 = 0', $queries[0]['sql'] );
+		$this->assertSame( array( 'wptests' ), $queries[0]['params'] );
+
+		$like_rows = $driver->query( "SHOW EVENTS LIKE 'ev_%'" );
+		$this->assertSame( array(), $like_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$where_rows = $driver->query( "SHOW EVENTS WHERE Status = 'ENABLED' AND Name = 'ev_options'" );
+		$this->assertSame( array(), $where_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$assoc_rows = $driver->query( "SHOW EVENTS FROM wptests WHERE BINARY Name = 'ev_options'", PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $assoc_rows );
+		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '0', $found_rows[0]->{'FOUND_ROWS()'} );
+	}
+
+	/**
+	 * Tests unsupported SHOW EVENTS clauses fail before backend execution.
+	 */
+	public function test_unsupported_show_events_clauses_fail_closed(): void {
+		$cases = array(
+			'SHOW EVENTS LIMIT 1'           => 'Unsupported SHOW EVENTS statement.',
+			'SHOW EVENTS LIKE Name'         => 'Unsupported SHOW EVENTS statement.',
+			"SHOW EVENTS WHERE Bogus = 'x'" => 'Unsupported SHOW EVENTS statement.',
+			'SHOW EVENTS FROM pg_catalog'   => 'Unsupported SHOW EVENTS statement.',
+		);
+
+		foreach ( $cases as $query => $message ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW EVENTS statement to throw.' );
 			} catch ( InvalidArgumentException $e ) {
 				$this->assertSame( $message, $e->getMessage(), $query );
 				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
@@ -25041,6 +35961,1626 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				}
 			)
 		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema relations do not read hidden metadata tables.
+	 */
+	public function test_direct_information_schema_pgsql_relations_do_not_join_hidden_metadata_tables(): void {
+		$connection       = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver           = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables  = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+		$reflection       = new ReflectionClass( WP_PostgreSQL_Driver::class );
+		$offenders        = array();
+		$get_relations    = Closure::bind(
+			function (): array {
+				return $this->get_direct_information_schema_relation_names();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_relation_sql = Closure::bind(
+			function ( string $relation ): ?string {
+				return $this->get_direct_information_schema_relation_sql( $relation );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		foreach ( $get_relations() as $relation ) {
+			$sql = $get_relation_sql( $relation );
+			$this->assertNotNull( $sql, $relation );
+
+			foreach ( $metadata_tables as $metadata_table ) {
+				if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+					$offenders[] = $relation . ' -> ' . $metadata_table;
+				}
+			}
+		}
+
+		foreach ( $reflection->getMethods( ReflectionMethod::IS_PRIVATE ) as $method ) {
+			$method_name = $method->getName();
+			if (
+				0 !== $method->getNumberOfRequiredParameters()
+				|| 1 !== preg_match( '/^get_direct_information_schema_.*_relation_sql$/', $method_name )
+			) {
+				continue;
+			}
+
+			$get_sql = Closure::bind(
+				function () use ( $method_name ): string {
+					return $this->{$method_name}();
+				},
+				$driver,
+				WP_PostgreSQL_Driver::class
+			);
+			$sql     = $get_sql();
+
+			foreach ( $metadata_tables as $metadata_table ) {
+				if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+					$offenders[] = $method_name . ' -> ' . $metadata_table;
+				}
+			}
+		}
+
+		$this->assertSame( array(), $offenders );
+		$this->assertSame(
+			array(),
+			$connection->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.TABLES does not use PHP materialized rows.
+	 */
+	public function test_direct_information_schema_pgsql_tables_rows_helper_fails_closed(): void {
+		$pdo        = $this->create_pgsql_reporting_sqlite_pdo();
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $pdo,
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_rows   = Closure::bind(
+			function (): array {
+				return $this->get_direct_information_schema_table_rows();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		try {
+			$get_rows();
+			$this->fail( 'Expected PostgreSQL information_schema.TABLES materialization to fail.' );
+		} catch ( LogicException $e ) {
+			$this->assertSame( 'PostgreSQL information_schema.TABLES must use a catalog relation.', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.TABLES is a native catalog relation.
+	 */
+	public function test_direct_information_schema_tables_uses_postgresql_catalog_relation_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		Closure::bind(
+			function (): void {
+				$this->collation = 'latin1_swedish_ci';
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		)();
+		$get_sql = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_tables_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql     = $get_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $sql );
+		$this->assertStringContainsString( 'LEFT JOIN LATERAL', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_get_serial_sequence', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_sequences ps', $sql );
+		$this->assertStringContainsString( 'AS "AUTO_INCREMENT"', $sql );
+		$this->assertStringContainsString( 'FROM information_schema.columns table_collation_columns', $sql );
+		$this->assertStringContainsString( 'pg_catalog.col_description(table_collation_pc.oid, table_collation_pa.attnum)', $sql );
+		$this->assertStringContainsString( 'AS "TABLE_COLLATION"', $sql );
+		$this->assertStringContainsString( "'utf8mb4_unicode_ci'", $sql );
+		$this->assertStringNotContainsString( 'latin1_swedish_ci', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.TABLES queries execute catalog SQL.
+	 */
+	public function test_direct_information_schema_tables_query_executes_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed direct information_schema.TABLES queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed information_schema.TABLES.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if (
+					0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM information_schema.tables t' )
+					&& false !== strpos( $sql, 'pg_catalog.obj_description(pc.oid, \'pg_class\')' )
+				) {
+					return parent::query(
+						"SELECT
+							'wptests_options' AS \"TABLE_NAME\",
+							'InnoDB' AS \"ENGINE\",
+							'utf8mb4_unicode_ci' AS \"TABLE_COLLATION\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$rows = $driver->query(
+			"SELECT table_name, engine, table_collation
+			FROM information_schema.tables
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_options'"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wptests_options', $rows[0]->TABLE_NAME );
+		$this->assertSame( 'InnoDB', $rows[0]->ENGINE );
+		$this->assertSame( 'utf8mb4_unicode_ci', $rows[0]->TABLE_COLLATION );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_get_serial_sequence', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_sequences ps', $sql );
+		$this->assertStringContainsString( 'FROM information_schema.columns table_collation_columns', $sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+		}
+		$this->assertGreaterThanOrEqual( 1, count( $connection->get_queries() ) );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.COLUMNS uses native catalog rows.
+	 */
+	public function test_direct_information_schema_columns_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$sql        = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_direct_information_schema_select_query',
+			"SELECT column_name, column_type, column_key, column_comment
+			FROM information_schema.columns
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_posts'"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'information_schema.columns c', $sql );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pg_catalog.pg_get_serial_sequence', $sql );
+		$this->assertStringContainsString( "'__wp_mysql_auto_increment_type:'", $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_attribute pa', $sql );
+		$this->assertStringContainsString( "c.data_type = 'USER-DEFINED' AND c.udt_name LIKE '__wp_mysql_enum_%' THEN 'enum'", $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_enum e', $sql );
+		$this->assertStringContainsString( "SELECT 'enum(' || pg_catalog.string_agg(pg_catalog.quote_literal(e.enumlabel), ',' ORDER BY e.enumsortorder) || ')'", $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_set_%' THEN 'set'", $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(domain_type.oid, \'pg_type\')', $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_set_%' THEN COALESCE((SELECT CASE", $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $sql );
+		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey) WITH ORDINALITY', $sql );
+		$this->assertStringContainsString( 'k.ordinality <= i.indnkeyatts', $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_datetime' THEN 'datetime'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_point' THEN 'point'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_timestamp_6' THEN 'timestamp(6)'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_json' THEN 'json'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_bit' THEN 'bit'", $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_bit_%'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_bool' THEN 'bool'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_boolean' THEN 'boolean'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_bigint_unsigned' THEN 'bigint unsigned'", $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_bigint_%_unsigned'", $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_int_%'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumblob' THEN 'mediumblob'", $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_varbinary_%' THEN 'varbinary'", $sql );
+		$this->assertStringContainsString( "'varbinary' || '(' || SUBSTR(c.domain_name", $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_dec_%' THEN 'dec'", $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_float_%' THEN 'float'", $sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_real' THEN 'real'", $sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_numeric_%' THEN 'numeric'", $sql );
+		$this->assertStringContainsString( "'numeric' || '(' || REPLACE(SUBSTR(c.domain_name", $sql );
+		$this->assertStringContainsString( "c.data_type = 'numeric' AND c.numeric_precision IS NULL THEN 'numeric'", $sql );
+		$this->assertStringContainsString( "'decimal' || CASE", $sql );
+		$this->assertStringContainsString( "c.data_type = 'double precision' THEN 'double'", $sql );
+		$this->assertStringContainsString( "c.data_type = 'real' THEN 'float'", $sql );
+		$this->assertStringContainsString( 'c.numeric_precision AS "NUMERIC_PRECISION"', $sql );
+		$this->assertStringContainsString( 'SUBSTRING(c.column_default FROM', $sql );
+		$this->assertStringContainsString( "THEN 'CURRENT_TIMESTAMP'", $sql );
+		$this->assertStringContainsString( "'CURRENT_TIMESTAMP(' || SUBSTRING(c.column_default FROM", $sql );
+		$this->assertStringContainsString( '__wp_mysql_column_type:', $sql );
+		$this->assertStringContainsString( 'integer|bigint|smallint|numeric|decimal|double precision|real|boolean', $sql );
+		$this->assertStringContainsString( 'CASE WHEN c.table_schema = \'public\' THEN \'wptests\' ELSE c.table_schema END AS "TABLE_SCHEMA"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.COLUMNS queries execute catalog SQL.
+	 */
+	public function test_direct_information_schema_columns_query_executes_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed direct information_schema queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed information_schema.COLUMNS.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if (
+					0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'pg_catalog.col_description(pc.oid, pa.attnum)' )
+				) {
+					return parent::query( 'SELECT \'status\' AS "COLUMN_NAME", \'enum(\'\'draft\'\',\'\'published\'\')\' AS "COLUMN_TYPE"' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$rows = $driver->query(
+			"SELECT c.column_name, c.column_type
+			FROM information_schema.columns AS c
+			WHERE c.table_schema = DATABASE()
+				AND c.table_name = 'wptests_posts'
+				AND c.column_name = 'status'"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'status', $rows[0]->COLUMN_NAME );
+		$this->assertSame( "enum('draft','published')", $rows[0]->COLUMN_TYPE );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $sql );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_enum e', $sql );
+		$this->assertStringNotContainsString( 'DATABASE()', $sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+		}
+		$queries = $connection->get_queries();
+		$this->assertGreaterThan( 1, count( $queries ) );
+		$this->assertSame( $sql, end( $queries ) );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema joins use native catalog relations.
+	 */
+	public function test_direct_information_schema_table_column_join_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+		);
+		$sql             = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_direct_information_schema_select_query',
+			"SELECT t.table_name, c.column_name
+			FROM information_schema.tables AS t
+			JOIN information_schema.columns AS c
+				ON c.table_schema = t.table_schema
+				AND c.table_name = t.table_name
+			WHERE t.table_schema = DATABASE()
+				AND t.table_name = 'wptests_posts'"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $sql );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $sql );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $sql );
+		$this->assertStringContainsString( 'CASE WHEN c.table_schema = \'public\' THEN \'wptests\' ELSE c.table_schema END AS "TABLE_SCHEMA"', $sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertStringNotContainsString( 'FROM "' . $metadata_table . '"', $sql );
+			$this->assertStringNotContainsString( 'JOIN "' . $metadata_table . '"', $sql );
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed DESCRIBE and SHOW COLUMNS use native catalogs.
+	 */
+	public function test_describe_and_show_columns_use_postgresql_catalog_for_pgsql_connections(): void {
+		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => new PDO( 'sqlite::memory:' ),
+			)
+		);
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+		);
+		$get_describe    = Closure::bind(
+			function (): string {
+				return $this->get_describe_postgresql_catalog_query();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_columns     = Closure::bind(
+			function ( bool $is_full ): string {
+				return $this->get_show_columns_postgresql_catalog_query( $is_full );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$describe_sql = $get_describe();
+		$columns_sql  = $get_columns( true );
+
+		$this->assertStringContainsString( 'describe_rows AS', $describe_sql );
+		$this->assertStringContainsString( 'information_schema.columns c', $describe_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $describe_sql );
+		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey) WITH ORDINALITY', $describe_sql );
+		$this->assertStringContainsString( 'k.ordinality <= i.indnkeyatts', $describe_sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_datetime' THEN 'datetime'", $describe_sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumtext' THEN 'mediumtext'", $describe_sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumblob' THEN 'mediumblob'", $describe_sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_binary_%' THEN 'binary'", $describe_sql );
+		$this->assertStringContainsString( "c.data_type = 'numeric' AND c.numeric_precision IS NULL THEN 'numeric'", $describe_sql );
+		$this->assertStringContainsString( "'decimal' || CASE", $describe_sql );
+		$this->assertStringContainsString( "c.data_type = 'double precision' THEN 'double'", $describe_sql );
+		$this->assertStringContainsString( "c.data_type = 'real' THEN 'float'", $describe_sql );
+		$this->assertStringContainsString( 'SUBSTRING(c.column_default FROM', $describe_sql );
+		$this->assertStringContainsString( "THEN 'CURRENT_TIMESTAMP'", $describe_sql );
+		$this->assertStringContainsString( "'CURRENT_TIMESTAMP(' || SUBSTRING(c.column_default FROM", $describe_sql );
+		$this->assertStringContainsString( '__wp_mysql_column_type:', $describe_sql );
+		$this->assertStringContainsString( 'show_columns_rows AS', $columns_sql );
+		$this->assertStringContainsString( 'information_schema.columns c', $columns_sql );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $columns_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $columns_sql );
+		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey) WITH ORDINALITY', $columns_sql );
+		$this->assertStringContainsString( 'k.ordinality <= i.indnkeyatts', $columns_sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_timestamp_6' THEN 'timestamp(6)'", $columns_sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumblob' THEN 'mediumblob'", $columns_sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_varbinary_%' THEN 'varbinary'", $columns_sql );
+		$this->assertStringContainsString( "c.data_type = 'numeric' AND c.numeric_precision IS NULL THEN 'numeric'", $columns_sql );
+		$this->assertStringContainsString( "'decimal' || CASE", $columns_sql );
+		$this->assertStringContainsString( "c.data_type = 'double precision' THEN 'double'", $columns_sql );
+		$this->assertStringContainsString( "c.data_type = 'real' THEN 'float'", $columns_sql );
+		$this->assertStringContainsString( 'SUBSTRING(c.column_default FROM', $columns_sql );
+		$this->assertStringContainsString( "THEN 'CURRENT_TIMESTAMP'", $columns_sql );
+		$this->assertStringContainsString( "'CURRENT_TIMESTAMP(' || SUBSTRING(c.column_default FROM", $columns_sql );
+		$this->assertStringContainsString( '__wp_mysql_column_type:', $columns_sql );
+		foreach ( array( $describe_sql, $columns_sql ) as $sql ) {
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertStringNotContainsString( 'FROM "' . $metadata_table . '"', $sql );
+				$this->assertStringNotContainsString( 'JOIN "' . $metadata_table . '"', $sql );
+			}
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed DESCRIBE and SHOW COLUMNS queries execute catalog SQL.
+	 */
+	public function test_describe_and_show_columns_queries_execute_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed DESCRIBE and SHOW COLUMNS catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed DESCRIBE or SHOW COLUMNS.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM describe_rows' ) ) {
+					return parent::query(
+						"SELECT
+							'option_id' AS \"Field\",
+							'bigint(20)' AS \"Type\",
+							'NO' AS \"Null\",
+							'PRI' AS \"Key\",
+							NULL AS \"Default\",
+							'auto_increment' AS \"Extra\""
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM show_columns_rows' ) ) {
+					return parent::query(
+						"SELECT
+							'option_name' AS \"Field\",
+							'varchar(191)' AS \"Type\",
+							'utf8mb4_unicode_ci' AS \"Collation\",
+							'NO' AS \"Null\",
+							'UNI' AS \"Key\",
+							'' AS \"Default\",
+							'' AS \"Extra\",
+							'select,insert,update,references' AS \"Privileges\",
+							'Option name' AS \"Comment\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$describe = $driver->query( 'DESCRIBE wptests_options' );
+
+		$this->assertCount( 1, $describe );
+		$this->assertSame( 'option_id', $describe[0]->Field );
+		$this->assertSame( 'PRI', $describe[0]->Key );
+
+		$describe_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'describe_rows AS', $describe_sql );
+		$this->assertStringContainsString( 'information_schema.columns c', $describe_sql );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $describe_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $describe_sql );
+
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $describe_sql ) );
+		}
+
+		$columns = $driver->query( 'SHOW FULL COLUMNS FROM wptests_options' );
+
+		$this->assertCount( 1, $columns );
+		$this->assertSame( 'option_name', $columns[0]->Field );
+		$this->assertSame( 'UNI', $columns[0]->Key );
+		$this->assertSame( 'Option name', $columns[0]->Comment );
+
+		$columns_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'show_columns_rows AS', $columns_sql );
+		$this->assertStringContainsString( 'information_schema.columns c', $columns_sql );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $columns_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $columns_sql );
+
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $columns_sql ) );
+		}
+
+		$this->assertGreaterThan( 2, count( $connection->get_queries() ) );
+	}
+
+	/**
+	 * Tests DML column metadata uses PostgreSQL catalogs directly for pgsql connections.
+	 */
+	public function test_dml_column_metadata_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed DML metadata catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'SELECT
+							\'id\' AS column_name,
+							1 AS ordinal_position,
+							\'bigint\' AS column_type,
+							\'NO\' AS is_nullable,
+							NULL AS column_default,
+							\'auto_increment\' AS extra
+						UNION ALL
+						SELECT
+							\'created_at\' AS column_name,
+							2 AS ordinal_position,
+							\'datetime\' AS column_type,
+							\'NO\' AS is_nullable,
+							\'CURRENT_TIMESTAMP\' AS column_default,
+							\'\' AS extra'
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_rows   = Closure::bind(
+			function (): array {
+				return $this->get_mysql_dml_column_catalog_metadata( 'public', 'wptests_posts' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$rows = $get_rows();
+
+		$this->assertSame( 'id', $rows[0]['column_name'] );
+		$this->assertSame( 'auto_increment', $rows[0]['extra'] );
+		$this->assertSame( 'created_at', $rows[1]['column_name'] );
+		$this->assertSame( 'datetime', $rows[1]['column_type'] );
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 1, $catalog_queries );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'c.is_identity', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_datetime' THEN 'datetime'", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumblob' THEN 'mediumblob'", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_varbinary_%' THEN 'varbinary'", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "c.data_type = 'numeric' AND c.numeric_precision IS NULL THEN 'numeric'", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "'decimal' || CASE", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "c.data_type = 'double precision' THEN 'double'", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "c.data_type = 'real' THEN 'float'", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'SUBSTRING(c.column_default FROM', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "THEN 'CURRENT_TIMESTAMP'", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( "'CURRENT_TIMESTAMP(' || SUBSTRING(c.column_default FROM", $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'convert_from(', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'decode(', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( '__wp_mysql_column_default:', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( '__wp_mysql_column_type:', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'DEFAULT_GENERATED', $catalog_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_posts' ), $catalog_queries[0]['params'] );
+	}
+
+	/**
+	 * Tests columnless INSERT infers columns from PostgreSQL catalogs without metadata tables.
+	 */
+	public function test_columnless_insert_uses_postgresql_catalog_dml_metadata_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed DML metadata queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed DML column metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'int' AS column_type,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra
+						UNION ALL
+						SELECT
+							'value' AS column_name,
+							2 AS ordinal_position,
+							'text' AS column_type,
+							'YES' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$connection->get_pdo()->exec( 'CREATE TABLE catalog_dml_columnless (id INTEGER NOT NULL, value TEXT)' );
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO catalog_dml_columnless VALUES (1, 'one')" ) );
+		$this->assertSame(
+			'INSERT INTO "catalog_dml_columnless" ("id", "value") VALUES (1, \'one\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $connection->get_pdo()->query( 'SELECT id, value FROM catalog_dml_columnless' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'one',
+				),
+			),
+			$rows
+		);
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertNotEmpty( $catalog_queries );
+		$dml_metadata_queries = array();
+		foreach ( $catalog_queries as $catalog_query ) {
+			$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_query['sql'] );
+			$this->assertSame( array( 'public', 'catalog_dml_columnless' ), $catalog_query['params'] );
+			if (
+				false !== strpos( $catalog_query['sql'], 'c.ordinal_position' )
+				&& false !== strpos( $catalog_query['sql'], 'pg_catalog.col_description(pc.oid, pa.attnum)' )
+			) {
+				$dml_metadata_queries[] = $catalog_query;
+			}
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $catalog_query['sql'] ) );
+			}
+		}
+		$this->assertNotEmpty( $dml_metadata_queries );
+		$this->assertSame(
+			array(),
+			$connection->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests columnless INSERT uses the current PostgreSQL catalog schema after USE.
+	 */
+	public function test_columnless_insert_uses_current_postgresql_catalog_schema_after_use_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed DML metadata queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed current-schema DML metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( array( 'plugin_schema', 'catalog_current_schema_dml' ) !== $params ) {
+						throw new RuntimeException( 'Columnless DML metadata should resolve against the selected PostgreSQL schema.' );
+					}
+
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'int' AS column_type,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra
+						UNION ALL
+						SELECT
+							'value' AS column_name,
+							2 AS ordinal_position,
+							'text' AS column_type,
+							'YES' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$pdo             = $connection->get_pdo();
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS plugin_schema" );
+		$pdo->exec( 'CREATE TABLE plugin_schema.catalog_current_schema_dml (id INTEGER NOT NULL, value TEXT)' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertSame( 1, $driver->query( "INSERT INTO catalog_current_schema_dml VALUES (1, 'one')" ) );
+		$this->assertSame(
+			'INSERT INTO "plugin_schema"."catalog_current_schema_dml" ("id", "value") VALUES (1, \'one\')',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $pdo->query( 'SELECT id, value FROM plugin_schema.catalog_current_schema_dml' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'one',
+				),
+			),
+			$rows
+		);
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertNotEmpty( $catalog_queries );
+		foreach ( $catalog_queries as $catalog_query ) {
+			$this->assertSame( array( 'plugin_schema', 'catalog_current_schema_dml' ), $catalog_query['params'] );
+			$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_query['sql'] );
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $catalog_query['sql'] ) );
+			}
+		}
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests columnless INSERT ... SELECT infers columns from PostgreSQL catalogs without metadata tables.
+	 */
+	public function test_columnless_insert_select_uses_postgresql_catalog_dml_metadata_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed DML metadata queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed DML column metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'int' AS column_type,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra
+						UNION ALL
+						SELECT
+							'value' AS column_name,
+							2 AS ordinal_position,
+							'text' AS column_type,
+							'YES' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$connection->get_pdo()->exec( 'CREATE TABLE catalog_dml_insert_select_columnless (id INTEGER NOT NULL, value TEXT)' );
+		$connection->get_pdo()->exec( 'CREATE TABLE catalog_dml_insert_select_columnless_source (id INTEGER NOT NULL, value TEXT)' );
+		$connection->get_pdo()->exec( "INSERT INTO catalog_dml_insert_select_columnless_source (id, value) VALUES (1, 'one'), (2, 'two')" );
+
+		$insert = 'INSERT INTO catalog_dml_insert_select_columnless
+			SELECT id, value FROM catalog_dml_insert_select_columnless_source WHERE 1 = 1';
+
+		$this->assertSame( 2, $driver->query( $insert ) );
+		$this->assertSame(
+			'INSERT INTO catalog_dml_insert_select_columnless ("id", "value") SELECT ' . $this->get_expected_mysql_integer_cast_sql( 'id' ) . ' , CAST(value AS text) FROM catalog_dml_insert_select_columnless_source WHERE 1 = 1',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$rows = $connection->get_pdo()->query( 'SELECT id, value FROM catalog_dml_insert_select_columnless ORDER BY id' )->fetchAll( PDO::FETCH_OBJ );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'value' => 'one',
+				),
+				(object) array(
+					'id'    => '2',
+					'value' => 'two',
+				),
+			),
+			$rows
+		);
+
+		$catalog_queries      = $connection->get_catalog_queries();
+		$dml_metadata_queries = array();
+		$this->assertNotEmpty( $catalog_queries );
+		foreach ( $catalog_queries as $catalog_query ) {
+			$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_query['sql'] );
+			if ( array( 'public', 'catalog_dml_insert_select_columnless' ) === $catalog_query['params'] ) {
+				$dml_metadata_queries[] = $catalog_query;
+			}
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $catalog_query['sql'] ) );
+			}
+		}
+		$this->assertNotEmpty( $dml_metadata_queries );
+		$this->assertStringContainsString( 'c.ordinal_position', $dml_metadata_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $dml_metadata_queries[0]['sql'] );
+		$this->assertSame(
+			array(),
+			$connection->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests DML identity repair metadata uses PostgreSQL catalogs for pgsql connections.
+	 */
+	public function test_dml_identity_metadata_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured identity catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed identity metadata catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'pg_catalog.pg_get_serial_sequence' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'SELECT
+							\'id\' AS column_name,
+							\'bigint\' AS data_type,
+							\'NO\' AS is_identity,
+							\'nextval(\'\'wptests_posts_id_seq\'\'::regclass)\' AS column_default,
+							\'bigint\' AS mysql_column_type,
+							\'auto_increment\' AS mysql_extra,
+							\'public\' AS sequence_schema,
+							\'wptests_posts_id_seq\' AS sequence_name'
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured identity catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_rows   = Closure::bind(
+			function (): array {
+				return $this->get_dml_identity_column_catalog_metadata( 'public', 'wptests_posts' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$rows = $get_rows();
+
+		$this->assertSame( 'id', $rows[0]['column_name'] );
+		$this->assertSame( 'auto_increment', $rows[0]['mysql_extra'] );
+		$this->assertSame( 'wptests_posts_id_seq', $rows[0]['sequence_name'] );
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 1, $catalog_queries );
+		$this->assertStringContainsString( 'pg_catalog.pg_get_serial_sequence', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_posts' ), $catalog_queries[0]['params'] );
+	}
+
+	/**
+	 * Tests column EXTRA metadata uses PostgreSQL catalogs for pgsql connections.
+	 */
+	public function test_column_extra_metadata_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed column EXTRA catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed EXTRA lookup.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( "SELECT 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP' AS extra" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_extra  = Closure::bind(
+			function (): string {
+				return $this->get_mysql_column_extra_metadata( 'public', 'wptests_posts', 'updated_at' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$this->assertSame( 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', $get_extra() );
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 1, $catalog_queries );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_trigger tr', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( '__wp_pg_on_update_', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'DEFAULT_GENERATED', $catalog_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_posts', 'updated_at' ), $catalog_queries[0]['params'] );
+	}
+
+	/**
+	 * Tests missing column EXTRA metadata does not fall back to hidden metadata tables for pgsql connections.
+	 */
+	public function test_column_extra_metadata_catalog_miss_does_not_fall_back_to_hidden_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed column EXTRA catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed EXTRA miss.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS extra WHERE 0 = 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_extra  = Closure::bind(
+			function (): string {
+				return $this->get_mysql_column_extra_metadata( 'public', 'wptests_posts', 'missing_extra' );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$this->assertSame( '', $get_extra() );
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 1, $catalog_queries );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_posts', 'missing_extra' ), $catalog_queries[0]['params'] );
+	}
+
+	/**
+	 * Tests column-reference metadata lookups use PostgreSQL catalogs.
+	 */
+	public function test_column_reference_metadata_lookups_use_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => new PDO( 'sqlite::memory:' ),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$pdo        = $connection->get_pdo();
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS information_schema" );
+		$pdo->exec(
+			'CREATE TABLE information_schema.columns (
+				table_schema TEXT NOT NULL,
+				table_name TEXT NOT NULL,
+				column_name TEXT NOT NULL,
+				ordinal_position INTEGER NOT NULL,
+				data_type TEXT NOT NULL,
+				character_maximum_length INTEGER,
+				numeric_precision INTEGER,
+				numeric_scale INTEGER,
+				collation_name TEXT,
+				column_default TEXT,
+				is_identity TEXT,
+				domain_name TEXT
+			)'
+		);
+		$pdo->exec(
+			"INSERT INTO information_schema.columns
+				(table_schema, table_name, column_name, ordinal_position, data_type, character_maximum_length, numeric_precision, numeric_scale, collation_name, column_default, is_identity, domain_name)
+			VALUES
+				('public', 'wptests_posts', 'ID', 1, 'integer', NULL, NULL, NULL, NULL, NULL, 'NO', NULL),
+				('public', 'wptests_posts', 'post_title', 2, 'character varying', 191, NULL, NULL, 'utf8mb4_unicode_ci', NULL, 'NO', NULL)"
+		);
+		$get_type    = Closure::bind(
+			function ( string $column ): ?string {
+				return $this->get_mysql_table_column_catalog_type( 'public', 'wptests_posts', $column );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_collate = Closure::bind(
+			function ( string $column ): ?string {
+				return $this->get_mysql_table_column_catalog_collation( 'public', 'wptests_posts', $column );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$has_columns = Closure::bind(
+			function ( string $table ): bool {
+				return $this->postgresql_catalog_table_has_columns( 'public', $table );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_name    = Closure::bind(
+			function ( string $column ): ?string {
+				return $this->get_mysql_table_catalog_column_name( 'public', 'wptests_posts', $column );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$this->assertSame( 'int', $get_type( 'id' ) );
+		$this->assertSame( 'varchar(191)', $get_type( 'post_title' ) );
+		$this->assertNull( $get_collate( 'ID' ) );
+		$this->assertSame( 'utf8mb4_unicode_ci', $get_collate( 'post_title' ) );
+		$this->assertTrue( $has_columns( 'wptests_posts' ) );
+		$this->assertFalse( $has_columns( 'wptests_missing' ) );
+		$this->assertSame( 'ID', $get_name( 'id' ) );
+		$this->assertSame( 'post_title', $get_name( 'post_title' ) );
+		$this->assertNull( $get_name( 'missing_column' ) );
+
+		$pgsql_pdo         = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$pgsql_connection  = new class( array( 'pdo' => $pgsql_pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'pg_catalog.col_description(pc.oid, pa.attnum)' )
+					&& isset( $params[2] )
+				) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( false !== strpos( $sql, ' AS column_type' ) ) {
+						return parent::query( "SELECT 'enum(''draft'',''published'')' AS column_type" );
+					}
+
+					return parent::query( "SELECT 'utf8mb4_unicode_ci' AS collation_name" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$pgsql_driver      = new WP_PostgreSQL_Driver( $pgsql_connection, 'wptests' );
+		$pgsql_get_type    = Closure::bind(
+			function ( string $column ): ?string {
+				return $this->get_mysql_table_column_catalog_type( 'public', 'wptests_posts', $column );
+			},
+			$pgsql_driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$pgsql_get_collate = Closure::bind(
+			function ( string $column ): ?string {
+				return $this->get_mysql_table_column_catalog_collation( 'public', 'wptests_posts', $column );
+			},
+			$pgsql_driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$this->assertSame( "enum('draft','published')", $pgsql_get_type( 'status' ) );
+		$this->assertSame( 'utf8mb4_unicode_ci', $pgsql_get_collate( 'status' ) );
+
+		$catalog_queries = $pgsql_connection->get_catalog_queries();
+		$this->assertCount( 2, $catalog_queries );
+		foreach ( $catalog_queries as $catalog_query ) {
+			$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_namespace pn', $catalog_query['sql'] );
+			$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_class pc', $catalog_query['sql'] );
+			$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_attribute pa', $catalog_query['sql'] );
+			$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $catalog_query['sql'] );
+			$this->assertStringContainsString( 'pg_catalog.pg_enum e', $catalog_query['sql'] );
+			$this->assertStringContainsString( '__wp_mysql_column_type:', $catalog_query['sql'] );
+			if ( false !== strpos( $catalog_query['sql'], ' AS collation_name' ) ) {
+				$this->assertStringContainsString( '__wp_mysql_column_collation:', $catalog_query['sql'] );
+			}
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_query['sql'] );
+			$this->assertSame( array( 'public', 'wptests_posts', 'status' ), $catalog_query['params'] );
+		}
+		$this->assertStringContainsString( "LIKE 'enum%'", $catalog_queries[1]['sql'] );
+		$this->assertStringContainsString( "LIKE 'set%'", $catalog_queries[1]['sql'] );
+	}
+
+	/**
+	 * Tests MySQL comments are represented as PostgreSQL catalog comments.
+	 */
+	public function test_mysql_comments_sync_to_postgresql_catalog_comment_statements(): void {
+		$driver         = $this->create_driver();
+		$get_statements = Closure::bind(
+			function (): array {
+				return array(
+					$this->get_postgresql_catalog_table_comment_statement( 'public', 'wptests_posts', "Table's note" ),
+					$this->get_postgresql_catalog_column_comment_statement( 'public', 'wptests_posts', 'post_title', "Title's note" ),
+					$this->get_postgresql_catalog_column_comment_statement( 'public', 'wptests_posts', 'post_excerpt', '' ),
+					$this->get_postgresql_catalog_index_comment_statement( 'public', 'wptests_posts', 'post_title', "Index's note" ),
+					$this->get_postgresql_catalog_index_comment_statement( 'public', 'wptests_posts', 'post_title', '' ),
+					$this->get_postgresql_catalog_index_comment_statement( 'public', 'wptests_posts', 'PRIMARY', 'Primary note' ),
+					$this->get_postgresql_catalog_index_comment_statement( 'public', 'wptests_posts', 'post_title', 'Fulltext note', 'FULLTEXT' ),
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sync_comments  = Closure::bind(
+			function (): void {
+				$this->sync_postgresql_catalog_table_comment( 'public', 'wptests_posts', 'Table note' );
+				$this->sync_postgresql_catalog_column_comment( 'public', 'wptests_posts', 'post_title', 'Title note' );
+				$this->sync_postgresql_catalog_index_comment(
+					'public',
+					'wptests_posts',
+					array(
+						'name'       => 'post_title',
+						'index_type' => 'BTREE',
+						'comment'    => 'Index note',
+					)
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$this->assertSame(
+			array(
+				'COMMENT ON TABLE "public"."wptests_posts" IS \'Table\'\'s note\'',
+				'COMMENT ON COLUMN "public"."wptests_posts"."post_title" IS \'Title\'\'s note\'',
+				'COMMENT ON COLUMN "public"."wptests_posts"."post_excerpt" IS NULL',
+				'COMMENT ON INDEX "public"."wptests_posts__post_title" IS \'Index\'\'s note\'',
+				'COMMENT ON INDEX "public"."wptests_posts__post_title" IS NULL',
+				null,
+				"COMMENT ON INDEX \"public\".\"wptests_posts__post_title\" IS '__wp_mysql_index_type:RlVMTFRFWFQ=\nFulltext note'",
+			),
+			$get_statements()
+		);
+
+		$sync_comments();
+
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
 	/**
@@ -25280,6 +37820,260 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed information_schema.SCHEMATA is a native catalog relation.
+	 */
+	public function test_direct_information_schema_schemata_uses_postgresql_catalog_relation_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_schemata_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.schemata s', $sql );
+		$this->assertStringContainsString( 's.schema_name = \'information_schema\'', $sql );
+		$this->assertStringContainsString( 'LEFT(s.schema_name, 3) <> \'pg_\'', $sql );
+		$this->assertStringContainsString( 'AS "SCHEMA_NAME"', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.VIEWS is a native catalog relation.
+	 */
+	public function test_direct_information_schema_views_uses_postgresql_catalog_relation_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_views_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql        = $get_sql();
+
+		$this->assertStringContainsString( 'FROM information_schema.views v', $sql );
+		$this->assertStringContainsString( 'v.view_definition AS "VIEW_DEFINITION"', $sql );
+		$this->assertStringContainsString( 'COALESCE(v.is_updatable, \'NO\') AS "IS_UPDATABLE"', $sql );
+		$this->assertStringContainsString( 'AS "COLLATION_CONNECTION"', $sql );
+		$this->assertStringContainsString( 'v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')', $sql );
+		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed routine metadata relations use native catalog views.
+	 */
+	public function test_direct_information_schema_programmable_objects_use_postgresql_catalog_relations_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function ( string $relation ): string {
+				if ( 'triggers' === $relation ) {
+					return $this->get_direct_information_schema_triggers_relation_sql();
+				}
+
+				if ( 'routines' === $relation ) {
+					return $this->get_direct_information_schema_routines_relation_sql();
+				}
+
+				return $this->get_direct_information_schema_parameters_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$triggers = $get_sql( 'triggers' );
+		$this->assertStringContainsString( 'FROM information_schema.triggers t', $triggers );
+		$this->assertStringContainsString( 't.action_statement AS "ACTION_STATEMENT"', $triggers );
+		$this->assertStringContainsString( 'TO_CHAR(t.created, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATED"', $triggers );
+		$this->assertStringContainsString( 'AS "DATABASE_COLLATION"', $triggers );
+		$this->assertStringContainsString( 't.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')', $triggers );
+		$this->assertStringNotContainsString( 'UNION ALL', $triggers );
+
+		$routines = $get_sql( 'routines' );
+		$this->assertStringContainsString( 'FROM information_schema.routines r', $routines );
+		$this->assertStringContainsString( 'r.routine_definition AS "ROUTINE_DEFINITION"', $routines );
+		$this->assertStringContainsString( 'TO_CHAR(r.last_altered, \'YYYY-MM-DD HH24:MI:SS\') AS "LAST_ALTERED"', $routines );
+		$this->assertStringContainsString( 'AS "SQL_MODE"', $routines );
+		$this->assertStringContainsString( 'r.routine_schema NOT IN (\'information_schema\', \'pg_catalog\')', $routines );
+		$this->assertStringNotContainsString( 'UNION ALL', $routines );
+
+		$parameters = $get_sql( 'parameters' );
+		$this->assertStringContainsString( 'FROM information_schema.parameters p', $parameters );
+		$this->assertStringContainsString( 'LEFT JOIN information_schema.routines r', $parameters );
+		$this->assertStringContainsString( 'p.dtd_identifier AS "DTD_IDENTIFIER"', $parameters );
+		$this->assertStringContainsString( 'COALESCE(r.routine_type, \'FUNCTION\') AS "ROUTINE_TYPE"', $parameters );
+		$this->assertStringContainsString( 'p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')', $parameters );
+		$this->assertStringNotContainsString( 'UNION ALL', $parameters );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed auxiliary information_schema queries execute catalog SQL.
+	 */
+	public function test_direct_information_schema_auxiliary_queries_execute_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed auxiliary information_schema catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed auxiliary information_schema queries.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if (
+					0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query( "SELECT 'wptests' AS \"SCHEMA_NAME\"" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.views v' ) ) {
+					return parent::query( "SELECT 'wptests_view' AS \"TABLE_NAME\"" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.triggers t' ) ) {
+					return parent::query( "SELECT 'trg_options' AS \"TRIGGER_NAME\"" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.routines r' ) ) {
+					return parent::query( "SELECT 'wp_function' AS \"ROUTINE_NAME\"" );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.parameters p' ) ) {
+					return parent::query( "SELECT 'arg1' AS \"PARAMETER_NAME\"" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+		$queries         = array(
+			'schemata'   => array(
+				'sql'      => "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'wptests'",
+				'column'   => 'SCHEMA_NAME',
+				'value'    => 'wptests',
+				'contains' => array(
+					'FROM information_schema.schemata s',
+					'AS "SCHEMA_NAME"',
+				),
+			),
+			'views'      => array(
+				'sql'      => 'SELECT table_name FROM information_schema.views WHERE table_schema = DATABASE()',
+				'column'   => 'TABLE_NAME',
+				'value'    => 'wptests_view',
+				'contains' => array(
+					'FROM information_schema.views v',
+					'v.view_definition AS "VIEW_DEFINITION"',
+				),
+			),
+			'triggers'   => array(
+				'sql'      => "SELECT trigger_name FROM information_schema.triggers WHERE trigger_name = 'trg_options'",
+				'column'   => 'TRIGGER_NAME',
+				'value'    => 'trg_options',
+				'contains' => array(
+					'FROM information_schema.triggers t',
+					't.action_statement AS "ACTION_STATEMENT"',
+				),
+			),
+			'routines'   => array(
+				'sql'      => "SELECT routine_name FROM information_schema.routines WHERE routine_name = 'wp_function'",
+				'column'   => 'ROUTINE_NAME',
+				'value'    => 'wp_function',
+				'contains' => array(
+					'FROM information_schema.routines r',
+					'r.routine_definition AS "ROUTINE_DEFINITION"',
+				),
+			),
+			'parameters' => array(
+				'sql'      => "SELECT parameter_name FROM information_schema.parameters WHERE parameter_name = 'arg1'",
+				'column'   => 'PARAMETER_NAME',
+				'value'    => 'arg1',
+				'contains' => array(
+					'FROM information_schema.parameters p',
+					'LEFT JOIN information_schema.routines r',
+				),
+			),
+		);
+
+		foreach ( $queries as $query ) {
+			$rows = $driver->query( $query['sql'] );
+
+			$this->assertCount( 1, $rows );
+			$this->assertSame( $query['value'], $rows[0]->{$query['column']} );
+
+			$sql = $this->get_last_single_postgresql_sql( $driver );
+			foreach ( $query['contains'] as $expected ) {
+				$this->assertStringContainsString( $expected, $sql );
+			}
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+			}
+		}
+
+		$this->assertGreaterThanOrEqual( count( $queries ), count( $connection->get_queries() ) );
+	}
+
+	/**
 	 * Tests direct information_schema charset and collation SELECTs return MySQL-shaped rows.
 	 */
 	public function test_direct_information_schema_character_sets_and_collations_selects_return_mysql_shape(): void {
@@ -25408,6 +38202,117 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				),
 			),
 			$defaults
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed charset metadata relations remain stateless compatibility rows.
+	 */
+	public function test_direct_information_schema_character_sets_and_collations_are_stateless_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute a query while rejecting hidden metadata table access.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed charset information_schema queries.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$character_sets = $driver->query(
+			"SELECT character_set_name, default_collate_name
+			FROM information_schema.character_sets
+			WHERE character_set_name LIKE 'utf8%'
+			ORDER BY character_set_name"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'CHARACTER_SET_NAME'   => 'utf8',
+					'DEFAULT_COLLATE_NAME' => 'utf8_general_ci',
+				),
+				(object) array(
+					'CHARACTER_SET_NAME'   => 'utf8mb4',
+					'DEFAULT_COLLATE_NAME' => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$character_sets
+		);
+		$character_sets_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( "'utf8' AS \"CHARACTER_SET_NAME\"", $character_sets_sql );
+		$this->assertStringContainsString( "'utf8mb4' AS \"CHARACTER_SET_NAME\"", $character_sets_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $character_sets_sql );
+
+		$collations = $driver->query(
+			"SELECT collation_name, character_set_name
+			FROM information_schema.collations
+			WHERE character_set_name = 'utf8mb4'
+			ORDER BY collation_name"
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_0900_ai_ci',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_bin',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_unicode_ci',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+				),
+			),
+			$collations
+		);
+		$collations_sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( "'utf8mb4_bin' AS \"COLLATION_NAME\"", $collations_sql );
+		$this->assertStringContainsString( "'utf8mb4_unicode_ci' AS \"COLLATION_NAME\"", $collations_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $collations_sql );
+
+		$this->assertGreaterThanOrEqual( 2, count( $connection->get_queries() ) );
+		$this->assertSame(
+			array(),
+			$connection->get_pdo()->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
 		);
 	}
 
@@ -25826,6 +38731,38 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests application SELECT predicates can route nested information_schema UNION branches.
+	 */
+	public function test_application_select_information_schema_nested_predicate_union_routes_mysql_shape(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->query(
+			'CREATE TABLE wptests_information_schema_versions (
+				s1 INTEGER NOT NULL
+			)'
+		);
+		$driver->query( 'INSERT INTO wptests_information_schema_versions (s1) VALUES (10), (11)' );
+
+		$rows = $driver->query(
+			'SELECT s1
+			FROM wptests_information_schema_versions
+			WHERE s1 IN (
+				SELECT version FROM information_schema.tables
+			)
+			UNION
+			SELECT version FROM information_schema.tables'
+		);
+
+		$this->assertSame( array( '10' ), array_column( $rows, 's1' ) );
+
+		$sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'UNION SELECT' );
+		$this->assertStringContainsString( 'FROM wptests_information_schema_versions', $sql );
+		$this->assertStringContainsString( 'AS "tables"', $sql );
+		$this->assertStringNotContainsString( 'information_schema.tables', $sql );
+	}
+
+	/**
 	 * Tests USE information_schema routes nested SELECT reads and rejects unsupported sources.
 	 */
 	public function test_use_statement_information_schema_nested_selects_route_or_fail_closed(): void {
@@ -26225,6 +39162,99 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed information_schema joins read application columns from catalogs.
+	 */
+	public function test_direct_information_schema_mixed_application_table_join_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog column metadata queries.
+			 *
+			 * @var array[]
+			 */
+			private $column_catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog metadata queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'ORDER BY c.ordinal_position' )
+				) {
+					$this->column_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT 'id' AS column_name, 1 AS ordinal_position, 'int(11)' AS column_type, 'NO' AS is_nullable, NULL AS column_default, '' AS extra
+						UNION ALL
+						SELECT 'db_name', 2, 'varchar(191)', 'NO', NULL, ''"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog column metadata queries.
+			 *
+			 * @return array[] Queries.
+			 */
+			public function get_column_catalog_queries(): array {
+				return $this->column_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$sql        = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_direct_information_schema_select_query',
+			"SELECT app.id, c.table_schema, c.table_name, c.column_name
+			FROM information_schema.columns AS c
+			JOIN wptests_schema_names AS app
+				ON app.db_name = c.table_schema
+			WHERE c.table_name = 'wptests_schema_names'"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( '"wptests_schema_names" AS "app"', $sql );
+		$this->assertStringContainsString( '"app"."db_name" = "c"."TABLE_SCHEMA"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
+
+		$this->assertCount( 1, $connection->get_column_catalog_queries() );
+		$column_catalog_query = $connection->get_column_catalog_queries()[0];
+		$this->assertSame( array( 'public', 'wptests_schema_names' ), $column_catalog_query['params'] );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $column_catalog_query['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $column_catalog_query['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $column_catalog_query['sql'] );
+	}
+
+	/**
 	 * Tests direct information_schema joins accept main database-qualified application tables.
 	 */
 	public function test_direct_information_schema_mixed_join_accepts_main_database_qualified_application_table(): void {
@@ -26360,6 +39390,633 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'USING ("TABLE_SCHEMA", "TABLE_NAME")'
 		);
 		$this->assertStringContainsString( 'USING ("TABLE_SCHEMA", "TABLE_NAME")', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.STATISTICS uses native catalog rows.
+	 */
+	public function test_direct_information_schema_statistics_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$sql        = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_direct_information_schema_select_query',
+			"SELECT index_name, column_name
+			FROM information_schema.statistics
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_options'"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_class t', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_attribute a', $sql );
+		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey)', $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(idx.oid, \'pg_class\')', $sql );
+		$this->assertStringContainsString( '__wp_mysql_index_type:', $sql );
+		$this->assertStringContainsString( '__wp_mysql_index_sub_part:', $sql );
+		$this->assertStringContainsString( 'AS "INDEX_COMMENT"', $sql );
+		$this->assertStringContainsString( "pg_catalog.pg_index_column_has_property(i.indexrelid, CAST(k.ordinality AS integer), 'desc') AS is_desc", $sql );
+		$this->assertStringContainsString( '= \'FULLTEXT\' THEN NULL ELSE CASE WHEN is_desc THEN \'D\' ELSE \'A\' END END AS "COLLATION"', $sql );
+		$this->assertStringContainsString( 'COALESCE(column_name, NULLIF(REPLACE(COALESCE(', $sql );
+		$this->assertStringContainsString( '= \'FULLTEXT\' THEN NULL ELSE COALESCE(CASE WHEN NULLIF(REPLACE(COALESCE(', $sql );
+		$this->assertStringContainsString( 'END AS "SUB_PART"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN NULLIF(REPLACE(COALESCE(', $sql );
+		$this->assertStringContainsString( 'THEN expression ELSE NULL END AS "EXPRESSION"', $sql );
+		$this->assertStringContainsString( 'CASE WHEN table_schema = \'public\' THEN \'wptests\' ELSE table_schema END AS "TABLE_SCHEMA"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed information_schema.STATISTICS queries execute catalog SQL.
+	 */
+	public function test_direct_information_schema_statistics_query_executes_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed direct information_schema.STATISTICS queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed information_schema.STATISTICS.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if (
+					0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM pg_catalog.pg_class t' )
+					&& false !== strpos( $sql, 'pg_catalog.pg_index' )
+					&& false !== strpos( $sql, 'AS "INDEX_NAME"' )
+				) {
+					return parent::query( 'SELECT \'PRIMARY\' AS "INDEX_NAME", \'option_id\' AS "COLUMN_NAME"' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$rows = $driver->query(
+			"SELECT index_name, column_name
+			FROM information_schema.statistics
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_options'"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'PRIMARY', $rows[0]->INDEX_NAME );
+		$this->assertSame( 'option_id', $rows[0]->COLUMN_NAME );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class t', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index', $sql );
+		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey)', $sql );
+		$this->assertStringContainsString( 'AS "INDEX_NAME"', $sql );
+		$this->assertStringNotContainsString( 'DATABASE()', $sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+		}
+		$queries = $connection->get_queries();
+		$this->assertNotEmpty( $queries );
+		$this->assertSame( $sql, end( $queries ) );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed constraint information_schema relations use native catalogs.
+	 */
+	public function test_direct_information_schema_constraint_relations_use_postgresql_catalog_for_pgsql_connections(): void {
+		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+		);
+		$cases           = array(
+			"SELECT constraint_name, constraint_type
+			FROM information_schema.table_constraints
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_posts'" => array( 'information_schema.table_constraints tc' ),
+			"SELECT constraint_name, column_name, referenced_table_name
+			FROM information_schema.key_column_usage
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_posts'" => array( 'information_schema.key_column_usage kcu', 'information_schema.constraint_column_usage ccu' ),
+			'SELECT constraint_name, delete_rule, referenced_table_name
+			FROM information_schema.referential_constraints
+			WHERE constraint_schema = DATABASE()' => array( 'information_schema.referential_constraints rc', 'information_schema.constraint_column_usage ccu' ),
+			'SELECT constraint_name, check_clause
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = DATABASE()' => array( 'information_schema.check_constraints cc' ),
+		);
+
+		foreach ( $cases as $query => $expected_fragments ) {
+			$sql = $this->translate_driver_query_with_private_method(
+				$driver,
+				'translate_direct_information_schema_select_query',
+				$query
+			);
+
+			$this->assertNotNull( $sql, $query );
+			foreach ( $expected_fragments as $expected_fragment ) {
+				$this->assertStringContainsString( $expected_fragment, $sql, $query );
+			}
+			if ( false !== strpos( strtolower( $query ), 'table_constraints' ) ) {
+				$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $sql, $query );
+				$this->assertStringContainsString( '__wp_mysql_check_enforced:', $sql, $query );
+			}
+			if ( false !== strpos( strtolower( $query ), 'check_constraints' ) ) {
+				$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $sql, $query );
+				$this->assertStringContainsString( '__wp_mysql_check_clause:', $sql, $query );
+			}
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertStringNotContainsString( 'FROM "' . $metadata_table . '"', $sql, $query );
+				$this->assertStringNotContainsString( 'JOIN "' . $metadata_table . '"', $sql, $query );
+			}
+		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed constraint information_schema queries execute catalog SQL.
+	 */
+	public function test_direct_information_schema_constraint_queries_execute_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed constraint information_schema catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed constraint information_schema queries.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if (
+					0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.table_constraints tc' ) ) {
+					return parent::query(
+						"SELECT
+							'wptests_posts_status_chk' AS \"CONSTRAINT_NAME\",
+							'CHECK' AS \"CONSTRAINT_TYPE\""
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.key_column_usage kcu' ) ) {
+					return parent::query(
+						"SELECT
+							'wptests_posts_author_fk' AS \"CONSTRAINT_NAME\",
+							'post_author' AS \"COLUMN_NAME\",
+							'wptests_options' AS \"REFERENCED_TABLE_NAME\""
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.referential_constraints rc' ) ) {
+					return parent::query(
+						"SELECT
+							'wptests_posts_author_fk' AS \"CONSTRAINT_NAME\",
+							'CASCADE' AS \"DELETE_RULE\",
+							'wptests_options' AS \"REFERENCED_TABLE_NAME\""
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
+					return parent::query(
+						"SELECT
+							'wptests_posts_status_chk' AS \"CONSTRAINT_NAME\",
+							'post_status IS NOT NULL' AS \"CHECK_CLAUSE\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$table_constraints = $driver->query(
+			"SELECT constraint_name, constraint_type
+			FROM information_schema.table_constraints
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_posts'"
+		);
+		$this->assertCount( 1, $table_constraints );
+		$this->assertSame( 'wptests_posts_status_chk', $table_constraints[0]->CONSTRAINT_NAME );
+		$this->assertSame( 'CHECK', $table_constraints[0]->CONSTRAINT_TYPE );
+
+		$key_usage = $driver->query(
+			"SELECT constraint_name, column_name, referenced_table_name
+			FROM information_schema.key_column_usage
+			WHERE table_schema = DATABASE()
+				AND table_name = 'wptests_posts'"
+		);
+		$this->assertCount( 1, $key_usage );
+		$this->assertSame( 'wptests_posts_author_fk', $key_usage[0]->CONSTRAINT_NAME );
+		$this->assertSame( 'post_author', $key_usage[0]->COLUMN_NAME );
+		$this->assertSame( 'wptests_options', $key_usage[0]->REFERENCED_TABLE_NAME );
+
+		$referential = $driver->query(
+			'SELECT constraint_name, delete_rule, referenced_table_name
+			FROM information_schema.referential_constraints
+			WHERE constraint_schema = DATABASE()'
+		);
+		$this->assertCount( 1, $referential );
+		$this->assertSame( 'wptests_posts_author_fk', $referential[0]->CONSTRAINT_NAME );
+		$this->assertSame( 'CASCADE', $referential[0]->DELETE_RULE );
+		$this->assertSame( 'wptests_options', $referential[0]->REFERENCED_TABLE_NAME );
+
+		$checks = $driver->query(
+			'SELECT constraint_name, check_clause
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = DATABASE()'
+		);
+		$this->assertCount( 1, $checks );
+		$this->assertSame( 'wptests_posts_status_chk', $checks[0]->CONSTRAINT_NAME );
+		$this->assertSame( 'post_status IS NOT NULL', $checks[0]->CHECK_CLAUSE );
+
+		$queries = array_values(
+			array_filter(
+				$connection->get_queries(),
+				static function ( string $sql ): bool {
+					return false !== strpos( $sql, 'FROM information_schema.' );
+				}
+			)
+		);
+		$this->assertCount( 4, $queries );
+		$this->assertStringContainsString( 'FROM information_schema.table_constraints tc', $queries[0] );
+		$this->assertStringContainsString( 'FROM information_schema.key_column_usage kcu', $queries[1] );
+		$this->assertStringContainsString( 'FROM information_schema.referential_constraints rc', $queries[2] );
+		$this->assertStringContainsString( 'FROM information_schema.check_constraints cc', $queries[3] );
+		foreach ( $queries as $index => $sql ) {
+			if ( in_array( $index, array( 0, 3 ), true ) ) {
+				$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $sql );
+			}
+			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+			}
+		}
+	}
+
+	/**
+	 * Tests ALTER constraint existence lookups use PostgreSQL catalogs before metadata tables.
+	 */
+	public function test_alter_constraint_existence_lookups_use_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured PostgreSQL catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog existence queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata fallback was not expected for catalog-backed fixture.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( ! isset( $params[2] ) ) {
+						return parent::query( 'SELECT 1' );
+					}
+
+					$index_name = strtolower( (string) $params[2] );
+					$exists     = false !== strpos( $sql, 'AND i.indisunique' )
+						? 'slug_unique' === $index_name
+						: in_array( $index_name, array( 'post_title', 'slug_unique' ), true );
+
+					return parent::query( $exists ? 'SELECT 1' : 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_constraint' ) && false !== strpos( $sql, "con.contype = 'f'" ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( ( $params[2] ?? '' ) === 'fk_post_parent' ? 'SELECT 1' : 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_constraint' ) && false !== strpos( $sql, "con.contype = 'c'" ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						( $params[2] ?? '' ) === 'positive_id'
+							? "SELECT
+							'positive_id' AS constraint_name,
+							'id > 0' AS check_clause,
+							'YES' AS enforced"
+							: 'SELECT NULL AS constraint_name, NULL AS check_clause, NULL AS enforced WHERE 0 = 1'
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$lookups    = Closure::bind(
+			function (): array {
+				return array(
+					'index'       => $this->mysql_index_metadata_exists( 'public', 'wptests_posts', 'post_title' ),
+					'unique'      => $this->mysql_unique_index_metadata_exists( 'public', 'wptests_posts', 'slug_unique' ),
+					'index_rows'  => $this->mysql_index_metadata_has_rows( 'public', 'wptests_posts' ),
+					'foreign_key' => $this->mysql_foreign_key_metadata_exists( 'public', 'wptests_posts', 'fk_post_parent' ),
+					'check'       => $this->get_mysql_check_metadata( 'public', 'wptests_posts', 'positive_id' ),
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$results = $lookups();
+
+		$this->assertTrue( $results['index'] );
+		$this->assertTrue( $results['unique'] );
+		$this->assertTrue( $results['index_rows'] );
+		$this->assertTrue( $results['foreign_key'] );
+		$this->assertSame(
+			array(
+				'constraint_name' => 'positive_id',
+				'check_clause'    => 'id > 0',
+				'enforced'        => 'YES',
+			),
+			$results['check']
+		);
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 5, $catalog_queries );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $catalog_queries[1]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $catalog_queries[2]['sql'] );
+		$this->assertStringContainsString( "con.contype = 'f'", $catalog_queries[3]['sql'] );
+		$this->assertStringContainsString( "con.contype = 'c'", $catalog_queries[4]['sql'] );
+		foreach ( $catalog_queries as $query ) {
+			$this->assertSame( 'public', $query['params'][0] );
+			$this->assertSame( 'wptests_posts', $query['params'][1] );
+		}
+	}
+
+	/**
+	 * Tests upsert conflict target discovery uses PostgreSQL unique-index catalogs.
+	 */
+	public function test_upsert_conflict_target_uses_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured upsert catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata fallback was not expected for catalog-backed upsert target discovery.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) && false !== strpos( $sql, 'i.indisunique' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							'id' AS column_name,
+							'BTREE' AS index_type,
+							NULL AS sub_part
+						UNION ALL
+						SELECT
+							'source_external_id' AS key_name,
+							'source' AS column_name,
+							'BTREE' AS index_type,
+							NULL AS sub_part
+						UNION ALL
+						SELECT
+							'source_external_id' AS key_name,
+							'external_id' AS column_name,
+							'BTREE' AS index_type,
+							NULL AS sub_part"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_target = Closure::bind(
+			function (): ?array {
+				return $this->get_mysql_upsert_conflict_target(
+					'wptests_plugin_lookup',
+					array( 'source', 'external_id', 'attempts', 'payload' )
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$target = $get_target();
+
+		$this->assertSame(
+			array( 'source', 'external_id' ),
+			$target['columns'] ?? null
+		);
+		$this->assertSame(
+			array( '"source"', '"external_id"' ),
+			$target['sql'] ?? null
+		);
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 1, $catalog_queries );
+		$this->assertStringContainsString( 'pg_catalog.pg_index i', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'i.indisunique', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_get_indexdef(i.indexrelid', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'COALESCE(column_name, NULLIF(REPLACE(COALESCE(', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'SUBSTRING(expression FROM \', 1, ([0-9]+)[)]$\') END AS sub_part', $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_plugin_lookup', 'wptests_plugin_lookup', 'wptests_plugin_lookup' ), $catalog_queries[0]['params'] );
 	}
 
 	/**
@@ -26675,6 +40332,148 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW INDEX uses PostgreSQL catalogs directly for pgsql connections.
+	 */
+	public function test_show_index_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$driver    = $this->create_show_index_driver();
+		$get_query = Closure::bind(
+			function (): string {
+				return $this->get_show_index_postgresql_catalog_query();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$sql       = $get_query();
+
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class t', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index', $sql );
+		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey)', $sql );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(idx.oid, \'pg_class\')', $sql );
+		$this->assertStringContainsString( '__wp_mysql_index_type:', $sql );
+		$this->assertStringContainsString( '__wp_mysql_index_sub_part:', $sql );
+		$this->assertStringContainsString( 'AS "Index_comment"', $sql );
+		$this->assertStringContainsString( "pg_catalog.pg_index_column_has_property(i.indexrelid, CAST(k.ordinality AS integer), 'desc') AS is_desc", $sql );
+		$this->assertStringContainsString( '= \'FULLTEXT\' THEN NULL ELSE CASE WHEN is_desc THEN \'D\' ELSE \'A\' END END AS "Collation"', $sql );
+		$this->assertStringContainsString( 'COALESCE(column_name, NULLIF(REPLACE(COALESCE(', $sql );
+		$this->assertStringContainsString( '= \'FULLTEXT\' THEN NULL ELSE COALESCE(CASE WHEN NULLIF(REPLACE(COALESCE(', $sql );
+		$this->assertStringContainsString( 'END AS "Sub_part"', $sql );
+		$this->assertStringContainsString( 'THEN expression ELSE NULL END AS "Expression"', $sql );
+		$this->assertStringNotContainsString( 'metadata_exists', $sql );
+		$this->assertStringNotContainsString( 'metadata_index_rows', $sql );
+		$this->assertStringNotContainsString( '__wp_postgresql_mysql_index_metadata', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed SHOW INDEX queries execute catalog SQL.
+	 */
+	public function test_show_index_query_executes_postgresql_catalog_sql_without_metadata_tables(): void {
+		$connection      = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured query SQL strings.
+			 *
+			 * @var string[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Execute fixture-backed SHOW INDEX catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
+						throw new RuntimeException( 'Hidden metadata table relation was not expected for PostgreSQL-backed SHOW INDEX.' );
+					}
+				}
+
+				$this->queries[] = $sql;
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM pg_catalog.pg_class t' )
+					&& false !== strpos( $sql, 'pg_catalog.pg_index' )
+					&& false !== strpos( $sql, 'show_index_rows' )
+				) {
+					return parent::query(
+						'SELECT
+							\'wptests_options\' AS "Table",
+							\'0\' AS "Non_unique",
+							\'PRIMARY\' AS "Key_name",
+							\'1\' AS "Seq_in_index",
+							\'option_id\' AS "Column_name",
+							\'A\' AS "Collation",
+							\'0\' AS "Cardinality",
+							NULL AS "Sub_part",
+							NULL AS "Packed",
+							\'\' AS "Null",
+							\'BTREE\' AS "Index_type",
+							\'\' AS "Comment",
+							\'\' AS "Index_comment",
+							\'YES\' AS "Visible",
+							NULL AS "Expression"'
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured query SQL strings.
+			 *
+			 * @return string[] Captured SQL strings.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$metadata_tables = array(
+			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
+		);
+
+		$indexes = $driver->query( 'SHOW INDEX FROM `wptests_options`;' );
+
+		$this->assertCount( 1, $indexes );
+		$this->assertSame( 'wptests_options', $indexes[0]->Table );
+		$this->assertSame( 'PRIMARY', $indexes[0]->Key_name );
+		$this->assertSame( 'option_id', $indexes[0]->Column_name );
+		$this->assertSame( 'BTREE', $indexes[0]->Index_type );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class t', $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_index', $sql );
+		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey)', $sql );
+		$this->assertStringContainsString( 'show_index_rows', $sql );
+		$this->assertStringNotContainsString( 'metadata_exists', $sql );
+		$this->assertStringNotContainsString( 'metadata_index_rows', $sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
+		}
+		$queries = $connection->get_queries();
+		$this->assertGreaterThan( 1, count( $queries ) );
+		$this->assertSame( $sql, end( $queries ) );
+	}
+
+	/**
 	 * Tests SHOW KEYS returns the same MySQL-shaped rows as SHOW INDEX.
 	 */
 	public function test_show_keys_returns_same_catalog_rows_as_show_index(): void {
@@ -26969,6 +40768,83 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$this->assertCount( 1, $queries, $query );
 			$this->assertStringContainsString( 'pg_catalog.pg_index', $queries[0]['sql'], $query );
 			$this->assertSame( $params, $queries[0]['params'], $query );
+		}
+	}
+
+	/**
+	 * Tests SHOW INDEX accepts PostgreSQL catalog schemas for pgsql connections.
+	 */
+	public function test_show_index_accepts_postgresql_catalog_schema_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed SHOW INDEX catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM show_index_rows' ) ) {
+					return parent::query(
+						"SELECT
+							'plugin_options' AS \"Table\",
+							'0' AS \"Non_unique\",
+							'PRIMARY' AS \"Key_name\",
+							'1' AS \"Seq_in_index\",
+							'plugin_id' AS \"Column_name\",
+							'A' AS \"Collation\",
+							'0' AS \"Cardinality\",
+							NULL AS \"Sub_part\",
+							NULL AS \"Packed\",
+							'' AS \"Null\",
+							'BTREE' AS \"Index_type\",
+							'' AS \"Comment\",
+							'' AS \"Index_comment\",
+							'YES' AS \"Visible\",
+							NULL AS \"Expression\""
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$indexes = $driver->query( 'SHOW INDEX FROM plugin_schema.plugin_options' );
+
+		$this->assertCount( 1, $indexes );
+		$this->assertSame( 'plugin_options', $indexes[0]->Table );
+		$this->assertSame( 'PRIMARY', $indexes[0]->Key_name );
+		$this->assertSame( 'plugin_id', $indexes[0]->Column_name );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'pg_catalog.pg_index', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'show_index_rows', $queries[0]['sql'] );
+		$this->assertSame( array( 'plugin_schema', 'plugin_options' ), $queries[0]['params'] );
+
+		try {
+			$driver->query( 'SHOW INDEX FROM pg_catalog.pg_class' );
+			$this->fail( 'Expected internal PostgreSQL schema SHOW INDEX statement to throw.' );
+		} catch ( InvalidArgumentException $e ) {
+			$this->assertSame( 'Unsupported SHOW INDEX statement.', $e->getMessage() );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		}
 	}
 
@@ -27419,6 +41295,2606 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed CREATE TABLE can use catalogs without metadata tables.
+	 */
+	public function test_create_table_uses_postgresql_catalog_without_metadata_for_recoverable_schema(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE TABLE.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'CREATE UNIQUE INDEX ' )
+						|| 0 === strpos( $sql, 'DO $wp_mysql_integer_domain$' )
+						|| 0 === strpos( $sql, 'DO $wp_mysql_numeric_domain$' )
+						|| 0 === strpos( $sql, 'DO $wp_mysql_text_domain$' )
+						|| 0 === strpos( $sql, 'DO $wp_mysql_enum_type$' )
+						|| 0 === strpos( $sql, 'DO $wp_mysql_set_domain$' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON DOMAIN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+					|| false !== strpos( $sql, 'DO $wp_mysql_identity_sequence_comment$' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				"CREATE TABLE catalog_pg_create (
+					id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					slug varchar(191) NOT NULL DEFAULT 'draft' COMMENT 'Slug note',
+					body text DEFAULT 'body text',
+					price decimal(10,2) NOT NULL,
+					rating double NOT NULL DEFAULT 0,
+					status enum('draft','published') NOT NULL DEFAULT 'draft' COMMENT 'Status note',
+					flags set('featured','archived') DEFAULT 'featured',
+					bits bit(10),
+					enabled bool,
+					toggled boolean,
+					amount dec(10,2),
+					fixed_value fixed(8,3),
+					real_value real,
+					ratio float(5,2),
+					score double(5,2),
+					measurement numeric(8,4),
+						unsigned_amount decimal(6,2) unsigned,
+						unsigned_score double unsigned,
+						unsigned_year year unsigned,
+						alias_count int4 unsigned,
+						views int DEFAULT 0,
+					PRIMARY KEY (id),
+					UNIQUE KEY slug_lookup (slug(32)) COMMENT 'Slug lookup note'
+				) COMMENT='Catalog table note'"
+			)
+		);
+
+		$sql        = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$create_sql = $this->get_logged_postgresql_sql_containing( $driver->get_last_postgresql_queries(), 'CREATE TABLE "catalog_pg_create"' );
+		$this->assertStringContainsString( '"id" bigint GENERATED BY DEFAULT AS IDENTITY NOT NULL', $create_sql );
+		$this->assertStringContainsString( '"slug" varchar(191) NOT NULL DEFAULT \'draft\'', $create_sql );
+		$this->assertStringContainsString( '"body" text DEFAULT \'body text\'', $create_sql );
+		$this->assertStringContainsString( '"price" numeric(10,2) NOT NULL', $create_sql );
+		$this->assertStringContainsString( '"rating" double precision NOT NULL DEFAULT \'0\'', $create_sql );
+		$this->assertStringContainsString( '"status" __wp_mysql_enum_02ccf983d79439de NOT NULL DEFAULT \'draft\'', $create_sql );
+		$this->assertStringContainsString( '"flags" __wp_mysql_set_3c255ba5f59d3194 DEFAULT \'featured\'', $create_sql );
+		$this->assertStringContainsString( '"bits" __wp_mysql_bit_10', $create_sql );
+		$this->assertStringContainsString( '"enabled" __wp_mysql_bool', $create_sql );
+		$this->assertStringContainsString( '"toggled" __wp_mysql_boolean', $create_sql );
+		$this->assertStringContainsString( '"amount" __wp_mysql_dec_10_2', $create_sql );
+		$this->assertStringContainsString( '"fixed_value" __wp_mysql_fixed_8_3', $create_sql );
+		$this->assertStringContainsString( '"real_value" __wp_mysql_real', $create_sql );
+		$this->assertStringContainsString( '"ratio" __wp_mysql_float_5_2', $create_sql );
+		$this->assertStringContainsString( '"score" __wp_mysql_double_5_2', $create_sql );
+		$this->assertStringContainsString( '"measurement" __wp_mysql_numeric_8_4', $create_sql );
+			$this->assertStringContainsString( '"unsigned_amount" numeric(6,2)', $create_sql );
+			$this->assertStringContainsString( '"unsigned_score" double precision', $create_sql );
+			$this->assertStringContainsString( '"unsigned_year" __wp_mysql_year', $create_sql );
+			$this->assertStringContainsString( '"alias_count" __wp_mysql_int4_unsigned', $create_sql );
+			$this->assertStringContainsString( '"views" integer DEFAULT \'0\'', $create_sql );
+		$this->assertContains( 'CREATE UNIQUE INDEX "catalog_pg_create__slug_lookup" ON "catalog_pg_create" (SUBSTR(CAST("slug" AS text), 1, 32))', $sql );
+		$this->assertContains( 'COMMENT ON TABLE "public"."catalog_pg_create" IS \'Catalog table note\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."slug" IS \'Slug note\'', $sql );
+		$all_sql = implode( "\n", $sql );
+		$this->assertStringContainsString( 'DO $wp_mysql_enum_type$', $all_sql );
+		$this->assertStringContainsString( 'CREATE TYPE "__wp_mysql_enum_02ccf983d79439de" AS ENUM (\'draft\', \'published\')', $all_sql );
+		$this->assertStringContainsString( 'DO $wp_mysql_set_domain$', $all_sql );
+			$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_set_3c255ba5f59d3194" AS text', $all_sql );
+			$this->assertContains( 'COMMENT ON DOMAIN "__wp_mysql_set_3c255ba5f59d3194" IS \'__wp_mysql_column_type:c2V0KCdmZWF0dXJlZCcsJ2FyY2hpdmVkJyk=\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."status" IS \'Status note\'', $sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:ZW51bSgnZHJhZnQnLCdwdWJsaXNoZWQnKQ==', $all_sql );
+		$this->assertNotContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."flags" IS \'__wp_mysql_column_type:c2V0KCdmZWF0dXJlZCcsJ2FyY2hpdmVkJyk=\'', $sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:Yml0KDEwKQ==', $all_sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:Ym9vbA==', $all_sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:Ym9vbGVhbg==', $all_sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:ZGVjKDEwLDIp', $all_sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:Zml4ZWQoOCwzKQ==', $all_sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:cmVhbA==', $all_sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:ZmxvYXQoNSwyKQ==', $all_sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:ZG91YmxlKDUsMik=', $all_sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:bnVtZXJpYyg4LDQp', $all_sql );
+		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."unsigned_amount" IS \'__wp_mysql_column_type:ZGVjaW1hbCg2LDIpIHVuc2lnbmVk\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."unsigned_score" IS \'__wp_mysql_column_type:ZG91YmxlIHVuc2lnbmVk\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."unsigned_year" IS \'__wp_mysql_column_type:eWVhciB1bnNpZ25lZA==\'', $sql );
+		$this->assertContains( 'COMMENT ON INDEX "public"."catalog_pg_create__slug_lookup" IS \'Slug lookup note\'', $sql );
+		$this->assertStringContainsString( 'DO $wp_mysql_identity_sequence_comment$', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_auto_increment_type:bigint(20) unsigned', $all_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $all_sql );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests the WordPress core schema can use PostgreSQL catalogs without hidden metadata.
+	 */
+	public function test_wordpress_core_schema_is_catalog_recoverable_for_pgsql_connections(): void {
+		$driver    = $this->create_driver();
+		$can_store = Closure::bind(
+			function ( string $schema ): bool {
+				return $this->can_use_postgresql_catalog_for_mysql_schema_metadata( $schema );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$schema   = $this->get_wordpress_core_schema();
+		$metadata = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $schema, true );
+
+		$this->assertTrue( $can_store( $schema ) );
+		$this->assertSame(
+			array(
+				'wp_users',
+				'wp_usermeta',
+				'wp_termmeta',
+				'wp_terms',
+				'wp_term_taxonomy',
+				'wp_term_relationships',
+				'wp_commentmeta',
+				'wp_comments',
+				'wp_links',
+				'wp_options',
+				'wp_postmeta',
+				'wp_posts',
+			),
+			array_column( $metadata, 'table_name' )
+		);
+
+		$pdo          = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection   = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed WordPress core schema.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+					|| false !== strpos( $sql, 'DO $wp_mysql_identity_sequence_comment$' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$pgsql_driver = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pgsql_driver->store_mysql_schema_metadata( $schema );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL catalog comments preserve non-default table collations.
+	 */
+	public function test_create_table_preserves_table_collation_in_postgresql_catalog_comments_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed table collation.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+					return parent::query(
+						"SELECT '__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=\nVisible note' AS table_comment"
+					);
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				"CREATE TABLE catalog_pg_table_collation (
+					id int NOT NULL,
+					amount decimal(10,2) NOT NULL
+				) DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci COMMENT='Visible note'"
+			)
+		);
+
+		$all_sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'COMMENT ON TABLE "public"."catalog_pg_table_collation" IS ', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=', $all_sql );
+		$this->assertStringContainsString( 'Visible note', $all_sql );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		$get_create = Closure::bind(
+			function (): string {
+				$table_metadata = $this->get_show_create_table_table_metadata( 'public', 'catalog_pg_table_collation' );
+
+				return $this->get_mysql_create_table_statement_from_metadata(
+					'catalog_pg_table_collation',
+					array(
+						array(
+							'column_name'        => 'id',
+							'column_type'        => 'int',
+							'is_nullable'        => 'NO',
+							'column_default'     => null,
+							'extra'              => '',
+							'column_comment'     => '',
+							'character_set_name' => null,
+							'collation_name'     => null,
+						),
+					),
+					array(),
+					array(),
+					array(),
+					$table_metadata['comment'],
+					false,
+					$table_metadata['collation']
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$create_table = $get_create();
+		$this->assertStringContainsString( ') ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci', $create_table );
+		$this->assertStringContainsString( "COMMENT='Visible note'", $create_table );
+		$this->assertStringNotContainsString( '__wp_mysql_table_collation:', $create_table );
+	}
+
+	/**
+	 * Tests PostgreSQL catalog comments preserve non-default column collations.
+	 */
+	public function test_create_table_preserves_column_collation_in_postgresql_catalog_comments_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed column collation.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				"CREATE TABLE catalog_pg_column_collation (
+					id int NOT NULL,
+					latin_title varchar(191) CHARACTER SET latin1 NOT NULL COMMENT 'Title note',
+					koi_body longtext COLLATE koi8r_general_ci NOT NULL
+				)"
+			)
+		);
+
+		$all_sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString( 'COMMENT ON COLUMN "public"."catalog_pg_column_collation"."latin_title" IS ', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_column_charset:bGF0aW4x', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_column_collation:bGF0aW4xX3N3ZWRpc2hfY2k=', $all_sql );
+		$this->assertStringContainsString( 'Title note', $all_sql );
+		$this->assertStringContainsString( 'COMMENT ON COLUMN "public"."catalog_pg_column_collation"."koi_body" IS ', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_column_charset:a29pOHI=', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_column_collation:a29pOHJfZ2VuZXJhbF9jaQ==', $all_sql );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE stores PRIMARY prefix lengths in catalogs.
+	 */
+	public function test_create_table_primary_prefix_indexes_use_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed PRIMARY prefix metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| false !== strpos( $sql, 'DO $wp_mysql_primary_index_comment$' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_pg_primary_prefix (
+					slug varchar(255) NOT NULL,
+					PRIMARY KEY (slug(10))
+				) DEFAULT CHARSET=utf8mb4'
+			)
+		);
+
+		$sql     = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$all_sql = implode( "\n", $sql );
+		$this->assertStringContainsString( 'CREATE TABLE "catalog_pg_primary_prefix"', $sql[0] );
+		$this->assertStringContainsString( 'PRIMARY KEY ("slug")', $sql[0] );
+		$this->assertStringContainsString( 'DO $wp_mysql_primary_index_comment$', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_index_sub_part:1:10', $all_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $all_sql );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE can represent NOT ENFORCED CHECK constraints in catalogs.
+	 */
+	public function test_create_table_not_enforced_check_constraints_use_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed NOT ENFORCED CHECK constraints.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON CONSTRAINT ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_not_enforced_check (
+					id int CHECK (id > 0) NOT ENFORCED,
+					score int CHECK (score > 0) ENFORCED,
+					CONSTRAINT score_ceiling CHECK (score < 100) NOT ENFORCED
+				)'
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( '"id" integer CONSTRAINT "catalog_not_enforced_check_chk_1" CHECK (true)', $sql[0] );
+		$this->assertStringContainsString( '"score" integer CONSTRAINT "catalog_not_enforced_check_chk_2" CHECK (score > 0)', $sql[0] );
+		$this->assertStringContainsString( 'CONSTRAINT "score_ceiling" CHECK (true)', $sql[0] );
+		$all_sql = implode( "\n", $sql );
+		$this->assertStringContainsString( 'COMMENT ON CONSTRAINT "catalog_not_enforced_check_chk_1" ON "public"."catalog_not_enforced_check" IS', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_check_clause:id > 0', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_check_enforced:NO', $all_sql );
+		$this->assertStringContainsString( 'COMMENT ON CONSTRAINT "score_ceiling" ON "public"."catalog_not_enforced_check" IS', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_check_clause:score < 100', $all_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $all_sql );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE can represent FULLTEXT/SPATIAL indexes in catalogs.
+	 */
+	public function test_create_table_metadata_only_indexes_use_postgresql_catalog_placeholders_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Catalog checks for target indexes.
+			 *
+			 * @var array[]
+			 */
+			private $target_index_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed metadata-only CREATE TABLE indexes.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT 'id' AS column_name, 'int' AS column_type
+						UNION ALL SELECT 'body', 'text'
+						UNION ALL SELECT 'shape', 'text'"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'WITH index_columns AS' ) && false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) ) {
+					$this->target_index_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS key_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'DO $wp_mysql_text_domain$' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'CREATE INDEX ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+
+			/**
+			 * Get captured target index catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_target_index_catalog_checks(): array {
+				return $this->target_index_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_pg_metadata_only_indexes (
+					id int NOT NULL,
+					body text,
+					shape point,
+					FULLTEXT KEY body_fulltext (body),
+					SPATIAL KEY shape_spatial (shape)
+				)'
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertContains( 'CREATE INDEX "catalog_pg_metadata_only_indexes__body_fulltext" ON "public"."catalog_pg_metadata_only_indexes" (SUBSTR(CAST("body" AS text), 1, 191))', $sql );
+		$this->assertContains( 'COMMENT ON INDEX "public"."catalog_pg_metadata_only_indexes__body_fulltext" IS \'__wp_mysql_index_type:RlVMTFRFWFQ=\'', $sql );
+		$this->assertContains( 'CREATE INDEX "catalog_pg_metadata_only_indexes__shape_spatial" ON "public"."catalog_pg_metadata_only_indexes" (SUBSTR(CAST("shape" AS text), 1, 32))', $sql );
+		$this->assertStringNotContainsString( '__wp_mysql_column_type:cG9pbnQ=', implode( "\n", $sql ) );
+		$this->assertContains( 'COMMENT ON INDEX "public"."catalog_pg_metadata_only_indexes__shape_spatial" IS \'__wp_mysql_index_type:U1BBVElBTA==\'', $sql );
+		$this->assertSame( array(), $connection->get_target_index_catalog_checks() );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE can skip metadata for CURRENT_TIMESTAMP defaults.
+	 */
+	public function test_create_table_current_timestamp_defaults_use_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/domain/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CURRENT_TIMESTAMP defaults.' );
+					}
+				}
+
+				if (
+					0 === strpos( $sql, 'DO $wp_mysql_text_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_binary_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_integer_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_numeric_domain$' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'CREATE INDEX ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_pg_current_timestamp_defaults (
+					id int NOT NULL,
+					created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					seen_at datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+				)'
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TABLE "catalog_pg_current_timestamp_defaults"', $sql[0] );
+		$this->assertStringContainsString(
+			'"created_at" __wp_mysql_timestamp NOT NULL DEFAULT TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			$sql[0]
+		);
+		$this->assertStringContainsString(
+			'"seen_at" __wp_mysql_datetime_6 NOT NULL DEFAULT LEFT(TO_CHAR(CURRENT_TIMESTAMP(6) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 26)',
+			$sql[0]
+		);
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE can skip metadata for NOW() defaults.
+	 */
+	public function test_create_table_now_defaults_use_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/domain/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed NOW() defaults.' );
+					}
+				}
+
+				if (
+					0 === strpos( $sql, 'DO $wp_mysql_text_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_binary_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_integer_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_numeric_domain$' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'CREATE INDEX ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_pg_now_defaults (
+					id int NOT NULL,
+					created_at timestamp NOT NULL DEFAULT (now()),
+					seen_at datetime(3) NOT NULL DEFAULT (now(3))
+				)'
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TABLE "catalog_pg_now_defaults"', $sql[0] );
+		$this->assertStringContainsString(
+			'"created_at" __wp_mysql_timestamp NOT NULL DEFAULT TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
+			$sql[0]
+		);
+		$this->assertStringContainsString(
+			'"seen_at" __wp_mysql_datetime_3 NOT NULL DEFAULT LEFT(TO_CHAR(CURRENT_TIMESTAMP(3) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 23)',
+			$sql[0]
+		);
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE can skip metadata for generated DEFAULT expressions.
+	 */
+	public function test_create_table_generated_defaults_use_postgresql_catalog_comments_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/domain/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed generated DEFAULT expressions.' );
+					}
+				}
+
+				if (
+					0 === strpos( $sql, 'DO $wp_mysql_text_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_binary_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_integer_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_numeric_domain$' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				"CREATE TABLE catalog_pg_generated_defaults (
+					id int NOT NULL,
+					col1 int NOT NULL DEFAULT (1 + 2) COMMENT 'Math note',
+					col2 datetime NOT NULL DEFAULT (DATE_ADD(NOW(), INTERVAL 1 YEAR)),
+					col3 varchar(255) NOT NULL DEFAULT (CONCAT('a', 'b'))
+				)"
+			)
+		);
+
+		$sql       = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$all_sql   = implode( "\n", $sql );
+		$prefix    = '__wp_mysql_column_default:';
+		$describe  = Closure::bind(
+			function (): string {
+				return $this->get_describe_postgresql_catalog_query();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_info  = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_columns_catalog_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$query_sql = $describe() . "\n" . $get_info();
+
+		$this->assertStringContainsString( 'CREATE TABLE "catalog_pg_generated_defaults"', $sql[0] );
+		$this->assertStringContainsString( '"col1" integer NOT NULL DEFAULT (1 + 2)', $sql[0] );
+		$this->assertStringContainsString(
+			'"col2" __wp_mysql_datetime NOT NULL DEFAULT (TO_CHAR((CURRENT_TIMESTAMP AT TIME ZONE \'UTC\' + (1 * INTERVAL \'1 year\')), \'YYYY-MM-DD HH24:MI:SS\'))',
+			$sql[0]
+		);
+		$this->assertStringContainsString(
+			'"col3" varchar(255) NOT NULL DEFAULT ((CAST(\'a\' AS text) || CAST(\'b\' AS text)))',
+			$sql[0]
+		);
+		$this->assertStringContainsString( 'COMMENT ON COLUMN "public"."catalog_pg_generated_defaults"."col1" IS E\'', $all_sql );
+		$this->assertStringContainsString( $prefix . 'MSArIDI=', $all_sql );
+		$this->assertStringContainsString( 'Math note', $all_sql );
+		$this->assertStringContainsString(
+			'COMMENT ON COLUMN "public"."catalog_pg_generated_defaults"."col2" IS \'' . $prefix . 'REFURV9BREQoTk9XKCksIElOVEVSVkFMIDEgWUVBUik=\'',
+			$all_sql
+		);
+		$this->assertStringContainsString(
+			'COMMENT ON COLUMN "public"."catalog_pg_generated_defaults"."col3" IS \'' . $prefix . 'Q09OQ0FUKCdhJywgJ2InKQ==\'',
+			$all_sql
+		);
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $all_sql );
+
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $query_sql );
+		$this->assertStringContainsString( 'convert_from(', $query_sql );
+		$this->assertStringContainsString( 'decode(', $query_sql );
+		$this->assertStringContainsString( $prefix, $query_sql );
+		$this->assertStringContainsString( 'AS "COLUMN_COMMENT"', $query_sql );
+		$this->assertStringContainsString( 'POSITION(CHR(10)', $query_sql );
+		$this->assertStringContainsString( 'DEFAULT_GENERATED', $query_sql );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE can skip metadata for ON UPDATE columns.
+	 */
+	public function test_create_table_on_update_current_timestamp_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/domain/trigger queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed ON UPDATE columns.' );
+					}
+				}
+
+				if (
+					0 === strpos( $sql, 'DO $wp_mysql_text_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_integer_domain$' )
+					|| 0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+					|| 0 === strpos( $sql, 'DROP TRIGGER IF EXISTS ' )
+					|| 0 === strpos( $sql, 'CREATE TRIGGER ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_pg_on_update (
+					id int NOT NULL,
+					updated_at timestamp NULL ON UPDATE CURRENT_TIMESTAMP
+				)'
+			)
+		);
+
+		$hash = md5( "public\0catalog_pg_on_update\0updated_at" );
+		$sql  = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TABLE "catalog_pg_on_update"', $sql[0] );
+		$this->assertContains( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $hash . '" ON "public"."catalog_pg_on_update"', $sql );
+		$this->assertContains(
+			'CREATE TRIGGER "__wp_pg_on_update_' . $hash . '" BEFORE UPDATE ON "public"."catalog_pg_on_update" FOR EACH ROW EXECUTE FUNCTION "public"."__wp_pg_on_update_fn_' . $hash . '"()',
+			$sql
+		);
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+
+		$get_describe = Closure::bind(
+			function (): string {
+				return $this->get_describe_postgresql_catalog_query();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$describe_sql = $get_describe();
+
+		$this->assertStringContainsString( 'pg_catalog.pg_trigger tr', $describe_sql );
+		$this->assertStringContainsString(
+			'tr.tgname = \'__wp_pg_on_update_\' || md5(c.table_schema || CHR(0) || c.table_name || CHR(0) || c.column_name)',
+			$describe_sql
+		);
+		$this->assertStringContainsString( '\'on update CURRENT_TIMESTAMP\'', $describe_sql );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE ensures MySQL catalog domains are available.
+	 */
+	public function test_create_table_ensures_catalog_domains_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured domain helper statements.
+			 *
+			 * @var string[]
+			 */
+			private $domain_statements = array();
+
+			/**
+			 * Execute fixture-backed catalog/domain queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog domain-backed CREATE TABLE.' );
+					}
+				}
+
+				if (
+					0 === strpos( $sql, 'DO $wp_mysql_text_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_binary_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_integer_domain$' )
+					|| 0 === strpos( $sql, 'DO $wp_mysql_numeric_domain$' )
+				) {
+					$this->domain_statements[] = $sql;
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'CREATE INDEX ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured domain helper statements.
+			 *
+			 * @return string[] Domain statements.
+			 */
+			public function get_domain_statements(): array {
+				return $this->domain_statements;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_pg_temporal_domains (
+					id int(11) NOT NULL,
+					flags bit(10),
+					enabled bool,
+					toggled boolean,
+						object_id bigint(20) unsigned NOT NULL DEFAULT 0,
+						tiny_flag tinyint(1) unsigned DEFAULT NULL,
+						alias_count int4 unsigned DEFAULT NULL,
+						alias_big int8 DEFAULT NULL,
+						created_date date,
+					created_at datetime(6),
+					updated_at timestamp,
+					touched_at time(3),
+					year_seen year,
+					hash binary(32),
+					payload varbinary(16),
+					raw_data mediumblob,
+					shape point,
+					amount dec(10,2),
+					ratio float(5,2),
+					measurement numeric(8,4),
+					real_value real,
+					PRIMARY KEY (id),
+					KEY object_lookup (object_id)
+					)'
+			)
+		);
+
+		$domain_sql = implode( "\n", $connection->get_domain_statements() );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_int_11" AS integer', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_bit_10" AS integer', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_bool" AS integer', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_boolean" AS integer', $domain_sql );
+			$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_bigint_20_unsigned" AS bigint', $domain_sql );
+			$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_tinyint_1_unsigned" AS integer', $domain_sql );
+			$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_int4_unsigned" AS integer', $domain_sql );
+			$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_int8" AS bigint', $domain_sql );
+			$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_date" AS text', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_datetime_6" AS text', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_timestamp" AS text', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_time_3" AS text', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_year" AS text', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_binary_32" AS bytea', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_varbinary_16" AS bytea', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_mediumblob" AS bytea', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_point" AS text', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_dec_10_2" AS numeric(10,2)', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_float_5_2" AS numeric(5,2)', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_numeric_8_4" AS numeric(8,4)', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_real" AS double precision', $domain_sql );
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringNotContainsString( 'COMMENT ON TABLE "public"."catalog_pg_temporal_domains"', implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( 'COMMENT ON COLUMN "public"."catalog_pg_temporal_domains"', implode( "\n", $sql ) );
+		$this->assertContains( 'CREATE INDEX "catalog_pg_temporal_domains__object_lookup" ON "catalog_pg_temporal_domains" ("object_id")', $sql );
+		$this->assertStringNotContainsString( 'COMMENT ON INDEX "public"."catalog_pg_temporal_domains__object_lookup"', implode( "\n", $sql ) );
+		$this->assertStringContainsString( '"id" __wp_mysql_int_11', $sql[0] );
+		$this->assertStringContainsString( '"flags" __wp_mysql_bit_10', $sql[0] );
+		$this->assertStringContainsString( '"enabled" __wp_mysql_bool', $sql[0] );
+		$this->assertStringContainsString( '"toggled" __wp_mysql_boolean', $sql[0] );
+			$this->assertStringContainsString( '"object_id" __wp_mysql_bigint_20_unsigned NOT NULL DEFAULT \'0\'', $sql[0] );
+			$this->assertStringContainsString( '"tiny_flag" __wp_mysql_tinyint_1_unsigned DEFAULT NULL', $sql[0] );
+			$this->assertStringContainsString( '"alias_count" __wp_mysql_int4_unsigned DEFAULT NULL', $sql[0] );
+			$this->assertStringContainsString( '"alias_big" __wp_mysql_int8 DEFAULT NULL', $sql[0] );
+			$this->assertStringContainsString( '"created_date" __wp_mysql_date', $sql[0] );
+		$this->assertStringContainsString( '"created_at" __wp_mysql_datetime_6', $sql[0] );
+		$this->assertStringContainsString( '"updated_at" __wp_mysql_timestamp', $sql[0] );
+		$this->assertStringContainsString( '"touched_at" __wp_mysql_time_3', $sql[0] );
+		$this->assertStringContainsString( '"year_seen" __wp_mysql_year', $sql[0] );
+		$this->assertStringContainsString( '"hash" __wp_mysql_binary_32', $sql[0] );
+		$this->assertStringContainsString( '"payload" __wp_mysql_varbinary_16', $sql[0] );
+		$this->assertStringContainsString( '"raw_data" __wp_mysql_mediumblob', $sql[0] );
+		$this->assertStringContainsString( '"shape" __wp_mysql_point', $sql[0] );
+		$this->assertStringContainsString( '"amount" __wp_mysql_dec_10_2', $sql[0] );
+		$this->assertStringContainsString( '"ratio" __wp_mysql_float_5_2', $sql[0] );
+		$this->assertStringContainsString( '"measurement" __wp_mysql_numeric_8_4', $sql[0] );
+		$this->assertStringContainsString( '"real_value" __wp_mysql_real', $sql[0] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_pg_plain_identity (
+					id int NOT NULL AUTO_INCREMENT,
+					PRIMARY KEY (id)
+				)'
+			)
+		);
+
+		$plain_identity_sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
+		$this->assertStringContainsString(
+			'"id" integer GENERATED BY DEFAULT AS IDENTITY NOT NULL',
+			$plain_identity_sql
+		);
+		$this->assertStringNotContainsString( 'DO $wp_mysql_identity_sequence_comment$', $plain_identity_sql );
+		$this->assertStringNotContainsString( 'COMMENT ON COLUMN "public"."catalog_pg_plain_identity"."id"', $plain_identity_sql );
+	}
+
+	/**
+	 * Tests public schema metadata storage can use PostgreSQL catalogs for existing tables.
+	 */
+	public function test_store_mysql_schema_metadata_uses_postgresql_catalog_for_existing_recoverable_tables(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for target column types.
+			 *
+			 * @var array[]
+			 */
+			private $target_column_catalog_checks = array();
+
+			/**
+			 * Catalog checks for target indexes.
+			 *
+			 * @var array[]
+			 */
+			private $target_index_catalog_checks = array();
+
+			/**
+			 * Catalog checks for target foreign keys.
+			 *
+			 * @var array[]
+			 */
+			private $target_foreign_key_catalog_checks = array();
+
+			/**
+			 * Catalog checks for target CHECK constraints.
+			 *
+			 * @var array[]
+			 */
+			private $target_check_catalog_checks = array();
+
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed metadata storage.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->target_column_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'catalog_pg_store_metadata' === (string) ( $params[1] ?? '' )
+							? "SELECT 'id' AS column_name, 'int' AS column_type
+								UNION ALL SELECT 'slug', 'varchar(191)'
+								UNION ALL SELECT 'body', 'text'
+								UNION ALL SELECT 'parent_id', 'int'
+								UNION ALL SELECT 'score', 'int'"
+							: 'SELECT NULL AS relname WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'WITH index_columns AS' ) && false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) ) {
+					$this->target_index_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'catalog_pg_store_metadata' === (string) ( $params[1] ?? '' )
+							? "SELECT 'PRIMARY' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'id' AS column_name, '0' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment
+								UNION ALL SELECT 'slug_lookup', 2, 1, 'slug', '0', 'BTREE', 'A', NULL, ''"
+							: 'SELECT NULL AS key_name WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) && false !== strpos( $sql, "con.contype = 'f'" ) ) {
+					$this->target_foreign_key_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'catalog_pg_store_metadata' === (string) ( $params[1] ?? '' )
+							? "SELECT 'fk_parent' AS constraint_name, 3 AS constraint_ordinal, 1 AS seq_in_index, 'parent_id' AS column_name, 'public' AS referenced_table_schema, 'catalog_pg_parent' AS referenced_table_name, 'id' AS referenced_column_name, 'NO ACTION' AS update_rule, 'CASCADE' AS delete_rule"
+							: 'SELECT NULL AS constraint_name WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) && false !== strpos( $sql, "con.contype = 'c'" ) ) {
+					$this->target_check_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'catalog_pg_store_metadata' === (string) ( $params[1] ?? '' )
+							? "SELECT 'score_positive' AS constraint_name, 4 AS constraint_ordinal, 'score >= 0' AS check_clause, 'YES' AS enforced"
+							: 'SELECT NULL AS constraint_name WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured target-column catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_target_column_catalog_checks(): array {
+				return $this->target_column_catalog_checks;
+			}
+
+			/**
+			 * Get captured target-index catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_target_index_catalog_checks(): array {
+				return $this->target_index_catalog_checks;
+			}
+
+			/**
+			 * Get captured target-foreign-key catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_target_foreign_key_catalog_checks(): array {
+				return $this->target_foreign_key_catalog_checks;
+			}
+
+			/**
+			 * Get captured target-CHECK catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_target_check_catalog_checks(): array {
+				return $this->target_check_catalog_checks;
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE catalog_pg_store_metadata (
+				id int NOT NULL,
+				slug varchar(191) NOT NULL DEFAULT 'draft' COMMENT 'Slug note',
+				body text DEFAULT 'body text',
+				parent_id int NOT NULL,
+				score int NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug_lookup (slug) COMMENT 'Slug lookup note',
+				CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES catalog_pg_parent (id) ON DELETE CASCADE,
+				CONSTRAINT score_positive CHECK (score >= 0)
+			) COMMENT='Catalog table note'"
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertContains( 'COMMENT ON TABLE "public"."catalog_pg_store_metadata" IS \'Catalog table note\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_store_metadata"."slug" IS \'Slug note\'', $sql );
+		$this->assertContains( 'COMMENT ON INDEX "public"."catalog_pg_store_metadata__slug_lookup" IS \'Slug lookup note\'', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
+
+		$this->assertSame( array(), $connection->get_target_column_catalog_checks() );
+		$this->assertSame( array(), $connection->get_target_index_catalog_checks() );
+		$this->assertSame( array(), $connection->get_target_foreign_key_catalog_checks() );
+		$this->assertSame( array(), $connection->get_target_check_catalog_checks() );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests temporary schema metadata can use PostgreSQL catalogs for recoverable tables.
+	 */
+	public function test_store_temporary_mysql_schema_metadata_uses_postgresql_catalog_for_recoverable_tables(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Active temporary schema probes.
+			 *
+			 * @var array[]
+			 */
+			private $temporary_schema_checks = array();
+
+			/**
+			 * Catalog checks for target column types.
+			 *
+			 * @var array[]
+			 */
+			private $target_column_catalog_checks = array();
+
+			/**
+			 * Catalog checks for target indexes.
+			 *
+			 * @var array[]
+			 */
+			private $target_index_catalog_checks = array();
+
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed temporary catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed temporary metadata storage.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					$this->temporary_schema_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'catalog_pg_temp_metadata' === (string) ( $params[0] ?? '' )
+							? "SELECT 'pg_temp_5' AS nspname"
+							: 'SELECT NULL AS nspname WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->target_column_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'pg_temp_5' === (string) ( $params[0] ?? '' )
+							&& 'catalog_pg_temp_metadata' === (string) ( $params[1] ?? '' )
+							? "SELECT 'id' AS column_name, 'int' AS column_type
+								UNION ALL SELECT 'slug', 'varchar(191)'"
+							: 'SELECT NULL AS relname WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'WITH index_columns AS' ) && false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) ) {
+					$this->target_index_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'pg_temp_5' === (string) ( $params[0] ?? '' )
+							&& 'catalog_pg_temp_metadata' === (string) ( $params[1] ?? '' )
+							? "SELECT 'PRIMARY' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'id' AS column_name, '0' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment
+								UNION ALL SELECT 'slug_lookup', 2, 1, 'slug', '0', 'BTREE', 'A', NULL, ''"
+							: 'SELECT NULL AS key_name WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured temporary-schema checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_temporary_schema_checks(): array {
+				return $this->temporary_schema_checks;
+			}
+
+			/**
+			 * Get captured target-column catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_target_column_catalog_checks(): array {
+				return $this->target_column_catalog_checks;
+			}
+
+			/**
+			 * Get captured target-index catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_target_index_catalog_checks(): array {
+				return $this->target_index_catalog_checks;
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->store_mysql_temporary_schema_metadata_for_test(
+			$driver,
+			'CREATE TEMPORARY TABLE catalog_pg_temp_metadata (
+				id int NOT NULL,
+				slug varchar(191) NOT NULL,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug_lookup (slug)
+				)'
+		);
+
+		$this->assertNotEmpty( $connection->get_temporary_schema_checks() );
+		$this->assertSame( array(), $connection->get_target_column_catalog_checks() );
+		$this->assertSame( array(), $connection->get_target_index_catalog_checks() );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests metadata storage skips index side tables for recoverable PostgreSQL catalog metadata.
+	 */
+	public function test_store_mysql_schema_metadata_skips_side_tables_for_catalog_index_metadata(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) && false === strpos( $sql, 'pg_catalog.pg_class c' ) ) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			$driver->store_mysql_schema_metadata(
+				'CREATE TABLE catalog_pg_store_metadata_mismatch (
+					id int NOT NULL,
+					slug varchar(191) NOT NULL,
+					PRIMARY KEY (id),
+					UNIQUE KEY slug_lookup (slug)
+				)'
+			);
+
+			$this->assertSame(
+				array(),
+				$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+			);
+	}
+
+	/**
+	 * Tests metadata storage does not probe hidden side tables in PostgreSQL catalog mode.
+	 */
+	public function test_store_mysql_schema_metadata_does_not_probe_hidden_metadata_tables_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+							throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed schema metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+						throw new RuntimeException( 'Hidden metadata table probe was not expected for catalog-backed schema metadata.' );
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$driver->store_mysql_schema_metadata(
+			"CREATE TABLE catalog_pg_failed_metadata_probe (
+				id int NOT NULL,
+				slug varchar(191) NOT NULL COMMENT 'Slug note',
+				PRIMARY KEY (id),
+				UNIQUE KEY slug_lookup (slug(16)) COMMENT 'Slug lookup note'
+			) COMMENT='Table note'"
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests metadata storage skips foreign key side tables for recoverable PostgreSQL catalog metadata.
+	 */
+	public function test_store_mysql_schema_metadata_skips_side_tables_for_catalog_foreign_key_metadata(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) && false === strpos( $sql, 'pg_catalog.pg_class c' ) ) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			$driver->store_mysql_schema_metadata(
+				'CREATE TABLE catalog_pg_store_metadata_fk_mismatch (
+					id int NOT NULL,
+					parent_id int NOT NULL,
+					PRIMARY KEY (id),
+					CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES catalog_pg_parent (id) ON DELETE CASCADE
+				)'
+			);
+
+			$this->assertSame(
+				array(),
+				$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+			);
+	}
+
+	/**
+	 * Tests metadata storage skips CHECK side tables for recoverable PostgreSQL catalog metadata.
+	 */
+	public function test_store_mysql_schema_metadata_skips_side_tables_for_catalog_check_metadata(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) && false === strpos( $sql, 'pg_catalog.pg_class c' ) ) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE metadata.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+					|| 0 === strpos( $sql, 'COMMENT ON CONSTRAINT ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			$driver->store_mysql_schema_metadata(
+				'CREATE TABLE catalog_pg_store_metadata_check_mismatch (
+					id int NOT NULL,
+					score int NOT NULL,
+					PRIMARY KEY (id),
+					CONSTRAINT score_positive CHECK (score >= 0)
+				)'
+			);
+
+			$this->assertSame(
+				array(),
+				$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+			);
+	}
+
+	/**
+	 * Tests CREATE TABLE uses the selected PostgreSQL catalog schema.
+	 */
+	public function test_create_table_uses_current_postgresql_catalog_schema_after_use(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE TABLE.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'CREATE UNIQUE INDEX ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertSame( array( 'wptests', 'plugin_schema' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				"CREATE TABLE plugin_catalog_create (
+					id int NOT NULL,
+					slug varchar(191) NOT NULL DEFAULT 'draft' COMMENT 'Slug note',
+					PRIMARY KEY (id),
+					UNIQUE KEY slug_lookup (slug) COMMENT 'Slug lookup note'
+				) COMMENT='Catalog table note'"
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TABLE "plugin_schema"."plugin_catalog_create"', $sql[0] );
+		$this->assertContains( 'CREATE UNIQUE INDEX "plugin_schema"."plugin_catalog_create__slug_lookup" ON "plugin_schema"."plugin_catalog_create" ("slug")', $sql );
+		$this->assertContains( 'COMMENT ON TABLE "plugin_schema"."plugin_catalog_create" IS \'Catalog table note\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "plugin_schema"."plugin_catalog_create"."slug" IS \'Slug note\'', $sql );
+		$this->assertContains( 'COMMENT ON INDEX "plugin_schema"."plugin_catalog_create__slug_lookup" IS \'Slug lookup note\'', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE stores MySQL CHECK text in catalog comments.
+	 */
+	public function test_create_table_json_valid_check_uses_postgresql_catalog_comment_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed CREATE TABLE and metadata queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( 0 === strpos( $sql, 'CREATE TABLE "catalog_json_check" ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'DO ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+						false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+					throw new RuntimeException( 'Hidden CHECK metadata table access was not expected for catalog-backed JSON CHECK.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) && false !== strpos( $sql, 'current_schema()' ) ) {
+					$table_name  = str_replace( '"', '""', (string) ( $params[0] ?? '' ) );
+					$column_name = (string) ( $params[1] ?? '' );
+					$columns     = parent::query( sprintf( 'PRAGMA table_info("%s")', $table_name ) )->fetchAll( PDO::FETCH_ASSOC );
+					foreach ( $columns as $column ) {
+						if ( (string) ( $column['name'] ?? '' ) === $column_name ) {
+							return parent::query( 'SELECT 1' );
+						}
+					}
+
+					return parent::query( 'SELECT 0' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_information_schema_fixture( $driver );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE TABLE catalog_json_check (data JSON CHECK (json_valid(data)))' )
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertContains(
+			'COMMENT ON CONSTRAINT "catalog_json_check_chk_1" ON "public"."catalog_json_check" IS \'__wp_mysql_check_clause:json_valid(data)\'',
+			$sql
+		);
+
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
 	 * Tests CREATE TABLE ... AS SELECT is translated and stores MySQL-facing metadata.
 	 */
 	public function test_create_table_as_select_translates_and_stores_metadata(): void {
@@ -27477,6 +43953,274 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$this->get_mysql_column_metadata_rows( $driver, 'ctas_copy' )
 		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE ... AS SELECT uses catalogs without metadata tables.
+	 */
+	public function test_create_table_as_select_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CTAS.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$column_name = strtolower( (string) ( $params[2] ?? '' ) );
+					if ( false !== strpos( $sql, 'AS collation_name' ) ) {
+						return parent::query(
+							'SELECT ? AS collation_name',
+							array( 'name' === $column_name ? 'utf8mb4_unicode_ci' : null )
+						);
+					}
+
+					return parent::query(
+						'SELECT ? AS column_type',
+						array( 'id' === $column_name ? 'int' : 'text' )
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON TABLE ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE ctas_pg_source (id INTEGER, name TEXT)' );
+		$pdo->exec( "INSERT INTO ctas_pg_source (id, name) VALUES (1, 'one'), (2, 'two')" );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query( "CREATE TABLE ctas_pg_copy COMMENT = 'Copied table' AS SELECT `id`, `name` FROM `ctas_pg_source` WHERE `id` > 1" )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE TABLE "public"."ctas_pg_copy" AS SELECT "id", "name" FROM "ctas_pg_source" WHERE "id" > 1',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON TABLE "public"."ctas_pg_copy" IS \'Copied table\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$rows = $driver->query( 'SELECT * FROM ctas_pg_copy' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'   => '2',
+					'name' => 'two',
+				),
+			),
+			$rows
+		);
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query( 'CREATE TABLE ctas_pg_plain AS SELECT `id` FROM `ctas_pg_source` WHERE `id` = 1' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE TABLE "public"."ctas_pg_plain" AS SELECT "id" FROM "ctas_pg_source" WHERE "id" = 1',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests CREATE TABLE ... AS SELECT uses the selected PostgreSQL catalog schema.
+	 */
+	public function test_create_table_as_select_uses_current_postgresql_catalog_schema_after_use(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CTAS.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query( "CREATE TABLE ctas_plugin_copy COMMENT = 'Copied table' AS SELECT 1 AS id" )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'CREATE TABLE "plugin_schema"."ctas_plugin_copy" AS SELECT 1 AS id',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON TABLE "plugin_schema"."ctas_plugin_copy" IS \'Copied table\'',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 	}
 
 	/**
@@ -27665,6 +44409,338 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed CREATE TABLE ... AS SELECT with definitions uses catalogs.
+	 */
+	public function test_create_table_select_with_definitions_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CTAS definitions.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							'bigint(20) unsigned' AS column_type
+						UNION ALL
+						SELECT
+							'name' AS column_name,
+							'varchar(20)' AS column_type"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'id' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'DO ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE "public"."ctas_pg_defined"' )
+					|| 0 === strpos( $sql, 'INSERT INTO "public"."ctas_pg_defined"' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE ctas_pg_defined_source (id INTEGER, name TEXT, score INTEGER)' );
+		$pdo->exec( "INSERT INTO ctas_pg_defined_source (id, name, score) VALUES (1, 'one', 1), (2, 'two', 2)" );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				"CREATE TABLE ctas_pg_defined (
+					id bigint(20) unsigned NOT NULL,
+					name varchar(20) NOT NULL COMMENT 'Copied name',
+					PRIMARY KEY (id)
+				) COMMENT='copy'
+				AS SELECT id, name FROM ctas_pg_defined_source WHERE score > 1"
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TABLE "ctas_pg_defined"', $sql[0] );
+		$this->assertContains(
+			'INSERT INTO "public"."ctas_pg_defined" ("id", "name") SELECT id, name FROM ctas_pg_defined_source WHERE score > 1',
+			$sql
+		);
+		$this->assertContains( 'COMMENT ON TABLE "public"."ctas_pg_defined" IS \'copy\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "public"."ctas_pg_defined"."name" IS \'Copied name\'', $sql );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed temporary CTAS with definitions uses catalogs.
+	 */
+	public function test_create_temporary_table_select_with_definitions_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured temporary-schema checks.
+			 *
+			 * @var array[]
+			 */
+			private $temporary_schema_checks = array();
+
+			/**
+			 * Captured metadata-table catalog checks.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed temporary catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed temporary CTAS definitions.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					$this->temporary_schema_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'ctas_pg_temp_defined' === (string) ( $params[0] ?? '' )
+							? "SELECT 'pg_temp_5' AS nspname"
+							: 'SELECT NULL AS nspname WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							'int' AS column_type
+						UNION ALL
+						SELECT
+							'name' AS column_name,
+							'varchar(20)' AS column_type"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'id' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON ' ) || 0 === strpos( $sql, 'DO ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TEMPORARY TABLE "ctas_pg_temp_defined"' )
+					|| 0 === strpos( $sql, 'INSERT INTO "ctas_pg_temp_defined"' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured temporary-schema checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_temporary_schema_checks(): array {
+				return $this->temporary_schema_checks;
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				"CREATE TEMPORARY TABLE ctas_pg_temp_defined (
+					id int NOT NULL,
+					name varchar(20) NOT NULL COMMENT 'Copied name',
+					PRIMARY KEY (id)
+				) COMMENT='copy'
+				AS SELECT 2 AS id, 'two' AS name"
+			)
+		);
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TEMPORARY TABLE "ctas_pg_temp_defined"', $sql[0] );
+		$this->assertContains(
+			'INSERT INTO "ctas_pg_temp_defined" ("id", "name") SELECT 2 AS id, \'two\' AS name',
+			$sql
+		);
+		$this->assertContains( 'COMMENT ON TABLE "pg_temp_5"."ctas_pg_temp_defined" IS \'copy\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "pg_temp_5"."ctas_pg_temp_defined"."name" IS \'Copied name\'', $sql );
+		$this->assertNotEmpty( $connection->get_temporary_schema_checks() );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
 	 * Tests CREATE TABLE ... SELECT accepts main database-qualified targets.
 	 */
 	public function test_create_table_select_main_database_qualified_target_translates(): void {
@@ -27837,6 +44913,531 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		} catch ( PDOException $e ) {
 			$this->assertNotSame( '', $e->getMessage() );
 		}
+	}
+
+	/**
+	 * Tests PostgreSQL-backed CREATE TABLE ... LIKE syncs catalog comments without metadata tables.
+	 */
+	public function test_create_table_like_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE LIKE.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'int' AS column_type,
+							NULL AS character_set_name,
+							NULL AS collation_name,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra,
+							'' AS column_comment
+						UNION ALL
+						SELECT
+							'title' AS column_name,
+							2 AS ordinal_position,
+							'varchar(191)' AS column_type,
+							'utf8mb4' AS character_set_name,
+							'utf8mb4_unicode_ci' AS collation_name,
+							'NO' AS is_nullable,
+							'' AS column_default,
+							'' AS extra,
+							'Title note' AS column_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'id' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment
+						UNION ALL
+						SELECT
+							'title_lookup' AS key_name,
+							2 AS index_ordinal,
+							1 AS seq_in_index,
+							'title' AS column_name,
+							'1' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'Title lookup note' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+					return parent::query(
+						"SELECT '__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=\nTemplate note' AS table_comment"
+					);
+				}
+
+				if (
+					0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual( 0, $driver->query( 'CREATE TABLE like_pg_copy LIKE like_pg_source' ) );
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TABLE "like_pg_copy"', $sql[0] );
+		$this->assertContains( 'CREATE INDEX "like_pg_copy__title_lookup" ON "like_pg_copy" ("title")', $sql );
+		$all_sql = implode( "\n", $sql );
+		$this->assertStringContainsString( 'COMMENT ON TABLE "public"."like_pg_copy" IS ', $all_sql );
+		$this->assertStringContainsString( '__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=', $all_sql );
+		$this->assertStringContainsString( 'Template note', $all_sql );
+			$this->assertStringContainsString( 'COMMENT ON COLUMN "public"."like_pg_copy"."title" IS ', $all_sql );
+			$this->assertStringContainsString( 'Title note', $all_sql );
+		$this->assertContains( 'COMMENT ON INDEX "public"."like_pg_copy__title_lookup" IS \'Title lookup note\'', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $all_sql );
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed temporary CREATE TABLE ... LIKE uses catalogs without metadata tables.
+	 */
+	public function test_create_temporary_table_like_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured temporary-schema checks.
+			 *
+			 * @var array[]
+			 */
+			private $temporary_schema_checks = array();
+
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog and temporary CREATE LIKE queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed temporary CREATE LIKE.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					$this->temporary_schema_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						'like_temp_pg_copy' === (string) ( $params[0] ?? '' )
+							? "SELECT 'pg_temp_5' AS nspname"
+							: 'SELECT NULL AS nspname WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'int' AS column_type,
+							NULL AS character_set_name,
+							NULL AS collation_name,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra,
+							'' AS column_comment
+						UNION ALL
+						SELECT
+							'slug' AS column_name,
+							2 AS ordinal_position,
+							'varchar(191)' AS column_type,
+							'utf8mb4' AS character_set_name,
+							'utf8mb4_unicode_ci' AS collation_name,
+							'NO' AS is_nullable,
+							'' AS column_default,
+							'' AS extra,
+							'' AS column_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'id' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment
+						UNION ALL
+						SELECT
+							'slug_lookup' AS key_name,
+							2 AS index_ordinal,
+							1 AS seq_in_index,
+							'slug' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+					return parent::query( "SELECT '' AS table_comment" );
+				}
+
+				if ( 0 === strpos( $sql, 'COMMENT ON ' ) ) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured temporary-schema checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_temporary_schema_checks(): array {
+				return $this->temporary_schema_checks;
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertGreaterThanOrEqual( 0, $driver->query( 'CREATE TEMPORARY TABLE like_temp_pg_copy LIKE like_temp_pg_source' ) );
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TEMPORARY TABLE "like_temp_pg_copy"', $sql[0] );
+		$this->assertContains( 'CREATE UNIQUE INDEX "like_temp_pg_copy__slug_lookup" ON "like_temp_pg_copy" ("slug")', $sql );
+		$this->assertNotEmpty( $connection->get_temporary_schema_checks() );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Tests CREATE TABLE ... LIKE uses the selected PostgreSQL catalog schema.
+	 */
+	public function test_create_table_like_uses_current_postgresql_catalog_schema_after_use(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Catalog checks for existing metadata side tables.
+			 *
+			 * @var array[]
+			 */
+			private $metadata_table_catalog_checks = array();
+
+			/**
+			 * Execute fixture-backed catalog/comment queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if (
+						false !== strpos( $sql, $metadata_table )
+						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
+					) {
+						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE LIKE.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
+					$this->metadata_table_catalog_checks[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'int' AS column_type,
+							NULL AS character_set_name,
+							NULL AS collation_name,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'' AS extra,
+							'' AS column_comment
+						UNION ALL
+						SELECT
+							'title' AS column_name,
+							2 AS ordinal_position,
+							'varchar(191)' AS column_type,
+							'utf8mb4' AS character_set_name,
+							'utf8mb4_unicode_ci' AS collation_name,
+							'NO' AS is_nullable,
+							'' AS column_default,
+							'' AS extra,
+							'Title note' AS column_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class t' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT
+							'PRIMARY' AS key_name,
+							1 AS index_ordinal,
+							1 AS seq_in_index,
+							'id' AS column_name,
+							'0' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'' AS index_comment
+						UNION ALL
+						SELECT
+							'title_lookup' AS key_name,
+							2 AS index_ordinal,
+							1 AS seq_in_index,
+							'title' AS column_name,
+							'1' AS non_unique,
+							'BTREE' AS index_type,
+							'A' AS collation,
+							NULL AS sub_part,
+							'Title lookup note' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+					return parent::query( "SELECT 'Template note' AS table_comment" );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE TABLE ' )
+					|| 0 === strpos( $sql, 'CREATE INDEX ' )
+					|| 0 === strpos( $sql, 'COMMENT ON TABLE ' )
+					|| 0 === strpos( $sql, 'COMMENT ON COLUMN ' )
+					|| 0 === strpos( $sql, 'COMMENT ON INDEX ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured metadata-table catalog checks.
+			 *
+			 * @return array[] Catalog checks.
+			 */
+			public function get_metadata_table_catalog_checks(): array {
+				return $this->metadata_table_catalog_checks;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+
+		$this->assertGreaterThanOrEqual( 0, $driver->query( 'CREATE TABLE like_plugin_copy LIKE like_plugin_source' ) );
+
+		$sql = array_column( $driver->get_last_postgresql_queries(), 'sql' );
+		$this->assertStringContainsString( 'CREATE TABLE "plugin_schema"."like_plugin_copy"', $sql[0] );
+		$this->assertContains( 'CREATE INDEX "plugin_schema"."like_plugin_copy__title_lookup" ON "plugin_schema"."like_plugin_copy" ("title")', $sql );
+		$this->assertContains( 'COMMENT ON TABLE "plugin_schema"."like_plugin_copy" IS \'Template note\'', $sql );
+		$this->assertContains( 'COMMENT ON COLUMN "plugin_schema"."like_plugin_copy"."title" IS \'Title note\'', $sql );
+		$this->assertContains( 'COMMENT ON INDEX "plugin_schema"."like_plugin_copy__title_lookup" IS \'Title lookup note\'', $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 	}
 
 	/**
@@ -28129,6 +45730,91 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			'DROP VIEW "qualified_view"',
 			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
+	 * Tests VIEW DDL uses the selected PostgreSQL catalog schema.
+	 */
+	public function test_view_ddl_uses_current_postgresql_catalog_schema_after_use(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed catalog/view DDL queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'FROM information_schema.schemata s' ) ) {
+					return parent::query(
+						'plugin_schema' === (string) ( $params[1] ?? '' )
+							? 'SELECT 1'
+							: 'SELECT 1 WHERE 0 = 1'
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if (
+					0 === strpos( $sql, 'CREATE VIEW ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE VIEW ' )
+					|| 0 === strpos( $sql, 'DROP VIEW ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$this->assertSame( 0, $driver->query( 'USE plugin_schema' ) );
+		$this->assertSame( array( 'wptests', 'plugin_schema' ), $driver->get_last_postgresql_queries()[0]['params'] );
+
+		$this->assertSame( 0, $driver->query( 'CREATE VIEW plugin_view AS SELECT 1 AS id' ) );
+		$this->assertSame(
+			'CREATE VIEW "plugin_schema"."plugin_view" AS SELECT 1 AS id',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$this->assertSame( 0, $driver->query( 'CREATE OR REPLACE VIEW plugin_schema.explicit_view AS SELECT 2 AS id' ) );
+		$this->assertSame(
+			'CREATE OR REPLACE VIEW "plugin_schema"."explicit_view" AS SELECT 2 AS id',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$this->assertSame( 0, $driver->query( 'DROP VIEW IF EXISTS plugin_view, plugin_schema.explicit_view RESTRICT' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'DROP VIEW IF EXISTS "plugin_schema"."plugin_view"',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'DROP VIEW IF EXISTS "plugin_schema"."explicit_view"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
 		);
 	}
 
@@ -30315,6 +48001,292 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Create a SQLite PDO fixture that reports pgsql for catalog-branch selection.
+	 *
+	 * @return PDO SQLite PDO that reports the pgsql driver name.
+	 */
+	private function create_pgsql_reporting_sqlite_pdo(): PDO {
+		return new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql while keeping SQLite execution for local tests.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+	}
+
+	/**
+	 * Creates a pgsql-reporting SQLite driver with catalog unique-key fixtures.
+	 *
+	 * @return array{0: WP_PostgreSQL_Driver, 1: WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection, 2: PDO}
+	 */
+	private function create_pgsql_catalog_unique_index_driver(): array {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured unique-index catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_index_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden MySQL metadata table access was not expected for catalog-backed unique indexes.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					return parent::query(
+						"SELECT 'pk' AS column_name, 1 AS ordinal_position, 'integer' AS column_type, 'NO' AS is_nullable, NULL AS column_default, '' AS extra
+						UNION ALL SELECT 'slug', 2, 'text', 'NO', NULL, ''
+						UNION ALL SELECT 'value', 3, 'text', 'NO', NULL, ''"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->catalog_index_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT 'slug_key' AS key_name, 'slug' AS column_name, 'BTREE' AS index_type, NULL AS sub_part"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured unique-index catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_index_queries(): array {
+				return $this->catalog_index_queries;
+			}
+		};
+
+		return array( new WP_PostgreSQL_Driver( $connection, 'wptests' ), $connection, $pdo );
+	}
+
+	/**
+	 * Creates a pgsql-reporting SQLite driver with catalog identity and unique-key fixtures.
+	 *
+	 * @return array{0: WP_PostgreSQL_Driver, 1: WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection, 2: PDO}
+	 */
+	private function create_pgsql_catalog_identity_unique_upsert_driver(): array {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured column catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_column_queries = array();
+
+			/**
+			 * Captured unique-index catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_index_queries = array();
+
+			/**
+			 * Number of sequence repair queries executed.
+			 *
+			 * @var int
+			 */
+			private $sequence_sync_query_count = 0;
+
+			/**
+			 * Execute fixture-backed catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden MySQL metadata table access was not expected for catalog-backed identity upserts.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.setval' ) ) {
+					++$this->sequence_sync_query_count;
+					return parent::query( 'SELECT 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_column_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( false !== strpos( $sql, 'seq_ns.nspname AS sequence_schema' ) ) {
+						return parent::query(
+							"SELECT
+								'id' AS column_name,
+								'bigint' AS data_type,
+								'YES' AS is_identity,
+								NULL AS column_default,
+								'bigint(20)' AS mysql_column_type,
+								'auto_increment' AS mysql_extra,
+								'public' AS sequence_schema,
+								'wp_acid_upsert_id_seq' AS sequence_name"
+						);
+					}
+
+					if ( false !== strpos( $sql, 'LOWER(c.column_name) = LOWER(?)' ) ) {
+						return parent::query(
+							'SELECT column_type
+							FROM (
+								SELECT \'id\' AS column_name, \'bigint(20)\' AS column_type
+								UNION ALL SELECT \'slug\', \'varchar(191)\'
+								UNION ALL SELECT \'hits\', \'int(11)\'
+								UNION ALL SELECT \'updated_at\', \'datetime\'
+							) catalog_columns
+							WHERE LOWER(column_name) = LOWER(?)',
+							array( $params[2] ?? '' )
+						);
+					}
+
+					return parent::query(
+						"SELECT
+							'id' AS column_name,
+							1 AS ordinal_position,
+							'bigint(20)' AS column_type,
+							'NO' AS is_nullable,
+							NULL AS column_default,
+							'auto_increment' AS extra
+						UNION ALL
+						SELECT 'slug', 2, 'varchar(191)', 'NO', NULL, ''
+						UNION ALL
+						SELECT 'hits', 3, 'int(11)', 'NO', '0', ''
+						UNION ALL
+						SELECT 'updated_at', 4, 'datetime', 'NO', NULL, ''"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					$this->catalog_index_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query(
+						"SELECT 'slug' AS key_name, 'slug' AS column_name, 'BTREE' AS index_type, NULL AS sub_part"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured column catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_column_queries(): array {
+				return $this->catalog_column_queries;
+			}
+
+			/**
+			 * Get captured unique-index catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_index_queries(): array {
+				return $this->catalog_index_queries;
+			}
+
+			/**
+			 * Get the number of sequence repair queries executed.
+			 *
+			 * @return int Sequence repair query count.
+			 */
+			public function get_sequence_sync_query_count(): int {
+				return $this->sequence_sync_query_count;
+			}
+		};
+
+		return array( new WP_PostgreSQL_Driver( $connection, 'wptests' ), $connection, $pdo );
+	}
+
+	/**
 	 * Creates a small table for GROUP_CONCAT behavior tests.
 	 *
 	 * @param WP_PostgreSQL_Driver $driver Driver under test.
@@ -31951,6 +49923,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				UNIQUE KEY option_name (option_name),
 				KEY autoload (autoload)
 			)"
+		);
+	}
+
+	/**
+	 * Get the WordPress core schema used for catalog-recoverability coverage.
+	 *
+	 * @return string MySQL CREATE TABLE statements.
+	 */
+	private function get_wordpress_core_schema(): string {
+		return implode(
+			' ',
+			array(
+				"CREATE TABLE wp_users ( ID bigint(20) unsigned NOT NULL auto_increment, user_login varchar(60) NOT NULL default '', user_pass varchar(255) NOT NULL default '', user_nicename varchar(50) NOT NULL default '', user_email varchar(100) NOT NULL default '', user_url varchar(100) NOT NULL default '', user_registered datetime NOT NULL default '0000-00-00 00:00:00', user_activation_key varchar(255) NOT NULL default '', user_status int(11) NOT NULL default '0', display_name varchar(250) NOT NULL default '', PRIMARY KEY (ID), KEY user_login_key (user_login), KEY user_nicename (user_nicename), KEY user_email (user_email) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_usermeta ( umeta_id bigint(20) unsigned NOT NULL auto_increment, user_id bigint(20) unsigned NOT NULL default '0', meta_key varchar(255) default NULL, meta_value longtext, PRIMARY KEY (umeta_id), KEY user_id (user_id), KEY meta_key (meta_key(191)) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_termmeta ( meta_id bigint(20) unsigned NOT NULL auto_increment, term_id bigint(20) unsigned NOT NULL default '0', meta_key varchar(255) default NULL, meta_value longtext, PRIMARY KEY (meta_id), KEY term_id (term_id), KEY meta_key (meta_key(191)) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_terms ( term_id bigint(20) unsigned NOT NULL auto_increment, name varchar(200) NOT NULL default '', slug varchar(200) NOT NULL default '', term_group bigint(10) NOT NULL default 0, PRIMARY KEY (term_id), KEY slug (slug(191)), KEY name (name(191)) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_term_taxonomy ( term_taxonomy_id bigint(20) unsigned NOT NULL auto_increment, term_id bigint(20) unsigned NOT NULL default 0, taxonomy varchar(32) NOT NULL default '', description longtext NOT NULL, parent bigint(20) unsigned NOT NULL default 0, count bigint(20) NOT NULL default 0, PRIMARY KEY (term_taxonomy_id), UNIQUE KEY term_id_taxonomy (term_id,taxonomy), KEY taxonomy (taxonomy) ) DEFAULT CHARACTER SET utf8mb4;",
+				'CREATE TABLE wp_term_relationships ( object_id bigint(20) unsigned NOT NULL default 0, term_taxonomy_id bigint(20) unsigned NOT NULL default 0, term_order int(11) NOT NULL default 0, PRIMARY KEY (object_id,term_taxonomy_id), KEY term_taxonomy_id (term_taxonomy_id) ) DEFAULT CHARACTER SET utf8mb4;',
+				"CREATE TABLE wp_commentmeta ( meta_id bigint(20) unsigned NOT NULL auto_increment, comment_id bigint(20) unsigned NOT NULL default '0', meta_key varchar(255) default NULL, meta_value longtext, PRIMARY KEY (meta_id), KEY comment_id (comment_id), KEY meta_key (meta_key(191)) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_comments ( comment_ID bigint(20) unsigned NOT NULL auto_increment, comment_post_ID bigint(20) unsigned NOT NULL default '0', comment_author tinytext NOT NULL, comment_author_email varchar(100) NOT NULL default '', comment_author_url varchar(200) NOT NULL default '', comment_author_IP varchar(100) NOT NULL default '', comment_date datetime NOT NULL default '0000-00-00 00:00:00', comment_date_gmt datetime NOT NULL default '0000-00-00 00:00:00', comment_content text NOT NULL, comment_karma int(11) NOT NULL default '0', comment_approved varchar(20) NOT NULL default '1', comment_agent varchar(255) NOT NULL default '', comment_type varchar(20) NOT NULL default 'comment', comment_parent bigint(20) unsigned NOT NULL default '0', user_id bigint(20) unsigned NOT NULL default '0', PRIMARY KEY (comment_ID), KEY comment_post_ID (comment_post_ID), KEY comment_approved_date_gmt (comment_approved,comment_date_gmt), KEY comment_date_gmt (comment_date_gmt), KEY comment_parent (comment_parent), KEY comment_author_email (comment_author_email(10)) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_links ( link_id bigint(20) unsigned NOT NULL auto_increment, link_url varchar(255) NOT NULL default '', link_name varchar(255) NOT NULL default '', link_image varchar(255) NOT NULL default '', link_target varchar(25) NOT NULL default '', link_description varchar(255) NOT NULL default '', link_visible varchar(20) NOT NULL default 'Y', link_owner bigint(20) unsigned NOT NULL default '1', link_rating int(11) NOT NULL default '0', link_updated datetime NOT NULL default '0000-00-00 00:00:00', link_rel varchar(255) NOT NULL default '', link_notes mediumtext NOT NULL, link_rss varchar(255) NOT NULL default '', PRIMARY KEY (link_id), KEY link_visible (link_visible) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_options ( option_id bigint(20) unsigned NOT NULL auto_increment, option_name varchar(191) NOT NULL default '', option_value longtext NOT NULL, autoload varchar(20) NOT NULL default 'yes', PRIMARY KEY (option_id), UNIQUE KEY option_name (option_name), KEY autoload (autoload) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_postmeta ( meta_id bigint(20) unsigned NOT NULL auto_increment, post_id bigint(20) unsigned NOT NULL default '0', meta_key varchar(255) default NULL, meta_value longtext, PRIMARY KEY (meta_id), KEY post_id (post_id), KEY meta_key (meta_key(191)) ) DEFAULT CHARACTER SET utf8mb4;",
+				"CREATE TABLE wp_posts ( ID bigint(20) unsigned NOT NULL auto_increment, post_author bigint(20) unsigned NOT NULL default '0', post_date datetime NOT NULL default '0000-00-00 00:00:00', post_date_gmt datetime NOT NULL default '0000-00-00 00:00:00', post_content longtext NOT NULL, post_title text NOT NULL, post_excerpt text NOT NULL, post_status varchar(20) NOT NULL default 'publish', comment_status varchar(20) NOT NULL default 'open', ping_status varchar(20) NOT NULL default 'open', post_password varchar(255) NOT NULL default '', post_name varchar(200) NOT NULL default '', to_ping text NOT NULL, pinged text NOT NULL, post_modified datetime NOT NULL default '0000-00-00 00:00:00', post_modified_gmt datetime NOT NULL default '0000-00-00 00:00:00', post_content_filtered longtext NOT NULL, post_parent bigint(20) unsigned NOT NULL default '0', guid varchar(255) NOT NULL default '', menu_order int(11) NOT NULL default '0', post_type varchar(20) NOT NULL default 'post', post_mime_type varchar(100) NOT NULL default '', comment_count bigint(20) NOT NULL default '0', PRIMARY KEY (ID), KEY post_name (post_name(191)), KEY type_status_date (post_type,post_status,post_date,ID), KEY post_parent (post_parent), KEY post_author (post_author) ) DEFAULT CHARACTER SET utf8mb4;",
+			)
 		);
 	}
 
