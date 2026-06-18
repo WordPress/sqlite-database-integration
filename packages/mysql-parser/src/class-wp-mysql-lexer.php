@@ -1354,11 +1354,12 @@ class WP_MySQL_Lexer {
 		// Function keywords (declared with SYM_FN in MySQL's lex.h) are keywords
 		// only when directly followed by an opening parenthesis.
 		if ( isset( self::FUNCTIONS[ $word ] ) ) {
-			// Skip any whitespace character if the SQL mode says they should be ignored.
+			// Keep ignored whitespace outside the current token range.
+			$peek = $this->bytes_already_read;
 			if ( $this->is_sql_mode_active( self::SQL_MODE_IGNORE_SPACE ) ) {
-				$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
+				$peek += strspn( $this->sql, self::WHITESPACE_MASK, $peek );
 			}
-			if ( '(' !== ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
+			if ( '(' !== ( $this->sql[ $peek ] ?? null ) ) {
 				return self::IDENTIFIER;
 			}
 		}

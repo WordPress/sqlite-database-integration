@@ -904,12 +904,13 @@ impl WpMySqlNativeLexer {
         }
 
         if lex::is_function_token(token_type) {
+            let mut peek = self.bytes_already_read;
             if self.is_sql_mode_active(SQL_MODE_IGNORE_SPACE) {
-                self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                peek = span_while(&self.sql, peek, |byte| {
                     byte_in(byte, lex::WHITESPACE_MASK.as_bytes())
                 });
             }
-            if self.byte_at(self.bytes_already_read) != Some(b'(') {
+            if self.byte_at(peek) != Some(b'(') {
                 return lex::IDENTIFIER;
             }
         }

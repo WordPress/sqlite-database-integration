@@ -422,6 +422,38 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	public function test_ignore_space_preserves_function_name_ranges(): void {
+		// Without "(", COUNT is an identifier whose range excludes trailing whitespace.
+		$sql    = 'SELECT COUNT FROM t';
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $tokens[1]->id, $sql );
+		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
+		$this->assertSame( 5, $tokens[1]->length, $sql );
+		$this->assertSame( 13, $tokens[2]->start, $sql );
+
+		$sql    = "SELECT COUNT\t\n FROM t";
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $tokens[1]->id, $sql );
+		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
+		$this->assertSame( 5, $tokens[1]->length, $sql );
+		$this->assertSame( 15, $tokens[2]->start, $sql );
+
+		// With "(", COUNT is a function whose range still excludes the whitespace.
+		$tokens = ( new WP_MySQL_Lexer( 'SELECT COUNT (1)', 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::COUNT_SYMBOL, $tokens[1]->id );
+		$this->assertSame( 5, $tokens[1]->length );
+		$this->assertSame( WP_MySQL_Lexer::OPEN_PAR_SYMBOL, $tokens[2]->id );
+		$this->assertSame( 13, $tokens[2]->start );
+
+		$sql    = "SELECT COUNT \t\n";
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( WP_MySQL_Lexer::IDENTIFIER, $tokens[1]->id, $sql );
+		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
+		$this->assertSame( 5, $tokens[1]->length, $sql );
+		$this->assertSame( WP_MySQL_Lexer::EOF, $tokens[2]->id, $sql );
+		$this->assertSame( strlen( $sql ), $tokens[2]->start, $sql );
+	}
+
 	/**
 	 * @dataProvider data_ansi_quotes_tokenization
 	 */
