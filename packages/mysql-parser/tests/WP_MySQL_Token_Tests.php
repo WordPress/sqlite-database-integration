@@ -34,6 +34,30 @@ class WP_MySQL_Token_Tests extends TestCase {
 		$this->assertSame( 'a\\nb', $token->get_value() );
 	}
 
+	public function test_get_value_preserves_non_utf8_bytes_in_string_literals(): void {
+		// A quoted literal may legitimately carry non-UTF-8 bytes (binary or
+		// other-charset payloads). Value extraction must return them unchanged
+		// rather than crash on a UTF-8 validation failure.
+		$raw = chr( 0xFF ) . chr( 0xFE );
+		$this->assertSame(
+			$raw,
+			self::first_token( "SELECT '$raw'", 'SINGLE_QUOTED_TEXT' )->get_value()
+		);
+
+		// A backslash escape preceding a non-UTF-8 byte strips the backslash and
+		// keeps the raw byte.
+		$this->assertSame(
+			chr( 0xE9 ),
+			self::first_token( "SELECT '\\" . chr( 0xE9 ) . "'", 'SINGLE_QUOTED_TEXT' )->get_value()
+		);
+
+		// Valid multibyte UTF-8 still round-trips.
+		$this->assertSame(
+			'café 🙂',
+			self::first_token( "SELECT 'café 🙂'", 'SINGLE_QUOTED_TEXT' )->get_value()
+		);
+	}
+
 	public function test_get_value_unquotes_backtick_identifiers(): void {
 		$this->assertSame( 'col name', self::first_token( 'SELECT `col name` FROM t', 'BACK_TICK_QUOTED_ID' )->get_value() );
 	}
