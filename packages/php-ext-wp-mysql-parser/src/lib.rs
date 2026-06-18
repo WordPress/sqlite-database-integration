@@ -784,13 +784,16 @@ impl WpMySqlNativeLexer {
     fn read_quoted_text(&mut self) -> Option<i64> {
         let quote = self.byte_at(self.bytes_already_read)?;
         self.bytes_already_read += 1;
-        let no_backslash_escapes = self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES);
+        let is_identifier_quote =
+            quote == b'`' || (quote == b'"' && self.is_sql_mode_active(SQL_MODE_ANSI_QUOTES));
+        let backslash_is_escape =
+            !is_identifier_quote && !self.is_sql_mode_active(SQL_MODE_NO_BACKSLASH_ESCAPES);
         let mut at = self.bytes_already_read;
 
         loop {
             at = span_until(&self.sql, at, &[quote]);
 
-            if !no_backslash_escapes {
+            if backslash_is_escape {
                 let mut i = 0usize;
                 while at > i && self.byte_at(at - i - 1) == Some(b'\\') {
                     i += 1;
@@ -816,9 +819,10 @@ impl WpMySqlNativeLexer {
         }
 
         self.bytes_already_read = at + 1;
+        if is_identifier_quote {
+            return Some(lex::BACK_TICK_QUOTED_ID);
+        }
         Some(match quote {
-            b'`' => lex::BACK_TICK_QUOTED_ID,
-            b'"' if self.is_sql_mode_active(SQL_MODE_ANSI_QUOTES) => lex::BACK_TICK_QUOTED_ID,
             b'"' => lex::DOUBLE_QUOTED_TEXT,
             _ => lex::SINGLE_QUOTED_TEXT,
         })

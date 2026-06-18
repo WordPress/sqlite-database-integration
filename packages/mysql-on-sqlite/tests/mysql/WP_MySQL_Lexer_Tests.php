@@ -452,6 +452,49 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertSame( WP_MySQL_Lexer::COUNT_SYMBOL, $lexer->get_token()->id );
 	}
 
+	/**
+	 * Quoted identifiers escape delimiters by doubling, not with backslashes.
+	 *
+	 * @dataProvider data_quoted_identifier_backslash
+	 */
+	public function test_quoted_identifiers_treat_backslash_literally(
+		string $sql,
+		array $sql_modes,
+		int $expected_token_id,
+		string $expected_value
+	): void {
+		$lexer = new WP_MySQL_Lexer( $sql, 80038, $sql_modes );
+		$this->assertTrue( $lexer->next_token() );
+
+		$token = $lexer->get_token();
+		$this->assertSame(
+			WP_MySQL_Lexer::get_token_name( $expected_token_id ),
+			$token->get_name(),
+			$sql
+		);
+		$this->assertSame( $expected_value, $token->get_value(), $sql );
+	}
+
+	public function data_quoted_identifier_backslash(): array {
+		$bs = chr( 92 ); // A single backslash.
+		$bt = '`';
+		$dq = '"';
+		$sq = "'";
+		return array(
+			// Backtick identifiers: backslash is a literal character.
+			'backtick keeps backslash-n literal'    => array( $bt . 'a' . $bs . 'nb' . $bt, array(), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bs . 'nb' ),
+			'backtick allows trailing backslash'    => array( $bt . 'a' . $bs . $bt, array(), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bs ),
+			'backtick escapes only by doubling'     => array( $bt . 'a' . $bt . $bt . 'b' . $bt, array(), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bt . 'b' ),
+
+			// ANSI-quoted identifiers behave like backtick identifiers.
+			'ansi-quoted keeps backslash literal'   => array( $dq . 'a' . $bs . 'nb' . $dq, array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bs . 'nb' ),
+			'ansi-quoted allows trailing backslash' => array( $dq . 'a' . $bs . $dq, array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, 'a' . $bs ),
+
+			// String literals still process backslash escapes.
+			'single-quoted string escapes newline'  => array( $sq . 'a' . $bs . 'nb' . $sq, array(), WP_MySQL_Lexer::SINGLE_QUOTED_TEXT, "a\nb" ),
+		);
+	}
+
 	private function get_token_names( array $token_types ): array {
 		return array_map(
 			function ( $token_type ) {

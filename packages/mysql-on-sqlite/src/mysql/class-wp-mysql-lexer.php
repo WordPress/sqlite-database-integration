@@ -2905,15 +2905,30 @@ class WP_MySQL_Lexer {
 	 *
 	 * Rules:
 	 *   1. Quotes can be escaped by doubling them ('', "", ``).
-	 *   2. Backslashes escape the next character, unless NO_BACKSLASH_ESCAPES is set.
+	 *   2. In string literals, backslashes escape the next character,
+	 *      unless the NO_BACKSLASH_ESCAPES SQL mode is set.
+	 *   3. In identifiers, backslashes are always literal and never escape.
 	 */
 	private function read_quoted_text(): ?int {
 		$quote                     = $this->sql[ $this->bytes_already_read ];
 		$this->bytes_already_read += 1; // Consume the quote.
 
-		$no_backslash_escapes = $this->is_sql_mode_active(
-			self::SQL_MODE_NO_BACKSLASH_ESCAPES
-		);
+		/*
+		 * Determine whether the quote opens an identifier or a string literal.
+		 * An identifier is quoted with a backtick or a double quote when the
+		 * ANSI_QUOTES SQL mode is active. Otherwise, it is a string literal.
+		 *
+		 * See: https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_ansi_quotes
+		 */
+		$is_identifier_quote = '`' === $quote
+			|| ( '"' === $quote && $this->is_sql_mode_active( self::SQL_MODE_ANSI_QUOTES ) );
+
+		/*
+		 * Backslash escapes apply only to string literals, and only when the
+		 * NO_BACKSLASH_ESCAPES SQL mode is not set.
+		 */
+		$backslash_is_escape = ! $is_identifier_quote
+			&& ! $this->is_sql_mode_active( self::SQL_MODE_NO_BACKSLASH_ESCAPES );
 
 		// We need to look for the closing quote in a loop, as it can be escaped,
 		// in which case the escape sequence is consumed and the loop continues.
@@ -2926,9 +2941,9 @@ class WP_MySQL_Lexer {
 			$at = $quote_at;
 
 			/*
-			 * By default, quotes can be escaped with a "\".
-			 * When NO_BACKSLASH_ESCAPES SQL mode is active, the "\" treated as
-			 * a regular character.
+			 * In string literals, quotes can be escaped with a backslash. When
+			 * NO_BACKSLASH_ESCAPES SQL mode is active, the backslash is treated
+			 * as a regular character. Identifiers never use backslash escaping.
 			 *
 			 * The quote is escaped only when the number of preceding backslashes
 			 * is odd - "\" is an escape sequence, "\\" is an escaped backslash,
@@ -2939,7 +2954,7 @@ class WP_MySQL_Lexer {
 			 * sits at the very start of the input. The `?? null` covers
 			 * positive out-of-range indexes belt-and-suspenders.
 			 */
-			if ( ! $no_backslash_escapes ) {
+			if ( $backslash_is_escape ) {
 				$i = 0;
 				while ( ( $at - $i - 1 ) >= 0 && '\\' === ( $this->sql[ $at - $i - 1 ] ?? null ) ) {
 					$i += 1;
@@ -2962,22 +2977,10 @@ class WP_MySQL_Lexer {
 
 		$this->bytes_already_read = $at;
 
-		if ( '`' === $quote ) {
+		if ( $is_identifier_quote ) {
 			return self::BACK_TICK_QUOTED_ID;
-		} elseif ( '"' === $quote ) {
-			/*
-			 * With the ANSI_QUOTES SQL mode enabled, MySQL treats double quotes
-			 * as identifier delimiters. Match this behavior by using the same token
-			 * type as for backtick-quoted identifiers.
-			 *
-			 * See: https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_ansi_quotes
-			 */
-			return $this->is_sql_mode_active( self::SQL_MODE_ANSI_QUOTES )
-				? self::BACK_TICK_QUOTED_ID
-				: self::DOUBLE_QUOTED_TEXT;
-		} else {
-			return self::SINGLE_QUOTED_TEXT;
 		}
+		return '"' === $quote ? self::DOUBLE_QUOTED_TEXT : self::SINGLE_QUOTED_TEXT;
 	}
 
 	private function read_line_comment(): int {
