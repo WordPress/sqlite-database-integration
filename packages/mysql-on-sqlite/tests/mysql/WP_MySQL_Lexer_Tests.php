@@ -398,6 +398,43 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider data_ansi_quotes_tokenization
+	 */
+	public function test_ansi_quotes_changes_double_quote_tokenization(
+		string $sql,
+		array $sql_modes,
+		int $expected_token_id
+	): void {
+		$lexer = new WP_MySQL_Lexer( $sql, 80038, $sql_modes );
+		$this->assertTrue( $lexer->next_token() );
+		$this->assertSame(
+			WP_MySQL_Lexer::get_token_name( $expected_token_id ),
+			$lexer->get_token()->get_name(),
+			$sql
+		);
+	}
+
+	public function data_ansi_quotes_tokenization(): array {
+		return array(
+			'double quote is a string by default'          => array( '"foo"', array(), WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT ),
+			'double quote is an identifier in ANSI_QUOTES' => array( '"foo"', array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ),
+			'ANSI_QUOTES is case-insensitive'              => array( '"foo"', array( 'ansi_quotes' ), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ),
+			'ANSI_QUOTES with other modes'                 => array( '"foo"', array( 'STRICT_ALL_TABLES', 'ANSI_QUOTES' ), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ),
+			'single quote stays a string in ANSI_QUOTES'   => array( "'foo'", array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::SINGLE_QUOTED_TEXT ),
+			'backtick stays an identifier in ANSI_QUOTES'  => array( '`foo`', array( 'ANSI_QUOTES' ), WP_MySQL_Lexer::BACK_TICK_QUOTED_ID ),
+		);
+	}
+
+	public function test_ansi_quotes_identifier_value_is_unescaped(): void {
+		$lexer = new WP_MySQL_Lexer( '"a""b"', 80038, array( 'ANSI_QUOTES' ) );
+		$this->assertTrue( $lexer->next_token() );
+
+		$token = $lexer->get_token();
+		$this->assertSame( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, $token->id );
+		$this->assertSame( 'a"b', $token->get_value() );
+	}
+
 	private function get_token_names( array $token_types ): array {
 		return array_map(
 			function ( $token_type ) {

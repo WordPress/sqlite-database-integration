@@ -1,7 +1,7 @@
 <?php
 
 $root = dirname( __DIR__, 3 );
-require_once $root . '/src/mysql/class-wp-mysql-lexer.php';
+require_once $root . '/packages/mysql-on-sqlite/src/mysql/class-wp-mysql-lexer.php';
 
 $reflection = new ReflectionClass( 'WP_MySQL_Lexer' );
 $constants  = $reflection->getConstants();

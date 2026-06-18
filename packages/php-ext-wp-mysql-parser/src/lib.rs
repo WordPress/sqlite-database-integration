@@ -24,6 +24,7 @@ const SQL_MODE_HIGH_NOT_PRECEDENCE: i64 = 1;
 const SQL_MODE_PIPES_AS_CONCAT: i64 = 2;
 const SQL_MODE_IGNORE_SPACE: i64 = 4;
 const SQL_MODE_NO_BACKSLASH_ESCAPES: i64 = 8;
+const SQL_MODE_ANSI_QUOTES: i64 = 16;
 const STACK_RED_ZONE: usize = 128 * 1024;
 const STACK_GROW_SIZE: usize = 8 * 1024 * 1024;
 
@@ -137,6 +138,7 @@ fn sql_modes_mask(sql_modes: &[String]) -> i64 {
             "PIPES_AS_CONCAT" => mask |= SQL_MODE_PIPES_AS_CONCAT,
             "IGNORE_SPACE" => mask |= SQL_MODE_IGNORE_SPACE,
             "NO_BACKSLASH_ESCAPES" => mask |= SQL_MODE_NO_BACKSLASH_ESCAPES,
+            "ANSI_QUOTES" => mask |= SQL_MODE_ANSI_QUOTES,
             _ => {}
         }
     }
@@ -813,6 +815,7 @@ impl WpMySqlNativeLexer {
         self.bytes_already_read = at + 1;
         Some(match quote {
             b'`' => lex::BACK_TICK_QUOTED_ID,
+            b'"' if self.is_sql_mode_active(SQL_MODE_ANSI_QUOTES) => lex::BACK_TICK_QUOTED_ID,
             b'"' => lex::DOUBLE_QUOTED_TEXT,
             _ => lex::SINGLE_QUOTED_TEXT,
         })
