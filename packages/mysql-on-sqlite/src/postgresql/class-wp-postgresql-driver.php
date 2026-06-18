@@ -20954,7 +20954,7 @@ ORDER BY table_name';
 		r."COLLATION_CONNECTION" AS "collation_connection",
 		r."DATABASE_COLLATION" AS "Database Collation"
 	FROM (
-' . $this->get_direct_information_schema_routines_relation_sql() . '
+' . $this->get_direct_information_schema_relation_sql( 'routines' ) . '
 	) r
 	WHERE r."ROUTINE_TYPE" = ?
 	ORDER BY r."ROUTINE_SCHEMA", r."ROUTINE_NAME"';
@@ -21281,7 +21281,7 @@ ORDER BY a.pid';
 	p."PLUGIN_LIBRARY" AS "Library",
 	p."PLUGIN_LICENSE" AS "License"
 FROM (
-' . $this->get_direct_information_schema_plugins_relation_sql() . '
+' . $this->get_direct_information_schema_relation_sql( 'plugins' ) . '
 ) p
 ORDER BY p."PLUGIN_NAME"';
 		$stmt = $this->connection->query( $sql );
@@ -21357,7 +21357,7 @@ ORDER BY p."PLUGIN_NAME"';
 	t."COLLATION_CONNECTION" AS "collation_connection",
 	t."DATABASE_COLLATION" AS "Database Collation"
 FROM (
-' . $this->get_direct_information_schema_triggers_relation_sql() . '
+' . $this->get_direct_information_schema_relation_sql( 'triggers' ) . '
 ) t
 WHERE t."TRIGGER_SCHEMA" = ?
 ORDER BY t."TRIGGER_NAME"';
@@ -40451,7 +40451,7 @@ WHERE option_name IN (
 
 		if (
 			! $this->should_use_postgresql_catalog_metadata()
-			&& in_array( $view, explode( ' ', 'files tablespaces_extensions tablespaces innodb_tables innodb_tablespaces innodb_tablespaces_brief innodb_datafiles innodb_indexes innodb_fields innodb_columns partitions user_privileges schema_privileges table_privileges column_privileges role_table_grants role_column_grants role_routine_grants applicable_roles administrable_role_authorizations enabled_roles views parameters columns_extensions table_constraints_extensions schemata_extensions view_table_usage view_routine_usage st_geometry_columns innodb_lock_waits column_statistics' ), true )
+			&& in_array( $view, explode( ' ', 'files tablespaces_extensions tablespaces innodb_tables innodb_tablespaces innodb_tablespaces_brief innodb_datafiles innodb_indexes innodb_fields innodb_columns partitions plugins user_privileges schema_privileges table_privileges column_privileges role_table_grants role_column_grants role_routine_grants applicable_roles administrable_role_authorizations enabled_roles views triggers routines parameters columns_extensions table_constraints_extensions schemata_extensions view_table_usage view_routine_usage st_geometry_columns innodb_lock_waits column_statistics' ), true )
 		) {
 			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
@@ -42180,10 +42180,6 @@ WHERE a.datname IS NULL OR a.datname = current_database()';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_plugins_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'plugins' );
-		}
-
 		return 'SELECT
 	ae.name AS "PLUGIN_NAME",
 	COALESCE(ae.installed_version, ae.default_version, \'\') AS "PLUGIN_VERSION",
@@ -42455,10 +42451,6 @@ WHERE v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_triggers_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'triggers' );
-		}
-
 		return sprintf(
 			'SELECT
 	\'def\' AS "TRIGGER_CATALOG",
@@ -42502,10 +42494,6 @@ WHERE t.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_routines_relation_sql(): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_empty_relation_sql( 'routines' );
-		}
-
 		return sprintf(
 			'SELECT
 	r.specific_name AS "SPECIFIC_NAME",
