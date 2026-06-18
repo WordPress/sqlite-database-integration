@@ -59901,13 +59901,44 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	private function get_postgresql_mysql_common_function_sql( string $function_name, array $argument_sql ): ?string {
 		$count = count( $argument_sql );
 
+		$templates = array(
+			1 => array(
+				'char_length'      => 'CHAR_LENGTH(CAST(%s AS text))',
+				'character_length' => 'CHAR_LENGTH(CAST(%s AS text))',
+				'hex'              => "UPPER(ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'hex'))",
+				'isnull'           => 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END',
+				'lcase'            => 'LOWER(CAST(%s AS text))',
+				'lower'            => 'LOWER(CAST(%s AS text))',
+				'ltrim'            => "LTRIM(CAST(%s AS text), ' ')",
+				'md5'              => 'MD5(CAST(%s AS text))',
+				'reverse'          => 'REVERSE(CAST(%s AS text))',
+				'rtrim'            => "RTRIM(CAST(%s AS text), ' ')",
+				'space'            => "CASE WHEN %1\$s IS NULL THEN NULL ELSE REPEAT(' ', GREATEST(CAST(%1\$s AS integer), 0)) END",
+				'to_base64'        => "ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'base64')",
+				'trim'             => "BTRIM(CAST(%s AS text), ' ')",
+				'ucase'            => 'UPPER(CAST(%s AS text))',
+				'unhex'            => "CONVERT_FROM(DECODE(CAST(%s AS text), 'hex'), 'UTF8')",
+				'upper'            => 'UPPER(CAST(%s AS text))',
+			),
+			2 => array(
+				'ifnull' => 'COALESCE(%s, %s)',
+				'instr'  => 'STRPOS(CAST(%s AS text), CAST(%s AS text))',
+				'left'   => 'LEFT(CAST(%s AS text), CAST(%s AS integer))',
+				'nullif' => 'NULLIF(%s, %s)',
+				'repeat' => 'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL ELSE REPEAT(CAST(%1$s AS text), GREATEST(CAST(%2$s AS integer), 0)) END',
+				'right'  => 'RIGHT(CAST(%s AS text), CAST(%s AS integer))',
+			),
+			3 => array(
+				'replace' => 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))',
+			),
+		);
+		if ( isset( $templates[ $count ][ $function_name ] ) ) {
+			return vsprintf( $templates[ $count ][ $function_name ], $argument_sql );
+		}
+
 		switch ( $function_name ) {
 			case 'ascii':
 				return 1 === $count ? $this->get_postgresql_mysql_ascii_sql( $argument_sql[0] ) : null;
-
-			case 'char_length':
-			case 'character_length':
-				return 1 === $count ? sprintf( 'CHAR_LENGTH(CAST(%s AS text))', $argument_sql[0] ) : null;
 
 			case 'length':
 				return 1 === $count ? $this->get_postgresql_mysql_text_byte_length_sql( $argument_sql[0] ) : null;
@@ -59971,38 +60002,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			case 'schema':
 				return 0 === $count ? $this->connection->quote( $this->db_name ) : null;
 
-			case 'md5':
-				return 1 === $count ? sprintf( 'MD5(CAST(%s AS text))', $argument_sql[0] ) : null;
-
-			case 'left':
-				return 2 === $count ? sprintf( 'LEFT(CAST(%s AS text), CAST(%s AS integer))', $argument_sql[0], $argument_sql[1] ) : null;
-
-			case 'lcase':
-			case 'lower':
-				return 1 === $count ? sprintf( 'LOWER(CAST(%s AS text))', $argument_sql[0] ) : null;
-
-			case 'ltrim':
-				return 1 === $count ? sprintf( "LTRIM(CAST(%s AS text), ' ')", $argument_sql[0] ) : null;
-
-			case 'ucase':
-			case 'upper':
-				return 1 === $count ? sprintf( 'UPPER(CAST(%s AS text))', $argument_sql[0] ) : null;
-
-			case 'right':
-				return 2 === $count ? sprintf( 'RIGHT(CAST(%s AS text), CAST(%s AS integer))', $argument_sql[0], $argument_sql[1] ) : null;
-
 			case 'lpad':
 			case 'rpad':
 				return 3 === $count ? $this->get_postgresql_mysql_pad_sql( $function_name, $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
-
-			case 'rtrim':
-				return 1 === $count ? sprintf( "RTRIM(CAST(%s AS text), ' ')", $argument_sql[0] ) : null;
-
-			case 'trim':
-				return 1 === $count ? sprintf( "BTRIM(CAST(%s AS text), ' ')", $argument_sql[0] ) : null;
-
-			case 'isnull':
-				return 1 === $count ? sprintf( 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END', $argument_sql[0] ) : null;
 
 			case 'is_uuid':
 				return 1 === $count ? $this->get_postgresql_mysql_is_uuid_sql( $argument_sql[0] ) : null;
@@ -60022,14 +60024,8 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			case 'coalesce':
 				return $count > 0 ? sprintf( 'COALESCE(%s)', implode( ', ', $argument_sql ) ) : null;
 
-			case 'ifnull':
-				return 2 === $count ? sprintf( 'COALESCE(%s, %s)', $argument_sql[0], $argument_sql[1] ) : null;
-
 			case 'if':
 				return null;
-
-			case 'nullif':
-				return 2 === $count ? sprintf( 'NULLIF(%s, %s)', $argument_sql[0], $argument_sql[1] ) : null;
 
 			case 'least':
 			case 'greatest':
@@ -60055,26 +60051,14 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			case 'log':
 				return $this->get_postgresql_mysql_log_sql( $argument_sql );
 
-			case 'hex':
-				return 1 === $count ? sprintf( "UPPER(ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'hex'))", $argument_sql[0] ) : null;
-
-			case 'unhex':
-				return 1 === $count ? sprintf( "CONVERT_FROM(DECODE(CAST(%s AS text), 'hex'), 'UTF8')", $argument_sql[0] ) : null;
-
 			case 'from_base64':
 				return 1 === $count ? $this->get_postgresql_mysql_from_base64_sql( $argument_sql[0] ) : null;
-
-			case 'to_base64':
-				return 1 === $count ? sprintf( "ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'base64')", $argument_sql[0] ) : null;
 
 			case 'inet_aton':
 				return 1 === $count ? $this->get_postgresql_mysql_inet_aton_sql( $argument_sql[0] ) : null;
 
 			case 'inet_ntoa':
 				return 1 === $count ? $this->get_postgresql_mysql_inet_ntoa_sql( $argument_sql[0] ) : null;
-
-			case 'instr':
-				return 2 === $count ? sprintf( 'STRPOS(CAST(%s AS text), CAST(%s AS text))', $argument_sql[0], $argument_sql[1] ) : null;
 
 			case 'datediff':
 				return 2 === $count ? $this->get_postgresql_mysql_datediff_sql( $argument_sql[0], $argument_sql[1] ) : null;
@@ -60096,18 +60080,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 			case 'monthname':
 				return 1 === $count ? $this->get_postgresql_mysql_monthname_sql( $argument_sql[0] ) : null;
-
-			case 'replace':
-				return 3 === $count ? sprintf( 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))', $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
-
-			case 'repeat':
-				return 2 === $count ? sprintf( 'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL ELSE REPEAT(CAST(%1$s AS text), GREATEST(CAST(%2$s AS integer), 0)) END', $argument_sql[0], $argument_sql[1] ) : null;
-
-			case 'reverse':
-				return 1 === $count ? sprintf( 'REVERSE(CAST(%s AS text))', $argument_sql[0] ) : null;
-
-			case 'space':
-				return 1 === $count ? sprintf( "CASE WHEN %1\$s IS NULL THEN NULL ELSE REPEAT(' ', GREATEST(CAST(%1\$s AS integer), 0)) END", $argument_sql[0] ) : null;
 
 			case 'regexp':
 				return 2 === $count ? $this->get_postgresql_mysql_regexp_function_sql( $argument_sql[0], $argument_sql[1] ) : null;
