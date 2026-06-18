@@ -40430,125 +40430,23 @@ WHERE option_name IN (
 	 * @return string|null Relation SQL, or null.
 	 */
 	private function get_direct_information_schema_relation_sql( string $view ): ?string {
-		switch ( strtolower( $view ) ) {
-			case 'schemata':
-				return $this->get_direct_information_schema_schemata_relation_sql();
-			case 'tables':
-				return $this->get_direct_information_schema_tables_relation_sql();
-			case 'columns':
-				return $this->get_direct_information_schema_columns_relation_sql();
-			case 'columns_extensions':
-				return $this->get_direct_information_schema_columns_extensions_relation_sql();
-			case 'statistics':
-				return $this->get_direct_information_schema_statistics_relation_sql();
-			case 'column_statistics':
-				return $this->get_direct_information_schema_column_statistics_relation_sql();
-			case 'table_constraints':
-				return $this->get_direct_information_schema_table_constraints_relation_sql();
-			case 'table_constraints_extensions':
-				return $this->get_direct_information_schema_table_constraints_extensions_relation_sql();
-			case 'key_column_usage':
-				return $this->get_direct_information_schema_key_column_usage_relation_sql();
-			case 'referential_constraints':
-				return $this->get_direct_information_schema_referential_constraints_relation_sql();
-			case 'check_constraints':
-				return $this->get_direct_information_schema_check_constraints_relation_sql();
-			case 'character_sets':
-				return $this->get_direct_information_schema_character_sets_relation_sql();
-			case 'collations':
-				return $this->get_direct_information_schema_collations_relation_sql();
-			case 'collation_character_set_applicability':
-				return $this->get_direct_information_schema_collation_character_set_applicability_relation_sql();
-			case 'engines':
-				return $this->get_direct_information_schema_engines_relation_sql();
-			case 'events':
-				return $this->get_direct_information_schema_events_relation_sql();
-			case 'files':
-				return $this->get_direct_information_schema_files_relation_sql();
-			case 'partitions':
-				return $this->get_direct_information_schema_partitions_relation_sql();
-			case 'tablespaces_extensions':
-				return $this->get_direct_information_schema_tablespaces_extensions_relation_sql();
-			case 'tablespaces':
-				return $this->get_direct_information_schema_tablespaces_relation_sql();
-			case 'innodb_tables':
-				return $this->get_direct_information_schema_innodb_tables_relation_sql();
-			case 'innodb_tablespaces':
-				return $this->get_direct_information_schema_innodb_tablespaces_relation_sql();
-			case 'innodb_tablespaces_brief':
-				return $this->get_direct_information_schema_innodb_tablespaces_brief_relation_sql();
-			case 'innodb_datafiles':
-				return $this->get_direct_information_schema_innodb_datafiles_relation_sql();
-			case 'innodb_indexes':
-				return $this->get_direct_information_schema_innodb_indexes_relation_sql();
-			case 'innodb_fields':
-				return $this->get_direct_information_schema_innodb_fields_relation_sql();
-			case 'innodb_columns':
-				return $this->get_direct_information_schema_innodb_columns_relation_sql();
-			case 'innodb_lock_waits':
-				return $this->get_direct_information_schema_innodb_lock_waits_relation_sql();
-			case 'session_variables':
-			case 'global_variables':
-				return $this->get_direct_information_schema_variables_relation_sql(
-					'global_variables' === strtolower( $view ) ? 'global' : 'session'
-				);
-			case 'session_status':
-			case 'global_status':
-			case 'server_status':
-				return $this->get_direct_information_schema_status_relation_sql();
-			case 'processlist':
-				return $this->get_direct_information_schema_processlist_relation_sql();
-			case 'optimizer_trace':
-				return $this->get_direct_information_schema_optimizer_trace_relation_sql();
-			case 'profiling':
-				return $this->get_direct_information_schema_profiling_relation_sql();
-			case 'keywords':
-				return $this->get_direct_information_schema_keywords_relation_sql();
-			case 'plugins':
-				return $this->get_direct_information_schema_plugins_relation_sql();
-			case 'user_privileges':
-				return $this->get_direct_information_schema_user_privileges_relation_sql();
-			case 'schema_privileges':
-				return $this->get_direct_information_schema_schema_privileges_relation_sql();
-			case 'table_privileges':
-				return $this->get_direct_information_schema_table_privileges_relation_sql();
-			case 'column_privileges':
-				return $this->get_direct_information_schema_column_privileges_relation_sql();
-			case 'applicable_roles':
-				return $this->get_direct_information_schema_applicable_roles_relation_sql();
-			case 'administrable_role_authorizations':
-				return $this->get_direct_information_schema_administrable_role_authorizations_relation_sql();
-			case 'enabled_roles':
-				return $this->get_direct_information_schema_enabled_roles_relation_sql();
-			case 'role_table_grants':
-				return $this->get_direct_information_schema_role_table_grants_relation_sql();
-			case 'role_column_grants':
-				return $this->get_direct_information_schema_role_column_grants_relation_sql();
-			case 'role_routine_grants':
-				return $this->get_direct_information_schema_role_routine_grants_relation_sql();
-			case 'resource_groups':
-				return $this->get_direct_information_schema_resource_groups_relation_sql();
-			case 'views':
-				return $this->get_direct_information_schema_views_relation_sql();
-			case 'schemata_extensions':
-				return $this->get_direct_information_schema_schemata_extensions_relation_sql();
-			case 'view_table_usage':
-				return $this->get_direct_information_schema_view_table_usage_relation_sql();
-			case 'view_routine_usage':
-				return $this->get_direct_information_schema_view_routine_usage_relation_sql();
-			case 'st_geometry_columns':
-				return $this->get_direct_information_schema_st_geometry_columns_relation_sql();
-			case 'triggers':
-				return $this->get_direct_information_schema_triggers_relation_sql();
-			case 'routines':
-				return $this->get_direct_information_schema_routines_relation_sql();
-			case 'parameters':
-				return $this->get_direct_information_schema_parameters_relation_sql();
-			case 'user_attributes':
-				return $this->get_direct_information_schema_user_attributes_relation_sql();
+		$view = strtolower( $view );
+		if ( null === $this->get_direct_information_schema_relation_columns( $view ) ) {
+			return null;
 		}
 
-		return null;
+		if ( 'global_variables' === $view || 'session_variables' === $view ) {
+			return $this->get_direct_information_schema_variables_relation_sql(
+				'global_variables' === $view ? 'global' : 'session'
+			);
+		}
+
+		if ( 'global_status' === $view || 'session_status' === $view || 'server_status' === $view ) {
+			return $this->get_direct_information_schema_status_relation_sql();
+		}
+
+		$method = 'get_direct_information_schema_' . $view . '_relation_sql';
+		return method_exists( $this, $method ) ? $this->$method() : null;
 	}
 
 	/**
