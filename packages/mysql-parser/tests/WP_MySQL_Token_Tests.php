@@ -38,6 +38,13 @@ class WP_MySQL_Token_Tests extends TestCase {
 		$this->assertSame( 'col name', self::first_token( 'SELECT `col name` FROM t', 'BACK_TICK_QUOTED_ID' )->get_value() );
 	}
 
+	public function test_get_value_unquotes_ansi_identifiers(): void {
+		$this->assertSame(
+			'a"b',
+			self::first_token( 'SELECT "a""b"', 'BACK_TICK_QUOTED_ID', array( 'ANSI_QUOTES' ) )->get_value()
+		);
+	}
+
 	public function test_get_value_does_not_unquote_unquoted_tokens(): void {
 		// The SSL keyword's Bison number collides with one of the lexer's
 		// internal quoted-text constants; value extraction must not be fooled

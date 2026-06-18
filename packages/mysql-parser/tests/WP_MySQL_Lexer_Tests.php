@@ -553,6 +553,29 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertNull( $lexer->get_token() );
 	}
 
+	/**
+	 * @dataProvider data_ansi_quotes_tokenization
+	 */
+	public function test_ansi_quotes_changes_double_quote_tokenization(
+		string $sql,
+		array $sql_modes,
+		string $expected_token_name
+	): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, $sql_modes ) )->remaining_tokens();
+		$this->assertSame( $expected_token_name, $tokens[0]->get_name(), $sql );
+	}
+
+	public function data_ansi_quotes_tokenization(): array {
+		return array(
+			'double quote is a string by default'          => array( '"foo"', array(), 'SINGLE_QUOTED_TEXT' ),
+			'double quote is an identifier in ANSI_QUOTES' => array( '"foo"', array( 'ANSI_QUOTES' ), 'BACK_TICK_QUOTED_ID' ),
+			'ANSI_QUOTES is case-insensitive'              => array( '"foo"', array( 'ansi_quotes' ), 'BACK_TICK_QUOTED_ID' ),
+			'ANSI_QUOTES with other modes'                 => array( '"foo"', array( 'STRICT_ALL_TABLES', 'ANSI_QUOTES' ), 'BACK_TICK_QUOTED_ID' ),
+			'single quote stays a string in ANSI_QUOTES'   => array( "'foo'", array( 'ANSI_QUOTES' ), 'SINGLE_QUOTED_TEXT' ),
+			'backtick stays an identifier in ANSI_QUOTES'  => array( '`foo`', array( 'ANSI_QUOTES' ), 'BACK_TICK_QUOTED_ID' ),
+		);
+	}
+
 	private function get_token_names( array $token_types ): array {
 		return array_map(
 			function ( $token_type ) {

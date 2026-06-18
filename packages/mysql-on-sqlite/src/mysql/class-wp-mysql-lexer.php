@@ -32,6 +32,7 @@ class WP_MySQL_Lexer {
 	const SQL_MODE_PIPES_AS_CONCAT      = 2;
 	const SQL_MODE_IGNORE_SPACE         = 4;
 	const SQL_MODE_NO_BACKSLASH_ESCAPES = 8;
+	const SQL_MODE_ANSI_QUOTES          = 16;
 
 	/**
 	 * Character masks for frequently used character classes.
@@ -2209,6 +2210,8 @@ class WP_MySQL_Lexer {
 				$this->sql_modes |= self::SQL_MODE_IGNORE_SPACE;
 			} elseif ( 'NO_BACKSLASH_ESCAPES' === $sql_mode ) {
 				$this->sql_modes |= self::SQL_MODE_NO_BACKSLASH_ESCAPES;
+			} elseif ( 'ANSI_QUOTES' === $sql_mode ) {
+				$this->sql_modes |= self::SQL_MODE_ANSI_QUOTES;
 			}
 		}
 	}
@@ -2951,7 +2954,16 @@ class WP_MySQL_Lexer {
 		if ( '`' === $quote ) {
 			return self::BACK_TICK_QUOTED_ID;
 		} elseif ( '"' === $quote ) {
-			return self::DOUBLE_QUOTED_TEXT;
+			/*
+			 * With the ANSI_QUOTES SQL mode enabled, MySQL treats double quotes
+			 * as identifier delimiters. Match this behavior by using the same token
+			 * type as for backtick-quoted identifiers.
+			 *
+			 * See: https://dev.mysql.com/doc/refman/8.4/en/sql-mode.html#sqlmode_ansi_quotes
+			 */
+			return $this->is_sql_mode_active( self::SQL_MODE_ANSI_QUOTES )
+				? self::BACK_TICK_QUOTED_ID
+				: self::DOUBLE_QUOTED_TEXT;
 		} else {
 			return self::SINGLE_QUOTED_TEXT;
 		}

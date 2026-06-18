@@ -3170,6 +3170,39 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( 1, $results[0]->ID );
 	}
 
+	public function testDoubleQuotesAreStringLiteralsByDefault() {
+		$this->assertQuery( 'SELECT "hello" AS greeting;' );
+		$results = $this->last_result;
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'hello', $results[0]->greeting );
+	}
+
+	public function testAnsiQuotesTreatsDoubleQuotesAsIdentifiers() {
+		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('alpha', 'one');"
+		);
+
+		$this->assertQuery( 'SELECT "option_name" AS "name" FROM _options WHERE "option_value" = \'one\';' );
+		$results = $this->last_result;
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'alpha', $results[0]->name );
+	}
+
+	public function testAnsiQuotesAllowsDoubleQuotedIdentifiersInDdl() {
+		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+
+		// Identifiers may contain spaces and escape the double quote by doubling it.
+		$this->assertQuery( 'CREATE TABLE "my ""tbl""" ("my col" INTEGER);' );
+		$this->assertQuery( 'INSERT INTO "my ""tbl""" ("my col") VALUES (42);' );
+		$this->assertQuery( 'SELECT "my col" FROM "my ""tbl""";' );
+
+		$results = $this->last_result;
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 42, $results[0]->{'my col'} );
+	}
+
 	public function testCaseInsensitiveSelect() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
