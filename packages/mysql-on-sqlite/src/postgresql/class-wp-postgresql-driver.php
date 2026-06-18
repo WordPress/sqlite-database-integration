@@ -59236,12 +59236,31 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			return null;
 		}
 
-		$expression_sql = $this->get_mysql_group_concat_expression_sql(
-			$tokens,
-			$parsed['expression_ranges']
-		);
-		if ( null === $expression_sql ) {
-			return null;
+		$expression_ranges = $parsed['expression_ranges'];
+		if ( 1 === count( $expression_ranges ) ) {
+			$range          = $expression_ranges[0];
+			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$range['start'],
+				$range['end']
+			);
+		} else {
+			$parts = array();
+			foreach ( $expression_ranges as $range ) {
+				if ( $range['start'] >= $range['end'] ) {
+					return null;
+				}
+
+				$parts[] = sprintf(
+					'CAST(%s AS text)',
+					$this->translate_mysql_token_sequence_to_postgresql(
+						$tokens,
+						$range['start'],
+						$range['end']
+					)
+				);
+			}
+			$expression_sql = implode( ' || ', $parts );
 		}
 
 		$separator_sql = null === $parsed['separator_start']
@@ -59254,33 +59273,37 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 		$order_sql = '';
 		if ( null !== $parsed['order_start'] ) {
-			$order_sql = $parsed['distinct']
-				? $this->get_mysql_group_concat_distinct_order_by_sql(
-					$tokens,
-					$parsed['expression_ranges'][0],
-					$expression_sql,
-					$parsed['order_start'],
-					$parsed['order_end']
-				)
-				: $this->get_mysql_group_concat_order_by_sql(
-					$tokens,
-					$parsed['order_start'],
-					$parsed['order_end']
-				);
+			$order_sql = $this->get_mysql_group_concat_order_by_sql(
+				$tokens,
+				$parsed['order_start'],
+				$parsed['order_end'],
+				$parsed['distinct'] ? $parsed['expression_ranges'][0] : null,
+				$parsed['distinct'] ? $expression_sql : null
+			);
 			if ( null === $order_sql ) {
 				return null;
 			}
 		}
 
-		$aggregate_sql = $this->get_postgresql_mysql_group_concat_aggregate_sql(
-			$expression_sql,
-			$separator_sql,
-			$order_sql,
-			$parsed['distinct'],
-			null === $parsed['separator_start']
-		);
-		if ( null === $aggregate_sql ) {
-			return null;
+		if ( ! $parsed['distinct'] ) {
+			$aggregate_sql = sprintf(
+				'STRING_AGG(CAST(%1$s AS text), CAST(%2$s AS text)%3$s)',
+				$expression_sql,
+				$separator_sql,
+				$order_sql
+			);
+		} elseif ( 'sqlite' === $this->connection->get_driver_name() ) {
+			if ( null !== $parsed['separator_start'] ) {
+				return null;
+			}
+			$aggregate_sql = sprintf( 'GROUP_CONCAT(DISTINCT CAST(%s AS text))', $expression_sql );
+		} else {
+			$aggregate_sql = sprintf(
+				'STRING_AGG(DISTINCT CAST(%1$s AS text), CAST(%2$s AS text)%3$s)',
+				$expression_sql,
+				$separator_sql,
+				$order_sql
+			);
 		}
 
 		return array(
@@ -59412,90 +59435,22 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
-	 * Render a GROUP_CONCAT row expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param array[]          $ranges Top-level expression ranges.
-	 * @return string|null PostgreSQL SQL, or null when unsupported.
-	 */
-	private function get_mysql_group_concat_expression_sql( array $tokens, array $ranges ): ?string {
-		if ( empty( $ranges ) ) {
-			return null;
-		}
-
-		if ( 1 === count( $ranges ) ) {
-			$range = $ranges[0];
-			return $this->translate_mysql_token_sequence_to_postgresql(
-				$tokens,
-				$range['start'],
-				$range['end']
-			);
-		}
-
-		$parts = array();
-		foreach ( $ranges as $range ) {
-			if ( $range['start'] >= $range['end'] ) {
-				return null;
-			}
-
-			$parts[] = sprintf(
-				'CAST(%s AS text)',
-				$this->translate_mysql_token_sequence_to_postgresql(
-					$tokens,
-					$range['start'],
-					$range['end']
-				)
-			);
-		}
-
-		return implode( ' || ', $parts );
-	}
-
-	/**
-	 * Render a supported GROUP_CONCAT aggregate expression.
-	 *
-	 * @param string $expression_sql         Translated expression SQL.
-	 * @param string $separator_sql          Translated separator SQL.
-	 * @param string $order_sql              Aggregate ORDER BY SQL.
-	 * @param bool   $distinct               Whether DISTINCT is present.
-	 * @param bool   $uses_default_separator Whether the separator is the implicit comma.
-	 * @return string|null Aggregate SQL, or null when unsupported by the active backend.
-	 */
-	private function get_postgresql_mysql_group_concat_aggregate_sql( string $expression_sql, string $separator_sql, string $order_sql, bool $distinct, bool $uses_default_separator ): ?string {
-		if ( ! $distinct ) {
-			return sprintf(
-				'STRING_AGG(CAST(%1$s AS text), CAST(%2$s AS text)%3$s)',
-				$expression_sql,
-				$separator_sql,
-				$order_sql
-			);
-		}
-
-		if ( 'sqlite' === $this->connection->get_driver_name() ) {
-			return $uses_default_separator
-				? sprintf( 'GROUP_CONCAT(DISTINCT CAST(%s AS text))', $expression_sql )
-				: null;
-		}
-
-		return sprintf(
-			'STRING_AGG(DISTINCT CAST(%1$s AS text), CAST(%2$s AS text)%3$s)',
-			$expression_sql,
-			$separator_sql,
-			$order_sql
-		);
-	}
-
-	/**
 	 * Render ORDER BY items inside a supported GROUP_CONCAT().
 	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int             $start  First ORDER BY item token position.
-	 * @param int             $end    Final ORDER BY item token position, exclusive.
+	 * @param WP_MySQL_Token[] $tokens                        MySQL lexer token stream.
+	 * @param int              $start                         First ORDER BY item token position.
+	 * @param int              $end                           Final ORDER BY item token position, exclusive.
+	 * @param array|null       $distinct_expression_range     DISTINCT expression range, if DISTINCT is present.
+	 * @param string|null      $distinct_expression_sql       Translated DISTINCT expression SQL, if DISTINCT is present.
 	 * @return string|null Aggregate ORDER BY SQL, or null when unsupported.
 	 */
-	private function get_mysql_group_concat_order_by_sql( array $tokens, int $start, int $end ): ?string {
+	private function get_mysql_group_concat_order_by_sql( array $tokens, int $start, int $end, ?array $distinct_expression_range = null, ?string $distinct_expression_sql = null ): ?string {
 		$items = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
-		if ( null === $items || empty( $items ) ) {
+		if (
+			null === $items
+			|| empty( $items )
+			|| ( null !== $distinct_expression_range && ( 1 !== count( $items ) || null === $distinct_expression_sql ) )
+		) {
 			return null;
 		}
 
@@ -59519,55 +59474,17 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return null;
 			}
 
-			$order_sql[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $item_start, $item_end ) . $direction;
+			$item_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $item_start, $item_end );
+			if ( null !== $distinct_expression_range ) {
+				return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $distinct_expression_range['start'], $distinct_expression_range['end'] ) === $item_sql
+					? sprintf( ' ORDER BY CAST(%s AS text)%s', $distinct_expression_sql, $direction )
+					: null;
+			}
+
+			$order_sql[] = $item_sql . $direction;
 		}
 
 		return ' ORDER BY ' . implode( ', ', $order_sql );
-	}
-
-	/**
-	 * Render ORDER BY for GROUP_CONCAT(DISTINCT expr ORDER BY expr).
-	 *
-	 * PostgreSQL requires DISTINCT aggregate ORDER BY expressions to match the
-	 * aggregate argument. Keep this to one item that translates to the same SQL as
-	 * the DISTINCT expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens         MySQL lexer token stream.
-	 * @param array            $expression_range DISTINCT expression range.
-	 * @param string           $expression_sql Translated DISTINCT expression SQL.
-	 * @param int              $start          First ORDER BY item token position.
-	 * @param int              $end            Final ORDER BY item token position, exclusive.
-	 * @return string|null Aggregate ORDER BY SQL, or null when unsupported.
-	 */
-	private function get_mysql_group_concat_distinct_order_by_sql( array $tokens, array $expression_range, string $expression_sql, int $start, int $end ): ?string {
-		$items = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
-		if ( null === $items || 1 !== count( $items ) ) {
-			return null;
-		}
-
-		$item_start = $items[0]['start'];
-		$item_end   = $items[0]['end'];
-		$direction  = '';
-
-		if ( isset( $tokens[ $item_end - 1 ] ) ) {
-			if ( WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $item_end - 1 ]->id ) {
-				$direction = ' DESC';
-				--$item_end;
-			} elseif ( WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $item_end - 1 ]->id ) {
-				$direction = ' ASC';
-				--$item_end;
-			}
-		}
-
-		if (
-			$item_start >= $item_end
-			|| $this->translate_mysql_token_sequence_to_postgresql( $tokens, $expression_range['start'], $expression_range['end'] )
-				!== $this->translate_mysql_token_sequence_to_postgresql( $tokens, $item_start, $item_end )
-		) {
-			return null;
-		}
-
-		return sprintf( ' ORDER BY CAST(%s AS text)%s', $expression_sql, $direction );
 	}
 
 	/**
@@ -59581,7 +59498,16 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * @return string Truncated aggregate SQL.
 	 */
 	private function get_mysql_group_concat_max_len_truncation_sql( string $aggregate_sql ): string {
-		$limit = $this->get_mysql_group_concat_max_len_sql_limit();
+		$value = $this->get_mysql_system_variable_value( 'group_concat_max_len' ) ?? '1024';
+		$value = ltrim( $value, '0' );
+		if ( '' === $value ) {
+			$limit = 0;
+		} else {
+			$max   = (string) self::MYSQL_GROUP_CONCAT_MAX_LEN_SQL_LIMIT;
+			$limit = strlen( $value ) > strlen( $max ) || ( strlen( $value ) === strlen( $max ) && strcmp( $value, $max ) > 0 )
+				? self::MYSQL_GROUP_CONCAT_MAX_LEN_SQL_LIMIT
+				: (int) $value;
+		}
 
 		if ( 'sqlite' === $this->connection->get_driver_name() ) {
 			return sprintf(
@@ -59596,26 +59522,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		}
 
 		return sprintf( 'SUBSTR(%1$s, 1, %2$d)', $aggregate_sql, $limit );
-	}
-
-	/**
-	 * Get the current group_concat_max_len as a SQL substring limit.
-	 *
-	 * @return int SQL-safe substring length.
-	 */
-	private function get_mysql_group_concat_max_len_sql_limit(): int {
-		$value = $this->get_mysql_system_variable_value( 'group_concat_max_len' ) ?? '1024';
-		$value = ltrim( $value, '0' );
-		if ( '' === $value ) {
-			return 0;
-		}
-
-		$max = (string) self::MYSQL_GROUP_CONCAT_MAX_LEN_SQL_LIMIT;
-		if ( strlen( $value ) > strlen( $max ) || ( strlen( $value ) === strlen( $max ) && strcmp( $value, $max ) > 0 ) ) {
-			return self::MYSQL_GROUP_CONCAT_MAX_LEN_SQL_LIMIT;
-		}
-
-		return (int) $value;
 	}
 
 	/**
@@ -60810,24 +60716,8 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		return false;
 	}
 
-	/**
-	 * Check whether a query contains an unsupported MySQL RAND() form.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether an unsupported RAND() call is present.
-	 */
 	private function contains_unsupported_mysql_rand_function_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		return $this->contains_unsupported_mysql_rand_function(
-			$tokens,
-			0,
-			null === $statement_end ? count( $tokens ) : $statement_end
-		);
+		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_rand_function' ) );
 	}
 
 	/**
@@ -61625,44 +61515,12 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		return false;
 	}
 
-	/**
-	 * Check whether a query contains an unsupported MySQL CONVERT() function.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether an unsupported CONVERT() form is present.
-	 */
 	private function contains_unsupported_mysql_convert_function_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		return $this->contains_unsupported_mysql_convert_function(
-			$tokens,
-			0,
-			null === $statement_end ? count( $tokens ) : $statement_end
-		);
+		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_convert_function' ) );
 	}
 
-	/**
-	 * Check whether a query contains an unsupported known MySQL runtime function.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether an unsupported known MySQL runtime function is present.
-	 */
 	private function contains_unsupported_mysql_common_function_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		return $this->contains_unsupported_mysql_common_function(
-			$tokens,
-			0,
-			null === $statement_end ? count( $tokens ) : $statement_end
-		);
+		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_common_function' ) );
 	}
 
 	/**
@@ -61730,24 +61588,8 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		return false;
 	}
 
-	/**
-	 * Check whether a query contains an unsupported GROUP_CONCAT() form.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether an unsupported GROUP_CONCAT() form is present.
-	 */
 	private function contains_unsupported_mysql_group_concat_function_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		return $this->contains_unsupported_mysql_group_concat_function(
-			$tokens,
-			0,
-			null === $statement_end ? count( $tokens ) : $statement_end
-		);
+		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_group_concat_function' ) );
 	}
 
 	/**
@@ -62399,9 +62241,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		if ( $this->postgresql_query_uses_mysql_text_domain( $query ) ) {
 			$this->ensure_postgresql_mysql_text_domains();
 		}
-		$this->ensure_postgresql_mysql_binary_domains_for_query( $query );
-		$this->ensure_postgresql_mysql_integer_domains_for_query( $query );
-		$this->ensure_postgresql_mysql_numeric_domains_for_query( $query );
+		$this->ensure_postgresql_mysql_domains( 'binary', $this->get_postgresql_mysql_binary_domain_definitions_for_query( $query ) );
+		$this->ensure_postgresql_mysql_domains( 'integer', $this->get_postgresql_mysql_integer_domain_definitions_for_query( $query ) );
+		$this->ensure_postgresql_mysql_domains( 'numeric', $this->get_postgresql_mysql_numeric_domain_definitions_for_query( $query ) );
 		if (
 			'sqlite' === $this->connection->get_driver_name()
 			&& 1 === preg_match( '/(?:pg_temp\.)?' . preg_quote( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, '/' ) . '\s*\(/i', $query )
@@ -62451,34 +62293,6 @@ $wp_mysql_text_domain$',
 	}
 
 	/**
-	 * Ensure PostgreSQL domains that preserve MySQL binary/blob type shapes exist.
-	 *
-	 * @param string $query PostgreSQL query.
-	 */
-	private function ensure_postgresql_mysql_binary_domains_for_query( string $query ): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
-		$domain_definitions = $this->get_postgresql_mysql_binary_domain_definitions_for_query( $query );
-		foreach ( $domain_definitions as $domain_name => $base_type ) {
-			$this->connection->query(
-				sprintf(
-					'DO $wp_mysql_binary_domain$
-BEGIN
-	CREATE DOMAIN %s AS %s;
-EXCEPTION WHEN duplicate_object THEN
-	NULL;
-END;
-$wp_mysql_binary_domain$',
-					$this->connection->quote_identifier( $domain_name ),
-					$base_type
-				)
-			);
-		}
-	}
-
-	/**
 	 * Get MySQL binary/blob domain definitions referenced by a PostgreSQL query.
 	 *
 	 * @param string $query PostgreSQL query.
@@ -62499,26 +62313,27 @@ $wp_mysql_binary_domain$',
 	}
 
 	/**
-	 * Ensure PostgreSQL domains that preserve MySQL integer type shapes exist.
+	 * Ensure PostgreSQL domains that preserve MySQL type shapes exist.
 	 *
-	 * @param string $query PostgreSQL query.
+	 * @param string               $kind               Domain kind for the DO block label.
+	 * @param array<string,string> $domain_definitions Domain name to PostgreSQL base type.
 	 */
-	private function ensure_postgresql_mysql_integer_domains_for_query( string $query ): void {
+	private function ensure_postgresql_mysql_domains( string $kind, array $domain_definitions ): void {
 		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
 			return;
 		}
 
-		$domain_definitions = $this->get_postgresql_mysql_integer_domain_definitions_for_query( $query );
 		foreach ( $domain_definitions as $domain_name => $base_type ) {
 			$this->connection->query(
 				sprintf(
-					'DO $wp_mysql_integer_domain$
+					'DO $wp_mysql_%1$s_domain$
 BEGIN
-	CREATE DOMAIN %s AS %s;
+	CREATE DOMAIN %2$s AS %3$s;
 EXCEPTION WHEN duplicate_object THEN
 	NULL;
 END;
-$wp_mysql_integer_domain$',
+$wp_mysql_%1$s_domain$',
+					$kind,
 					$this->connection->quote_identifier( $domain_name ),
 					$base_type
 				)
@@ -62549,34 +62364,6 @@ $wp_mysql_integer_domain$',
 		}
 
 		return $domain_definitions;
-	}
-
-	/**
-	 * Ensure PostgreSQL domains that preserve MySQL numeric alias type shapes exist.
-	 *
-	 * @param string $query PostgreSQL query.
-	 */
-	private function ensure_postgresql_mysql_numeric_domains_for_query( string $query ): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
-		$domain_definitions = $this->get_postgresql_mysql_numeric_domain_definitions_for_query( $query );
-		foreach ( $domain_definitions as $domain_name => $base_type ) {
-			$this->connection->query(
-				sprintf(
-					'DO $wp_mysql_numeric_domain$
-BEGIN
-	CREATE DOMAIN %s AS %s;
-EXCEPTION WHEN duplicate_object THEN
-	NULL;
-END;
-$wp_mysql_numeric_domain$',
-					$this->connection->quote_identifier( $domain_name ),
-					$base_type
-				)
-			);
-		}
 	}
 
 	/**
@@ -62634,14 +62421,6 @@ $wp_mysql_numeric_domain$',
 			return;
 		}
 
-		$this->register_sqlite_mysql_validate_temporal_function();
-		$this->sqlite_mysql_validate_temporal_function_registered = true;
-	}
-
-	/**
-	 * Register a SQLite test-harness shim for strict temporal validation.
-	 */
-	private function register_sqlite_mysql_validate_temporal_function(): void {
 		$pdo      = $this->connection->get_pdo();
 		$callback = static function ( $value, $mysql_type, $reject_zero_date, $reject_zero_in_date ): ?string {
 			return self::get_mysql_validate_temporal_runtime_result(
@@ -62654,12 +62433,14 @@ $wp_mysql_numeric_domain$',
 
 		if ( method_exists( $pdo, 'createFunction' ) ) {
 			$pdo->createFunction( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, $callback, 4 );
+			$this->sqlite_mysql_validate_temporal_function_registered = true;
 			return;
 		}
 
 		if ( method_exists( $pdo, 'sqliteCreateFunction' ) ) {
 			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Base PDO SQLite exposes only the deprecated fallback on PHP 8.5.
 			@$pdo->sqliteCreateFunction( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, $callback, 4 );
+			$this->sqlite_mysql_validate_temporal_function_registered = true;
 			return;
 		}
 
@@ -63722,24 +63503,15 @@ $wp_mysql_numeric_domain$',
 		return false;
 	}
 
-	/**
-	 * Check whether a query contains an unsupported MySQL date arithmetic call.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether an unsupported date arithmetic call is present.
-	 */
 	private function contains_unsupported_mysql_date_arithmetic_function_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		$end           = null === $statement_end ? count( $tokens ) : $statement_end;
-
-		return $this->contains_unsupported_mysql_date_arithmetic_function( $tokens, 0, $end )
-			|| $this->contains_unsupported_mysql_timestampadd_function( $tokens, 0, $end )
-			|| $this->contains_unsupported_mysql_timestampdiff_function( $tokens, 0, $end );
+		return $this->contains_unsupported_mysql_range_scanner_query(
+			$query,
+			array(
+				'contains_unsupported_mysql_date_arithmetic_function',
+				'contains_unsupported_mysql_timestampadd_function',
+				'contains_unsupported_mysql_timestampdiff_function',
+			)
+		);
 	}
 
 	/**
@@ -64574,24 +64346,8 @@ $wp_mysql_numeric_domain$',
 		return false;
 	}
 
-	/**
-	 * Check whether a query contains an unsupported MySQL WEEK() call.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether an unsupported WEEK() call is present.
-	 */
 	private function contains_unsupported_mysql_week_function_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		return $this->contains_unsupported_mysql_week_function(
-			$tokens,
-			0,
-			null === $statement_end ? count( $tokens ) : $statement_end
-		);
+		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_week_function' ) );
 	}
 
 	/**
@@ -64656,21 +64412,6 @@ $wp_mysql_numeric_domain$',
 		}
 
 		throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL WEEK(expr, 1).
-	 *
-	 * MySQL mode 1 is Monday-first and returns week numbers in the given year,
-	 * using 0 for dates before that year's first ISO-like week.
-	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_week_mode_one_sql( string $expression_sql ): string {
-		return $this->get_postgresql_mysql_week_mode_one_timestamp_sql(
-			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql )
-		);
 	}
 
 	/**
@@ -64851,10 +64592,24 @@ $wp_mysql_numeric_domain$',
 			return $if_sql;
 		}
 
-		return $this->get_postgresql_mysql_finite_date_format_case_choice_sql(
+		$searched_case = $this->get_mysql_searched_case_expression_branches( $tokens, $start, $end );
+		if ( null !== $searched_case ) {
+			return $this->get_postgresql_mysql_finite_date_format_searched_case_choice_sql(
+				$tokens,
+				$searched_case,
+				$expression_sql,
+				$force_string
+			);
+		}
+
+		$simple_case = $this->get_mysql_simple_case_expression_branches( $tokens, $start, $end );
+		if ( null === $simple_case ) {
+			return null;
+		}
+
+		return $this->get_postgresql_mysql_finite_date_format_simple_case_choice_sql(
 			$tokens,
-			$start,
-			$end,
+			$simple_case,
 			$expression_sql,
 			$force_string
 		);
@@ -64913,40 +64668,6 @@ $wp_mysql_numeric_domain$',
 			: $this->get_postgresql_mysql_truthy_expression_sql( $condition_argument_sql );
 
 		return sprintf( 'CASE WHEN %s THEN %s ELSE %s END', $condition_sql, $truthy_sql, $falsy_sql );
-	}
-
-	/**
-	 * Get PostgreSQL SQL for searched CASE choices between finite DATE_FORMAT() masks.
-	 *
-	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
-	 * @param int              $start         First format expression token.
-	 * @param int              $end           Final format expression token, exclusive.
-	 * @param string           $expression_sql PostgreSQL timestamp/date expression SQL.
-	 * @param bool             $force_string  Whether to force formatted string semantics.
-	 * @return string|null PostgreSQL SQL, or null when the format is not a finite searched CASE choice.
-	 */
-	private function get_postgresql_mysql_finite_date_format_case_choice_sql( array $tokens, int $start, int $end, string $expression_sql, bool $force_string ): ?string {
-		$searched_case = $this->get_mysql_searched_case_expression_branches( $tokens, $start, $end );
-		if ( null !== $searched_case ) {
-			return $this->get_postgresql_mysql_finite_date_format_searched_case_choice_sql(
-				$tokens,
-				$searched_case,
-				$expression_sql,
-				$force_string
-			);
-		}
-
-		$simple_case = $this->get_mysql_simple_case_expression_branches( $tokens, $start, $end );
-		if ( null === $simple_case ) {
-			return null;
-		}
-
-		return $this->get_postgresql_mysql_finite_date_format_simple_case_choice_sql(
-			$tokens,
-			$simple_case,
-			$expression_sql,
-			$force_string
-		);
 	}
 
 	/**
@@ -65439,24 +65160,32 @@ $wp_mysql_numeric_domain$',
 		return false;
 	}
 
-	/**
-	 * Check whether a query contains an unsupported MySQL DATE_FORMAT() form.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether an unsupported DATE_FORMAT() call is present.
-	 */
 	private function contains_unsupported_mysql_date_format_function_query( string $query ): bool {
+		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_date_format_function' ) );
+	}
+
+	/**
+	 * Check a query with one or more unsupported-construct range scanners.
+	 *
+	 * @param string   $query         SQL query.
+	 * @param string[] $scanner_names Private scanner method names.
+	 * @return bool Whether any scanner reports an unsupported construct.
+	 */
+	private function contains_unsupported_mysql_range_scanner_query( string $query, array $scanner_names ): bool {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) ) {
 			return false;
 		}
 
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		return $this->contains_unsupported_mysql_date_format_function(
-			$tokens,
-			0,
-			null === $statement_end ? count( $tokens ) : $statement_end
-		);
+		$end           = null === $statement_end ? count( $tokens ) : $statement_end;
+		foreach ( $scanner_names as $scanner_name ) {
+			if ( $this->$scanner_name( $tokens, 0, $end ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -65523,16 +65252,40 @@ $wp_mysql_numeric_domain$',
 	private function get_postgresql_mysql_date_format_sql( string $format, string $expression_sql ): ?string {
 		switch ( $format ) {
 			case '%H.%i':
-				return $this->get_postgresql_mysql_date_format_hour_minute_sql( $expression_sql );
+				return $this->get_postgresql_mysql_numeric_date_format_sql(
+					$expression_sql,
+					"SUBSTRING(%1\$s FROM 12 FOR 2) || '.' || SUBSTRING(%1\$s FROM 15 FOR 2)",
+					'TO_CHAR(%1$s, %2$s)',
+					'HH24.MI'
+				);
 
 			case '%H.%i%s':
-				return $this->get_postgresql_mysql_date_format_hour_minute_second_number_sql( $expression_sql );
+				return $this->get_postgresql_mysql_numeric_date_format_sql(
+					$expression_sql,
+					"SUBSTRING(%1\$s FROM 12 FOR 2) || '.' || SUBSTRING(%1\$s FROM 15 FOR 2) || SUBSTRING(%1\$s FROM 18 FOR 2)",
+					'TO_CHAR(%1$s, %2$s)',
+					'HH24.MISS'
+				);
 
 			case '0.%i%s':
-				return $this->get_postgresql_mysql_date_format_minute_second_fraction_sql( $expression_sql );
+				return $this->get_postgresql_mysql_numeric_date_format_sql(
+					$expression_sql,
+					"'0.' || SUBSTRING(%1\$s FROM 15 FOR 2) || SUBSTRING(%1\$s FROM 18 FOR 2)",
+					"'0.' || TO_CHAR(%1\$s, %2\$s)",
+					'MISS'
+				);
 
 			case '%Y-%m-%d':
-				return $this->get_postgresql_mysql_date_format_year_month_day_sql( $expression_sql );
+				$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+
+				return sprintf(
+					'CASE WHEN %1$s THEN NULL WHEN %2$s THEN SUBSTRING(%3$s FROM 1 FOR 10) ELSE TO_CHAR(%4$s, %5$s) END',
+					$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
+					$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
+					$expression_text_sql,
+					$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+					$this->connection->quote( 'YYYY-MM-DD' )
+				);
 		}
 
 		return $this->get_postgresql_mysql_generic_date_format_sql( $format, $expression_sql );
@@ -66382,96 +66135,34 @@ $wp_mysql_numeric_domain$',
 	}
 
 	/**
-	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%H.%i').
+	 * Get PostgreSQL SQL for numeric DATE_FORMAT() special cases.
 	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @param string $expression_sql           PostgreSQL expression SQL.
+	 * @param string $zero_date_value_template Template receiving the expression text SQL.
+	 * @param string $timestamp_value_template Template receiving timestamp SQL and quoted TO_CHAR format.
+	 * @param string $to_char_format           PostgreSQL TO_CHAR format.
 	 * @return string PostgreSQL expression SQL.
 	 */
-	private function get_postgresql_mysql_date_format_hour_minute_sql( string $expression_sql ): string {
+	private function get_postgresql_mysql_numeric_date_format_sql( string $expression_sql, string $zero_date_value_template, string $timestamp_value_template, string $to_char_format ): string {
 		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
 		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
 		$date_time_pattern    = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
 		$zero_date_format_sql = sprintf(
-			'CASE WHEN %1$s ~ %2$s THEN CAST(SUBSTRING(%1$s FROM 12 FOR 2) || \'.\' || SUBSTRING(%1$s FROM 15 FOR 2) AS double precision) ELSE 0 END',
+			'CASE WHEN %1$s ~ %2$s THEN CAST(%3$s AS double precision) ELSE 0 END',
 			$expression_text_sql,
-			$date_time_pattern
+			$date_time_pattern,
+			sprintf( $zero_date_value_template, $expression_text_sql )
 		);
 
 		return sprintf(
-			'CASE WHEN %1$s THEN %2$s ELSE CAST(TO_CHAR(%3$s, %4$s) AS double precision) END',
+			'CASE WHEN %1$s THEN %2$s ELSE CAST(%3$s AS double precision) END',
 			$zero_date_condition,
 			$zero_date_format_sql,
-			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-			$this->connection->quote( 'HH24.MI' )
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%H.%i%s').
-	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_date_format_hour_minute_second_number_sql( string $expression_sql ): string {
-		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
-		$date_time_pattern    = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
-		$zero_date_format_sql = sprintf(
-			'CASE WHEN %1$s ~ %2$s THEN CAST(SUBSTRING(%1$s FROM 12 FOR 2) || \'.\' || SUBSTRING(%1$s FROM 15 FOR 2) || SUBSTRING(%1$s FROM 18 FOR 2) AS double precision) ELSE 0 END',
-			$expression_text_sql,
-			$date_time_pattern
-		);
-
-		return sprintf(
-			'CASE WHEN %1$s THEN %2$s ELSE CAST(TO_CHAR(%3$s, %4$s) AS double precision) END',
-			$zero_date_condition,
-			$zero_date_format_sql,
-			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-			$this->connection->quote( 'HH24.MISS' )
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '0.%i%s').
-	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_date_format_minute_second_fraction_sql( string $expression_sql ): string {
-		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
-		$date_time_pattern    = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
-		$zero_date_format_sql = sprintf(
-			'CASE WHEN %1$s ~ %2$s THEN CAST(\'0.\' || SUBSTRING(%1$s FROM 15 FOR 2) || SUBSTRING(%1$s FROM 18 FOR 2) AS double precision) ELSE 0 END',
-			$expression_text_sql,
-			$date_time_pattern
-		);
-
-		return sprintf(
-			'CASE WHEN %1$s THEN %2$s ELSE CAST(\'0.\' || TO_CHAR(%3$s, %4$s) AS double precision) END',
-			$zero_date_condition,
-			$zero_date_format_sql,
-			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-			$this->connection->quote( 'MISS' )
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%Y-%m-%d').
-	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_date_format_year_month_day_sql( string $expression_sql ): string {
-		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
-
-		return sprintf(
-			'CASE WHEN %1$s THEN NULL WHEN %2$s THEN SUBSTRING(%3$s FROM 1 FOR 10) ELSE TO_CHAR(%4$s, %5$s) END',
-			$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
-			$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
-			$expression_text_sql,
-			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-			$this->connection->quote( 'YYYY-MM-DD' )
+			sprintf(
+				$timestamp_value_template,
+				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+				$this->connection->quote( $to_char_format )
+			)
 		);
 	}
 
