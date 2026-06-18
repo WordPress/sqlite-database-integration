@@ -3392,6 +3392,25 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests temporary table creation with MySQL binary/blob types is translated.
+	 */
+	public function test_create_temporary_table_with_binary_blob_types_is_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+		$query  = 'CREATE TEMPORARY TABLE wptests_binary_temp ( b BINARY, vb VARBINARY(16), tb TINYBLOB, bl BLOB, mb MEDIUMBLOB, lb LONGBLOB )';
+
+		$this->assertSame( 0, $driver->query( $query ) );
+
+		$sql = $driver->get_last_postgresql_queries()[0]['sql'];
+		$this->assertStringStartsWith( 'CREATE TEMPORARY TABLE "wptests_binary_temp"', $sql );
+		$this->assertStringContainsString( '"b" __wp_mysql_binary_1', $sql );
+		$this->assertStringContainsString( '"vb" __wp_mysql_varbinary_16', $sql );
+		$this->assertStringContainsString( '"tb" __wp_mysql_tinyblob', $sql );
+		$this->assertStringContainsString( '"bl" __wp_mysql_blob', $sql );
+		$this->assertStringContainsString( '"mb" __wp_mysql_mediumblob', $sql );
+		$this->assertStringContainsString( '"lb" __wp_mysql_longblob', $sql );
+	}
+
+	/**
 	 * Tests temporary DDL does not clobber permanent MySQL schema metadata.
 	 */
 	public function test_temporary_create_and_drop_do_not_clobber_permanent_mysql_schema_metadata(): void {
