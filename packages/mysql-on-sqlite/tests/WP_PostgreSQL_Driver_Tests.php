@@ -3915,7 +3915,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'COMMENT ON INDEX "public"."catalog_pg_standalone_index__idx_value" IS \'Lookup\'',
+					'sql'    => "COMMENT ON INDEX \"public\".\"catalog_pg_standalone_index__idx_value\" IS E'__wp_mysql_index_sub_part:1:16\\nLookup'",
 					'params' => array(),
 				),
 			),
@@ -22062,7 +22062,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 				array(
-					'sql'    => 'COMMENT ON INDEX "public"."catalog_alter_add_index__value_idx" IS \'Lookup\'',
+					'sql'    => "COMMENT ON INDEX \"public\".\"catalog_alter_add_index__value_idx\" IS E'__wp_mysql_index_sub_part:1:16\\nLookup'",
 					'params' => array(),
 				),
 			),
@@ -41488,7 +41488,7 @@ $wp_mysql_on_update$',
 		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."unsigned_amount" IS \'__wp_mysql_column_type:ZGVjaW1hbCg2LDIpIHVuc2lnbmVk\'', $sql );
 		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."unsigned_score" IS \'__wp_mysql_column_type:ZG91YmxlIHVuc2lnbmVk\'', $sql );
 		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_create"."unsigned_year" IS \'__wp_mysql_column_type:eWVhciB1bnNpZ25lZA==\'', $sql );
-		$this->assertContains( 'COMMENT ON INDEX "public"."catalog_pg_create__slug_lookup" IS \'Slug lookup note\'', $sql );
+		$this->assertContains( "COMMENT ON INDEX \"public\".\"catalog_pg_create__slug_lookup\" IS E'__wp_mysql_index_sub_part:1:32\\nSlug lookup note'", $sql );
 		$this->assertStringContainsString( 'DO $wp_mysql_identity_sequence_comment$', $all_sql );
 		$this->assertStringContainsString( '__wp_mysql_auto_increment_type:bigint(20) unsigned', $all_sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $all_sql );
@@ -42859,6 +42859,7 @@ $wp_mysql_on_update$',
 					year_seen year,
 					hash binary(32),
 					payload varbinary(16),
+					plain_blob blob,
 					raw_data mediumblob,
 					shape point,
 					amount dec(10,2),
@@ -42887,6 +42888,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_year" AS text', $domain_sql );
 		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_binary_32" AS bytea', $domain_sql );
 		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_varbinary_16" AS bytea', $domain_sql );
+		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_blob" AS bytea', $domain_sql );
 		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_mediumblob" AS bytea', $domain_sql );
 		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_point" AS text', $domain_sql );
 		$this->assertStringContainsString( 'CREATE DOMAIN "__wp_mysql_dec_10_2" AS numeric(10,2)', $domain_sql );
@@ -42914,6 +42916,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '"year_seen" __wp_mysql_year', $sql[0] );
 		$this->assertStringContainsString( '"hash" __wp_mysql_binary_32', $sql[0] );
 		$this->assertStringContainsString( '"payload" __wp_mysql_varbinary_16', $sql[0] );
+		$this->assertStringContainsString( '"plain_blob" __wp_mysql_blob', $sql[0] );
 		$this->assertStringContainsString( '"raw_data" __wp_mysql_mediumblob', $sql[0] );
 		$this->assertStringContainsString( '"shape" __wp_mysql_point', $sql[0] );
 		$this->assertStringContainsString( '"amount" __wp_mysql_dec_10_2', $sql[0] );
@@ -42939,6 +42942,20 @@ $wp_mysql_on_update$',
 		);
 		$this->assertStringNotContainsString( 'DO $wp_mysql_identity_sequence_comment$', $plain_identity_sql );
 		$this->assertStringNotContainsString( 'COMMENT ON COLUMN "public"."catalog_pg_plain_identity"."id"', $plain_identity_sql );
+
+		$this->assertGreaterThanOrEqual(
+			0,
+			$driver->query(
+				'CREATE TABLE catalog_pg_repeated_blob_domains (
+					payload blob
+				)'
+			)
+		);
+
+		$this->assertSame(
+			2,
+			substr_count( implode( "\n", $connection->get_domain_statements() ), 'CREATE DOMAIN "__wp_mysql_blob" AS bytea' )
+		);
 	}
 
 	/**

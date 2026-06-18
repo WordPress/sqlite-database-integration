@@ -411,34 +411,6 @@ class WP_PostgreSQL_Driver {
 	private $postgresql_mysql_validate_temporal_function_ensured = false;
 
 	/**
-	 * Whether MySQL text-domain helper types are available on this connection.
-	 *
-	 * @var bool
-	 */
-	private $postgresql_mysql_text_domains_ensured = false;
-
-	/**
-	 * MySQL binary-domain helper types available on this connection.
-	 *
-	 * @var array<string, bool>
-	 */
-	private $postgresql_mysql_binary_domains_ensured = array();
-
-	/**
-	 * MySQL integer-domain helper types available on this connection.
-	 *
-	 * @var array<string, bool>
-	 */
-	private $postgresql_mysql_integer_domains_ensured = array();
-
-	/**
-	 * MySQL numeric-domain helper types available on this connection.
-	 *
-	 * @var array<string, bool>
-	 */
-	private $postgresql_mysql_numeric_domains_ensured = array();
-
-	/**
 	 * Whether PostgreSQL-backed information_schema compatibility views are installed.
 	 *
 	 * @var bool
@@ -7056,7 +7028,8 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_postgresql_catalog_index_comment( string $index_name, string $index_comment, string $index_type = 'BTREE', array $index_columns = array() ): string {
 		$metadata_lines = array();
-		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
+		$index_type     = strtoupper( $index_type );
+		if ( 'PRIMARY' === strtoupper( $index_name ) || ! $this->is_mysql_metadata_only_index_type( $index_type ) ) {
 			foreach ( $index_columns as $column ) {
 				if ( null === ( $column['sub_part'] ?? null ) || '' === (string) $column['sub_part'] ) {
 					continue;
@@ -7064,7 +7037,9 @@ $wp_mysql_primary_index_comment$',
 
 				$metadata_lines[] = self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX . (int) ( $column['seq_in_index'] ?? count( $metadata_lines ) + 1 ) . ':' . (int) $column['sub_part'];
 			}
+		}
 
+		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
 			if ( ! empty( $metadata_lines ) ) {
 				return implode( "\n", $metadata_lines );
 			}
@@ -19755,6 +19730,8 @@ ORDER BY table_name';
 			'NULLIF(REPLACE(COALESCE(
 				SUBSTRING(%1$s FROM \'^[Ss][Uu][Bb][Ss][Tt][Rr][(][Cc][Aa][Ss][Tt][(]"([^"]+)" [Aa][Ss] text[)], 1, [0-9]+[)]$\'),
 				SUBSTRING(%1$s FROM \'^[Ss][Uu][Bb][Ss][Tt][Rr][(][Cc][Aa][Ss][Tt][(]([A-Za-z_][A-Za-z0-9_$]*) [Aa][Ss] text[)], 1, [0-9]+[)]$\'),
+				SUBSTRING(%1$s FROM \'^[Ss][Uu][Bb][Ss][Tt][Rr][(]"([^"]+)", 1, [0-9]+[)]$\'),
+				SUBSTRING(%1$s FROM \'^[Ss][Uu][Bb][Ss][Tt][Rr][(]([A-Za-z_][A-Za-z0-9_$]*), 1, [0-9]+[)]$\'),
 				SUBSTRING(%1$s FROM \'^[Ss][Uu][Bb][Ss][Tt][Rr][(][(]"([^"]+)"[)]::text, 1, [0-9]+[)]$\'),
 				SUBSTRING(%1$s FROM \'^[Ss][Uu][Bb][Ss][Tt][Rr][(]"([^"]+)"::text, 1, [0-9]+[)]$\'),
 				SUBSTRING(%1$s FROM \'^[Ss][Uu][Bb][Ss][Tt][Rr][(][(]([A-Za-z_][A-Za-z0-9_$]*)[)]::text, 1, [0-9]+[)]$\'),
@@ -43824,7 +43801,12 @@ END',
 			WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
 			ELSE \'\'
 		END
-	WHEN LEFT(%1$s, LENGTH(%3$s)) = %3$s THEN \'\'
+	WHEN LEFT(%1$s, LENGTH(%3$s)) = %3$s THEN
+		pg_catalog.regexp_replace(
+			%1$s,
+			\'^(\' || %3$s || \'[0-9]+:[0-9]+\' || CHR(10) || \')*\' || %3$s || \'[0-9]+:[0-9]+(\' || CHR(10) || \')?\',
+			\'\'
+		)
 	ELSE %1$s
 END',
 			$comment_sql,
@@ -59749,7 +59731,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * Ensure PostgreSQL domains that preserve lossy MySQL text-backed types exist.
 	 */
 	private function ensure_postgresql_mysql_text_domains(): void {
-		if ( $this->postgresql_mysql_text_domains_ensured || ! $this->should_use_postgresql_catalog_metadata() ) {
+		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
 			return;
 		}
 
@@ -59767,8 +59749,6 @@ $wp_mysql_text_domain$',
 				)
 			);
 		}
-
-		$this->postgresql_mysql_text_domains_ensured = true;
 	}
 
 	/**
@@ -59783,10 +59763,6 @@ $wp_mysql_text_domain$',
 
 		$domain_definitions = $this->get_postgresql_mysql_binary_domain_definitions_for_query( $query );
 		foreach ( $domain_definitions as $domain_name => $base_type ) {
-			if ( isset( $this->postgresql_mysql_binary_domains_ensured[ $domain_name ] ) ) {
-				continue;
-			}
-
 			$this->connection->query(
 				sprintf(
 					'DO $wp_mysql_binary_domain$
@@ -59800,7 +59776,6 @@ $wp_mysql_binary_domain$',
 					$base_type
 				)
 			);
-			$this->postgresql_mysql_binary_domains_ensured[ $domain_name ] = true;
 		}
 	}
 
@@ -59836,10 +59811,6 @@ $wp_mysql_binary_domain$',
 
 		$domain_definitions = $this->get_postgresql_mysql_integer_domain_definitions_for_query( $query );
 		foreach ( $domain_definitions as $domain_name => $base_type ) {
-			if ( isset( $this->postgresql_mysql_integer_domains_ensured[ $domain_name ] ) ) {
-				continue;
-			}
-
 			$this->connection->query(
 				sprintf(
 					'DO $wp_mysql_integer_domain$
@@ -59853,7 +59824,6 @@ $wp_mysql_integer_domain$',
 					$base_type
 				)
 			);
-			$this->postgresql_mysql_integer_domains_ensured[ $domain_name ] = true;
 		}
 	}
 
@@ -59894,10 +59864,6 @@ $wp_mysql_integer_domain$',
 
 		$domain_definitions = $this->get_postgresql_mysql_numeric_domain_definitions_for_query( $query );
 		foreach ( $domain_definitions as $domain_name => $base_type ) {
-			if ( isset( $this->postgresql_mysql_numeric_domains_ensured[ $domain_name ] ) ) {
-				continue;
-			}
-
 			$this->connection->query(
 				sprintf(
 					'DO $wp_mysql_numeric_domain$
@@ -59911,7 +59877,6 @@ $wp_mysql_numeric_domain$',
 					$base_type
 				)
 			);
-			$this->postgresql_mysql_numeric_domains_ensured[ $domain_name ] = true;
 		}
 	}
 
