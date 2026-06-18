@@ -19028,26 +19028,7 @@ ORDER BY table_name';
 	 * @return string[] Column names.
 	 */
 	private function get_show_table_status_result_columns(): array {
-		return array(
-			'Name',
-			'Engine',
-			'Version',
-			'Row_format',
-			'Rows',
-			'Avg_row_length',
-			'Data_length',
-			'Max_data_length',
-			'Index_length',
-			'Data_free',
-			'Auto_increment',
-			'Create_time',
-			'Update_time',
-			'Check_time',
-			'Collation',
-			'Checksum',
-			'Create_options',
-			'Comment',
-		);
+		return explode( ' ', 'Name Engine Version Row_format Rows Avg_row_length Data_length Max_data_length Index_length Data_free Auto_increment Create_time Update_time Check_time Collation Checksum Create_options Comment' );
 	}
 
 	/**
@@ -22942,23 +22923,7 @@ ORDER BY
 	 * @return string[] Output column names.
 	 */
 	private function get_show_index_output_columns(): array {
-		return array(
-			'Table',
-			'Non_unique',
-			'Key_name',
-			'Seq_in_index',
-			'Column_name',
-			'Collation',
-			'Cardinality',
-			'Sub_part',
-			'Packed',
-			'Null',
-			'Index_type',
-			'Comment',
-			'Index_comment',
-			'Visible',
-			'Expression',
-		);
+		return explode( ' ', 'Table Non_unique Key_name Seq_in_index Column_name Collation Cardinality Sub_part Packed Null Index_type Comment Index_comment Visible Expression' );
 	}
 
 	/**
