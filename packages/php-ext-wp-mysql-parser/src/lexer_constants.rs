@@ -2048,7 +2048,7 @@ pub const SQL_MODE_PIPES_AS_CONCAT: i64 = 2i64;
 pub const SQL_MODE_IGNORE_SPACE: i64 = 4i64;
 pub const SQL_MODE_NO_BACKSLASH_ESCAPES: i64 = 8i64;
 pub const SQL_MODE_ANSI_QUOTES: i64 = 16i64;
-pub const WHITESPACE_MASK: &str = " \t\n\r\x0c";
+pub const WHITESPACE_MASK: &str = " \t\n\r\x0c\x0b";
 pub const DIGIT_MASK: &str = "0123456789";
 pub const HEX_DIGIT_MASK: &str = "0123456789abcdefABCDEF";
 pub const ACCESSIBLE_SYMBOL: i64 = 1i64;
@@ -4047,7 +4047,7 @@ pub fn register_lexer_constants(mut builder: ClassBuilder) -> ClassBuilder {
         .constant("SQL_MODE_ANSI_QUOTES", 16i64, &[])
         .unwrap();
     builder = builder
-        .constant("WHITESPACE_MASK", " \t\n\r\x0c", &[])
+        .constant("WHITESPACE_MASK", " \t\n\r\x0c\x0b", &[])
         .unwrap();
     builder = builder.constant("DIGIT_MASK", "0123456789", &[]).unwrap();
     builder = builder
