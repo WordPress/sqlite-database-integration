@@ -34646,17 +34646,11 @@ WHERE option_name IN (
 		}
 
 		if ( $this->is_mysql_null_literal_expression( $tokens, $start, $end ) ) {
-			return array(
-				'is_null' => true,
-				'value'   => '',
-			);
+			return $this->get_mysql_null_constant_string_value();
 		}
 
 		if ( $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
-			return array(
-				'is_null' => false,
-				'value'   => $tokens[ $start ]->get_value(),
-			);
+			return $this->get_mysql_constant_string_value( $tokens[ $start ]->get_value() );
 		}
 
 		$trim_bounds = $this->get_mysql_trim_function_bounds( $tokens, $start, $end );
@@ -34674,10 +34668,7 @@ WHERE option_name IN (
 				return $value;
 			}
 
-			return array(
-				'is_null' => false,
-				'value'   => $this->get_mysql_trimmed_string_value( $trim_bounds['direction'], $trim_bounds['remove'], $value['value'] ),
-			);
+			return $this->get_mysql_constant_string_value( $this->get_mysql_trimmed_string_value( $trim_bounds['direction'], $trim_bounds['remove'], $value['value'] ) );
 		}
 
 		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
@@ -34702,10 +34693,7 @@ WHERE option_name IN (
 					}
 				}
 
-				return array(
-					'is_null' => true,
-					'value'   => '',
-				);
+				return $this->get_mysql_null_constant_string_value();
 
 			case 'concat':
 				$value = '';
@@ -34716,19 +34704,13 @@ WHERE option_name IN (
 					}
 
 					if ( $part['is_null'] ) {
-						return array(
-							'is_null' => true,
-							'value'   => '',
-						);
+						return $this->get_mysql_null_constant_string_value();
 					}
 
 					$value .= $part['value'];
 				}
 
-				return array(
-					'is_null' => false,
-					'value'   => $value,
-				);
+				return $this->get_mysql_constant_string_value( $value );
 
 			case 'concat_ws':
 				if ( count( $arguments ) < 2 ) {
@@ -34741,10 +34723,7 @@ WHERE option_name IN (
 				}
 
 				if ( $separator['is_null'] ) {
-					return array(
-						'is_null' => true,
-						'value'   => '',
-					);
+					return $this->get_mysql_null_constant_string_value();
 				}
 
 				$parts = array();
@@ -34761,10 +34740,7 @@ WHERE option_name IN (
 					$parts[] = $part['value'];
 				}
 
-				return array(
-					'is_null' => false,
-					'value'   => implode( $separator['value'], $parts ),
-				);
+				return $this->get_mysql_constant_string_value( implode( $separator['value'], $parts ) );
 
 			case 'ifnull':
 				if ( 2 !== count( $arguments ) ) {
@@ -34790,10 +34766,7 @@ WHERE option_name IN (
 				}
 
 				if ( $index < 1 || $index >= count( $arguments ) ) {
-					return array(
-						'is_null' => true,
-						'value'   => '',
-					);
+					return $this->get_mysql_null_constant_string_value();
 				}
 
 				return $this->get_mysql_constant_string_expression_value(
@@ -34822,23 +34795,14 @@ WHERE option_name IN (
 				}
 
 				if ( 'ltrim' === $bounds['function'] ) {
-					return array(
-						'is_null' => false,
-						'value'   => ltrim( $value['value'], ' ' ),
-					);
+					return $this->get_mysql_constant_string_value( ltrim( $value['value'], ' ' ) );
 				}
 
 				if ( 'rtrim' === $bounds['function'] ) {
-					return array(
-						'is_null' => false,
-						'value'   => rtrim( $value['value'], ' ' ),
-					);
+					return $this->get_mysql_constant_string_value( rtrim( $value['value'], ' ' ) );
 				}
 
-				return array(
-					'is_null' => false,
-					'value'   => in_array( $bounds['function'], array( 'lcase', 'lower' ), true ) ? strtolower( $value['value'] ) : strtoupper( $value['value'] ),
-				);
+				return $this->get_mysql_constant_string_value( in_array( $bounds['function'], array( 'lcase', 'lower' ), true ) ? strtolower( $value['value'] ) : strtoupper( $value['value'] ) );
 
 			case 'left':
 			case 'right':
@@ -34863,10 +34827,7 @@ WHERE option_name IN (
 						'left' === $bounds['function'] ? 0 : -$length,
 						$length
 					);
-				return array(
-					'is_null' => false,
-					'value'   => false === $substring_value ? '' : $substring_value,
-				);
+				return $this->get_mysql_constant_string_value( false === $substring_value ? '' : $substring_value );
 
 			case 'lpad':
 			case 'rpad':
@@ -34880,10 +34841,7 @@ WHERE option_name IN (
 					return null;
 				}
 				if ( $value['is_null'] || $pad['is_null'] ) {
-					return array(
-						'is_null' => true,
-						'value'   => '',
-					);
+					return $this->get_mysql_null_constant_string_value();
 				}
 
 				$length = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
@@ -34907,10 +34865,7 @@ WHERE option_name IN (
 						: $value['value'] . $pad_value;
 				}
 
-				return array(
-					'is_null' => false,
-					'value'   => false === $padded_value ? '' : $padded_value,
-				);
+				return $this->get_mysql_constant_string_value( false === $padded_value ? '' : $padded_value );
 
 			case 'nullif':
 				if ( 2 !== count( $arguments ) ) {
@@ -34924,10 +34879,7 @@ WHERE option_name IN (
 				}
 
 				if ( ! $left['is_null'] && ! $right['is_null'] && $left['value'] === $right['value'] ) {
-					return array(
-						'is_null' => true,
-						'value'   => '',
-					);
+					return $this->get_mysql_null_constant_string_value();
 				}
 
 				return $left;
@@ -34944,16 +34896,10 @@ WHERE option_name IN (
 					return null;
 				}
 				if ( $value['is_null'] || $search['is_null'] || $replacement['is_null'] ) {
-					return array(
-						'is_null' => true,
-						'value'   => '',
-					);
+					return $this->get_mysql_null_constant_string_value();
 				}
 
-				return array(
-					'is_null' => false,
-					'value'   => str_replace( $search['value'], $replacement['value'], $value['value'] ),
-				);
+				return $this->get_mysql_constant_string_value( str_replace( $search['value'], $replacement['value'], $value['value'] ) );
 
 			case 'reverse':
 				if ( 1 !== count( $arguments ) ) {
@@ -34969,10 +34915,7 @@ WHERE option_name IN (
 					return null;
 				}
 
-				return array(
-					'is_null' => false,
-					'value'   => strrev( $value['value'] ),
-				);
+				return $this->get_mysql_constant_string_value( strrev( $value['value'] ) );
 
 			case 'repeat':
 				if ( 2 !== count( $arguments ) ) {
@@ -34989,10 +34932,7 @@ WHERE option_name IN (
 					return null;
 				}
 
-				return array(
-					'is_null' => false,
-					'value'   => $count <= 0 ? '' : str_repeat( $value['value'], $count ),
-				);
+				return $this->get_mysql_constant_string_value( $count <= 0 ? '' : str_repeat( $value['value'], $count ) );
 
 			case 'space':
 				if ( 1 !== count( $arguments ) ) {
@@ -35004,10 +34944,7 @@ WHERE option_name IN (
 					return null;
 				}
 
-				return array(
-					'is_null' => false,
-					'value'   => str_repeat( ' ', max( $count, 0 ) ),
-				);
+				return $this->get_mysql_constant_string_value( str_repeat( ' ', max( $count, 0 ) ) );
 
 			case 'substring':
 			case 'substr':
@@ -35027,10 +34964,7 @@ WHERE option_name IN (
 
 				if ( 2 === count( $arguments ) ) {
 					$substring_value = substr( $value['value'], $position - 1 );
-					return array(
-						'is_null' => false,
-						'value'   => false === $substring_value ? '' : $substring_value,
-					);
+					return $this->get_mysql_constant_string_value( false === $substring_value ? '' : $substring_value );
 				}
 
 				$length = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[2]['start'], $arguments[2]['end'] );
@@ -35039,13 +34973,35 @@ WHERE option_name IN (
 				}
 
 				$substring_value = $length < 1 ? '' : substr( $value['value'], $position - 1, $length );
-				return array(
-					'is_null' => false,
-					'value'   => false === $substring_value ? '' : $substring_value,
-				);
+				return $this->get_mysql_constant_string_value( false === $substring_value ? '' : $substring_value );
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get a folded NULL string value.
+	 *
+	 * @return array{is_null: bool, value: string} Constant string value.
+	 */
+	private function get_mysql_null_constant_string_value(): array {
+		return array(
+			'is_null' => true,
+			'value'   => '',
+		);
+	}
+
+	/**
+	 * Get a folded non-NULL string value.
+	 *
+	 * @param string $value String value.
+	 * @return array{is_null: bool, value: string} Constant string value.
+	 */
+	private function get_mysql_constant_string_value( string $value ): array {
+		return array(
+			'is_null' => false,
+			'value'   => $value,
+		);
 	}
 
 	/**
