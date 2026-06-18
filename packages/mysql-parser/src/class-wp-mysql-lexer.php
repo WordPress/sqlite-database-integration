@@ -1297,20 +1297,32 @@ class WP_MySQL_Lexer {
 	private function read_mysql_comment(): int {
 		// @TODO: Consider supporting optimizer hints (/*+ ... */) or document
 		//        that they are not supported.
-		// @TODO: Implement six-digit version number support (from MySQL 8.4).
 
 		// MySQL-specific comment in one of the following forms:
-		//   1. /*! ... */      - The content is treated as SQL.
-		//   2. /*!12345 ... */ - The content is treated as SQL when "MySQL version >= 12345".
+		//   1. /*! ... */       - The content is treated as SQL.
+		//   2. /*!12345 ... */  - The content is treated as SQL when "MySQL version >= 12345".
+		//   3. /*!123456 ... */ - As of MySQL 8.4, a six-digit version (MMmmrr).
 		$this->bytes_already_read += 3; // Consume the '/*!'.
 
-		// Check if the next 5 characters are digits.
-		$digit_count        = strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read, 5 );
-		$is_version_comment = 5 === $digit_count;
-
-		// For version comments, extract the version number.
-		$version = $is_version_comment
-			? (int) substr( $this->sql, $this->bytes_already_read, $digit_count )
+		/*
+		 * Extract the version number, mirroring MySQL's own strict rule: the first
+		 * five characters must be digits. If a sixth digit follows and is itself
+		 * followed by whitespace, it is a six-digit version (MMmmrr, as of MySQL
+		 * 8.4); otherwise the version is the first five digits and any extra digit
+		 * stays comment content.
+		 */
+		$version_length = 0;
+		if ( 5 === strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read, 5 ) ) {
+			$version_length = 5;
+			if (
+				1 === strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read + 5, 1 )
+				&& 1 === strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read + 6, 1 )
+			) {
+				$version_length = 6;
+			}
+		}
+		$version = $version_length > 0
+			? (int) substr( $this->sql, $this->bytes_already_read, $version_length )
 			: 0;
 
 		if ( $this->mysql_version < $version ) {
@@ -1319,7 +1331,7 @@ class WP_MySQL_Lexer {
 			return self::COMMENT;
 		} else {
 			// Version satisfied or not specified. Treat the content as SQL code.
-			$this->bytes_already_read += $digit_count; // Skip the version number.
+			$this->bytes_already_read += $version_length; // Skip the version number.
 			$this->in_mysql_comment    = true;
 			return self::MYSQL_COMMENT_START;
 		}

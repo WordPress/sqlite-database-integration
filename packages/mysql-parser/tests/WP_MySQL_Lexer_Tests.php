@@ -104,6 +104,30 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		$this->assertSame( 'OPEN_PAR_SYMBOL', $tokens[2]->get_name() );
 	}
 
+	public function test_version_comments_gate_the_body_by_version(): void {
+		// Five-digit version: the body is SQL only when the server version satisfies it.
+		$this->assertSame(
+			array( 'SELECT', 'INT_NUMBER', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			self::token_names( 'SELECT /*!50000 1 */ 2' )
+		);
+		$this->assertSame(
+			array( 'SELECT', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			self::token_names( 'SELECT /*!99999 1 */ 2' )
+		);
+
+		// Six-digit MMmmrr version (MySQL 8.4): a sixth digit followed by whitespace
+		// belongs to the version, not the body — so 080400 is consumed whole (no stray
+		// digit), and 100000 gates above 8.4.0 rather than as 10000.
+		$this->assertSame(
+			array( 'SELECT', 'INT_NUMBER', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			self::token_names( 'SELECT /*!080400 1 */ 2' )
+		);
+		$this->assertSame(
+			array( 'SELECT', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			self::token_names( 'SELECT /*!100000 1 */ 2' )
+		);
+	}
+
 	public function test_at_name_splits_into_at_and_ident(): void {
 		$tokens = ( new WP_MySQL_Lexer( 'SELECT @var1' ) )->remaining_tokens();
 		$this->assertSame( 'AT_SIGN_SYMBOL', $tokens[1]->get_name() );
