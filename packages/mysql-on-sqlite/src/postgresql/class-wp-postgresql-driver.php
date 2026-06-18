@@ -91,14 +91,9 @@ class WP_PostgreSQL_Driver {
 	private const MYSQL_GROUP_CONCAT_MAX_LEN_SQL_LIMIT = 2147483647;
 
 	/**
-	 * Private helper used to emulate MySQL JSON_VALID().
+	 * SQLite-only test-harness helper used to validate MySQL temporal values at runtime.
 	 */
-	private const MYSQL_JSON_VALID_FUNCTION = '__wp_pg_mysql_json_valid';
-
-	/**
-	 * Private helper used to validate MySQL temporal values at runtime.
-	 */
-	private const MYSQL_VALIDATE_TEMPORAL_FUNCTION = '__wp_pg_mysql_validate_temporal';
+	private const SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION = '__wp_pg_mysql_validate_temporal';
 
 	/**
 	 * Driver-owned schema for future PostgreSQL-backed information_schema compatibility views.
@@ -397,18 +392,11 @@ class WP_PostgreSQL_Driver {
 	private $mysql_sql_calc_found_rows_count_query_cache = array();
 
 	/**
-	 * Whether the MySQL JSON_VALID() helper function is available on this connection.
+	 * Whether the SQLite MySQL temporal validation helper is registered.
 	 *
 	 * @var bool
 	 */
-	private $postgresql_mysql_json_valid_function_ensured = false;
-
-	/**
-	 * Whether the MySQL temporal validation helper function is available on this connection.
-	 *
-	 * @var bool
-	 */
-	private $postgresql_mysql_validate_temporal_function_ensured = false;
+	private $sqlite_mysql_validate_temporal_function_registered = false;
 
 	/**
 	 * Whether PostgreSQL-backed information_schema compatibility views are installed.
@@ -1827,7 +1815,7 @@ class WP_PostgreSQL_Driver {
 			}
 
 			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $statement_end );
-			if ( null !== $bounds && in_array( $bounds['function'], array( 'last_insert_id', 'row_count' ), true ) ) {
+			if ( null !== $bounds && in_array( $bounds['function'], array( 'found_rows', 'last_insert_id', 'row_count' ), true ) ) {
 				return true;
 			}
 		}
@@ -34056,16 +34044,16 @@ WHERE option_name IN (
 		}
 	}
 
-		/**
-		 * Get runtime validation SQL for a strict-mode temporal DML expression.
-		 *
-		 * @param array            $column_metadata Column metadata row.
-		 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
-		 * @param int              $start           First value token position.
-		 * @param int              $end             Final value token position, exclusive.
-		 * @param string           $value_sql       Translated PostgreSQL value SQL.
-		 * @return string|null Guarded PostgreSQL value SQL, or null when no guard is needed.
-		 */
+	/**
+	 * Get runtime validation SQL for a strict-mode temporal DML expression.
+	 *
+	 * @param array            $column_metadata Column metadata row.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First value token position.
+	 * @param int              $end             Final value token position, exclusive.
+	 * @param string           $value_sql       Translated PostgreSQL value SQL.
+	 * @return string|null Guarded PostgreSQL value SQL, or null when no guard is needed.
+	 */
 	private function get_strict_mysql_dml_temporal_expression_sql_for_column( array $column_metadata, array $tokens, int $start, int $end, string $value_sql ): ?string {
 		if ( ! $this->is_mysql_strict_sql_mode_active() ) {
 			return null;
@@ -34083,9 +34071,30 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$known_valid_value_sql = $this->get_mysql_intrinsically_valid_temporal_expression_sql_for_column(
+			$base_type,
+			(string) ( $column_metadata['column_type'] ?? '' ),
+			$tokens,
+			$start,
+			$end,
+			$value_sql
+		);
+		if ( null !== $known_valid_value_sql ) {
+			return $known_valid_value_sql === $value_sql ? null : $known_valid_value_sql;
+		}
+
+		if ( 'pgsql' === $this->connection->get_driver_name() ) {
+			return $this->get_postgresql_mysql_inline_validate_temporal_sql(
+				$value_sql,
+				$base_type,
+				$this->is_mysql_sql_mode_active( 'NO_ZERO_DATE' ),
+				$this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' )
+			);
+		}
+
 		return sprintf(
 			'%s(CAST(%s AS text), %s, %d, %d)',
-			$this->get_postgresql_mysql_validate_temporal_function_name(),
+			self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION,
 			$value_sql,
 			$this->connection->quote( $base_type ),
 			$this->is_mysql_sql_mode_active( 'NO_ZERO_DATE' ) ? 1 : 0,
@@ -34093,14 +34102,1848 @@ WHERE option_name IN (
 		);
 	}
 
-		/**
-		 * Check whether a value token range is the MySQL DEFAULT value keyword.
-		 *
-		 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-		 * @param int              $start  First value token position.
-		 * @param int              $end    Final value token position, exclusive.
-		 * @return bool Whether the range is DEFAULT.
-		 */
+	/**
+	 * Get inline PostgreSQL SQL for strict MySQL temporal validation.
+	 *
+	 * @param string $value_sql           Translated PostgreSQL value SQL.
+	 * @param string $mysql_type          MySQL temporal base type.
+	 * @param bool   $reject_zero_date    Whether NO_ZERO_DATE rejects full zero dates.
+	 * @param bool   $reject_zero_in_date Whether NO_ZERO_IN_DATE rejects partial-zero dates.
+	 * @return string Inline validation SQL.
+	 */
+	private function get_postgresql_mysql_inline_validate_temporal_sql( string $value_sql, string $mysql_type, bool $reject_zero_date, bool $reject_zero_in_date ): string {
+		$value_sql_alias = '"__wp_pg_mysql_temporal_value"."value"';
+		$date_part_sql   = sprintf( 'SUBSTRING(%s FROM 1 FOR 10)', $value_sql_alias );
+		$year_text_sql   = sprintf( 'SUBSTRING(%s FROM 1 FOR 4)', $date_part_sql );
+		$month_text_sql  = sprintf( 'SUBSTRING(%s FROM 6 FOR 2)', $date_part_sql );
+		$day_text_sql    = sprintf( 'SUBSTRING(%s FROM 9 FOR 2)', $date_part_sql );
+		$year_sql        = sprintf( 'CAST(%s AS integer)', $year_text_sql );
+		$month_sql       = sprintf( 'CAST(%s AS integer)', $month_text_sql );
+		$day_sql         = sprintf( 'CAST(%s AS integer)', $day_text_sql );
+		$error_sql       = $this->get_postgresql_mysql_inline_temporal_validation_error_sql( $value_sql_alias );
+
+		if ( 'date' === $mysql_type ) {
+			$format_condition_sql = sprintf(
+				"%s ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?Z?)?$'",
+				$value_sql_alias
+			);
+			$normalized_value_sql = $date_part_sql;
+			$time_condition_sql   = null;
+		} else {
+			$date_only_condition_sql = sprintf(
+				"%s ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'",
+				$value_sql_alias
+			);
+			$date_time_condition_sql = sprintf(
+				"%s ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?Z?$'",
+				$value_sql_alias
+			);
+			$format_condition_sql    = sprintf( '(%s OR %s)', $date_only_condition_sql, $date_time_condition_sql );
+			$normalized_value_sql    = sprintf(
+				"CASE WHEN %1\$s THEN %2\$s || ' 00:00:00' ELSE %3\$s || ' ' || SUBSTRING(%2\$s FROM 12 FOR 8) END",
+				$date_only_condition_sql,
+				$value_sql_alias,
+				$date_part_sql
+			);
+			$time_condition_sql      = sprintf(
+				'(%1$s OR (CAST(SUBSTRING(%2$s FROM 12 FOR 2) AS integer) BETWEEN 0 AND 23 AND CAST(SUBSTRING(%2$s FROM 15 FOR 2) AS integer) BETWEEN 0 AND 59 AND CAST(SUBSTRING(%2$s FROM 18 FOR 2) AS integer) BETWEEN 0 AND 59))',
+				$date_only_condition_sql,
+				$value_sql_alias
+			);
+		}
+
+		$full_zero_date_condition_sql = sprintf(
+			"%s = '0000' AND %s = '00' AND %s = '00'",
+			$year_text_sql,
+			$month_text_sql,
+			$day_text_sql
+		);
+		$zero_in_date_condition_sql   = sprintf(
+			"%s <> '0000' AND (%s = '00' OR %s = '00')",
+			$year_text_sql,
+			$month_text_sql,
+			$day_text_sql
+		);
+		$valid_calendar_condition_sql = $this->get_postgresql_mysql_inline_valid_calendar_date_condition_sql(
+			$year_sql,
+			$month_sql,
+			$day_sql
+		);
+
+		$when_clauses = array(
+			sprintf( 'WHEN %s IS NULL THEN NULL', $value_sql_alias ),
+			sprintf( 'WHEN NOT (%s) THEN %s', $format_condition_sql, $error_sql ),
+		);
+		if ( null !== $time_condition_sql ) {
+			$when_clauses[] = sprintf( 'WHEN NOT %s THEN %s', $time_condition_sql, $error_sql );
+		}
+
+		$when_clauses[] = sprintf(
+			'WHEN %s THEN %s',
+			$full_zero_date_condition_sql,
+			$reject_zero_date ? $error_sql : $normalized_value_sql
+		);
+		$when_clauses[] = sprintf(
+			'WHEN %s THEN %s',
+			$zero_in_date_condition_sql,
+			$reject_zero_in_date ? $error_sql : $normalized_value_sql
+		);
+		$when_clauses[] = sprintf( 'WHEN %s THEN %s', $valid_calendar_condition_sql, $normalized_value_sql );
+
+		return sprintf(
+			'(SELECT CASE %s ELSE %s END FROM (SELECT CAST(%s AS text) AS "value") AS "__wp_pg_mysql_temporal_value")',
+			implode( ' ', $when_clauses ),
+			$error_sql,
+			$value_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL that raises an invalid timestamp input error when evaluated.
+	 *
+	 * @param string $value_sql Runtime value SQL.
+	 * @return string Error expression SQL.
+	 */
+	private function get_postgresql_mysql_inline_temporal_validation_error_sql( string $value_sql ): string {
+		return sprintf(
+			"CAST(CAST('__wp_pg_invalid_temporal__' || COALESCE(%s, '') AS timestamp) AS text)",
+			$value_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL that validates a Gregorian calendar date.
+	 *
+	 * @param string $year_sql  Integer year expression SQL.
+	 * @param string $month_sql Integer month expression SQL.
+	 * @param string $day_sql   Integer day expression SQL.
+	 * @return string Calendar validity condition SQL.
+	 */
+	private function get_postgresql_mysql_inline_valid_calendar_date_condition_sql( string $year_sql, string $month_sql, string $day_sql ): string {
+		$leap_year_condition_sql = sprintf(
+			'((%1$s %% 4 = 0 AND %1$s %% 100 <> 0) OR %1$s %% 400 = 0)',
+			$year_sql
+		);
+		$max_day_sql             = sprintf(
+			'CASE WHEN %1$s IN (1, 3, 5, 7, 8, 10, 12) THEN 31 WHEN %1$s IN (4, 6, 9, 11) THEN 30 WHEN %1$s = 2 THEN CASE WHEN %2$s THEN 29 ELSE 28 END ELSE 0 END',
+			$month_sql,
+			$leap_year_condition_sql
+		);
+
+		return sprintf(
+			'(%1$s BETWEEN 1 AND 9999 AND %2$s BETWEEN 1 AND 12 AND %3$s BETWEEN 1 AND %4$s)',
+			$year_sql,
+			$month_sql,
+			$day_sql,
+			$max_day_sql
+		);
+	}
+
+	/**
+	 * Get storage SQL for a strict-mode temporal expression known-valid before execution.
+	 *
+	 * @param string           $base_type MySQL temporal base type.
+	 * @param string           $column_type MySQL temporal column type.
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int              $start       First value token position.
+	 * @param int              $end         Final value token position, exclusive.
+	 * @param string           $value_sql   Translated PostgreSQL value SQL.
+	 * @return string|null PostgreSQL storage SQL, or null when the expression is not known-valid.
+	 */
+	private function get_mysql_intrinsically_valid_temporal_expression_sql_for_column( string $base_type, string $column_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
+		if (
+			$start < $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start ]->id
+		) {
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $start, $end );
+			if ( $end === $after_close ) {
+				return $this->get_mysql_intrinsically_valid_temporal_expression_sql_for_column( $base_type, $column_type, $tokens, $start + 1, $end - 1, $value_sql );
+			}
+		}
+
+		$function = $this->get_mysql_intrinsically_valid_temporal_function_name( $tokens, $start, $end );
+		if ( null !== $function ) {
+			$function_sql = $this->get_mysql_intrinsically_valid_temporal_function_sql_for_column( $base_type, $function, $value_sql );
+			if ( null !== $function_sql ) {
+				return $function_sql;
+			}
+		}
+
+		$date_function_sql = $this->get_mysql_intrinsically_valid_date_function_expression_sql_for_column( $base_type, $tokens, $start, $end, $value_sql );
+		if ( null !== $date_function_sql ) {
+			return $date_function_sql;
+		}
+
+		$cast_sql = $this->get_mysql_intrinsically_valid_temporal_cast_expression_sql_for_column( $base_type, $column_type, $tokens, $start, $end, $value_sql );
+		if ( null !== $cast_sql ) {
+			return $cast_sql;
+		}
+
+		$from_unixtime_sql = $this->get_mysql_intrinsically_valid_from_unixtime_expression_sql_for_column( $base_type, $column_type, $tokens, $start, $end, $value_sql );
+		if ( null !== $from_unixtime_sql ) {
+			return $from_unixtime_sql;
+		}
+
+		$date_format_sql = $this->get_mysql_intrinsically_valid_date_format_expression_sql_for_column( $base_type, $tokens, $start, $end, $value_sql );
+		if ( null !== $date_format_sql ) {
+			return $date_format_sql;
+		}
+
+		$wrapper_sql = $this->get_mysql_intrinsically_valid_temporal_wrapper_expression_sql_for_column( $base_type, $tokens, $start, $end, $value_sql );
+		if ( null !== $wrapper_sql ) {
+			return $wrapper_sql;
+		}
+
+		$case_sql = $this->get_mysql_intrinsically_valid_temporal_case_expression_sql_for_column( $base_type, $tokens, $start, $end, $value_sql );
+		if ( null !== $case_sql ) {
+			return $case_sql;
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_temporal_arithmetic_expression( $tokens, $start, $end ) ) {
+			return $this->get_postgresql_mysql_temporal_storage_expression_sql( $base_type, $column_type, $value_sql );
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_temporal_text_expression( $tokens, $start, $end ) ) {
+			return $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get storage SQL for an intrinsic current temporal function.
+	 *
+	 * @param string $base_type     MySQL temporal base type.
+	 * @param string $function_name Normalized function name.
+	 * @param string $value_sql     Translated PostgreSQL function SQL.
+	 * @return string|null Storage SQL, or null when the function does not fit the target column.
+	 */
+	private function get_mysql_intrinsically_valid_temporal_function_sql_for_column( string $base_type, string $function_name, string $value_sql ): ?string {
+		if ( 'date' === $base_type ) {
+			return in_array( $function_name, array( 'curdate', 'utc_date' ), true ) ? $value_sql : null;
+		}
+
+		if ( in_array( $base_type, array( 'datetime', 'timestamp' ), true ) ) {
+			if ( in_array( $function_name, array( 'now', 'utc_timestamp', 'localtime', 'localtimestamp' ), true ) ) {
+				return $value_sql;
+			}
+
+			if ( in_array( $function_name, array( 'curdate', 'utc_date' ), true ) ) {
+				return $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get the name of an intrinsic current temporal function expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return string|null Function name, or null when not an intrinsic current temporal expression.
+	 */
+	private function get_mysql_intrinsically_valid_temporal_function_name( array $tokens, int $start, int $end ): ?string {
+		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
+			return null;
+		}
+
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null !== $bounds && $bounds['close'] + 1 === $end ) {
+			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+			if ( null === $arguments ) {
+				return null;
+			}
+
+			$fsp = $this->get_mysql_temporal_function_fractional_seconds_precision(
+				array_map(
+					function ( array $argument ) use ( $tokens ): string {
+						return $this->translate_mysql_token_sequence_to_postgresql(
+							$tokens,
+							$argument['start'],
+							$argument['end']
+						);
+					},
+					$arguments
+				)
+			);
+
+			if (
+				in_array( $bounds['function'], array( 'now', 'utc_timestamp', 'localtime', 'localtimestamp' ), true )
+				&& null !== $fsp
+			) {
+				return $bounds['function'];
+			}
+
+			if (
+				in_array( $bounds['function'], array( 'curdate', 'utc_date' ), true )
+				&& 0 === count( $arguments )
+			) {
+				return $bounds['function'];
+			}
+
+			return null;
+		}
+
+		if ( $start + 1 !== $end ) {
+			return null;
+		}
+
+		$function_name = strtolower( $tokens[ $start ]->get_value() );
+		if ( 'current_date' === $function_name && WP_MySQL_Lexer::IDENTIFIER === $tokens[ $start ]->id ) {
+			return 'curdate';
+		}
+
+		if (
+			in_array( $function_name, array( 'current_timestamp', 'localtime', 'localtimestamp' ), true )
+			&& WP_MySQL_Lexer::NOW_SYMBOL === $tokens[ $start ]->id
+		) {
+			return 'current_timestamp' === $function_name ? 'utc_timestamp' : $function_name;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get storage SQL for DATE(expr) when expr is known-valid.
+	 *
+	 * @param string           $base_type MySQL temporal base type.
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $start     First value token position.
+	 * @param int              $end       Final value token position, exclusive.
+	 * @param string           $value_sql Translated PostgreSQL DATE() SQL.
+	 * @return string|null Storage SQL, or null when DATE() can produce an invalid temporal value.
+	 */
+	private function get_mysql_intrinsically_valid_date_function_expression_sql_for_column( string $base_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
+		if ( ! in_array( $base_type, array( 'date', 'datetime', 'timestamp' ), true ) ) {
+			return null;
+		}
+
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null !== $bounds && 'date' === $bounds['function'] && $bounds['close'] + 1 === $end ) {
+			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+			if ( null === $arguments || 1 !== count( $arguments ) ) {
+				return null;
+			}
+
+			if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$arguments[0]['start'],
+				$arguments[0]['end']
+			) ) {
+				return null;
+			}
+
+			return 'date' === $base_type
+				? $value_sql
+				: $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get storage SQL for a temporal CAST/CONVERT expression when its source is known-valid.
+	 *
+	 * @param string           $base_type   MySQL temporal base type.
+	 * @param string           $column_type MySQL temporal column type.
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int              $start       First value token position.
+	 * @param int              $end         Final value token position, exclusive.
+	 * @param string           $value_sql   Translated PostgreSQL CAST/CONVERT SQL.
+	 * @return string|null Storage SQL, or null when the expression can produce an invalid temporal value.
+	 */
+	private function get_mysql_intrinsically_valid_temporal_cast_expression_sql_for_column( string $base_type, string $column_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
+		$date_time_cast = $this->get_mysql_date_time_cast_bounds( $tokens, $start, $end );
+		if ( null !== $date_time_cast && $date_time_cast['close'] + 1 === $end ) {
+			if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$date_time_cast['expression_start'],
+				$date_time_cast['expression_end']
+			) ) {
+				return null;
+			}
+
+			return $this->get_postgresql_mysql_temporal_storage_expression_sql( $base_type, $column_type, $value_sql );
+		}
+
+		$date_cast = $this->get_mysql_date_cast_bounds( $tokens, $start, $end );
+		if ( null !== $date_cast && $date_cast['close'] + 1 === $end ) {
+			if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$date_cast['expression_start'],
+				$date_cast['expression_end']
+			) ) {
+				return null;
+			}
+
+			return 'date' === $base_type
+				? $value_sql
+				: $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
+		}
+
+		$date_convert = $this->get_mysql_date_convert_bounds( $tokens, $start, $end );
+		if ( null !== $date_convert && $date_convert['close'] + 1 === $end ) {
+			if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$date_convert['expression_start'],
+				$date_convert['expression_end']
+			) ) {
+				return null;
+			}
+
+			return 'date' === $base_type
+				? $value_sql
+				: $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get storage SQL for FROM_UNIXTIME(literal) values that cannot produce invalid temporal text.
+	 *
+	 * @param string           $base_type   MySQL temporal base type.
+	 * @param string           $column_type MySQL temporal column type.
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int              $start       First value token position.
+	 * @param int              $end         Final value token position, exclusive.
+	 * @param string           $value_sql   Translated PostgreSQL value SQL.
+	 * @return string|null Storage SQL, or null when FROM_UNIXTIME() needs runtime validation.
+	 */
+	private function get_mysql_intrinsically_valid_from_unixtime_expression_sql_for_column( string $base_type, string $column_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
+		if ( $this->is_mysql_null_from_unixtime_expression( $tokens, $start, $end ) ) {
+			return $value_sql;
+		}
+
+		$timestamp_sql = $this->get_mysql_intrinsically_valid_from_unixtime_timestamp_sql( $tokens, $start, $end );
+		if ( null !== $timestamp_sql ) {
+			return $this->get_postgresql_mysql_temporal_storage_expression_sql( $base_type, $column_type, $timestamp_sql );
+		}
+
+		$format = $this->get_mysql_intrinsically_valid_formatted_from_unixtime_expression_format( $tokens, $start, $end );
+		if ( null === $format ) {
+			return null;
+		}
+
+		if ( '%Y-%m-%d' === $format ) {
+			return 'date' === $base_type
+				? $value_sql
+				: $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
+		}
+
+		if ( '%Y-%m-%d %H:%i:%s' === $format ) {
+			return 'date' === $base_type
+				? $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql )
+				: $value_sql;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get storage SQL for fixed-format DATE_FORMAT() calls over known-valid sources.
+	 *
+	 * @param string           $base_type MySQL temporal base type.
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $start     First value token position.
+	 * @param int              $end       Final value token position, exclusive.
+	 * @param string           $value_sql Translated PostgreSQL DATE_FORMAT() SQL.
+	 * @return string|null Storage SQL, or null when DATE_FORMAT() can produce arbitrary text.
+	 */
+	private function get_mysql_intrinsically_valid_date_format_expression_sql_for_column( string $base_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
+		if ( $this->is_mysql_null_date_format_expression( $tokens, $start, $end ) ) {
+			return $value_sql;
+		}
+
+		$format = $this->get_mysql_intrinsically_valid_date_format_expression_format( $tokens, $start, $end );
+		if ( null === $format ) {
+			return null;
+		}
+
+		if ( '%Y-%m-%d' === $format ) {
+			return 'date' === $base_type
+				? $value_sql
+				: $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
+		}
+
+		if ( '%Y-%m-%d %H:%i:%s' === $format ) {
+			return 'date' === $base_type
+				? $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql )
+				: $value_sql;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get storage SQL for a wrapper expression whose possible values are known-valid temporal values.
+	 *
+	 * @param string           $base_type MySQL temporal base type.
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $start     First value token position.
+	 * @param int              $end       Final value token position, exclusive.
+	 * @param string           $value_sql Translated PostgreSQL wrapper expression SQL.
+	 * @return string|null Storage SQL, or null when any result branch can produce an invalid temporal value.
+	 */
+	private function get_mysql_intrinsically_valid_temporal_wrapper_expression_sql_for_column( string $base_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
+		if ( ! $this->is_mysql_intrinsically_valid_temporal_wrapper_expression( $tokens, $start, $end ) ) {
+			return null;
+		}
+
+		return $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql );
+	}
+
+	/**
+	 * Check whether a wrapper expression can only return known-valid temporal values.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether all possible non-NULL result branches are known-valid.
+	 */
+	private function is_mysql_intrinsically_valid_temporal_wrapper_expression( array $tokens, int $start, int $end ): bool {
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null === $bounds || $bounds['close'] + 1 !== $end ) {
+			return false;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments ) {
+			return false;
+		}
+
+		if ( 'if' === $bounds['function'] ) {
+			$result_arguments = 3 === count( $arguments ) ? array_slice( $arguments, 1 ) : null;
+		} elseif ( in_array( $bounds['function'], array( 'coalesce', 'greatest', 'ifnull', 'least' ), true ) ) {
+			$result_arguments = count( $arguments ) >= 2 ? $arguments : null;
+		} elseif ( 'nullif' === $bounds['function'] ) {
+			$result_arguments = 2 === count( $arguments ) ? array( $arguments[0] ) : null;
+		} else {
+			return false;
+		}
+
+		if ( null === $result_arguments ) {
+			return false;
+		}
+
+		foreach ( $result_arguments as $argument ) {
+			if (
+				! $this->is_mysql_intrinsically_valid_temporal_source_expression( $tokens, $argument['start'], $argument['end'] )
+				&& ! $this->is_mysql_intrinsically_valid_date_function_expression( $tokens, $argument['start'], $argument['end'] )
+			) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Get storage SQL for a CASE expression whose result branches are known-valid temporal values.
+	 *
+	 * @param string           $base_type MySQL temporal base type.
+	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
+	 * @param int              $start     First value token position.
+	 * @param int              $end       Final value token position, exclusive.
+	 * @param string           $value_sql Translated PostgreSQL CASE expression SQL.
+	 * @return string|null Storage SQL, or null when any result branch can produce an invalid temporal value.
+	 */
+	private function get_mysql_intrinsically_valid_temporal_case_expression_sql_for_column( string $base_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
+		if ( ! $this->is_mysql_intrinsically_valid_temporal_case_expression( $tokens, $start, $end ) ) {
+			return null;
+		}
+
+		return $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql );
+	}
+
+	/**
+	 * Check whether a CASE expression can only return known-valid temporal values or NULL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether all non-NULL result branches are known-valid.
+	 */
+	private function is_mysql_intrinsically_valid_temporal_case_expression( array $tokens, int $start, int $end ): bool {
+		$result_ranges = $this->get_mysql_case_expression_result_ranges( $tokens, $start, $end );
+		if ( null === $result_ranges || empty( $result_ranges ) ) {
+			return false;
+		}
+
+		foreach ( $result_ranges as $range ) {
+			if (
+				! $this->is_mysql_intrinsically_valid_temporal_source_expression( $tokens, $range['start'], $range['end'] )
+				&& ! $this->is_mysql_intrinsically_valid_date_function_expression( $tokens, $range['start'], $range['end'] )
+			) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Get top-level THEN/ELSE result expression ranges from a CASE expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  CASE token position.
+	 * @param int              $end    Final CASE expression token position, exclusive.
+	 * @return array<int,array{start:int,end:int}>|null Result expression ranges, or null when unsupported.
+	 */
+	private function get_mysql_case_expression_result_ranges( array $tokens, int $start, int $end ): ?array {
+		if (
+			$start >= $end
+			|| ! isset( $tokens[ $start ], $tokens[ $end - 1 ] )
+			|| WP_MySQL_Lexer::CASE_SYMBOL !== $tokens[ $start ]->id
+			|| WP_MySQL_Lexer::END_SYMBOL !== $tokens[ $end - 1 ]->id
+		) {
+			return null;
+		}
+
+		$case_depth    = 0;
+		$paren_depth   = 0;
+		$then_start    = null;
+		$else_start    = null;
+		$result_ranges = array();
+
+		for ( $i = $start + 1; $i < $end; $i++ ) {
+			$token_id = $tokens[ $i ]->id;
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token_id ) {
+				++$paren_depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token_id ) {
+				--$paren_depth;
+				if ( $paren_depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 !== $paren_depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CASE_SYMBOL === $token_id ) {
+				++$case_depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id && $case_depth > 0 ) {
+				--$case_depth;
+				continue;
+			}
+
+			if ( 0 !== $case_depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::WHEN_SYMBOL === $token_id || WP_MySQL_Lexer::ELSE_SYMBOL === $token_id || WP_MySQL_Lexer::END_SYMBOL === $token_id ) {
+				if ( null !== $then_start ) {
+					if ( $then_start >= $i ) {
+						return null;
+					}
+					$result_ranges[] = array(
+						'start' => $then_start,
+						'end'   => $i,
+					);
+					$then_start      = null;
+				}
+
+				if ( WP_MySQL_Lexer::WHEN_SYMBOL === $token_id ) {
+					if ( null !== $else_start ) {
+						return null;
+					}
+					continue;
+				}
+
+				if ( WP_MySQL_Lexer::ELSE_SYMBOL === $token_id ) {
+					if ( null !== $else_start ) {
+						return null;
+					}
+					$else_start = $i + 1;
+					continue;
+				}
+
+				if ( null !== $else_start ) {
+					if ( $else_start >= $i ) {
+						return null;
+					}
+					$result_ranges[] = array(
+						'start' => $else_start,
+						'end'   => $i,
+					);
+					$else_start      = null;
+				}
+
+				return $i === $end - 1 ? $result_ranges : null;
+			}
+
+			if ( WP_MySQL_Lexer::THEN_SYMBOL === $token_id ) {
+				if ( null !== $then_start || null !== $else_start ) {
+					return null;
+				}
+				$then_start = $i + 1;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether DATE(expr) is based on a known-valid temporal expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether DATE() cannot produce a malformed or zero date.
+	 */
+	private function is_mysql_intrinsically_valid_date_function_expression( array $tokens, int $start, int $end ): bool {
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null === $bounds || 'date' !== $bounds['function'] || $bounds['close'] + 1 !== $end ) {
+			return false;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 1 !== count( $arguments ) ) {
+			return false;
+		}
+
+		return $this->is_mysql_intrinsically_valid_temporal_source_expression(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		);
+	}
+
+	/**
+	 * Check whether temporal arithmetic is based on a known-valid current temporal expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the expression cannot produce a malformed or zero temporal value.
+	 */
+	private function is_mysql_intrinsically_valid_temporal_arithmetic_expression( array $tokens, int $start, int $end ): bool {
+		$date_arithmetic = $this->get_mysql_date_arithmetic_function_bounds( $tokens, $start, $end );
+		if ( null !== $date_arithmetic && $date_arithmetic['close'] + 1 === $end ) {
+			return $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$date_arithmetic['expression_start'],
+				$date_arithmetic['expression_end']
+			);
+		}
+
+		$infix_arithmetic = $this->get_mysql_infix_interval_expression_bounds( $tokens, $start, $end );
+		if ( null !== $infix_arithmetic && $infix_arithmetic['close'] + 1 === $end ) {
+			return $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$infix_arithmetic['expression_start'],
+				$infix_arithmetic['expression_end']
+			);
+		}
+
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if (
+			null === $bounds
+			|| $bounds['close'] + 1 !== $end
+			|| 'timestampadd' !== $bounds['function']
+		) {
+			return false;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 3 !== count( $arguments ) ) {
+			return false;
+		}
+
+		if (
+			null === $this->get_mysql_timestampadd_interval(
+				$tokens,
+				$arguments[0]['start'],
+				$arguments[0]['end'],
+				$arguments[1]['start'],
+				$arguments[1]['end']
+			)
+		) {
+			return false;
+		}
+
+		return $this->is_mysql_intrinsically_valid_temporal_source_expression(
+			$tokens,
+			$arguments[2]['start'],
+			$arguments[2]['end']
+		);
+	}
+
+	/**
+	 * Check whether an expression is a known-valid current temporal arithmetic source.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the expression is known-valid.
+	 */
+	private function is_mysql_intrinsically_valid_temporal_source_expression( array $tokens, int $start, int $end ): bool {
+		if (
+			$start < $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start ]->id
+		) {
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $start, $end );
+			if ( $end === $after_close ) {
+				return $this->is_mysql_intrinsically_valid_temporal_source_expression( $tokens, $start + 1, $end - 1 );
+			}
+		}
+
+		if ( null !== $this->get_mysql_intrinsically_valid_temporal_function_name( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_null_literal_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_temporal_literal_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_temporal_text_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_temporal_wrapper_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_date_function_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_temporal_cast_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_from_unixtime_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_null_from_unixtime_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( null !== $this->get_mysql_intrinsically_valid_formatted_from_unixtime_expression_format( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_null_date_format_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( null !== $this->get_mysql_intrinsically_valid_date_format_expression_format( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		if ( $this->is_mysql_intrinsically_valid_temporal_case_expression( $tokens, $start, $end ) ) {
+			return true;
+		}
+
+		return $this->is_mysql_intrinsically_valid_temporal_arithmetic_expression( $tokens, $start, $end );
+	}
+
+	/**
+	 * Check whether a temporal CAST/CONVERT expression is based on a known-valid temporal source.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the expression is known-valid.
+	 */
+	private function is_mysql_intrinsically_valid_temporal_cast_expression( array $tokens, int $start, int $end ): bool {
+		$date_time_cast = $this->get_mysql_date_time_cast_bounds( $tokens, $start, $end );
+		if ( null !== $date_time_cast && $date_time_cast['close'] + 1 === $end ) {
+			return $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$date_time_cast['expression_start'],
+				$date_time_cast['expression_end']
+			);
+		}
+
+		$date_cast = $this->get_mysql_date_cast_bounds( $tokens, $start, $end );
+		if ( null !== $date_cast && $date_cast['close'] + 1 === $end ) {
+			return $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$date_cast['expression_start'],
+				$date_cast['expression_end']
+			);
+		}
+
+		$date_convert = $this->get_mysql_date_convert_bounds( $tokens, $start, $end );
+		if ( null !== $date_convert && $date_convert['close'] + 1 === $end ) {
+			return $this->is_mysql_intrinsically_valid_temporal_source_expression(
+				$tokens,
+				$date_convert['expression_start'],
+				$date_convert['expression_end']
+			);
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether FROM_UNIXTIME() is based on a safe literal Unix timestamp.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the expression is known-valid.
+	 */
+	private function is_mysql_intrinsically_valid_from_unixtime_expression( array $tokens, int $start, int $end ): bool {
+		return null !== $this->get_mysql_intrinsically_valid_from_unixtime_timestamp_sql( $tokens, $start, $end );
+	}
+
+	/**
+	 * Check whether a token range is the NULL literal.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the range is NULL.
+	 */
+	private function is_mysql_null_literal_expression( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $start ]->id;
+	}
+
+	/**
+	 * Check whether a string literal is a real calendar date/datetime.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the expression is a known-valid temporal literal.
+	 */
+	private function is_mysql_intrinsically_valid_temporal_literal_expression( array $tokens, int $start, int $end ): bool {
+		$literal = $this->get_mysql_dml_literal_value( $tokens, $start, $end );
+		if ( null === $literal || 'string' !== $literal['type'] || null === $literal['value'] ) {
+			return false;
+		}
+
+		return $this->is_mysql_intrinsically_valid_temporal_value( $literal['value'] );
+	}
+
+	/**
+	 * Check whether an expression always returns a valid canonical temporal text value.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the expression is known-valid temporal text.
+	 */
+	private function is_mysql_intrinsically_valid_temporal_text_expression( array $tokens, int $start, int $end ): bool {
+		$constant_value = $this->get_mysql_constant_string_expression_value( $tokens, $start, $end );
+		if ( null === $constant_value ) {
+			return false;
+		}
+
+		return $constant_value['is_null']
+			|| $this->is_mysql_intrinsically_valid_canonical_temporal_value( $constant_value['value'] );
+	}
+
+	/**
+	 * Get a known-valid canonical temporal text expression value.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return string|null Temporal value, or null when not known-valid canonical temporal text.
+	 */
+	private function get_mysql_intrinsically_valid_temporal_text_expression_value( array $tokens, int $start, int $end ): ?string {
+		$constant_value = $this->get_mysql_constant_string_expression_value( $tokens, $start, $end );
+		if ( null === $constant_value || $constant_value['is_null'] ) {
+			return null;
+		}
+
+		return $this->is_mysql_intrinsically_valid_canonical_temporal_value( $constant_value['value'] ) ? $constant_value['value'] : null;
+	}
+
+	/**
+	 * Get a literal-only string expression value.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return array{is_null: bool, value: string}|null Constant string value, or null when not known.
+	 */
+	private function get_mysql_constant_string_expression_value( array $tokens, int $start, int $end ): ?array {
+		if (
+			$start < $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start ]->id
+		) {
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $start, $end );
+			if ( $end === $after_close ) {
+				return $this->get_mysql_constant_string_expression_value( $tokens, $start + 1, $end - 1 );
+			}
+		}
+
+		if ( $this->is_mysql_null_literal_expression( $tokens, $start, $end ) ) {
+			return array(
+				'is_null' => true,
+				'value'   => '',
+			);
+		}
+
+		if ( $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
+			return array(
+				'is_null' => false,
+				'value'   => $tokens[ $start ]->get_value(),
+			);
+		}
+
+		$trim_bounds = $this->get_mysql_trim_function_bounds( $tokens, $start, $end );
+		if ( null !== $trim_bounds && $trim_bounds['close'] + 1 === $end ) {
+			if ( null === $trim_bounds['remove'] ) {
+				return null;
+			}
+
+			$value = $this->get_mysql_constant_string_expression_value(
+				$tokens,
+				$trim_bounds['argument_start'],
+				$trim_bounds['argument_end']
+			);
+			if ( null === $value || $value['is_null'] ) {
+				return $value;
+			}
+
+			return array(
+				'is_null' => false,
+				'value'   => $this->get_mysql_trimmed_string_value( $trim_bounds['direction'], $trim_bounds['remove'], $value['value'] ),
+			);
+		}
+
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null === $bounds || $bounds['close'] + 1 !== $end ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || empty( $arguments ) ) {
+			return null;
+		}
+
+		switch ( $bounds['function'] ) {
+			case 'coalesce':
+				foreach ( $arguments as $argument ) {
+					$value = $this->get_mysql_constant_string_expression_value( $tokens, $argument['start'], $argument['end'] );
+					if ( null === $value ) {
+						return null;
+					}
+					if ( ! $value['is_null'] ) {
+						return $value;
+					}
+				}
+
+				return array(
+					'is_null' => true,
+					'value'   => '',
+				);
+
+			case 'concat':
+				$value = '';
+				foreach ( $arguments as $argument ) {
+					$part = $this->get_mysql_constant_string_expression_value( $tokens, $argument['start'], $argument['end'] );
+					if ( null === $part ) {
+						return null;
+					}
+
+					if ( $part['is_null'] ) {
+						return array(
+							'is_null' => true,
+							'value'   => '',
+						);
+					}
+
+					$value .= $part['value'];
+				}
+
+				return array(
+					'is_null' => false,
+					'value'   => $value,
+				);
+
+			case 'concat_ws':
+				if ( count( $arguments ) < 2 ) {
+					return null;
+				}
+
+				$separator = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $separator ) {
+					return null;
+				}
+
+				if ( $separator['is_null'] ) {
+					return array(
+						'is_null' => true,
+						'value'   => '',
+					);
+				}
+
+				$parts = array();
+				foreach ( array_slice( $arguments, 1 ) as $argument ) {
+					$part = $this->get_mysql_constant_string_expression_value( $tokens, $argument['start'], $argument['end'] );
+					if ( null === $part ) {
+						return null;
+					}
+
+					if ( $part['is_null'] ) {
+						continue;
+					}
+
+					$parts[] = $part['value'];
+				}
+
+				return array(
+					'is_null' => false,
+					'value'   => implode( $separator['value'], $parts ),
+				);
+
+			case 'ifnull':
+				if ( 2 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$left = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $left ) {
+					return null;
+				}
+				return $left['is_null']
+					? $this->get_mysql_constant_string_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] )
+					: $left;
+
+			case 'elt':
+				if ( count( $arguments ) < 2 ) {
+					return null;
+				}
+
+				$index = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $index ) {
+					return null;
+				}
+
+				if ( $index < 1 || $index >= count( $arguments ) ) {
+					return array(
+						'is_null' => true,
+						'value'   => '',
+					);
+				}
+
+				return $this->get_mysql_constant_string_expression_value(
+					$tokens,
+					$arguments[ $index ]['start'],
+					$arguments[ $index ]['end']
+				);
+
+			case 'lcase':
+			case 'ltrim':
+			case 'ucase':
+			case 'lower':
+			case 'rtrim':
+			case 'upper':
+				if ( 1 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $value || $value['is_null'] ) {
+					return $value;
+				}
+
+				if ( ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
+					return null;
+				}
+
+				if ( 'ltrim' === $bounds['function'] ) {
+					return array(
+						'is_null' => false,
+						'value'   => ltrim( $value['value'], ' ' ),
+					);
+				}
+
+				if ( 'rtrim' === $bounds['function'] ) {
+					return array(
+						'is_null' => false,
+						'value'   => rtrim( $value['value'], ' ' ),
+					);
+				}
+
+				return array(
+					'is_null' => false,
+					'value'   => in_array( $bounds['function'], array( 'lcase', 'lower' ), true ) ? strtolower( $value['value'] ) : strtoupper( $value['value'] ),
+				);
+
+			case 'left':
+			case 'right':
+				if ( 2 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $value || $value['is_null'] ) {
+					return $value;
+				}
+
+				$length = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				if ( null === $length || ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
+					return null;
+				}
+
+				$substring_value = $length <= 0
+					? ''
+					: substr(
+						$value['value'],
+						'left' === $bounds['function'] ? 0 : -$length,
+						$length
+					);
+				return array(
+					'is_null' => false,
+					'value'   => false === $substring_value ? '' : $substring_value,
+				);
+
+			case 'lpad':
+			case 'rpad':
+				if ( 3 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$pad   = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[2]['start'], $arguments[2]['end'] );
+				if ( null === $value || null === $pad ) {
+					return null;
+				}
+				if ( $value['is_null'] || $pad['is_null'] ) {
+					return array(
+						'is_null' => true,
+						'value'   => '',
+					);
+				}
+
+				$length = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				if (
+					null === $length
+					|| $length < 0
+					|| '' === $pad['value']
+					|| ! $this->is_mysql_ascii_constant_string_value( $value['value'] )
+					|| ! $this->is_mysql_ascii_constant_string_value( $pad['value'] )
+				) {
+					return null;
+				}
+
+				if ( strlen( $value['value'] ) >= $length ) {
+					$padded_value = substr( $value['value'], 0, $length );
+				} else {
+					$pad_length   = $length - strlen( $value['value'] );
+					$pad_value    = substr( str_repeat( $pad['value'], (int) ceil( $pad_length / strlen( $pad['value'] ) ) ), 0, $pad_length );
+					$padded_value = 'lpad' === $bounds['function']
+						? $pad_value . $value['value']
+						: $value['value'] . $pad_value;
+				}
+
+				return array(
+					'is_null' => false,
+					'value'   => false === $padded_value ? '' : $padded_value,
+				);
+
+			case 'nullif':
+				if ( 2 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$left  = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$right = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				if ( null === $left || null === $right ) {
+					return null;
+				}
+
+				if ( ! $left['is_null'] && ! $right['is_null'] && $left['value'] === $right['value'] ) {
+					return array(
+						'is_null' => true,
+						'value'   => '',
+					);
+				}
+
+				return $left;
+
+			case 'replace':
+				if ( 3 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$value       = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$search      = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				$replacement = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[2]['start'], $arguments[2]['end'] );
+				if ( null === $value || null === $search || null === $replacement ) {
+					return null;
+				}
+				if ( $value['is_null'] || $search['is_null'] || $replacement['is_null'] ) {
+					return array(
+						'is_null' => true,
+						'value'   => '',
+					);
+				}
+
+				return array(
+					'is_null' => false,
+					'value'   => str_replace( $search['value'], $replacement['value'], $value['value'] ),
+				);
+
+			case 'reverse':
+				if ( 1 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $value || $value['is_null'] ) {
+					return $value;
+				}
+
+				if ( ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
+					return null;
+				}
+
+				return array(
+					'is_null' => false,
+					'value'   => strrev( $value['value'] ),
+				);
+
+			case 'repeat':
+				if ( 2 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $value || $value['is_null'] ) {
+					return $value;
+				}
+
+				$count = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				if ( null === $count || ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
+					return null;
+				}
+
+				return array(
+					'is_null' => false,
+					'value'   => $count <= 0 ? '' : str_repeat( $value['value'], $count ),
+				);
+
+			case 'space':
+				if ( 1 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$count = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $count ) {
+					return null;
+				}
+
+				return array(
+					'is_null' => false,
+					'value'   => str_repeat( ' ', max( $count, 0 ) ),
+				);
+
+			case 'substring':
+			case 'substr':
+				if ( 2 !== count( $arguments ) && 3 !== count( $arguments ) ) {
+					return null;
+				}
+
+				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				if ( null === $value || $value['is_null'] ) {
+					return $value;
+				}
+
+				$position = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				if ( null === $position || $position < 1 || ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
+					return null;
+				}
+
+				if ( 2 === count( $arguments ) ) {
+					$substring_value = substr( $value['value'], $position - 1 );
+					return array(
+						'is_null' => false,
+						'value'   => false === $substring_value ? '' : $substring_value,
+					);
+				}
+
+				$length = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[2]['start'], $arguments[2]['end'] );
+				if ( null === $length ) {
+					return null;
+				}
+
+				$substring_value = $length < 1 ? '' : substr( $value['value'], $position - 1, $length );
+				return array(
+					'is_null' => false,
+					'value'   => false === $substring_value ? '' : $substring_value,
+				);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get token bounds for supported MySQL TRIM() forms.
+	 *
+	 * PostgreSQL BTRIM/LTRIM/RTRIM use character-set semantics instead of
+	 * MySQL's repeated removal-string semantics. Non-space removal strings are
+	 * rendered with edge-anchored regular expressions.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position Function token position.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return array{direction: string, remove: string|null, remove_start: int|null, remove_end: int|null, argument_start: int, argument_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_trim_function_bounds( array $tokens, int $position, int $end ): ?array {
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::TRIM_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$arguments_start = $position + 2;
+		$arguments_end   = $after_close - 1;
+		$arguments       = $this->split_top_level_mysql_arguments( $tokens, $arguments_start, $arguments_end );
+		if ( null === $arguments || 1 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$argument = $arguments[0];
+		$from     = $this->find_first_top_level_mysql_token(
+			$tokens,
+			array( WP_MySQL_Lexer::FROM_SYMBOL ),
+			$argument['start'],
+			$argument['end']
+		);
+
+		if ( null === $from ) {
+			if (
+				null !== $this->find_first_top_level_mysql_token(
+					$tokens,
+					array(
+						WP_MySQL_Lexer::BOTH_SYMBOL,
+						WP_MySQL_Lexer::LEADING_SYMBOL,
+						WP_MySQL_Lexer::TRAILING_SYMBOL,
+					),
+					$argument['start'],
+					$argument['end']
+				)
+			) {
+				return null;
+			}
+
+			return array(
+				'direction'      => 'both',
+				'remove'         => ' ',
+				'remove_start'   => null,
+				'remove_end'     => null,
+				'argument_start' => $argument['start'],
+				'argument_end'   => $argument['end'],
+				'close'          => $after_close - 1,
+			);
+		}
+
+		if ( $from + 1 >= $argument['end'] ) {
+			return null;
+		}
+
+		$direction    = 'both';
+		$remove       = ' ';
+		$remove_start = null;
+		$remove_end   = null;
+		$prefix_start = $argument['start'];
+		$prefix_end   = $from;
+
+		if ( $prefix_start < $prefix_end ) {
+			if ( ! isset( $tokens[ $prefix_start ] ) ) {
+				return null;
+			}
+
+			if ( in_array( $tokens[ $prefix_start ]->id, array( WP_MySQL_Lexer::BOTH_SYMBOL, WP_MySQL_Lexer::LEADING_SYMBOL, WP_MySQL_Lexer::TRAILING_SYMBOL ), true ) ) {
+				if ( WP_MySQL_Lexer::LEADING_SYMBOL === $tokens[ $prefix_start ]->id ) {
+					$direction = 'leading';
+				} elseif ( WP_MySQL_Lexer::TRAILING_SYMBOL === $tokens[ $prefix_start ]->id ) {
+					$direction = 'trailing';
+				}
+
+				++$prefix_start;
+			}
+
+			if ( $prefix_start < $prefix_end ) {
+				$remove_start = $prefix_start;
+				$remove_end   = $prefix_end;
+				$remove       = null;
+
+				if ( $this->is_mysql_string_literal_range( $tokens, $prefix_start, $prefix_end ) ) {
+					$remove       = $tokens[ $prefix_start ]->get_value();
+					$remove_start = null;
+					$remove_end   = null;
+				}
+			}
+		}
+
+		return array(
+			'direction'      => $direction,
+			'remove'         => $remove,
+			'remove_start'   => $remove_start,
+			'remove_end'     => $remove_end,
+			'argument_start' => $from + 1,
+			'argument_end'   => $argument['end'],
+			'close'          => $after_close - 1,
+		);
+	}
+
+	/**
+	 * Trim a constant string using MySQL TRIM() removal-string semantics.
+	 *
+	 * @param string $direction MySQL trim direction: both, leading, or trailing.
+	 * @param string $remove    Literal string to remove.
+	 * @param string $value     Constant value.
+	 * @return string Trimmed value.
+	 */
+	private function get_mysql_trimmed_string_value( string $direction, string $remove, string $value ): string {
+		if ( '' === $remove ) {
+			return $value;
+		}
+
+		if ( in_array( $direction, array( 'both', 'leading' ), true ) ) {
+			$remove_length = strlen( $remove );
+			while ( 0 === strncmp( $value, $remove, $remove_length ) ) {
+				$value = substr( $value, $remove_length );
+			}
+		}
+
+		if ( in_array( $direction, array( 'both', 'trailing' ), true ) ) {
+			$remove_length = strlen( $remove );
+			while ( substr( $value, -$remove_length ) === $remove ) {
+				$value = substr( $value, 0, -$remove_length );
+			}
+		}
+
+		return $value;
+	}
+
+	/**
+	 * Evaluate a bounded MySQL integer constant expression as a PHP integer.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First expression token position, inclusive.
+	 * @param int              $end    Final expression token position, exclusive.
+	 * @return int|null Integer value, or null when unsupported.
+	 */
+	private function get_mysql_constant_php_integer_expression_value( array $tokens, int $start, int $end ): ?int {
+		$position = $start;
+		$value    = $this->parse_mysql_constant_integer_expression( $tokens, $position, $end );
+		return null !== $value && $position === $end ? $value : null;
+	}
+
+	/**
+	 * Check whether a constant string value can use byte-safe PHP string helpers.
+	 *
+	 * @param string $value Constant string value.
+	 * @return bool Whether the value contains ASCII bytes only.
+	 */
+	private function is_mysql_ascii_constant_string_value( string $value ): bool {
+		return 1 === preg_match( '/^[\x00-\x7F]*$/', $value );
+	}
+
+	/**
+	 * Check whether a temporal value is a real calendar date/datetime.
+	 *
+	 * @param string $value Temporal text value.
+	 * @return bool Whether the value is intrinsically valid.
+	 */
+	private function is_mysql_intrinsically_valid_temporal_value( string $value ): bool {
+		$datetime_value = $this->normalize_mysql_dml_datetime_literal_format( $value );
+		$datetime_parts = $this->get_mysql_dml_datetime_parts( $datetime_value );
+		if ( null !== $datetime_parts ) {
+			return $this->is_mysql_dml_time_value_valid( $datetime_parts['hour'], $datetime_parts['minute'], $datetime_parts['second'] )
+				&& $this->is_mysql_real_calendar_date_parts( $datetime_parts['year'], $datetime_parts['month'], $datetime_parts['day'] );
+		}
+
+		$date_value = $this->normalize_mysql_dml_date_literal_format( $value );
+		$date_parts = $this->get_mysql_dml_date_parts( $date_value );
+		if ( null === $date_parts ) {
+			return false;
+		}
+
+		return $this->is_mysql_real_calendar_date_parts( $date_parts['year'], $date_parts['month'], $date_parts['day'] );
+	}
+
+	/**
+	 * Check whether a temporal value is already in canonical storage shape.
+	 *
+	 * @param string $value Temporal text value.
+	 * @return bool Whether the value is canonical and intrinsically valid.
+	 */
+	private function is_mysql_intrinsically_valid_canonical_temporal_value( string $value ): bool {
+		if (
+			1 !== preg_match( '/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/', $value )
+			&& 1 !== preg_match( '/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$/', $value )
+		) {
+			return false;
+		}
+
+		return $this->is_mysql_intrinsically_valid_temporal_value( $value );
+	}
+
+	/**
+	 * Get a fixed FROM_UNIXTIME() format that always produces temporal text.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return string|null Format string, or null when the expression is not known-valid.
+	 */
+	private function get_mysql_intrinsically_valid_formatted_from_unixtime_expression_format( array $tokens, int $start, int $end ): ?string {
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null === $bounds || 'from_unixtime' !== $bounds['function'] || $bounds['close'] + 1 !== $end ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 2 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$literal = $this->parse_mysql_numeric_literal( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+		if ( null === $literal || $literal['start'] !== $arguments[0]['start'] || $literal['end'] !== $arguments[0]['end'] ) {
+			return null;
+		}
+
+		$timestamp = (float) $this->get_mysql_token_sequence_bytes( $tokens, $literal['start'], $literal['end'] );
+		if ( $timestamp < 0 || $timestamp > 2147483647.999999 ) {
+			return null;
+		}
+
+		$format = $this->get_mysql_constant_string_expression_value(
+			$tokens,
+			$arguments[1]['start'],
+			$arguments[1]['end']
+		);
+		if ( null === $format || $format['is_null'] ) {
+			return null;
+		}
+
+		return in_array( $format['value'], array( '%Y-%m-%d', '%Y-%m-%d %H:%i:%s' ), true ) ? $format['value'] : null;
+	}
+
+	/**
+	 * Check whether FROM_UNIXTIME() is guaranteed to return NULL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the expression is FROM_UNIXTIME(NULL[, ...]).
+	 */
+	private function is_mysql_null_from_unixtime_expression( array $tokens, int $start, int $end ): bool {
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null === $bounds || 'from_unixtime' !== $bounds['function'] || $bounds['close'] + 1 !== $end ) {
+			return false;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || ! in_array( count( $arguments ), array( 1, 2 ), true ) ) {
+			return false;
+		}
+
+		return $this->is_mysql_null_literal_expression( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+	}
+
+	/**
+	 * Check whether date parts identify a real non-zero calendar date.
+	 *
+	 * @param string $year  Four-digit year.
+	 * @param string $month Two-digit month.
+	 * @param string $day   Two-digit day.
+	 * @return bool Whether the parts are a real calendar date.
+	 */
+	private function is_mysql_real_calendar_date_parts( string $year, string $month, string $day ): bool {
+		if ( '0000' === $year || '00' === $month || '00' === $day ) {
+			return false;
+		}
+
+		return checkdate( (int) $month, (int) $day, (int) $year );
+	}
+
+	/**
+	 * Get a DATE_FORMAT() format that always produces a valid date or datetime.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return string|null Format string, or null when the expression is not known-valid.
+	 */
+	private function get_mysql_intrinsically_valid_date_format_expression_format( array $tokens, int $start, int $end ): ?string {
+		$bounds = $this->get_mysql_date_format_call_bounds( $tokens, $start, $end );
+		if (
+			null === $bounds
+			|| $bounds['close'] + 1 !== $end
+			|| ! in_array( $bounds['format'], array( '%Y-%m-%d', '%Y-%m-%d %H:%i:%s' ), true )
+		) {
+			return null;
+		}
+
+		if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression( $tokens, $bounds['expression_start'], $bounds['expression_end'] ) ) {
+			return null;
+		}
+
+		return $bounds['format'];
+	}
+
+	/**
+	 * Check whether DATE_FORMAT() is guaranteed to return NULL.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the expression is DATE_FORMAT(NULL, ...).
+	 */
+	private function is_mysql_null_date_format_expression( array $tokens, int $start, int $end ): bool {
+		$bounds = $this->get_mysql_date_format_call_bounds( $tokens, $start, $end );
+		if ( null === $bounds || $bounds['close'] + 1 !== $end ) {
+			return false;
+		}
+
+		return $this->is_mysql_null_literal_expression( $tokens, $bounds['expression_start'], $bounds['expression_end'] );
+	}
+
+	/**
+	 * Get timestamp SQL for a safe literal FROM_UNIXTIME() expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return string|null PostgreSQL timestamp SQL, or null when the expression is not known-valid.
+	 */
+	private function get_mysql_intrinsically_valid_from_unixtime_timestamp_sql( array $tokens, int $start, int $end ): ?string {
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null === $bounds || 'from_unixtime' !== $bounds['function'] || $bounds['close'] + 1 !== $end ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 1 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$literal = $this->parse_mysql_numeric_literal( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+		if ( null === $literal || $literal['start'] !== $arguments[0]['start'] || $literal['end'] !== $arguments[0]['end'] ) {
+			return null;
+		}
+
+		$literal_value = $this->get_mysql_token_sequence_bytes( $tokens, $literal['start'], $literal['end'] );
+		$timestamp     = (float) $literal_value;
+		if ( $timestamp < 0 || $timestamp > 2147483647.999999 ) {
+			return null;
+		}
+
+		$timestamp_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		);
+
+		return $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $timestamp_sql );
+	}
+
+	/**
+	 * Format a known-valid timestamp expression for MySQL temporal storage.
+	 *
+	 * @param string $base_type   MySQL temporal base type.
+	 * @param string $column_type MySQL temporal column type.
+	 * @param string $value_sql   PostgreSQL timestamp expression SQL.
+	 * @return string PostgreSQL storage SQL.
+	 */
+	private function get_postgresql_mysql_temporal_storage_expression_sql( string $base_type, string $column_type, string $value_sql ): string {
+		if ( 'date' === $base_type ) {
+			return sprintf( 'TO_CHAR(%s, %s)', $value_sql, $this->connection->quote( 'YYYY-MM-DD' ) );
+		}
+
+		$fsp = $this->get_mysql_temporal_column_fractional_seconds_precision( $column_type );
+		if ( 0 === $fsp ) {
+			return sprintf( 'TO_CHAR(%s, %s)', $value_sql, $this->connection->quote( 'YYYY-MM-DD HH24:MI:SS' ) );
+		}
+
+		return sprintf(
+			'LEFT(TO_CHAR(%s, %s), %d)',
+			$value_sql,
+			$this->connection->quote( 'YYYY-MM-DD HH24:MI:SS.US' ),
+			20 + $fsp
+		);
+	}
+
+	/**
+	 * Format a known-valid DATE expression for DATETIME/TIMESTAMP storage.
+	 *
+	 * @param string $value_sql PostgreSQL date text expression SQL.
+	 * @return string PostgreSQL datetime text expression SQL.
+	 */
+	private function get_postgresql_mysql_date_to_datetime_storage_expression_sql( string $value_sql ): string {
+		return sprintf( '(%s || %s)', $value_sql, $this->connection->quote( ' 00:00:00' ) );
+	}
+
+	/**
+	 * Store a known-valid temporal text expression in a target temporal column.
+	 *
+	 * @param string $base_type MySQL temporal base type.
+	 * @param string $value_sql PostgreSQL expression returning valid date/datetime text.
+	 * @return string PostgreSQL storage expression SQL.
+	 */
+	private function get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( string $base_type, string $value_sql ): string {
+		$value_text_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+		if ( 'date' === $base_type ) {
+			return sprintf( 'SUBSTRING(%s FROM 1 FOR 10)', $value_text_sql );
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s ~ %2$s THEN %1$s || %3$s ELSE %1$s END',
+			$value_text_sql,
+			$this->connection->quote( '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' ),
+			$this->connection->quote( ' 00:00:00' )
+		);
+	}
+
+	/**
+	 * Get temporal column fractional seconds precision.
+	 *
+	 * @param string $column_type MySQL temporal column type.
+	 * @return int Precision, 0 through 6.
+	 */
+	private function get_mysql_temporal_column_fractional_seconds_precision( string $column_type ): int {
+		$fsp = $this->get_mysql_column_type_display_width( $column_type );
+		return null !== $fsp && $fsp >= 0 && $fsp <= 6 ? $fsp : 0;
+	}
+
+	/**
+	 * Check whether a value token range is the MySQL DEFAULT value keyword.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  First value token position.
+	 * @param int              $end    Final value token position, exclusive.
+	 * @return bool Whether the range is DEFAULT.
+	 */
 	private function is_mysql_default_value_token_sequence( array $tokens, int $start, int $end ): bool {
 		return $start + 1 === $end
 			&& isset( $tokens[ $start ] )
@@ -51382,6 +53225,12 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				continue;
 			}
 
+			$temporal_cast_end = $this->get_mysql_temporal_cast_or_convert_expression_end( $tokens, $position, $end );
+			if ( null !== $temporal_cast_end ) {
+				$position = $temporal_cast_end - 1;
+				continue;
+			}
+
 			if ( null === $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null ) ) {
 				continue;
 			}
@@ -51498,8 +53347,18 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			}
 		);
 
-		$chunks   = array();
-		$position = $start;
+			$temporal_arithmetic_sql = $this->translate_mysql_upsert_temporal_arithmetic_expression_with_replacements_to_postgresql(
+				$tokens,
+				$start,
+				$end,
+				$replacements
+			);
+		if ( null !== $temporal_arithmetic_sql ) {
+			return $temporal_arithmetic_sql;
+		}
+
+			$chunks   = array();
+			$position = $start;
 		while ( $position < $end ) {
 			$replacement = $this->get_mysql_token_sequence_replacement_at_position( $replacements, $position );
 			if ( null !== $replacement ) {
@@ -51545,7 +53404,134 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			$position = $segment_end;
 		}
 
-		return implode( ' ', array_filter( $chunks, 'strlen' ) );
+			return implode( ' ', array_filter( $chunks, 'strlen' ) );
+	}
+
+	/**
+	 * Translate a MySQL temporal arithmetic expression while preserving upsert replacements.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param int              $start        First expression token.
+	 * @param int              $end          Final expression token, exclusive.
+	 * @param array[]          $replacements Replacement ranges.
+	 * @return string|null PostgreSQL SQL, or null when the expression is not supported temporal arithmetic.
+	 */
+	private function translate_mysql_upsert_temporal_arithmetic_expression_with_replacements_to_postgresql( array $tokens, int $start, int $end, array $replacements ): ?string {
+		$date_arithmetic = $this->get_mysql_date_arithmetic_function_bounds( $tokens, $start, $end );
+		if ( null !== $date_arithmetic && $date_arithmetic['close'] + 1 === $end ) {
+			return $this->get_postgresql_mysql_temporal_arithmetic_sql_with_replacements(
+				$tokens,
+				$date_arithmetic,
+				$replacements
+			);
+		}
+
+		$infix_arithmetic = $this->get_mysql_infix_interval_expression_bounds( $tokens, $start, $end );
+		if ( null !== $infix_arithmetic && $infix_arithmetic['close'] + 1 === $end ) {
+			return $this->get_postgresql_mysql_temporal_arithmetic_sql_with_replacements(
+				$tokens,
+				$infix_arithmetic,
+				$replacements
+			);
+		}
+
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if (
+			null === $bounds
+			|| $bounds['close'] + 1 !== $end
+			|| 'timestampadd' !== $bounds['function']
+		) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 3 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$interval = $this->get_mysql_timestampadd_interval(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end'],
+			$arguments[1]['start'],
+			$arguments[1]['end']
+		);
+		if ( null === $interval ) {
+			return null;
+		}
+
+		$interval_sql = $interval['sql'] ?? null;
+		if ( null === $interval_sql ) {
+			$value_sql = $this->translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql(
+				$tokens,
+				$arguments[1]['start'],
+				$arguments[1]['end'],
+				$this->get_mysql_token_sequence_replacements_for_range( $replacements, $arguments[1]['start'], $arguments[1]['end'] )
+			);
+			if ( null === $value_sql ) {
+				return null;
+			}
+
+			$interval_sql = $this->get_postgresql_mysql_interval_sql( $value_sql, $interval['unit'] );
+		}
+
+		$datetime_sql = $this->translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			$arguments[2]['start'],
+			$arguments[2]['end'],
+			$this->get_mysql_token_sequence_replacements_for_range( $replacements, $arguments[2]['start'], $arguments[2]['end'] )
+		);
+		if ( null === $datetime_sql ) {
+			return null;
+		}
+
+		return sprintf(
+			'(%1$s + %2$s)',
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $datetime_sql ),
+			$interval_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for date arithmetic bounds while preserving upsert replacements.
+	 *
+	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
+	 * @param array            $bounds       Date arithmetic bounds.
+	 * @param array[]          $replacements Replacement ranges.
+	 * @return string|null PostgreSQL SQL, or null when translation fails.
+	 */
+	private function get_postgresql_mysql_temporal_arithmetic_sql_with_replacements( array $tokens, array $bounds, array $replacements ): ?string {
+		$expression_sql = $this->translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end'],
+			$this->get_mysql_token_sequence_replacements_for_range( $replacements, $bounds['expression_start'], $bounds['expression_end'] )
+		);
+		if ( null === $expression_sql ) {
+			return null;
+		}
+
+		$interval_sql = $bounds['interval_sql'] ?? null;
+		if ( null === $interval_sql ) {
+			$value_sql = $this->translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql(
+				$tokens,
+				$bounds['interval_value_start'],
+				$bounds['interval_value_end'],
+				$this->get_mysql_token_sequence_replacements_for_range( $replacements, $bounds['interval_value_start'], $bounds['interval_value_end'] )
+			);
+			if ( null === $value_sql ) {
+				return null;
+			}
+
+			$interval_sql = $this->get_postgresql_mysql_interval_sql( $value_sql, $bounds['interval_unit'] );
+		}
+
+		return sprintf(
+			'(%1$s %2$s %3$s)',
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+			$bounds['operator'],
+			$interval_sql
+		);
 	}
 
 	/**
@@ -51582,6 +53568,41 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			if ( null === $arguments ) {
 				return false;
 			}
+		}
+
+		if ( 'trim' === $bounds['function'] ) {
+			$trim_bounds = $this->get_mysql_trim_function_bounds( $tokens, $position, $end );
+			if ( null === $trim_bounds ) {
+				return false;
+			}
+
+			$value_sql = $this->translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql(
+				$tokens,
+				$trim_bounds['argument_start'],
+				$trim_bounds['argument_end'],
+				$this->get_mysql_token_sequence_replacements_for_range( $replacements, $trim_bounds['argument_start'], $trim_bounds['argument_end'] )
+			);
+			if ( null === $value_sql ) {
+				return false;
+			}
+
+			$remove_sql = null;
+			if ( null !== $trim_bounds['remove_start'] && null !== $trim_bounds['remove_end'] ) {
+				$remove_sql = $this->translate_mysql_upsert_expression_token_sequence_with_replacements_to_postgresql(
+					$tokens,
+					$trim_bounds['remove_start'],
+					$trim_bounds['remove_end'],
+					$this->get_mysql_token_sequence_replacements_for_range( $replacements, $trim_bounds['remove_start'], $trim_bounds['remove_end'] )
+				);
+				if ( null === $remove_sql ) {
+					return false;
+				}
+			}
+
+			return array(
+				'sql'      => $this->get_postgresql_mysql_trim_sql( $trim_bounds['direction'], $value_sql, $trim_bounds['remove'], $remove_sql ),
+				'position' => $trim_bounds['close'],
+			);
 		}
 
 		$argument_sql = array();
@@ -51772,6 +53793,29 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			);
 
 			for ( $position = $start; $position < $end; ) {
+				$temporal_arithmetic_sql = $this->translate_mysql_upsert_temporal_arithmetic_expression_with_replacements_to_postgresql(
+					$tokens,
+					$position,
+					$end,
+					$replacements
+				);
+				if ( null !== $temporal_arithmetic_sql ) {
+					$position = $end;
+					continue;
+				}
+
+				$date_arithmetic = $this->translate_mysql_date_arithmetic_to_postgresql( $tokens, $position, $end );
+				if ( null !== $date_arithmetic ) {
+					$position = $date_arithmetic['position'] + 1;
+					continue;
+				}
+
+				$infix_interval = $this->translate_mysql_infix_interval_expression_to_postgresql( $tokens, $position, $end );
+				if ( null !== $infix_interval ) {
+					$position = $infix_interval['position'] + 1;
+					continue;
+				}
+
 				$replacement = $this->get_mysql_token_sequence_replacement_at_position( $replacements, $position );
 				if ( null !== $replacement ) {
 					$position = $replacement['end'];
@@ -51858,6 +53902,36 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 */
 	private function is_supported_simple_mysql_upsert_expression_segment( array $tokens, int $start, int $end ): bool {
 		for ( $position = $start; $position < $end; $position++ ) {
+			$date_arithmetic = $this->translate_mysql_date_arithmetic_to_postgresql( $tokens, $position, $end );
+			if ( null !== $date_arithmetic ) {
+				$position = $date_arithmetic['position'];
+				continue;
+			}
+
+			$infix_interval = $this->translate_mysql_infix_interval_expression_to_postgresql( $tokens, $position, $end );
+			if ( null !== $infix_interval ) {
+				$position = $infix_interval['position'];
+				continue;
+			}
+
+			$date_time_cast = $this->translate_mysql_date_time_cast_to_postgresql( $tokens, $position, $end );
+			if ( null !== $date_time_cast ) {
+				$position = $date_time_cast['position'];
+				continue;
+			}
+
+			$date_cast = $this->translate_mysql_date_cast_to_postgresql( $tokens, $position, $end );
+			if ( null !== $date_cast ) {
+				$position = $date_cast['position'];
+				continue;
+			}
+
+			$date_convert = $this->translate_mysql_date_convert_to_postgresql( $tokens, $position, $end );
+			if ( null !== $date_convert ) {
+				$position = $date_convert['position'];
+				continue;
+			}
+
 			$common_function = $this->translate_mysql_common_function_to_postgresql( $tokens, $position, $end );
 			if ( null !== $common_function ) {
 				$position = $common_function['position'];
@@ -55748,6 +57822,42 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 */
 	private function is_supported_simple_mysql_expression_fragment( array $tokens, int $start, int $end ): bool {
 		for ( $i = $start; $i < $end; $i++ ) {
+			$date_arithmetic = $this->translate_mysql_date_arithmetic_to_postgresql( $tokens, $i, $end );
+			if ( null !== $date_arithmetic ) {
+				$i = $date_arithmetic['position'];
+				continue;
+			}
+
+			$infix_interval = $this->translate_mysql_infix_interval_expression_to_postgresql( $tokens, $i, $end );
+			if ( null !== $infix_interval ) {
+				$i = $infix_interval['position'];
+				continue;
+			}
+
+			$date_time_cast = $this->translate_mysql_date_time_cast_to_postgresql( $tokens, $i, $end );
+			if ( null !== $date_time_cast ) {
+				$i = $date_time_cast['position'];
+				continue;
+			}
+
+			$date_cast = $this->translate_mysql_date_cast_to_postgresql( $tokens, $i, $end );
+			if ( null !== $date_cast ) {
+				$i = $date_cast['position'];
+				continue;
+			}
+
+			$date_convert = $this->translate_mysql_date_convert_to_postgresql( $tokens, $i, $end );
+			if ( null !== $date_convert ) {
+				$i = $date_convert['position'];
+				continue;
+			}
+
+			$common_function = $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end );
+			if ( null !== $common_function ) {
+				$i = $common_function['position'];
+				continue;
+			}
+
 			if ( ! $this->is_supported_simple_mysql_expression_token( $tokens[ $i ] ) ) {
 				return false;
 			}
@@ -55804,6 +57914,12 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				continue;
 			}
 
+			$temporal_cast_end = $this->get_mysql_temporal_cast_or_convert_expression_end( $tokens, $position, $end );
+			if ( null !== $temporal_cast_end ) {
+				$position = $temporal_cast_end - 1;
+				continue;
+			}
+
 			if ( null === $this->get_mysql_dml_identifier_token_value( $tokens[ $position ] ?? null ) ) {
 				continue;
 			}
@@ -55828,6 +57944,33 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
+	 * Get the end position for a supported temporal CAST/CONVERT expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position First expression token.
+	 * @param int              $end      Final expression token, exclusive.
+	 * @return int|null End position, exclusive, or null when not a supported temporal CAST/CONVERT expression.
+	 */
+	private function get_mysql_temporal_cast_or_convert_expression_end( array $tokens, int $position, int $end ): ?int {
+		$date_time_cast = $this->get_mysql_date_time_cast_bounds( $tokens, $position, $end );
+		if ( null !== $date_time_cast ) {
+			return $date_time_cast['close'] + 1;
+		}
+
+		$date_cast = $this->get_mysql_date_cast_bounds( $tokens, $position, $end );
+		if ( null !== $date_cast ) {
+			return $date_cast['close'] + 1;
+		}
+
+		$date_convert = $this->get_mysql_date_convert_bounds( $tokens, $position, $end );
+		if ( null !== $date_convert ) {
+			return $date_convert['close'] + 1;
+		}
+
+		return null;
+	}
+
+	/**
 	 * Check that qualified references in a simple expression use statement aliases.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -55843,6 +57986,12 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			}
 
 			if ( null !== $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $position, $end ) ) {
+				continue;
+			}
+
+			$temporal_cast_end = $this->get_mysql_temporal_cast_or_convert_expression_end( $tokens, $position, $end );
+			if ( null !== $temporal_cast_end ) {
+				$position = $temporal_cast_end - 1;
 				continue;
 			}
 
@@ -56600,6 +58749,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				$translated_fragment = $this->translate_mysql_date_time_cast_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_date_cast_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_binary_cast_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
@@ -56624,16 +58776,16 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				$translated_fragment = $this->translate_mysql_session_user_function_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_infix_interval_expression_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_date_arithmetic_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $i, $end );
+			}
+			if ( null === $translated_fragment ) {
+				$translated_fragment = $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_week_function_to_postgresql( $tokens, $i, $end );
@@ -58097,6 +60249,96 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
+	 * Translate MySQL CAST(expr AS DATE) to PostgreSQL text.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CAST token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 */
+	private function translate_mysql_date_cast_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_date_cast_bounds( $tokens, $position, $end );
+		if ( null === $bounds ) {
+			return null;
+		}
+
+		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$bounds['expression_start'],
+			$bounds['expression_end']
+		);
+
+		return array(
+			'sql'      => $this->get_postgresql_mysql_date_sql( $expression_sql ),
+			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
+			'position' => $bounds['close'],
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported MySQL DATE CAST expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position CAST token position.
+	 * @param int             $end      Final token position, exclusive.
+	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_date_cast_bounds( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
+		if ( $bounds['start'] !== $position ) {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
+		if ( null === $after_close ) {
+			return null;
+		}
+
+		$close_position = $after_close - 1;
+		$as_position    = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::AS_SYMBOL,
+			$position + 2,
+			$close_position
+		);
+		if (
+			null === $as_position
+			|| $as_position <= $position + 2
+			|| ! $this->is_mysql_date_cast_type( $tokens, $as_position + 1, $close_position )
+		) {
+			return null;
+		}
+
+		return array(
+			'expression_start' => $position + 2,
+			'expression_end'   => $as_position,
+			'close'            => $close_position,
+		);
+	}
+
+	/**
+	 * Check whether a CAST type is MySQL DATE.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First cast type token.
+	 * @param int             $end    Final cast type token, exclusive.
+	 * @return bool Whether the type is supported.
+	 */
+	private function is_mysql_date_cast_type( array $tokens, int $start, int $end ): bool {
+		return $start + 1 === $end
+			&& isset( $tokens[ $start ] )
+			&& WP_MySQL_Lexer::DATE_SYMBOL === $tokens[ $start ]->id;
+	}
+
+	/**
 	 * Translate MySQL CAST(expr AS BINARY) to PostgreSQL text.
 	 *
 	 * PostgreSQL regex operators work on text, so keep supported binary regex
@@ -58502,12 +60744,11 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
-	 * Translate MySQL RAND() and literal RAND(seed) calls to PostgreSQL.
+	 * Translate MySQL RAND() and RAND(seed) calls to PostgreSQL.
 	 *
 	 * PostgreSQL setseed() is session-stateful, so literal seeded calls are
-	 * folded to the first value from SQLite's seeded MySQL-compatible LCG.
-	 * Non-literal seeded calls stay on random() instead of leaking seed state
-	 * into later statements.
+	 * folded and dynamic seeded calls render the first value from SQLite's
+	 * seeded MySQL-compatible LCG as a stateless SQL expression.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
@@ -58530,6 +60771,13 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			$seed = $this->get_mysql_literal_rand_seed_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
 			if ( null !== $seed ) {
 				$sql = $this->get_mysql_seeded_rand_literal_sql( $seed['value'] );
+			} else {
+				$seed_sql = $this->translate_mysql_token_sequence_to_postgresql(
+					$tokens,
+					$arguments[0]['start'],
+					$arguments[0]['end']
+				);
+				$sql      = $this->get_postgresql_mysql_seeded_rand_sql( $seed_sql );
 			}
 		}
 
@@ -58583,7 +60831,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
-	 * Get a literal MySQL RAND(seed) value using SQLite UDF seed coercion.
+	 * Get a literal MySQL RAND(seed) value using shared MySQL-compatible seed coercion.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int              $start  First seed token.
@@ -58626,6 +60874,31 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 		$literal = rtrim( rtrim( sprintf( '%.17F', (float) $seed1 / (float) $max_value ), '0' ), '.' );
 		return sprintf( 'CAST(%s AS double precision)', $literal );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for the first MySQL-compatible seeded RAND() value.
+	 *
+	 * @param string $seed_sql PostgreSQL seed expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_seeded_rand_sql( string $seed_sql ): string {
+		$max_value        = '1073741823';
+		$seed_numeric_sql = $this->get_postgresql_mysql_numeric_cast_sql( $seed_sql );
+		$seed_sql         = sprintf(
+			'(((CAST(ROUND(COALESCE(%s, 0)) AS bigint) %% 4294967296) + 4294967296) %% 4294967296)',
+			$seed_numeric_sql
+		);
+		$seed1_sql        = sprintf( '((("__wp_pg_mysql_rand_seed"."seed" * 65537 + 55555555) %% %s))', $max_value );
+		$seed2_sql        = sprintf( '((("__wp_pg_mysql_rand_seed"."seed" * 268435457) %% %s))', $max_value );
+		$value_sql        = sprintf( '(((%s * 3 + %s) %% %s))', $seed1_sql, $seed2_sql, $max_value );
+
+		return sprintf(
+			'(SELECT CAST(%1$s AS double precision) / %2$s FROM (SELECT %3$s AS "seed") AS "__wp_pg_mysql_rand_seed")',
+			$value_sql,
+			$max_value,
+			$seed_sql
+		);
 	}
 
 	/**
@@ -58749,8 +61022,8 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	/**
 	 * Translate common MySQL runtime functions to PostgreSQL expressions.
 	 *
-	 * This mirrors the broad SQLite UDF layer for simple function shapes used by
-	 * WordPress and plugins. More complex or ambiguous forms intentionally remain
+	 * This mirrors the broad MySQL compatibility function surface used by the
+	 * SQLite backend. More complex or ambiguous forms intentionally remain
 	 * unsupported so they fail visibly instead of changing semantics silently.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
@@ -58776,12 +61049,52 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			}
 		}
 
+		if ( 'trim' === $bounds['function'] ) {
+			$trim_bounds = $this->get_mysql_trim_function_bounds( $tokens, $position, $end );
+			if ( null === $trim_bounds ) {
+				return null;
+			}
+
+			$value_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$trim_bounds['argument_start'],
+				$trim_bounds['argument_end']
+			);
+
+			$remove_sql = null;
+			if ( null !== $trim_bounds['remove_start'] && null !== $trim_bounds['remove_end'] ) {
+				$remove_sql = $this->translate_mysql_token_sequence_to_postgresql(
+					$tokens,
+					$trim_bounds['remove_start'],
+					$trim_bounds['remove_end']
+				);
+			}
+
+			return array(
+				'sql'      => $this->get_postgresql_mysql_trim_sql( $trim_bounds['direction'], $value_sql, $trim_bounds['remove'], $remove_sql ),
+				'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+				'position' => $trim_bounds['close'],
+			);
+		}
+
 		if ( 'timestampadd' === $bounds['function'] ) {
 			return $this->translate_mysql_timestampadd_function_to_postgresql( $tokens, $arguments, $bounds['close'] );
 		}
 
 		if ( 'timestampdiff' === $bounds['function'] ) {
 			return $this->translate_mysql_timestampdiff_function_to_postgresql( $tokens, $arguments, $bounds['close'] );
+		}
+
+		if (
+			'from_unixtime' === $bounds['function']
+			&& in_array( count( $arguments ), array( 1, 2 ), true )
+			&& $this->is_mysql_null_literal_expression( $tokens, $arguments[0]['start'], $arguments[0]['end'] )
+		) {
+			return array(
+				'sql'      => 'NULL',
+				'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+				'position' => $bounds['close'],
+			);
 		}
 
 		if (
@@ -58814,6 +61127,73 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			if ( null !== $binary_length_sql ) {
 				return array(
 					'sql'      => $binary_length_sql,
+					'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+					'position' => $bounds['close'],
+				);
+			}
+		}
+
+		if ( 'from_unixtime' === $bounds['function'] && 2 === count( $arguments ) ) {
+			$format = $this->get_mysql_constant_string_expression_value(
+				$tokens,
+				$arguments[1]['start'],
+				$arguments[1]['end']
+			);
+			if ( null !== $format ) {
+				$sql = 'NULL';
+				if ( ! $format['is_null'] ) {
+					$timestamp_sql = $this->get_postgresql_mysql_from_unixtime_timestamp_sql(
+						$this->translate_mysql_token_sequence_to_postgresql(
+							$tokens,
+							$arguments[0]['start'],
+							$arguments[0]['end']
+						)
+					);
+					$sql           = $this->get_postgresql_mysql_date_format_string_sql( $format['value'], $timestamp_sql );
+					if ( null === $sql ) {
+						return null;
+					}
+				}
+
+				return array(
+					'sql'      => $sql,
+					'token_id' => WP_MySQL_Lexer::IDENTIFIER,
+					'position' => $bounds['close'],
+				);
+			}
+
+			$timestamp_sql = $this->get_postgresql_mysql_from_unixtime_timestamp_sql(
+				$this->translate_mysql_token_sequence_to_postgresql(
+					$tokens,
+					$arguments[0]['start'],
+					$arguments[0]['end']
+				)
+			);
+			$sql           = $this->get_postgresql_mysql_finite_date_format_choice_sql(
+				$tokens,
+				$arguments[1]['start'],
+				$arguments[1]['end'],
+				$timestamp_sql,
+				true
+			);
+			if ( null !== $sql ) {
+				return array(
+					'sql'      => $sql,
+					'token_id' => WP_MySQL_Lexer::CASE_SYMBOL,
+					'position' => $bounds['close'],
+				);
+			}
+		}
+
+		if ( 'json_valid' === $bounds['function'] && 1 === count( $arguments ) ) {
+			$json_value = $this->get_mysql_constant_string_expression_value(
+				$tokens,
+				$arguments[0]['start'],
+				$arguments[0]['end']
+			);
+			if ( null !== $json_value ) {
+				return array(
+					'sql'      => $json_value['is_null'] ? 'NULL' : (string) self::get_mysql_json_valid_runtime_result( $json_value['value'] ),
 					'token_id' => WP_MySQL_Lexer::IDENTIFIER,
 					'position' => $bounds['close'],
 				);
@@ -59055,6 +61435,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		}
 
 		$keyword_functions = array(
+			WP_MySQL_Lexer::ASCII_SYMBOL             => 'ascii',
 			WP_MySQL_Lexer::COALESCE_SYMBOL          => 'coalesce',
 			WP_MySQL_Lexer::CURRENT_USER_SYMBOL      => 'current_user',
 			WP_MySQL_Lexer::CURDATE_SYMBOL           => 'curdate',
@@ -59070,10 +61451,14 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			WP_MySQL_Lexer::NOW_SYMBOL               => 'now',
 			WP_MySQL_Lexer::REPLACE_SYMBOL           => 'replace',
 			WP_MySQL_Lexer::REGEXP_SYMBOL            => 'regexp',
+			WP_MySQL_Lexer::REPEAT_SYMBOL            => 'repeat',
+			WP_MySQL_Lexer::REVERSE_SYMBOL           => 'reverse',
+			WP_MySQL_Lexer::RIGHT_SYMBOL             => 'right',
 			WP_MySQL_Lexer::ROW_COUNT_SYMBOL         => 'row_count',
 			WP_MySQL_Lexer::SCHEMA_SYMBOL            => 'database',
 			WP_MySQL_Lexer::SUBSTR_SYMBOL            => 'substring',
 			WP_MySQL_Lexer::SUBSTRING_SYMBOL         => 'substring',
+			WP_MySQL_Lexer::TRIM_SYMBOL              => 'trim',
 			WP_MySQL_Lexer::UTC_DATE_SYMBOL          => 'utc_date',
 			WP_MySQL_Lexer::UTC_TIME_SYMBOL          => 'utc_time',
 			WP_MySQL_Lexer::UTC_TIMESTAMP_SYMBOL     => 'utc_timestamp',
@@ -59103,6 +61488,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		}
 
 		$supported = array(
+			'ascii',
 			'char_length',
 			'character_length',
 			'concat',
@@ -59112,7 +61498,11 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'current_user',
 			'database',
 			'date',
+			'dayname',
 			'datediff',
+			'elt',
+			'find_in_set',
+			'found_rows',
 			'from_base64',
 			'from_unixtime',
 			'get_lock',
@@ -59122,7 +61512,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'ifnull',
 			'inet_aton',
 			'inet_ntoa',
+			'instr',
 			'isnull',
+			'is_uuid',
 			'json_valid',
 			'lcase',
 			'last_insert_id',
@@ -59131,27 +61523,40 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'length',
 			'locate',
 			'log',
+			'lower',
+			'lpad',
 			'localtime',
 			'localtimestamp',
+			'ltrim',
+			'make_set',
 			'md5',
 			'monthnum',
+			'monthname',
 			'now',
 			'nullif',
 			'release_lock',
 			'replace',
 			'regexp',
+			'repeat',
+			'reverse',
+			'right',
+			'rpad',
+			'rtrim',
 			'row_count',
 			'schema',
 			'session_user',
+			'space',
 			'substr',
 			'substring',
 			'system_user',
 			'timestampadd',
 			'timestampdiff',
 			'to_base64',
+			'trim',
 			'ucase',
 			'unhex',
 			'unix_timestamp',
+			'upper',
 			'utc_date',
 			'utc_time',
 			'utc_timestamp',
@@ -59377,6 +61782,138 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
+	 * Get PostgreSQL SQL for MySQL LPAD()/RPAD().
+	 *
+	 * PostgreSQL raises when the fill string is empty. MySQL returns NULL for
+	 * empty fill strings and negative target lengths, so guard before calling
+	 * LPAD()/RPAD().
+	 *
+	 * @param string $function_name MySQL padding function name.
+	 * @param string $value_sql     PostgreSQL value expression SQL.
+	 * @param string $length_sql    PostgreSQL target length expression SQL.
+	 * @param string $pad_sql       PostgreSQL padding expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_pad_sql( string $function_name, string $value_sql, string $length_sql, string $pad_sql ): string {
+		return sprintf(
+			'CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %3$s IS NULL OR CAST(%2$s AS integer) < 0 OR CAST(%3$s AS text) = \'\' THEN NULL ELSE %4$s(CAST(%1$s AS text), CAST(%2$s AS integer), CAST(%3$s AS text)) END',
+			$value_sql,
+			$length_sql,
+			$pad_sql,
+			strtoupper( $function_name )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for a supported MySQL TRIM() form.
+	 *
+	 * @param string $direction MySQL trim direction: both, leading, or trailing.
+	 * @param string $value_sql PostgreSQL value expression SQL.
+	 * @param string|null $remove Literal string to remove, or null for dynamic.
+	 * @param string|null $remove_sql PostgreSQL dynamic removal expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_trim_sql( string $direction, string $value_sql, ?string $remove, ?string $remove_sql = null ): string {
+		$value_text_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+		if ( null === $remove ) {
+			if ( null === $remove_sql ) {
+				return $value_text_sql;
+			}
+
+			return $this->get_postgresql_mysql_dynamic_trim_sql( $direction, $value_text_sql, sprintf( 'CAST(%s AS text)', $remove_sql ) );
+		}
+
+		if ( '' === $remove ) {
+			return $value_text_sql;
+		}
+
+		if ( ' ' === $remove ) {
+			$function = array(
+				'both'     => 'BTRIM',
+				'leading'  => 'LTRIM',
+				'trailing' => 'RTRIM',
+			)[ $direction ];
+
+			return sprintf( "%s(%s, ' ')", $function, $value_text_sql );
+		}
+
+		$remove_pattern = $this->get_postgresql_regex_escaped_literal_sql( $remove );
+		if ( 'leading' === $direction ) {
+			return sprintf( 'REGEXP_REPLACE(%s, %s, \'\')', $value_text_sql, $this->connection->quote( '^(' . $remove_pattern . ')+' ) );
+		}
+
+		if ( 'trailing' === $direction ) {
+			return sprintf( 'REGEXP_REPLACE(%s, %s, \'\')', $value_text_sql, $this->connection->quote( '(' . $remove_pattern . ')+$' ) );
+		}
+
+		return sprintf(
+			'REGEXP_REPLACE(REGEXP_REPLACE(%s, %s, \'\'), %s, \'\')',
+			$value_text_sql,
+			$this->connection->quote( '^(' . $remove_pattern . ')+' ),
+			$this->connection->quote( '(' . $remove_pattern . ')+$' )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL TRIM() with a dynamic removal expression.
+	 *
+	 * @param string $direction       MySQL trim direction: both, leading, or trailing.
+	 * @param string $value_text_sql  PostgreSQL value expression cast to text.
+	 * @param string $remove_text_sql PostgreSQL removal expression cast to text.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_dynamic_trim_sql( string $direction, string $value_text_sql, string $remove_text_sql ): string {
+		$escaped_remove_sql = $this->get_postgresql_regex_escaped_expression_sql( $remove_text_sql );
+		$leading_pattern    = sprintf( "( '^(' || %s || ')+' )", $escaped_remove_sql );
+		$trailing_pattern   = sprintf( "( '(' || %s || ')+$' )", $escaped_remove_sql );
+
+		if ( 'leading' === $direction ) {
+			$trimmed_sql = sprintf( "REGEXP_REPLACE(%s, %s, '')", $value_text_sql, $leading_pattern );
+		} elseif ( 'trailing' === $direction ) {
+			$trimmed_sql = sprintf( "REGEXP_REPLACE(%s, %s, '')", $value_text_sql, $trailing_pattern );
+		} else {
+			$trimmed_sql = sprintf(
+				"REGEXP_REPLACE(REGEXP_REPLACE(%s, %s, ''), %s, '')",
+				$value_text_sql,
+				$leading_pattern,
+				$trailing_pattern
+			);
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s = \'\' THEN %1$s ELSE %3$s END',
+			$value_text_sql,
+			$remove_text_sql,
+			$trimmed_sql
+		);
+	}
+
+	/**
+	 * Escape a PostgreSQL text expression for use inside a regular expression.
+	 *
+	 * @param string $expression_sql PostgreSQL text expression SQL.
+	 * @return string PostgreSQL escaped expression SQL.
+	 */
+	private function get_postgresql_regex_escaped_expression_sql( string $expression_sql ): string {
+		return sprintf(
+			"REGEXP_REPLACE(%s, %s, %s, 'g')",
+			$expression_sql,
+			$this->connection->quote( '([\\\\.^$|?*+()[\]{}])' ),
+			$this->connection->quote( '\\\\\1' )
+		);
+	}
+
+	/**
+	 * Escape a literal string for use inside a PostgreSQL regular expression.
+	 *
+	 * @param string $literal Literal string.
+	 * @return string Regular-expression fragment matching the literal.
+	 */
+	private function get_postgresql_regex_escaped_literal_sql( string $literal ): string {
+		return (string) preg_replace( '/([\\\\.^$|?*+()[\]{}])/', '\\\\$1', $literal );
+	}
+
+	/**
 	 * Render PostgreSQL SQL for a supported common MySQL runtime function.
 	 *
 	 * @param string   $function_name Lowercase MySQL function name.
@@ -59387,6 +61924,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		$count = count( $argument_sql );
 
 		switch ( $function_name ) {
+			case 'ascii':
+				return 1 === $count ? $this->get_postgresql_mysql_ascii_sql( $argument_sql[0] ) : null;
+
 			case 'char_length':
 			case 'character_length':
 				return 1 === $count ? sprintf( 'CHAR_LENGTH(CAST(%s AS text))', $argument_sql[0] ) : null;
@@ -59411,6 +61951,15 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 			case 'concat_ws':
 				return $count >= 2 ? $this->get_postgresql_mysql_concat_ws_sql( $argument_sql ) : null;
+
+			case 'elt':
+				return $count >= 2 ? $this->get_postgresql_mysql_elt_sql( $argument_sql ) : null;
+
+			case 'find_in_set':
+				return 2 === $count ? $this->get_postgresql_mysql_find_in_set_sql( $argument_sql[0], $argument_sql[1] ) : null;
+
+			case 'make_set':
+				return $count >= 2 ? $this->get_postgresql_mysql_make_set_sql( $argument_sql ) : null;
 
 			case 'connection_id':
 				return 0 === $count ? self::MYSQL_CONNECTION_ID : null;
@@ -59451,19 +62000,43 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return 2 === $count ? sprintf( 'LEFT(CAST(%s AS text), CAST(%s AS integer))', $argument_sql[0], $argument_sql[1] ) : null;
 
 			case 'lcase':
+			case 'lower':
 				return 1 === $count ? sprintf( 'LOWER(CAST(%s AS text))', $argument_sql[0] ) : null;
 
+			case 'ltrim':
+				return 1 === $count ? sprintf( "LTRIM(CAST(%s AS text), ' ')", $argument_sql[0] ) : null;
+
 			case 'ucase':
+			case 'upper':
 				return 1 === $count ? sprintf( 'UPPER(CAST(%s AS text))', $argument_sql[0] ) : null;
+
+			case 'right':
+				return 2 === $count ? sprintf( 'RIGHT(CAST(%s AS text), CAST(%s AS integer))', $argument_sql[0], $argument_sql[1] ) : null;
+
+			case 'lpad':
+			case 'rpad':
+				return 3 === $count ? $this->get_postgresql_mysql_pad_sql( $function_name, $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
+
+			case 'rtrim':
+				return 1 === $count ? sprintf( "RTRIM(CAST(%s AS text), ' ')", $argument_sql[0] ) : null;
+
+			case 'trim':
+				return 1 === $count ? sprintf( "BTRIM(CAST(%s AS text), ' ')", $argument_sql[0] ) : null;
 
 			case 'isnull':
 				return 1 === $count ? sprintf( 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END', $argument_sql[0] ) : null;
+
+			case 'is_uuid':
+				return 1 === $count ? $this->get_postgresql_mysql_is_uuid_sql( $argument_sql[0] ) : null;
 
 			case 'json_valid':
 				return 1 === $count ? $this->get_postgresql_mysql_json_valid_sql( $argument_sql[0] ) : null;
 
 			case 'last_insert_id':
 				return 0 === $count ? $this->get_postgresql_mysql_last_insert_id_sql() : null;
+
+			case 'found_rows':
+				return 0 === $count ? (string) $this->last_found_rows : null;
 
 			case 'row_count':
 				return 0 === $count ? $this->get_postgresql_mysql_row_count_sql() : null;
@@ -59522,6 +62095,9 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			case 'inet_ntoa':
 				return 1 === $count ? $this->get_postgresql_mysql_inet_ntoa_sql( $argument_sql[0] ) : null;
 
+			case 'instr':
+				return 2 === $count ? sprintf( 'STRPOS(CAST(%s AS text), CAST(%s AS text))', $argument_sql[0], $argument_sql[1] ) : null;
+
 			case 'datediff':
 				return 2 === $count ? $this->get_postgresql_mysql_datediff_sql( $argument_sql[0], $argument_sql[1] ) : null;
 
@@ -59537,8 +62113,23 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			case 'date':
 				return 1 === $count ? $this->get_postgresql_mysql_date_sql( $argument_sql[0] ) : null;
 
+			case 'dayname':
+				return 1 === $count ? $this->get_postgresql_mysql_dayname_sql( $argument_sql[0] ) : null;
+
+			case 'monthname':
+				return 1 === $count ? $this->get_postgresql_mysql_monthname_sql( $argument_sql[0] ) : null;
+
 			case 'replace':
 				return 3 === $count ? sprintf( 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))', $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
+
+			case 'repeat':
+				return 2 === $count ? sprintf( 'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL ELSE REPEAT(CAST(%1$s AS text), GREATEST(CAST(%2$s AS integer), 0)) END', $argument_sql[0], $argument_sql[1] ) : null;
+
+			case 'reverse':
+				return 1 === $count ? sprintf( 'REVERSE(CAST(%s AS text))', $argument_sql[0] ) : null;
+
+			case 'space':
+				return 1 === $count ? sprintf( "CASE WHEN %1\$s IS NULL THEN NULL ELSE REPEAT(' ', GREATEST(CAST(%1\$s AS integer), 0)) END", $argument_sql[0] ) : null;
 
 			case 'regexp':
 				return 2 === $count ? $this->get_postgresql_mysql_regexp_function_sql( $argument_sql[0], $argument_sql[1] ) : null;
@@ -59587,27 +62178,157 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return 1 === $count ? '1' : null;
 
 			case 'uuid':
-				return null;
+				return 0 === $count ? $this->get_postgresql_mysql_uuid_sql() : null;
 		}
 
 		return null;
 	}
 
 	/**
+	 * Get PostgreSQL SQL for MySQL UUID().
+	 *
+	 * PostgreSQL installations may not have UUID extensions enabled. Build a
+	 * UUID-shaped random string from core volatile functions instead of relying
+	 * on extension-provided helpers.
+	 *
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_uuid_sql(): string {
+		return "LOWER(REGEXP_REPLACE(MD5(CAST(CLOCK_TIMESTAMP() AS text) || CAST(RANDOM() AS text) || CAST(PG_BACKEND_PID() AS text)), '^(.{8})(.{4}).(.{3}).(.{3})(.{12})$', '\\1-\\2-4\\3-8\\4-\\5'))";
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL DAYNAME().
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_dayname_sql( string $expression_sql ): string {
+		return $this->get_postgresql_mysql_temporal_name_sql(
+			'DOW',
+			$expression_sql,
+			array(
+				0 => 'Sunday',
+				1 => 'Monday',
+				2 => 'Tuesday',
+				3 => 'Wednesday',
+				4 => 'Thursday',
+				5 => 'Friday',
+				6 => 'Saturday',
+			)
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL MONTHNAME().
+	 *
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_monthname_sql( string $expression_sql ): string {
+		return $this->get_postgresql_mysql_temporal_name_sql(
+			'MONTH',
+			$expression_sql,
+			array(
+				1  => 'January',
+				2  => 'February',
+				3  => 'March',
+				4  => 'April',
+				5  => 'May',
+				6  => 'June',
+				7  => 'July',
+				8  => 'August',
+				9  => 'September',
+				10 => 'October',
+				11 => 'November',
+				12 => 'December',
+			)
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for an English MySQL temporal name function.
+	 *
+	 * @param string        $unit           PostgreSQL EXTRACT unit.
+	 * @param string        $expression_sql PostgreSQL expression SQL.
+	 * @param array<int,string> $names      Extracted integer value to MySQL name.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_temporal_name_sql( string $unit, string $expression_sql, array $names ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$timestamp_sql       = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+		$branches            = array();
+
+		foreach ( $names as $value => $name ) {
+			$branches[] = sprintf(
+				'WHEN %d THEN %s',
+				$value,
+				$this->connection->quote( $name )
+			);
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s OR %2$s THEN NULL ELSE CASE CAST(EXTRACT(%3$s FROM %4$s) AS integer) %5$s END END',
+			$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
+			$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
+			$unit,
+			$timestamp_sql,
+			implode( ' ', $branches )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL IS_UUID().
+	 *
+	 * MySQL accepts canonical dashed UUIDs, canonical UUIDs wrapped in braces,
+	 * and compact 32-hex-character UUID strings.
+	 *
+	 * @param string $argument_sql PostgreSQL argument SQL.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_postgresql_mysql_is_uuid_sql( string $argument_sql ): string {
+		$argument_text_sql = sprintf( 'CAST(%s AS text)', $argument_sql );
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN %1$s ~* %2$s THEN 1 ELSE 0 END',
+			$argument_text_sql,
+			$this->connection->quote( '^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})$' )
+		);
+	}
+
+	/**
 	 * Get PostgreSQL SQL for MySQL JSON_VALID().
 	 *
-	 * PostgreSQL needs a small PL/pgSQL helper so invalid JSON returns 0
-	 * instead of raising a cast error.
+	 * PostgreSQL can validate dynamic JSON text with pg_input_is_valid() without
+	 * raising a cast error. SQLite-backed tests keep using the runtime helper for
+	 * dynamic values, while constant values can be folded before execution.
 	 *
 	 * @param string $argument_sql PostgreSQL argument SQL.
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_postgresql_mysql_json_valid_sql( string $argument_sql ): string {
-		return sprintf(
-			'%s(CAST(%s AS text))',
-			$this->get_postgresql_mysql_json_valid_function_name(),
-			$argument_sql
-		);
+		if ( 'NULL' === strtoupper( trim( $argument_sql ) ) ) {
+			return 'NULL';
+		}
+
+		$literal_value = $this->get_mysql_sql_string_literal_value( $argument_sql );
+		if ( null !== $literal_value ) {
+			return (string) self::get_mysql_json_valid_runtime_result( $literal_value );
+		}
+
+		if ( 1 === preg_match( '/^-?(?:0|[1-9][0-9]*)(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?$/', trim( $argument_sql ) ) ) {
+			return (string) self::get_mysql_json_valid_runtime_result( trim( $argument_sql ) );
+		}
+
+		if ( 'pgsql' === $this->connection->get_driver_name() ) {
+			return sprintf(
+				'CASE WHEN %1$s IS NULL THEN NULL WHEN pg_input_is_valid(CAST(%1$s AS text), %2$s) THEN 1 ELSE 0 END',
+				$argument_sql,
+				$this->connection->quote( 'json' )
+			);
+		}
+
+		return sprintf( 'CASE WHEN %1$s IS NULL THEN NULL ELSE json_valid(CAST(%1$s AS text)) END', $argument_sql );
 	}
 
 		/**
@@ -59670,28 +62391,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	}
 
 	/**
-	 * Get the backend helper function name used for MySQL JSON_VALID().
-	 *
-	 * @return string Function name SQL.
-	 */
-	private function get_postgresql_mysql_json_valid_function_name(): string {
-		return 'pgsql' === $this->connection->get_driver_name()
-			? 'pg_temp.' . self::MYSQL_JSON_VALID_FUNCTION
-			: self::MYSQL_JSON_VALID_FUNCTION;
-	}
-
-	/**
-	 * Get the backend helper function name used for strict temporal validation.
-	 *
-	 * @return string Function name SQL.
-	 */
-	private function get_postgresql_mysql_validate_temporal_function_name(): string {
-		return 'pgsql' === $this->connection->get_driver_name()
-			? 'pg_temp.' . self::MYSQL_VALIDATE_TEMPORAL_FUNCTION
-			: self::MYSQL_VALIDATE_TEMPORAL_FUNCTION;
-	}
-
-	/**
 	 * Ensure runtime helper functions referenced by a translated query exist.
 	 *
 	 * @param string $query PostgreSQL query.
@@ -59703,11 +62402,11 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		$this->ensure_postgresql_mysql_binary_domains_for_query( $query );
 		$this->ensure_postgresql_mysql_integer_domains_for_query( $query );
 		$this->ensure_postgresql_mysql_numeric_domains_for_query( $query );
-		if ( 1 === preg_match( '/(?:pg_temp\.)?' . preg_quote( self::MYSQL_JSON_VALID_FUNCTION, '/' ) . '\s*\(/i', $query ) ) {
-			$this->ensure_postgresql_mysql_json_valid_function();
-		}
-		if ( 1 === preg_match( '/(?:pg_temp\.)?' . preg_quote( self::MYSQL_VALIDATE_TEMPORAL_FUNCTION, '/' ) . '\s*\(/i', $query ) ) {
-			$this->ensure_postgresql_mysql_validate_temporal_function();
+		if (
+			'sqlite' === $this->connection->get_driver_name()
+			&& 1 === preg_match( '/(?:pg_temp\.)?' . preg_quote( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, '/' ) . '\s*\(/i', $query )
+		) {
+			$this->ensure_sqlite_mysql_validate_temporal_function();
 		}
 	}
 
@@ -59913,61 +62612,6 @@ $wp_mysql_numeric_domain$',
 	}
 
 	/**
-	 * Ensure the MySQL JSON_VALID() helper exists for the current backing driver.
-	 */
-	private function ensure_postgresql_mysql_json_valid_function(): void {
-		if ( $this->postgresql_mysql_json_valid_function_ensured ) {
-			return;
-		}
-
-		$driver_name = $this->connection->get_driver_name();
-		if ( 'pgsql' === $driver_name ) {
-			$this->connection->query(
-				'CREATE OR REPLACE FUNCTION pg_temp.' . self::MYSQL_JSON_VALID_FUNCTION . '(value text)
-RETURNS integer
-LANGUAGE plpgsql
-IMMUTABLE
-STRICT
-AS $wp_mysql_json_valid$
-BEGIN
-  PERFORM $1::json;
-  RETURN 1;
-EXCEPTION WHEN others THEN
-  RETURN 0;
-END;
-$wp_mysql_json_valid$'
-			);
-		} elseif ( 'sqlite' === $driver_name ) {
-			$this->register_sqlite_mysql_json_valid_function();
-		}
-
-		$this->postgresql_mysql_json_valid_function_ensured = true;
-	}
-
-	/**
-	 * Register a SQLite test-harness shim for the MySQL JSON_VALID() helper.
-	 */
-	private function register_sqlite_mysql_json_valid_function(): void {
-		$pdo      = $this->connection->get_pdo();
-		$callback = static function ( $value ): ?int {
-			return self::get_mysql_json_valid_runtime_result( $value );
-		};
-
-		if ( method_exists( $pdo, 'createFunction' ) ) {
-			$pdo->createFunction( self::MYSQL_JSON_VALID_FUNCTION, $callback, 1 );
-			return;
-		}
-
-		if ( method_exists( $pdo, 'sqliteCreateFunction' ) ) {
-			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Base PDO SQLite exposes only the deprecated fallback on PHP 8.5.
-			@$pdo->sqliteCreateFunction( self::MYSQL_JSON_VALID_FUNCTION, $callback, 1 );
-			return;
-		}
-
-		throw new RuntimeException( 'SQLite JSON_VALID() helper registration is unavailable.' );
-	}
-
-	/**
 	 * Get the MySQL-compatible JSON_VALID() result for a runtime value.
 	 *
 	 * @param mixed $value Runtime value.
@@ -59983,105 +62627,15 @@ $wp_mysql_json_valid$'
 	}
 
 	/**
-	 * Ensure the strict temporal validation helper exists for the current backing driver.
+	 * Ensure the SQLite strict temporal validation helper exists.
 	 */
-	private function ensure_postgresql_mysql_validate_temporal_function(): void {
-		if ( $this->postgresql_mysql_validate_temporal_function_ensured ) {
+	private function ensure_sqlite_mysql_validate_temporal_function(): void {
+		if ( $this->sqlite_mysql_validate_temporal_function_registered ) {
 			return;
 		}
 
-		$driver_name = $this->connection->get_driver_name();
-		if ( 'pgsql' === $driver_name ) {
-			$this->connection->query(
-				'CREATE OR REPLACE FUNCTION pg_temp.' . self::MYSQL_VALIDATE_TEMPORAL_FUNCTION . '(value text, mysql_type text, reject_zero_date integer, reject_zero_in_date integer)
-RETURNS text
-LANGUAGE plpgsql
-IMMUTABLE
-STRICT
-AS $wp_mysql_validate_temporal$
-DECLARE
-  date_part text;
-  normalized_value text;
-  year_text text;
-  month_text text;
-  day_text text;
-  hour_text text;
-  minute_text text;
-  second_text text;
-  year_value integer;
-  month_value integer;
-  day_value integer;
-  hour_value integer;
-  minute_value integer;
-  second_value integer;
-BEGIN
-  IF mysql_type = \'date\' THEN
-    IF value !~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?Z?)?$\' THEN
-      RAISE EXCEPTION \'Incorrect % value: %\', mysql_type, quote_literal(value) USING ERRCODE = \'22007\';
-    END IF;
-    date_part := substring(value from 1 for 10);
-    normalized_value := date_part;
-  ELSE
-    IF value ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}$\' THEN
-      date_part := value;
-      normalized_value := value || \' 00:00:00\';
-      hour_text := \'00\';
-      minute_text := \'00\';
-      second_text := \'00\';
-    ELSIF value ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?Z?$\' THEN
-      date_part := substring(value from 1 for 10);
-      normalized_value := date_part || \' \' || substring(value from 12 for 8);
-      hour_text := substring(value from 12 for 2);
-      minute_text := substring(value from 15 for 2);
-      second_text := substring(value from 18 for 2);
-    ELSE
-      RAISE EXCEPTION \'Incorrect % value: %\', mysql_type, quote_literal(value) USING ERRCODE = \'22007\';
-    END IF;
-
-    hour_value := hour_text::integer;
-    minute_value := minute_text::integer;
-    second_value := second_text::integer;
-    IF hour_value < 0 OR hour_value > 23 OR minute_value < 0 OR minute_value > 59 OR second_value < 0 OR second_value > 59 THEN
-      RAISE EXCEPTION \'Incorrect % value: %\', mysql_type, quote_literal(value) USING ERRCODE = \'22007\';
-    END IF;
-  END IF;
-
-  year_text := substring(date_part from 1 for 4);
-  month_text := substring(date_part from 6 for 2);
-  day_text := substring(date_part from 9 for 2);
-
-  IF year_text = \'0000\' AND month_text = \'00\' AND day_text = \'00\' THEN
-    IF reject_zero_date <> 0 THEN
-      RAISE EXCEPTION \'Incorrect % value: %\', mysql_type, quote_literal(value) USING ERRCODE = \'22007\';
-    END IF;
-    RETURN normalized_value;
-  END IF;
-
-  IF year_text <> \'0000\' AND ( month_text = \'00\' OR day_text = \'00\' ) THEN
-    IF reject_zero_in_date <> 0 THEN
-      RAISE EXCEPTION \'Incorrect % value: %\', mysql_type, quote_literal(value) USING ERRCODE = \'22007\';
-    END IF;
-    RETURN normalized_value;
-  END IF;
-
-  year_value := year_text::integer;
-  month_value := month_text::integer;
-  day_value := day_text::integer;
-  BEGIN
-    PERFORM make_date(year_value, month_value, day_value);
-  EXCEPTION WHEN others THEN
-    RAISE EXCEPTION \'Incorrect % value: %\', mysql_type, quote_literal(value) USING ERRCODE = \'22007\';
-  END;
-
-  RETURN normalized_value;
-END;
-$wp_mysql_validate_temporal$'
-			);
-		} elseif ( 'sqlite' === $driver_name ) {
-			$this->register_sqlite_mysql_validate_temporal_function();
-		}
-
-		$this->postgresql_mysql_validate_temporal_function_ensured = true;
+		$this->register_sqlite_mysql_validate_temporal_function();
+		$this->sqlite_mysql_validate_temporal_function_registered = true;
 	}
 
 	/**
@@ -60099,13 +62653,13 @@ $wp_mysql_validate_temporal$'
 		};
 
 		if ( method_exists( $pdo, 'createFunction' ) ) {
-			$pdo->createFunction( self::MYSQL_VALIDATE_TEMPORAL_FUNCTION, $callback, 4 );
+			$pdo->createFunction( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, $callback, 4 );
 			return;
 		}
 
 		if ( method_exists( $pdo, 'sqliteCreateFunction' ) ) {
 			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Base PDO SQLite exposes only the deprecated fallback on PHP 8.5.
-			@$pdo->sqliteCreateFunction( self::MYSQL_VALIDATE_TEMPORAL_FUNCTION, $callback, 4 );
+			@$pdo->sqliteCreateFunction( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, $callback, 4 );
 			return;
 		}
 
@@ -60328,7 +62882,7 @@ $wp_mysql_validate_temporal$'
 	}
 
 	/**
-	 * Get PostgreSQL SQL for SQLite UDF-style MySQL REGEXP(pattern, value).
+	 * Get PostgreSQL SQL for MySQL REGEXP(pattern, value) function calls.
 	 *
 	 * @param string $pattern_sql Regular expression pattern SQL.
 	 * @param string $value_sql   Value SQL.
@@ -60427,6 +62981,50 @@ $wp_mysql_validate_temporal$'
 	}
 
 	/**
+	 * Get PostgreSQL SQL for MySQL byte-oriented ASCII(text).
+	 *
+	 * MySQL returns the first byte of the first character, 0 for an empty string,
+	 * and NULL for NULL. PostgreSQL's ASCII() returns a Unicode code point, so use
+	 * bytea inspection instead. Text envelopes carry original MySQL bytes as hex;
+	 * read their first encoded byte directly when present.
+	 *
+	 * @param string $argument_sql Translated argument SQL.
+	 * @return string PostgreSQL ASCII-compatible SQL.
+	 */
+	private function get_postgresql_mysql_ascii_sql( string $argument_sql ): string {
+		$text_sql           = sprintf( 'CAST(%s AS text)', $argument_sql );
+		$prefix_chars       = preg_match_all( '/./us', self::MYSQL_TEXT_ENCODING_PREFIX );
+		$prefix_length      = false === $prefix_chars ? strlen( self::MYSQL_TEXT_ENCODING_PREFIX ) : $prefix_chars;
+		$prefix_sql         = $this->connection->get_pdo()->quote( self::MYSQL_TEXT_ENCODING_PREFIX );
+		$payload_sql        = sprintf( 'SUBSTR(%s, %d)', $text_sql, $prefix_length + 1 );
+		$separator_sql      = sprintf( "STRPOS(%s, ':')", $payload_sql );
+		$length_sql         = sprintf( 'SUBSTR(%s, 1, GREATEST(%s - 1, 0))', $payload_sql, $separator_sql );
+		$after_length_sql   = sprintf( 'SUBSTR(%s, GREATEST(%s + 1, 1))', $payload_sql, $separator_sql );
+		$hash_separator_sql = sprintf( "STRPOS(%s, ':')", $after_length_sql );
+		$hash_sql           = sprintf( 'SUBSTR(%s, 1, GREATEST(%s - 1, 0))', $after_length_sql, $hash_separator_sql );
+		$hex_sql            = sprintf( 'SUBSTR(%s, GREATEST(%s + 1, 1))', $after_length_sql, $hash_separator_sql );
+		$envelope_sql       = sprintf(
+			"SUBSTR(%1\$s, 1, %2\$d) = %3\$s AND %4\$s > 1 AND %5\$s > 1 AND TRANSLATE(%6\$s, '0123456789', '') = '' AND (%6\$s = '0' OR SUBSTR(%6\$s, 1, 1) <> '0') AND %7\$s ~ '^[0-9a-f]{64}$' AND MOD(CHAR_LENGTH(%8\$s), 2) = 0 AND %8\$s ~ '^[0-9a-f]*$' AND (%6\$s = '0' OR CHAR_LENGTH(%8\$s) >= 2)",
+			$text_sql,
+			$prefix_length,
+			$prefix_sql,
+			$separator_sql,
+			$hash_separator_sql,
+			$length_sql,
+			$hash_sql,
+			$hex_sql
+		);
+
+		return sprintf(
+			"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s THEN CASE WHEN CAST(%3\$s AS bigint) = 0 THEN 0 ELSE GET_BYTE(DECODE(SUBSTR(%4\$s, 1, 2), 'hex'), 0) END WHEN %1\$s = '' THEN 0 ELSE GET_BYTE(CONVERT_TO(%1\$s, 'UTF8'), 0) END",
+			$text_sql,
+			$envelope_sql,
+			$length_sql,
+			$hex_sql
+		);
+	}
+
+	/**
 	 * Get PostgreSQL SQL for MySQL CONCAT_WS(separator, value, ...).
 	 *
 	 * MySQL skips NULL values after the separator, keeps empty strings, and
@@ -60459,6 +63057,88 @@ $wp_mysql_validate_temporal$'
 			'CASE WHEN %1$s IS NULL THEN NULL ELSE (%2$s) END',
 			$separator_sql,
 			implode( ' || ', $fragments )
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL ELT(index, value, ...).
+	 *
+	 * MySQL coerces the index argument to an integer and returns the indexed
+	 * string argument, or NULL when the index is NULL or out of range.
+	 *
+	 * @param string[] $argument_sql Translated PostgreSQL arguments.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_elt_sql( array $argument_sql ): string {
+		$index_sql = $this->get_postgresql_mysql_integer_cast_sql( $argument_sql[0] );
+		$branches  = array(
+			sprintf( 'WHEN %s IS NULL THEN NULL', $index_sql ),
+		);
+
+		for ( $i = 1; $i < count( $argument_sql ); $i++ ) {
+			$branches[] = sprintf(
+				'WHEN %1$s = %2$d THEN CAST(%3$s AS text)',
+				$index_sql,
+				$i,
+				$argument_sql[ $i ]
+			);
+		}
+
+		return 'CASE ' . implode( ' ', $branches ) . ' ELSE NULL END';
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL FIND_IN_SET(str, strlist).
+	 *
+	 * MySQL returns NULL for NULL arguments, 0 when the needle contains a comma,
+	 * and otherwise the one-based position in the comma-separated list.
+	 *
+	 * @param string $needle_sql PostgreSQL needle expression SQL.
+	 * @param string $list_sql   PostgreSQL comma-separated list expression SQL.
+	 * @return string PostgreSQL SQL.
+	 */
+	private function get_postgresql_mysql_find_in_set_sql( string $needle_sql, string $list_sql ): string {
+		$needle_text_sql = sprintf( 'CAST(%s AS text)', $needle_sql );
+		$list_text_sql   = sprintf( 'CAST(%s AS text)', $list_sql );
+
+		return sprintf(
+			"CASE WHEN %1\$s IS NULL OR %2\$s IS NULL THEN NULL WHEN STRPOS(%1\$s, ',') > 0 THEN 0 ELSE COALESCE(ARRAY_POSITION(STRING_TO_ARRAY(%2\$s, ','), %1\$s), 0) END",
+			$needle_text_sql,
+			$list_text_sql
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL MAKE_SET(bits, str1, str2, ...).
+	 *
+	 * PostgreSQL bigint bitwise operators are signed, so support the practical
+	 * MySQL-compatible bit range that fits in a positive bigint mask.
+	 *
+	 * @param string[] $argument_sql Translated PostgreSQL arguments.
+	 * @return string|null PostgreSQL SQL, or null when unsupported.
+	 */
+	private function get_postgresql_mysql_make_set_sql( array $argument_sql ): ?string {
+		if ( count( $argument_sql ) > 64 ) {
+			return null;
+		}
+
+		$mask_sql   = $this->get_postgresql_mysql_integer_cast_sql( $argument_sql[0] );
+		$values_sql = array();
+
+		for ( $i = 1; $i < count( $argument_sql ); $i++ ) {
+			$bit_sql      = (string) ( 1 << ( $i - 1 ) );
+			$values_sql[] = sprintf(
+				'CASE WHEN (%1$s & %2$s) <> 0 THEN CAST(%3$s AS text) ELSE NULL END',
+				$mask_sql,
+				$bit_sql,
+				$argument_sql[ $i ]
+			);
+		}
+
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL ELSE CONCAT_WS(\',\', %2$s) END',
+			$mask_sql,
+			implode( ', ', $values_sql )
 		);
 	}
 
@@ -60843,13 +63523,15 @@ $wp_mysql_validate_temporal$'
 				return null;
 			}
 
-			$inner = $this->get_mysql_infix_interval_expression_bounds( $tokens, $position + 1, $after_close - 1 );
-			if ( null === $inner || $inner['close'] !== $after_close - 2 ) {
-				return null;
-			}
+			if ( $after_close === $end ) {
+				$inner = $this->get_mysql_infix_interval_expression_bounds( $tokens, $position + 1, $after_close - 1 );
+				if ( null === $inner || $inner['close'] !== $after_close - 2 ) {
+					return null;
+				}
 
-			$inner['close'] = $after_close - 1;
-			return $inner;
+				$inner['close'] = $after_close - 1;
+				return $inner;
+			}
 		}
 
 		$expression = $this->get_mysql_infix_interval_left_expression_bounds( $tokens, $position, $end );
@@ -60900,6 +63582,31 @@ $wp_mysql_validate_temporal$'
 			return null;
 		}
 
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+			if ( null === $after_close ) {
+				return null;
+			}
+
+			$inner = $this->get_mysql_infix_interval_left_expression_bounds( $tokens, $position + 1, $after_close - 1 );
+			if ( null !== $inner && $inner['start'] === $position + 1 && $inner['end'] === $after_close - 1 ) {
+				return array(
+					'start' => $position,
+					'end'   => $after_close,
+				);
+			}
+		}
+
+		if ( WP_MySQL_Lexer::CASE_SYMBOL === $tokens[ $position ]->id ) {
+			$case_end = $this->get_mysql_case_expression_end( $tokens, $position, $end );
+			if ( null !== $case_end ) {
+				return array(
+					'start' => $position,
+					'end'   => $case_end,
+				);
+			}
+		}
+
 		$common_function = $this->get_mysql_common_function_bounds( $tokens, $position, $end );
 		if ( null !== $common_function ) {
 			return array(
@@ -60913,6 +63620,67 @@ $wp_mysql_validate_temporal$'
 				'start' => $position,
 				'end'   => $position + 1,
 			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get the end position for a complete CASE expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int              $position CASE token position.
+	 * @param int              $end      Final token position, exclusive.
+	 * @return int|null End position, exclusive, or null when unsupported.
+	 */
+	private function get_mysql_case_expression_end( array $tokens, int $position, int $end ): ?int {
+		if (
+			$position >= $end
+			|| ! isset( $tokens[ $position ] )
+			|| WP_MySQL_Lexer::CASE_SYMBOL !== $tokens[ $position ]->id
+		) {
+			return null;
+		}
+
+		$case_depth  = 0;
+		$paren_depth = 0;
+		for ( $i = $position + 1; $i < $end; $i++ ) {
+			$token_id = $tokens[ $i ]->id;
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token_id ) {
+				++$paren_depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token_id ) {
+				--$paren_depth;
+				if ( $paren_depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 !== $paren_depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CASE_SYMBOL === $token_id ) {
+				++$case_depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::END_SYMBOL !== $token_id ) {
+				continue;
+			}
+
+			if ( $case_depth > 0 ) {
+				--$case_depth;
+				continue;
+			}
+
+			return null === $this->get_mysql_case_expression_result_ranges( $tokens, $position, $i + 1 )
+				? null
+				: $i + 1;
 		}
 
 		return null;
@@ -61728,10 +64496,19 @@ $wp_mysql_validate_temporal$'
 	private function get_mysql_week_function_bounds( array $tokens, int $position, int $end ): ?array {
 		if (
 			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::WEEK_SYMBOL !== $tokens[ $position ]->id
 			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
 		) {
 			return null;
+		}
+
+		$is_weekofyear = false;
+		if ( WP_MySQL_Lexer::WEEK_SYMBOL !== $tokens[ $position ]->id ) {
+			$function_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] );
+			if ( null === $function_name || 0 !== strcasecmp( $function_name, 'weekofyear' ) ) {
+				return null;
+			}
+
+			$is_weekofyear = true;
 		}
 
 		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
@@ -61740,14 +64517,15 @@ $wp_mysql_validate_temporal$'
 		}
 
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $position + 2, $after_close - 1 );
-		if (
-			null === $arguments
-			|| ! in_array( count( $arguments ), array( 1, 2 ), true )
-		) {
+		if ( null === $arguments || ! in_array( count( $arguments ), array( 1, 2 ), true ) ) {
 			return null;
 		}
 
-		$mode = 0;
+		if ( $is_weekofyear && 1 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$mode = $is_weekofyear ? 3 : 0;
 		if ( 2 === count( $arguments ) ) {
 			$mode = $this->get_mysql_supported_week_mode_argument( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
 			if ( null === $mode ) {
@@ -61775,10 +64553,16 @@ $wp_mysql_validate_temporal$'
 		for ( $i = $start; $i < $end; $i++ ) {
 			if (
 				! isset( $tokens[ $i ], $tokens[ $i + 1 ] )
-				|| WP_MySQL_Lexer::WEEK_SYMBOL !== $tokens[ $i ]->id
 				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
 			) {
 				continue;
+			}
+
+			if ( WP_MySQL_Lexer::WEEK_SYMBOL !== $tokens[ $i ]->id ) {
+				$function_name = $this->get_mysql_identifier_token_value( $tokens[ $i ] );
+				if ( null === $function_name || 0 !== strcasecmp( $function_name, 'weekofyear' ) ) {
+					continue;
+				}
 			}
 
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $i + 1, $end );
@@ -62011,15 +64795,28 @@ $wp_mysql_validate_temporal$'
 			$bounds['expression_start'],
 			$bounds['expression_end']
 		);
-		if ( null !== $bounds['format'] ) {
+		if ( $this->is_mysql_null_literal_expression( $tokens, $bounds['expression_start'], $bounds['expression_end'] ) ) {
+			$sql = 'NULL';
+		} elseif ( null !== $bounds['format'] ) {
 			$sql = $this->get_postgresql_mysql_date_format_sql( $bounds['format'], $expression_sql );
+		} elseif ( $bounds['format_is_null'] ) {
+			$sql = 'NULL';
 		} else {
-			$format_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$sql = $this->get_postgresql_mysql_finite_date_format_choice_sql(
 				$tokens,
 				$bounds['format_start'],
-				$bounds['format_end']
+				$bounds['format_end'],
+				$expression_sql,
+				false
 			);
-			$sql        = $this->get_postgresql_mysql_dynamic_date_format_sql( $format_sql, $expression_sql );
+			if ( null === $sql ) {
+				$format_sql = $this->translate_mysql_token_sequence_to_postgresql(
+					$tokens,
+					$bounds['format_start'],
+					$bounds['format_end']
+				);
+				$sql        = $this->get_postgresql_mysql_dynamic_date_format_sql( $format_sql, $expression_sql );
+			}
 		}
 		if ( null === $sql ) {
 			return null;
@@ -62030,6 +64827,594 @@ $wp_mysql_validate_temporal$'
 			'token_id' => WP_MySQL_Lexer::CASE_SYMBOL,
 			'position' => $bounds['close'],
 		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for runtime choices between finite DATE_FORMAT() masks.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         First format expression token.
+	 * @param int              $end           Final format expression token, exclusive.
+	 * @param string           $expression_sql PostgreSQL timestamp/date expression SQL.
+	 * @param bool             $force_string  Whether to force formatted string semantics.
+	 * @return string|null PostgreSQL SQL, or null when the format is not a finite choice.
+	 */
+	private function get_postgresql_mysql_finite_date_format_choice_sql( array $tokens, int $start, int $end, string $expression_sql, bool $force_string ): ?string {
+		$if_sql = $this->get_postgresql_mysql_finite_date_format_if_choice_sql(
+			$tokens,
+			$start,
+			$end,
+			$expression_sql,
+			$force_string
+		);
+		if ( null !== $if_sql ) {
+			return $if_sql;
+		}
+
+		return $this->get_postgresql_mysql_finite_date_format_case_choice_sql(
+			$tokens,
+			$start,
+			$end,
+			$expression_sql,
+			$force_string
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for IF() choices between finite DATE_FORMAT() masks.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         First format expression token.
+	 * @param int              $end           Final format expression token, exclusive.
+	 * @param string           $expression_sql PostgreSQL timestamp/date expression SQL.
+	 * @param bool             $force_string  Whether to force formatted string semantics.
+	 * @return string|null PostgreSQL SQL, or null when the format is not a finite IF() choice.
+	 */
+	private function get_postgresql_mysql_finite_date_format_if_choice_sql( array $tokens, int $start, int $end, string $expression_sql, bool $force_string ): ?string {
+		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
+		if ( null === $bounds || $bounds['close'] + 1 !== $end || 'if' !== $bounds['function'] ) {
+			return null;
+		}
+
+		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+		if ( null === $arguments || 3 !== count( $arguments ) ) {
+			return null;
+		}
+
+		$truthy_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
+			$tokens,
+			$arguments[1]['start'],
+			$arguments[1]['end'],
+			$expression_sql,
+			$force_string
+		);
+		$falsy_sql  = $this->get_postgresql_mysql_date_format_constant_branch_sql(
+			$tokens,
+			$arguments[2]['start'],
+			$arguments[2]['end'],
+			$expression_sql,
+			$force_string
+		);
+		if ( null === $truthy_sql || null === $falsy_sql ) {
+			return null;
+		}
+
+		$condition_argument_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		);
+		$condition_sql          = $this->is_mysql_boolean_condition_expression(
+			$tokens,
+			$arguments[0]['start'],
+			$arguments[0]['end']
+		)
+			? '(' . $condition_argument_sql . ')'
+			: $this->get_postgresql_mysql_truthy_expression_sql( $condition_argument_sql );
+
+		return sprintf( 'CASE WHEN %s THEN %s ELSE %s END', $condition_sql, $truthy_sql, $falsy_sql );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for searched CASE choices between finite DATE_FORMAT() masks.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         First format expression token.
+	 * @param int              $end           Final format expression token, exclusive.
+	 * @param string           $expression_sql PostgreSQL timestamp/date expression SQL.
+	 * @param bool             $force_string  Whether to force formatted string semantics.
+	 * @return string|null PostgreSQL SQL, or null when the format is not a finite searched CASE choice.
+	 */
+	private function get_postgresql_mysql_finite_date_format_case_choice_sql( array $tokens, int $start, int $end, string $expression_sql, bool $force_string ): ?string {
+		$searched_case = $this->get_mysql_searched_case_expression_branches( $tokens, $start, $end );
+		if ( null !== $searched_case ) {
+			return $this->get_postgresql_mysql_finite_date_format_searched_case_choice_sql(
+				$tokens,
+				$searched_case,
+				$expression_sql,
+				$force_string
+			);
+		}
+
+		$simple_case = $this->get_mysql_simple_case_expression_branches( $tokens, $start, $end );
+		if ( null === $simple_case ) {
+			return null;
+		}
+
+		return $this->get_postgresql_mysql_finite_date_format_simple_case_choice_sql(
+			$tokens,
+			$simple_case,
+			$expression_sql,
+			$force_string
+		);
+	}
+
+	/**
+	 * Get PostgreSQL SQL for searched CASE choices between finite DATE_FORMAT() masks.
+	 *
+	 * @param WP_MySQL_Token[]                                                                                     $tokens          MySQL lexer token stream.
+	 * @param array{branches:array<int,array{condition_start:int,condition_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null} $case_ranges Searched CASE branch ranges.
+	 * @param string                                                                                               $expression_sql  PostgreSQL timestamp/date expression SQL.
+	 * @param bool                                                                                                 $force_string    Whether to force formatted string semantics.
+	 * @return string|null PostgreSQL SQL, or null when a result branch is not a fixed mask or NULL.
+	 */
+	private function get_postgresql_mysql_finite_date_format_searched_case_choice_sql( array $tokens, array $case_ranges, string $expression_sql, bool $force_string ): ?string {
+		$parts = array( 'CASE' );
+		foreach ( $case_ranges['branches'] as $branch ) {
+			$branch_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
+				$tokens,
+				$branch['result_start'],
+				$branch['result_end'],
+				$expression_sql,
+				$force_string
+			);
+			if ( null === $branch_sql ) {
+				return null;
+			}
+
+			$condition_argument_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$branch['condition_start'],
+				$branch['condition_end']
+			);
+			$condition_sql          = $this->is_mysql_boolean_condition_expression(
+				$tokens,
+				$branch['condition_start'],
+				$branch['condition_end']
+			)
+				? '(' . $condition_argument_sql . ')'
+				: $this->get_postgresql_mysql_truthy_expression_sql( $condition_argument_sql );
+
+			$parts[] = sprintf( 'WHEN %s THEN %s', $condition_sql, $branch_sql );
+		}
+
+		$else_sql = 'NULL';
+		if ( null !== $case_ranges['else'] ) {
+			$else_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
+				$tokens,
+				$case_ranges['else']['start'],
+				$case_ranges['else']['end'],
+				$expression_sql,
+				$force_string
+			);
+			if ( null === $else_sql ) {
+				return null;
+			}
+		}
+
+		$parts[] = 'ELSE ' . $else_sql;
+		$parts[] = 'END';
+
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for simple CASE choices between finite DATE_FORMAT() masks.
+	 *
+	 * @param WP_MySQL_Token[]                                                                               $tokens          MySQL lexer token stream.
+	 * @param array{value_start:int,value_end:int,branches:array<int,array{compare_start:int,compare_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null} $case_ranges Simple CASE branch ranges.
+	 * @param string                                                                                         $expression_sql  PostgreSQL timestamp/date expression SQL.
+	 * @param bool                                                                                           $force_string    Whether to force formatted string semantics.
+	 * @return string|null PostgreSQL SQL, or null when a result branch is not a fixed mask or NULL.
+	 */
+	private function get_postgresql_mysql_finite_date_format_simple_case_choice_sql( array $tokens, array $case_ranges, string $expression_sql, bool $force_string ): ?string {
+		$value_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$tokens,
+			$case_ranges['value_start'],
+			$case_ranges['value_end']
+		);
+		$parts     = array( 'CASE' );
+		foreach ( $case_ranges['branches'] as $branch ) {
+			$branch_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
+				$tokens,
+				$branch['result_start'],
+				$branch['result_end'],
+				$expression_sql,
+				$force_string
+			);
+			if ( null === $branch_sql ) {
+				return null;
+			}
+
+			$compare_sql = $this->translate_mysql_token_sequence_to_postgresql(
+				$tokens,
+				$branch['compare_start'],
+				$branch['compare_end']
+			);
+			$parts[]     = sprintf( 'WHEN (%s = %s) THEN %s', $value_sql, $compare_sql, $branch_sql );
+		}
+
+		$else_sql = 'NULL';
+		if ( null !== $case_ranges['else'] ) {
+			$else_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
+				$tokens,
+				$case_ranges['else']['start'],
+				$case_ranges['else']['end'],
+				$expression_sql,
+				$force_string
+			);
+			if ( null === $else_sql ) {
+				return null;
+			}
+		}
+
+		$parts[] = 'ELSE ' . $else_sql;
+		$parts[] = 'END';
+
+		return implode( ' ', $parts );
+	}
+
+	/**
+	 * Get searched CASE branch ranges.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  CASE token position.
+	 * @param int              $end    Final CASE expression token position, exclusive.
+	 * @return array{branches:array<int,array{condition_start:int,condition_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null}|null Branch ranges, or null when unsupported.
+	 */
+	private function get_mysql_searched_case_expression_branches( array $tokens, int $start, int $end ): ?array {
+		if (
+			$start + 3 >= $end
+			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $end - 1 ] )
+			|| WP_MySQL_Lexer::CASE_SYMBOL !== $tokens[ $start ]->id
+			|| WP_MySQL_Lexer::WHEN_SYMBOL !== $tokens[ $start + 1 ]->id
+			|| WP_MySQL_Lexer::END_SYMBOL !== $tokens[ $end - 1 ]->id
+			|| $this->get_mysql_case_expression_end( $tokens, $start, $end ) !== $end
+		) {
+			return null;
+		}
+
+		$branches                = array();
+		$case_depth              = 0;
+		$paren_depth             = 0;
+		$condition_start         = null;
+		$condition_end           = null;
+		$result_start            = null;
+		$else_start              = null;
+		$finalize_current_branch = function ( int $position ) use ( &$branches, &$condition_start, &$condition_end, &$result_start ): bool {
+			if (
+				null === $condition_start
+				|| null === $condition_end
+				|| null === $result_start
+				|| $condition_start >= $condition_end
+				|| $result_start >= $position
+			) {
+				return false;
+			}
+
+			$branches[]      = array(
+				'condition_start' => $condition_start,
+				'condition_end'   => $condition_end,
+				'result_start'    => $result_start,
+				'result_end'      => $position,
+			);
+			$condition_start = null;
+			$condition_end   = null;
+			$result_start    = null;
+
+			return true;
+		};
+
+		for ( $i = $start + 1; $i < $end; $i++ ) {
+			$token_id = $tokens[ $i ]->id;
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token_id ) {
+				++$paren_depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token_id ) {
+				--$paren_depth;
+				if ( $paren_depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 !== $paren_depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CASE_SYMBOL === $token_id ) {
+				++$case_depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id && $case_depth > 0 ) {
+				--$case_depth;
+				continue;
+			}
+
+			if ( 0 !== $case_depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::WHEN_SYMBOL === $token_id ) {
+				if ( null !== $else_start ) {
+					return null;
+				}
+				if ( null !== $result_start && ! $finalize_current_branch( $i ) ) {
+					return null;
+				}
+				if ( null !== $condition_start || null !== $condition_end ) {
+					return null;
+				}
+
+				$condition_start = $i + 1;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::THEN_SYMBOL === $token_id ) {
+				if (
+					null === $condition_start
+					|| null !== $condition_end
+					|| null !== $result_start
+					|| null !== $else_start
+					|| $condition_start >= $i
+				) {
+					return null;
+				}
+
+				$condition_end = $i;
+				$result_start  = $i + 1;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::ELSE_SYMBOL === $token_id ) {
+				if ( null !== $else_start || null === $result_start || ! $finalize_current_branch( $i ) ) {
+					return null;
+				}
+
+				$else_start = $i + 1;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id ) {
+				if ( $i !== $end - 1 ) {
+					return null;
+				}
+				if ( null !== $result_start && ! $finalize_current_branch( $i ) ) {
+					return null;
+				}
+				if ( null !== $condition_start || null !== $condition_end || empty( $branches ) ) {
+					return null;
+				}
+				if ( null === $else_start ) {
+					return array(
+						'branches' => $branches,
+						'else'     => null,
+					);
+				}
+				if ( $else_start >= $i ) {
+					return null;
+				}
+
+				return array(
+					'branches' => $branches,
+					'else'     => array(
+						'start' => $else_start,
+						'end'   => $i,
+					),
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get simple CASE branch ranges.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int              $start  CASE token position.
+	 * @param int              $end    Final CASE expression token position, exclusive.
+	 * @return array{value_start:int,value_end:int,branches:array<int,array{compare_start:int,compare_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null}|null Branch ranges, or null when unsupported.
+	 */
+	private function get_mysql_simple_case_expression_branches( array $tokens, int $start, int $end ): ?array {
+		if (
+			$start + 4 >= $end
+			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $end - 1 ] )
+			|| WP_MySQL_Lexer::CASE_SYMBOL !== $tokens[ $start ]->id
+			|| WP_MySQL_Lexer::WHEN_SYMBOL === $tokens[ $start + 1 ]->id
+			|| WP_MySQL_Lexer::END_SYMBOL !== $tokens[ $end - 1 ]->id
+			|| $this->get_mysql_case_expression_end( $tokens, $start, $end ) !== $end
+		) {
+			return null;
+		}
+
+		$branches                = array();
+		$case_depth              = 0;
+		$paren_depth             = 0;
+		$value_start             = $start + 1;
+		$value_end               = null;
+		$compare_start           = null;
+		$compare_end             = null;
+		$result_start            = null;
+		$else_start              = null;
+		$finalize_current_branch = function ( int $position ) use ( &$branches, &$compare_start, &$compare_end, &$result_start ): bool {
+			if (
+				null === $compare_start
+				|| null === $compare_end
+				|| null === $result_start
+				|| $compare_start >= $compare_end
+				|| $result_start >= $position
+			) {
+				return false;
+			}
+
+			$branches[]    = array(
+				'compare_start' => $compare_start,
+				'compare_end'   => $compare_end,
+				'result_start'  => $result_start,
+				'result_end'    => $position,
+			);
+			$compare_start = null;
+			$compare_end   = null;
+			$result_start  = null;
+
+			return true;
+		};
+
+		for ( $i = $start + 1; $i < $end; $i++ ) {
+			$token_id = $tokens[ $i ]->id;
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token_id ) {
+				++$paren_depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token_id ) {
+				--$paren_depth;
+				if ( $paren_depth < 0 ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( 0 !== $paren_depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CASE_SYMBOL === $token_id ) {
+				++$case_depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id && $case_depth > 0 ) {
+				--$case_depth;
+				continue;
+			}
+
+			if ( 0 !== $case_depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::WHEN_SYMBOL === $token_id ) {
+				if ( null !== $else_start ) {
+					return null;
+				}
+				if ( null === $value_end ) {
+					if ( $value_start >= $i ) {
+						return null;
+					}
+					$value_end = $i;
+				} elseif ( null !== $result_start && ! $finalize_current_branch( $i ) ) {
+					return null;
+				}
+				if ( null !== $compare_start || null !== $compare_end ) {
+					return null;
+				}
+
+				$compare_start = $i + 1;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::THEN_SYMBOL === $token_id ) {
+				if (
+					null === $value_end
+					|| null === $compare_start
+					|| null !== $compare_end
+					|| null !== $result_start
+					|| null !== $else_start
+					|| $compare_start >= $i
+				) {
+					return null;
+				}
+
+				$compare_end  = $i;
+				$result_start = $i + 1;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::ELSE_SYMBOL === $token_id ) {
+				if ( null !== $else_start || null === $result_start || ! $finalize_current_branch( $i ) ) {
+					return null;
+				}
+
+				$else_start = $i + 1;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id ) {
+				if ( $i !== $end - 1 || null === $value_end ) {
+					return null;
+				}
+				if ( null !== $result_start && ! $finalize_current_branch( $i ) ) {
+					return null;
+				}
+				if ( null !== $compare_start || null !== $compare_end || empty( $branches ) ) {
+					return null;
+				}
+				if ( null === $else_start ) {
+					return array(
+						'value_start' => $value_start,
+						'value_end'   => $value_end,
+						'branches'    => $branches,
+						'else'        => null,
+					);
+				}
+				if ( $else_start >= $i ) {
+					return null;
+				}
+
+				return array(
+					'value_start' => $value_start,
+					'value_end'   => $value_end,
+					'branches'    => $branches,
+					'else'        => array(
+						'start' => $else_start,
+						'end'   => $i,
+					),
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Get PostgreSQL SQL for one fixed DATE_FORMAT() branch.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $start         First branch token.
+	 * @param int              $end           Final branch token, exclusive.
+	 * @param string           $expression_sql PostgreSQL timestamp/date expression SQL.
+	 * @param bool             $force_string  Whether to force formatted string semantics.
+	 * @return string|null PostgreSQL SQL, or null when the branch is not a fixed mask or NULL.
+	 */
+	private function get_postgresql_mysql_date_format_constant_branch_sql( array $tokens, int $start, int $end, string $expression_sql, bool $force_string ): ?string {
+		$format = $this->get_mysql_constant_string_expression_value( $tokens, $start, $end );
+		if ( null === $format ) {
+			return null;
+		}
+
+		if ( $format['is_null'] ) {
+			return 'NULL';
+		}
+
+		return $force_string
+			? $this->get_postgresql_mysql_date_format_string_sql( $format['value'], $expression_sql )
+			: $this->get_postgresql_mysql_date_format_sql( $format['value'], $expression_sql );
 	}
 
 	/**
@@ -62097,7 +65482,7 @@ $wp_mysql_validate_temporal$'
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
 	 * @param int             $position Function token position.
 	 * @param int             $end      Final token position, exclusive.
-	 * @return array{format: string|null, expression_start: int, expression_end: int, format_start: int, format_end: int, close: int}|null Bounds, or null when unsupported.
+	 * @return array{format: string|null, format_is_null: bool, expression_start: int, expression_end: int, format_start: int, format_end: int, close: int}|null Bounds, or null when unsupported.
 	 */
 	private function get_mysql_date_format_call_bounds( array $tokens, int $position, int $end ): ?array {
 		$bounds = $this->get_mysql_function_call_bounds( $tokens, $position, $end, 'date_format' );
@@ -62110,12 +65495,16 @@ $wp_mysql_validate_temporal$'
 			return null;
 		}
 
-		$format = $this->is_mysql_string_literal_range( $tokens, $arguments[1]['start'], $arguments[1]['end'] )
-			? $tokens[ $arguments[1]['start'] ]->get_value()
-			: null;
+		$format_constant = $this->get_mysql_constant_string_expression_value(
+			$tokens,
+			$arguments[1]['start'],
+			$arguments[1]['end']
+		);
+		$format          = null !== $format_constant && ! $format_constant['is_null'] ? $format_constant['value'] : null;
 
 		return array(
 			'format'           => $format,
+			'format_is_null'   => null !== $format_constant && $format_constant['is_null'],
 			'expression_start' => $arguments[0]['start'],
 			'expression_end'   => $arguments[0]['end'],
 			'format_start'     => $arguments[1]['start'],
@@ -63130,6 +66519,16 @@ $wp_mysql_validate_temporal$'
 		$empty_date_condition = $this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql );
 		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
 
+		if ( 'MICROSECOND' === $unit ) {
+			return sprintf(
+				"CASE WHEN %1\$s THEN NULL WHEN %2\$s THEN CAST(%3\$s AS integer) ELSE CAST(TO_CHAR(%4\$s, 'US') AS integer) END",
+				$empty_date_condition,
+				$zero_date_condition,
+				$this->get_postgresql_mysql_zero_date_microsecond_sql( $expression_text_sql ),
+				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql )
+			);
+		}
+
 		return sprintf(
 			'CASE WHEN %1$s THEN NULL WHEN %2$s THEN %3$s ELSE CAST(EXTRACT(%4$s FROM %5$s) AS integer) END',
 			$empty_date_condition,
@@ -63361,6 +66760,9 @@ $wp_mysql_validate_temporal$'
 
 			case WP_MySQL_Lexer::SECOND_SYMBOL:
 				return 'SECOND';
+
+			case WP_MySQL_Lexer::MICROSECOND_SYMBOL:
+				return 'MICROSECOND';
 		}
 
 		$name = $this->get_mysql_identifier_token_value( $token );
@@ -63739,6 +67141,10 @@ $wp_mysql_validate_temporal$'
 			}
 
 			if ( null !== $this->get_mysql_date_time_cast_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+
+			if ( null !== $this->get_mysql_date_cast_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 

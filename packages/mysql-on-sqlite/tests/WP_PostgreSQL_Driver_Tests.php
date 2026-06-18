@@ -1243,6 +1243,261 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests strict UPDATE avoids temporal validation helpers for safe FROM_UNIXTIME() literals.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_literal_from_unixtime_expressions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			'UPDATE `wptests_strict_values`
+			SET `date_value` = FROM_UNIXTIME(0),
+				`datetime_value` = FROM_UNIXTIME(0.123456),
+				`timestamp_value` = DATE_ADD(FROM_UNIXTIME(0), INTERVAL 1 DAY)
+			WHERE `id` = 1'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( "TO_CHAR(TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC', 'YYYY-MM-DD')", $sql );
+		$this->assertStringContainsString( "TO_CHAR(TO_TIMESTAMP(CAST(0.123456 AS double precision)) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')", $sql );
+		$this->assertStringContainsString( "INTERVAL '1 day'", $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
+	}
+
+	/**
+	 * Tests strict UPDATE avoids temporal validation helpers for fixed DATE_FORMAT() masks.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_fixed_date_format_expressions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			"UPDATE `wptests_strict_values`
+			SET `date_value` = DATE_FORMAT(NOW(), '%Y-%m-%d'),
+				`datetime_value` = DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s'),
+				`timestamp_value` = DATE_FORMAT(CURRENT_DATE, '%Y-%m-%d')
+			WHERE `id` = 1"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( "'YYYY-MM-DD'", $sql );
+		$this->assertStringContainsString( "'YYYY-MM-DD HH24:MI:SS'", $sql );
+		$this->assertStringContainsString( "|| ' 00:00:00'", $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+	}
+
+	/**
+	 * Tests strict UPDATE avoids temporal helpers for fixed formatted FROM_UNIXTIME() literals.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_fixed_formatted_from_unixtime_literals(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			"UPDATE `wptests_strict_values`
+			SET `date_value` = FROM_UNIXTIME(1609632000, CONCAT('%Y', '-%m-%d')),
+				`datetime_value` = FROM_UNIXTIME(1609632000, CONCAT_WS(' ', '%Y-%m-%d', '%H:%i:%s')),
+				`timestamp_value` = FROM_UNIXTIME(1609632000, CONCAT('%Y', '-%m-%d'))
+			WHERE `id` = 1"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'TO_TIMESTAMP(CAST(1609632000 AS double precision))', $sql );
+		$this->assertStringContainsString( "'YYYY'", $sql );
+		$this->assertStringContainsString( "'HH24'", $sql );
+		$this->assertStringContainsString( "|| ' 00:00:00'", $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
+	}
+
+	/**
+	 * Tests strict UPDATE avoids temporal helpers for expressions based on valid temporal literals.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_valid_literal_temporal_sources(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			"UPDATE `wptests_strict_values`
+			SET `date_value` = DATE_ADD('2024-01-01', INTERVAL 1 DAY),
+				`datetime_value` = DATE_ADD('2024-01-01 02:03:04', INTERVAL 1 DAY),
+				`timestamp_value` = DATE(COALESCE('2024-01-01 02:03:04', NOW()))
+			WHERE `id` = 1"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( "INTERVAL '1 day'", $sql );
+		$this->assertStringContainsString( "'2024-01-01 02:03:04'", $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+		$this->assertStringNotContainsString( 'DATE_ADD', $sql );
+	}
+
+	/**
+	 * Tests strict UPDATE avoids temporal helpers for constant temporal text expressions.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_constant_temporal_text_expressions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			"UPDATE `wptests_strict_values`
+			SET `date_value` = REPLACE('2024/01/02', '/', '-'),
+				`datetime_value` = CONCAT_WS(' ', SUBSTRING('xx2024-01-02', 3), IFNULL(NULL, '03:04:05')),
+				`timestamp_value` = DATE_ADD(LEFT('2024-01-02 03:04:05 ignored', 19), INTERVAL 1 DAY)
+			WHERE `id` = 1"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( "'2024/01/02'", $sql );
+		$this->assertStringContainsString( "'03:04:05'", $sql );
+		$this->assertStringContainsString( "INTERVAL '1 day'", $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+		$this->assertStringNotContainsString( 'CONCAT', $sql );
+		$this->assertStringNotContainsString( 'DATE_ADD', $sql );
+	}
+
+	/**
+	 * Tests strict UPDATE avoids temporal helpers for NULL concatenation expressions.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_null_concatenation_expressions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			"UPDATE `wptests_strict_values`
+			SET `date_value` = CONCAT('2024-01-02', NULL),
+				`datetime_value` = CONCAT_WS(NULL, '2024-01-02', '03:04:05'),
+				`timestamp_value` = DATE_ADD(CONCAT('2024-01-02', NULL), INTERVAL 1 DAY)
+			WHERE `id` = 1"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'NULL', $sql );
+		$this->assertStringContainsString( "INTERVAL '1 day'", $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+		$this->assertStringNotContainsString( 'CONCAT', $sql );
+		$this->assertStringNotContainsString( 'DATE_ADD', $sql );
+	}
+
+	/**
+	 * Tests strict UPDATE avoids temporal helpers for NULL-producing temporal branches.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_null_temporal_branches(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			'UPDATE `wptests_strict_values`
+			SET `date_value` = IF(`id` = 1, CURRENT_DATE, NULL),
+				`datetime_value` = COALESCE(NULL, NOW()),
+				`timestamp_value` = CASE WHEN `id` = 1 THEN NOW() ELSE NULL END
+			WHERE `id` = 1'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'ELSE NULL END', $sql );
+		$this->assertStringContainsString( 'COALESCE(NULL,', $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+	}
+
+	/**
+	 * Tests strict UPDATE avoids temporal helpers for functions that are guaranteed NULL.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_null_temporal_functions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			"UPDATE `wptests_strict_values`
+			SET `date_value` = DATE_FORMAT(NULL, CONCAT('%Y', '-%m-%d')),
+				`datetime_value` = FROM_UNIXTIME(NULL, CONCAT('%Y-%m-%d', ' %H:%i:%s')),
+				`timestamp_value` = DATE_ADD(FROM_UNIXTIME(NULL), INTERVAL 1 DAY)
+			WHERE `id` = 1"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( '"date_value" = NULL', $sql );
+		$this->assertStringContainsString( '"datetime_value" = NULL', $sql );
+		$this->assertStringContainsString( 'INTERVAL \'1 day\'', $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+		$this->assertStringNotContainsString( 'WITH RECURSIVE "__wp_pg_mysql_date_format"', $sql );
+		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
+		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
+	}
+
+	/**
+	 * Tests strict UPDATE avoids temporal helpers for NULL casts and date arithmetic.
+	 */
+	public function test_strict_update_avoids_temporal_helper_for_null_cast_and_arithmetic_expressions(): void {
+		$driver = $this->create_driver();
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			'UPDATE `wptests_strict_values`
+			SET `date_value` = DATE(NULL),
+				`datetime_value` = CAST(NULL AS DATETIME),
+				`timestamp_value` = DATE_ADD(NULL, INTERVAL 1 DAY)
+			WHERE `id` = 1'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'NULL', $sql );
+		$this->assertStringContainsString( "INTERVAL '1 day'", $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+		$this->assertStringNotContainsString( 'DATE_ADD', $sql );
+	}
+
+	/**
+	 * Tests strict temporal validation is inlined for PostgreSQL connections.
+	 */
+	public function test_strict_update_inlines_temporal_validation_for_pgsql_connections(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => new PDO( 'sqlite::memory:' ),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_simple_mysql_update_query',
+			'UPDATE `wptests_strict_values`
+			SET `date_value` = `datetime_value`,
+				`datetime_value` = `timestamp_value`
+			WHERE `id` = 1'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( '(SELECT CASE WHEN "__wp_pg_mysql_temporal_value"."value" IS NULL THEN NULL', $sql );
+		$this->assertStringContainsString( 'FROM (SELECT CAST("datetime_value" AS text) AS "value") AS "__wp_pg_mysql_temporal_value"', $sql );
+		$this->assertStringContainsString( 'FROM (SELECT CAST("timestamp_value" AS text) AS "value") AS "__wp_pg_mysql_temporal_value"', $sql );
+		$this->assertStringContainsString( "'__wp_pg_invalid_temporal__' || COALESCE", $sql );
+		$this->assertStringContainsString( 'BETWEEN 1 AND 9999', $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $sql );
+	}
+
+	/**
 	 * Tests non-strict INSERT normalizes temporal boolean and zero literals using MySQL metadata.
 	 */
 	public function test_non_strict_insert_normalizes_temporal_boolean_and_zero_literals_from_mysql_metadata(): void {
@@ -7202,7 +7457,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertNotNull( $translation );
 		$this->assertSame(
-			'INSERT INTO "wp_acid_upsert" ("slug", "hits", "updated_at") VALUES (\'same\', 2, __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)) ON CONFLICT ("slug") DO UPDATE SET "id" = "wp_acid_upsert"."id", "hits" = "wp_acid_upsert"."hits" + excluded."hits", "updated_at" = excluded."updated_at"',
+			'INSERT INTO "wp_acid_upsert" ("slug", "hits", "updated_at") VALUES (\'same\', 2, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')) ON CONFLICT ("slug") DO UPDATE SET "id" = "wp_acid_upsert"."id", "hits" = "wp_acid_upsert"."hits" + excluded."hits", "updated_at" = excluded."updated_at"',
 			$translation['sql']
 		);
 	}
@@ -8409,7 +8664,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $now_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)',
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
 			$now_translation['sql']
 		);
 
@@ -8424,7 +8679,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $current_timestamp_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)',
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
 			$current_timestamp_translation['sql']
 		);
 
@@ -8439,9 +8694,50 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $current_timestamp_keyword_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\') AS text), \'datetime\', 1, 1)',
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS\')',
 			$current_timestamp_keyword_translation['sql']
 		);
+
+		$current_date_datetime_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = CURRENT_DATE";
+
+		$current_date_datetime_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$current_date_datetime_upsert
+		);
+		$this->assertNotNull( $current_date_datetime_translation );
+		$this->assertSame(
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = (TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD\') || \' 00:00:00\')',
+			$current_date_datetime_translation['sql']
+		);
+
+		$if_datetime_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = IF(`id` = 1, NOW(), CURRENT_TIMESTAMP)";
+
+		$if_datetime_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$if_datetime_upsert
+		);
+		$this->assertNotNull( $if_datetime_translation );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "updated_at" = CASE WHEN CAST(CASE WHEN', $if_datetime_translation['sql'] );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $if_datetime_translation['sql'] );
+
+		$coalesce_date_datetime_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = COALESCE(CURRENT_DATE, UTC_DATE())";
+
+		$coalesce_date_datetime_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$coalesce_date_datetime_upsert
+		);
+		$this->assertNotNull( $coalesce_date_datetime_translation );
+		$this->assertStringContainsString( "THEN CAST(COALESCE(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD'), TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD')) AS text) || ' 00:00:00'", $coalesce_date_datetime_translation['sql'] );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $coalesce_date_datetime_translation['sql'] );
 
 		$driver->query(
 			'CREATE TABLE wptests_upsert_temporal_keywords (
@@ -8470,9 +8766,300 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $temporal_keyword_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_temporal_keywords" ("id", "date_value", "time_value") VALUES (1, \'2001-01-01\', \'01:02:03\') ON CONFLICT ("id") DO UPDATE SET "date_value" = __wp_pg_mysql_validate_temporal(CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD\') AS text), \'date\', 1, 1), "time_value" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'HH24:MI:SS\')',
+			'INSERT INTO "wptests_upsert_temporal_keywords" ("id", "date_value", "time_value") VALUES (1, \'2001-01-01\', \'01:02:03\') ON CONFLICT ("id") DO UPDATE SET "date_value" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'YYYY-MM-DD\'), "time_value" = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE \'UTC\', \'HH24:MI:SS\')',
 			$temporal_keyword_translation['sql']
 		);
+
+		foreach (
+			array(
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = IFNULL(NOW(), CURRENT_TIMESTAMP)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = IF(`id` = 1, NOW(), NULL)',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = NULLIF(CURRENT_DATE, UTC_DATE())',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = COALESCE(NULL, CURRENT_DATE)',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = DATE(NULL)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = GREATEST(NOW(), CURRENT_TIMESTAMP)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = CAST(NULL AS DATETIME)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = DATE_ADD(NULL, INTERVAL 1 DAY)',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = LEAST(CURRENT_DATE, UTC_DATE())',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = DATE_SUB(COALESCE(NOW(), CURRENT_TIMESTAMP), INTERVAL 1 DAY)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = (NOW()) + INTERVAL 10 MINUTE',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = IF(`id` = 1, NOW(), CURRENT_TIMESTAMP) + INTERVAL 1 DAY',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = DATE_ADD(IF(`id` = 1, NOW(), CURRENT_TIMESTAMP), INTERVAL 1 DAY)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = CAST(NOW() AS DATETIME)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = CAST(CURRENT_DATE AS TIMESTAMP)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = TIMESTAMPADD(DAY, 1, IFNULL(NOW(), CURRENT_TIMESTAMP))',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = TIMESTAMPADD(DAY, 1, CASE WHEN `id` = 1 THEN NOW() ELSE CURRENT_TIMESTAMP END)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = FROM_UNIXTIME(0)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = DATE_ADD(FROM_UNIXTIME(0), INTERVAL 1 DAY)',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = DATE(COALESCE(NOW(), CURRENT_TIMESTAMP))',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = FROM_UNIXTIME(1609632000)',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => "`date_value` = FROM_UNIXTIME(1609632000, '%Y-%m-%d')",
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => "`date_value` = DATE_FORMAT(NULL, CONCAT('%Y', '-%m-%d'))",
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => "`updated_at` = FROM_UNIXTIME(1609632000, '%Y-%m-%d %H:%i:%s')",
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = DATE_ADD(FROM_UNIXTIME(NULL), INTERVAL 1 DAY)',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => "`date_value` = DATE_FORMAT(NOW(), '%Y-%m-%d')",
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => "`date_value` = DATE_ADD('2024-01-01', INTERVAL 1 DAY)",
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => "`date_value` = CONCAT('2024-', CONCAT('01', '-02'))",
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => "`date_value` = CONCAT_WS('-', '2024', CONCAT('0', '1'), '02')",
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => "`date_value` = CONCAT_WS('-', '2024', NULL, CONCAT('0', '1'), '02')",
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => "`date_value` = CONCAT('2024-01-02', NULL)",
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => "`updated_at` = DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')",
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => "`updated_at` = DATE_ADD('2024-01-01 02:03:04', INTERVAL 1 DAY)",
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => "`updated_at` = DATE_ADD(CONCAT_WS(' ', CONCAT_WS('-', '2024', '01', '01'), CONCAT('02:', '03:04')), INTERVAL 1 DAY)",
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => "`updated_at` = DATE_FORMAT(CURRENT_DATE, '%Y-%m-%d')",
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = CONVERT(NOW(), DATE)',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = CAST(NOW() AS DATE)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = CONVERT(CURRENT_DATE, DATE)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = CAST(CURRENT_DATE AS DATE)',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = CASE WHEN `id` = 1 THEN NOW() ELSE CURRENT_TIMESTAMP END',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = CASE WHEN `id` = 1 THEN NOW() ELSE NULL END',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = CASE `id` WHEN 1 THEN CURRENT_DATE ELSE UTC_DATE() END',
+				),
+				array(
+					'table'      => 'wptests_upsert_timestamps',
+					'columns'    => '`id`, `updated_at`',
+					'values'     => "1, '2001-01-01 00:00:00'",
+					'assignment' => '`updated_at` = CASE WHEN `id` = 1 THEN NOW() ELSE CURRENT_TIMESTAMP END - INTERVAL 2 HOUR',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = (CASE `id` WHEN 1 THEN CURRENT_DATE ELSE UTC_DATE() END) + INTERVAL 1 DAY',
+				),
+				array(
+					'table'      => 'wptests_upsert_temporal_keywords',
+					'columns'    => '`id`, `date_value`, `time_value`',
+					'values'     => "1, '2001-01-01', '01:02:03'",
+					'assignment' => '`date_value` = DATE(CASE WHEN `id` = 1 THEN NOW() ELSE CURRENT_TIMESTAMP END)',
+				),
+			) as $wrapper_case
+		) {
+			$wrapper_upsert = sprintf(
+				'INSERT INTO `%s` (%s) VALUES (%s) ON DUPLICATE KEY UPDATE %s',
+				$wrapper_case['table'],
+				$wrapper_case['columns'],
+				$wrapper_case['values'],
+				$wrapper_case['assignment']
+			);
+
+			$wrapper_translation = $this->translate_driver_query_data_with_private_method(
+				$driver,
+				'translate_mysql_on_duplicate_key_update_query',
+				$wrapper_upsert
+			);
+			$this->assertNotNull( $wrapper_translation, $wrapper_case['assignment'] );
+			$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $wrapper_translation['sql'], $wrapper_case['assignment'] );
+		}
 
 		$fractional_timestamp_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
 			VALUES (1, '2001-01-01 00:00:00')
@@ -8485,9 +9072,153 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 		$this->assertNotNull( $fractional_timestamp_translation );
 		$this->assertSame(
-			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = __wp_pg_mysql_validate_temporal(CAST(LEFT(TO_CHAR(CURRENT_TIMESTAMP(6) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 26) AS text), \'datetime\', 1, 1)',
+			'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = LEFT(TO_CHAR(CURRENT_TIMESTAMP(6) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 26)',
 			$fractional_timestamp_translation['sql']
 		);
+
+		$now_sql = "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
+
+		$date_add_sql    = $this->get_expected_date_arithmetic_sql( '+', $now_sql, '1', 'day' );
+		$date_add_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = DATE_ADD(NOW(), INTERVAL 1 DAY)";
+
+		$date_add_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$date_add_upsert
+		);
+		$this->assertNotNull( $date_add_translation );
+		$this->assertSame(
+			sprintf(
+				'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(%s, \'YYYY-MM-DD HH24:MI:SS\')',
+				$date_add_sql
+			),
+			$date_add_translation['sql']
+		);
+
+		$date_sub_sql    = $this->get_expected_date_arithmetic_sql( '-', $now_sql, '2', 'hour' );
+		$date_sub_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 2 HOUR)";
+
+		$date_sub_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$date_sub_upsert
+		);
+		$this->assertNotNull( $date_sub_translation );
+		$this->assertSame(
+			sprintf(
+				'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(%s, \'YYYY-MM-DD HH24:MI:SS\')',
+				$date_sub_sql
+			),
+			$date_sub_translation['sql']
+		);
+
+		$infix_interval_sql    = $this->get_expected_date_arithmetic_sql( '+', $now_sql, '10', 'minute' );
+		$infix_interval_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = NOW() + INTERVAL 10 MINUTE";
+
+		$infix_interval_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$infix_interval_upsert
+		);
+		$this->assertNotNull( $infix_interval_translation );
+		$this->assertSame(
+			sprintf(
+				'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(%s, \'YYYY-MM-DD HH24:MI:SS\')',
+				$infix_interval_sql
+			),
+			$infix_interval_translation['sql']
+		);
+
+		$timestampadd_sql    = $this->get_expected_date_arithmetic_sql( '+', $now_sql, '3', 'day' );
+		$timestampadd_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = TIMESTAMPADD(DAY, 3, NOW())";
+
+		$timestampadd_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$timestampadd_upsert
+		);
+		$this->assertNotNull( $timestampadd_translation );
+		$this->assertSame(
+			sprintf(
+				'INSERT INTO "wptests_upsert_timestamps" ("id", "updated_at") VALUES (1, \'2001-01-01 00:00:00\') ON CONFLICT ("id") DO UPDATE SET "updated_at" = TO_CHAR(%s, \'YYYY-MM-DD HH24:MI:SS\')',
+				$timestampadd_sql
+			),
+			$timestampadd_translation['sql']
+		);
+
+		$current_date_sql  = "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD')";
+		$date_value_sql    = $this->get_expected_date_arithmetic_sql( '+', $current_date_sql, '1', 'day' );
+		$date_value_upsert = "INSERT INTO `wptests_upsert_temporal_keywords` (`id`, `date_value`, `time_value`)
+			VALUES (1, '2001-01-01', '01:02:03')
+			ON DUPLICATE KEY UPDATE `date_value` = DATE_ADD(CURRENT_DATE, INTERVAL 1 DAY)";
+
+		$date_value_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$date_value_upsert
+		);
+		$this->assertNotNull( $date_value_translation );
+		$this->assertSame(
+			sprintf(
+				'INSERT INTO "wptests_upsert_temporal_keywords" ("id", "date_value", "time_value") VALUES (1, \'2001-01-01\', \'01:02:03\') ON CONFLICT ("id") DO UPDATE SET "date_value" = TO_CHAR(%s, \'YYYY-MM-DD\')',
+				$date_value_sql
+			),
+			$date_value_translation['sql']
+		);
+
+		$date_function_upsert = "INSERT INTO `wptests_upsert_temporal_keywords` (`id`, `date_value`, `time_value`)
+			VALUES (1, '2001-01-01', '01:02:03')
+			ON DUPLICATE KEY UPDATE `date_value` = DATE(NOW())";
+
+		$date_function_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$date_function_upsert
+		);
+		$this->assertNotNull( $date_function_translation );
+		$this->assertStringContainsString(
+			"ON CONFLICT (\"id\") DO UPDATE SET \"date_value\" = CASE WHEN CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS text)",
+			$date_function_translation['sql']
+		);
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $date_function_translation['sql'] );
+
+		$if_date_upsert = "INSERT INTO `wptests_upsert_temporal_keywords` (`id`, `date_value`, `time_value`)
+			VALUES (1, '2001-01-01', '01:02:03')
+			ON DUPLICATE KEY UPDATE `date_value` = IF(`id` = 1, CURRENT_DATE, UTC_DATE())";
+
+		$if_date_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$if_date_upsert
+		);
+		$this->assertNotNull( $if_date_translation );
+		$this->assertStringContainsString( 'ON CONFLICT ("id") DO UPDATE SET "date_value" = SUBSTRING(CAST(CASE WHEN', $if_date_translation['sql'] );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $if_date_translation['sql'] );
+
+		$date_function_datetime_upsert = "INSERT INTO `wptests_upsert_timestamps` (`id`, `updated_at`)
+			VALUES (1, '2001-01-01 00:00:00')
+			ON DUPLICATE KEY UPDATE `updated_at` = DATE(NOW())";
+
+		$date_function_datetime_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$date_function_datetime_upsert
+		);
+		$this->assertNotNull( $date_function_datetime_translation );
+		$this->assertStringContainsString(
+			"ON CONFLICT (\"id\") DO UPDATE SET \"updated_at\" = (CASE WHEN CAST(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS text)",
+			$date_function_datetime_translation['sql']
+		);
+		$this->assertStringContainsString( "|| ' 00:00:00')", $date_function_datetime_translation['sql'] );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_validate_temporal', $date_function_datetime_translation['sql'] );
 	}
 
 	/**
@@ -13556,6 +14287,24 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CAST(expr AS DATE) expressions use explicit PostgreSQL semantics.
+	 */
+	public function test_cast_date_expressions_are_translated_to_postgresql(): void {
+		$driver = $this->create_driver();
+
+		$date_sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT CAST('2025-10-05 14:05:28' AS DATE) AS date_value"
+		);
+
+		$this->assertNotNull( $date_sql );
+		$this->assertStringContainsString( 'TO_CHAR', $date_sql );
+		$this->assertStringContainsString( ' AS date_value', $date_sql );
+		$this->assertStringNotContainsString( 'CAST(' . "'2025-10-05 14:05:28'" . ' AS DATE)', $date_sql );
+	}
+
+	/**
 	 * Tests unsupported CONVERT(expr, type) forms fail before backend execution.
 	 */
 	public function test_unsupported_convert_typed_forms_fail_closed_before_backend_execution(): void {
@@ -13928,10 +14677,28 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver = $this->create_driver();
 
 		$select = "SELECT MD5('abc') AS md5_hash,
+			ASCII('Az') AS ascii_value,
+			ASCII('') AS ascii_empty_value,
 			LEFT('Lorem ipsum', 5) AS left_part,
 			UCASE('abc') AS upper_part,
 			LCASE('ABC') AS lower_part,
+			LTRIM('  left') AS ltrim_part,
+			RTRIM('right  ') AS rtrim_part,
+			TRIM(' both ') AS trim_part,
+			TRIM(LEADING FROM '  leading') AS trim_leading_default_part,
+			TRIM(TRAILING FROM 'trailing  ') AS trim_trailing_default_part,
+			TRIM(BOTH FROM ' both ') AS trim_both_default_part,
+			TRIM('xy' FROM 'xyxytrimxy') AS trim_literal_part,
+			TRIM(LEADING 'xy' FROM 'xyxytrim') AS trim_leading_literal_part,
+			TRIM(TRAILING 'xy' FROM 'trimxyxy') AS trim_trailing_literal_part,
+			TRIM(LEADING fallback_value FROM primary_value) AS trim_dynamic_leading_part,
+			TRIM(fallback_value FROM primary_value) AS trim_dynamic_both_part,
 			ISNULL(NULL) AS is_null_value,
+			IS_UUID('12345678-1234-5678-1234-567812345678') AS is_uuid_dashed_value,
+			IS_UUID('{12345678-1234-5678-1234-567812345678}') AS is_uuid_braced_value,
+			IS_UUID('12345678123456781234567812345678') AS is_uuid_compact_value,
+			IS_UUID('not-a-uuid') AS is_uuid_invalid_value,
+			IS_UUID(NULL) AS is_uuid_null_value,
 			IF(1, 'yes', 'no') AS if_numeric,
 			IF(1 = 0, 'yes', 'no') AS if_predicate,
 			IFNULL(NULL, 'fallback') AS ifnull_value,
@@ -13939,6 +14706,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			COALESCE(NULL, 'first', 'second') AS coalesce_value,
 			CONCAT('wp', '_', 'db') AS concat_value,
 			CONCAT_WS('-', 'wp', NULL, 'db') AS concat_ws_value,
+			ELT(2, 'first', 'second', 'third') AS elt_value,
+			MAKE_SET(9, 'read', 'write', 'delete', 'execute') AS make_set_value,
+			MAKE_SET(0, 'read') AS make_set_empty_value,
+			MAKE_SET(NULL, 'read') AS make_set_null_value,
 			CHAR_LENGTH('hello') AS char_length_value,
 			CHARACTER_LENGTH('hello') AS character_length_value,
 			SUBSTRING('abcdef', 2, 3) AS substring_value,
@@ -13951,18 +14722,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			LOG(8) AS natural_log_value,
 			LOG(2, 8) AS based_log_value,
 			DATEDIFF('2024-01-05', '2024-01-02') AS day_diff,
+			DAYNAME('2024-06-16') AS day_name_value,
+			MONTHNAME('2024-06-16') AS month_name_value,
 			LENGTH('hello') AS byte_length,
 			LOCATE('or', 'WordPress') AS locate_value,
 			LOCATE('r', 'WordPress', 4) AS locate_with_position,
+			INSTR('WordPress', 'Press') AS instr_value,
+			FIND_IN_SET('Press', 'Word,Press,SQLite') AS find_in_set_value,
+			FIND_IN_SET('with,comma', 'with,comma') AS find_in_set_comma_value,
+			FIND_IN_SET(NULL, 'Word,Press') AS find_in_set_null_value,
 			HEX('Az') AS hex_value,
 			UNHEX('417a') AS unhex_value,
+			RIGHT('WordPress', 5) AS right_part,
+			LPAD('42', 5, '0') AS lpad_value,
+			RPAD('42', 5, '0') AS rpad_value,
+			REPEAT('ab', 3) AS repeat_value,
+			REVERSE('desserts') AS reverse_value,
+			SPACE(3) AS space_value,
 			TO_BASE64('wp') AS base64_value,
 			FROM_BASE64('d3A=') AS base64_decoded,
 			INET_ATON('127.0.0.1') AS inet_number,
 			INET_NTOA(2130706433) AS inet_address,
 			FROM_UNIXTIME(0) AS epoch_datetime,
 			FROM_UNIXTIME(0, '%Y') AS epoch_year,
-			UNIX_TIMESTAMP('1970-01-02 00:00:00') AS epoch_seconds";
+			UNIX_TIMESTAMP('1970-01-02 00:00:00') AS epoch_seconds,
+			UUID() AS uuid_value";
 
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
@@ -13971,10 +14755,32 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$this->assertStringContainsString( "MD5(CAST('abc' AS text)) AS md5_hash", $sql );
+		$this->assertStringContainsString( "WHEN CAST('Az' AS text) = '' THEN 0 ELSE GET_BYTE(CONVERT_TO(CAST('Az' AS text), 'UTF8'), 0) END AS ascii_value", $sql );
+		$this->assertStringContainsString( "WHEN CAST('' AS text) = '' THEN 0 ELSE GET_BYTE(CONVERT_TO(CAST('' AS text), 'UTF8'), 0) END AS ascii_empty_value", $sql );
 		$this->assertStringContainsString( "LEFT(CAST('Lorem ipsum' AS text), CAST(5 AS integer)) AS left_part", $sql );
 		$this->assertStringContainsString( "UPPER(CAST('abc' AS text)) AS upper_part", $sql );
 		$this->assertStringContainsString( "LOWER(CAST('ABC' AS text)) AS lower_part", $sql );
+		$this->assertStringContainsString( "LTRIM(CAST('  left' AS text), ' ') AS ltrim_part", $sql );
+		$this->assertStringContainsString( "RTRIM(CAST('right  ' AS text), ' ') AS rtrim_part", $sql );
+		$this->assertStringContainsString( "BTRIM(CAST(' both ' AS text), ' ') AS trim_part", $sql );
+		$this->assertStringContainsString( "LTRIM(CAST('  leading' AS text), ' ') AS trim_leading_default_part", $sql );
+		$this->assertStringContainsString( "RTRIM(CAST('trailing  ' AS text), ' ') AS trim_trailing_default_part", $sql );
+		$this->assertStringContainsString( "BTRIM(CAST(' both ' AS text), ' ') AS trim_both_default_part", $sql );
+		$this->assertStringContainsString( "REGEXP_REPLACE(REGEXP_REPLACE(CAST('xyxytrimxy' AS text), '^(xy)+', ''), '(xy)+$', '') AS trim_literal_part", $sql );
+		$this->assertStringContainsString( "REGEXP_REPLACE(CAST('xyxytrim' AS text), '^(xy)+', '') AS trim_leading_literal_part", $sql );
+		$this->assertStringContainsString( "REGEXP_REPLACE(CAST('trimxyxy' AS text), '(xy)+$', '') AS trim_trailing_literal_part", $sql );
+		$this->assertStringContainsString( 'CASE WHEN CAST(primary_value AS text) IS NULL OR CAST(fallback_value AS text) IS NULL THEN NULL', $sql );
+		$this->assertStringContainsString( "REGEXP_REPLACE(CAST(fallback_value AS text), '([\\\\.^$|?*+()[\\]{}])'", $sql );
+		$this->assertStringContainsString( 'AS trim_dynamic_leading_part', $sql );
+		$this->assertStringContainsString( 'AS trim_dynamic_both_part', $sql );
 		$this->assertStringContainsString( 'CASE WHEN NULL IS NULL THEN 1 ELSE 0 END AS is_null_value', $sql );
+		$this->assertStringContainsString( "CAST('12345678-1234-5678-1234-567812345678' AS text) ~*", $sql );
+		$this->assertStringContainsString( 'AS is_uuid_dashed_value', $sql );
+		$this->assertStringContainsString( 'AS is_uuid_braced_value', $sql );
+		$this->assertStringContainsString( 'AS is_uuid_compact_value', $sql );
+		$this->assertStringContainsString( 'AS is_uuid_invalid_value', $sql );
+		$this->assertStringContainsString( 'CAST(NULL AS text) IS NULL THEN NULL', $sql );
+		$this->assertStringContainsString( 'AS is_uuid_null_value', $sql );
 		$this->assertStringContainsString( "THEN 'yes' ELSE 'no' END AS if_numeric", $sql );
 		$this->assertStringContainsString( "CASE WHEN (1 = 0) THEN 'yes' ELSE 'no' END AS if_predicate", $sql );
 		$this->assertStringContainsString( "COALESCE(NULL, 'fallback') AS ifnull_value", $sql );
@@ -13986,6 +14792,19 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "THEN CAST('-' AS text) ELSE '' END", $sql );
 		$this->assertStringContainsString( "COALESCE(CAST('db' AS text), '')", $sql );
 		$this->assertStringContainsString( 'END AS concat_ws_value', $sql );
+		$this->assertStringContainsString( "THEN CAST('second' AS text)", $sql );
+		$this->assertStringContainsString( 'ELSE NULL END AS elt_value', $sql );
+		$make_set_mask_sql = $this->get_expected_mysql_integer_cast_sql( '9' );
+		$this->assertStringContainsString(
+			sprintf( 'CASE WHEN %1$s IS NULL THEN NULL ELSE CONCAT_WS(\',\', CASE WHEN (%1$s & 1) <> 0 THEN CAST(\'read\' AS text) ELSE NULL END', $make_set_mask_sql ),
+			$sql
+		);
+		$this->assertStringContainsString(
+			sprintf( 'CASE WHEN (%1$s & 8) <> 0 THEN CAST(\'execute\' AS text) ELSE NULL END) END AS make_set_value', $make_set_mask_sql ),
+			$sql
+		);
+		$this->assertStringContainsString( 'AS make_set_empty_value', $sql );
+		$this->assertStringContainsString( 'AS make_set_null_value', $sql );
 		$this->assertStringContainsString( "CHAR_LENGTH(CAST('hello' AS text)) AS char_length_value", $sql );
 		$this->assertStringContainsString( "CHAR_LENGTH(CAST('hello' AS text)) AS character_length_value", $sql );
 		$this->assertStringContainsString( "SUBSTRING(CAST('abcdef' AS text) FROM CASE WHEN CAST(2 AS integer) > 0 THEN CAST(2 AS integer) WHEN CAST(2 AS integer) < 0 THEN CHAR_LENGTH(CAST('abcdef' AS text)) + CAST(2 AS integer) + 1 ELSE 0 END FOR CAST(3 AS integer)) END AS substring_value", $sql );
@@ -13998,11 +14817,25 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'CASE WHEN CAST(8 AS double precision) IS NULL OR CAST(8 AS double precision) <= 0 THEN NULL ELSE LN(CAST(8 AS double precision)) END AS natural_log_value', $sql );
 		$this->assertStringContainsString( 'CASE WHEN CAST(2 AS double precision) IS NULL OR CAST(8 AS double precision) IS NULL OR CAST(2 AS double precision) <= 1 OR CAST(8 AS double precision) <= 0 THEN NULL ELSE LN(CAST(8 AS double precision)) / LN(CAST(2 AS double precision)) END AS based_log_value', $sql );
 		$this->assertStringContainsString( $this->get_expected_mysql_datediff_sql( "'2024-01-05'", "'2024-01-02'" ) . ' AS day_diff', $sql );
+		$this->assertStringContainsString( "WHEN 0 THEN 'Sunday'", $sql );
+		$this->assertStringContainsString( 'END AS day_name_value', $sql );
+		$this->assertStringContainsString( "WHEN 6 THEN 'June'", $sql );
+		$this->assertStringContainsString( 'END AS month_name_value', $sql );
 		$this->assertStringContainsString( "ELSE OCTET_LENGTH(CONVERT_TO(CAST('hello' AS text), 'UTF8')) END AS byte_length", $sql );
 		$this->assertStringContainsString( "STRPOS(CAST('WordPress' AS text), CAST('or' AS text)) AS locate_value", $sql );
 		$this->assertStringContainsString( "STRPOS(SUBSTRING(CAST('WordPress' AS text) FROM CAST(4 AS integer)), CAST('r' AS text)) + CAST(4 AS integer) - 1 END AS locate_with_position", $sql );
+		$this->assertStringContainsString( "STRPOS(CAST('WordPress' AS text), CAST('Press' AS text)) AS instr_value", $sql );
+		$this->assertStringContainsString( "ARRAY_POSITION(STRING_TO_ARRAY(CAST('Word,Press,SQLite' AS text), ','), CAST('Press' AS text))", $sql );
+		$this->assertStringContainsString( "STRPOS(CAST('with,comma' AS text), ',') > 0 THEN 0", $sql );
+		$this->assertStringContainsString( "CAST(NULL AS text) IS NULL OR CAST('Word,Press' AS text) IS NULL THEN NULL", $sql );
 		$this->assertStringContainsString( "UPPER(ENCODE(CONVERT_TO(CAST('Az' AS text), 'UTF8'), 'hex')) AS hex_value", $sql );
 		$this->assertStringContainsString( "CONVERT_FROM(DECODE(CAST('417a' AS text), 'hex'), 'UTF8') AS unhex_value", $sql );
+		$this->assertStringContainsString( "RIGHT(CAST('WordPress' AS text), CAST(5 AS integer)) AS right_part", $sql );
+		$this->assertStringContainsString( "ELSE LPAD(CAST('42' AS text), CAST(5 AS integer), CAST('0' AS text)) END AS lpad_value", $sql );
+		$this->assertStringContainsString( "ELSE RPAD(CAST('42' AS text), CAST(5 AS integer), CAST('0' AS text)) END AS rpad_value", $sql );
+		$this->assertStringContainsString( "ELSE REPEAT(CAST('ab' AS text), GREATEST(CAST(3 AS integer), 0)) END AS repeat_value", $sql );
+		$this->assertStringContainsString( "REVERSE(CAST('desserts' AS text)) AS reverse_value", $sql );
+		$this->assertStringContainsString( "CASE WHEN 3 IS NULL THEN NULL ELSE REPEAT(' ', GREATEST(CAST(3 AS integer), 0)) END AS space_value", $sql );
 		$this->assertStringContainsString( "ENCODE(CONVERT_TO(CAST('wp' AS text), 'UTF8'), 'base64') AS base64_value", $sql );
 		$this->assertStringContainsString( "CASE WHEN CAST('d3A=' AS text) IS NULL OR CAST('d3A=' AS text) !~", $sql );
 		$this->assertStringContainsString( "ELSE CONVERT_FROM(DECODE(CAST('d3A=' AS text), 'base64'), 'UTF8') END AS base64_decoded", $sql );
@@ -14012,15 +14845,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC'", $sql );
 		$this->assertStringContainsString( "'YYYY'", $sql );
 		$this->assertStringContainsString( 'CAST(FLOOR(EXTRACT(EPOCH FROM CAST(CASE WHEN CAST(\'1970-01-02 00:00:00\' AS text)', $sql );
+		$this->assertStringContainsString( 'LOWER(REGEXP_REPLACE(MD5(CAST(CLOCK_TIMESTAMP() AS text) || CAST(RANDOM() AS text) || CAST(PG_BACKEND_PID() AS text))', $sql );
+		$this->assertStringContainsString( 'AS uuid_value', $sql );
 		$this->assertStringNotContainsString( 'UNIX_TIMESTAMP', $sql );
 		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
+		$this->assertStringNotContainsString( 'DAYNAME', $sql );
+		$this->assertStringNotContainsString( 'MONTHNAME', $sql );
+		$this->assertStringNotContainsString( 'IS_UUID', $sql );
 		$this->assertStringNotContainsString( 'INET_ATON', $sql );
 		$this->assertStringNotContainsString( 'INET_NTOA', $sql );
 		$this->assertStringNotContainsString( 'FROM_BASE64', $sql );
 		$this->assertStringNotContainsString( 'TO_BASE64', $sql );
 		$this->assertStringNotContainsString( 'IFNULL', $sql );
 		$this->assertStringNotContainsString( 'CONCAT(', $sql );
-		$this->assertStringNotContainsString( 'CONCAT_WS', $sql );
+		$this->assertStringNotContainsString( 'FIND_IN_SET', $sql );
+		$this->assertStringNotContainsString( 'MAKE_SET', $sql );
+		$this->assertStringNotContainsString( 'SPACE(', $sql );
+		$this->assertStringNotContainsString( "TRIM(' both ')", $sql );
+		$this->assertStringNotContainsString( "TRIM(LEADING FROM '  leading')", $sql );
+		$this->assertStringNotContainsString( "TRIM('xy' FROM 'xyxytrimxy')", $sql );
+		$this->assertStringNotContainsString( 'TRIM(LEADING fallback_value FROM primary_value)', $sql );
 	}
 
 	/**
@@ -14078,6 +14922,74 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringNotContainsString( 'SCHEMA', $sql );
 		$this->assertStringNotContainsString( 'GET_LOCK', $sql );
 		$this->assertStringNotContainsString( 'RELEASE_LOCK', $sql );
+	}
+
+	/**
+	 * Tests every external SQLite UDF registry entry has a PostgreSQL translation path.
+	 */
+	public function test_external_sqlite_udf_registry_functions_have_postgresql_translations(): void {
+		$driver  = $this->create_driver();
+		$queries = array(
+			'curdate'        => 'SELECT CURDATE() AS value',
+			'datediff'       => "SELECT DATEDIFF('2024-01-05', '2024-01-02') AS value",
+			'day'            => "SELECT DAY('2024-06-16 13:04:05') AS value",
+			'dayofmonth'     => "SELECT DAYOFMONTH('2024-06-16 13:04:05') AS value",
+			'dayofweek'      => "SELECT DAYOFWEEK('2024-06-16 13:04:05') AS value",
+			'field'          => "SELECT FIELD('b', 'a', 'b', 'c') AS value",
+			'from_base64'    => "SELECT FROM_BASE64('d3A=') AS value",
+			'from_unixtime'  => 'SELECT FROM_UNIXTIME(0) AS value',
+			'get_lock'       => "SELECT GET_LOCK('plugin_lock', 1) AS value",
+			'greatest'       => 'SELECT GREATEST(1, 2, 3) AS value',
+			'hour'           => "SELECT HOUR('2024-06-16 13:04:05') AS value",
+			'if'             => "SELECT IF(1, 'yes', 'no') AS value",
+			'inet_aton'      => "SELECT INET_ATON('127.0.0.1') AS value",
+			'inet_ntoa'      => 'SELECT INET_NTOA(2130706433) AS value',
+			'isnull'         => 'SELECT ISNULL(NULL) AS value',
+			'lcase'          => "SELECT LCASE('ABC') AS value",
+			'least'          => 'SELECT LEAST(1, 2, 3) AS value',
+			'localtime'      => 'SELECT LOCALTIME() AS value',
+			'localtimestamp' => 'SELECT LOCALTIMESTAMP() AS value',
+			'locate'         => "SELECT LOCATE('or', 'WordPress') AS value",
+			'log'            => 'SELECT LOG(8) AS value',
+			'md5'            => "SELECT MD5('abc') AS value",
+			'minute'         => "SELECT MINUTE('2024-06-16 13:04:05') AS value",
+			'month'          => "SELECT MONTH('2024-06-16 13:04:05') AS value",
+			'monthnum'       => "SELECT MONTHNUM('2024-06-16 13:04:05') AS value",
+			'now'            => 'SELECT NOW() AS value',
+			'rand'           => 'SELECT RAND(7) AS value',
+			'regexp'         => "SELECT REGEXP('^wp', 'WordPress') AS value",
+			'release_lock'   => "SELECT RELEASE_LOCK('plugin_lock') AS value",
+			'second'         => "SELECT SECOND('2024-06-16 13:04:05') AS value",
+			'to_base64'      => "SELECT TO_BASE64('wp') AS value",
+			'ucase'          => "SELECT UCASE('abc') AS value",
+			'unhex'          => "SELECT UNHEX('417a') AS value",
+			'unix_timestamp' => "SELECT UNIX_TIMESTAMP('1970-01-02 00:00:00') AS value",
+			'utc_date'       => 'SELECT UTC_DATE() AS value',
+			'utc_time'       => 'SELECT UTC_TIME() AS value',
+			'utc_timestamp'  => 'SELECT UTC_TIMESTAMP() AS value',
+			'version'        => 'SELECT VERSION() AS value',
+			'week'           => "SELECT WEEK('2024-06-16', 1) AS value",
+			'weekday'        => "SELECT WEEKDAY('2024-06-16') AS value",
+			'year'           => "SELECT YEAR('2024-06-16 13:04:05') AS value",
+		);
+
+		$registered_functions = $this->get_external_sqlite_udf_registry_functions();
+		$translated_functions = array_keys( $queries );
+		sort( $registered_functions );
+		sort( $translated_functions );
+
+		$this->assertSame( $registered_functions, $translated_functions );
+
+		foreach ( $queries as $function_name => $query ) {
+			$this->assertNotNull(
+				$this->translate_driver_query_with_private_method(
+					$driver,
+					'translate_mysql_compatible_query',
+					$query
+				),
+				$function_name
+			);
+		}
 	}
 
 	/**
@@ -14238,23 +15150,123 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests JSON_VALID() runtime calls are translated to the driver helper.
+	 * Tests JSON_VALID() runtime calls fold constants and use native dynamic fallback.
 	 */
-	public function test_json_valid_runtime_function_is_translated_to_postgresql_helper(): void {
+	public function test_json_valid_runtime_function_folds_constants_and_uses_native_fallback_for_dynamic_values(): void {
 		$driver = $this->create_driver();
 
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
 			'translate_mysql_compatible_query',
-			'SELECT JSON_VALID(\'{"ok":true}\') AS object_valid, JSON_VALID(NULL) AS null_valid, JSON_VALID(payload) AS payload_valid FROM runtime_names'
+			'SELECT JSON_VALID(\'{"ok":true}\') AS object_valid,
+				JSON_VALID(CONCAT(\'{"ok":\', \'true}\')) AS concat_object_valid,
+				JSON_VALID(CONCAT_WS(\'\', \'[\', \'1\', \']\')) AS concat_array_valid,
+				JSON_VALID(REPLACE(\'{"bad":true}\', \'bad\', \'ok\')) AS replace_object_valid,
+				JSON_VALID(SUBSTRING(\'xx[1]\', 3)) AS substring_array_valid,
+				JSON_VALID(IFNULL(NULL, \'{"fallback":true}\')) AS ifnull_object_valid,
+				JSON_VALID(CONCAT(\'{\', NULL, \'}\')) AS concat_null_valid,
+				JSON_VALID(NULLIF(\'[1]\', \'[1]\')) AS nullif_null_valid,
+				JSON_VALID(\'not json\') AS invalid_json,
+				JSON_VALID(NULL) AS null_valid,
+				JSON_VALID(payload) AS payload_valid
+			FROM runtime_names'
 		);
 
 		$this->assertNotNull( $sql );
-		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(\'{"ok":true}\' AS text)) AS object_valid', $sql );
-		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(NULL AS text)) AS null_valid', $sql );
-		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(payload AS text)) AS payload_valid', $sql );
+		$this->assertStringContainsString( '1 AS object_valid', $sql );
+		$this->assertStringContainsString( '1 AS concat_object_valid', $sql );
+		$this->assertStringContainsString( '1 AS concat_array_valid', $sql );
+		$this->assertStringContainsString( '1 AS replace_object_valid', $sql );
+		$this->assertStringContainsString( '1 AS substring_array_valid', $sql );
+		$this->assertStringContainsString( '1 AS ifnull_object_valid', $sql );
+		$this->assertStringContainsString( 'NULL AS concat_null_valid', $sql );
+		$this->assertStringContainsString( 'NULL AS nullif_null_valid', $sql );
+		$this->assertStringContainsString( '0 AS invalid_json', $sql );
+		$this->assertStringContainsString( 'NULL AS null_valid', $sql );
+		$this->assertStringContainsString( 'CASE WHEN payload IS NULL THEN NULL ELSE json_valid(CAST(payload AS text)) END AS payload_valid', $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_json_valid', $sql );
 		$this->assertStringNotContainsString( 'JSON_VALID', $sql );
 		$this->assertStringNotContainsString( 'pg_input_is_valid', $sql );
+	}
+
+	/**
+	 * Tests JSON_VALID() dynamic values use native PostgreSQL validation on pgsql connections.
+	 */
+	public function test_json_valid_runtime_function_uses_pg_input_is_valid_for_dynamic_pgsql_values(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			'SELECT JSON_VALID(\'{"ok":true}\') AS object_valid, JSON_VALID(\'not json\') AS invalid_json, JSON_VALID(NULL) AS null_valid, JSON_VALID(payload) AS payload_valid FROM runtime_names'
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( '1 AS object_valid', $sql );
+		$this->assertStringContainsString( '0 AS invalid_json', $sql );
+		$this->assertStringContainsString( 'NULL AS null_valid', $sql );
+		$this->assertStringContainsString( "CASE WHEN payload IS NULL THEN NULL WHEN pg_input_is_valid(CAST(payload AS text), 'json') THEN 1 ELSE 0 END AS payload_valid", $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_json_valid', $sql );
+		$this->assertStringNotContainsString( 'JSON_VALID', $sql );
+	}
+
+	/**
+	 * Tests PostgreSQL helper scanning no longer creates MySQL UDF shims.
+	 */
+	public function test_pgsql_runtime_helper_scanner_does_not_create_mysql_udf_shims(): void {
+		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured queries.
+			 *
+			 * @var array[]
+			 */
+			private $queries = array();
+
+			/**
+			 * Capture queries issued through the connection.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = array(
+					'sql'    => $sql,
+					'params' => $params,
+				);
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured queries.
+			 *
+			 * @return array[] Captured queries.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$ensure     = Closure::bind(
+			function ( string $query ): void {
+				$this->ensure_postgresql_runtime_helpers_for_query( $query );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$ensure(
+			"SELECT __wp_pg_mysql_json_valid(CAST(payload AS text)),
+				__wp_pg_mysql_validate_temporal(CAST(value AS text), 'datetime', 1, 1)"
+		);
+
+		$this->assertSame( array(), $connection->get_queries() );
 	}
 
 	/**
@@ -14301,8 +15313,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '1', $literal_result[0]->number_valid );
 
 		$sql = $this->get_last_single_postgresql_sql( $driver );
-		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(\'{"ok":true}\' AS text)) AS object_valid', $sql );
-		$this->assertStringContainsString( '__wp_pg_mysql_json_valid(CAST(NULL AS text)) AS null_json', $sql );
+		$this->assertStringContainsString( '1 AS object_valid', $sql );
+		$this->assertStringContainsString( '1 AS array_valid', $sql );
+		$this->assertStringContainsString( '0 AS invalid_json', $sql );
+		$this->assertStringContainsString( 'NULL AS null_json', $sql );
+		$this->assertStringContainsString( '1 AS null_literal_valid', $sql );
+		$this->assertStringContainsString( '1 AS number_valid', $sql );
+		$this->assertStringNotContainsString( '__wp_pg_mysql_json_valid', $sql );
 		$this->assertStringNotContainsString( 'JSON_VALID', $sql );
 		$this->assertStringNotContainsString( 'pg_input_is_valid', $sql );
 	}
@@ -14505,6 +15522,23 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				FROM_UNIXTIME(0, '%H.%i%s') AS formatted_hour_minute_second,
 				FROM_UNIXTIME(0, '0.%i%s') AS formatted_minute_second_fraction,
 				FROM_UNIXTIME(1609632000, '%U %u %V %v %X %x') AS formatted_week_modes,
+				FROM_UNIXTIME(0, CONCAT('%Y', '-%m')) AS constant_expression_format,
+				FROM_UNIXTIME(0, CONCAT_WS('-', '%Y', '%m', '%d')) AS constant_ws_expression_format,
+				FROM_UNIXTIME(0, REPLACE('%Y/%m/%d', '/', '-')) AS constant_replace_expression_format,
+				FROM_UNIXTIME(0, SUBSTRING('xx%Y-%m-%d', 3, 8)) AS constant_substring_expression_format,
+				FROM_UNIXTIME(0, RIGHT('ignored%Y-%m', 5)) AS constant_right_expression_format,
+				FROM_UNIXTIME(0, LPAD('%m', 5, '%Y-')) AS constant_lpad_expression_format,
+				FROM_UNIXTIME(0, RPAD('%Y', 5, '-%m')) AS constant_rpad_expression_format,
+				FROM_UNIXTIME(0, REPEAT('%Y', 1)) AS constant_repeat_expression_format,
+				FROM_UNIXTIME(0, TRIM(' %Y-%m ')) AS constant_trim_expression_format,
+				FROM_UNIXTIME(0, LTRIM('   %Y')) AS constant_ltrim_expression_format,
+				FROM_UNIXTIME(0, RTRIM('%m   ')) AS constant_rtrim_expression_format,
+				FROM_UNIXTIME(0, CONCAT('%Y', SPACE(1), '%m')) AS constant_space_expression_format,
+				FROM_UNIXTIME(0, REVERSE('Y%')) AS constant_reverse_expression_format,
+				FROM_UNIXTIME(0, ELT(2, '%m', '%Y')) AS constant_elt_expression_format,
+				FROM_UNIXTIME(0, IFNULL(NULL, '%Y-%m')) AS constant_ifnull_expression_format,
+				FROM_UNIXTIME(0, CONCAT('%Y', NULL)) AS null_expression_format,
+				FROM_UNIXTIME(0, NULLIF('%Y', '%Y')) AS null_nullif_expression_format,
 				FROM_UNIXTIME(NULL, 'literal') AS null_literal,
 				FROM_UNIXTIME(NULL, '') AS null_empty_from_unixtime,
 				DATE_FORMAT(NULL, '%%') AS null_percent,
@@ -14545,10 +15579,35 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "'MI'", $sql );
 		$this->assertStringContainsString( "'SS'", $sql );
 		$this->assertStringContainsString( "'US'", $sql );
-		$this->assertStringContainsString( "CASE WHEN CAST(TO_TIMESTAMP(CAST(NULL AS double precision)) AT TIME ZONE 'UTC' AS text) IS NULL OR", $sql );
-		$this->assertStringContainsString( "THEN NULL ELSE '' END AS null_empty_from_unixtime", $sql );
-		$this->assertStringContainsString( "CASE WHEN CAST(NULL AS text) IS NULL OR CAST(NULL AS text) = '' THEN NULL WHEN", $sql );
-		$this->assertStringContainsString( "THEN '' ELSE '' END AS null_empty_format", $sql );
+		$this->assertStringContainsString( 'TO_CHAR(' . $this->get_expected_zero_date_safe_timestamp_sql( "TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC'" ) . ', \'YYYY\') || \'-\' || TO_CHAR', $sql );
+		$this->assertStringContainsString( "'DD') END AS constant_ws_expression_format", $sql );
+		$this->assertStringContainsString( 'AS constant_ws_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_replace_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_substring_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_right_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_lpad_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_rpad_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_repeat_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_trim_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_ltrim_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_rtrim_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_space_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_reverse_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_elt_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_ifnull_expression_format', $sql );
+		$this->assertStringContainsString( 'NULL AS null_expression_format', $sql );
+		$this->assertStringContainsString( 'NULL AS null_nullif_expression_format', $sql );
+		$this->assertStringContainsString( 'NULL AS null_literal', $sql );
+		$this->assertStringContainsString( 'NULL AS null_empty_from_unixtime', $sql );
+		$this->assertStringContainsString( 'NULL AS null_percent', $sql );
+		$this->assertStringContainsString( 'NULL AS null_empty_format', $sql );
+		$this->assertStringNotContainsString( 'WITH RECURSIVE "__wp_pg_mysql_date_format"', $sql );
+		$this->assertStringNotContainsString( "TRIM(' %Y-%m ')", $sql );
+		$this->assertStringNotContainsString( "LTRIM('   %Y')", $sql );
+		$this->assertStringNotContainsString( "RTRIM('%m   ')", $sql );
+		$this->assertStringNotContainsString( 'SPACE(1)', $sql );
+		$this->assertStringNotContainsString( "REVERSE('Y%')", $sql );
+		$this->assertStringNotContainsString( "ELT(2, '%m', '%Y')", $sql );
 		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
 		$this->assertStringNotContainsString( 'DATE_FORMAT', $sql );
 	}
@@ -14588,16 +15647,81 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'translate_mysql_compatible_query',
 			"SELECT
 				DATE_FORMAT(post_date, format_mask) AS dynamic_column_format,
-				DATE_FORMAT(post_date, CONCAT('%Y', '-%m')) AS dynamic_expression_format,
+				DATE_FORMAT(post_date, CONCAT('%Y', '-%m')) AS constant_expression_format,
+				DATE_FORMAT(post_date, CONCAT_WS('-', '%Y', '%m', '%d')) AS constant_ws_expression_format,
+				DATE_FORMAT(post_date, REPLACE('%Y/%m/%d', '/', '-')) AS constant_replace_expression_format,
+				DATE_FORMAT(post_date, LEFT('%Y-%m-%d ignored', 8)) AS constant_left_expression_format,
+				DATE_FORMAT(post_date, RIGHT('ignored %Y-%m', 5)) AS constant_right_expression_format,
+				DATE_FORMAT(post_date, LPAD('%m', 5, '%Y-')) AS constant_lpad_expression_format,
+				DATE_FORMAT(post_date, RPAD('%Y', 5, '-%m')) AS constant_rpad_expression_format,
+				DATE_FORMAT(post_date, REPEAT('%Y', 1)) AS constant_repeat_expression_format,
+				DATE_FORMAT(post_date, TRIM(' %Y-%m ')) AS constant_trim_expression_format,
+				DATE_FORMAT(post_date, LTRIM('   %Y')) AS constant_ltrim_expression_format,
+				DATE_FORMAT(post_date, RTRIM('%m   ')) AS constant_rtrim_expression_format,
+				DATE_FORMAT(post_date, CONCAT('%Y', SPACE(1), '%m')) AS constant_space_expression_format,
+				DATE_FORMAT(post_date, REVERSE('Y%')) AS constant_reverse_expression_format,
+				DATE_FORMAT(post_date, ELT(2, '%m', '%Y')) AS constant_elt_expression_format,
+				DATE_FORMAT(post_date, COALESCE(NULL, '%Y-%m')) AS constant_coalesce_expression_format,
+				DATE_FORMAT(post_date, IF(format_mask = '%Y', '%Y', '%m')) AS finite_if_expression_format,
+				DATE_FORMAT(post_date, IF(format_mask = '%Y', '%Y', NULL)) AS finite_if_null_expression_format,
+				DATE_FORMAT(post_date, CASE WHEN format_mask = '%Y' THEN '%Y' WHEN format_mask = '%m' THEN '%m' ELSE NULL END) AS finite_case_expression_format,
+				DATE_FORMAT(post_date, CASE format_mask WHEN '%Y' THEN '%Y' ELSE '%m' END) AS finite_simple_case_expression_format,
+				DATE_FORMAT(post_date, CONCAT('%Y-', NULL)) AS null_expression_format,
+				DATE_FORMAT(post_date, NULLIF('%H', '%H')) AS null_nullif_expression_format,
 				DATE_FORMAT(NULL, format_mask) AS null_date_format,
 				DATE_FORMAT(post_date, NULL) AS null_mask_format
 			FROM wptests_dynamic_date_formats"
 		);
 
 		$this->assertNotNull( $sql );
-		$this->assertStringContainsString( 'WITH RECURSIVE "__wp_pg_mysql_date_format"', $sql );
+		$this->assertSame( 2, substr_count( $sql, 'WITH RECURSIVE "__wp_pg_mysql_date_format"' ) );
 		$this->assertStringContainsString( 'CAST(format_mask AS text)', $sql );
-		$this->assertStringContainsString( "(CAST('%Y' AS text) || CAST('-%m' AS text))", $sql );
+		$this->assertStringNotContainsString( "(CAST('%Y' AS text) || CAST('-%m' AS text))", $sql );
+		$this->assertStringContainsString( 'TO_CHAR(' . $this->get_expected_zero_date_safe_timestamp_sql( 'post_date' ) . ', \'YYYY\') || \'-\' || TO_CHAR', $sql );
+		$this->assertStringContainsString( "'YYYY-MM-DD'", $sql );
+		$this->assertStringContainsString( 'AS constant_ws_expression_format', $sql );
+		$this->assertStringNotContainsString( "CONCAT_WS('-', '%Y', '%m', '%d')", $sql );
+		$this->assertStringContainsString( 'AS constant_replace_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_left_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_right_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_lpad_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_rpad_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_repeat_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_trim_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_ltrim_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_rtrim_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_space_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_reverse_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_elt_expression_format', $sql );
+		$this->assertStringContainsString( 'AS constant_coalesce_expression_format', $sql );
+		$this->assertStringContainsString( 'AS finite_if_expression_format', $sql );
+		$this->assertStringContainsString( 'AS finite_if_null_expression_format', $sql );
+		$this->assertStringContainsString( 'AS finite_case_expression_format', $sql );
+		$this->assertStringContainsString( 'AS finite_simple_case_expression_format', $sql );
+		$this->assertStringContainsString( "CASE WHEN (format_mask = '%Y') THEN", $sql );
+		$this->assertStringContainsString( 'ELSE NULL END AS finite_if_null_expression_format', $sql );
+		$this->assertStringContainsString( "WHEN (format_mask = '%m') THEN", $sql );
+		$this->assertStringContainsString( 'ELSE NULL END AS finite_case_expression_format', $sql );
+		$this->assertStringNotContainsString( "REPLACE('%Y/%m/%d', '/', '-')", $sql );
+		$this->assertStringNotContainsString( "LEFT('%Y-%m-%d ignored', 8)", $sql );
+		$this->assertStringNotContainsString( "RIGHT('ignored %Y-%m', 5)", $sql );
+		$this->assertStringNotContainsString( "LPAD('%m', 5, '%Y-')", $sql );
+		$this->assertStringNotContainsString( "RPAD('%Y', 5, '-%m')", $sql );
+		$this->assertStringNotContainsString( "REPEAT('%Y', 1)", $sql );
+		$this->assertStringNotContainsString( "TRIM(' %Y-%m ')", $sql );
+		$this->assertStringNotContainsString( "LTRIM('   %Y')", $sql );
+		$this->assertStringNotContainsString( "RTRIM('%m   ')", $sql );
+		$this->assertStringNotContainsString( 'SPACE(1)', $sql );
+		$this->assertStringNotContainsString( "REVERSE('Y%')", $sql );
+		$this->assertStringNotContainsString( "ELT(2, '%m', '%Y')", $sql );
+		$this->assertStringNotContainsString( "COALESCE(NULL, '%Y-%m')", $sql );
+		$this->assertStringNotContainsString( "IF(format_mask = '%Y'", $sql );
+		$this->assertStringNotContainsString( "CASE WHEN format_mask = '%Y' THEN '%Y'", $sql );
+		$this->assertStringNotContainsString( "CASE format_mask WHEN '%Y'", $sql );
+		$this->assertStringContainsString( 'NULL AS null_expression_format', $sql );
+		$this->assertStringContainsString( 'NULL AS null_nullif_expression_format', $sql );
+		$this->assertStringContainsString( 'NULL AS null_date_format', $sql );
+		$this->assertStringContainsString( 'NULL AS null_mask_format', $sql );
 		$this->assertStringContainsString( "WHEN 'Y' THEN TO_CHAR", $sql );
 		$this->assertStringContainsString( "WHEN 'D' THEN CAST(CAST(EXTRACT(DAY FROM", $sql );
 		$this->assertStringContainsString( "WHEN 'w' THEN CAST(CAST(EXTRACT(DOW FROM", $sql );
@@ -14661,14 +15785,26 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$sql = $this->translate_driver_query_with_private_method(
 			$driver,
 			'translate_mysql_compatible_query',
-			'SELECT FROM_UNIXTIME(0, format_mask) AS formatted_epoch
+			'SELECT FROM_UNIXTIME(0, format_mask) AS formatted_epoch,
+				FROM_UNIXTIME(0, IF(format_mask = \'%Y\', \'%Y\', \'%m\')) AS finite_if_epoch,
+				FROM_UNIXTIME(0, CASE WHEN format_mask = \'%Y\' THEN \'%Y\' ELSE \'%m\' END) AS finite_case_epoch,
+				FROM_UNIXTIME(0, CASE format_mask WHEN \'%Y\' THEN \'%Y\' ELSE \'%m\' END) AS finite_simple_case_epoch,
+				FROM_UNIXTIME(NULL, format_mask) AS null_dynamic_epoch
 			FROM wptests_unix_time_formats'
 		);
 
 		$this->assertNotNull( $sql );
-		$this->assertStringContainsString( 'WITH RECURSIVE "__wp_pg_mysql_date_format"', $sql );
+		$this->assertSame( 2, substr_count( $sql, 'WITH RECURSIVE "__wp_pg_mysql_date_format"' ) );
 		$this->assertStringContainsString( "TO_TIMESTAMP(CAST(0 AS double precision)) AT TIME ZONE 'UTC'", $sql );
 		$this->assertStringContainsString( 'CAST(format_mask AS text)', $sql );
+		$this->assertStringContainsString( 'AS finite_if_epoch', $sql );
+		$this->assertStringContainsString( 'AS finite_case_epoch', $sql );
+		$this->assertStringContainsString( 'AS finite_simple_case_epoch', $sql );
+		$this->assertStringContainsString( "CASE WHEN (format_mask = '%Y') THEN", $sql );
+		$this->assertStringContainsString( 'NULL AS null_dynamic_epoch', $sql );
+		$this->assertStringNotContainsString( "IF(format_mask = '%Y'", $sql );
+		$this->assertStringNotContainsString( "CASE WHEN format_mask = '%Y' THEN '%Y'", $sql );
+		$this->assertStringNotContainsString( "CASE format_mask WHEN '%Y'", $sql );
 		$this->assertStringNotContainsString( 'FROM_UNIXTIME', $sql );
 	}
 
@@ -14680,16 +15816,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$queries = array(
 			'SELECT CONCAT() AS empty_concat',
 			"SELECT CONCAT_WS('-') AS invalid_concat_ws",
+			'SELECT ASCII() AS invalid_ascii',
+			'SELECT ASCII(primary_value, fallback_value) AS invalid_ascii FROM runtime_names',
+			'SELECT DAYNAME() AS invalid_dayname',
+			'SELECT DAYNAME(primary_value, fallback_value) AS invalid_dayname FROM runtime_names',
+			'SELECT ELT(1) AS invalid_elt',
+			'SELECT FIND_IN_SET(primary_value) AS invalid_find_in_set FROM runtime_names',
+			'SELECT FIND_IN_SET(primary_value, fallback_value, third_value) AS invalid_find_in_set FROM runtime_names',
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
+			'SELECT INSTR(primary_value) AS invalid_instr FROM runtime_names',
+			'SELECT INSTR(primary_value, fallback_value, third_value) AS invalid_instr FROM runtime_names',
+			'SELECT IS_UUID() AS invalid_is_uuid',
+			'SELECT IS_UUID(primary_value, fallback_value) AS invalid_is_uuid FROM runtime_names',
 			'SELECT NULLIF(primary_value) AS invalid_nullif FROM runtime_names',
 			'SELECT NULLIF(primary_value, fallback_value, third_value) AS invalid_nullif FROM runtime_names',
 			'SELECT JSON_VALID() AS invalid_json',
 			'SELECT JSON_VALID(payload, fallback_value) AS invalid_json FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
+			'SELECT LTRIM(primary_value, fallback_value) AS invalid_ltrim FROM runtime_names',
+			'SELECT MAKE_SET() AS invalid_make_set',
+			'SELECT MAKE_SET(primary_value) AS invalid_make_set FROM runtime_names',
+			'SELECT MONTHNAME() AS invalid_monthname',
+			'SELECT MONTHNAME(primary_value, fallback_value) AS invalid_monthname FROM runtime_names',
+			'SELECT REVERSE() AS invalid_reverse',
+			'SELECT REVERSE(primary_value, fallback_value) AS invalid_reverse FROM runtime_names',
+			'SELECT RTRIM(primary_value, fallback_value) AS invalid_rtrim FROM runtime_names',
+			'SELECT SPACE() AS invalid_space',
+			'SELECT SPACE(1, 2) AS invalid_space',
+			'SELECT TRIM() AS invalid_trim',
+			'SELECT TRIM(primary_value, fallback_value) AS invalid_trim FROM runtime_names',
 			'SELECT CURRENT_TIMESTAMP(7) AS invalid_fractional_timestamp',
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
+			'SELECT FOUND_ROWS(1) AS invalid_found_rows',
 			'SELECT ROW_COUNT(123) AS rows_changed',
-			'SELECT UUID() AS uuid_value',
+			'SELECT UUID(1) AS invalid_uuid',
 		);
 
 		foreach ( $queries as $query ) {
@@ -14711,19 +15871,32 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$queries = array(
 			'SELECT CONCAT() AS empty_concat',
 			"SELECT CONCAT_WS('-') AS invalid_concat_ws",
+			'SELECT DAYNAME() AS invalid_dayname',
+			'SELECT DAYNAME(primary_value, fallback_value) AS invalid_dayname FROM runtime_names',
+			'SELECT FIND_IN_SET(primary_value) AS invalid_find_in_set FROM runtime_names',
+			'SELECT FIND_IN_SET(primary_value, fallback_value, third_value) AS invalid_find_in_set FROM runtime_names',
 			'SELECT IFNULL(primary_value) AS invalid_ifnull FROM runtime_names',
+			'SELECT IS_UUID() AS invalid_is_uuid',
+			'SELECT IS_UUID(primary_value, fallback_value) AS invalid_is_uuid FROM runtime_names',
 			'SELECT NULLIF(primary_value) AS invalid_nullif FROM runtime_names',
 			'SELECT NULLIF(primary_value, fallback_value, third_value) AS invalid_nullif FROM runtime_names',
 			'SELECT JSON_VALID() AS invalid_json',
 			'SELECT JSON_VALID(payload, fallback_value) AS invalid_json FROM runtime_names',
 			'SELECT LOG() AS invalid_log',
+			'SELECT MAKE_SET() AS invalid_make_set',
+			'SELECT MAKE_SET(primary_value) AS invalid_make_set FROM runtime_names',
+			'SELECT MONTHNAME() AS invalid_monthname',
+			'SELECT MONTHNAME(primary_value, fallback_value) AS invalid_monthname FROM runtime_names',
+			'SELECT TRIM() AS invalid_trim',
+			'SELECT TRIM(primary_value, fallback_value) AS invalid_trim FROM runtime_names',
 			'SELECT CURRENT_TIMESTAMP(7) AS invalid_fractional_timestamp',
 			"SELECT FROM_UNIXTIME(0, '%Y', 'extra') AS invalid_from_unixtime",
 			"SELECT LAST_INSERT_ID('123') AS invalid_last_insert_id",
 			'SELECT CURRENT_USER(1) AS invalid_current_user',
 			'SELECT USER(1) AS invalid_user',
+			'SELECT FOUND_ROWS(1) AS invalid_found_rows',
 			'SELECT ROW_COUNT(123) AS rows_changed',
-			'SELECT UUID() AS uuid_value',
+			'SELECT UUID(1) AS invalid_uuid',
 		);
 
 		foreach ( $queries as $query ) {
@@ -16286,16 +17459,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
-		$driver->query( 'SELECT rand() AS random_value, RAND(link_id) AS conservative_seed FROM wptests_links LIMIT 1' );
-		$this->assertSame(
-			array(
-				array(
-					'sql'    => 'SELECT random() AS random_value, random() AS conservative_seed FROM wptests_links LIMIT 1',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
-		);
+		$rows = $driver->query( 'SELECT rand() AS random_value, RAND(link_id) AS seeded_value FROM wptests_links WHERE link_id = 1' );
+		$this->assertEqualsWithDelta( 0.40540353712197724, (float) $rows[0]->seeded_value, 1e-12 );
+		$this->assertStringContainsString( 'random() AS random_value', $this->get_last_single_postgresql_sql( $driver ) );
+		$this->assertStringContainsString( '"__wp_pg_mysql_rand_seed"."seed" * 65537 + 55555555', $this->get_last_single_postgresql_sql( $driver ) );
+		$this->assertStringContainsString( 'AS seeded_value', $this->get_last_single_postgresql_sql( $driver ) );
+		$this->assertStringNotContainsString( 'random() AS seeded_value', $this->get_last_single_postgresql_sql( $driver ) );
 	}
 
 	/**
@@ -16800,6 +17969,52 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '2', $page_rows[0]->ID );
 		$this->assertSame( '3', $rows[0]->{'FOUND_ROWS()'} );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+	}
+
+	/**
+	 * Tests FOUND_ROWS() can be rewritten inside scalar expressions without stale cached SQL.
+	 */
+	public function test_found_rows_runtime_function_rewrites_inside_scalar_expressions(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY, post_type TEXT NOT NULL, post_status TEXT NOT NULL)' );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (1, 'post', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (2, 'post', 'publish')" );
+		$driver->query( "INSERT INTO wptests_posts (\"ID\", post_type, post_status) VALUES (3, 'page', 'publish')" );
+
+		$driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE wptests_posts.post_status = 'publish'
+			ORDER BY wptests_posts.ID ASC
+			LIMIT 0, 1"
+		);
+
+		$first = $driver->query( 'SELECT FOUND_ROWS() + 1 AS found_rows_plus_one, FOUND_ROWS() AS found_rows_value' );
+
+		$this->assertSame( '4', $first[0]->found_rows_plus_one );
+		$this->assertSame( '3', $first[0]->found_rows_value );
+		$this->assertSame(
+			'SELECT 3 + 1 AS found_rows_plus_one, 3 AS found_rows_value',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+
+		$driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE wptests_posts.post_type = 'post'
+			ORDER BY wptests_posts.ID ASC
+			LIMIT 0, 1"
+		);
+
+		$second = $driver->query( 'SELECT FOUND_ROWS() + 1 AS found_rows_plus_one, FOUND_ROWS() AS found_rows_value' );
+
+		$this->assertSame( '3', $second[0]->found_rows_plus_one );
+		$this->assertSame( '2', $second[0]->found_rows_value );
+		$this->assertSame(
+			'SELECT 2 + 1 AS found_rows_plus_one, 2 AS found_rows_value',
+			$this->get_last_single_postgresql_sql( $driver )
+		);
 	}
 
 	/**
@@ -18005,11 +19220,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_mysql_date_time_extract_functions_are_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
-		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, QUARTER(post_date) AS q, DAYOFYEAR(post_date) AS doy, DAYOFMONTH(post_date) AS d, DAY(post_date) AS day_value, HOUR(post_date) AS h, MINUTE(post_date) AS i, SECOND(post_date) AS s, EXTRACT(DAY FROM post_date) AS extracted_day, EXTRACT(QUARTER FROM post_date) AS extracted_quarter, EXTRACT(DAYOFYEAR FROM post_date) AS extracted_doy FROM wptests_posts WHERE ID = 1';
+		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, QUARTER(post_date) AS q, DAYOFYEAR(post_date) AS doy, DAYOFMONTH(post_date) AS d, DAY(post_date) AS day_value, HOUR(post_date) AS h, MINUTE(post_date) AS i, SECOND(post_date) AS s, MICROSECOND(post_date) AS us, EXTRACT(DAY FROM post_date) AS extracted_day, EXTRACT(QUARTER FROM post_date) AS extracted_quarter, EXTRACT(DAYOFYEAR FROM post_date) AS extracted_doy, EXTRACT(MICROSECOND FROM post_date) AS extracted_us FROM wptests_posts WHERE ID = 1';
 		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
 		$this->assertSame(
-			'SELECT ' . $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' ) . ' AS y, ' . $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' ) . ' AS m, ' . $this->get_expected_zero_date_safe_extract_sql( 'QUARTER', 'post_date' ) . ' AS q, ' . $this->get_expected_zero_date_safe_extract_sql( 'DOY', 'post_date' ) . ' AS doy, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS d, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS day_value, ' . $this->get_expected_zero_date_safe_extract_sql( 'HOUR', 'post_date' ) . ' AS h, ' . $this->get_expected_zero_date_safe_extract_sql( 'MINUTE', 'post_date' ) . ' AS i, ' . $this->get_expected_zero_date_safe_extract_sql( 'SECOND', 'post_date' ) . ' AS s, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS extracted_day, ' . $this->get_expected_zero_date_safe_extract_sql( 'QUARTER', 'post_date' ) . ' AS extracted_quarter, ' . $this->get_expected_zero_date_safe_extract_sql( 'DOY', 'post_date' ) . ' AS extracted_doy FROM wptests_posts WHERE "ID" = 1',
+			'SELECT ' . $this->get_expected_zero_date_safe_extract_sql( 'YEAR', 'post_date' ) . ' AS y, ' . $this->get_expected_zero_date_safe_extract_sql( 'MONTH', 'post_date' ) . ' AS m, ' . $this->get_expected_zero_date_safe_extract_sql( 'QUARTER', 'post_date' ) . ' AS q, ' . $this->get_expected_zero_date_safe_extract_sql( 'DOY', 'post_date' ) . ' AS doy, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS d, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS day_value, ' . $this->get_expected_zero_date_safe_extract_sql( 'HOUR', 'post_date' ) . ' AS h, ' . $this->get_expected_zero_date_safe_extract_sql( 'MINUTE', 'post_date' ) . ' AS i, ' . $this->get_expected_zero_date_safe_extract_sql( 'SECOND', 'post_date' ) . ' AS s, ' . $this->get_expected_zero_date_safe_extract_sql( 'MICROSECOND', 'post_date' ) . ' AS us, ' . $this->get_expected_zero_date_safe_extract_sql( 'DAY', 'post_date' ) . ' AS extracted_day, ' . $this->get_expected_zero_date_safe_extract_sql( 'QUARTER', 'post_date' ) . ' AS extracted_quarter, ' . $this->get_expected_zero_date_safe_extract_sql( 'DOY', 'post_date' ) . ' AS extracted_doy, ' . $this->get_expected_zero_date_safe_extract_sql( 'MICROSECOND', 'post_date' ) . ' AS extracted_us FROM wptests_posts WHERE "ID" = 1',
 			$sql
 		);
 	}
@@ -18020,7 +19235,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_mysql_date_time_extract_functions_are_zero_date_safe_for_postgresql(): void {
 		$driver = $this->create_driver();
 
-		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, DAYOFMONTH(post_date) AS d, HOUR(post_date) AS h FROM wptests_posts WHERE post_date = \'0000-00-00 00:00:00\'';
+		$select = 'SELECT YEAR(post_date) AS y, MONTH(post_date) AS m, DAYOFMONTH(post_date) AS d, HOUR(post_date) AS h, MICROSECOND(post_date) AS us FROM wptests_posts WHERE post_date = \'0000-00-00 00:00:00.123456\'';
 		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
 		$this->assertStringContainsString( "CASE WHEN CAST(post_date AS text) = '' THEN NULL WHEN CAST(post_date AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'", $sql );
@@ -18031,6 +19246,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 6 FOR 2) AS integer)', $sql );
 		$this->assertStringContainsString( 'THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 9 FOR 2) AS integer)', $sql );
 		$this->assertStringContainsString( "THEN CASE WHEN CAST(post_date AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' THEN CAST(SUBSTRING(CAST(post_date AS text) FROM 12 FOR 2) AS integer) ELSE 0 END", $sql );
+		$this->assertStringContainsString( "THEN CAST(CASE WHEN CAST(post_date AS text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]+' THEN LEFT(RPAD(SUBSTRING(CAST(post_date AS text) FROM '[.]([0-9]+)'), 6, '0'), 6) ELSE '000000' END AS integer)", $sql );
 		$this->assertStringNotContainsString( 'SELECT CAST(EXTRACT(YEAR FROM CAST(post_date AS timestamp)) AS integer) AS y', $sql );
 		$this->assertStringContainsString( 'CAST(EXTRACT(YEAR FROM CAST(CASE WHEN CAST(post_date AS text)', $sql );
 		$this->assertStringContainsString( 'THEN NULL ELSE CAST(post_date AS text) END AS timestamp)', $sql );
@@ -18192,6 +19408,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				'name' => 'SECOND',
 				'unit' => 'SECOND',
 			),
+			array(
+				'name' => 'MICROSECOND',
+				'unit' => 'MICROSECOND',
+			),
 		);
 
 		foreach ( $literals as $literal ) {
@@ -18212,21 +19432,31 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					$sql,
 					$function_sql
 				);
-				$this->assertStringContainsString(
-					'CAST(EXTRACT(' . $extract_function['unit'] . ' FROM CAST(CASE WHEN ' . $expression_text_sql,
-					$sql,
-					$function_sql
-				);
+				if ( 'MICROSECOND' === $extract_function['unit'] ) {
+					$this->assertStringContainsString(
+						"CAST(TO_CHAR(CAST(CASE WHEN {$expression_text_sql}",
+						$sql,
+						$function_sql
+					);
+				} else {
+					$this->assertStringContainsString(
+						'CAST(EXTRACT(' . $extract_function['unit'] . ' FROM CAST(CASE WHEN ' . $expression_text_sql,
+						$sql,
+						$function_sql
+					);
+				}
 				$this->assertStringContainsString(
 					'THEN NULL ELSE ' . $expression_text_sql . ' END AS timestamp)',
 					$sql,
 					$function_sql
 				);
-				$this->assertStringNotContainsString(
-					'CAST(EXTRACT(' . $extract_function['unit'] . ' FROM CAST(' . $expression_sql . ' AS timestamp))',
-					$sql,
-					$function_sql
-				);
+				if ( 'MICROSECOND' !== $extract_function['unit'] ) {
+					$this->assertStringNotContainsString(
+						'CAST(EXTRACT(' . $extract_function['unit'] . ' FROM CAST(' . $expression_sql . ' AS timestamp))',
+						$sql,
+						$function_sql
+					);
+				}
 			}
 		}
 
@@ -18248,14 +19478,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_mysql_week_and_weekday_index_functions_are_translated_to_postgresql(): void {
 		$driver = $this->create_driver();
 
-		$select = 'SELECT WEEK(post_date, 1) AS week_num, DAYOFWEEK(post_date) AS day_of_week, WEEKDAY(post_date) AS weekday_value FROM wptests_posts WHERE WEEK(post_date, 1) = 24 AND DAYOFWEEK(post_date) = 1 AND WEEKDAY(post_date) = 6';
+		$select = 'SELECT WEEK(post_date, 1) AS week_num, WEEKOFYEAR(post_date) AS week_of_year, DAYOFWEEK(post_date) AS day_of_week, WEEKDAY(post_date) AS weekday_value FROM wptests_posts WHERE WEEK(post_date, 1) = 24 AND WEEKOFYEAR(post_date) = 24 AND DAYOFWEEK(post_date) = 1 AND WEEKDAY(post_date) = 6';
 		$sql    = $this->translate_driver_query_with_private_method( $driver, 'translate_mysql_compatible_query', $select );
 
 		$this->assertSame(
-			'SELECT ' . $this->get_expected_mysql_week_mode_one_sql( 'post_date' ) . ' AS week_num, ' . $this->get_expected_mysql_weekday_index_sql( 'dayofweek', 'post_date' ) . ' AS day_of_week, ' . $this->get_expected_mysql_weekday_index_sql( 'weekday', 'post_date' ) . ' AS weekday_value FROM wptests_posts WHERE ' . $this->get_expected_mysql_week_mode_one_sql( 'post_date' ) . ' = 24 AND ' . $this->get_expected_mysql_weekday_index_sql( 'dayofweek', 'post_date' ) . ' = 1 AND ' . $this->get_expected_mysql_weekday_index_sql( 'weekday', 'post_date' ) . ' = 6',
+			'SELECT ' . $this->get_expected_mysql_week_mode_one_sql( 'post_date' ) . ' AS week_num, ' . $this->get_expected_mysql_week_sql( 'post_date', 3 ) . ' AS week_of_year, ' . $this->get_expected_mysql_weekday_index_sql( 'dayofweek', 'post_date' ) . ' AS day_of_week, ' . $this->get_expected_mysql_weekday_index_sql( 'weekday', 'post_date' ) . ' AS weekday_value FROM wptests_posts WHERE ' . $this->get_expected_mysql_week_mode_one_sql( 'post_date' ) . ' = 24 AND ' . $this->get_expected_mysql_week_sql( 'post_date', 3 ) . ' = 24 AND ' . $this->get_expected_mysql_weekday_index_sql( 'dayofweek', 'post_date' ) . ' = 1 AND ' . $this->get_expected_mysql_weekday_index_sql( 'weekday', 'post_date' ) . ' = 6',
 			$sql
 		);
 		$this->assertStringNotContainsString( 'WEEK(', $sql );
+		$this->assertStringNotContainsString( 'WEEKOFYEAR', $sql );
 		$this->assertStringNotContainsString( 'DAYOFWEEK', $sql );
 		$this->assertStringNotContainsString( 'WEEKDAY', $sql );
 	}
@@ -18303,6 +19534,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'SELECT WEEK(post_date, default_week_format) AS week_num',
 			'SELECT WEEK(post_date, 1 + 1) AS week_num',
 			'SELECT WEEK(post_date, 0, 1) AS week_num',
+			'SELECT WEEKOFYEAR(post_date, 1) AS week_num',
 		);
 
 		foreach ( $queries as $query ) {
@@ -48808,6 +50040,34 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Get external SQLite UDF registry function names.
+	 *
+	 * @return string[] Function names.
+	 */
+	private function get_external_sqlite_udf_registry_functions(): array {
+		$reflection = new ReflectionClass( WP_SQLite_PDO_User_Defined_Functions::class );
+		$property   = $reflection->getProperty( 'functions' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$property->setAccessible( true );
+		}
+
+		$functions = array_keys( $property->getValue( $reflection->newInstanceWithoutConstructor() ) );
+		$functions = array_values(
+			array_diff(
+				$functions,
+				array(
+					'throw',
+					'_helper_like_to_glob_pattern',
+				)
+			)
+		);
+
+		sort( $functions );
+
+		return $functions;
+	}
+
+	/**
 	 * Translate a query by calling a private driver translator.
 	 *
 	 * @param WP_PostgreSQL_Driver $driver      Driver under test.
@@ -49478,6 +50738,16 @@ $wp_mysql_on_update$',
 		$empty_date_condition = $this->get_expected_empty_temporal_condition_sql( $expression_text_sql );
 		$zero_date_condition  = $this->get_expected_zero_date_condition_sql( $expression_text_sql );
 
+		if ( 'MICROSECOND' === $unit ) {
+			return sprintf(
+				"CASE WHEN %1\$s THEN NULL WHEN %2\$s THEN CAST(%3\$s AS integer) ELSE CAST(TO_CHAR(%4\$s, 'US') AS integer) END",
+				$empty_date_condition,
+				$zero_date_condition,
+				$this->get_expected_zero_date_microsecond_sql( $expression_text_sql ),
+				$this->get_expected_zero_date_safe_timestamp_sql( $expression_sql )
+			);
+		}
+
 		return sprintf(
 			'CASE WHEN %1$s THEN NULL WHEN %2$s THEN %3$s ELSE CAST(EXTRACT(%4$s FROM %5$s) AS integer) END',
 			$empty_date_condition,
@@ -49593,6 +50863,19 @@ $wp_mysql_on_update$',
 			'CASE WHEN %1$s ~ \'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}\' THEN CAST(SUBSTRING(%1$s FROM %2$d FOR 2) AS integer) ELSE 0 END',
 			$expression_text_sql,
 			$start
+		);
+	}
+
+	/**
+	 * Get expected PostgreSQL SQL for the microsecond component of a zero-ish date string.
+	 *
+	 * @param string $expression_text_sql PostgreSQL expression cast to text.
+	 * @return string PostgreSQL expression SQL.
+	 */
+	private function get_expected_zero_date_microsecond_sql( string $expression_text_sql ): string {
+		return sprintf(
+			"CASE WHEN %1\$s ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]+' THEN LEFT(RPAD(SUBSTRING(%1\$s FROM '[.]([0-9]+)'), 6, '0'), 6) ELSE '000000' END",
+			$expression_text_sql
 		);
 	}
 
