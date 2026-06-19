@@ -22297,9 +22297,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'insert_mysql_table_metadata'                  => function (): void {
 				$this->insert_mysql_table_metadata( 'public', 'catalog_side_table', array() );
 			},
-			'update_mysql_table_comment_metadata'          => function (): void {
-				$this->update_mysql_table_comment_metadata( 'public', 'catalog_side_table', '' );
-			},
 			'delete_mysql_schema_metadata_for_tables'      => function (): void {
 				$this->delete_mysql_schema_metadata_for_tables( array( 'catalog_side_table' ), 'public' );
 			},

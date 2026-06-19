@@ -1060,9 +1060,20 @@ class WP_PostgreSQL_Driver {
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
 			$this->execute_postgresql_statements( $drop_query['statements'] );
-			$this->maybe_clear_mysql_schema_metadata_table_state( $drop_query['tables'] );
+			foreach ( $drop_query['tables'] as $table_name ) {
+				if ( in_array( (string) $table_name, $this->get_direct_information_schema_hidden_table_names(), true ) ) {
+					$this->mysql_schema_metadata_tables_ensured = false;
+					$this->clear_mysql_metadata_caches();
+					break;
+				}
+			}
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$this->clear_mysql_metadata_cache_for_table_targets( $drop_query['metadata_targets'] );
+				foreach ( $drop_query['metadata_targets'] as $target ) {
+					$this->clear_mysql_metadata_cache_for_table(
+						$target['schema'],
+						$target['table']
+					);
+				}
 			} else {
 				foreach ( $drop_query['metadata_targets'] as $target ) {
 					$this->delete_mysql_schema_metadata_for_tables(
@@ -4411,20 +4422,6 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Clear cached MySQL metadata for concrete schema/table targets.
-	 *
-	 * @param array[] $targets Metadata targets.
-	 */
-	private function clear_mysql_metadata_cache_for_table_targets( array $targets ): void {
-		foreach ( $targets as $target ) {
-			$this->clear_mysql_metadata_cache_for_table(
-				$target['schema'],
-				$target['table']
-			);
-		}
-	}
-
-	/**
 	 * Get a cache key for metadata keyed by backend schema and table name.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -4441,23 +4438,6 @@ class WP_PostgreSQL_Driver {
 	private function clear_mysql_query_translation_caches(): void {
 		$this->mysql_select_translation_cache              = array();
 		$this->mysql_sql_calc_found_rows_count_query_cache = array();
-	}
-
-	/**
-	 * Reset metadata side-table state if a query drops the side tables directly.
-	 *
-	 * @param string[] $table_names Dropped table names.
-	 */
-	private function maybe_clear_mysql_schema_metadata_table_state( array $table_names ): void {
-		foreach ( $table_names as $table_name ) {
-			if ( ! in_array( (string) $table_name, $this->get_direct_information_schema_hidden_table_names(), true ) ) {
-				continue;
-			}
-
-			$this->mysql_schema_metadata_tables_ensured = false;
-			$this->clear_mysql_metadata_caches();
-			return;
-		}
 	}
 
 	/**
@@ -5384,19 +5364,6 @@ $wp_mysql_on_update$',
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
-		$this->update_mysql_table_comment_metadata( $table_schema, $table_name, $table_comment );
-	}
-
-	/**
-	 * Update MySQL-facing table comment metadata.
-	 *
-	 * @param string $table_schema  Table schema.
-	 * @param string $table_name    Table name.
-	 * @param string $table_comment Table comment.
-	 */
-	private function update_mysql_table_comment_metadata( string $table_schema, string $table_name, string $table_comment ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->connection->query(
 			sprintf(
 				'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
