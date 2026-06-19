@@ -37229,7 +37229,29 @@ WHERE s.schema_name = \'information_schema\'
 					$comment_sql,
 					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
 				);
-				$column_key      = $this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
+				$column_key      = 'COALESCE((
+	SELECT CASE
+		WHEN BOOL_OR(i.indisprimary) THEN \'PRI\'
+		WHEN BOOL_OR(i.indisunique) THEN \'UNI\'
+		ELSE \'MUL\'
+	END
+	FROM pg_catalog.pg_class t
+	INNER JOIN pg_catalog.pg_namespace n
+		ON n.oid = t.relnamespace
+	INNER JOIN pg_catalog.pg_index i
+		ON i.indrelid = t.oid
+	CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
+	INNER JOIN pg_catalog.pg_attribute a
+		ON a.attrelid = t.oid
+		AND a.attnum = k.attnum
+	WHERE n.nspname = c.table_schema
+		AND t.relname = c.table_name
+		AND a.attname = c.column_name
+		AND k.ordinality <= i.indnkeyatts
+		AND k.attnum > 0
+		AND i.indisvalid
+		AND i.indislive
+), \'\')';
 				$column_comment  = $comment_sql;
 				for ( $i = 0; $i < 4; ++$i ) {
 					$column_comment = $this->get_postgresql_catalog_column_comment_without_metadata_line_sql( $column_comment );
@@ -40667,45 +40689,6 @@ END',
 			$table_sql,
 			$column_sql,
 			$catalog_constraints
-		);
-	}
-
-	/**
-	 * Get COLUMN_KEY expression for a table column from PostgreSQL catalogs.
-	 *
-	 * @param string $schema_sql SQL expression for backend schema.
-	 * @param string $table_sql  SQL expression for table name.
-	 * @param string $column_sql SQL expression for column name.
-	 * @return string SQL expression.
-	 */
-	private function get_direct_information_schema_catalog_column_key_expression( string $schema_sql, string $table_sql, string $column_sql ): string {
-		return sprintf(
-			'COALESCE((
-	SELECT CASE
-		WHEN BOOL_OR(i.indisprimary) THEN \'PRI\'
-		WHEN BOOL_OR(i.indisunique) THEN \'UNI\'
-		ELSE \'MUL\'
-	END
-	FROM pg_catalog.pg_class t
-	INNER JOIN pg_catalog.pg_namespace n
-		ON n.oid = t.relnamespace
-	INNER JOIN pg_catalog.pg_index i
-		ON i.indrelid = t.oid
-	CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-	INNER JOIN pg_catalog.pg_attribute a
-		ON a.attrelid = t.oid
-		AND a.attnum = k.attnum
-	WHERE n.nspname = %1$s
-		AND t.relname = %2$s
-		AND a.attname = %3$s
-		AND k.ordinality <= i.indnkeyatts
-		AND k.attnum > 0
-		AND i.indisvalid
-		AND i.indislive
-), \'\')',
-			$schema_sql,
-			$table_sql,
-			$column_sql
 		);
 	}
 
