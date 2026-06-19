@@ -23066,17 +23066,13 @@ describe_rows AS (
 	SELECT * FROM metadata_columns
 )
 SELECT
-	field_name AS "Field",
-	column_type AS "Type",
-	is_nullable AS "Null",
-	column_key AS "Key",
-	column_default AS "Default",
-	column_extra AS "Extra"
+	%4$s
 FROM describe_rows
 ORDER BY ordinal_position',
 			$column_metadata_table,
 			$catalog_key_expression,
-			$metadata_key_expression
+			$metadata_key_expression,
+			$this->get_show_columns_select_column_sql( false )
 		);
 	}
 
@@ -23117,12 +23113,7 @@ describe_rows AS (
 		AND pa.attnum > 0
 )
 SELECT
-	field_name AS "Field",
-	column_type AS "Type",
-	is_nullable AS "Null",
-	column_key AS "Key",
-	column_default AS "Default",
-	column_extra AS "Extra"
+	%5$s
 FROM describe_rows
 ORDER BY ordinal_position',
 			$this->get_direct_information_schema_catalog_column_type_expression(
@@ -23132,7 +23123,8 @@ ORDER BY ordinal_position',
 			),
 			$this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' ),
 			$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-			$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql )
+			$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
+			$this->get_show_columns_select_column_sql( false )
 		);
 	}
 
@@ -23192,25 +23184,6 @@ ORDER BY ordinal_position',
 		WHEN c.column_default LIKE \'nextval(%\' THEN \'auto_increment\'
 		ELSE \'\'
 	END';
-
-		if ( $is_full ) {
-			$fields = 'field_name AS "Field",
-		column_type AS "Type",
-		collation_name AS "Collation",
-		is_nullable AS "Null",
-		column_key AS "Key",
-		column_default AS "Default",
-		column_extra AS "Extra",
-		\'select,insert,update,references\' AS "Privileges",
-		column_comment AS "Comment"';
-		} else {
-			$fields = 'field_name AS "Field",
-	column_type AS "Type",
-	is_nullable AS "Null",
-	column_key AS "Key",
-	column_default AS "Default",
-	column_extra AS "Extra"';
-		}
 
 		return sprintf(
 			'WITH requested_table AS (
@@ -23278,7 +23251,7 @@ show_columns_rows AS (
 			$metadata_key_expression,
 			$catalog_extra_expression,
 			$metadata_collation_expression,
-			$fields
+			$this->get_show_columns_select_column_sql( $is_full )
 		);
 	}
 
@@ -23295,25 +23268,6 @@ show_columns_rows AS (
 			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
 			$comment_sql
 		);
-
-		if ( $is_full ) {
-			$fields = 'field_name AS "Field",
-		column_type AS "Type",
-		collation_name AS "Collation",
-		is_nullable AS "Null",
-		column_key AS "Key",
-		column_default AS "Default",
-		column_extra AS "Extra",
-		\'select,insert,update,references\' AS "Privileges",
-		column_comment AS "Comment"';
-		} else {
-			$fields = 'field_name AS "Field",
-	column_type AS "Type",
-	is_nullable AS "Null",
-	column_key AS "Key",
-	column_default AS "Default",
-	column_extra AS "Extra"';
-		}
 
 		return sprintf(
 			'WITH requested_table AS (
@@ -23358,10 +23312,37 @@ show_columns_rows AS (
 			),
 			$this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' ),
 			$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-			$fields,
+			$this->get_show_columns_select_column_sql( $is_full ),
 			$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
 			$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
 		);
+	}
+
+	/**
+	 * Get the projected output columns for DESCRIBE and SHOW COLUMNS SQL.
+	 *
+	 * @param bool $is_full Whether to emit SHOW FULL COLUMNS fields.
+	 * @return string SQL column list.
+	 */
+	private function get_show_columns_select_column_sql( bool $is_full ): string {
+		$expressions = array(
+			'Field'      => 'field_name',
+			'Type'       => 'column_type',
+			'Collation'  => 'collation_name',
+			'Null'       => 'is_nullable',
+			'Key'        => 'column_key',
+			'Default'    => 'column_default',
+			'Extra'      => 'column_extra',
+			'Privileges' => '\'select,insert,update,references\'',
+			'Comment'    => 'column_comment',
+		);
+		$fields      = array();
+
+		foreach ( $this->get_show_columns_output_columns( $is_full ) as $column ) {
+			$fields[] = $expressions[ $column ] . ' AS "' . $column . '"';
+		}
+
+		return implode( ',' . "\n\t", $fields );
 	}
 
 	/**
