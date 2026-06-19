@@ -1316,8 +1316,11 @@ class WP_PostgreSQL_Driver {
 			$query                     = $translated_query;
 			$translated_for_postgresql = true;
 		}
-		if ( ! $translated_for_postgresql && $this->is_unsupported_mysql_delete_query( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported DELETE statement.' );
+		if ( ! $translated_for_postgresql ) {
+			$delete_tokens = $this->get_mysql_tokens( $query );
+			if ( isset( $delete_tokens[0] ) && WP_MySQL_Lexer::DELETE_SYMBOL === $delete_tokens[0]->id ) {
+				throw new InvalidArgumentException( 'Unsupported DELETE statement.' );
+			}
 		}
 
 		$upsert_query = $this->translate_mysql_on_duplicate_key_update_query( $query );
@@ -1393,14 +1396,17 @@ class WP_PostgreSQL_Driver {
 			}
 			$query                     = $translated_query;
 			$translated_for_postgresql = true;
-		} elseif (
-			! $translated_for_postgresql
-			&& (
-				$this->is_unsupported_mysql_update_query( $query )
-				|| $this->is_unsupported_mysql_cte_prefixed_update_query( $query )
-			)
-		) {
-			throw new InvalidArgumentException( 'Unsupported UPDATE statement.' );
+		} elseif ( ! $translated_for_postgresql ) {
+			$update_tokens       = $this->get_mysql_tokens( $query );
+			$is_update_query     = isset( $update_tokens[0] ) && WP_MySQL_Lexer::UPDATE_SYMBOL === $update_tokens[0]->id;
+			$update_end          = isset( $update_tokens[0] ) && WP_MySQL_Lexer::WITH_SYMBOL === $update_tokens[0]->id
+				? $this->get_mysql_statement_end_position( $update_tokens, 1 )
+				: null;
+			$is_cte_update_query = null !== $update_end
+				&& null !== $this->find_top_level_mysql_token( $update_tokens, WP_MySQL_Lexer::UPDATE_SYMBOL, 1, $update_end );
+			if ( $is_update_query || $is_cte_update_query ) {
+				throw new InvalidArgumentException( 'Unsupported UPDATE statement.' );
+			}
 		}
 
 		$is_sql_calc_found_rows_query = $this->is_sql_calc_found_rows_select_query( $query );
@@ -22111,17 +22117,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Check whether a top-level DELETE statement reached the unsupported fallback.
-	 *
-	 * @param string $query MySQL query.
-	 * @return bool Whether this is an unsupported DELETE statement.
-	 */
-	private function is_unsupported_mysql_delete_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		return isset( $tokens[0] ) && WP_MySQL_Lexer::DELETE_SYMBOL === $tokens[0]->id;
-	}
-
-	/**
 	 * Translate supported INSERT ... ON DUPLICATE KEY UPDATE queries.
 	 *
 	 * WordPress emits MySQL upserts for a small set of VALUES inserts. Keep this
@@ -27750,34 +27745,6 @@ WHERE option_name IN (
 		}
 
 		return null;
-	}
-
-	/**
-	 * Check whether a top-level UPDATE statement reached the unsupported fallback.
-	 *
-	 * @param string $query MySQL query.
-	 * @return bool Whether this is an unsupported UPDATE statement.
-	 */
-	private function is_unsupported_mysql_update_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		return isset( $tokens[0] ) && WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[0]->id;
-	}
-
-	/**
-	 * Check whether a WITH ... UPDATE statement reached the unsupported fallback.
-	 *
-	 * @param string $query MySQL query.
-	 * @return bool Whether this is an unsupported CTE-prefixed UPDATE statement.
-	 */
-	private function is_unsupported_mysql_cte_prefixed_update_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::WITH_SYMBOL !== $tokens[0]->id ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		return null !== $statement_end
-			&& null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::UPDATE_SYMBOL, 1, $statement_end );
 	}
 
 	/**
