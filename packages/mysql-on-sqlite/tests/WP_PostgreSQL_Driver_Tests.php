@@ -31905,7 +31905,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'FROM information_schema.schemata s', $catalog_query );
 		$this->assertStringContainsString( 's."SCHEMA_NAME" AS "Database"', $catalog_query );
 		$this->assertStringContainsString( 'AS "SCHEMA_NAME"', $catalog_query );
-		$this->assertStringContainsString( 'LEFT(s.schema_name, 3) <> \'pg_\'', $catalog_query );
+		$this->assertStringContainsString( 's.schema_name !~ \'^pg_\'', $catalog_query );
 		$this->assertStringContainsString( 'ORDER BY "Database"', $catalog_query );
 		$this->assertStringNotContainsString( '__wp_postgresql_mysql_', $catalog_query );
 	}
@@ -32116,7 +32116,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'FROM information_schema.schemata s', $catalog_query );
 		$this->assertStringContainsString( 'AS "SCHEMA_NAME"', $catalog_query );
 		$this->assertStringContainsString( 's."SCHEMA_NAME" = ?', $catalog_query );
-		$this->assertStringContainsString( 'LEFT(s.schema_name, 3) <> \'pg_\'', $catalog_query );
+		$this->assertStringContainsString( 's.schema_name !~ \'^pg_\'', $catalog_query );
 		$this->assertStringNotContainsString( '__wp_postgresql_mysql_', $catalog_query );
 	}
 
@@ -38286,7 +38286,7 @@ $wp_mysql_on_update$',
 
 		$this->assertStringContainsString( 'FROM information_schema.schemata s', $sql );
 		$this->assertStringContainsString( 's.schema_name = \'information_schema\'', $sql );
-		$this->assertStringContainsString( 'LEFT(s.schema_name, 3) <> \'pg_\'', $sql );
+		$this->assertStringContainsString( 's.schema_name !~ \'^pg_\'', $sql );
 		$this->assertStringContainsString( 'AS "SCHEMA_NAME"', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
 	}

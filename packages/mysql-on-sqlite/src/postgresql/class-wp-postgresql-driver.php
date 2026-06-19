@@ -37027,8 +37027,7 @@ WHERE "TABLE_SCHEMA" = %3$s
 	NULL AS "SQL_PATH",
 	\'NO\' AS "DEFAULT_ENCRYPTION"
 FROM information_schema.schemata s
-WHERE s.schema_name = \'information_schema\'
-	OR LEFT(s.schema_name, 3) <> \'pg_\'',
+WHERE s.schema_name = \'information_schema\' OR s.schema_name !~ \'^pg_\'',
 					$this->get_direct_information_schema_display_schema_sql( 's.schema_name' ),
 					$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
 					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
@@ -38604,8 +38603,7 @@ WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
 	%1$s AS "SCHEMA_NAME",
 	NULL AS "OPTIONS"
 FROM information_schema.schemata s
-WHERE s.schema_name = \'information_schema\'
-	OR LEFT(s.schema_name, 3) <> \'pg_\'',
+WHERE s.schema_name = \'information_schema\' OR s.schema_name !~ \'^pg_\'',
 				$this->get_direct_information_schema_display_schema_sql( 's.schema_name' )
 			);
 		}
