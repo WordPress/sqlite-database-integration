@@ -1048,7 +1048,12 @@ class WP_PostgreSQL_Driver {
 			}
 			return $result;
 		}
-		if ( $this->is_mysql_alter_table_query( $query ) ) {
+		$alter_tokens = $this->get_mysql_tokens( $query );
+		if (
+			isset( $alter_tokens[0], $alter_tokens[1] )
+			&& WP_MySQL_Lexer::ALTER_SYMBOL === $alter_tokens[0]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $alter_tokens[1]->id
+		) {
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
@@ -1112,7 +1117,12 @@ class WP_PostgreSQL_Driver {
 			$this->last_result = 0;
 			return $this->last_result;
 		}
-		if ( $this->is_mysql_rename_table_query( $query ) ) {
+		$rename_tokens = $this->get_mysql_tokens( $query );
+		if (
+			isset( $rename_tokens[0], $rename_tokens[1] )
+			&& WP_MySQL_Lexer::RENAME_SYMBOL === $rename_tokens[0]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $rename_tokens[1]->id
+		) {
 			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
 		}
 
@@ -12390,32 +12400,6 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		return true;
-	}
-
-	/**
-	 * Check whether a query starts with ALTER TABLE.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether this is an ALTER TABLE statement.
-	 */
-	private function is_mysql_alter_table_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		return isset( $tokens[0], $tokens[1] )
-			&& WP_MySQL_Lexer::ALTER_SYMBOL === $tokens[0]->id
-			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id;
-	}
-
-	/**
-	 * Check whether a query starts with RENAME TABLE.
-	 *
-	 * @param string $query SQL query.
-	 * @return bool Whether this is a RENAME TABLE statement.
-	 */
-	private function is_mysql_rename_table_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		return isset( $tokens[0], $tokens[1] )
-			&& WP_MySQL_Lexer::RENAME_SYMBOL === $tokens[0]->id
-			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id;
 	}
 
 	/**
