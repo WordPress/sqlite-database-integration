@@ -8,9 +8,37 @@ class WP_PostgreSQL_Driver_Show_Index_Fixture_Connection extends WP_PostgreSQL_C
 	 * Constructor.
 	 */
 	public function __construct() {
-		parent::__construct( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
+		parent::__construct(
+			array(
+				'pdo' => new class( 'sqlite::memory:' ) extends PDO {
+					/**
+					 * Report pgsql while keeping SQLite execution for fixture queries.
+					 *
+					 * @param int $attribute PDO attribute.
+					 * @return mixed Attribute value.
+					 */
+					#[\ReturnTypeWillChange]
+					public function getAttribute( $attribute ) {
+						if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+							return 'pgsql';
+						}
+
+						return parent::getAttribute( $attribute );
+					}
+				},
+			)
+		);
 
 		$this->install_fixture();
+	}
+
+	/**
+	 * Report PostgreSQL for catalog-branch selection.
+	 *
+	 * @return string PDO driver name.
+	 */
+	public function get_driver_name(): string {
+		return 'pgsql';
 	}
 
 	/**
@@ -21,6 +49,10 @@ class WP_PostgreSQL_Driver_Show_Index_Fixture_Connection extends WP_PostgreSQL_C
 	 * @return PDOStatement Statement.
 	 */
 	public function query( string $sql, array $params = array() ): PDOStatement {
+		if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+			return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+		}
+
 		if ( false === strpos( $sql, 'pg_catalog.pg_index' ) ) {
 			return parent::query( $sql, $params );
 		}

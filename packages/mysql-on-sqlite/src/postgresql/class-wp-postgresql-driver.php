@@ -20042,12 +20042,6 @@ ORDER BY ' . $table_name_sql;
 			return $this->last_result;
 		}
 
-		$include_catalog_fallback = true;
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			$this->ensure_mysql_schema_metadata_tables();
-			$include_catalog_fallback = ! $this->mysql_index_metadata_has_rows( $resolved_schema, $table_name );
-		}
-
 		$sql    = sprintf(
 			'SELECT
 	%1$s
@@ -20065,7 +20059,6 @@ FROM (
 				'statistics',
 				array(
 					'include_internal_sort_column' => true,
-					'include_catalog_fallback'     => $include_catalog_fallback,
 				)
 			),
 			$this->connection->quote( 'public' ),
@@ -36662,7 +36655,7 @@ WHERE t.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 
 		if (
 			! $this->should_use_postgresql_catalog_metadata()
-			&& ! in_array( $view, explode( ' ', 'processlist keywords statistics' ), true )
+			&& ! in_array( $view, explode( ' ', 'processlist keywords' ), true )
 		) {
 			return $this->get_direct_information_schema_literal_relation_sql(
 				$this->get_direct_information_schema_relation_columns( $view ),
@@ -37684,19 +37677,17 @@ WHERE c.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 
 		if ( 'statistics' === $view ) {
 			$include_internal_sort_column = ! empty( $options['include_internal_sort_column'] );
-
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$column_name_sql = $this->get_postgresql_prefix_index_expression_column_name_sql( 'expression' );
-				$index_type_sql  = sprintf(
-					'COALESCE(%s, UPPER(access_method))',
-					$this->get_postgresql_catalog_index_type_comment_sql( 'index_comment' )
-				);
-				$sub_part_sql    = $this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' );
-				$sort_column_sql = $include_internal_sort_column ? ',
+			$column_name_sql              = $this->get_postgresql_prefix_index_expression_column_name_sql( 'expression' );
+			$index_type_sql               = sprintf(
+				'COALESCE(%s, UPPER(access_method))',
+				$this->get_postgresql_catalog_index_type_comment_sql( 'index_comment' )
+			);
+			$sub_part_sql                 = $this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' );
+			$internal_sort_column_sql     = $include_internal_sort_column ? ',
 	postgresql_index_oid AS "POSTGRESQL_INDEX_OID"' : '';
 
-				return sprintf(
-					'%7$s
+			return sprintf(
+				'%7$s
 SELECT
 	\'def\' AS "TABLE_CATALOG",
 	%1$s AS "TABLE_SCHEMA",
@@ -37724,144 +37715,21 @@ SELECT
 	\'YES\' AS "IS_VISIBLE",
 	%6$s AS "EXPRESSION"%8$s
 FROM index_columns',
-					$this->get_direct_information_schema_display_schema_sql( 'table_schema' ),
-					$column_name_sql,
-					$index_type_sql,
-					$sub_part_sql,
-					$this->get_postgresql_catalog_index_comment_sql( 'index_comment' ),
-					$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
-					$this->get_postgresql_catalog_index_columns_cte_sql(
-						'n.nspname AS table_schema',
-						'',
-						array(
-							'n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-							't.relkind IN (\'r\', \'p\')',
-						)
-					),
-					$sort_column_sql
-				);
-			}
-
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$index_metadata_table         = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
-			$column_name_sql              = $this->get_postgresql_prefix_index_expression_column_name_sql( 'expression' );
-			$internal_sort_column         = $include_internal_sort_column ? ',
-	im.index_ordinal AS "POSTGRESQL_INDEX_OID"' : '';
-			$catalog_internal_sort_column = $include_internal_sort_column ? ',
-	postgresql_index_oid AS "POSTGRESQL_INDEX_OID"' : '';
-
-			if ( empty( $options['include_catalog_fallback'] ) ) {
-				return sprintf(
-					'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	im.table_name AS "TABLE_NAME",
-	CAST(im.non_unique AS integer) AS "NON_UNIQUE",
-	%1$s AS "INDEX_SCHEMA",
-	im.key_name AS "INDEX_NAME",
-	im.seq_in_index AS "SEQ_IN_INDEX",
-	im.column_name AS "COLUMN_NAME",
-	CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "COLLATION",
-	0 AS "CARDINALITY",
-	im.sub_part AS "SUB_PART",
-	NULL AS "PACKED",
-	im.nullable AS "NULLABLE",
-	im.index_type AS "INDEX_TYPE",
-	\'\' AS "COMMENT",
-	im.index_comment AS "INDEX_COMMENT",
-	\'YES\' AS "IS_VISIBLE",
-	NULL AS "EXPRESSION"%3$s
-FROM %2$s im',
-					$this->get_direct_information_schema_display_schema_sql( 'im.table_schema' ),
-					$index_metadata_table,
-					$internal_sort_column
-				);
-			}
-
-			return sprintf(
-				'WITH metadata_tables AS (
-	SELECT DISTINCT table_schema, table_name
-	FROM %1$s
-),
-metadata_index_rows AS (
-	SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%2$s AS "TABLE_SCHEMA",
-	im.table_name AS "TABLE_NAME",
-	CAST(im.non_unique AS integer) AS "NON_UNIQUE",
-	%2$s AS "INDEX_SCHEMA",
-	im.key_name AS "INDEX_NAME",
-	im.seq_in_index AS "SEQ_IN_INDEX",
-	im.column_name AS "COLUMN_NAME",
-	CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "COLLATION",
-	0 AS "CARDINALITY",
-	im.sub_part AS "SUB_PART",
-	NULL AS "PACKED",
-	im.nullable AS "NULLABLE",
-	im.index_type AS "INDEX_TYPE",
-	\'\' AS "COMMENT",
-	im.index_comment AS "INDEX_COMMENT",
-	\'YES\' AS "IS_VISIBLE",
-	NULL AS "EXPRESSION"%8$s
-	FROM %1$s im
-),
-%3$s,
-catalog_index_rows AS (
-	SELECT
-		\'def\' AS "TABLE_CATALOG",
-		%4$s AS "TABLE_SCHEMA",
-		table_name AS "TABLE_NAME",
-		CASE WHEN indisunique THEN 0 ELSE 1 END AS "NON_UNIQUE",
-		%4$s AS "INDEX_SCHEMA",
-		CASE
-			WHEN indisprimary THEN \'PRIMARY\'
-			WHEN postgresql_index_name LIKE table_name || \'__%%\' THEN SUBSTRING(postgresql_index_name FROM CHAR_LENGTH(table_name || \'__\') + 1)
-			ELSE postgresql_index_name
-		END AS "INDEX_NAME",
-		CAST(seq_in_index AS integer) AS "SEQ_IN_INDEX",
-		COALESCE(column_name, %5$s) AS "COLUMN_NAME",
-		CASE WHEN is_desc THEN \'D\' ELSE \'A\' END AS "COLLATION",
-		0 AS "CARDINALITY",
-		%6$s AS "SUB_PART",
-		NULL AS "PACKED",
-		CASE
-			WHEN 0 = attnum OR attnotnull THEN \'\'
-			ELSE \'YES\'
-		END AS "NULLABLE",
-		UPPER(access_method) AS "INDEX_TYPE",
-	\'\' AS "COMMENT",
-	index_comment AS "INDEX_COMMENT",
-	\'YES\' AS "IS_VISIBLE",
-	%7$s AS "EXPRESSION"%9$s
-	FROM index_columns ic
-	WHERE NOT EXISTS (
-		SELECT 1
-		FROM metadata_tables mt
-		WHERE mt.table_schema = ic.table_schema
-			AND mt.table_name = ic.table_name
-	)
-)
-SELECT * FROM metadata_index_rows
-UNION ALL
-SELECT * FROM catalog_index_rows',
-				$index_metadata_table,
-				$this->get_direct_information_schema_display_schema_sql( 'im.table_schema' ),
+				$this->get_direct_information_schema_display_schema_sql( 'table_schema' ),
+				$column_name_sql,
+				$index_type_sql,
+				$sub_part_sql,
+				$this->get_postgresql_catalog_index_comment_sql( 'index_comment' ),
+				$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
 				$this->get_postgresql_catalog_index_columns_cte_sql(
 					'n.nspname AS table_schema',
 					'',
 					array(
-						'n.nspname NOT IN (\'information_schema\', \'pg_catalog\')',
-						't.relname NOT IN (' . $this->get_direct_information_schema_hidden_table_list_sql() . ')',
+						'n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 						't.relkind IN (\'r\', \'p\')',
 					)
 				),
-				$this->get_direct_information_schema_display_schema_sql( 'table_schema' ),
-				$column_name_sql,
-				$this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' ),
-				$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
-				$internal_sort_column,
-				$catalog_internal_sort_column
+				$internal_sort_column_sql
 			);
 		}
 

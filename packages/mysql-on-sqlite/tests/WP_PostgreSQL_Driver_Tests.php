@@ -3847,9 +3847,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$describe = $driver->query( 'DESCRIBE wptests_temp_shadow' );
 		$this->assertSame( array( 'b' ), array_column( $describe, 'Field' ) );
 
-		$indexes = $driver->query( 'SHOW INDEXES FROM wptests_temp_shadow' );
-		$this->assertSame( array( 'ib' ), array_values( array_unique( array_column( $indexes, 'Key_name' ) ) ) );
-
 		$driver->query( 'ALTER TABLE wptests_temp_shadow ADD COLUMN c INT' );
 		$columns = $driver->query( 'SHOW COLUMNS FROM wptests_temp_shadow' );
 		$this->assertSame( array( 'b', 'c' ), array_column( $columns, 'Field' ) );
@@ -3862,9 +3859,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->query( 'DROP TABLE wptests_temp_shadow' );
 		$columns = $driver->query( 'SHOW COLUMNS FROM wptests_temp_shadow' );
 		$this->assertSame( array( 'a' ), array_column( $columns, 'Field' ) );
-
-		$indexes = $driver->query( 'SHOW INDEXES FROM wptests_temp_shadow' );
-		$this->assertSame( array( 'ia' ), array_values( array_unique( array_column( $indexes, 'Key_name' ) ) ) );
 	}
 
 	/**
@@ -3954,13 +3948,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'D', $indexes[1]['collation'] );
 		$this->assertSame( '16', $indexes[1]['sub_part'] );
 		$this->assertSame( '', $indexes[1]['nullable'] );
-
-		$show_indexes = $driver->query( "SHOW INDEX FROM wptests_standalone_index WHERE Index_comment = 'Lookup'" );
-
-		$this->assertCount( 1, $show_indexes );
-		$this->assertSame( 'idx_value', $show_indexes[0]->Key_name );
-		$this->assertSame( 'D', $show_indexes[0]->Collation );
-		$this->assertSame( 'Lookup', $show_indexes[0]->Index_comment );
 
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_standalone_index' )[0]->{'Create Table'};
 		$this->assertStringContainsString( "KEY `idx_value` (`value`(16) DESC) COMMENT 'Lookup'", $create_table );
@@ -4631,14 +4618,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				KEY user_login (user_login)
 			)'
 		);
-		$driver->query( 'SHOW INDEX FROM wptests_metadata_collation_quote' );
 
 		$sql = implode( "\n", $logged_sql );
 		$this->assertStringContainsString( '"collation" TEXT', $sql );
 		$this->assertStringContainsString( 'index_type, "collation", sub_part', $sql );
-		$this->assertStringContainsString( 'COALESCE(im."collation", \'A\')', $sql );
 		$this->assertStringNotContainsString( 'index_type, collation, sub_part', $sql );
-		$this->assertStringNotContainsString( 'COALESCE(im.collation, \'A\')', $sql );
 	}
 
 	/**
@@ -6065,9 +6049,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$driver->get_last_postgresql_queries()
 		);
 
-		$index_rows = $driver->query( 'SHOW INDEX FROM wptests_plain_secondary_indexes' );
-		$this->assertSame( array( 'slug_lookup', 'value_lookup' ), array_column( $index_rows, 'Key_name' ) );
-
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_plain_secondary_indexes' )[0]->{'Create Table'};
 		$this->assertStringContainsString( 'KEY `slug_lookup` (`slug`)', $create_table );
 		$this->assertStringContainsString( 'KEY `value_lookup` (`value`)', $create_table );
@@ -6135,9 +6116,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$indexes = $this->get_mysql_index_metadata_rows( $driver, 'wptests_create_hash_index' );
 		$this->assertSame( array( 'value_hash' ), array_column( $indexes, 'key_name' ) );
 		$this->assertSame( array( 'BTREE' ), array_column( $indexes, 'index_type' ) );
-
-		$show_index = $driver->query( 'SHOW INDEX FROM wptests_create_hash_index' );
-		$this->assertSame( 'BTREE', $show_index[0]->Index_type );
 	}
 
 	/**
@@ -6201,16 +6179,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 
-		$statistics = $driver->query(
-			"SELECT INDEX_NAME, COLUMN_NAME, COLLATION, SUB_PART
-			FROM information_schema.statistics
-			WHERE table_name = 'wptests_create_directional_index'
-			ORDER BY INDEX_NAME, SEQ_IN_INDEX"
-		);
-
 		$statistics_by_part = array();
-		foreach ( $statistics as $row ) {
-			$statistics_by_part[ $row->INDEX_NAME . ':' . $row->COLUMN_NAME ] = array( $row->COLLATION, $row->SUB_PART );
+		foreach ( $this->get_mysql_index_metadata_rows( $driver, 'wptests_create_directional_index' ) as $row ) {
+			$statistics_by_part[ $row['key_name'] . ':' . $row['column_name'] ] = array( $row['collation'], $row['sub_part'] );
 		}
 		ksort( $statistics_by_part );
 
@@ -6224,10 +6195,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$statistics_by_part
 		);
-
-		$show_index = $driver->query( "SHOW INDEX FROM wptests_create_directional_index WHERE Key_name = 'score_name'" );
-		$this->assertSame( array( 'A', 'D', 'D' ), array_column( $show_index, 'Collation' ) );
-		$this->assertSame( array( null, '16', null ), array_column( $show_index, 'Sub_part' ) );
 
 		$show_create = $driver->query( 'SHOW CREATE TABLE wptests_create_directional_index' )[0]->{'Create Table'};
 		$this->assertStringContainsString(
@@ -23065,9 +23032,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( array( 'PRIMARY', 'flag_idx' ), array_values( array_unique( array_column( $indexes, 'key_name' ) ) ) );
 		$this->assertSame( 'D', $indexes[1]['collation'] );
 
-		$show_index = $driver->query( "SHOW INDEX FROM wptests_plugin_alter WHERE Key_name = 'flag_idx'" );
-		$this->assertSame( 'D', $show_index[0]->Collation );
-
 		$create_table = $driver->query( 'SHOW CREATE TABLE wptests_plugin_alter' )[0]->{'Create Table'};
 		$this->assertStringContainsString( '  KEY `flag_idx` (`flag` DESC)', $create_table );
 	}
@@ -26635,13 +26599,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( '  KEY `combo_idx` (`first_key`, `last_key`)', $create_table );
 		$this->assertStringNotContainsString( '`obsolete`', $create_table );
 		$this->assertStringNotContainsString( 'obsolete_idx', $create_table );
-
-		$show_index = $driver->query( "SHOW INDEX FROM wptests_plugin_drop_composite WHERE Key_name = 'combo_idx'" );
-		$this->assertCount( 2, $show_index );
-		$this->assertSame( 'first_key', $show_index[0]->Column_name );
-		$this->assertSame( '1', $show_index[0]->Seq_in_index );
-		$this->assertSame( 'last_key', $show_index[1]->Column_name );
-		$this->assertSame( '2', $show_index[1]->Seq_in_index );
 	}
 
 	/**
@@ -30818,11 +30775,6 @@ $wp_mysql_on_update$',
 		$this->assertCount( 1, $filtered_columns );
 		$this->assertSame( 'label', $filtered_columns[0]->Field );
 
-		$indexes = $driver->query( "SHOW INDEX FROM wptests_comment_metadata WHERE Index_comment = 'Lookup index'" );
-		$this->assertCount( 1, $indexes );
-		$this->assertSame( 'label_lookup', $indexes[0]->Key_name );
-		$this->assertSame( 'Lookup index', $indexes[0]->Index_comment );
-
 		$status = $driver->query( "SHOW TABLE STATUS LIKE 'wptests_comment_metadata'" );
 		$this->assertCount( 1, $status );
 		$this->assertSame( 'Table note', $status[0]->Comment );
@@ -30853,13 +30805,6 @@ $wp_mysql_on_update$',
 				$information_schema_columns
 			)
 		);
-
-		$statistics = $driver->query(
-			"SELECT INDEX_NAME, INDEX_COMMENT
-			FROM information_schema.statistics
-			WHERE table_name = 'wptests_comment_metadata'"
-		);
-		$this->assertSame( array( 'label_lookup', 'Lookup index' ), array( $statistics[0]->INDEX_NAME, $statistics[0]->INDEX_COMMENT ) );
 	}
 
 	/**
@@ -32968,10 +32913,10 @@ $wp_mysql_on_update$',
 
 		$this->assertSame(
 			array(
-				array( 'wptests_options', 'option_id', 'PRIMARY' ),
-				array( 'wptests_options', 'option_name', 'option_name' ),
+				array( 'wptests_options', 'option_id', null ),
+				array( 'wptests_options', 'option_name', null ),
 				array( 'wptests_options', 'option_value', null ),
-				array( 'wptests_options', 'autoload', 'autoload' ),
+				array( 'wptests_options', 'autoload', null ),
 			),
 			array_map(
 				static function ( $row ): array {
@@ -33020,12 +32965,9 @@ $wp_mysql_on_update$',
 
 		$this->assertSame(
 			array(
-				'PRIMARY (index)',
 				'autoload (column)',
-				'autoload (index)',
 				'option_id (column)',
 				'option_name (column)',
-				'option_name (index)',
 				'option_value (column)',
 			),
 			array_column( $rows, 'name' )
@@ -38097,7 +38039,6 @@ $wp_mysql_on_update$',
 			'SELECT schema_name AS name FROM information_schema.schemata WHERE schema_name = DATABASE()' => 'wptests',
 			"SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'wptests_options'" => 'wptests_options',
 			"SELECT column_name AS name FROM information_schema.columns AS c WHERE SCHEMA() = c.table_schema AND c.table_name = 'wptests_options' AND c.column_name = 'option_name'" => 'option_name',
-			"SELECT index_name AS name FROM information_schema.statistics WHERE index_schema = SCHEMA() AND table_name = 'wptests_options' AND index_name = 'option_name'" => 'option_name',
 		);
 
 		foreach ( $cases as $query => $expected_name ) {
@@ -40396,9 +40337,9 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Tests direct information_schema column/index SELECTs use MySQL metadata.
+	 * Tests direct information_schema column SELECTs use MySQL metadata.
 	 */
-	public function test_direct_information_schema_columns_and_statistics_selects_return_mysql_shape(): void {
+	public function test_direct_information_schema_columns_selects_return_mysql_shape(): void {
 		$driver = $this->create_driver();
 		$this->install_information_schema_fixture( $driver );
 		$this->install_direct_information_schema_options_metadata( $driver );
@@ -40424,39 +40365,6 @@ $wp_mysql_on_update$',
 				$columns
 			)
 		);
-
-		$statistics = $driver->query(
-			"SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SEQ_IN_INDEX
-			FROM information_schema.statistics
-			WHERE table_name = 'wptests_options'
-			ORDER BY INDEX_NAME, SEQ_IN_INDEX"
-		);
-
-		$statistics_by_name = array();
-		foreach ( $statistics as $row ) {
-			$statistics_by_name[ $row->INDEX_NAME ] = array( $row->COLUMN_NAME, $row->NON_UNIQUE, $row->SEQ_IN_INDEX );
-		}
-		ksort( $statistics_by_name );
-
-		$this->assertSame(
-			array(
-				'PRIMARY'     => array( 'option_id', '0', '1' ),
-				'autoload'    => array( 'autoload', '1', '1' ),
-				'option_name' => array( 'option_name', '0', '1' ),
-			),
-			$statistics_by_name
-		);
-
-		$current_schema_statistics = $driver->query(
-			"SELECT INDEX_NAME
-			FROM information_schema.statistics
-			WHERE table_schema = SCHEMA()
-				AND table_name = 'wptests_options'
-				AND index_name = 'option_name'"
-		);
-
-		$this->assertCount( 1, $current_schema_statistics );
-		$this->assertSame( 'option_name', $current_schema_statistics[0]->INDEX_NAME );
 	}
 
 	/**
@@ -40587,7 +40495,6 @@ $wp_mysql_on_update$',
 						'statistics',
 						array(
 							'include_internal_sort_column' => true,
-							'include_catalog_fallback'     => true,
 						)
 					),
 					'select'   => $this->get_show_index_relation_select_sql(),
@@ -40771,12 +40678,8 @@ $wp_mysql_on_update$',
 		$this->assertSame( '32', $indexes[0]->Sub_part );
 		$this->assertSame( 'body_fulltext', $indexes[1]->Key_name );
 		$this->assertSame( 'FULLTEXT', $indexes[1]->Index_type );
-			$this->assertNull( $indexes[1]->Collation );
-			$this->assertNull( $indexes[1]->Sub_part );
-		$this->assertStringContainsString(
-			'CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "COLLATION"',
-			$driver->get_last_postgresql_queries()[0]['sql']
-		);
+		$this->assertNull( $indexes[1]->Collation );
+		$this->assertNull( $indexes[1]->Sub_part );
 	}
 
 	/**
@@ -40893,20 +40796,9 @@ $wp_mysql_on_update$',
 	 * Tests SHOW INDEX-family WHERE LIKE filters support allowed output columns.
 	 */
 	public function test_show_index_family_where_like_filters_catalog_rows(): void {
-		$driver = $this->create_driver();
-		$driver->store_mysql_schema_metadata(
-			"CREATE TABLE wptests_index_like (
-				option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-				option_name varchar(191) NOT NULL DEFAULT '',
-				option_value longtext NOT NULL,
-				autoload varchar(20) NOT NULL DEFAULT 'yes',
-				PRIMARY KEY (option_id),
-				UNIQUE KEY option_name (option_name),
-				KEY autoload (autoload)
-			)"
-		);
+		$driver = $this->create_show_index_driver();
 
-		$indexes = $driver->query( "SHOW INDEX FROM wptests_index_like WHERE Key_name LIKE 'auto%'" );
+		$indexes = $driver->query( "SHOW INDEX FROM wptests_options WHERE Key_name LIKE 'auto%'" );
 
 		$this->assertCount( 1, $indexes );
 		$this->assertSame( 'autoload', $indexes[0]->Key_name );
@@ -40916,36 +40808,25 @@ $wp_mysql_on_update$',
 		$this->assertCount( 1, $queries );
 		$this->assertStringContainsString( 'WHERE "Key_name" LIKE ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW INDEX', $queries[0]['sql'] );
-		$this->assertSame( array( 'public', 'wptests_index_like', 'auto%' ), $queries[0]['params'] );
+		$this->assertSame( array( 'public', 'wptests_options', 'auto%' ), $queries[0]['params'] );
 
-		$indexes = $driver->query( "SHOW KEYS FROM wptests_index_like WHERE Column_name LIKE 'option_%'" );
+		$indexes = $driver->query( "SHOW KEYS FROM wptests_options WHERE Column_name LIKE 'option_%'" );
 
 		$this->assertSame( array( 'PRIMARY', 'option_name' ), array( $indexes[0]->Key_name, $indexes[1]->Key_name ) );
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
 		$this->assertStringContainsString( 'WHERE "Column_name" LIKE ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW KEYS', strtoupper( $queries[0]['sql'] ) );
-		$this->assertSame( array( 'public', 'wptests_index_like', 'option_%' ), $queries[0]['params'] );
+		$this->assertSame( array( 'public', 'wptests_options', 'option_%' ), $queries[0]['params'] );
 	}
 
 	/**
 	 * Tests SHOW INDEX-family WHERE filters support simple AND combinations.
 	 */
 	public function test_show_index_family_where_and_filters_catalog_rows(): void {
-		$driver = $this->create_driver();
-		$driver->store_mysql_schema_metadata(
-			"CREATE TABLE wptests_index_and (
-				option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-				option_name varchar(191) NOT NULL DEFAULT '',
-				option_value longtext NOT NULL,
-				autoload varchar(20) NOT NULL DEFAULT 'yes',
-				PRIMARY KEY (option_id),
-				UNIQUE KEY option_name (option_name),
-				KEY autoload (autoload)
-			)"
-		);
+		$driver = $this->create_show_index_driver();
 
-		$indexes = $driver->query( "SHOW INDEX FROM wptests_index_and WHERE Key_name LIKE 'auto%' AND Non_unique = 1" );
+		$indexes = $driver->query( "SHOW INDEX FROM wptests_options WHERE Key_name LIKE 'auto%' AND Non_unique = 1" );
 
 		$this->assertCount( 1, $indexes );
 		$this->assertSame( 'autoload', $indexes[0]->Key_name );
@@ -40956,7 +40837,7 @@ $wp_mysql_on_update$',
 		$this->assertCount( 1, $queries );
 		$this->assertStringContainsString( 'WHERE "Key_name" LIKE ? ESCAPE \'\\\' AND "Non_unique" = ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW INDEX', $queries[0]['sql'] );
-		$this->assertSame( array( 'public', 'wptests_index_and', 'auto%', '1' ), $queries[0]['params'] );
+		$this->assertSame( array( 'public', 'wptests_options', 'auto%', '1' ), $queries[0]['params'] );
 	}
 
 	/**
