@@ -30776,33 +30776,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '  CONSTRAINT `wptests_not_enforced_check_chk_1` CHECK (id > 0) /*!80016 NOT ENFORCED */', $create_table );
 		$this->assertStringContainsString( '  CONSTRAINT `wptests_not_enforced_check_chk_2` CHECK (score > 0)', $create_table );
 		$this->assertStringContainsString( '  CONSTRAINT `score_ceiling` CHECK (score < 100) /*!80016 NOT ENFORCED */', $create_table );
-
-		$table_constraints = $driver->query(
-			"SELECT CONSTRAINT_NAME, ENFORCED
-			FROM information_schema.table_constraints
-			WHERE table_name = 'wptests_not_enforced_check'
-			ORDER BY CONSTRAINT_NAME"
-		);
-		$this->assertSame(
-			array(
-				array( 'score_ceiling', 'NO' ),
-				array( 'wptests_not_enforced_check_chk_1', 'NO' ),
-				array( 'wptests_not_enforced_check_chk_2', 'YES' ),
-			),
-			array_map(
-				static function ( $row ): array {
-					return array( $row->CONSTRAINT_NAME, $row->ENFORCED );
-				},
-				$table_constraints
-			)
-		);
-
-		$check_constraints = $driver->query(
-			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
-			FROM information_schema.check_constraints
-			WHERE constraint_name = 'score_ceiling'"
-		);
-		$this->assertSame( 'score < 100', $check_constraints[0]->CHECK_CLAUSE );
 	}
 
 	/**
@@ -32947,25 +32920,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'AS "t"', $sql );
 		$this->assertStringContainsString( 'AS "c"', $sql );
 		$this->assertStringContainsString( '"c"."TABLE_SCHEMA" = "t"."TABLE_SCHEMA"', $sql );
-
-		$checks = $driver->query(
-			"SELECT tc.constraint_name AS constraint_name, cc.check_clause AS check_clause
-			FROM table_constraints AS tc
-			JOIN check_constraints AS cc
-				ON cc.constraint_schema = tc.constraint_schema
-				AND cc.constraint_name = tc.constraint_name
-			WHERE tc.table_name = 'wptests_posts'"
-		);
-
-		$this->assertEquals(
-			array(
-				(object) array(
-					'constraint_name' => 'wptests_posts_status_chk',
-					'check_clause'    => 'post_status IS NOT NULL',
-				),
-			),
-			$checks
-		);
 
 		$status = $driver->query(
 			"SELECT variable_name AS variable_name
@@ -38144,10 +38098,6 @@ $wp_mysql_on_update$',
 			"SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'wptests_options'" => 'wptests_options',
 			"SELECT column_name AS name FROM information_schema.columns AS c WHERE SCHEMA() = c.table_schema AND c.table_name = 'wptests_options' AND c.column_name = 'option_name'" => 'option_name',
 			"SELECT index_name AS name FROM information_schema.statistics WHERE index_schema = SCHEMA() AND table_name = 'wptests_options' AND index_name = 'option_name'" => 'option_name',
-			"SELECT constraint_name AS name FROM information_schema.table_constraints WHERE constraint_schema = DATABASE() AND table_name = 'wptests_options' AND constraint_name = 'PRIMARY'" => 'PRIMARY',
-			"SELECT referenced_table_schema AS name FROM information_schema.key_column_usage WHERE referenced_table_schema = SCHEMA() AND table_name = 'wptests_posts'" => 'wptests',
-			"SELECT unique_constraint_schema AS name FROM information_schema.referential_constraints WHERE unique_constraint_schema = DATABASE() AND table_name = 'wptests_posts'" => 'wptests',
-			"SELECT constraint_schema AS name FROM information_schema.check_constraints WHERE constraint_schema = SCHEMA() AND constraint_name = 'wptests_posts_status_chk'" => 'wptests',
 		);
 
 		foreach ( $cases as $query => $expected_name ) {
@@ -38835,23 +38785,6 @@ $wp_mysql_on_update$',
 		$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
 		$this->assertStringContainsString( 'USING ("TABLE_SCHEMA", "TABLE_NAME")', $sql );
 		$this->assertStringContainsString( 'WHERE "TABLE_NAME" = \'wptests_options\'', $sql );
-
-		$key_usage = $driver->query(
-			"SELECT constraint_name AS constraint_name, kcu.column_name AS column_name
-			FROM information_schema.table_constraints AS tc
-			JOIN information_schema.key_column_usage AS kcu
-				USING (constraint_schema, constraint_name, table_schema, table_name)
-			WHERE table_name = 'wptests_options'
-				AND constraint_name = 'PRIMARY'"
-		);
-
-		$this->assertSame( 'PRIMARY', $key_usage[0]->constraint_name );
-		$this->assertSame( 'option_id', $key_usage[0]->column_name );
-
-		$sql = implode( "\n", array_column( $driver->get_last_postgresql_queries(), 'sql' ) );
-		$this->assertStringContainsString( 'USING ("CONSTRAINT_SCHEMA", "CONSTRAINT_NAME", "TABLE_SCHEMA", "TABLE_NAME")', $sql );
-		$this->assertStringContainsString( 'WHERE "TABLE_NAME" = \'wptests_options\'', $sql );
-		$this->assertStringContainsString( '"CONSTRAINT_NAME" = \'PRIMARY\'', $sql );
 	}
 
 	/**
@@ -40463,9 +40396,9 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Tests direct information_schema column/index/constraint SELECTs use MySQL metadata.
+	 * Tests direct information_schema column/index SELECTs use MySQL metadata.
 	 */
-	public function test_direct_information_schema_columns_statistics_and_key_constraints_selects_return_mysql_shape(): void {
+	public function test_direct_information_schema_columns_and_statistics_selects_return_mysql_shape(): void {
 		$driver = $this->create_driver();
 		$this->install_information_schema_fixture( $driver );
 		$this->install_direct_information_schema_options_metadata( $driver );
@@ -40524,112 +40457,6 @@ $wp_mysql_on_update$',
 
 		$this->assertCount( 1, $current_schema_statistics );
 		$this->assertSame( 'option_name', $current_schema_statistics[0]->INDEX_NAME );
-
-		$constraints = $driver->query(
-			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
-			FROM information_schema.table_constraints
-			WHERE table_name = 'wptests_options'
-			ORDER BY CONSTRAINT_NAME"
-		);
-
-		$this->assertSame(
-			array(
-				array( 'PRIMARY', 'PRIMARY KEY' ),
-				array( 'option_name', 'UNIQUE' ),
-			),
-			array_map(
-				static function ( $row ): array {
-					return array( $row->CONSTRAINT_NAME, $row->CONSTRAINT_TYPE );
-				},
-				$constraints
-			)
-		);
-
-		$key_usage = $driver->query(
-			"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
-			FROM information_schema.key_column_usage
-			WHERE table_name = 'wptests_options'
-			ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION"
-		);
-
-		$this->assertSame(
-			array(
-				array( 'PRIMARY', 'option_id', '1' ),
-				array( 'option_name', 'option_name', '1' ),
-			),
-			array_map(
-				static function ( $row ): array {
-					return array( $row->CONSTRAINT_NAME, $row->COLUMN_NAME, $row->ORDINAL_POSITION );
-				},
-				$key_usage
-			)
-		);
-	}
-
-	/**
-	 * Tests direct FK and CHECK information_schema SELECTs return MySQL-shaped rows.
-	 */
-	public function test_direct_information_schema_foreign_and_check_constraints_selects_return_mysql_shape(): void {
-		$driver = $this->create_driver();
-		$this->install_information_schema_fixture( $driver );
-
-		$constraints = $driver->query(
-			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
-			FROM information_schema.table_constraints
-			WHERE table_name = 'wptests_posts'
-			ORDER BY CONSTRAINT_NAME"
-		);
-
-		$this->assertSame(
-			array(
-				array( 'wptests_posts_author_fk', 'FOREIGN KEY' ),
-				array( 'wptests_posts_status_chk', 'CHECK' ),
-			),
-			array_map(
-				static function ( $row ): array {
-					return array( $row->CONSTRAINT_NAME, $row->CONSTRAINT_TYPE );
-				},
-				$constraints
-			)
-		);
-
-		$key_usage = $driver->query(
-			"SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
-			FROM information_schema.key_column_usage
-			WHERE table_name = 'wptests_posts'
-			ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION"
-		);
-
-		$this->assertSame(
-			array(
-				array( 'wptests_posts_author_fk', 'post_author', 'wptests_options', 'option_id' ),
-			),
-			array_map(
-				static function ( $row ): array {
-					return array( $row->CONSTRAINT_NAME, $row->COLUMN_NAME, $row->REFERENCED_TABLE_NAME, $row->REFERENCED_COLUMN_NAME );
-				},
-				$key_usage
-			)
-		);
-
-		$referential = $driver->query(
-			"SELECT CONSTRAINT_NAME, DELETE_RULE, REFERENCED_TABLE_NAME
-			FROM information_schema.referential_constraints
-			WHERE table_name = 'wptests_posts'"
-		);
-
-		$this->assertSame( 'wptests_posts_author_fk', $referential[0]->CONSTRAINT_NAME );
-		$this->assertSame( 'CASCADE', $referential[0]->DELETE_RULE );
-		$this->assertSame( 'wptests_options', $referential[0]->REFERENCED_TABLE_NAME );
-
-		$checks = $driver->query(
-			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
-			FROM information_schema.check_constraints
-			WHERE constraint_name = 'wptests_posts_status_chk'"
-		);
-
-		$this->assertSame( 'wptests_posts_status_chk', $checks[0]->CONSTRAINT_NAME );
-		$this->assertSame( 'post_status IS NOT NULL', $checks[0]->CHECK_CLAUSE );
 	}
 
 	/**

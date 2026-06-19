@@ -36662,7 +36662,7 @@ WHERE t.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 
 		if (
 			! $this->should_use_postgresql_catalog_metadata()
-			&& ! in_array( $view, explode( ' ', 'processlist keywords table_constraints key_column_usage referential_constraints check_constraints statistics' ), true )
+			&& ! in_array( $view, explode( ' ', 'processlist keywords statistics' ), true )
 		) {
 			return $this->get_direct_information_schema_literal_relation_sql(
 				$this->get_direct_information_schema_relation_columns( $view ),
@@ -37289,12 +37289,11 @@ WHERE c.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 		}
 
 		if ( 'table_constraints' === $view ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$enforced_sql = $this->get_postgresql_mysql_check_enforced_comment_sql(
-					'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
-				);
-				return sprintf(
-					'SELECT
+			$enforced_sql = $this->get_postgresql_mysql_check_enforced_comment_sql(
+				'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
+			);
+			return sprintf(
+				'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
 	CASE WHEN con.contype = \'p\' THEN \'PRIMARY\' ELSE con.conname END AS "CONSTRAINT_NAME",
@@ -37315,106 +37314,14 @@ JOIN pg_catalog.pg_namespace table_ns
 WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
 	AND table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-					$enforced_sql
-				);
-			}
-
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$index_metadata_table       = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
-			$foreign_key_metadata_table = $this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE );
-			$check_metadata_table       = $this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE );
-
-			return sprintf(
-				'WITH index_constraints AS (
-	SELECT DISTINCT
-		im.table_schema,
-		im.table_name,
-		im.key_name AS constraint_name,
-		CASE WHEN UPPER(im.key_name) = \'PRIMARY\' THEN \'PRIMARY KEY\' ELSE \'UNIQUE\' END AS constraint_type
-	FROM %1$s im
-	WHERE im.non_unique = \'0\'
-),
-foreign_key_constraints AS (
-	SELECT DISTINCT
-		fk.table_schema,
-		fk.table_name,
-		fk.constraint_name,
-		\'FOREIGN KEY\' AS constraint_type
-	FROM %2$s fk
-),
-check_constraints AS (
-	SELECT
-		cm.table_schema,
-		cm.table_name,
-		cm.constraint_name,
-		\'CHECK\' AS constraint_type,
-		cm.enforced
-	FROM %3$s cm
-),
-catalog_constraints AS (
-	SELECT
-		tc.table_schema,
-		tc.table_name,
-		CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END AS constraint_name,
-		tc.constraint_type,
-		\'YES\' AS enforced
-	FROM information_schema.table_constraints tc
-	WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND tc.table_name NOT IN (%4$s)
-		AND tc.constraint_type IN (\'PRIMARY KEY\', \'UNIQUE\', \'FOREIGN KEY\', \'CHECK\')
-		AND NOT EXISTS (
-			SELECT 1
-			FROM index_constraints ic
-			WHERE ic.table_schema = tc.table_schema
-				AND ic.table_name = tc.table_name
-				AND ic.constraint_type = tc.constraint_type
-		)
-		AND NOT EXISTS (
-			SELECT 1
-			FROM foreign_key_constraints fkc
-			WHERE fkc.table_schema = tc.table_schema
-				AND fkc.table_name = tc.table_name
-				AND fkc.constraint_name = tc.constraint_name
-		)
-		AND NOT EXISTS (
-			SELECT 1
-			FROM check_constraints cc
-			WHERE cc.table_schema = tc.table_schema
-				AND cc.table_name = tc.table_name
-				AND cc.constraint_name = tc.constraint_name
-		)
-)
-SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%5$s AS "CONSTRAINT_SCHEMA",
-	constraint_name AS "CONSTRAINT_NAME",
-	%5$s AS "TABLE_SCHEMA",
-	table_name AS "TABLE_NAME",
-	constraint_type AS "CONSTRAINT_TYPE",
-	enforced AS "ENFORCED"
-FROM (
-	SELECT table_schema, table_name, constraint_name, constraint_type, \'YES\' AS enforced FROM index_constraints
-	UNION ALL
-	SELECT table_schema, table_name, constraint_name, constraint_type, \'YES\' AS enforced FROM foreign_key_constraints
-	UNION ALL
-	SELECT * FROM check_constraints
-	UNION ALL
-	SELECT * FROM catalog_constraints
-) constraints',
-				$index_metadata_table,
-				$foreign_key_metadata_table,
-				$check_metadata_table,
-				$this->get_direct_information_schema_hidden_table_list_sql(),
-				$this->get_direct_information_schema_display_schema_sql( 'table_schema' )
+				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
+				$enforced_sql
 			);
 		}
 
 		if ( 'key_column_usage' === $view ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				return sprintf(
-					'SELECT
+			return sprintf(
+				'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
 	CASE WHEN con.contype = \'p\' THEN \'PRIMARY\' ELSE con.conname END AS "CONSTRAINT_NAME",
@@ -37448,109 +37355,15 @@ LEFT JOIN pg_catalog.pg_attribute ref_att
 WHERE con.contype IN (\'p\', \'u\', \'f\')
 	AND table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
-				);
-			}
-
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$index_metadata_table       = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
-			$foreign_key_metadata_table = $this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE );
-
-			return sprintf(
-				'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	im.key_name AS "CONSTRAINT_NAME",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	im.table_name AS "TABLE_NAME",
-	im.column_name AS "COLUMN_NAME",
-	im.seq_in_index AS "ORDINAL_POSITION",
-	NULL AS "POSITION_IN_UNIQUE_CONSTRAINT",
-	NULL AS "REFERENCED_TABLE_SCHEMA",
-	NULL AS "REFERENCED_TABLE_NAME",
-	NULL AS "REFERENCED_COLUMN_NAME"
-FROM %2$s im
-WHERE im.non_unique = \'0\'
-UNION ALL
-SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%3$s AS "CONSTRAINT_SCHEMA",
-	fk.constraint_name AS "CONSTRAINT_NAME",
-	\'def\' AS "TABLE_CATALOG",
-	%3$s AS "TABLE_SCHEMA",
-	fk.table_name AS "TABLE_NAME",
-	fk.column_name AS "COLUMN_NAME",
-	fk.seq_in_index AS "ORDINAL_POSITION",
-	fk.seq_in_index AS "POSITION_IN_UNIQUE_CONSTRAINT",
-	%4$s AS "REFERENCED_TABLE_SCHEMA",
-	fk.referenced_table_name AS "REFERENCED_TABLE_NAME",
-	fk.referenced_column_name AS "REFERENCED_COLUMN_NAME"
-FROM %5$s fk',
-				$this->get_direct_information_schema_display_schema_sql( 'im.table_schema' ),
-				$index_metadata_table,
-				$this->get_direct_information_schema_display_schema_sql( 'fk.table_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 'fk.referenced_table_schema' ),
-				$foreign_key_metadata_table
-			) . sprintf(
-				'
-UNION ALL
-SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE kcu.constraint_name END AS "CONSTRAINT_NAME",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	kcu.table_name AS "TABLE_NAME",
-	kcu.column_name AS "COLUMN_NAME",
-	kcu.ordinal_position AS "ORDINAL_POSITION",
-	kcu.position_in_unique_constraint AS "POSITION_IN_UNIQUE_CONSTRAINT",
-	%2$s AS "REFERENCED_TABLE_SCHEMA",
-	ccu.table_name AS "REFERENCED_TABLE_NAME",
-	ccu.column_name AS "REFERENCED_COLUMN_NAME"
-FROM information_schema.key_column_usage kcu
-LEFT JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = kcu.constraint_schema
-	AND tc.constraint_name = kcu.constraint_name
-	AND tc.table_schema = kcu.table_schema
-	AND tc.table_name = kcu.table_name
-LEFT JOIN information_schema.constraint_column_usage ccu
-	ON ccu.constraint_schema = kcu.constraint_schema
-	AND ccu.constraint_name = kcu.constraint_name
-WHERE kcu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND kcu.table_name NOT IN (%3$s)
-	AND NOT EXISTS (
-		SELECT 1
-		FROM %4$s im
-		WHERE im.table_schema = kcu.table_schema
-			AND im.table_name = kcu.table_name
-			AND im.column_name = kcu.column_name
-			AND im.seq_in_index = kcu.ordinal_position
-			AND im.non_unique = \'0\'
-	)
-	AND NOT EXISTS (
-		SELECT 1
-		FROM %5$s fk
-		WHERE fk.table_schema = kcu.table_schema
-			AND fk.table_name = kcu.table_name
-			AND fk.constraint_name = kcu.constraint_name
-			AND fk.column_name = kcu.column_name
-	)',
-				$this->get_direct_information_schema_display_schema_sql( 'kcu.table_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 'ccu.table_schema' ),
-				$this->get_direct_information_schema_hidden_table_list_sql(),
-				$index_metadata_table,
-				$foreign_key_metadata_table
+				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
+				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
+				$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
 			);
 		}
 
 		if ( 'referential_constraints' === $view ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				return sprintf(
-					'SELECT
+			return sprintf(
+				'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
 	con.conname AS "CONSTRAINT_NAME",
@@ -37594,85 +37407,18 @@ LEFT JOIN pg_catalog.pg_constraint ref_con
 WHERE con.contype = \'f\'
 	AND table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
-				);
-			}
-
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$foreign_key_metadata_table = $this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE );
-
-			return sprintf(
-				'WITH metadata_constraints AS (
-	SELECT
-		fk.table_schema,
-		fk.constraint_name,
-		MIN(fk.constraint_ordinal) AS constraint_ordinal,
-		MIN(fk.referenced_table_schema) AS referenced_table_schema,
-		MIN(fk.referenced_table_name) AS referenced_table_name,
-		MIN(fk.update_rule) AS update_rule,
-		MIN(fk.delete_rule) AS delete_rule,
-		MIN(fk.table_name) AS table_name
-	FROM %1$s fk
-	GROUP BY fk.table_schema, fk.constraint_name
-),
-catalog_constraints AS (
-	SELECT
-		rc.constraint_schema AS table_schema,
-		rc.constraint_name,
-		0 AS constraint_ordinal,
-		rc.unique_constraint_schema AS referenced_table_schema,
-		ccu.table_name AS referenced_table_name,
-		rc.update_rule,
-		rc.delete_rule,
-		tc.table_name
-	FROM information_schema.referential_constraints rc
-	LEFT JOIN information_schema.table_constraints tc
-		ON tc.constraint_schema = rc.constraint_schema
-		AND tc.constraint_name = rc.constraint_name
-	LEFT JOIN information_schema.constraint_column_usage ccu
-		ON ccu.constraint_schema = rc.unique_constraint_schema
-		AND ccu.constraint_name = rc.unique_constraint_name
-	WHERE rc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND NOT EXISTS (
-			SELECT 1
-			FROM metadata_constraints mc
-			WHERE mc.table_schema = rc.constraint_schema
-				AND mc.constraint_name = rc.constraint_name
-		)
-)
-SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%2$s AS "CONSTRAINT_SCHEMA",
-	constraint_name AS "CONSTRAINT_NAME",
-	\'def\' AS "UNIQUE_CONSTRAINT_CATALOG",
-	%3$s AS "UNIQUE_CONSTRAINT_SCHEMA",
-	\'PRIMARY\' AS "UNIQUE_CONSTRAINT_NAME",
-	\'NONE\' AS "MATCH_OPTION",
-	update_rule AS "UPDATE_RULE",
-	delete_rule AS "DELETE_RULE",
-	table_name AS "TABLE_NAME",
-	referenced_table_name AS "REFERENCED_TABLE_NAME"
-FROM (
-	SELECT * FROM metadata_constraints
-	UNION ALL
-	SELECT * FROM catalog_constraints
-) constraints',
-				$foreign_key_metadata_table,
-				$this->get_direct_information_schema_display_schema_sql( 'table_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 'referenced_table_schema' )
+				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
+				$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
 			);
 		}
 
 		if ( 'check_constraints' === $view ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
-					'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
-					'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
-				);
-				return sprintf(
-					'SELECT
+			$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
+				'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
+				'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
+			);
+			return sprintf(
+				'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
 	con.conname AS "CONSTRAINT_NAME",
@@ -37683,49 +37429,8 @@ JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
 WHERE con.contype = \'c\'
 	AND t.relkind IN (\'r\', \'p\')
 	AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-					$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
-					$check_clause_sql
-				);
-			}
-
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$check_metadata_table = $this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE );
-
-			return sprintf(
-				'WITH metadata_checks AS (
-	SELECT
-		cm.table_schema AS constraint_schema,
-		cm.constraint_name,
-		cm.check_clause
-	FROM %2$s cm
-),
-catalog_checks AS (
-	SELECT
-		cc.constraint_schema,
-		cc.constraint_name,
-		cc.check_clause
-	FROM information_schema.check_constraints cc
-	WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND NOT EXISTS (
-			SELECT 1
-			FROM metadata_checks mc
-			WHERE mc.constraint_schema = cc.constraint_schema
-				AND mc.constraint_name = cc.constraint_name
-		)
-)
-SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	constraint_name AS "CONSTRAINT_NAME",
-	check_clause AS "CHECK_CLAUSE"
-FROM (
-	SELECT * FROM metadata_checks
-	UNION ALL
-	SELECT * FROM catalog_checks
-) checks',
-				$this->get_direct_information_schema_display_schema_sql( 'constraint_schema' ),
-				$check_metadata_table
+				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
+				$check_clause_sql
 			);
 		}
 
