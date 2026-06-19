@@ -2294,41 +2294,55 @@ class WP_PostgreSQL_Driver {
 	}
 
 	private function execute_materialized_mysql_upsert_select_statements( array $upsert_query ): int {
-		$materialize_statements = isset( $upsert_query['materialize_statements'] ) && is_array( $upsert_query['materialize_statements'] )
-			? $upsert_query['materialize_statements']
+		return $this->execute_materialized_mysql_select_dml_statements( $upsert_query, 'upsert' );
+	}
+
+	private function execute_materialized_mysql_select_dml_statements( array $dml_query, string $operation ): int {
+		$materialize_statements = isset( $dml_query['materialize_statements'] ) && is_array( $dml_query['materialize_statements'] )
+			? $dml_query['materialize_statements']
 			: array();
-		$mutation_statements    = isset( $upsert_query['mutation_statements'] ) && is_array( $upsert_query['mutation_statements'] )
-			? $upsert_query['mutation_statements']
+		$mutation_statements    = isset( $dml_query['mutation_statements'] ) && is_array( $dml_query['mutation_statements'] )
+			? $dml_query['mutation_statements']
 			: array();
-		$cleanup_statements     = isset( $upsert_query['cleanup_statements'] ) && is_array( $upsert_query['cleanup_statements'] )
-			? $upsert_query['cleanup_statements']
+		$cleanup_statements     = isset( $dml_query['cleanup_statements'] ) && is_array( $dml_query['cleanup_statements'] )
+			? $dml_query['cleanup_statements']
 			: array();
 
 		foreach ( $materialize_statements as $statement ) {
 			$this->execute_postgresql_logged_statement( (string) $statement, true );
 		}
 
+		$return_value = null;
 		try {
-			$upsert_query = $this->prepare_materialized_mysql_upsert_select_insert_id_metadata( $upsert_query );
-
-			if ( ! empty( $upsert_query['upsert_select_ambiguous_conflict_targets'] ) ) {
-				$affected_rows = $this->execute_materialized_mysql_upsert_select_rows_with_ambiguous_targets( $upsert_query );
-			} elseif ( isset( $upsert_query['duplicate_conflict_rows_sql'] ) && is_string( $upsert_query['duplicate_conflict_rows_sql'] ) ) {
-				$stmt          = $this->connection->query( $upsert_query['duplicate_conflict_rows_sql'] );
-				$has_duplicate = false !== $stmt->fetchColumn();
-				$stmt->closeCursor();
-			} else {
-				$has_duplicate = false;
+			if ( 'upsert' === $operation ) {
+				$dml_query = $this->prepare_materialized_mysql_upsert_select_insert_id_metadata( $dml_query );
+				if ( ! empty( $dml_query['upsert_select_ambiguous_conflict_targets'] ) ) {
+					$affected_rows = $this->execute_materialized_mysql_upsert_select_rows_with_ambiguous_targets( $dml_query );
+				}
 			}
 
-			if ( empty( $upsert_query['upsert_select_ambiguous_conflict_targets'] ) ) {
+			if ( ! isset( $affected_rows ) ) {
+				$has_duplicate = $this->materialized_mysql_select_dml_has_duplicate_rows( $dml_query );
 				if ( $has_duplicate ) {
-					$affected_rows = $this->execute_materialized_mysql_upsert_select_rows_sequentially( $upsert_query );
-				} else {
-					$affected_rows = 0;
-					foreach ( $mutation_statements as $statement ) {
-						$affected_rows += $this->execute_postgresql_logged_statement( (string) $statement );
+					if ( 'upsert' === $operation ) {
+						$affected_rows = $this->execute_materialized_mysql_upsert_select_rows_sequentially( $dml_query );
+					} else {
+						$affected_rows                 = $this->execute_materialized_mysql_replace_select_rows_sequentially( $dml_query );
+						$return_value                  = $affected_rows;
+						$dml_query['inserted_new_row'] = $affected_rows > 0;
 					}
+				} else {
+					if ( 'replace' === $operation && isset( $dml_query['replace_select_affected_rows_sql'] ) && is_string( $dml_query['replace_select_affected_rows_sql'] ) ) {
+						$stmt = $this->connection->query( $dml_query['replace_select_affected_rows_sql'] );
+						$row  = $stmt->fetch( PDO::FETCH_ASSOC );
+						$stmt->closeCursor();
+						if ( is_array( $row ) && isset( $row['affected_rows'] ) ) {
+							$return_value                  = (int) $row['affected_rows'];
+							$dml_query['inserted_new_row'] = isset( $row['inserted_rows'] ) && (int) $row['inserted_rows'] > 0;
+						}
+					}
+
+					$affected_rows = $this->execute_postgresql_logged_statements( $mutation_statements );
 				}
 			}
 		} finally {
@@ -2337,10 +2351,35 @@ class WP_PostgreSQL_Driver {
 			}
 		}
 
+		return $this->finish_materialized_mysql_select_dml_statements( $dml_query, $affected_rows, $return_value );
+	}
+
+	private function materialized_mysql_select_dml_has_duplicate_rows( array $dml_query ): bool {
+		if ( ! isset( $dml_query['duplicate_conflict_rows_sql'] ) || ! is_string( $dml_query['duplicate_conflict_rows_sql'] ) ) {
+			return false;
+		}
+
+		$stmt          = $this->connection->query( $dml_query['duplicate_conflict_rows_sql'] );
+		$has_duplicate = false !== $stmt->fetchColumn();
+		$stmt->closeCursor();
+
+		return $has_duplicate;
+	}
+
+	private function execute_postgresql_logged_statements( array $statements ): int {
+		$affected_rows = 0;
+		foreach ( $statements as $statement ) {
+			$affected_rows += $this->execute_postgresql_logged_statement( (string) $statement );
+		}
+
+		return $affected_rows;
+	}
+
+	private function finish_materialized_mysql_select_dml_statements( array $dml_query, int $affected_rows, ?int $return_value ): int {
 		$this->clear_last_column_meta();
-		$this->last_result = $affected_rows;
-		$this->set_last_insert_id_after_dml_success( $upsert_query, $affected_rows );
-		$this->repair_dml_identity_sequences_after_success( $upsert_query, $affected_rows );
+		$this->last_result = $return_value ?? $affected_rows;
+		$this->set_last_insert_id_after_dml_success( $dml_query, $affected_rows );
+		$this->repair_dml_identity_sequences_after_success( $dml_query, $affected_rows );
 
 		return (int) $this->last_result;
 	}
@@ -2590,6 +2629,10 @@ class WP_PostgreSQL_Driver {
 	}
 
 	private function get_materialized_mysql_upsert_select_conflict_predicate_sql( string $target_alias, string $rows_alias, array $conflict_parts ): ?string {
+		return $this->get_materialized_mysql_dml_conflict_group_predicate_sql( $target_alias, $rows_alias, $conflict_parts );
+	}
+
+	private function get_materialized_mysql_dml_conflict_group_predicate_sql( ?string $target_alias, string $rows_alias, array $conflict_parts ): ?string {
 		$where = array();
 		foreach ( $conflict_parts as $conflict_part ) {
 			$column = (string) ( $conflict_part['column'] ?? '' );
@@ -2597,11 +2640,13 @@ class WP_PostgreSQL_Driver {
 				return null;
 			}
 
-			$target_value   = sprintf(
-				'%s.%s',
-				$target_alias,
-				$this->connection->quote_identifier( $column )
-			);
+			$target_value   = null === $target_alias
+				? $this->connection->quote_identifier( $column )
+				: sprintf(
+					'%s.%s',
+					$target_alias,
+					$this->connection->quote_identifier( $column )
+				);
 			$incoming_value = sprintf(
 				'%s.%s',
 				$rows_alias,
@@ -2643,25 +2688,52 @@ class WP_PostgreSQL_Driver {
 	}
 
 	private function execute_materialized_mysql_upsert_select_rows( array $upsert_query, callable $get_conflict_sql ): int {
+		return $this->execute_materialized_mysql_select_rows(
+			$upsert_query,
+			'upsert',
+			function ( int $ordinal_value, string $row_filter, array $context ) use ( $get_conflict_sql ): array {
+				$conflict_sql = $get_conflict_sql( $ordinal_value );
+				if ( null === $conflict_sql ) {
+					throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
+				}
+
+				return array(
+					sprintf(
+						'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s %s',
+						$context['quoted_target_table'],
+						$context['column_sql'],
+						implode( ', ', $context['insert_projection_sql'] ),
+						$context['ordinal_source_table_sql'],
+						$context['rows_alias'],
+						$row_filter,
+						$conflict_sql
+					),
+				);
+			}
+		);
+	}
+
+	private function execute_materialized_mysql_select_rows( array $dml_query, string $operation, callable $get_row_statements ): int {
 		if (
-			! isset( $upsert_query['table_name'], $upsert_query['columns'], $upsert_query['source_table_sql'], $upsert_query['ordinal_source_table_sql'] )
-			|| ! is_string( $upsert_query['table_name'] )
-			|| ! is_array( $upsert_query['columns'] )
-			|| ! is_string( $upsert_query['source_table_sql'] )
-			|| ! is_string( $upsert_query['ordinal_source_table_sql'] )
+			! isset( $dml_query['table_name'], $dml_query['columns'], $dml_query['source_table_sql'], $dml_query['ordinal_source_table_sql'] )
+			|| ! is_string( $dml_query['table_name'] )
+			|| ! is_array( $dml_query['columns'] )
+			|| ! is_string( $dml_query['source_table_sql'] )
+			|| ! is_string( $dml_query['ordinal_source_table_sql'] )
 		) {
-			throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
+			throw new InvalidArgumentException( 'Unsupported materialized SELECT DML statement.' );
 		}
 
-		$ordinal_column      = '__wp_pg_upsert_ordinal';
+		$ordinal_column      = '__wp_pg_' . $operation . '_ordinal';
 		$quoted_ordinal      = $this->connection->quote_identifier( $ordinal_column );
-		$source_alias        = $this->connection->quote_identifier( '__wp_pg_upsert_source' );
-		$rows_alias          = $this->connection->quote_identifier( '__wp_pg_upsert_rows' );
-		$quoted_target_table = $this->connection->quote_identifier( $upsert_query['table_name'] );
-		$column_sql          = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $upsert_query['columns'] ) );
+		$source_alias        = $this->connection->quote_identifier( '__wp_pg_' . $operation . '_source' );
+		$rows_alias          = $this->connection->quote_identifier( '__wp_pg_' . $operation . '_rows' );
+		$target_alias        = $this->connection->quote_identifier( '__wp_pg_' . $operation . '_target' );
+		$quoted_target_table = $this->connection->quote_identifier( $dml_query['table_name'] );
+		$column_sql          = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $dml_query['columns'] ) );
 
 		$insert_projection_sql = array();
-		foreach ( $upsert_query['columns'] as $column ) {
+		foreach ( $dml_query['columns'] as $column ) {
 			$insert_projection_sql[] = sprintf(
 				'%s.%s',
 				$rows_alias,
@@ -2671,53 +2743,42 @@ class WP_PostgreSQL_Driver {
 
 		$create_ordinal_table_sql = sprintf(
 			'CREATE TEMPORARY TABLE %s AS SELECT ROW_NUMBER() OVER () AS %s, %s.* FROM %s AS %s',
-			$upsert_query['ordinal_source_table_sql'],
+			$dml_query['ordinal_source_table_sql'],
 			$quoted_ordinal,
 			$source_alias,
-			$upsert_query['source_table_sql'],
+			$dml_query['source_table_sql'],
 			$source_alias
 		);
 		$this->execute_postgresql_logged_statement( $create_ordinal_table_sql, true );
 
-		$drop_ordinal_table_sql = sprintf( 'DROP TABLE IF EXISTS %s', $upsert_query['ordinal_source_table_sql'] );
+		$drop_ordinal_table_sql = sprintf( 'DROP TABLE IF EXISTS %s', $dml_query['ordinal_source_table_sql'] );
 
 		try {
 			$stmt     = $this->connection->query(
 				sprintf(
 					'SELECT %1$s FROM %2$s ORDER BY %1$s',
 					$quoted_ordinal,
-					$upsert_query['ordinal_source_table_sql']
+					$dml_query['ordinal_source_table_sql']
 				)
 			);
 			$ordinals = $stmt->fetchAll( PDO::FETCH_COLUMN );
 			$stmt->closeCursor();
 
+			$context = array(
+				'column_sql'               => $column_sql,
+				'insert_projection_sql'    => $insert_projection_sql,
+				'ordinal_source_table_sql' => $dml_query['ordinal_source_table_sql'],
+				'quoted_ordinal'           => $quoted_ordinal,
+				'quoted_target_table'      => $quoted_target_table,
+				'rows_alias'               => $rows_alias,
+				'target_alias'             => $target_alias,
+			);
+
 			$affected_rows = 0;
 			foreach ( $ordinals as $ordinal ) {
-				$ordinal_value = (int) $ordinal;
-				$conflict_sql  = $get_conflict_sql( $ordinal_value );
-				if ( null === $conflict_sql ) {
-					throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
-				}
-
-				$row_filter = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
-				$insert_sql = sprintf(
-					'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s %s',
-					$quoted_target_table,
-					$column_sql,
-					implode( ', ', $insert_projection_sql ),
-					$upsert_query['ordinal_source_table_sql'],
-					$rows_alias,
-					$row_filter,
-					$conflict_sql
-				);
-
-				$stmt                            = $this->connection->query( $insert_sql );
-				$this->last_postgresql_queries[] = array(
-					'sql'    => $insert_sql,
-					'params' => array(),
-				);
-				$affected_rows                  += $stmt->rowCount();
+				$ordinal_value  = (int) $ordinal;
+				$row_filter     = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
+				$affected_rows += $this->execute_postgresql_logged_statements( $get_row_statements( $ordinal_value, $row_filter, $context ) );
 			}
 
 			return $affected_rows;
@@ -2727,93 +2788,19 @@ class WP_PostgreSQL_Driver {
 	}
 
 	private function execute_materialized_mysql_replace_select_statements( array $replace_query ): int {
-		$materialize_statements = isset( $replace_query['materialize_statements'] ) && is_array( $replace_query['materialize_statements'] )
-			? $replace_query['materialize_statements']
-			: array();
-		$mutation_statements    = isset( $replace_query['mutation_statements'] ) && is_array( $replace_query['mutation_statements'] )
-			? $replace_query['mutation_statements']
-			: array();
-		$cleanup_statements     = isset( $replace_query['cleanup_statements'] ) && is_array( $replace_query['cleanup_statements'] )
-			? $replace_query['cleanup_statements']
-			: array();
-
-		foreach ( $materialize_statements as $statement ) {
-			$this->execute_postgresql_logged_statement( (string) $statement, true );
-		}
-
-		try {
-			if ( isset( $replace_query['duplicate_conflict_rows_sql'] ) && is_string( $replace_query['duplicate_conflict_rows_sql'] ) ) {
-				$stmt          = $this->connection->query( $replace_query['duplicate_conflict_rows_sql'] );
-				$has_duplicate = false !== $stmt->fetchColumn();
-				$stmt->closeCursor();
-			} else {
-				$has_duplicate = false;
-			}
-
-			$return_value = null;
-			if ( $has_duplicate ) {
-				$affected_rows                     = $this->execute_materialized_mysql_replace_select_rows_sequentially( $replace_query );
-				$return_value                      = $affected_rows;
-				$replace_query['inserted_new_row'] = $affected_rows > 0;
-			} elseif ( isset( $replace_query['replace_select_affected_rows_sql'] ) && is_string( $replace_query['replace_select_affected_rows_sql'] ) ) {
-				$stmt = $this->connection->query( $replace_query['replace_select_affected_rows_sql'] );
-				$row  = $stmt->fetch( PDO::FETCH_ASSOC );
-				$stmt->closeCursor();
-				if ( is_array( $row ) && isset( $row['affected_rows'] ) ) {
-					$return_value                      = (int) $row['affected_rows'];
-					$replace_query['inserted_new_row'] = isset( $row['inserted_rows'] ) && (int) $row['inserted_rows'] > 0;
-				}
-			}
-
-			if ( ! $has_duplicate ) {
-				$affected_rows = 0;
-				foreach ( $mutation_statements as $statement ) {
-					$affected_rows += $this->execute_postgresql_logged_statement( (string) $statement );
-				}
-			}
-		} finally {
-			foreach ( $cleanup_statements as $statement ) {
-				$this->execute_postgresql_logged_statement( (string) $statement, true );
-			}
-		}
-
-		$this->clear_last_column_meta();
-		$this->last_result = $return_value ?? $affected_rows;
-		$this->set_last_insert_id_after_dml_success( $replace_query, $affected_rows );
-		$this->repair_dml_identity_sequences_after_success( $replace_query, $affected_rows );
-
-		return (int) $this->last_result;
+		return $this->execute_materialized_mysql_select_dml_statements( $replace_query, 'replace' );
 	}
 
 	private function execute_materialized_mysql_replace_select_rows_sequentially( array $replace_query ): int {
 		if (
-			! isset( $replace_query['table_name'], $replace_query['columns'], $replace_query['source_table_sql'], $replace_query['ordinal_source_table_sql'], $replace_query['conflict_index_groups'] )
-			|| ! is_string( $replace_query['table_name'] )
-			|| ! is_array( $replace_query['columns'] )
-			|| ! is_string( $replace_query['source_table_sql'] )
-			|| ! is_string( $replace_query['ordinal_source_table_sql'] )
+			! isset( $replace_query['conflict_index_groups'] )
 			|| ! is_array( $replace_query['conflict_index_groups'] )
 		) {
 			throw new InvalidArgumentException( 'Unsupported REPLACE SELECT statement.' );
 		}
 
-		$ordinal_column      = '__wp_pg_replace_ordinal';
-		$quoted_ordinal      = $this->connection->quote_identifier( $ordinal_column );
-		$source_alias        = $this->connection->quote_identifier( '__wp_pg_replace_source' );
-		$rows_alias          = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
-		$target_alias        = $this->connection->quote_identifier( '__wp_pg_replace_target' );
-		$quoted_target_table = $this->connection->quote_identifier( $replace_query['table_name'] );
-		$column_sql          = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $replace_query['columns'] ) );
-
-		$insert_projection_sql = array();
-		foreach ( $replace_query['columns'] as $column ) {
-			$insert_projection_sql[] = sprintf(
-				'%s.%s',
-				$rows_alias,
-				$this->connection->quote_identifier( (string) $column )
-			);
-		}
-
+		$rows_alias           = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
+		$target_alias         = $this->connection->quote_identifier( '__wp_pg_replace_target' );
 		$delete_predicate_sql = $this->get_mysql_replace_select_delete_predicate_sql(
 			$target_alias,
 			$rows_alias,
@@ -2823,66 +2810,32 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported REPLACE SELECT statement.' );
 		}
 
-		$create_ordinal_table_sql        = sprintf(
-			'CREATE TEMPORARY TABLE %s AS SELECT ROW_NUMBER() OVER () AS %s, %s.* FROM %s AS %s',
-			$replace_query['ordinal_source_table_sql'],
-			$quoted_ordinal,
-			$source_alias,
-			$replace_query['source_table_sql'],
-			$source_alias
-		);
-		$stmt                            = $this->connection->query( $create_ordinal_table_sql );
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $create_ordinal_table_sql,
-			'params' => array(),
-		);
-		$stmt->closeCursor();
-
-		$drop_ordinal_table_sql = sprintf( 'DROP TABLE IF EXISTS %s', $replace_query['ordinal_source_table_sql'] );
-
-		try {
-			$stmt     = $this->connection->query(
-				sprintf(
-					'SELECT %1$s FROM %2$s ORDER BY %1$s',
-					$quoted_ordinal,
-					$replace_query['ordinal_source_table_sql']
-				)
-			);
-			$ordinals = $stmt->fetchAll( PDO::FETCH_COLUMN );
-			$stmt->closeCursor();
-
-			$affected_rows = 0;
-			foreach ( $ordinals as $ordinal ) {
-				$ordinal_value = (int) $ordinal;
-				$row_filter    = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
-				$delete_sql    = sprintf(
-					'DELETE FROM %s AS %s WHERE EXISTS (SELECT 1 FROM %s AS %s WHERE %s AND %s)',
-					$quoted_target_table,
-					$target_alias,
-					$replace_query['ordinal_source_table_sql'],
-					$rows_alias,
-					$row_filter,
-					$delete_predicate_sql
+		return $this->execute_materialized_mysql_select_rows(
+			$replace_query,
+			'replace',
+			static function ( int $ordinal_value, string $row_filter, array $context ) use ( $delete_predicate_sql ): array {
+				return array(
+					sprintf(
+						'DELETE FROM %s AS %s WHERE EXISTS (SELECT 1 FROM %s AS %s WHERE %s AND %s)',
+						$context['quoted_target_table'],
+						$context['target_alias'],
+						$context['ordinal_source_table_sql'],
+						$context['rows_alias'],
+						$row_filter,
+						$delete_predicate_sql
+					),
+					sprintf(
+						'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s',
+						$context['quoted_target_table'],
+						$context['column_sql'],
+						implode( ', ', $context['insert_projection_sql'] ),
+						$context['ordinal_source_table_sql'],
+						$context['rows_alias'],
+						$row_filter
+					),
 				);
-				$insert_sql    = sprintf(
-					'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s',
-					$quoted_target_table,
-					$column_sql,
-					implode( ', ', $insert_projection_sql ),
-					$replace_query['ordinal_source_table_sql'],
-					$rows_alias,
-					$row_filter
-				);
-
-				foreach ( array( $delete_sql, $insert_sql ) as $statement ) {
-					$affected_rows += $this->execute_postgresql_logged_statement( $statement );
-				}
 			}
-
-			return $affected_rows;
-		} finally {
-			$this->execute_postgresql_logged_statement( $drop_ordinal_table_sql, true );
-		}
+		);
 	}
 
 	private function execute_mysql_multi_target_delete_query( string $statement ): int {
@@ -19071,38 +19024,12 @@ WHERE option_name IN (
 	private function get_mysql_replace_select_conflict_exists_sql( string $table_name, string $rows_alias, array $conflict_index_groups ): ?string {
 		$group_predicates = array();
 		foreach ( $conflict_index_groups as $conflict_indexes ) {
-			$where = array();
-			foreach ( $conflict_indexes as $conflict_index ) {
-				$column = (string) ( $conflict_index['column'] ?? '' );
-				if ( '' === $column ) {
-					return null;
-				}
-
-				$incoming_value = sprintf(
-					'%s.%s',
-					$rows_alias,
-					$this->connection->quote_identifier( $column )
-				);
-				if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
-					$incoming_value = sprintf(
-						'SUBSTR(CAST(%s AS text), 1, %d)',
-						$incoming_value,
-						(int) $conflict_index['sub_part']
-					);
-				}
-
-				$where[] = sprintf(
-					'%s = %s',
-					$this->get_mysql_index_key_part_sql( $column, $conflict_index['sub_part'] ?? null ),
-					$incoming_value
-				);
-			}
-
-			if ( empty( $where ) ) {
+			$predicate = $this->get_materialized_mysql_dml_conflict_group_predicate_sql( null, $rows_alias, $conflict_indexes );
+			if ( null === $predicate ) {
 				return null;
 			}
 
-			$group_predicates[] = '(' . implode( ' AND ', $where ) . ')';
+			$group_predicates[] = '(' . $predicate . ')';
 		}
 
 		if ( empty( $group_predicates ) ) {
@@ -19119,48 +19046,12 @@ WHERE option_name IN (
 	private function get_mysql_replace_select_delete_predicate_sql( string $target_alias, string $rows_alias, array $conflict_index_groups ): ?string {
 		$group_predicates = array();
 		foreach ( $conflict_index_groups as $conflict_indexes ) {
-			$where = array();
-			foreach ( $conflict_indexes as $conflict_index ) {
-				$column = (string) ( $conflict_index['column'] ?? '' );
-				if ( '' === $column ) {
-					return null;
-				}
-
-				$target_value   = sprintf(
-					'%s.%s',
-					$target_alias,
-					$this->connection->quote_identifier( $column )
-				);
-				$incoming_value = sprintf(
-					'%s.%s',
-					$rows_alias,
-					$this->connection->quote_identifier( $column )
-				);
-				if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
-					$target_value   = sprintf(
-						'SUBSTR(CAST(%s AS text), 1, %d)',
-						$target_value,
-						(int) $conflict_index['sub_part']
-					);
-					$incoming_value = sprintf(
-						'SUBSTR(CAST(%s AS text), 1, %d)',
-						$incoming_value,
-						(int) $conflict_index['sub_part']
-					);
-				}
-
-				$where[] = sprintf(
-					'%s = %s',
-					$target_value,
-					$incoming_value
-				);
-			}
-
-			if ( empty( $where ) ) {
+			$predicate = $this->get_materialized_mysql_dml_conflict_group_predicate_sql( $target_alias, $rows_alias, $conflict_indexes );
+			if ( null === $predicate ) {
 				return null;
 			}
 
-			$group_predicates[] = '(' . implode( ' AND ', $where ) . ')';
+			$group_predicates[] = '(' . $predicate . ')';
 		}
 
 		return empty( $group_predicates ) ? null : implode( ' OR ', $group_predicates );
