@@ -1111,7 +1111,7 @@ class WP_PostgreSQL_Driver {
 			return $result;
 		}
 
-		$create_view_query = $this->translate_mysql_create_view_query( $query );
+		$create_view_query = $this->translate_mysql_view_query( $query, WP_MySQL_Lexer::CREATE_SYMBOL, 'CREATE VIEW' );
 		if ( null !== $create_view_query ) {
 			return $this->execute_postgresql_statements( $create_view_query['statements'] );
 		}
@@ -1152,7 +1152,7 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
-		$alter_view_query = $this->translate_mysql_alter_view_query( $query );
+		$alter_view_query = $this->translate_mysql_view_query( $query, WP_MySQL_Lexer::ALTER_SYMBOL, 'ALTER VIEW' );
 		if ( null !== $alter_view_query ) {
 			return $this->execute_postgresql_statements( $alter_view_query['statements'] );
 		}
@@ -8327,29 +8327,32 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Translate supported MySQL CREATE VIEW statements to PostgreSQL.
+	 * Translate supported MySQL CREATE/ALTER VIEW statements to PostgreSQL.
 	 *
-	 * @param string $query MySQL CREATE VIEW query.
-	 * @return array{statements: string[]}|null Translation, or null when this is not CREATE VIEW.
+	 * @param string $query          MySQL VIEW query.
+	 * @param int    $statement_id   Expected first token id.
+	 * @param string $statement_type Statement type for fail-closed error messages.
+	 * @return array{statements: string[]}|null Translation, or null when this is not a matching VIEW query.
 	 */
-	private function translate_mysql_create_view_query( string $query ): ?array {
+	private function translate_mysql_view_query( string $query, int $statement_id, string $statement_type ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+		if ( ! isset( $tokens[0] ) || $statement_id !== $tokens[0]->id ) {
 			return null;
 		}
 
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 		if ( null === $statement_end ) {
 			if ( $this->contains_mysql_view_token_after_position( $tokens, 1 ) ) {
-				throw new InvalidArgumentException( 'Unsupported CREATE VIEW statement.' );
+				throw new InvalidArgumentException( 'Unsupported ' . $statement_type . ' statement.' );
 			}
 			return null;
 		}
 
 		$position   = 1;
-		$or_replace = false;
+		$or_replace = WP_MySQL_Lexer::ALTER_SYMBOL === $statement_id;
 		if (
-			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
+			WP_MySQL_Lexer::CREATE_SYMBOL === $statement_id
+			&& isset( $tokens[ $position ], $tokens[ $position + 1 ] )
 			&& WP_MySQL_Lexer::OR_SYMBOL === $tokens[ $position ]->id
 			&& WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[ $position + 1 ]->id
 		) {
@@ -8358,7 +8361,7 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( $this->contains_mysql_unsupported_view_prefix_clause( $tokens, $position, $statement_end ) ) {
-			throw new InvalidArgumentException( 'Unsupported CREATE VIEW statement.' );
+			throw new InvalidArgumentException( 'Unsupported ' . $statement_type . ' statement.' );
 		}
 
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VIEW_SYMBOL !== $tokens[ $position ]->id ) {
@@ -8371,46 +8374,7 @@ $wp_mysql_primary_index_comment$',
 			$position,
 			$statement_end,
 			$or_replace,
-			'CREATE VIEW'
-		);
-	}
-
-	/**
-	 * Translate supported MySQL ALTER VIEW statements to PostgreSQL CREATE OR REPLACE VIEW.
-	 *
-	 * @param string $query MySQL ALTER VIEW query.
-	 * @return array{statements: string[]}|null Translation, or null when this is not ALTER VIEW.
-	 */
-	private function translate_mysql_alter_view_query( string $query ): ?array {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::ALTER_SYMBOL !== $tokens[0]->id ) {
-			return null;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		if ( null === $statement_end ) {
-			if ( $this->contains_mysql_view_token_after_position( $tokens, 1 ) ) {
-				throw new InvalidArgumentException( 'Unsupported ALTER VIEW statement.' );
-			}
-			return null;
-		}
-
-		$position = 1;
-		if ( $this->contains_mysql_unsupported_view_prefix_clause( $tokens, $position, $statement_end ) ) {
-			throw new InvalidArgumentException( 'Unsupported ALTER VIEW statement.' );
-		}
-
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::VIEW_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		return $this->translate_mysql_view_definition_query(
-			$query,
-			$tokens,
-			$position,
-			$statement_end,
-			true,
-			'ALTER VIEW'
+			$statement_type
 		);
 	}
 
