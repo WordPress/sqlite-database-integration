@@ -667,6 +667,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 				bit_literal_five BIT(4) DEFAULT b'0101',
 				binary_number_five BIT(4) DEFAULT 0b0101,
 				hex_literal_five BIT(4) DEFAULT x'05',
+				hex_number_five BIT(4) DEFAULT 0x05,
 				true_literal BIT(4) DEFAULT TRUE,
 				false_literal BIT(4) DEFAULT FALSE
 			)"
@@ -680,6 +681,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( "`bit_literal_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`binary_number_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`hex_literal_five` bit(4) DEFAULT b'101'", $create_table );
+		$this->assertStringContainsString( "`hex_number_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`true_literal` bit(4) DEFAULT b'1'", $create_table );
 		$this->assertStringContainsString( "`false_literal` bit(4) DEFAULT b'0'", $create_table );
 
@@ -695,6 +697,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 					'bit_literal_five'   => '5',
 					'binary_number_five' => '5',
 					'hex_literal_five'   => '5',
+					'hex_number_five'    => '5',
 					'true_literal'       => '1',
 					'false_literal'      => '0',
 				),
