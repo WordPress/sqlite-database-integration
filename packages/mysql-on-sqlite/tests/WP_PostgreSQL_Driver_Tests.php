@@ -22303,16 +22303,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'delete_mysql_schema_metadata_for_tables'      => function (): void {
 				$this->delete_mysql_schema_metadata_for_tables( array( 'catalog_side_table' ), 'public' );
 			},
-			'delete_mysql_schema_metadata_targets'         => function (): void {
-				$this->delete_mysql_schema_metadata_for_table_targets(
-					array(
-						array(
-							'schema' => 'public',
-							'table'  => 'catalog_side_table',
-						),
-					)
-				);
-			},
 			'store_mysql_schema_metadata_for_schema'       => function (): void {
 				$this->store_mysql_schema_metadata_for_schema(
 					'CREATE TABLE catalog_side_table (id bigint NOT NULL)',

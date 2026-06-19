@@ -1064,7 +1064,12 @@ class WP_PostgreSQL_Driver {
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
 				$this->clear_mysql_metadata_cache_for_table_targets( $drop_query['metadata_targets'] );
 			} else {
-				$this->delete_mysql_schema_metadata_for_table_targets( $drop_query['metadata_targets'] );
+				foreach ( $drop_query['metadata_targets'] as $target ) {
+					$this->delete_mysql_schema_metadata_for_tables(
+						array( $target['table'] ),
+						$target['schema']
+					);
+				}
 			}
 			$this->last_result = 0;
 			return $this->last_result;
@@ -5040,20 +5045,6 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Delete stored MySQL schema metadata for concrete schema/table targets.
-	 *
-	 * @param array[] $targets Metadata targets.
-	 */
-	private function delete_mysql_schema_metadata_for_table_targets( array $targets ): void {
-		foreach ( $targets as $target ) {
-			$this->delete_mysql_schema_metadata_for_tables(
-				array( $target['table'] ),
-				$target['schema']
-			);
-		}
-	}
-
-	/**
 	 * Apply metadata changes for a translated dbDelta ALTER TABLE statement.
 	 *
 	 * @param array $metadata ALTER metadata.
@@ -5110,7 +5101,13 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'add_index' === $metadata['operation'] ) {
-			$this->apply_mysql_add_index_metadata( $table_schema, $table_name, $metadata['index'] );
+			$this->apply_mysql_create_index_metadata(
+				array(
+					'schema' => $table_schema,
+					'table'  => $table_name,
+					'index'  => $metadata['index'],
+				)
+			);
 			return;
 		}
 
@@ -5309,23 +5306,6 @@ $wp_mysql_on_update$',
 		$this->delete_mysql_index_metadata( $table_schema, $table_name, $index['name'] );
 		$index['ordinal'] = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
 		$this->insert_mysql_index_metadata( $table_schema, $table_name, $index );
-	}
-
-	/**
-	 * Store MySQL metadata for an ALTER TABLE ADD INDEX operation.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $index        Index metadata.
-	 */
-	private function apply_mysql_add_index_metadata( string $table_schema, string $table_name, array $index ): void {
-		$this->apply_mysql_create_index_metadata(
-			array(
-				'schema' => $table_schema,
-				'table'  => $table_name,
-				'index'  => $index,
-			)
-		);
 	}
 
 	/**
@@ -6023,11 +6003,13 @@ $wp_mysql_on_update$',
 	 * @param array  $column       Column metadata.
 	 */
 	private function sync_postgresql_catalog_identity_sequence_comment( string $table_schema, string $table_name, array $column ): void {
+		$column_type          = (string) ( $column['type'] ?? '' );
+		$identity_column_type = (string) preg_replace( '/\s+/', ' ', strtolower( trim( $column_type ) ) );
 		if (
 			! $this->should_use_postgresql_catalog_metadata()
 			|| 'auto_increment' !== strtolower( (string) ( $column['extra'] ?? '' ) )
-			|| ! $this->is_mysql_integer_family_column_type( (string) ( $column['type'] ?? '' ) )
-			|| ! $this->is_postgresql_catalog_identity_sequence_type_comment_needed( (string) ( $column['type'] ?? '' ) )
+			|| ! $this->is_mysql_integer_family_column_type( $column_type )
+			|| in_array( $identity_column_type, array( 'int', 'integer', 'bigint' ), true )
 		) {
 			return;
 		}
@@ -6052,23 +6034,6 @@ $wp_mysql_identity_sequence_comment$',
 				),
 			)
 		);
-	}
-
-	/**
-	 * Check whether AUTO_INCREMENT type metadata needs a sequence comment.
-	 *
-	 * PostgreSQL catalogs already expose plain integer and bigint identity
-	 * columns as MySQL-facing int/bigint AUTO_INCREMENT columns. Width,
-	 * unsigned, and smaller integer aliases still need catalog metadata.
-	 *
-	 * @param string $column_type MySQL-facing column type.
-	 * @return bool Whether the identity sequence needs a type marker comment.
-	 */
-	private function is_postgresql_catalog_identity_sequence_type_comment_needed( string $column_type ): bool {
-		$column_type = strtolower( trim( $column_type ) );
-		$column_type = preg_replace( '/\s+/', ' ', $column_type );
-
-		return ! in_array( $column_type, array( 'int', 'integer', 'bigint' ), true );
 	}
 
 	/**
