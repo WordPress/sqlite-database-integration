@@ -20140,11 +20140,6 @@ WHERE option_name IN (
 			}
 		}
 
-		$sql_value_rows = array();
-		foreach ( $value_rows as $values ) {
-			$sql_value_rows[] = '(' . implode( ', ', $values ) . ')';
-		}
-
 		$column_sql   = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) );
 		$conflict_sql = sprintf(
 			'ON CONFLICT (%s) DO UPDATE SET %s',
@@ -20157,7 +20152,7 @@ WHERE option_name IN (
 				'INSERT INTO %s (%s) %s %s',
 				$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
 				$column_sql,
-				'VALUES ' . implode( ', ', $sql_value_rows ),
+				'VALUES ' . $this->get_postgresql_dml_values_rows_sql( $value_rows ),
 				$conflict_sql
 			),
 			'table_name'           => $table_name,
@@ -20234,8 +20229,6 @@ WHERE option_name IN (
 		int $table_reference_end,
 		bool $insert_column_list = false
 	): ?array {
-		$select_start        = $position;
-		$select_end          = $on_duplicate;
 		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
 			$tokens,
 			$table_reference_start,
@@ -20252,51 +20245,31 @@ WHERE option_name IN (
 			),
 		);
 		$closing_replacement = array();
-
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $on_duplicate );
-			if (
-				null === $after_close
-				|| $after_close !== $on_duplicate
-				|| ! isset( $tokens[ $position + 1 ] )
-				|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
-			) {
-				return null;
-			}
-
-			$select_start          = $position + 1;
-			$select_end            = $on_duplicate - 1;
-			$outer_replacements[]  = array(
-				'start' => $position,
-				'end'   => $position + 1,
-				'sql'   => '',
-			);
-			$closing_replacement[] = array(
-				'start' => $on_duplicate - 1,
-				'end'   => $on_duplicate,
-				'sql'   => '',
-			);
-		}
-
-		if ( ! isset( $tokens[ $select_start ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $select_start ]->id ) {
+		$select_bounds       = $this->get_mysql_optional_parenthesized_select_bounds( $tokens, $position, $on_duplicate );
+		if ( null === $select_bounds ) {
 			return null;
+		}
+		$select_start = $select_bounds['start'];
+		$select_end   = $select_bounds['end'];
+		if ( null !== $select_bounds['opening_replacement'] ) {
+			$outer_replacements[]  = $select_bounds['opening_replacement'];
+			$closing_replacement[] = $select_bounds['closing_replacement'];
 		}
 
 		$table_column_lookup           = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$auto_increment_column         = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
-		$literal_value_row             = null;
+		$literal_value_row             = $this->get_mysql_insert_select_upsert_literal_value_row(
+			$table_name,
+			$columns,
+			$tokens,
+			$select_start,
+			$select_end
+		);
 		$explicit_identity_columns     = array();
 		$ambiguous_conflict_candidates = array();
 
 		$conflict_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns );
 		if ( null === $conflict_target ) {
-			$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
-				$table_name,
-				$columns,
-				$tokens,
-				$select_start,
-				$select_end
-			);
 			if ( null !== $literal_value_row ) {
 				$conflict_target = $this->get_mysql_upsert_conflict_target(
 					$table_name,
@@ -20418,15 +20391,6 @@ WHERE option_name IN (
 			$last_insert_id_column_on_duplicate_key_update = null;
 		if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
 			if ( null === $literal_value_row ) {
-				$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
-					$table_name,
-					$columns,
-					$tokens,
-					$select_start,
-					$select_end
-				);
-			}
-			if ( null === $literal_value_row ) {
 				$last_insert_id_column_on_duplicate_key_update = (string) $assignment_effects['last_insert_id_column'];
 			} else {
 				$last_insert_id_row = $this->get_mysql_upsert_conflicting_row_column_value(
@@ -20453,15 +20417,6 @@ WHERE option_name IN (
 		$inserted_value_rows  = null;
 		$insert_id_value_rows = null;
 		if ( null !== $auto_increment_column ) {
-			if ( null === $literal_value_row ) {
-				$literal_value_row = $this->get_mysql_insert_select_upsert_literal_value_row(
-					$table_name,
-					$columns,
-					$tokens,
-					$select_start,
-					$select_end
-				);
-			}
 			if ( null === $literal_value_row ) {
 				if (
 					! $this->can_mysql_insert_select_upsert_skip_auto_increment_literal_probe(
@@ -20532,27 +20487,17 @@ WHERE option_name IN (
 			$upsert_query['last_insert_id_column_on_duplicate_key_update'] = $last_insert_id_column_on_duplicate_key_update;
 		}
 
-		$literal_select_row = $literal_value_row;
-		if ( null === $literal_select_row ) {
-			$literal_select_row = $this->get_mysql_insert_select_upsert_literal_value_row(
+		if ( null === $literal_value_row ) {
+			$materialized_flow = $this->get_mysql_insert_select_upsert_materialized_flow(
 				$table_name,
 				$columns,
 				$tokens,
 				$select_start,
-				$select_end
+				$select_end,
+				$conflict_indexes,
+				$conflict_target['parts'],
+				$conflict_sql
 			);
-		}
-		if ( null === $literal_select_row ) {
-				$materialized_flow = $this->get_mysql_insert_select_upsert_materialized_flow(
-					$table_name,
-					$columns,
-					$tokens,
-					$select_start,
-					$select_end,
-					$conflict_indexes,
-					$conflict_target['parts'],
-					$conflict_sql
-				);
 			if ( null === $materialized_flow ) {
 				return null;
 			}
@@ -20900,6 +20845,21 @@ WHERE option_name IN (
 		}
 
 		return count( $rows ) > 0 ? $rows : null;
+	}
+
+	/**
+	 * Serialize translated value rows for PostgreSQL VALUES SQL.
+	 *
+	 * @param array[] $value_rows Translated PostgreSQL VALUES rows.
+	 * @return string Parenthesized row SQL list.
+	 */
+	private function get_postgresql_dml_values_rows_sql( array $value_rows ): string {
+		$sql_rows = array();
+		foreach ( $value_rows as $values ) {
+			$sql_rows[] = '(' . implode( ', ', $values ) . ')';
+		}
+
+		return implode( ', ', $sql_rows );
 	}
 
 	/**
@@ -21518,11 +21478,8 @@ WHERE option_name IN (
 
 			$candidate_conflicts = false;
 			foreach ( $value_rows as $row_index => $values ) {
-				$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
-				foreach ( $conflict_indexes as $conflict_index ) {
-					if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
-						return null;
-					}
+				if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safe_rows[ $row_index ] ?? array(), $conflict_indexes ) ) {
+					return null;
 				}
 
 				$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
@@ -21611,10 +21568,8 @@ WHERE option_name IN (
 			$matching_indexes = array();
 
 			foreach ( $conflict_index_groups as $candidate_index => $conflict_indexes ) {
-				foreach ( $conflict_indexes as $conflict_index ) {
-					if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
-						return null;
-					}
+				if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safety, $conflict_indexes ) ) {
+					return null;
 				}
 
 				$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
@@ -21704,11 +21659,8 @@ WHERE option_name IN (
 
 		$inserted_rows = array();
 		foreach ( $value_rows as $row_index => $values ) {
-			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
-			foreach ( $conflict_indexes as $conflict_index ) {
-				if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
-					return null;
-				}
+			if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safe_rows[ $row_index ] ?? array(), $conflict_indexes ) ) {
+				return null;
 			}
 
 			$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
@@ -21758,6 +21710,52 @@ WHERE option_name IN (
 	}
 
 	/**
+	 * Check whether one deterministic row can safely probe a conflict key.
+	 *
+	 * @param array   $values           Translated PostgreSQL VALUES row.
+	 * @param bool[]  $probe_safety     Per-value conflict-probe safety flags.
+	 * @param array[] $conflict_indexes Conflict target column/index tuples.
+	 * @return bool Whether every conflict key part is present and probe-safe.
+	 */
+	private function mysql_upsert_conflict_indexes_are_probe_safe_for_row( array $values, array $probe_safety, array $conflict_indexes ): bool {
+		foreach ( $conflict_indexes as $conflict_index ) {
+			if (
+				! array_key_exists( $conflict_index['index'], $values )
+				|| ! isset( $probe_safety[ $conflict_index['index'] ] )
+				|| ! $probe_safety[ $conflict_index['index'] ]
+			) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Build a conflict-index comparison for a deterministic incoming SQL value.
+	 *
+	 * @param array  $conflict_index Conflict target column/index tuple.
+	 * @param string $value_sql      Incoming PostgreSQL value SQL.
+	 * @return string SQL comparison.
+	 */
+	private function get_mysql_conflict_index_value_comparison_sql( array $conflict_index, string $value_sql ): string {
+		if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
+			return sprintf(
+				'%s = SUBSTR(CAST(%s AS text), 1, %d)',
+				$this->get_mysql_index_key_part_sql( (string) $conflict_index['column'], $conflict_index['sub_part'] ),
+				$value_sql,
+				(int) $conflict_index['sub_part']
+			);
+		}
+
+		return sprintf(
+			'%s = %s',
+			$this->connection->quote_identifier( (string) $conflict_index['column'] ),
+			$value_sql
+		);
+	}
+
+	/**
 	 * Check whether a VALUES row conflicts with the selected upsert target.
 	 *
 	 * @param string $table_name       Table name.
@@ -21777,20 +21775,7 @@ WHERE option_name IN (
 				return false;
 			}
 
-			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
-				$where[] = sprintf(
-					'%s = SUBSTR(CAST(%s AS text), 1, %d)',
-					$this->get_mysql_index_key_part_sql( (string) $conflict_index['column'], $conflict_index['sub_part'] ),
-					$value,
-					(int) $conflict_index['sub_part']
-				);
-			} else {
-				$where[] = sprintf(
-					'%s = %s',
-					$this->connection->quote_identifier( (string) $conflict_index['column'] ),
-					$value
-				);
-			}
+			$where[] = $this->get_mysql_conflict_index_value_comparison_sql( $conflict_index, $value );
 		}
 
 		$stmt = $this->connection->query(
@@ -21859,15 +21844,12 @@ WHERE option_name IN (
 	 * @return array{found: bool, value: mixed}|null Conflict row value, or null when unsupported.
 	 */
 	private function get_mysql_upsert_conflicting_row_column_value( string $table_name, string $column_name, array $values, array $probe_safety, array $conflict_indexes ): ?array {
+		if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safety, $conflict_indexes ) ) {
+			return null;
+		}
+
 		$where = array();
 		foreach ( $conflict_indexes as $conflict_index ) {
-			if (
-				! array_key_exists( $conflict_index['index'], $values )
-				|| empty( $probe_safety[ $conflict_index['index'] ] )
-			) {
-				return null;
-			}
-
 			$value = (string) $values[ $conflict_index['index'] ];
 			if ( $this->is_mysql_generated_auto_increment_value_sql( $value ) ) {
 				return array(
@@ -21876,20 +21858,7 @@ WHERE option_name IN (
 				);
 			}
 
-			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
-				$where[] = sprintf(
-					'%s = SUBSTR(CAST(%s AS text), 1, %d)',
-					$this->get_mysql_index_key_part_sql( (string) $conflict_index['column'], $conflict_index['sub_part'] ),
-					$value,
-					(int) $conflict_index['sub_part']
-				);
-			} else {
-				$where[] = sprintf(
-					'%s = %s',
-					$this->connection->quote_identifier( (string) $conflict_index['column'] ),
-					$value
-				);
-			}
+			$where[] = $this->get_mysql_conflict_index_value_comparison_sql( $conflict_index, $value );
 		}
 
 		if ( empty( $where ) ) {
@@ -22047,16 +22016,11 @@ WHERE option_name IN (
 		);
 		$this->append_non_strict_dml_defaults_for_omitted_value_rows( $table_name, $columns, $value_rows, $column_metadata );
 
-		$value_sql_rows = array();
-		foreach ( $value_rows as $values ) {
-			$value_sql_rows[] = '(' . implode( ', ', $values ) . ')';
-		}
-
 		$sql = sprintf(
 			'INSERT INTO %s (%s) VALUES %s',
 			$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
 			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
-			implode( ', ', $value_sql_rows )
+			$this->get_postgresql_dml_values_rows_sql( $value_rows )
 		);
 
 		$conflict_target                  = $this->get_mysql_replace_conflict_target(
@@ -22283,16 +22247,11 @@ WHERE option_name IN (
 			);
 		}
 
-		$sql_value_rows = array();
-		foreach ( $value_rows as $values ) {
-			$sql_value_rows[] = '(' . implode( ', ', $values ) . ')';
-		}
-
 		$statements[] = sprintf(
 			'INSERT INTO %s (%s) VALUES %s',
 			$quoted_table,
 			$column_sql,
-			implode( ', ', $sql_value_rows )
+			$this->get_postgresql_dml_values_rows_sql( $value_rows )
 		);
 
 		return $statements;
@@ -22351,16 +22310,12 @@ WHERE option_name IN (
 	 * @return string|false|null Predicate SQL, false when unsafe, or null when the row cannot conflict.
 	 */
 	private function get_mysql_replace_delete_predicate_for_row_conflict_indexes( array $values, array $probe_safety, array $conflict_indexes ) {
+		if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safety, $conflict_indexes ) ) {
+			return false;
+		}
+
 		$where = array();
 		foreach ( $conflict_indexes as $conflict_index ) {
-			if (
-				! array_key_exists( $conflict_index['index'], $values )
-				|| ! isset( $probe_safety[ $conflict_index['index'] ] )
-				|| ! $probe_safety[ $conflict_index['index'] ]
-			) {
-				return false;
-			}
-
 			$value = trim( (string) $values[ $conflict_index['index'] ] );
 			if (
 				'' === $value
@@ -22370,20 +22325,7 @@ WHERE option_name IN (
 				return null;
 			}
 
-			if ( null !== ( $conflict_index['sub_part'] ?? null ) && '' !== (string) $conflict_index['sub_part'] ) {
-				$where[] = sprintf(
-					'%s = SUBSTR(CAST(%s AS text), 1, %d)',
-					$this->get_mysql_index_key_part_sql( (string) $conflict_index['column'], $conflict_index['sub_part'] ),
-					$value,
-					(int) $conflict_index['sub_part']
-				);
-			} else {
-				$where[] = sprintf(
-					'%s = %s',
-					$this->connection->quote_identifier( (string) $conflict_index['column'] ),
-					$value
-				);
-			}
+			$where[] = $this->get_mysql_conflict_index_value_comparison_sql( $conflict_index, $value );
 		}
 
 		return empty( $where ) ? null : implode( ' AND ', $where );
@@ -22449,15 +22391,8 @@ WHERE option_name IN (
 	 */
 	private function mysql_replace_conflict_indexes_are_probe_safe_for_rows( array $conflict_indexes, array $value_rows, array $probe_safe_rows ): bool {
 		foreach ( $value_rows as $row_index => $values ) {
-			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
-			foreach ( $conflict_indexes as $conflict_index ) {
-				if (
-					! array_key_exists( $conflict_index['index'], $values )
-					|| ! isset( $probe_safety[ $conflict_index['index'] ] )
-					|| ! $probe_safety[ $conflict_index['index'] ]
-				) {
-					return false;
-				}
+			if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safe_rows[ $row_index ] ?? array(), $conflict_indexes ) ) {
+				return false;
 			}
 		}
 
@@ -22506,8 +22441,6 @@ WHERE option_name IN (
 		if ( $insert_column_list || ! empty( $default_columns ) ) {
 			$table_reference_sql .= ' (' . implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ) . ')';
 		}
-		$select_start        = $position;
-		$select_end          = $statement_end;
 		$outer_replacements  = array(
 			array(
 				'start' => 0,
@@ -22516,34 +22449,15 @@ WHERE option_name IN (
 			),
 		);
 		$closing_replacement = array();
-
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
-			if (
-				null === $after_close
-				|| $after_close !== $statement_end
-				|| ! isset( $tokens[ $position + 1 ] )
-				|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
-			) {
-				return null;
-			}
-
-			$select_start          = $position + 1;
-			$select_end            = $statement_end - 1;
-			$outer_replacements[]  = array(
-				'start' => $position,
-				'end'   => $position + 1,
-				'sql'   => '',
-			);
-			$closing_replacement[] = array(
-				'start' => $statement_end - 1,
-				'end'   => $statement_end,
-				'sql'   => '',
-			);
-		}
-
-		if ( ! isset( $tokens[ $select_start ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $select_start ]->id ) {
+		$select_bounds       = $this->get_mysql_optional_parenthesized_select_bounds( $tokens, $position, $statement_end );
+		if ( null === $select_bounds ) {
 			return null;
+		}
+		$select_start = $select_bounds['start'];
+		$select_end   = $select_bounds['end'];
+		if ( null !== $select_bounds['opening_replacement'] ) {
+			$outer_replacements[]  = $select_bounds['opening_replacement'];
+			$closing_replacement[] = $select_bounds['closing_replacement'];
 		}
 
 		$select_replacements = $this->get_mysql_insert_select_projection_replacements(
@@ -23356,11 +23270,8 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
-			foreach ( $replace_query['conflict_indexes'] as $conflict_index ) {
-				if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
-					return null;
-				}
+			if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safe_rows[ $row_index ] ?? array(), $replace_query['conflict_indexes'] ) ) {
+				return null;
 			}
 
 			$seen_key                = $this->get_mysql_replace_conflict_seen_key_for_row( $values, $replace_query['conflict_indexes'] );
@@ -23547,11 +23458,8 @@ WHERE option_name IN (
 		}
 
 		foreach ( $value_rows as $row_index => $values ) {
-			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
-			foreach ( $conflict_indexes as $conflict_index ) {
-				if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
-					return true;
-				}
+			if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safe_rows[ $row_index ] ?? array(), $conflict_indexes ) ) {
+				return true;
 			}
 
 			$conflict_exists = $this->mysql_upsert_conflict_exists( $table_name, $values, $conflict_indexes );
@@ -23574,11 +23482,8 @@ WHERE option_name IN (
 	private function has_duplicate_mysql_replace_conflict_value_rows( array $value_rows, array $probe_safe_rows, array $conflict_indexes ): bool {
 		$seen_values = array();
 		foreach ( $value_rows as $row_index => $values ) {
-			$probe_safety = $probe_safe_rows[ $row_index ] ?? array();
-			foreach ( $conflict_indexes as $conflict_index ) {
-				if ( ! isset( $probe_safety[ $conflict_index['index'] ] ) || ! $probe_safety[ $conflict_index['index'] ] ) {
-					return false;
-				}
+			if ( ! $this->mysql_upsert_conflict_indexes_are_probe_safe_for_row( $values, $probe_safe_rows[ $row_index ] ?? array(), $conflict_indexes ) ) {
+				return false;
 			}
 
 			$seen_key = $this->get_mysql_replace_conflict_seen_key_for_row( $values, $conflict_indexes );
@@ -23809,16 +23714,11 @@ WHERE option_name IN (
 		);
 		$this->append_non_strict_dml_defaults_for_omitted_value_rows( $table_name, $columns, $value_rows, $column_metadata );
 
-		$sql_value_rows = array();
-		foreach ( $value_rows as $values ) {
-			$sql_value_rows[] = '(' . implode( ', ', $values ) . ')';
-		}
-
 		$sql = sprintf(
 			'INSERT INTO %s (%s) VALUES %s',
 			$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
 			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
-			implode( ', ', $sql_value_rows )
+			$this->get_postgresql_dml_values_rows_sql( $value_rows )
 		);
 
 		return array(
@@ -24141,8 +24041,6 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$select_start        = $position;
-		$select_end          = $statement_end;
 		$outer_replacements  = array(
 			array(
 				'start' => 0,
@@ -24151,33 +24049,15 @@ WHERE option_name IN (
 			),
 		);
 		$closing_replacement = array();
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
-			if (
-				null === $after_close
-				|| $after_close !== $statement_end
-				|| ! isset( $tokens[ $position + 1 ] )
-				|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
-			) {
-				return null;
-			}
-
-			$select_start          = $position + 1;
-			$select_end            = $statement_end - 1;
-			$outer_replacements[]  = array(
-				'start' => $position,
-				'end'   => $position + 1,
-				'sql'   => '',
-			);
-			$closing_replacement[] = array(
-				'start' => $statement_end - 1,
-				'end'   => $statement_end,
-				'sql'   => '',
-			);
-		}
-
-		if ( ! isset( $tokens[ $select_start ] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $select_start ]->id ) {
+		$select_bounds       = $this->get_mysql_optional_parenthesized_select_bounds( $tokens, $position, $statement_end );
+		if ( null === $select_bounds ) {
 			return null;
+		}
+		$select_start = $select_bounds['start'];
+		$select_end   = $select_bounds['end'];
+		if ( null !== $select_bounds['opening_replacement'] ) {
+			$outer_replacements[]  = $select_bounds['opening_replacement'];
+			$closing_replacement[] = $select_bounds['closing_replacement'];
 		}
 
 		$replacements = $this->get_mysql_insert_select_projection_replacements(
@@ -24265,6 +24145,54 @@ WHERE option_name IN (
 			'insert_id_value_rows'      => $insert_id_value_rows,
 			'insert_id_unknown'         => ! empty( $explicit_identity_columns ),
 			'explicit_identity_columns' => $explicit_identity_columns,
+		);
+	}
+
+	/**
+	 * Resolve SELECT bounds for SELECT or parenthesized SELECT DML sources.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param int             $position SELECT or opening parenthesis token position.
+	 * @param int             $end      Final source token position, exclusive.
+	 * @return array{start: int, end: int, opening_replacement: array|null, closing_replacement: array|null}|null SELECT bounds and optional parenthesis replacements.
+	 */
+	private function get_mysql_optional_parenthesized_select_bounds( array $tokens, int $position, int $end ): ?array {
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
+			return array(
+				'start'               => $position,
+				'end'                 => $end,
+				'opening_replacement' => null,
+				'closing_replacement' => null,
+			);
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
+		if (
+			null === $after_close
+			|| $after_close !== $end
+			|| ! isset( $tokens[ $position + 1 ] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[ $position + 1 ]->id
+		) {
+			return null;
+		}
+
+		return array(
+			'start'               => $position + 1,
+			'end'                 => $end - 1,
+			'opening_replacement' => array(
+				'start' => $position,
+				'end'   => $position + 1,
+				'sql'   => '',
+			),
+			'closing_replacement' => array(
+				'start' => $end - 1,
+				'end'   => $end,
+				'sql'   => '',
+			),
 		);
 	}
 
