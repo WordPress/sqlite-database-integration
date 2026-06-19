@@ -43808,42 +43808,31 @@ END',
 			return false;
 		}
 
-		switch ( $tokens[0]->id ) {
-			case WP_MySQL_Lexer::INSERT_SYMBOL:
-				return $this->insert_or_replace_query_targets_main_database_explicitly( $tokens, true );
-
-			case WP_MySQL_Lexer::REPLACE_SYMBOL:
-				return $this->insert_or_replace_query_targets_main_database_explicitly( $tokens, false );
-
-			case WP_MySQL_Lexer::UPDATE_SYMBOL:
-				return $this->simple_update_query_targets_main_database_explicitly( $tokens );
-
-			case WP_MySQL_Lexer::DELETE_SYMBOL:
-				return $this->simple_delete_query_targets_main_database_explicitly( $tokens );
-
-			case WP_MySQL_Lexer::TRUNCATE_SYMBOL:
-				return $this->truncate_query_targets_main_database_explicitly( $tokens );
-
-			case WP_MySQL_Lexer::CREATE_SYMBOL:
-				return $this->create_query_targets_main_database_explicitly( $tokens );
-
-			case WP_MySQL_Lexer::ALTER_SYMBOL:
-				return $this->alter_table_query_targets_main_database_explicitly( $tokens );
-
-			case WP_MySQL_Lexer::DROP_SYMBOL:
-				return $this->drop_query_targets_main_database_explicitly( $tokens );
-
-			case WP_MySQL_Lexer::ANALYZE_SYMBOL:
-			case WP_MySQL_Lexer::CHECK_SYMBOL:
-			case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
-			case WP_MySQL_Lexer::REPAIR_SYMBOL:
-				return $this->table_administration_query_targets_main_database_explicitly( $query );
-
-			case WP_MySQL_Lexer::LOCK_SYMBOL:
-				return $this->lock_tables_query_targets_main_database_explicitly( $query );
+		if ( WP_MySQL_Lexer::INSERT_SYMBOL === $tokens[0]->id || WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[0]->id ) {
+			return $this->insert_or_replace_query_targets_main_database_explicitly(
+				$tokens,
+				WP_MySQL_Lexer::INSERT_SYMBOL === $tokens[0]->id
+			);
 		}
 
-		return false;
+		$token_methods = array(
+			WP_MySQL_Lexer::UPDATE_SYMBOL   => 'simple_update_query_targets_main_database_explicitly',
+			WP_MySQL_Lexer::DELETE_SYMBOL   => 'simple_delete_query_targets_main_database_explicitly',
+			WP_MySQL_Lexer::TRUNCATE_SYMBOL => 'truncate_query_targets_main_database_explicitly',
+			WP_MySQL_Lexer::CREATE_SYMBOL   => 'create_query_targets_main_database_explicitly',
+			WP_MySQL_Lexer::ALTER_SYMBOL    => 'alter_table_query_targets_main_database_explicitly',
+			WP_MySQL_Lexer::DROP_SYMBOL     => 'drop_query_targets_main_database_explicitly',
+		);
+		if ( isset( $token_methods[ $tokens[0]->id ] ) ) {
+			return $this->{$token_methods[ $tokens[0]->id ]}( $tokens );
+		}
+
+		if ( in_array( $tokens[0]->id, array( WP_MySQL_Lexer::ANALYZE_SYMBOL, WP_MySQL_Lexer::CHECK_SYMBOL, WP_MySQL_Lexer::OPTIMIZE_SYMBOL, WP_MySQL_Lexer::REPAIR_SYMBOL ), true ) ) {
+			return $this->table_administration_query_targets_main_database_explicitly( $query );
+		}
+
+		return WP_MySQL_Lexer::LOCK_SYMBOL === $tokens[0]->id
+			&& $this->lock_tables_query_targets_main_database_explicitly( $query );
 	}
 
 	/**
