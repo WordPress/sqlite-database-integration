@@ -33616,7 +33616,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'CASE WHEN n.nspname = \'public\' THEN \'wptests\' ELSE n.nspname END AS "TABLE_SCHEMA"', $sql );
 		$this->assertStringContainsString( 'acl.privilege_type AS "PRIVILEGE_TYPE"', $sql );
 		$this->assertStringContainsString( 'CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"', $sql );
-		$this->assertStringContainsString( 'LEFT(n.nspname, 3) <> \'pg_\'', $sql );
+		$this->assertStringContainsString( 'n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
 	}
 
@@ -38314,7 +38314,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'v.view_definition AS "VIEW_DEFINITION"', $sql );
 		$this->assertStringContainsString( 'COALESCE(v.is_updatable, \'NO\') AS "IS_UPDATABLE"', $sql );
 		$this->assertStringContainsString( 'AS "COLLATION_CONNECTION"', $sql );
-		$this->assertStringContainsString( 'v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')', $sql );
+		$this->assertStringContainsString( 'v.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
 	}
 
@@ -38341,7 +38341,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 't.action_statement AS "ACTION_STATEMENT"', $triggers );
 		$this->assertStringContainsString( 'TO_CHAR(t.created, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATED"', $triggers );
 		$this->assertStringContainsString( 'AS "DATABASE_COLLATION"', $triggers );
-		$this->assertStringContainsString( 't.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')', $triggers );
+		$this->assertStringContainsString( 't.trigger_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'', $triggers );
 		$this->assertStringNotContainsString( 'UNION ALL', $triggers );
 
 		$routines = $get_sql( 'routines' );
@@ -38349,7 +38349,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'r.routine_definition AS "ROUTINE_DEFINITION"', $routines );
 		$this->assertStringContainsString( 'TO_CHAR(r.last_altered, \'YYYY-MM-DD HH24:MI:SS\') AS "LAST_ALTERED"', $routines );
 		$this->assertStringContainsString( 'AS "SQL_MODE"', $routines );
-		$this->assertStringContainsString( 'r.routine_schema NOT IN (\'information_schema\', \'pg_catalog\')', $routines );
+		$this->assertStringContainsString( 'r.routine_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'', $routines );
 		$this->assertStringNotContainsString( 'UNION ALL', $routines );
 
 		$parameters = $get_sql( 'parameters' );
@@ -38357,7 +38357,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'LEFT JOIN information_schema.routines r', $parameters );
 		$this->assertStringContainsString( 'p.dtd_identifier AS "DTD_IDENTIFIER"', $parameters );
 		$this->assertStringContainsString( 'COALESCE(r.routine_type, \'FUNCTION\') AS "ROUTINE_TYPE"', $parameters );
-		$this->assertStringContainsString( 'p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')', $parameters );
+		$this->assertStringContainsString( 'p.specific_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'', $parameters );
 		$this->assertStringNotContainsString( 'UNION ALL', $parameters );
 	}
 

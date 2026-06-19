@@ -37640,8 +37640,7 @@ FROM pg_catalog.pg_namespace n
 CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault(\'n\', n.nspowner))) acl
 LEFT JOIN pg_catalog.pg_roles grantee_role
 	ON grantee_role.oid = acl.grantee
-WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'',
+WHERE n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
 			);
 		}
@@ -37656,8 +37655,7 @@ WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
 	tp.privilege_type AS "PRIVILEGE_TYPE",
 	tp.is_grantable AS "IS_GRANTABLE"
 FROM information_schema.table_privileges tp
-WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(tp.table_schema, 3) <> \'pg_\'',
+WHERE tp.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'tp.table_schema' )
 			);
 		}
@@ -37692,8 +37690,7 @@ WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	rtg.privilege_type AS "PRIVILEGE_TYPE",
 	rtg.is_grantable AS "IS_GRANTABLE"
 FROM information_schema.role_table_grants rtg
-WHERE rtg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(rtg.table_schema, 3) <> \'pg_\'',
+WHERE rtg.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'rtg.table_schema' )
 			);
 		}
@@ -37731,8 +37728,7 @@ WHERE rtg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	rrg.privilege_type AS "PRIVILEGE_TYPE",
 	rrg.is_grantable AS "IS_GRANTABLE"
 FROM information_schema.role_routine_grants rrg
-WHERE rrg.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(rrg.specific_schema, 3) <> \'pg_\'',
+WHERE rrg.specific_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'rrg.specific_schema' ),
 				$this->get_direct_information_schema_display_schema_sql( 'rrg.routine_schema' )
 			);
@@ -37876,8 +37872,7 @@ LEFT JOIN LATERAL (
 ) column_counts
 	ON TRUE
 WHERE c.relkind IN (\'r\', \'p\')
-	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'',
+	AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
 			);
 		}
@@ -37929,8 +37924,7 @@ WHERE c.relkind IN (\'r\', \'p\')
 		SELECT pg_catalog.pg_get_partkeydef(parent_class.oid) AS definition
 	) partkey
 		ON TRUE
-	WHERE parent_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-		AND LEFT(parent_ns.nspname, 3) <> \'pg_\'
+	WHERE parent_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'
 	UNION ALL
 	SELECT
 		\'def\' AS "TABLE_CATALOG",
@@ -37965,8 +37959,7 @@ WHERE c.relkind IN (\'r\', \'p\')
 		ON pc.relnamespace = pn.oid
 		AND pc.relname = t.table_name
 		AND pc.relkind IN (\'r\', \'p\')
-	WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND LEFT(t.table_schema, 3) <> \'pg_\'
+	WHERE t.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 		AND t.table_type = \'BASE TABLE\'
 		AND (
 			pc.oid IS NULL
@@ -38064,8 +38057,7 @@ JOIN pg_catalog.pg_namespace table_ns
 LEFT JOIN pg_catalog.pg_database db
 	ON db.datname = current_database()
 WHERE table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'';
+	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'';
 		}
 
 		if ( 'innodb_fields' === $view ) {
@@ -38086,8 +38078,7 @@ JOIN pg_catalog.pg_attribute att
 	ON att.attrelid = table_class.oid
 	AND att.attnum = idx.indkey[key_positions.position]
 WHERE table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'';
+	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'';
 		}
 
 		if ( 'innodb_columns' === $view ) {
@@ -38125,8 +38116,7 @@ LEFT JOIN pg_catalog.pg_attrdef def
 WHERE c.relkind IN (\'r\', \'p\')
 	AND a.attnum > 0
 	AND NOT a.attisdropped
-	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'';
+	AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'';
 		}
 
 		if ( 'columns_extensions' === $view ) {
@@ -38139,8 +38129,7 @@ WHERE c.relkind IN (\'r\', \'p\')
 	NULL AS "ENGINE_ATTRIBUTE",
 	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
 FROM information_schema.columns c
-WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(c.table_schema, 3) <> \'pg_\'',
+WHERE c.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' )
 			);
 		}
@@ -38171,8 +38160,7 @@ JOIN pg_catalog.pg_namespace table_ns
 	ON table_ns.oid = table_class.relnamespace
 WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
 	AND table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'',
+	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
 					$enforced_sql
 				);
@@ -38305,8 +38293,7 @@ LEFT JOIN pg_catalog.pg_attribute ref_att
 	AND con.contype = \'f\'
 WHERE con.contype IN (\'p\', \'u\', \'f\')
 	AND table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'',
+	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
 					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
 					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
@@ -38452,8 +38439,7 @@ LEFT JOIN pg_catalog.pg_constraint ref_con
 	AND ref_con.conkey = con.confkey
 WHERE con.contype = \'f\'
 	AND table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'',
+	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
 					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
 				);
@@ -38542,8 +38528,7 @@ JOIN pg_catalog.pg_class t ON t.oid = con.conrelid
 JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
 WHERE con.contype = \'c\'
 	AND t.relkind IN (\'r\', \'p\')
-	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'',
+	AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
 					$check_clause_sql
 				);
@@ -38607,8 +38592,7 @@ JOIN pg_catalog.pg_namespace table_ns
 	ON table_ns.oid = table_class.relnamespace
 WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
 	AND table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'',
+	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' )
 			);
 		}
@@ -38636,10 +38620,8 @@ WHERE s.schema_name = \'information_schema\'
 	%2$s AS "TABLE_SCHEMA",
 	vtu.table_name AS "TABLE_NAME"
 FROM information_schema.view_table_usage vtu
-WHERE vtu.view_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vtu.view_schema, 3) <> \'pg_\'
-	AND vtu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vtu.table_schema, 3) <> \'pg_\'',
+WHERE vtu.view_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
+	AND vtu.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'vtu.view_schema' ),
 				$this->get_direct_information_schema_display_schema_sql( 'vtu.table_schema' )
 			);
@@ -38655,10 +38637,8 @@ WHERE vtu.view_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	%2$s AS "SPECIFIC_SCHEMA",
 	vru.specific_name AS "SPECIFIC_NAME"
 FROM information_schema.view_routine_usage vru
-WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vru.table_schema, 3) <> \'pg_\'
-	AND vru.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vru.specific_schema, 3) <> \'pg_\'',
+WHERE vru.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
+	AND vru.specific_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'vru.table_schema' ),
 				$this->get_direct_information_schema_display_schema_sql( 'vru.specific_schema' )
 			);
@@ -38678,8 +38658,7 @@ WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	%2$s AS "CHARACTER_SET_CLIENT",
 	%3$s AS "COLLATION_CONNECTION"
 FROM information_schema.views v
-WHERE v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(v.table_schema, 3) <> \'pg_\'',
+WHERE v.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'v.table_schema' ),
 				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
 				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
@@ -38712,8 +38691,7 @@ WHERE v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	%5$s AS "COLLATION_CONNECTION",
 	%5$s AS "DATABASE_COLLATION"
 FROM information_schema.triggers t
-WHERE t.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(t.trigger_schema, 3) <> \'pg_\'',
+WHERE t.trigger_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 't.trigger_schema' ),
 				$this->get_direct_information_schema_display_schema_sql( 't.event_object_schema' ),
 				$this->connection->quote( $this->get_sql_mode() ),
@@ -38757,8 +38735,7 @@ WHERE t.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	%4$s AS "COLLATION_CONNECTION",
 	%4$s AS "DATABASE_COLLATION"
 FROM information_schema.routines r
-WHERE r.routine_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(r.routine_schema, 3) <> \'pg_\'',
+WHERE r.routine_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'r.routine_schema' ),
 				$this->connection->quote( $this->get_sql_mode() ),
 				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
@@ -38790,8 +38767,7 @@ LEFT JOIN information_schema.routines r
 	ON r.specific_catalog = p.specific_catalog
 	AND r.specific_schema = p.specific_schema
 	AND r.specific_name = p.specific_name
-WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(p.specific_schema, 3) <> \'pg_\'',
+WHERE p.specific_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'p.specific_schema' )
 			);
 		}
@@ -38840,8 +38816,7 @@ WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 		ELSE UPPER(COALESCE(c.domain_name, c.udt_name, c.data_type))
 	END AS "GEOMETRY_TYPE_NAME"
 FROM information_schema.columns c
-WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(c.table_schema, 3) <> \'pg_\'
+WHERE c.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 	AND LOWER(COALESCE(c.domain_name, c.udt_name, c.data_type)) IN (%3$s)',
 				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
 				implode( "\n\t\t", $geometry_type_case ),
@@ -39044,8 +39019,7 @@ SELECT * FROM catalog_index_rows',
 		\'last-updated\', NULL
 	) AS text) AS "HISTOGRAM"
 FROM pg_catalog.pg_stats stats
-WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(stats.schemaname, 3) <> \'pg_\'',
+WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 				$this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' )
 			);
 		}
