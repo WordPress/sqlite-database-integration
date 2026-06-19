@@ -13,6 +13,12 @@ require_once __DIR__ . '/WP_PostgreSQL_Connection_Stale_Insert_ID_SQLite_Connect
  * Unit tests for the PostgreSQL driver scaffold.
  */
 class WP_PostgreSQL_Driver_Tests extends TestCase {
+	public const MYSQL_COLUMN_METADATA_TABLE      = '__wp_postgresql_mysql_column_metadata';
+	public const MYSQL_INDEX_METADATA_TABLE       = '__wp_postgresql_mysql_index_metadata';
+	public const MYSQL_FOREIGN_KEY_METADATA_TABLE = '__wp_postgresql_mysql_foreign_key_metadata';
+	public const MYSQL_CHECK_METADATA_TABLE       = '__wp_postgresql_mysql_check_metadata';
+	public const MYSQL_TABLE_METADATA_TABLE       = '__wp_postgresql_mysql_table_metadata';
+
 	/**
 	 * Number of times the static FETCH_FUNC regression callback was invoked.
 	 *
@@ -39,7 +45,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$column_meta = $driver->get_last_column_meta();
@@ -545,7 +551,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$comments = $driver->query( 'SELECT comment_author, comment_author_email, comment_content, comment_parent FROM wptests_comments WHERE comment_ID = 1' );
@@ -588,7 +594,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$posts = $driver->query( 'SELECT post_date, post_content, post_excerpt, post_status, post_parent FROM wptests_posts WHERE ID = 1' );
@@ -639,8 +645,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests DML column metadata is read fresh after metadata changes.
 	 */
 	public function test_dml_column_metadata_reads_fresh_rows_after_metadata_changes(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$driver->set_sql_mode( '' );
 
 		$driver->query(
@@ -659,17 +665,18 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)"
 		);
 
-			$metadata_select_count = 0;
-			$connection->set_query_logger(
-				static function ( string $sql, array $params ) use ( &$metadata_select_count ): void {
-					if (
-					false !== strpos( $sql, 'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, extra' )
-					&& false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
-					) {
-						++$metadata_select_count;
-					}
+		$metadata_select_count = 0;
+		$connection->set_query_logger(
+			static function ( string $sql, array $params ) use ( &$metadata_select_count ): void {
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'c.column_name' )
+					&& false !== strpos( $sql, 'c.ordinal_position' )
+				) {
+					++$metadata_select_count;
 				}
-			);
+			}
+		);
 
 		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (1)' ) );
 		$after_first_insert = $metadata_select_count;
@@ -783,7 +790,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$posts = $driver->query( 'SELECT post_date, post_date_gmt, post_modified, post_modified_gmt FROM wptests_posts WHERE ID = 1' );
@@ -1442,12 +1449,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests strict temporal validation is inlined for PostgreSQL connections.
 	 */
 	public function test_strict_update_inlines_temporal_validation_for_pgsql_connections(): void {
-		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
-			array(
-				'pdo' => new PDO( 'sqlite::memory:' ),
-			)
-		);
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$driver = $this->create_driver_with_postgresql_quote_translation();
 		$this->install_strict_dml_values_table_with_mysql_metadata( $driver );
 
 		$sql = $this->translate_driver_query_with_private_method(
@@ -1898,7 +1900,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assert_last_postgresql_sql_statements(
 			$driver,
 			array(
-				'DELETE FROM "wptests_options" WHERE ("option_name" = \'siteurl\')',
+				'DELETE FROM "wptests_options" WHERE (("option_id" = 8) OR ("option_name" = \'siteurl\'))',
 				'INSERT INTO "wptests_options" ("option_id", "option_name", "option_value") VALUES (8, \'siteurl\', \'updated\')',
 			)
 		);
@@ -1914,7 +1916,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assert_last_postgresql_sql_statements(
 			$driver,
 			array(
-				'DELETE FROM "wptests_options" WHERE ("option_name" = \'home\')',
+				'DELETE FROM "wptests_options" WHERE (("option_id" = 9) OR ("option_name" = \'home\'))',
 				'INSERT INTO "wptests_options" ("option_id", "option_name", "option_value") VALUES (9, \'home\', \'created\')',
 			)
 		);
@@ -1932,7 +1934,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assert_last_postgresql_sql_statements(
 			$driver,
 			array(
-				'DELETE FROM "wptests_options" WHERE ("option_name" = \'home\')',
+				'DELETE FROM "wptests_options" WHERE (("option_id" = 10) OR ("option_name" = \'home\'))',
 				'INSERT INTO "wptests_options" ("option_id", "option_name", "option_value") VALUES (10, \'home\', \'qualified\')',
 			)
 		);
@@ -2254,11 +2256,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -2719,7 +2721,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 3, $driver->query( $replace ) );
 		$sql = $this->assert_last_replace_select_materialized_sql( $driver, 'wptests_replace_select' );
 		$this->assertStringContainsString(
-			' AS SELECT id AS "id" , name AS "name" , color AS "color" FROM wptests_replace_select_source WHERE 1 = 1',
+			' AS SELECT id AS "id" , CAST(name AS text) AS "name" , color AS "color" FROM wptests_replace_select_source WHERE 1 = 1',
 			$sql[1]
 		);
 		$this->assertStringContainsString(
@@ -2882,7 +2884,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 3, $driver->query( $replace ) );
 		$sql = $this->assert_last_replace_select_materialized_sql( $driver, 'wptests_replace_select_columnless' );
 		$this->assertStringContainsString(
-			' AS SELECT ' . $this->get_expected_mysql_integer_cast_sql( '"ID"' ) . ' AS "ID" , CAST(display_name AS text) AS "display_name" FROM wptests_replace_select_columnless_source WHERE 1 = 1',
+			' AS SELECT "ID" AS "ID" , display_name AS "display_name" FROM wptests_replace_select_columnless_source WHERE 1 = 1',
 			$sql[1]
 		);
 		$this->assertStringContainsString(
@@ -3611,6 +3613,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'sql'    => "CREATE TEMPORARY TABLE \"wptests_charset_temp\" (\n  \"a\" varchar(50),\n  \"b\" text\n)",
 					'params' => array(),
 				),
+				array(
+					'sql'    => "COMMENT ON COLUMN \"temp\".\"wptests_charset_temp\".\"a\" IS '__wp_mysql_column_charset:YmlnNQ==\n__wp_mysql_column_collation:YmlnNV9jaGluZXNlX2Np'",
+					'params' => array(),
+				),
+				array(
+					'sql'    => "COMMENT ON COLUMN \"temp\".\"wptests_charset_temp\".\"b\" IS '__wp_mysql_column_charset:YmlnNQ==\n__wp_mysql_column_collation:YmlnNV9jaGluZXNlX2Np'",
+					'params' => array(),
+				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
@@ -3818,6 +3828,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'sql'    => 'CREATE UNIQUE INDEX "wptests_standalone_prefix_unique__value_prefix" ON "wptests_standalone_prefix_unique" (SUBSTR(CAST("value" AS text), 1, 16))',
 					'params' => array(),
 				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "public"."wptests_standalone_prefix_unique__value_prefix" IS \'__wp_mysql_index_sub_part:1:16\'',
+					'params' => array(),
+				),
 			),
 			$driver->get_last_postgresql_queries()
 		);
@@ -3934,7 +3948,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table mutation was not expected for catalog-backed CREATE INDEX.' );
 				}
 
@@ -4056,7 +4070,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table mutation was not expected for catalog-backed CREATE INDEX.' );
 				}
 
@@ -4187,7 +4201,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table mutation was not expected for catalog-backed FULLTEXT/SPATIAL CREATE INDEX.' );
 				}
 
@@ -4386,13 +4400,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_mysql_index_metadata_quotes_collation_identifier_for_postgresql(): void {
 		$logged_sql = array();
-		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
 		$connection->set_query_logger(
 			static function ( string $sql ) use ( &$logged_sql ): void {
 				$logged_sql[] = $sql;
 			}
 		);
-		$driver = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$driver = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 
 		$driver->query(
 			'CREATE TABLE wptests_metadata_collation_quote (
@@ -4402,11 +4416,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				KEY user_login (user_login)
 			)'
 		);
+		$driver->query( 'SHOW INDEX FROM wptests_metadata_collation_quote' );
 
 		$sql = implode( "\n", $logged_sql );
-		$this->assertStringContainsString( '"collation" TEXT', $sql );
-		$this->assertStringContainsString( 'index_type, "collation", sub_part', $sql );
-		$this->assertStringNotContainsString( 'index_type, collation, sub_part', $sql );
+		$this->assertStringContainsString( '"COLLATION" AS "Collation"', $sql );
+		$this->assertStringNotContainsString( 'AS collation', $sql );
+		$this->assertStringNotContainsString( '__wp_postgresql_mysql_', $sql );
 	}
 
 	/**
@@ -4549,7 +4564,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed DROP INDEX.' );
 				}
 
@@ -4661,11 +4676,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -4775,7 +4790,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed DROP INDEX.' );
 				}
 
@@ -4857,8 +4872,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests standalone DROP INDEX PRIMARY removes the primary-key constraint metadata.
 	 */
 	public function test_standalone_drop_index_primary_updates_postgresql_and_mysql_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_standalone_drop_primary (
@@ -4989,8 +5004,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE ADD primary and unique constraints update backend and MySQL metadata.
 	 */
 	public function test_alter_table_add_primary_and_unique_constraints_update_backend_and_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_add_constraints (
@@ -5035,8 +5050,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		foreach ( $queries as $query ) {
-			$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+			$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+			$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 			$this->install_information_schema_fixture( $driver );
 			$driver->store_mysql_schema_metadata(
 				'CREATE TABLE wptests_alter_drop_primary (
@@ -5068,8 +5083,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE DROP CONSTRAINT maps unique-key metadata to a PostgreSQL index drop.
 	 */
 	public function test_alter_table_drop_constraint_updates_unique_key_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_drop_constraint (
@@ -5102,8 +5117,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE DROP CONSTRAINT fails before backend execution when metadata has no matching constraint.
 	 */
 	public function test_alter_table_drop_constraint_fails_for_missing_constraint_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_drop_missing_constraint (
@@ -5125,8 +5140,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE DROP CONSTRAINT fails closed when metadata has multiple matching constraint classes.
 	 */
 	public function test_alter_table_drop_constraint_fails_for_ambiguous_constraint_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_drop_constraint_parent (
@@ -5137,29 +5152,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_drop_ambiguous_constraint (
 				id int NOT NULL,
-				UNIQUE KEY cnst (id)
+				UNIQUE KEY cnst (id),
+				CONSTRAINT cnst FOREIGN KEY (id) REFERENCES wptests_alter_drop_constraint_parent (id)
 			)'
-		);
-		$driver->get_connection()->query(
-			sprintf(
-				'INSERT INTO %s
-					(table_schema, table_name, constraint_name, constraint_ordinal, seq_in_index, column_name, referenced_table_schema, referenced_table_name, referenced_column_name, update_rule, delete_rule)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array(
-				'public',
-				'wptests_alter_drop_ambiguous_constraint',
-				'cnst',
-				1,
-				1,
-				'id',
-				'public',
-				'wptests_alter_drop_constraint_parent',
-				'id',
-				'NO ACTION',
-				'NO ACTION',
-			)
 		);
 
 		try {
@@ -5178,8 +5173,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE DROP CONSTRAINT does not treat ordinary non-unique keys as constraints.
 	 */
 	public function test_alter_table_drop_constraint_fails_for_non_unique_index_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_drop_non_unique_constraint (
@@ -5204,8 +5199,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE ADD/DROP CHECK forms translate to PostgreSQL constraints.
 	 */
 	public function test_alter_table_check_constraint_forms_translate_to_postgresql(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_check (
@@ -5239,7 +5234,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 		$this->assertSame(
 			array(
@@ -5288,8 +5283,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'sql'    => 'ALTER TABLE "wptests_alter_check" DROP CONSTRAINT "wptests_alter_check_chk_2"',
 					'params' => array(),
 				),
+				array(
+					'sql'    => 'ALTER TABLE "wptests_alter_check" DROP CONSTRAINT "max_id"',
+					'params' => array(),
+				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 		$this->assertSame( array(), $this->get_mysql_check_metadata_rows( $driver, 'wptests_alter_check' ) );
 	}
@@ -5337,7 +5336,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden CHECK metadata table access was not expected for catalog-backed DROP CHECK.' );
 				}
 
@@ -5488,7 +5487,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden CHECK metadata table access was not expected for catalog-backed ADD CHECK.' );
 				}
 
@@ -5595,8 +5594,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE DROP CHECK fails before backend execution when metadata has no matching constraint.
 	 */
 	public function test_alter_table_drop_check_fails_for_missing_constraint_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_drop_missing_check (
@@ -5756,11 +5755,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				if (
-					false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE )
-					|| false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
-					|| false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE )
-					|| false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-					|| false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE )
+					false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE )
+					|| false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE )
+					|| false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE )
+					|| false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+					|| false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE )
 				) {
 					throw new RuntimeException( 'Hidden schema metadata table access was not expected for catalog-backed DROP TABLE.' );
 				}
@@ -5944,6 +5943,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				),
 				array(
 					'sql'    => 'CREATE INDEX "wptests_create_hash_index__value_hash" ON "wptests_create_hash_index" (SUBSTR(CAST("value" AS text), 1, 191))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON INDEX "public"."wptests_create_hash_index__value_hash" IS \'__wp_mysql_index_sub_part:1:191\'',
 					'params' => array(),
 				),
 			),
@@ -6539,7 +6542,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 2, $driver->query( $insert ) );
 		$this->assertSame(
-			'INSERT INTO wptests_insert_select_columnless ("id", "value") SELECT ' . $this->get_expected_mysql_integer_cast_sql( 'id' ) . ' , CAST(value AS text) FROM wptests_insert_select_columnless_source WHERE 1 = 1',
+			'INSERT INTO wptests_insert_select_columnless ("id", "value") SELECT id, value FROM wptests_insert_select_columnless_source WHERE 1 = 1',
 			$this->get_last_single_postgresql_sql( $driver )
 		);
 
@@ -7383,7 +7386,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$unique_index_metadata_queries = 0;
 		$driver->get_connection()->set_query_logger(
 			static function ( string $sql ) use ( &$unique_index_metadata_queries ): void {
-				if ( false !== strpos( $sql, "non_unique = '0'" ) ) {
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index' ) ) {
 					++$unique_index_metadata_queries;
 				}
 			}
@@ -10566,11 +10569,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -10967,11 +10970,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -11082,11 +11085,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -12790,11 +12793,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -16528,9 +16531,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests column-reference metadata lookups are cached until table metadata changes.
+	 * Tests column-reference metadata uses stateless catalog reads.
 	 */
-	public function test_wordpress_column_reference_metadata_cache_reuses_lookups_until_metadata_changes(): void {
+	public function test_wordpress_column_reference_metadata_uses_stateless_catalog_reads(): void {
 		$driver = $this->create_driver();
 
 		$driver->query(
@@ -16548,19 +16551,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)'
 		);
 
-		$column_type_queries        = 0;
-		$column_collation_queries   = 0;
-		$table_has_metadata_queries = 0;
+		$hidden_metadata_queries = 0;
 		$driver->get_connection()->set_query_logger(
-			static function ( string $sql ) use ( &$column_type_queries, &$column_collation_queries, &$table_has_metadata_queries ): void {
-				if ( false !== strpos( $sql, 'SELECT column_type FROM "__wp_postgresql_mysql_column_metadata"' ) ) {
-					++$column_type_queries;
-				}
-				if ( false !== strpos( $sql, 'SELECT collation_name FROM "__wp_postgresql_mysql_column_metadata"' ) ) {
-					++$column_collation_queries;
-				}
-				if ( false !== strpos( $sql, 'SELECT 1 FROM "__wp_postgresql_mysql_column_metadata"' ) ) {
-					++$table_has_metadata_queries;
+			static function ( string $sql ) use ( &$hidden_metadata_queries ): void {
+				if ( false !== strpos( $sql, '__wp_postgresql_mysql_column_metadata' ) ) {
+					++$hidden_metadata_queries;
 				}
 			}
 		);
@@ -16568,19 +16563,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$query = "SELECT post_title FROM wptests_posts, wptests_terms WHERE post_title LIKE '%test%'";
 
 		$driver->query( $query );
-
-		$type_queries_after_first      = $column_type_queries;
-		$collation_queries_after_first = $column_collation_queries;
-		$metadata_queries_after_first  = $table_has_metadata_queries;
-		$this->assertGreaterThan( 0, $type_queries_after_first );
-		$this->assertGreaterThan( 0, $collation_queries_after_first );
-		$this->assertGreaterThan( 0, $metadata_queries_after_first );
+		$this->assertSame( 0, $hidden_metadata_queries );
+		$this->assertStringContainsString(
+			"LOWER(post_title) LIKE LOWER('%test%')",
+			$this->get_last_single_postgresql_sql( $driver )
+		);
 
 		$driver->query( $query );
-
-		$this->assertSame( $type_queries_after_first, $column_type_queries );
-		$this->assertSame( $collation_queries_after_first, $column_collation_queries );
-		$this->assertSame( $metadata_queries_after_first, $table_has_metadata_queries );
+		$this->assertSame( 0, $hidden_metadata_queries );
 
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_posts (
@@ -16590,16 +16580,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)'
 		);
 		$driver->query( $query );
-
-		$this->assertGreaterThan( $type_queries_after_first, $column_type_queries );
-		$this->assertGreaterThan( $collation_queries_after_first, $column_collation_queries );
-		$this->assertGreaterThan( $metadata_queries_after_first, $table_has_metadata_queries );
+		$this->assertSame( 0, $hidden_metadata_queries );
 	}
 
 	/**
-	 * Tests qualified column-name metadata lookups are cached until table metadata changes.
+	 * Tests qualified column-name metadata uses stateless catalog reads.
 	 */
-	public function test_wordpress_column_name_metadata_cache_reuses_lookups_until_metadata_changes(): void {
+	public function test_wordpress_column_name_metadata_uses_stateless_catalog_reads(): void {
 		$driver = $this->create_driver();
 
 		$driver->query(
@@ -16610,11 +16597,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)'
 		);
 
-		$column_name_queries = 0;
+		$hidden_metadata_queries = 0;
 		$driver->get_connection()->set_query_logger(
-			static function ( string $sql ) use ( &$column_name_queries ): void {
-				if ( false !== strpos( $sql, 'SELECT column_name FROM "__wp_postgresql_mysql_column_metadata"' ) ) {
-					++$column_name_queries;
+			static function ( string $sql ) use ( &$hidden_metadata_queries ): void {
+				if ( false !== strpos( $sql, '__wp_postgresql_mysql_column_metadata' ) ) {
+					++$hidden_metadata_queries;
 				}
 			}
 		);
@@ -16622,11 +16609,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$query = 'SELECT p.ID FROM wptests_posts AS p WHERE p.ID > 0';
 
 		$driver->query( $query );
-		$column_name_queries_after_first = $column_name_queries;
-		$this->assertGreaterThan( 0, $column_name_queries_after_first );
+		$this->assertSame( 0, $hidden_metadata_queries );
 
 		$driver->query( $query );
-		$this->assertSame( $column_name_queries_after_first, $column_name_queries );
+		$this->assertSame( 0, $hidden_metadata_queries );
 
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_posts (
@@ -16636,7 +16622,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)'
 		);
 		$driver->query( $query );
-		$this->assertGreaterThan( $column_name_queries_after_first, $column_name_queries );
+		$this->assertSame( 0, $hidden_metadata_queries );
 	}
 
 	/**
@@ -20391,10 +20377,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -20549,8 +20535,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -20719,8 +20705,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -20865,10 +20851,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -21037,10 +21023,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -21218,7 +21204,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					);
 				}
 
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed identity lookup.' );
 				}
 
@@ -21303,7 +21289,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					return parent::query( 'SELECT NULL AS data_type WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden column metadata table access was not expected for missing catalog-backed identity lookup.' );
 				}
 
@@ -21335,101 +21321,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(pg_catalog.pg_get_serial_sequence', $catalog_queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'catalog_identity', 'missing_id' ), $catalog_queries[0]['params'] );
-	}
-
-	/**
-	 * Tests column ordinal helpers use PostgreSQL catalogs without hidden metadata tables.
-	 */
-	public function test_column_ordinal_helpers_use_postgresql_catalog_for_pgsql_connections(): void {
-		$pdo         = new class( 'sqlite::memory:' ) extends PDO {
-			/**
-			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
-			 *
-			 * @param int $attribute PDO attribute.
-			 * @return mixed Attribute value.
-			 */
-			#[\ReturnTypeWillChange]
-			public function getAttribute( $attribute ) {
-				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-					return 'pgsql';
-				}
-
-				return parent::getAttribute( $attribute );
-			}
-		};
-		$connection  = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
-			/**
-			 * Captured catalog ordinal queries.
-			 *
-			 * @var array[]
-			 */
-			private $catalog_queries = array();
-
-			/**
-			 * Execute fixture-backed column ordinal catalog queries.
-			 *
-			 * @param string $sql    SQL query.
-			 * @param array  $params Query parameters.
-			 * @return PDOStatement Statement.
-			 */
-			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
-					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed column ordinals.' );
-				}
-
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
-					$this->catalog_queries[] = array(
-						'sql'    => $sql,
-						'params' => $params,
-					);
-
-					if ( false !== strpos( $sql, 'MAX(c.ordinal_position)' ) ) {
-						return parent::query( 'SELECT 4 AS next_ordinal' );
-					}
-
-					if ( false !== strpos( $sql, 'SELECT c.ordinal_position' ) ) {
-						return parent::query( 'SELECT 2 AS ordinal_position' );
-					}
-				}
-
-				return parent::query( $sql, $params );
-			}
-
-			/**
-			 * Get captured catalog ordinal queries.
-			 *
-			 * @return array[] Catalog queries.
-			 */
-			public function get_catalog_queries(): array {
-				return $this->catalog_queries;
-			}
-		};
-		$driver      = new WP_PostgreSQL_Driver( $connection, 'wptests' );
-		$get_results = Closure::bind(
-			function (): array {
-				return array(
-					'next'     => $this->get_next_mysql_column_ordinal( 'public', 'catalog_ordinals' ),
-					'existing' => $this->get_mysql_column_ordinal_metadata( 'public', 'catalog_ordinals', 'slug' ),
-				);
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
-
-		$this->assertSame(
-			array(
-				'next'     => 4,
-				'existing' => 2,
-			),
-			$get_results()
-		);
-
-		$catalog_queries = $connection->get_catalog_queries();
-		$this->assertCount( 2, $catalog_queries );
-		$this->assertStringContainsString( 'MAX(c.ordinal_position)', $catalog_queries[0]['sql'] );
-		$this->assertStringContainsString( 'SELECT c.ordinal_position', $catalog_queries[1]['sql'] );
-		$this->assertSame( array( 'public', 'catalog_ordinals' ), $catalog_queries[0]['params'] );
-		$this->assertSame( array( 'public', 'catalog_ordinals', 'slug' ), $catalog_queries[1]['params'] );
 	}
 
 	/**
@@ -21471,11 +21362,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$this->queries[] = $sql;
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -21542,11 +21433,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -21624,11 +21515,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -21676,8 +21567,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE HASH indexes are normalized to BTREE like the SQLite backend.
 	 */
 	public function test_alter_table_add_hash_index_is_normalized_to_btree(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_hash_index (
@@ -21742,7 +21633,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed ADD INDEX.' );
 				}
 
@@ -21867,7 +21758,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed ADD FULLTEXT/SPATIAL INDEX.' );
 				}
 
@@ -21995,7 +21886,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed ADD COLUMN.' );
 				}
 
@@ -22110,7 +22001,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed helper type ADD COLUMN.' );
 				}
 
@@ -22195,7 +22086,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$set_sql[2]
 		);
 		$this->assertStringNotContainsString( 'COMMENT ON COLUMN "public"."catalog_alter_helper_types"', implode( "\n", array_merge( $enum_sql, $set_sql ) ) );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", array_merge( $enum_sql, $set_sql ) ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", array_merge( $enum_sql, $set_sql ) ) );
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 	}
 
@@ -22235,7 +22126,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed ADD COLUMN ON UPDATE.' );
 				}
 
@@ -22306,7 +22197,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'CREATE TRIGGER "__wp_pg_on_update_' . $hash . '" BEFORE UPDATE ON "public"."catalog_add_on_update_column" FOR EACH ROW EXECUTE FUNCTION "public"."__wp_pg_on_update_fn_' . $hash . '"()',
 			$sql
 		);
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 		$this->assertSame(
 			array(),
@@ -22352,8 +22243,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -22478,8 +22369,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -22625,8 +22516,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -22771,10 +22662,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -22850,8 +22741,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE can drop and recreate the same column name in one batch.
 	 */
 	public function test_alter_table_drop_and_readd_same_column_updates_backend_and_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			"CREATE TABLE wptests_alter_readd_column (
@@ -22878,7 +22769,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_alter_readd_column' );
@@ -22892,8 +22783,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE can rename a column and then re-add the original name in one batch.
 	 */
 	public function test_alter_table_change_and_readd_original_column_name_updates_backend_and_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			"CREATE TABLE wptests_alter_change_readd_column (
@@ -22932,7 +22823,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_alter_change_readd_column' );
@@ -22948,8 +22839,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE can drop and recreate the same secondary or primary key name in one batch.
 	 */
 	public function test_alter_table_drop_and_readd_same_index_names_update_backend_and_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alter_readd_index (
@@ -23034,8 +22925,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		foreach ( $queries as $query => $message ) {
-			$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+			$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+			$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 			$this->install_information_schema_fixture( $driver );
 			$driver->store_mysql_schema_metadata(
 				'CREATE TABLE wptests_alter_readd_order (
@@ -23059,8 +22950,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests parenthesized ALTER TABLE ADD column lists ignore MySQL placement.
 	 */
 	public function test_alter_table_add_parenthesized_column_list_accepts_placement_suffixes(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_parenthesized_placement_alter (
@@ -23357,8 +23248,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE ADD accepts MySQL data type aliases.
 	 */
 	public function test_alter_table_add_accepts_mysql_data_type_aliases(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_alias_alter (
@@ -23477,8 +23368,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE resolves existing column references case-insensitively.
 	 */
 	public function test_alter_table_resolves_existing_column_names_case_insensitively(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_case_alter (
@@ -23515,7 +23406,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$driver->query( 'ALTER TABLE wptests_case_alter ALTER COLUMN ReNaMeD_Value DROP DEFAULT' );
@@ -23526,7 +23417,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$driver->query( 'ALTER TABLE wptests_case_alter ADD INDEX mixed_case_idx (ReNaMeD_Value DESC)' );
@@ -23537,7 +23428,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$driver->query( 'ALTER TABLE wptests_case_alter ADD CONSTRAINT parent_fk FOREIGN KEY (PaReNt_Id) REFERENCES wptests_case_parent (ID)' );
@@ -23548,7 +23439,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$driver->query( 'ALTER TABLE wptests_case_alter RENAME COLUMN ReNaMeD_Value TO final_value' );
@@ -23559,7 +23450,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$driver->query( 'ALTER TABLE wptests_case_alter DROP COLUMN ObSoLeTe' );
@@ -23570,7 +23461,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$columns      = $this->get_mysql_column_metadata_rows( $driver, 'wptests_case_alter' );
@@ -23679,8 +23570,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE ADD COLUMN inline CHECK constraints are translated.
 	 */
 	public function test_alter_table_add_column_supports_inline_check_constraint(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 
 		$driver->store_mysql_schema_metadata( 'CREATE TABLE wptests_alter_inline_check (id int(11))' );
 
@@ -23752,7 +23643,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden foreign-key metadata table access was not expected for catalog-backed ALTER TABLE FOREIGN KEY.' );
 				}
 
@@ -23910,7 +23801,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden foreign-key metadata table access was not expected for catalog-backed unnamed ALTER TABLE FOREIGN KEY.' );
 				}
 
@@ -24041,7 +23932,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden foreign-key metadata table access was not expected for catalog-backed foreign key metadata readers.' );
 				}
 
@@ -24130,7 +24021,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$this->assertStringContainsString( "t.relkind IN ('r', 'p')", $catalog_query['sql'] );
 			$this->assertStringContainsString( "con.contype = 'f'", $catalog_query['sql'] );
 			$this->assertStringContainsString( "t.relname || '__'", $catalog_query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $catalog_query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE, $catalog_query['sql'] );
 		}
 
 		$this->assertStringContainsString( 'AS constraint_name', $catalog_queries[0]['sql'] );
@@ -24143,8 +24034,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE DROP FOREIGN KEY fails before backend execution when metadata has no matching constraint.
 	 */
 	public function test_alter_table_drop_foreign_key_fails_for_missing_constraint_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_fk_drop_missing_child (
@@ -24293,8 +24184,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests ALTER TABLE DROP COLUMN removes column and dependent index metadata.
 	 */
 	public function test_alter_table_drop_column_updates_backend_and_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			"CREATE TABLE wptests_plugin_drop (
@@ -24314,7 +24205,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_drop' );
@@ -24329,8 +24220,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 */
 	public function test_alter_table_drop_column_suffixes_are_supported_noops(): void {
 		foreach ( array( 'RESTRICT', 'CASCADE' ) as $suffix ) {
-			$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+			$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+			$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 			$this->install_information_schema_fixture( $driver );
 			$driver->store_mysql_schema_metadata(
 				"CREATE TABLE wptests_plugin_drop (
@@ -24350,7 +24241,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						'params' => array(),
 					),
 				),
-				$driver->get_last_postgresql_queries(),
+				$this->get_last_schema_postgresql_queries( $driver ),
 				$suffix
 			);
 
@@ -24400,10 +24291,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -24524,11 +24415,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden column metadata table access was not expected for mixed catalog-backed DROP COLUMN.' );
 				}
 
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table access was not expected for mixed catalog-backed DROP COLUMN.' );
 				}
 
@@ -24538,7 +24429,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						'params' => $params,
 					);
 
-					return parent::query( 'SELECT ? AS relname', array( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) );
+					return parent::query( 'SELECT ? AS relname', array( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) );
 				}
 
 				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
@@ -24607,7 +24498,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertContains( 'ALTER TABLE "catalog_drop_column_partial_metadata" DROP COLUMN "obsolete"', $sql );
 		$this->assertContains( 'DROP TRIGGER IF EXISTS "__wp_pg_on_update_' . $hash . '" ON "public"."catalog_drop_column_partial_metadata"', $sql );
 		$this->assertContains( 'DROP FUNCTION IF EXISTS "public"."__wp_pg_on_update_fn_' . $hash . '"()', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 		$this->assertSame( array( 'id' ), $pdo->query( 'SELECT name FROM pragma_table_info(\'catalog_drop_column_partial_metadata\')' )->fetchAll( PDO::FETCH_COLUMN ) );
 	}
@@ -24657,10 +24548,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -24819,9 +24710,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -24928,9 +24819,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -25050,7 +24941,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden index metadata table access was not expected for catalog-backed RENAME INDEX.' );
 				}
 
@@ -25072,6 +24963,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						'sql'    => $sql,
 						'params' => $params,
 					);
+
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'slug_idx' === (string) $params[2] ? 'SELECT 1' : 'SELECT 1 WHERE 0 = 1'
+						);
+					}
 
 					return parent::query(
 						"SELECT 'slug_idx' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'slug' AS column_name, '1' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment"
@@ -25113,11 +25010,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			$driver->get_last_postgresql_queries()
 		);
 
-		$catalog_queries = $connection->get_catalog_queries();
-		$this->assertCount( 3, $catalog_queries );
-		$this->assertSame( array( 'public', 'catalog_rename_index' ), $catalog_queries[0]['params'] );
-		$this->assertSame( array( 'public', 'catalog_rename_index' ), $catalog_queries[1]['params'] );
-		$this->assertSame( array( 'public', 'catalog_rename_index' ), $catalog_queries[2]['params'] );
+		$catalog_queries      = $connection->get_catalog_queries();
+		$catalog_query_params = array_column( $catalog_queries, 'params' );
+		$this->assertGreaterThanOrEqual( 2, count( $catalog_query_params ) );
+		$this->assertContains( array( 'public', 'catalog_rename_index', 'slug_idx', 'slug_idx', 'slug_idx' ), $catalog_query_params );
+		$this->assertContains( array( 'public', 'catalog_rename_index', 'slug_lookup', 'slug_lookup', 'slug_lookup' ), $catalog_query_params );
 		$this->assertSame(
 			array(),
 			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
@@ -25213,8 +25110,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests RENAME TABLE updates table, index, and foreign-key metadata.
 	 */
 	public function test_rename_table_updates_indexes_and_foreign_key_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_rename_parent (
@@ -25290,11 +25187,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -25417,7 +25314,7 @@ $wp_mysql_on_update$',
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$catalog_queries = $connection->get_catalog_queries();
@@ -25463,11 +25360,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -25499,7 +25396,7 @@ $wp_mysql_on_update$',
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$this->assertSame(
@@ -25546,11 +25443,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) && false === strpos( $sql, 'pg_catalog.pg_class c' ) ) {
@@ -25626,7 +25523,7 @@ $wp_mysql_on_update$',
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$this->assertSame( 0, $driver->query( 'RENAME TABLE plugin_schema.plugin_explicit_old TO plugin_schema.plugin_explicit_new' ) );
@@ -25654,8 +25551,8 @@ $wp_mysql_on_update$',
 	 * Tests multi-pair RENAME TABLE applies table, index, and FK metadata left-to-right.
 	 */
 	public function test_multi_pair_rename_table_updates_indexes_and_foreign_key_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 
 		$driver->store_mysql_schema_metadata(
 			'CREATE TABLE wptests_rename_swap_left (
@@ -25778,8 +25675,8 @@ $wp_mysql_on_update$',
 	 * Tests ALTER COLUMN DROP DEFAULT updates backend and MySQL metadata.
 	 */
 	public function test_alter_table_drop_default_updates_backend_and_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			"CREATE TABLE wptests_plugin_defaults (
@@ -25797,7 +25694,7 @@ $wp_mysql_on_update$',
 					'params' => array(),
 				),
 			),
-			$driver->get_last_postgresql_queries()
+			$this->get_last_schema_postgresql_queries( $driver )
 		);
 
 		$columns = $this->get_mysql_column_metadata_rows( $driver, 'wptests_plugin_defaults' );
@@ -25848,7 +25745,7 @@ $wp_mysql_on_update$',
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE ) ) {
 					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed ALTER COLUMN DEFAULT.' );
 				}
 
@@ -25969,8 +25866,8 @@ $wp_mysql_on_update$',
 	 * Tests MySQL table-option ALTER clauses are supported no-ops.
 	 */
 	public function test_alter_table_storage_options_are_supported_noops(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			"CREATE TABLE wptests_plugin_options (
@@ -26023,8 +25920,8 @@ $wp_mysql_on_update$',
 	 * Tests MySQL table-option ALTER clauses accept optional-equals forms as no-ops.
 	 */
 	public function test_alter_table_storage_options_accept_optional_equals_forms_as_noops(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			"CREATE TABLE wptests_plugin_option_spacing (
@@ -26115,7 +26012,7 @@ $wp_mysql_on_update$',
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, '/' ) . '"?/i', $sql ) ) {
+				if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, '/' ) . '"?/i', $sql ) ) {
 					throw new RuntimeException( 'Hidden table metadata table access was not expected for catalog-backed ALTER TABLE COMMENT.' );
 				}
 
@@ -26203,8 +26100,8 @@ $wp_mysql_on_update$',
 	 * Tests MySQL ALTER TABLE ORDER BY clauses are supported schema no-ops.
 	 */
 	public function test_alter_table_order_by_clauses_are_supported_noops(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$this->install_information_schema_fixture( $driver );
 		$driver->store_mysql_schema_metadata(
 			"CREATE TABLE wptests_plugin_order_by (
@@ -26321,10 +26218,8 @@ $wp_mysql_on_update$',
 	 * Tests ALTER TABLE AUTO_INCREMENT emits guarded PostgreSQL sequence repair.
 	 */
 	public function test_alter_table_auto_increment_uses_postgresql_identity_metadata(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
-			$this->get_dml_identity_metadata_fixture( 'wptests_pg_alter_auto_increment', 'id', 'wptests_pg_alter_auto_increment_id_seq' )
-		);
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$driver->query(
 			'CREATE TABLE wptests_pg_alter_auto_increment (
 				id INTEGER PRIMARY KEY,
@@ -26796,8 +26691,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'AS "TABLE_COLLATION"', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'FROM information_schema.columns table_collation_columns', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.pg_class pc', $queries[0]['sql'] );
-		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
-		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
 		$this->assertSame( array( 'wptests', 'BASE TABLE' ), $queries[0]['params'] );
 	}
 
@@ -26823,11 +26718,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -26884,11 +26779,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$tables = $driver->query( 'SHOW TABLE STATUS' );
@@ -27178,11 +27073,11 @@ $wp_mysql_on_update$',
 		foreach ( $queries as $query ) {
 			foreach (
 				array(
-					WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-					WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-					WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-					WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-					WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
 				) as $metadata_table
 			) {
 				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $query['sql'] ) );
@@ -27212,11 +27107,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -27327,11 +27222,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$tables = $driver->query( 'SHOW CREATE TABLE wptests_show_create' );
@@ -27486,11 +27381,11 @@ $wp_mysql_on_update$',
 			$this->assertContains( 'plugin_options', $query['params'] );
 			foreach (
 				array(
-					WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-					WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-					WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-					WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-					WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
+					WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
 				) as $metadata_table
 			) {
 				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $query['sql'] ) );
@@ -28276,11 +28171,11 @@ $wp_mysql_on_update$',
 
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -28835,9 +28730,9 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'p."PLUGIN_NAME" AS "Name"', $plugin_queries[0]['sql'] );
 		$this->assertStringContainsString( 'ORDER BY p."PLUGIN_NAME"', $plugin_queries[0]['sql'] );
 		$this->assertSame( $plugin_queries[0]['sql'], $connection->get_plugin_sql() );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $plugin_queries[0]['sql'] );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $plugin_queries[0]['sql'] );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $plugin_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, $plugin_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $plugin_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE, $plugin_queries[0]['sql'] );
 	}
 
 	/**
@@ -28931,11 +28826,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -29678,11 +29573,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -30123,11 +30018,11 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END AS "PLUGIN_STATUS"', $sql );
 		$this->assertStringContainsString( 'CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END AS "LOAD_OPTION"', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -30157,11 +30052,11 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '\'InnoDB\' AS "ENGINE"', $sql );
 		$this->assertStringContainsString( '\'NORMAL\' AS "STATUS"', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -30221,11 +30116,11 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
 		$this->assertStringNotContainsString( 'FROM (', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -30253,11 +30148,11 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '\'General\' AS "TABLESPACE_TYPE"', $sql );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(ts.oid, \'pg_tablespace\')', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -30373,11 +30268,11 @@ $wp_mysql_on_update$',
 		);
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 		$sql             = $this->translate_driver_query_with_private_method(
 			$driver,
@@ -30422,11 +30317,11 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::class
 		);
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		foreach ( $get_relations() as $relation ) {
@@ -30623,7 +30518,7 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', implode( "\n", $connection->get_queries() ) );
 		$this->assertSame(
 			0,
-			preg_match( '/\b(?:FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, '/' ) . '"?\b/i', $sql )
+			preg_match( '/\b(?:FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, '/' ) . '"?\b/i', $sql )
 		);
 	}
 	/**
@@ -30826,11 +30721,11 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'pg_catalog.concat_ws', $sql );
 		$this->assertStringContainsString( 'waiting.transactionid IS NOT DISTINCT FROM blocking.transactionid', $sql );
 		$this->assertStringContainsString( 'WHERE NOT waiting.granted', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -30933,11 +30828,11 @@ $wp_mysql_on_update$',
 		);
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 		$sql             = $this->translate_driver_query_with_private_method(
 			$driver,
@@ -31847,11 +31742,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -32082,11 +31977,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -32327,11 +32222,11 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'UNION ALL', $sql );
 		foreach (
 			array(
-				WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+				WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+				WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+				WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+				WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+				WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 			) as $metadata_table
 		) {
 			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ), $metadata_table );
@@ -32496,11 +32391,11 @@ $wp_mysql_on_update$',
 		);
 		$driver           = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables  = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 		$reflection       = new ReflectionClass( WP_PostgreSQL_Driver::class );
 		$offenders        = array();
@@ -32608,8 +32503,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'AS "TABLE_COLLATION"', $sql );
 		$this->assertStringContainsString( "'utf8mb4_unicode_ci'", $sql );
 		$this->assertStringNotContainsString( 'latin1_swedish_ci', $sql );
-		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $sql );
-		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE . '"', $sql );
 	}
 
 	/**
@@ -32634,11 +32529,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -32680,11 +32575,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$rows = $driver->query(
@@ -32775,10 +32670,10 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '__wp_mysql_column_type:', $sql );
 		$this->assertStringContainsString( 'integer|bigint|smallint|numeric|decimal|double precision|real|boolean', $sql );
 		$this->assertStringContainsString( 'CASE WHEN c.table_schema = \'public\' THEN \'wptests\' ELSE c.table_schema END AS "TABLE_SCHEMA"', $sql );
-		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
-		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
-		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
-		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
 	}
 
 	/**
@@ -32803,11 +32698,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -32844,11 +32739,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$rows = $driver->query(
@@ -32887,11 +32782,11 @@ $wp_mysql_on_update$',
 		);
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 		$sql             = $this->translate_driver_query_with_private_method(
 			$driver,
@@ -32929,8 +32824,8 @@ $wp_mysql_on_update$',
 		);
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
 		);
 		$get_columns     = Closure::bind(
 			function (): string {
@@ -33002,11 +32897,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -33060,11 +32955,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$describe = $driver->query( 'DESCRIBE wptests_options' );
@@ -33200,7 +33095,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '__wp_mysql_column_default:', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( '__wp_mysql_column_type:', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'DEFAULT_GENERATED', $catalog_queries[0]['sql'] );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_posts' ), $catalog_queries[0]['params'] );
 	}
 
@@ -33226,11 +33121,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -33281,11 +33176,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$connection->get_pdo()->exec( 'CREATE TABLE catalog_dml_columnless (id INTEGER NOT NULL, value TEXT)' );
@@ -33352,11 +33247,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -33420,11 +33315,11 @@ $wp_mysql_on_update$',
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$pdo             = $connection->get_pdo();
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$pdo->exec( "ATTACH DATABASE ':memory:' AS plugin_schema" );
@@ -33485,11 +33380,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -33540,11 +33435,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$connection->get_pdo()->exec( 'CREATE TABLE catalog_dml_insert_select_columnless (id INTEGER NOT NULL, value TEXT)' );
@@ -33666,170 +33561,8 @@ $wp_mysql_on_update$',
 		$this->assertCount( 1, $catalog_queries );
 		$this->assertStringContainsString( 'pg_catalog.pg_get_serial_sequence', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_posts' ), $catalog_queries[0]['params'] );
-	}
-
-	/**
-	 * Tests column EXTRA metadata uses PostgreSQL catalogs for pgsql connections.
-	 */
-	public function test_column_extra_metadata_uses_postgresql_catalog_for_pgsql_connections(): void {
-		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
-			/**
-			 * Report pgsql for catalog branch selection while keeping SQLite execution.
-			 *
-			 * @param int $attribute PDO attribute.
-			 * @return mixed Attribute value.
-			 */
-			#[\ReturnTypeWillChange]
-			public function getAttribute( $attribute ) {
-				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-					return 'pgsql';
-				}
-
-				return parent::getAttribute( $attribute );
-			}
-		};
-		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
-			/**
-			 * Captured catalog queries.
-			 *
-			 * @var array[]
-			 */
-			private $catalog_queries = array();
-
-			/**
-			 * Execute fixture-backed column EXTRA catalog queries.
-			 *
-			 * @param string $sql    SQL query.
-			 * @param array  $params Query parameters.
-			 * @return PDOStatement Statement.
-			 */
-			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
-					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed EXTRA lookup.' );
-				}
-
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
-					$this->catalog_queries[] = array(
-						'sql'    => $sql,
-						'params' => $params,
-					);
-
-					return parent::query( "SELECT 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP' AS extra" );
-				}
-
-				return parent::query( $sql, $params );
-			}
-
-			/**
-			 * Get captured catalog queries.
-			 *
-			 * @return array[] Catalog queries.
-			 */
-			public function get_catalog_queries(): array {
-				return $this->catalog_queries;
-			}
-		};
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
-		$get_extra  = Closure::bind(
-			function (): string {
-				return $this->get_mysql_column_extra_metadata( 'public', 'wptests_posts', 'updated_at' );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
-
-		$this->assertSame( 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', $get_extra() );
-
-		$catalog_queries = $connection->get_catalog_queries();
-		$this->assertCount( 1, $catalog_queries );
-		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
-		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $catalog_queries[0]['sql'] );
-		$this->assertStringContainsString( 'pg_catalog.pg_trigger tr', $catalog_queries[0]['sql'] );
-		$this->assertStringContainsString( '__wp_pg_on_update_', $catalog_queries[0]['sql'] );
-		$this->assertStringContainsString( 'DEFAULT_GENERATED', $catalog_queries[0]['sql'] );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
-		$this->assertSame( array( 'public', 'wptests_posts', 'updated_at' ), $catalog_queries[0]['params'] );
-	}
-
-	/**
-	 * Tests missing column EXTRA metadata does not fall back to hidden metadata tables for pgsql connections.
-	 */
-	public function test_column_extra_metadata_catalog_miss_does_not_fall_back_to_hidden_metadata_for_pgsql_connections(): void {
-		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
-			/**
-			 * Report pgsql for catalog branch selection while keeping SQLite execution.
-			 *
-			 * @param int $attribute PDO attribute.
-			 * @return mixed Attribute value.
-			 */
-			#[\ReturnTypeWillChange]
-			public function getAttribute( $attribute ) {
-				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-					return 'pgsql';
-				}
-
-				return parent::getAttribute( $attribute );
-			}
-		};
-		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
-			/**
-			 * Captured catalog queries.
-			 *
-			 * @var array[]
-			 */
-			private $catalog_queries = array();
-
-			/**
-			 * Execute fixture-backed column EXTRA catalog queries.
-			 *
-			 * @param string $sql    SQL query.
-			 * @param array  $params Query parameters.
-			 * @return PDOStatement Statement.
-			 */
-			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
-					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed EXTRA miss.' );
-				}
-
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
-					$this->catalog_queries[] = array(
-						'sql'    => $sql,
-						'params' => $params,
-					);
-
-					return parent::query( 'SELECT NULL AS extra WHERE 0 = 1' );
-				}
-
-				return parent::query( $sql, $params );
-			}
-
-			/**
-			 * Get captured catalog queries.
-			 *
-			 * @return array[] Catalog queries.
-			 */
-			public function get_catalog_queries(): array {
-				return $this->catalog_queries;
-			}
-		};
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
-		$get_extra  = Closure::bind(
-			function (): string {
-				return $this->get_mysql_column_extra_metadata( 'public', 'wptests_posts', 'missing_extra' );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
-
-		$this->assertSame( '', $get_extra() );
-
-		$catalog_queries = $connection->get_catalog_queries();
-		$this->assertCount( 1, $catalog_queries );
-		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_queries[0]['sql'] );
-		$this->assertSame( array( 'public', 'wptests_posts', 'missing_extra' ), $catalog_queries[0]['params'] );
 	}
 
 	/**
@@ -33993,7 +33726,7 @@ $wp_mysql_on_update$',
 			if ( false !== strpos( $catalog_query['sql'], ' AS collation_name' ) ) {
 				$this->assertStringContainsString( '__wp_mysql_column_collation:', $catalog_query['sql'] );
 			}
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $catalog_query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $catalog_query['sql'] );
 			$this->assertSame( array( 'public', 'wptests_posts', 'status' ), $catalog_query['params'] );
 		}
 		$this->assertStringContainsString( "LIKE 'enum%'", $catalog_queries[1]['sql'] );
@@ -34234,11 +33967,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -34288,11 +34021,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 		$queries         = array(
 			'schemata'   => array(
@@ -34514,11 +34247,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -34715,15 +34448,15 @@ $wp_mysql_on_update$',
 		$this->assertNotNull( $sql );
 		$this->assertStringContainsString( '"wptests_schema_names" AS "app"', $sql );
 		$this->assertStringContainsString( '"app"."db_name" = "c"."TABLE_SCHEMA"', $sql );
-		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
-		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE . '"', $sql );
 
 		$this->assertCount( 1, $connection->get_column_catalog_queries() );
 		$column_catalog_query = $connection->get_column_catalog_queries()[0];
 		$this->assertSame( array( 'public', 'wptests_schema_names' ), $column_catalog_query['params'] );
 		$this->assertStringContainsString( 'FROM information_schema.columns c', $column_catalog_query['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $column_catalog_query['sql'] );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $column_catalog_query['sql'] );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $column_catalog_query['sql'] );
 	}
 
 	/**
@@ -34762,7 +34495,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'CASE WHEN NULLIF(REPLACE(COALESCE(', $sql );
 		$this->assertStringContainsString( 'THEN expression ELSE NULL END AS "EXPRESSION"', $sql );
 		$this->assertStringContainsString( 'CASE WHEN table_schema = \'public\' THEN \'wptests\' ELSE table_schema END AS "TABLE_SCHEMA"', $sql );
-		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE . '"', $sql );
 	}
 
 	/**
@@ -34787,11 +34520,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -34829,11 +34562,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$rows = $driver->query(
@@ -34872,9 +34605,9 @@ $wp_mysql_on_update$',
 		);
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 		$cases           = array(
 			"SELECT constraint_name, constraint_type
@@ -34941,11 +34674,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -35009,11 +34742,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$table_constraints = $driver->query(
@@ -35124,9 +34857,9 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -35270,9 +35003,9 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -35466,7 +35199,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '"EXPRESSION" AS "Expression"', $sql['select'] );
 		$this->assertStringNotContainsString( 'metadata_exists', $sql['relation'] );
 		$this->assertStringNotContainsString( 'metadata_index_rows', $sql['relation'] );
-		$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, '/' ) . '"?/i', $sql['relation'] ) );
+		$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE, '/' ) . '"?/i', $sql['relation'] ) );
 	}
 
 	/**
@@ -35491,11 +35224,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -35547,11 +35280,11 @@ $wp_mysql_on_update$',
 		};
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$metadata_tables = array(
-			WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+			WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 		);
 
 		$indexes = $driver->query( 'SHOW INDEX FROM `wptests_options`;' );
@@ -36194,11 +35927,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -36330,7 +36063,7 @@ $wp_mysql_on_update$',
 		$this->assertContains( "COMMENT ON INDEX \"public\".\"catalog_pg_create__slug_lookup\" IS E'__wp_mysql_index_sub_part:1:32\\nSlug lookup note'", $sql );
 		$this->assertStringContainsString( 'DO $wp_mysql_identity_sequence_comment$', $all_sql );
 		$this->assertStringContainsString( '__wp_mysql_auto_increment_type:bigint(20) unsigned', $all_sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $all_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, $all_sql );
 
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 		$this->assertSame(
@@ -36398,11 +36131,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -36485,11 +36218,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -36609,11 +36342,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -36705,11 +36438,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -36767,7 +36500,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'PRIMARY KEY ("slug")', $sql[0] );
 		$this->assertStringContainsString( 'DO $wp_mysql_primary_index_comment$', $all_sql );
 		$this->assertStringContainsString( '__wp_mysql_index_sub_part:1:10', $all_sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $all_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE, $all_sql );
 
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 		$this->assertSame(
@@ -36814,11 +36547,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -36882,7 +36615,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '__wp_mysql_check_enforced:NO', $all_sql );
 		$this->assertStringContainsString( 'COMMENT ON CONSTRAINT "score_ceiling" ON "public"."catalog_not_enforced_check" IS', $all_sql );
 		$this->assertStringContainsString( '__wp_mysql_check_clause:score < 100', $all_sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $all_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE, $all_sql );
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 	}
 
@@ -36931,11 +36664,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -37074,11 +36807,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -37151,7 +36884,7 @@ $wp_mysql_on_update$',
 			'"seen_at" __wp_mysql_datetime_6 NOT NULL DEFAULT LEFT(TO_CHAR(CURRENT_TIMESTAMP(6) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 26)',
 			$sql[0]
 		);
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
 
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 		$this->assertSame(
@@ -37198,11 +36931,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -37275,7 +37008,7 @@ $wp_mysql_on_update$',
 			'"seen_at" __wp_mysql_datetime_3 NOT NULL DEFAULT LEFT(TO_CHAR(CURRENT_TIMESTAMP(3) AT TIME ZONE \'UTC\', \'YYYY-MM-DD HH24:MI:SS.US\'), 23)',
 			$sql[0]
 		);
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
 
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 		$this->assertSame(
@@ -37322,11 +37055,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -37422,7 +37155,7 @@ $wp_mysql_on_update$',
 			'COMMENT ON COLUMN "public"."catalog_pg_generated_defaults"."col3" IS \'' . $prefix . 'Q09OQ0FUKCdhJywgJ2InKQ==\'',
 			$all_sql
 		);
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $all_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, $all_sql );
 
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $query_sql );
 		$this->assertStringContainsString( 'convert_from(', $query_sql );
@@ -37477,11 +37210,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -37546,7 +37279,7 @@ $wp_mysql_on_update$',
 			'CREATE TRIGGER "__wp_pg_on_update_' . $hash . '" BEFORE UPDATE ON "public"."catalog_pg_on_update" FOR EACH ROW EXECUTE FUNCTION "public"."__wp_pg_on_update_fn_' . $hash . '"()',
 			$sql
 		);
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
 
 		$get_info     = Closure::bind(
 			function (): string {
@@ -37609,11 +37342,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -37744,7 +37477,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '"ratio" __wp_mysql_float_5_2', $sql[0] );
 		$this->assertStringContainsString( '"measurement" __wp_mysql_numeric_8_4', $sql[0] );
 		$this->assertStringContainsString( '"real_value" __wp_mysql_real', $sql[0] );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
 
 		$this->assertGreaterThanOrEqual(
 			0,
@@ -37845,11 +37578,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -38002,7 +37735,7 @@ $wp_mysql_on_update$',
 		$this->assertContains( 'COMMENT ON TABLE "public"."catalog_pg_store_metadata" IS \'Catalog table note\'', $sql );
 		$this->assertContains( 'COMMENT ON COLUMN "public"."catalog_pg_store_metadata"."slug" IS \'Slug note\'', $sql );
 		$this->assertContains( 'COMMENT ON INDEX "public"."catalog_pg_store_metadata__slug_lookup" IS \'Slug lookup note\'', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
 
 		$this->assertSame( array(), $connection->get_target_column_catalog_checks() );
 		$this->assertSame( array(), $connection->get_target_index_catalog_checks() );
@@ -38074,11 +37807,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -38252,11 +37985,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -38333,7 +38066,7 @@ $wp_mysql_on_update$',
 		$this->assertContains( 'COMMENT ON TABLE "plugin_schema"."plugin_catalog_create" IS \'Catalog table note\'', $sql );
 		$this->assertContains( 'COMMENT ON COLUMN "plugin_schema"."plugin_catalog_create"."slug" IS \'Slug note\'', $sql );
 		$this->assertContains( 'COMMENT ON INDEX "plugin_schema"."plugin_catalog_create__slug_lookup" IS \'Slug lookup note\'', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 	}
 
@@ -38379,7 +38112,7 @@ $wp_mysql_on_update$',
 				}
 
 				if (
-						false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE )
+						false !== strpos( $sql, WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE )
 						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
 					) {
 					throw new RuntimeException( 'Hidden CHECK metadata table access was not expected for catalog-backed JSON CHECK.' );
@@ -38467,11 +38200,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -38621,11 +38354,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -38801,11 +38534,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -38965,11 +38698,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if (
@@ -39156,11 +38889,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -39285,7 +39018,7 @@ $wp_mysql_on_update$',
 			$this->assertStringContainsString( 'COMMENT ON COLUMN "public"."like_pg_copy"."title" IS ', $all_sql );
 			$this->assertStringContainsString( 'Title note', $all_sql );
 		$this->assertContains( 'COMMENT ON INDEX "public"."like_pg_copy__title_lookup" IS \'Title lookup note\'', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $all_sql );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, $all_sql );
 
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 		$this->assertSame(
@@ -39339,11 +39072,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -39517,11 +39250,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -39650,7 +39383,7 @@ $wp_mysql_on_update$',
 		$this->assertContains( 'COMMENT ON TABLE "plugin_schema"."like_plugin_copy" IS \'Template note\'', $sql );
 		$this->assertContains( 'COMMENT ON COLUMN "plugin_schema"."like_plugin_copy"."title" IS \'Title note\'', $sql );
 		$this->assertContains( 'COMMENT ON INDEX "plugin_schema"."like_plugin_copy__title_lookup" IS \'Title lookup note\'', $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
+		$this->assertStringNotContainsString( WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE, implode( "\n", $sql ) );
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 	}
 
@@ -39709,8 +39442,8 @@ $wp_mysql_on_update$',
 	 * Tests CREATE OR REPLACE VIEW and ALTER VIEW emit PostgreSQL CREATE OR REPLACE VIEW.
 	 */
 	public function test_create_or_replace_view_and_alter_view_translate_to_create_or_replace(): void {
-		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 
 		$this->assertSame(
 			0,
@@ -42038,8 +41771,8 @@ $wp_mysql_on_update$',
 	 * @return WP_PostgreSQL_Driver
 	 */
 	private function create_driver( string $db_name = 'wptests' ): WP_PostgreSQL_Driver {
-		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
-		return new WP_PostgreSQL_Driver( $connection, $db_name );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		return new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, $db_name );
 	}
 
 	/**
@@ -42106,11 +41839,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -42211,11 +41944,11 @@ $wp_mysql_on_update$',
 			public function query( string $sql, array $params = array() ): PDOStatement {
 				foreach (
 					array(
-						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE,
+						WP_PostgreSQL_Driver_Tests::MYSQL_TABLE_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -42486,8 +42219,8 @@ $wp_mysql_on_update$',
 	 * @return WP_PostgreSQL_Driver Driver under test.
 	 */
 	private function create_driver_with_stale_connection_insert_id(): WP_PostgreSQL_Driver {
-		$connection = new WP_PostgreSQL_Connection_Stale_Insert_ID_SQLite_Connection();
-		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_Stale_Insert_ID_SQLite_Connection();
+		return new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 	}
 
 	/**
@@ -42496,8 +42229,8 @@ $wp_mysql_on_update$',
 	 * @return WP_PostgreSQL_Driver Driver under test.
 	 */
 	private function create_driver_with_postgresql_quote_translation(): WP_PostgreSQL_Driver {
-		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) );
-		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_Pgsql_Quote_SQLite_Connection();
+		return new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 	}
 
 	/**
@@ -42685,9 +42418,10 @@ $wp_mysql_on_update$',
 	 * @return WP_PostgreSQL_Driver
 	 */
 	private function create_driver_with_postgresql_substring_function(): WP_PostgreSQL_Driver {
-		$pdo_class = class_exists( 'Pdo\Sqlite' ) ? 'Pdo\Sqlite' : PDO::class;
-		$pdo       = new $pdo_class( 'sqlite::memory:' );
-		$substring = static function ( $value, $pattern ): ?string {
+		$pdo_class  = class_exists( 'Pdo\Sqlite' ) ? 'Pdo\Sqlite' : PDO::class;
+		$pdo        = new $pdo_class( 'sqlite::memory:' );
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection( $pdo );
+		$substring  = static function ( $value, $pattern ): ?string {
 			if ( null === $value ) {
 				return null;
 			}
@@ -42706,8 +42440,7 @@ $wp_mysql_on_update$',
 			$pdo->sqliteCreateFunction( 'SUBSTRING', $substring, 2 );
 		}
 
-		$connection = new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) );
-		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		return new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 	}
 
 	/**
@@ -42716,12 +42449,10 @@ $wp_mysql_on_update$',
 	 * @return WP_PostgreSQL_Driver
 	 */
 	private function create_driver_with_postgresql_text_runtime_functions(): WP_PostgreSQL_Driver {
-		$connection = new WP_PostgreSQL_Connection(
-			array(
-				'pdo' => $this->create_pdo_with_postgresql_text_runtime_functions(),
-			)
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection(
+			$this->create_pdo_with_postgresql_text_runtime_functions()
 		);
-		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		return new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 	}
 
 	/**
@@ -42730,12 +42461,10 @@ $wp_mysql_on_update$',
 	 * @return WP_PostgreSQL_Driver
 	 */
 	private function create_driver_with_postgresql_quote_translation_and_text_runtime_functions(): WP_PostgreSQL_Driver {
-		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
-			array(
-				'pdo' => $this->create_pdo_with_postgresql_text_runtime_functions(),
-			)
+		$connection = new WP_PostgreSQL_Catalog_Metadata_Pgsql_Quote_SQLite_Connection(
+			$this->create_pdo_with_postgresql_text_runtime_functions()
 		);
-		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		return new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 	}
 
 	/**
@@ -43678,6 +43407,27 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Get last PostgreSQL queries without catalog-maintenance fixture noise.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 * @return array[] PostgreSQL queries.
+	 */
+	private function get_last_schema_postgresql_queries( WP_PostgreSQL_Driver $driver ): array {
+		return array_values(
+			array_filter(
+				$driver->get_last_postgresql_queries(),
+				static function ( array $query ): bool {
+					$sql = ltrim( (string) $query['sql'] );
+					return 0 !== strpos( $sql, 'WITH index_columns AS' )
+						&& 0 !== strpos( $sql, 'SELECT pg_catalog.col_description' )
+						&& 0 !== strpos( $sql, 'COMMENT ON COLUMN ' )
+						&& 0 !== strpos( $sql, 'COMMENT ON CONSTRAINT ' );
+				}
+			)
+		);
+	}
+
+	/**
 	 * Get stored MySQL column metadata rows for a table.
 	 *
 	 * @param WP_PostgreSQL_Driver $driver     Driver under test.
@@ -43686,13 +43436,18 @@ $wp_mysql_on_update$',
 	 * @return array Stored metadata rows.
 	 */
 	private function get_mysql_column_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
+		$connection = $driver->get_connection();
+		if ( $connection instanceof WP_PostgreSQL_Catalog_Metadata_SQLite_Connection ) {
+			return $connection->get_mysql_column_metadata_rows( $schema, $table_name );
+		}
+
 		$stmt = $driver->get_connection()->query(
 			sprintf(
 				'SELECT column_name, column_type, character_set_name, collation_name, is_nullable, column_default, extra
 				FROM %s
 				WHERE table_schema = ? AND table_name = ?
 				ORDER BY ordinal_position',
-				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver_Tests::MYSQL_COLUMN_METADATA_TABLE )
 			),
 			array( $schema, $table_name )
 		);
@@ -43709,13 +43464,18 @@ $wp_mysql_on_update$',
 	 * @return array Stored metadata rows.
 	 */
 	private function get_mysql_index_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
+		$connection = $driver->get_connection();
+		if ( $connection instanceof WP_PostgreSQL_Catalog_Metadata_SQLite_Connection ) {
+			return $connection->get_mysql_index_metadata_rows( $schema, $table_name );
+		}
+
 		$stmt = $driver->get_connection()->query(
 			sprintf(
 				'SELECT key_name, seq_in_index, column_name, non_unique, index_type, collation, sub_part, nullable
 				FROM %s
 				WHERE table_schema = ? AND table_name = ?
 				ORDER BY index_ordinal, seq_in_index',
-				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE )
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver_Tests::MYSQL_INDEX_METADATA_TABLE )
 			),
 			array( $schema, $table_name )
 		);
@@ -43730,6 +43490,11 @@ $wp_mysql_on_update$',
 	 * @param string               $query  MySQL CREATE TEMPORARY TABLE query.
 	 */
 	private function store_mysql_temporary_schema_metadata_for_test( WP_PostgreSQL_Driver $driver, string $query ): void {
+		$connection = $driver->get_connection();
+		if ( $connection instanceof WP_PostgreSQL_Catalog_Metadata_SQLite_Connection ) {
+			$connection->store_mysql_schema_metadata_fixture( $query, 'temp' );
+		}
+
 		$method = new ReflectionMethod( WP_PostgreSQL_Driver::class, 'store_mysql_temporary_schema_metadata' );
 		if ( PHP_VERSION_ID < 80100 && method_exists( $method, 'setAccessible' ) ) {
 			$method->setAccessible( true );
@@ -43747,13 +43512,18 @@ $wp_mysql_on_update$',
 	 * @return array Stored metadata rows.
 	 */
 	private function get_mysql_foreign_key_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
+		$connection = $driver->get_connection();
+		if ( $connection instanceof WP_PostgreSQL_Catalog_Metadata_SQLite_Connection ) {
+			return $connection->get_mysql_foreign_key_metadata_rows( $schema, $table_name );
+		}
+
 		$stmt = $driver->get_connection()->query(
 			sprintf(
 				'SELECT constraint_name, seq_in_index, column_name, referenced_table_name, referenced_column_name, update_rule, delete_rule
 				FROM %s
 				WHERE table_schema = ? AND table_name = ?
 				ORDER BY constraint_name, seq_in_index',
-				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver_Tests::MYSQL_FOREIGN_KEY_METADATA_TABLE )
 			),
 			array( $schema, $table_name )
 		);
@@ -43770,13 +43540,18 @@ $wp_mysql_on_update$',
 	 * @return array Stored metadata rows.
 	 */
 	private function get_mysql_check_metadata_rows( WP_PostgreSQL_Driver $driver, string $table_name, string $schema = 'public' ): array {
+		$connection = $driver->get_connection();
+		if ( $connection instanceof WP_PostgreSQL_Catalog_Metadata_SQLite_Connection ) {
+			return $connection->get_mysql_check_metadata_rows( $schema, $table_name );
+		}
+
 		$stmt = $driver->get_connection()->query(
 			sprintf(
 				'SELECT constraint_name, check_clause, enforced
 				FROM %s
 				WHERE table_schema = ? AND table_name = ?
 				ORDER BY constraint_ordinal, constraint_name',
-				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE )
+				$driver->get_connection()->quote_identifier( WP_PostgreSQL_Driver_Tests::MYSQL_CHECK_METADATA_TABLE )
 			),
 			array( $schema, $table_name )
 		);
@@ -44128,6 +43903,2089 @@ function wp_postgresql_driver_fetch_dynamic_field_for_introspection_cache_test( 
 
 	++$wp_postgresql_driver_named_fetch_func_invocations;
 	return $wp_postgresql_driver_named_fetch_func_invocations . ':' . $values[0];
+}
+
+/**
+ * Driver fixture that exposes parsed CREATE metadata through a catalog fixture connection.
+ */
+class WP_PostgreSQL_Catalog_Metadata_Fixture_Driver extends WP_PostgreSQL_Driver {
+	/**
+	 * Execute a query after priming catalog fixture metadata for CREATE TABLE.
+	 *
+	 * @param string $query              MySQL query.
+	 * @param int    $fetch_mode         PDO fetch mode.
+	 * @param mixed  ...$fetch_mode_args Fetch mode arguments.
+	 * @return mixed Query result.
+	 */
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$connection   = $this->get_connection();
+		$table_schema = $this->is_mysql_metadata_fixture_temporary_create_table_query( $query ) ? 'temp' : 'public';
+		if (
+			$connection instanceof WP_PostgreSQL_Catalog_Metadata_SQLite_Connection
+			&& 1 === preg_match( '/^\s*CREATE\s+(?:TEMPORARY\s+|TEMP\s+)?TABLE\b/i', $query )
+			&& $this->is_mysql_metadata_fixture_create_table_query( $query )
+			&& ! $this->mysql_metadata_fixture_create_table_if_not_exists_targets_existing_table( $query, $connection, $table_schema )
+		) {
+			$connection->store_mysql_schema_metadata_fixture( $query, $table_schema );
+		}
+
+		return parent::query( $query, $fetch_mode, ...$fetch_mode_args );
+	}
+
+	/**
+	 * Store test fixture metadata before the production catalog side effects run.
+	 *
+	 * @param string $query MySQL CREATE TABLE query.
+	 */
+	public function store_mysql_schema_metadata( string $query ): void {
+		$connection = $this->get_connection();
+		if ( $connection instanceof WP_PostgreSQL_Catalog_Metadata_SQLite_Connection ) {
+			$connection->store_mysql_schema_metadata_fixture(
+				$query,
+				$this->is_mysql_metadata_fixture_temporary_create_table_query( $query ) ? 'temp' : 'public'
+			);
+		}
+
+		parent::store_mysql_schema_metadata( $query );
+	}
+
+	/**
+	 * Check whether CREATE TABLE should prime MySQL-shaped fixture metadata.
+	 *
+	 * @param string $query CREATE TABLE query.
+	 * @return bool Whether the query carries MySQL-facing metadata.
+	 */
+	private function is_mysql_metadata_fixture_create_table_query( string $query ): bool {
+		return 1 === preg_match(
+			'/\b(?:AUTO_INCREMENT|UNIQUE\s+KEY|PRIMARY\s+KEY\s*\(|KEY\s+[`\w"]+\s*\(|CHECK\s*\(|DEFAULT\s+CHARACTER\s+SET|CHARACTER\s+SET|COLLATE|bigint\s*\(|int\s*\(|char\s*\(|varchar\s*\(|bit\s*\(|bool|boolean|dec\s*\(|fixed\s*\(|real|long\s+varchar|long\s+varbinary|longtext|mediumtext|mediumblob|tinytext|datetime|timestamp)\b/i',
+			$query
+		);
+	}
+
+	/**
+	 * Check whether a fixture CREATE TABLE query is temporary.
+	 *
+	 * @param string $query CREATE TABLE query.
+	 * @return bool Whether the CREATE TABLE query is temporary.
+	 */
+	private function is_mysql_metadata_fixture_temporary_create_table_query( string $query ): bool {
+		return 1 === preg_match( '/^\s*CREATE\s+(?:TEMPORARY|TEMP)\s+TABLE\b/i', $query );
+	}
+
+	/**
+	 * Check whether a CREATE TABLE IF NOT EXISTS should leave fixture metadata unchanged.
+	 *
+	 * @param string                                      $query        MySQL CREATE TABLE query.
+	 * @param WP_PostgreSQL_Catalog_Metadata_SQLite_Connection $connection Catalog fixture connection.
+	 * @param string                                      $table_schema Backend schema.
+	 * @return bool Whether the table already has fixture metadata.
+	 */
+	private function mysql_metadata_fixture_create_table_if_not_exists_targets_existing_table( string $query, WP_PostgreSQL_Catalog_Metadata_SQLite_Connection $connection, string $table_schema ): bool {
+		if ( 1 !== preg_match( '/^\s*CREATE\s+(?:TEMPORARY\s+|TEMP\s+)?TABLE\s+IF\s+NOT\s+EXISTS\s+(?:`(?P<quoted>[^`]+)`|(?P<bare>[A-Za-z_][A-Za-z0-9_$]*))/i', $query, $matches ) ) {
+			return false;
+		}
+
+		$table_name = '' !== ( $matches['quoted'] ?? '' ) ? $matches['quoted'] : $matches['bare'];
+		return $connection->has_mysql_schema_metadata_fixture( $table_schema, $table_name );
+	}
+}
+
+/**
+ * SQLite connection fixture that answers PostgreSQL catalog-shaped column metadata queries.
+ */
+class WP_PostgreSQL_Catalog_Metadata_SQLite_Connection extends WP_PostgreSQL_Connection {
+	/**
+	 * MySQL column metadata rows keyed by schema and table.
+	 *
+	 * @var array<string, array<string, array<int, array<string, mixed>>>>
+	 */
+	private $mysql_column_metadata = array();
+
+	/**
+	 * MySQL index metadata rows keyed by schema and table.
+	 *
+	 * @var array<string, array<string, array<int, array<string, mixed>>>>
+	 */
+	private $mysql_index_metadata = array();
+
+	/**
+	 * MySQL foreign-key metadata rows keyed by schema and table.
+	 *
+	 * @var array<string, array<string, array<int, array<string, mixed>>>>
+	 */
+	private $mysql_foreign_key_metadata = array();
+
+	/**
+	 * MySQL CHECK metadata rows keyed by schema and table.
+	 *
+	 * @var array<string, array<string, array<int, array<string, mixed>>>>
+	 */
+	private $mysql_check_metadata = array();
+
+	/**
+	 * Query logger for fixture-handled queries.
+	 *
+	 * @var callable|null
+	 */
+	private $fixture_query_logger;
+
+	/**
+	 * Number of PostgreSQL setval side effects handled by the fixture.
+	 *
+	 * @var int
+	 */
+	private $sequence_sync_query_count = 0;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param PDO|null $pdo Optional PDO instance.
+	 */
+	public function __construct( ?PDO $pdo = null ) {
+		parent::__construct( array( 'pdo' => $pdo ?? new PDO( 'sqlite::memory:' ) ) );
+	}
+
+	/**
+	 * Store parsed MySQL CREATE TABLE metadata for catalog query fixtures.
+	 *
+	 * @param string $query        MySQL CREATE TABLE query.
+	 * @param string $table_schema Backend schema.
+	 */
+	public function store_mysql_schema_metadata_fixture( string $query, string $table_schema = 'public' ): void {
+		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $query, true );
+		foreach ( $metadata_tables as $metadata ) {
+			$table_name = (string) $metadata['table_name'];
+			$rows       = array();
+			foreach ( $metadata['columns'] as $column ) {
+				$column_type = (string) ( $column['type'] ?? '' );
+				$rows[]      = array(
+					'column_name'        => (string) $column['name'],
+					'ordinal_position'   => (int) ( $column['ordinal'] ?? ( count( $rows ) + 1 ) ),
+					'column_type'        => $column_type,
+					'collation_name'     => $column['collation'] ?? null,
+					'is_nullable'        => (string) ( $column['nullable'] ?? 'YES' ),
+					'column_default'     => $column['default'] ?? null,
+					'extra'              => (string) ( $column['extra'] ?? '' ),
+					'data_type'          => $this->get_fixture_data_type_from_mysql_column_type( $column_type ),
+					'is_identity'        => 'auto_increment' === strtolower( (string) ( $column['extra'] ?? '' ) ) ? 'YES' : 'NO',
+					'sequence_schema'    => $table_schema,
+					'sequence_name'      => $table_name . '_' . (string) $column['name'] . '_seq',
+					'character_set_name' => $column['charset'] ?? null,
+					'column_comment'     => (string) ( $column['comment'] ?? '' ),
+				);
+			}
+
+			$this->mysql_column_metadata[ $table_schema ][ $table_name ] = $rows;
+
+			$index_rows = array();
+			foreach ( $metadata['indexes'] ?? array() as $index ) {
+				foreach ( $index['columns'] as $column ) {
+					$index_rows[] = array(
+						'key_name'      => (string) $index['name'],
+						'index_ordinal' => (int) ( $index['ordinal'] ?? ( count( $index_rows ) + 1 ) ),
+						'seq_in_index'  => (int) ( $column['seq_in_index'] ?? 1 ),
+						'column_name'   => (string) $column['column_name'],
+						'non_unique'    => (string) ( $index['non_unique'] ?? '1' ),
+						'index_type'    => (string) ( $index['index_type'] ?? 'BTREE' ),
+						'collation'     => $column['collation'] ?? 'A',
+						'sub_part'      => null === ( $column['sub_part'] ?? null ) ? null : (string) $column['sub_part'],
+						'index_comment' => (string) ( $index['comment'] ?? '' ),
+						'nullable'      => '',
+					);
+				}
+			}
+
+			$this->mysql_index_metadata[ $table_schema ][ $table_name ]       = $index_rows;
+			$this->mysql_foreign_key_metadata[ $table_schema ][ $table_name ] = $this->normalize_fixture_foreign_key_metadata_rows( $metadata['foreign_keys'] ?? array() );
+			$this->mysql_check_metadata[ $table_schema ][ $table_name ]       = $this->normalize_fixture_check_metadata_rows( $metadata['checks'] ?? array() );
+		}
+	}
+
+	/**
+	 * Check whether fixture metadata exists for a table.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return bool Whether fixture metadata exists.
+	 */
+	public function has_mysql_schema_metadata_fixture( string $table_schema, string $table_name ): bool {
+		return isset( $this->mysql_column_metadata[ $table_schema ][ $table_name ] )
+			|| isset( $this->mysql_index_metadata[ $table_schema ][ $table_name ] )
+			|| isset( $this->mysql_foreign_key_metadata[ $table_schema ][ $table_name ] )
+			|| isset( $this->mysql_check_metadata[ $table_schema ][ $table_name ] );
+	}
+
+	/**
+	 * Get MySQL column metadata rows from the fixture catalog.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return array<int, array<string, mixed>> Column rows.
+	 */
+	public function get_mysql_column_metadata_rows( string $table_schema, string $table_name ): array {
+		$rows = $this->get_fixture_column_metadata_rows( $table_schema, $table_name );
+		return array_map(
+			static function ( array $row ): array {
+				return array(
+					'column_name'        => $row['column_name'],
+					'column_type'        => $row['column_type'],
+					'character_set_name' => $row['character_set_name'],
+					'collation_name'     => $row['collation_name'],
+					'is_nullable'        => $row['is_nullable'],
+					'column_default'     => $row['column_default'],
+					'extra'              => $row['extra'],
+				);
+			},
+			$rows
+		);
+	}
+
+	/**
+	 * Get MySQL index metadata rows from the fixture catalog.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return array<int, array<string, mixed>> Index rows.
+	 */
+	public function get_mysql_index_metadata_rows( string $table_schema, string $table_name ): array {
+		$rows = $this->mysql_index_metadata[ $table_schema ][ $table_name ] ?? array();
+		return array_map(
+			static function ( array $row ): array {
+				return array(
+					'key_name'     => $row['key_name'],
+					'seq_in_index' => $row['seq_in_index'],
+					'column_name'  => $row['column_name'],
+					'non_unique'   => $row['non_unique'],
+					'index_type'   => $row['index_type'],
+					'collation'    => $row['collation'],
+					'sub_part'     => $row['sub_part'],
+					'nullable'     => $row['nullable'] ?? '',
+				);
+			},
+			$rows
+		);
+	}
+
+	/**
+	 * Get MySQL foreign-key metadata rows from the fixture catalog.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return array<int, array<string, mixed>> Foreign-key rows.
+	 */
+	public function get_mysql_foreign_key_metadata_rows( string $table_schema, string $table_name ): array {
+		return $this->mysql_foreign_key_metadata[ $table_schema ][ $table_name ] ?? array();
+	}
+
+	/**
+	 * Get MySQL CHECK metadata rows from the fixture catalog.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return array<int, array<string, mixed>> CHECK rows.
+	 */
+	public function get_mysql_check_metadata_rows( string $table_schema, string $table_name ): array {
+		return $this->mysql_check_metadata[ $table_schema ][ $table_name ] ?? array();
+	}
+
+	/**
+	 * Set a query logger.
+	 *
+	 * @param callable $logger Query logger.
+	 */
+	public function set_query_logger( callable $logger ): void {
+		$this->fixture_query_logger = $logger;
+		parent::set_query_logger( $logger );
+	}
+
+	/**
+	 * Get the number of sequence repair queries executed.
+	 *
+	 * @return int Sequence repair query count.
+	 */
+	public function get_sequence_sync_query_count(): int {
+		return $this->sequence_sync_query_count;
+	}
+
+	/**
+	 * Execute a query against SQLite or the catalog metadata fixture.
+	 *
+	 * @param string $sql    SQL query.
+	 * @param array  $params Query parameters.
+	 * @return PDOStatement Statement.
+	 */
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		$trimmed = ltrim( $sql );
+
+		if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
+			$this->log_fixture_query( $sql, $params );
+			return $this->query_fixture_information_schema_columns( $sql, $params );
+		}
+
+		if ( false !== strpos( $sql, 'pg_catalog.pg_constraint' ) ) {
+			$this->log_fixture_query( $sql, $params );
+			return $this->query_fixture_pg_constraint( $sql, $params );
+		}
+
+		if ( false !== strpos( $sql, 'pg_catalog.setval' ) ) {
+			$this->apply_fixture_setval( $sql );
+			return parent::query( 'SELECT 1' );
+		}
+
+		if ( false !== strpos( $sql, 'pg_catalog.pg_index' ) ) {
+			$this->log_fixture_query( $sql, $params );
+			return $this->query_fixture_pg_index( $sql, $params );
+		}
+
+		if ( false !== strpos( $sql, 'SELECT pg_catalog.col_description(c.oid, a.attnum) AS column_comment' ) ) {
+			$row = $this->get_fixture_column_metadata_row(
+				(string) ( $params[0] ?? 'public' ),
+				(string) ( $params[1] ?? '' ),
+				(string) ( $params[2] ?? '' ),
+				true
+			);
+
+			return parent::query(
+				'SELECT ? AS column_comment',
+				array( $row['column_comment'] ?? '' )
+			);
+		}
+
+		if ( 0 === strpos( $trimmed, 'COMMENT ON ' ) ) {
+			$this->apply_fixture_comment( $trimmed );
+			return parent::query( 'SELECT 1' );
+		}
+
+		if ( 0 === strpos( $trimmed, 'DO ' ) ) {
+			return parent::query( 'SELECT 1' );
+		}
+
+		if ( 0 === strpos( $trimmed, 'ALTER TABLE ' ) ) {
+			$this->apply_fixture_alter_table( $trimmed );
+			$this->apply_fixture_sqlite_alter_table( $trimmed );
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		if ( 0 === strpos( $trimmed, 'CREATE INDEX ' ) || 0 === strpos( $trimmed, 'CREATE UNIQUE INDEX ' ) ) {
+			$this->apply_fixture_create_index( $trimmed );
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		if ( 0 === strpos( $trimmed, 'DROP INDEX ' ) ) {
+			$this->apply_fixture_drop_index( $trimmed );
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		if ( 0 === strpos( $trimmed, 'ALTER INDEX ' ) ) {
+			$this->apply_fixture_alter_index( $trimmed );
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		if ( 0 === strpos( $trimmed, 'DROP TABLE ' ) ) {
+			$this->apply_fixture_drop_table( $trimmed );
+			return parent::query( $sql, $params );
+		}
+
+		if ( 0 === strpos( $trimmed, 'CREATE OR REPLACE VIEW ' ) || 0 === strpos( $trimmed, 'CREATE VIEW ' ) ) {
+			$this->apply_fixture_sqlite_create_view( $trimmed );
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		return parent::query( $sql, $params );
+	}
+
+	/**
+	 * Apply a simple public ALTER TABLE side effect to the SQLite fixture schema.
+	 *
+	 * @param string $sql PostgreSQL ALTER TABLE SQL.
+	 */
+	private function apply_fixture_sqlite_alter_table( string $sql ): void {
+		$sqlite_sql = $this->get_fixture_sqlite_public_alter_table_sql( $sql );
+		if ( null === $sqlite_sql ) {
+			return;
+		}
+
+		$this->execute_fixture_sqlite_side_effect( $sqlite_sql );
+	}
+
+	/**
+	 * Get SQLite-compatible SQL for a public ALTER TABLE fixture statement.
+	 *
+	 * @param string $sql PostgreSQL ALTER TABLE SQL.
+	 * @return string|null SQLite SQL, or null when the statement is catalog-only.
+	 */
+	private function get_fixture_sqlite_public_alter_table_sql( string $sql ): ?string {
+		if (
+			1 !== preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ADD COLUMN\s+"(?P<column>[^"]+)"\s+(?P<definition>.+)$/is',
+				$sql,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+		if ( 'public' !== $schema ) {
+			return null;
+		}
+
+		$table_exists = parent::query(
+			"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+			array( $matches['table'] )
+		)->fetchColumn();
+		if ( false === $table_exists ) {
+			return null;
+		}
+
+		return sprintf(
+			'ALTER TABLE "%s" ADD COLUMN "%s" %s',
+			str_replace( '"', '""', $matches['table'] ),
+			str_replace( '"', '""', $matches['column'] ),
+			$matches['definition']
+		);
+	}
+
+	/**
+	 * Apply a simple public CREATE VIEW side effect to the SQLite fixture schema.
+	 *
+	 * @param string $sql PostgreSQL CREATE VIEW SQL.
+	 */
+	private function apply_fixture_sqlite_create_view( string $sql ): void {
+		if (
+			1 !== preg_match( '/^CREATE VIEW\s+"[^"]+"\s*(?:[(].*[)]\s*)?AS\s+/is', $sql )
+			|| 0 === strpos( $sql, 'CREATE VIEW "public".' )
+		) {
+			return;
+		}
+
+		$this->execute_fixture_sqlite_side_effect( $sql );
+	}
+
+	/**
+	 * Execute a SQLite fixture side effect without adding an extra driver query log entry.
+	 *
+	 * @param string $sql SQLite SQL.
+	 */
+	private function execute_fixture_sqlite_side_effect( string $sql ): void {
+		$stmt = $this->get_pdo()->prepare( $sql );
+		$stmt->execute();
+	}
+
+	/**
+	 * Log a fixture-handled query.
+	 *
+	 * @param string $sql    SQL query.
+	 * @param array  $params Query parameters.
+	 */
+	private function log_fixture_query( string $sql, array $params ): void {
+		if ( is_callable( $this->fixture_query_logger ) ) {
+			call_user_func( $this->fixture_query_logger, $sql, $params );
+		}
+	}
+
+	/**
+	 * Answer a PostgreSQL information_schema.columns query from fixture metadata.
+	 *
+	 * @param string $sql    SQL query.
+	 * @param array  $params Query parameters.
+	 * @return PDOStatement Statement.
+	 */
+	private function query_fixture_information_schema_columns( string $sql, array $params ): PDOStatement {
+		$table_schema = (string) ( $params[0] ?? 'public' );
+		$table_name   = (string) ( $params[1] ?? '' );
+		$rows         = $this->get_fixture_column_metadata_rows( $table_schema, $table_name );
+
+		if ( false !== strpos( $sql, 'LOWER(c.column_name) = LOWER(?)' ) ) {
+			$column_name = (string) ( $params[2] ?? '' );
+			$rows        = array_values(
+				array_filter(
+					$rows,
+					static function ( array $row ) use ( $column_name ): bool {
+						return 0 === strcasecmp( (string) $row['column_name'], $column_name );
+					}
+				)
+			);
+		} elseif ( false !== strpos( $sql, 'c.column_name = ?' ) ) {
+			$column_name = (string) ( $params[2] ?? '' );
+			$rows        = array_values(
+				array_filter(
+					$rows,
+					static function ( array $row ) use ( $column_name ): bool {
+						return (string) $row['column_name'] === $column_name;
+					}
+				)
+			);
+		}
+
+		if ( 1 === preg_match( '/\ASELECT\s+1\s+/i', ltrim( $sql ) ) ) {
+			return parent::query( count( $rows ) > 0 ? 'SELECT 1' : 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		return $this->select_fixture_column_metadata_rows( $rows );
+	}
+
+	/**
+	 * Answer a PostgreSQL pg_index catalog query from fixture metadata.
+	 *
+	 * @param string $sql    SQL query.
+	 * @param array  $params Query parameters.
+	 * @return PDOStatement Statement.
+	 */
+	private function query_fixture_pg_index( string $sql, array $params ): PDOStatement {
+		$table_schema = (string) ( $params[0] ?? 'public' );
+		$table_name   = (string) ( $params[1] ?? '' );
+		$rows         = $this->mysql_index_metadata[ $table_schema ][ $table_name ] ?? array();
+		if ( empty( $rows ) ) {
+			$rows = $this->get_sqlite_fixture_index_metadata_rows( $table_schema, $table_name );
+		}
+
+		if ( false !== strpos( $sql, 'SELECT idx.relname' ) ) {
+			$prefix = (string) ( $params[2] ?? $table_name . '__' );
+			$names  = array();
+			foreach ( $rows as $row ) {
+				$key_name = (string) ( $row['key_name'] ?? '' );
+				if ( '' === $key_name || 'PRIMARY' === strtoupper( $key_name ) ) {
+					continue;
+				}
+
+				$postgresql_index_name = $table_name . '__' . $key_name;
+				if ( 0 === strpos( $postgresql_index_name, $prefix ) ) {
+					$names[] = $postgresql_index_name;
+				}
+			}
+
+			sort( $names, SORT_STRING );
+			return $this->select_fixture_single_column_rows( 'relname', array_values( array_unique( $names ) ) );
+		}
+
+		if ( isset( $params[2] ) && 1 === preg_match( '/\bSELECT\s+1\b/i', $sql ) ) {
+			$index_name = (string) $params[2];
+			$unique     = false !== strpos( $sql, 'AND i.indisunique' );
+			foreach ( $rows as $row ) {
+				$key_name = (string) $row['key_name'];
+				if ( $unique && '0' !== (string) $row['non_unique'] ) {
+					continue;
+				}
+				if (
+					0 === strcasecmp( $key_name, $index_name )
+					|| ( 'PRIMARY' === strtoupper( $key_name ) && 0 === strcasecmp( 'primary', $index_name ) )
+					|| 0 === strcasecmp( $table_name . '__' . $key_name, $index_name )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+			}
+
+			return parent::query( 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		if ( isset( $params[2] ) ) {
+			$index_name = (string) $params[2];
+			$unique     = false !== strpos( $sql, 'AND i.indisunique' );
+			$rows       = array_values(
+				array_filter(
+					$rows,
+					static function ( array $row ) use ( $table_name, $index_name, $unique ): bool {
+						$key_name = (string) $row['key_name'];
+						if ( $unique && '0' !== (string) $row['non_unique'] ) {
+							return false;
+						}
+
+						return 0 === strcasecmp( $key_name, $index_name )
+							|| ( 'PRIMARY' === strtoupper( $key_name ) && 0 === strcasecmp( 'primary', $index_name ) )
+							|| 0 === strcasecmp( $table_name . '__' . $key_name, $index_name );
+					}
+				)
+			);
+		}
+
+		if ( 1 === preg_match( '/\bSELECT\s+1\b/i', $sql ) ) {
+			return parent::query( count( $rows ) > 0 ? 'SELECT 1' : 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		return $this->select_fixture_index_metadata_rows( $rows );
+	}
+
+	/**
+	 * Get MySQL-shaped index rows from SQLite fixture metadata.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return array<int, array<string, mixed>> Index rows.
+	 */
+	private function get_sqlite_fixture_index_metadata_rows( string $table_schema, string $table_name ): array {
+		if ( '' === $table_name ) {
+			return array();
+		}
+
+		$rows       = array();
+		$table_info = parent::query(
+			$this->get_sqlite_fixture_pragma_statement_sql( 'table_info', $table_schema, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$pk_columns = array();
+		foreach ( $table_info as $column ) {
+			if ( isset( $column['pk'] ) && (int) $column['pk'] > 0 ) {
+				$pk_columns[ (int) $column['pk'] ] = (string) $column['name'];
+			}
+		}
+		ksort( $pk_columns, SORT_NUMERIC );
+
+		foreach ( array_values( $pk_columns ) as $offset => $column_name ) {
+			$rows[] = array(
+				'key_name'      => 'PRIMARY',
+				'index_ordinal' => 1,
+				'seq_in_index'  => $offset + 1,
+				'column_name'   => $column_name,
+				'non_unique'    => '0',
+				'index_type'    => 'BTREE',
+				'collation'     => 'A',
+				'sub_part'      => null,
+				'index_comment' => '',
+			);
+		}
+
+		$index_list = parent::query(
+			$this->get_sqlite_fixture_pragma_statement_sql( 'index_list', $table_schema, $table_name )
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$ordinal    = 1;
+		foreach ( $index_list as $index ) {
+			if ( empty( $index['unique'] ) || 'pk' === (string) ( $index['origin'] ?? '' ) ) {
+				continue;
+			}
+
+			$index_name = (string) ( $index['name'] ?? '' );
+			if ( '' === $index_name ) {
+				continue;
+			}
+
+			$index_rows = parent::query( 'PRAGMA index_info(' . $this->quote_sqlite_identifier( $index_name ) . ')' )->fetchAll( PDO::FETCH_ASSOC );
+			++$ordinal;
+			foreach ( $index_rows as $offset => $index_row ) {
+				if ( null === ( $index_row['name'] ?? null ) || '' === (string) $index_row['name'] ) {
+					continue;
+				}
+
+				$rows[] = array(
+					'key_name'      => $index_name,
+					'index_ordinal' => $ordinal,
+					'seq_in_index'  => $offset + 1,
+					'column_name'   => (string) $index_row['name'],
+					'non_unique'    => '0',
+					'index_type'    => 'BTREE',
+					'collation'     => 'A',
+					'sub_part'      => null,
+					'index_comment' => '',
+				);
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Answer a PostgreSQL pg_constraint catalog query from fixture metadata.
+	 *
+	 * @param string $sql    SQL query.
+	 * @param array  $params Query parameters.
+	 * @return PDOStatement Statement.
+	 */
+	private function query_fixture_pg_constraint( string $sql, array $params ): PDOStatement {
+		$table_schema = (string) ( $params[0] ?? 'public' );
+		$table_name   = (string) ( $params[1] ?? '' );
+		$constraint   = isset( $params[2] ) ? (string) $params[2] : null;
+		$type         = false !== strpos( $sql, "con.contype = 'f'" ) ? 'foreign_key' : 'check';
+		$rows         = 'foreign_key' === $type
+			? $this->mysql_foreign_key_metadata[ $table_schema ][ $table_name ] ?? array()
+			: $this->mysql_check_metadata[ $table_schema ][ $table_name ] ?? array();
+
+		if ( null !== $constraint ) {
+			$rows = array_values(
+				array_filter(
+					$rows,
+					static function ( array $row ) use ( $constraint ): bool {
+						$name = (string) ( $row['constraint_name'] ?? '' );
+						return 0 === strcasecmp( $name, $constraint );
+					}
+				)
+			);
+		}
+
+		if ( 1 === preg_match( '/\bSELECT\s+1\b/i', $sql ) ) {
+			return parent::query( count( $rows ) > 0 ? 'SELECT 1' : 'SELECT 1 WHERE 0 = 1' );
+		}
+
+		if ( false !== strpos( $sql, 'con.conname' ) && false === strpos( $sql, 'check_clause' ) ) {
+			return $this->select_fixture_single_column_rows(
+				'conname',
+				array_values(
+					array_unique(
+						array_map(
+							static function ( array $row ): string {
+								return (string) ( $row['constraint_name'] ?? '' );
+							},
+							$rows
+						)
+					)
+				)
+			);
+		}
+
+		if ( 'foreign_key' === $type ) {
+			return $this->select_fixture_single_column_rows(
+				'constraint_name',
+				array_values(
+					array_unique(
+						array_map(
+							static function ( array $row ): string {
+								return (string) ( $row['constraint_name'] ?? '' );
+							},
+							$rows
+						)
+					)
+				)
+			);
+		}
+
+		return $this->select_fixture_check_metadata_rows( $rows );
+	}
+
+	/**
+	 * Return fixture CHECK metadata rows as a PDOStatement.
+	 *
+	 * @param array<int, array<string, mixed>> $rows CHECK rows.
+	 * @return PDOStatement Statement.
+	 */
+	private function select_fixture_check_metadata_rows( array $rows ): PDOStatement {
+		$columns = array( 'constraint_name', 'check_clause', 'enforced', 'metadata_source' );
+		if ( empty( $rows ) ) {
+			return parent::query( 'SELECT NULL AS constraint_name, NULL AS check_clause, NULL AS enforced, NULL AS metadata_source WHERE 0 = 1' );
+		}
+
+		$selects = array();
+		$params  = array();
+		foreach ( $rows as $row ) {
+			$selects[] = 'SELECT ? AS constraint_name, ? AS check_clause, ? AS enforced, ? AS metadata_source';
+			$params[]  = $row['constraint_name'];
+			$params[]  = $row['check_clause'];
+			$params[]  = $row['enforced'];
+			$params[]  = 'catalog';
+		}
+
+		return parent::query( implode( ' UNION ALL ', $selects ), $params );
+	}
+
+	/**
+	 * Return single-column rows as a PDOStatement.
+	 *
+	 * @param string   $column Column alias.
+	 * @param string[] $values Column values.
+	 * @return PDOStatement Statement.
+	 */
+	private function select_fixture_single_column_rows( string $column, array $values ): PDOStatement {
+		if ( empty( $values ) ) {
+			return parent::query( 'SELECT NULL AS ' . $column . ' WHERE 0 = 1' );
+		}
+
+		return parent::query(
+			implode( ' UNION ALL ', array_fill( 0, count( $values ), 'SELECT ? AS ' . $column ) ),
+			$values
+		);
+	}
+
+	/**
+	 * Return fixture index metadata rows as a PDOStatement.
+	 *
+	 * @param array<int, array<string, mixed>> $rows Index rows.
+	 * @return PDOStatement Statement.
+	 */
+	private function select_fixture_index_metadata_rows( array $rows ): PDOStatement {
+		$columns = array(
+			'key_name',
+			'index_ordinal',
+			'seq_in_index',
+			'column_name',
+			'non_unique',
+			'index_type',
+			'collation',
+			'sub_part',
+			'index_comment',
+		);
+
+		if ( empty( $rows ) ) {
+			return parent::query(
+				'SELECT ' . implode(
+					', ',
+					array_map(
+						static function ( string $column ): string {
+							return 'NULL AS ' . $column;
+						},
+						$columns
+					)
+				) . ' WHERE 0 = 1'
+			);
+		}
+
+		$selects = array();
+		$params  = array();
+		foreach ( $rows as $row ) {
+			$selects[] = 'SELECT ' . implode(
+				', ',
+				array_map(
+					static function ( string $column ): string {
+						return '? AS "' . $column . '"';
+					},
+					$columns
+				)
+			);
+			foreach ( $columns as $column ) {
+				$params[] = $row[ $column ] ?? null;
+			}
+		}
+
+		return parent::query( implode( ' UNION ALL ', $selects ), $params );
+	}
+
+	/**
+	 * Get stored fixture metadata rows, falling back to SQLite table metadata.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return array<int, array<string, mixed>> Column rows.
+	 */
+	private function get_fixture_column_metadata_rows( string $table_schema, string $table_name ): array {
+		if ( isset( $this->mysql_column_metadata[ $table_schema ][ $table_name ] ) ) {
+			return $this->mysql_column_metadata[ $table_schema ][ $table_name ];
+		}
+
+		return $this->get_fixture_column_metadata_rows_from_sqlite( $table_schema, $table_name );
+	}
+
+	/**
+	 * Get stored fixture metadata rows from SQLite table metadata.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return array<int, array<string, mixed>> Column rows.
+	 */
+	private function get_fixture_column_metadata_rows_from_sqlite( string $table_schema, string $table_name ): array {
+		$stmt = parent::query(
+			$this->get_sqlite_fixture_pragma_statement_sql( 'table_info', $table_schema, $table_name )
+		);
+		$rows = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
+			$column_type = $this->get_fixture_mysql_column_type_from_sqlite_type( (string) ( $column['type'] ?? '' ) );
+			$rows[]      = array(
+				'column_name'        => (string) $column['name'],
+				'ordinal_position'   => (int) $column['cid'] + 1,
+				'column_type'        => $column_type,
+				'collation_name'     => null,
+				'is_nullable'        => empty( $column['notnull'] ) ? 'YES' : 'NO',
+				'column_default'     => $this->normalize_sqlite_default_for_mysql_fixture( $column['dflt_value'] ?? null ),
+				'extra'              => '',
+				'data_type'          => $this->get_fixture_data_type_from_mysql_column_type( $column_type ),
+				'is_identity'        => 'NO',
+				'sequence_schema'    => $table_schema,
+				'sequence_name'      => $table_name . '_' . (string) $column['name'] . '_seq',
+				'character_set_name' => null,
+				'column_comment'     => '',
+			);
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Get one fixture metadata row.
+	 *
+	 * @param string $table_schema   Backend schema.
+	 * @param string $table_name     Table name.
+	 * @param string $column_name    Column name.
+	 * @param bool   $case_sensitive Whether to match case-sensitively.
+	 * @return array<string, mixed>|null Metadata row.
+	 */
+	private function get_fixture_column_metadata_row( string $table_schema, string $table_name, string $column_name, bool $case_sensitive ): ?array {
+		foreach ( $this->get_fixture_column_metadata_rows( $table_schema, $table_name ) as $row ) {
+			$matches = $case_sensitive
+				? (string) $row['column_name'] === $column_name
+				: 0 === strcasecmp( (string) $row['column_name'], $column_name );
+			if ( $matches ) {
+				return $row;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Return fixture metadata rows as a PDOStatement.
+	 *
+	 * @param array<int, array<string, mixed>> $rows Column rows.
+	 * @return PDOStatement Statement.
+	 */
+	private function select_fixture_column_metadata_rows( array $rows ): PDOStatement {
+		$columns = array(
+			'column_name',
+			'ordinal_position',
+			'column_type',
+			'collation_name',
+			'is_nullable',
+			'column_default',
+			'extra',
+			'data_type',
+			'is_identity',
+			'sequence_schema',
+			'sequence_name',
+			'character_set_name',
+			'column_comment',
+		);
+
+		if ( empty( $rows ) ) {
+			return parent::query(
+				'SELECT ' . implode(
+					', ',
+					array_map(
+						static function ( string $column ): string {
+							return 'NULL AS ' . $column;
+						},
+						$columns
+					)
+				) . ' WHERE 0 = 1'
+			);
+		}
+
+		$selects = array();
+		$params  = array();
+		foreach ( $rows as $row ) {
+			$selects[] = 'SELECT ' . implode(
+				', ',
+				array_map(
+					static function ( string $column ): string {
+						return '? AS ' . $column;
+					},
+					$columns
+				)
+			);
+			foreach ( $columns as $column ) {
+				$params[] = $row[ $column ] ?? null;
+			}
+		}
+
+		return parent::query( implode( ' UNION ALL ', $selects ), $params );
+	}
+
+	/**
+	 * Apply a PostgreSQL ALTER TABLE side effect to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL ALTER TABLE SQL.
+	 */
+	private function apply_fixture_alter_table( string $sql ): void {
+		if ( $this->apply_fixture_alter_table_default( $sql ) ) {
+			return;
+		}
+
+		if ( $this->apply_fixture_alter_table_column( $sql ) ) {
+			return;
+		}
+
+		if ( $this->apply_fixture_alter_table_constraint( $sql ) ) {
+			return;
+		}
+
+		if ( $this->apply_fixture_rename_table( $sql ) ) {
+			return;
+		}
+	}
+
+	/**
+	 * Apply a simple ALTER COLUMN SET/DROP DEFAULT to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL ALTER TABLE SQL.
+	 * @return bool Whether the statement was handled.
+	 */
+	private function apply_fixture_alter_table_default( string $sql ): bool {
+		if (
+			1 !== preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ALTER COLUMN\s+"(?P<column>[^"]+)"\s+(?P<action>SET DEFAULT (?P<default>.+)|DROP DEFAULT)$/is',
+				$sql,
+				$matches
+			)
+		) {
+			return false;
+		}
+
+		$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+		$table  = $matches['table'];
+		$column = $matches['column'];
+		if ( ! isset( $this->mysql_column_metadata[ $schema ][ $table ] ) ) {
+			return true;
+		}
+
+		foreach ( $this->mysql_column_metadata[ $schema ][ $table ] as &$row ) {
+			if ( (string) $row['column_name'] !== $column ) {
+				continue;
+			}
+
+			$row['column_default'] = 'DROP DEFAULT' === strtoupper( $matches['action'] )
+				? null
+				: $this->normalize_sqlite_default_for_mysql_fixture( $matches['default'] ?? null );
+			break;
+		}
+		unset( $row );
+
+		return true;
+	}
+
+	/**
+	 * Apply PostgreSQL ALTER TABLE column side effects to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL ALTER TABLE SQL.
+	 * @return bool Whether the statement was handled.
+	 */
+	private function apply_fixture_alter_table_column( string $sql ): bool {
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ADD COLUMN\s+"(?P<column>[^"]+)"\s+(?P<definition>.+)$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$table  = $matches['table'];
+			$this->add_fixture_column_metadata_row( $schema, $table, $matches['column'], $matches['definition'] );
+			$this->add_fixture_inline_check_metadata_rows( $schema, $table, $matches['definition'] );
+			return true;
+		}
+
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+DROP COLUMN\s+"(?P<column>[^"]+)"$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$table  = $matches['table'];
+			$column = $matches['column'];
+			$this->mysql_column_metadata[ $schema ][ $table ] = array_values(
+				array_filter(
+					$this->mysql_column_metadata[ $schema ][ $table ] ?? array(),
+					static function ( array $row ) use ( $column ): bool {
+						return (string) $row['column_name'] !== $column;
+					}
+				)
+			);
+			$this->mysql_index_metadata[ $schema ][ $table ]  = array_values(
+				array_filter(
+					$this->mysql_index_metadata[ $schema ][ $table ] ?? array(),
+					static function ( array $row ) use ( $column ): bool {
+						return (string) $row['column_name'] !== $column;
+					}
+				)
+			);
+			return true;
+		}
+
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+RENAME COLUMN\s+"(?P<old>[^"]+)"\s+TO\s+"(?P<new>[^"]+)"$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$this->rename_fixture_column( $schema, $matches['table'], $matches['old'], $matches['new'] );
+			return true;
+		}
+
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ALTER COLUMN\s+"(?P<column>[^"]+)"\s+TYPE\s+(?P<type>.+)$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$this->update_fixture_column( $schema, $matches['table'], $matches['column'], array( 'column_type' => $this->get_fixture_mysql_column_type_from_postgresql_definition( $matches['type'] ) ) );
+			return true;
+		}
+
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ALTER COLUMN\s+"(?P<column>[^"]+)"\s+(?P<action>SET NOT NULL|DROP NOT NULL)$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$this->update_fixture_column( $schema, $matches['table'], $matches['column'], array( 'is_nullable' => 'SET NOT NULL' === strtoupper( $matches['action'] ) ? 'NO' : 'YES' ) );
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Apply PostgreSQL ALTER TABLE constraint side effects to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL ALTER TABLE SQL.
+	 * @return bool Whether the statement was handled.
+	 */
+	private function apply_fixture_alter_table_constraint( string $sql ): bool {
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ADD CONSTRAINT\s+"(?P<constraint>[^"]+)"\s+CHECK\s+[(](?P<check>.*)[)]$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$this->add_fixture_check_metadata_row( $schema, $matches['table'], $matches['constraint'], $matches['check'], 'YES' );
+			return true;
+		}
+
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ADD CONSTRAINT\s+"(?P<constraint>[^"]+)"\s+FOREIGN KEY\s+[(](?P<columns>[^)]+)[)]\s+REFERENCES\s+"(?P<ref_table>[^"]+)"\s+[(](?P<ref_columns>[^)]+)[)]/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema      = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$columns     = $this->parse_fixture_identifier_list( $matches['columns'] );
+			$ref_columns = $this->parse_fixture_identifier_list( $matches['ref_columns'] );
+			foreach ( $columns as $index => $column ) {
+				$this->mysql_foreign_key_metadata[ $schema ][ $matches['table'] ][] = array(
+					'constraint_name'        => $matches['constraint'],
+					'seq_in_index'           => $index + 1,
+					'column_name'            => $column,
+					'referenced_table_name'  => $matches['ref_table'],
+					'referenced_column_name' => $ref_columns[ $index ] ?? '',
+					'update_rule'            => 'NO ACTION',
+					'delete_rule'            => 'NO ACTION',
+				);
+			}
+			return true;
+		}
+
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ADD PRIMARY KEY\s+[(](?P<columns>[^)]+)[)]$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$this->add_fixture_index_metadata_rows( $schema, $matches['table'], 'PRIMARY', $matches['columns'], '0', 'BTREE' );
+			return true;
+		}
+
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+ADD UNIQUE\s+[(](?P<columns>[^)]+)[)]$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$this->add_fixture_index_metadata_rows( $schema, $matches['table'], $matches['table'] . '_unique', $matches['columns'], '0', 'BTREE' );
+			return true;
+		}
+
+		if (
+			1 === preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+DROP CONSTRAINT\s+"(?P<constraint>[^"]+)"$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$this->drop_fixture_constraint( $schema, $matches['table'], $matches['constraint'] );
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Apply a PostgreSQL CREATE INDEX side effect to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL CREATE INDEX SQL.
+	 */
+	private function apply_fixture_create_index( string $sql ): void {
+		if (
+			1 !== preg_match(
+				'/^CREATE\s+(?P<unique>UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"(?P<schema>[^"]+)"[.])?(?:"(?P<quoted_index>[^"]+)"|(?P<bare_index>[A-Za-z_][A-Za-z0-9_$]*))\s+ON\s+(?:"[^"]+"[.])?(?:"(?P<quoted_table>[^"]+)"|(?P<bare_table>[A-Za-z_][A-Za-z0-9_$]*))\s+[(](?P<columns>.*)[)]$/is',
+				$sql,
+				$matches
+			)
+		) {
+			return;
+		}
+
+			$schema     = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$table      = '' !== ( $matches['quoted_table'] ?? '' ) ? $matches['quoted_table'] : $matches['bare_table'];
+			$index      = '' !== ( $matches['quoted_index'] ?? '' ) ? $matches['quoted_index'] : $matches['bare_index'];
+			$index      = $this->get_fixture_mysql_index_name_from_postgresql_name( $table, $index );
+			$non_unique = ( isset( $matches['unique'] ) && '' !== $matches['unique'] ) ? '0' : '1';
+			$this->drop_fixture_index( $schema, $table, $index );
+			$this->add_fixture_index_metadata_rows( $schema, $table, $index, $matches['columns'], $non_unique, 'BTREE' );
+			$this->apply_fixture_sqlite_create_index( $sql, $schema, $table );
+	}
+
+	/**
+	 * Apply a PostgreSQL CREATE INDEX side effect to the SQLite fixture schema.
+	 *
+	 * @param string $sql    PostgreSQL CREATE INDEX SQL.
+	 * @param string $schema Backend schema.
+	 * @param string $table  Table name.
+	 */
+	private function apply_fixture_sqlite_create_index( string $sql, string $schema, string $table ): void {
+		if ( 'public' !== $schema ) {
+			return;
+		}
+
+		$stmt = parent::query(
+			"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+			array( $table )
+		);
+		if ( false === $stmt->fetchColumn() ) {
+			return;
+		}
+
+		parent::query( str_replace( '"public".', '', $sql ) );
+	}
+
+	/**
+	 * Apply a PostgreSQL DROP INDEX side effect to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL DROP INDEX SQL.
+	 */
+	private function apply_fixture_drop_index( string $sql ): void {
+		if (
+			1 !== preg_match(
+				'/^DROP INDEX\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<index>[^"]+)"$/is',
+				$sql,
+				$matches
+			)
+		) {
+			return;
+		}
+
+		$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+		foreach ( $this->mysql_index_metadata[ $schema ] ?? array() as $table => $rows ) {
+			$index = $this->get_fixture_mysql_index_name_from_postgresql_name( $table, $matches['index'] );
+			$this->drop_fixture_index( $schema, $table, $index );
+		}
+	}
+
+	/**
+	 * Apply a PostgreSQL DROP TABLE side effect to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL DROP TABLE SQL.
+	 */
+	private function apply_fixture_drop_table( string $sql ): void {
+		if (
+			1 !== preg_match(
+				'/^DROP TABLE\s+(?:IF\s+EXISTS\s+)?(?:(?:"(?P<quoted_schema>temp|public|main)"|(?P<schema>temp|public|main))[.])?"(?P<table>[^"]+)"/is',
+				$sql,
+				$matches
+			)
+		) {
+			return;
+		}
+
+		$schema = strtolower( (string) ( '' !== ( $matches['quoted_schema'] ?? '' ) ? $matches['quoted_schema'] : ( $matches['schema'] ?? '' ) ) );
+		if ( 'main' === $schema ) {
+			$schema = 'public';
+		}
+		if ( '' === $schema ) {
+			$schema = $this->sqlite_temp_table_exists( $matches['table'] ) ? 'temp' : 'public';
+		}
+
+		$this->drop_fixture_table_metadata( $schema, $matches['table'] );
+	}
+
+	/**
+	 * Check whether a SQLite temp table exists.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether a temp table exists.
+	 */
+	private function sqlite_temp_table_exists( string $table_name ): bool {
+		return false !== parent::query(
+			"SELECT 1 FROM sqlite_temp_master WHERE type = 'table' AND name = ? LIMIT 1",
+			array( $table_name )
+		)->fetchColumn();
+	}
+
+	/**
+	 * Drop fixture metadata for a table.
+	 *
+	 * @param string $schema Backend schema.
+	 * @param string $table  Table name.
+	 */
+	private function drop_fixture_table_metadata( string $schema, string $table ): void {
+		foreach ( array( 'mysql_column_metadata', 'mysql_index_metadata', 'mysql_foreign_key_metadata', 'mysql_check_metadata' ) as $property ) {
+			unset( $this->{$property}[ $schema ][ $table ] );
+		}
+	}
+
+	/**
+	 * Apply a PostgreSQL ALTER INDEX side effect to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL ALTER INDEX SQL.
+	 */
+	private function apply_fixture_alter_index( string $sql ): void {
+		if (
+			1 !== preg_match(
+				'/^ALTER INDEX\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<old>[^"]+)"\s+RENAME TO\s+"(?P<new>[^"]+)"$/is',
+				$sql,
+				$matches
+			)
+		) {
+			return;
+		}
+
+		$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+		foreach ( $this->mysql_index_metadata[ $schema ] ?? array() as $table => &$rows ) {
+			$old = $this->get_fixture_mysql_index_name_from_postgresql_name( $table, $matches['old'] );
+			$new = $this->get_fixture_mysql_index_name_from_postgresql_name( $table, $matches['new'] );
+			foreach ( $rows as &$row ) {
+				if ( (string) $row['key_name'] === $old ) {
+					$row['key_name'] = $new;
+				}
+			}
+			unset( $row );
+		}
+		unset( $rows );
+	}
+
+	/**
+	 * Apply a guarded PostgreSQL setval side effect to SQLite AUTOINCREMENT state.
+	 *
+	 * @param string $sql PostgreSQL setval SQL.
+	 */
+	private function apply_fixture_setval( string $sql ): void {
+		++$this->sequence_sync_query_count;
+		if (
+			1 !== preg_match(
+				'/GREATEST[(]COALESCE[(]MAX[(]"(?P<column>[^"]+)"[)], 0[)], (?P<seq>\d+)[)] AS max_identity_value FROM "(?:[^"]+)"[.]"(?P<table>[^"]+)"/is',
+				$sql,
+				$matches
+			)
+		) {
+			return;
+		}
+
+		$sequence_table = parent::query( "SELECT name FROM sqlite_master WHERE name = 'sqlite_sequence'" )->fetchColumn();
+		if ( false === $sequence_table ) {
+			return;
+		}
+
+		parent::query( 'DELETE FROM sqlite_sequence WHERE name = ?', array( $matches['table'] ) );
+		parent::query( 'INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)', array( $matches['table'], (int) $matches['seq'] ) );
+	}
+
+	/**
+	 * Apply a PostgreSQL RENAME TABLE side effect to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL ALTER TABLE SQL.
+	 * @return bool Whether the statement was handled.
+	 */
+	private function apply_fixture_rename_table( string $sql ): bool {
+		if (
+			1 !== preg_match(
+				'/^ALTER TABLE\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<old>[^"]+)"\s+RENAME TO\s+"(?P<new>[^"]+)"$/is',
+				$sql,
+				$matches
+			)
+		) {
+			return false;
+		}
+
+		$schema = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+		foreach ( array( 'mysql_column_metadata', 'mysql_index_metadata', 'mysql_foreign_key_metadata', 'mysql_check_metadata' ) as $property ) {
+			if ( isset( $this->{$property}[ $schema ][ $matches['old'] ] ) ) {
+				$this->{$property}[ $schema ][ $matches['new'] ] = $this->{$property}[ $schema ][ $matches['old'] ];
+			}
+			$this->{$property}[ $schema ][ $matches['old'] ] = array();
+		}
+		if ( isset( $this->mysql_foreign_key_metadata[ $schema ] ) ) {
+			foreach ( $this->mysql_foreign_key_metadata[ $schema ] as &$rows ) {
+				foreach ( $rows as &$row ) {
+					if ( 0 === strcasecmp( (string) ( $row['referenced_table_name'] ?? '' ), $matches['old'] ) ) {
+						$row['referenced_table_name'] = $matches['new'];
+					}
+				}
+				unset( $row );
+			}
+			unset( $rows );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Apply PostgreSQL COMMENT ON side effects to fixture metadata.
+	 *
+	 * @param string $sql PostgreSQL COMMENT ON SQL.
+	 */
+	private function apply_fixture_comment( string $sql ): void {
+		if (
+			1 === preg_match(
+				'/^COMMENT ON CONSTRAINT\s+"(?P<constraint>[^"]+)"\s+ON\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<table>[^"]+)"\s+IS\s+(?P<comment>.+)$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema  = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$comment = $this->parse_fixture_postgresql_literal( $matches['comment'] );
+			if ( ! isset( $this->mysql_check_metadata[ $schema ][ $matches['table'] ] ) ) {
+				return;
+			}
+			foreach ( $this->mysql_check_metadata[ $schema ][ $matches['table'] ] as &$row ) {
+				if ( (string) $row['constraint_name'] !== $matches['constraint'] ) {
+					continue;
+				}
+				foreach ( explode( "\n", $comment ) as $line ) {
+					if ( 0 === strpos( $line, '__wp_mysql_check_clause:' ) ) {
+						$row['check_clause'] = substr( $line, strlen( '__wp_mysql_check_clause:' ) );
+					} elseif ( 0 === strpos( $line, '__wp_mysql_check_enforced:' ) ) {
+						$row['enforced'] = substr( $line, strlen( '__wp_mysql_check_enforced:' ) );
+					}
+				}
+			}
+			unset( $row );
+		}
+
+		if (
+			1 === preg_match(
+				'/^COMMENT ON INDEX\s+(?:"(?P<schema>[^"]+)"[.])?"(?P<index>[^"]+)"\s+IS\s+(?P<comment>.+)$/is',
+				$sql,
+				$matches
+			)
+		) {
+			$schema  = '' !== ( $matches['schema'] ?? '' ) ? $matches['schema'] : 'public';
+			$comment = $this->parse_fixture_postgresql_literal( $matches['comment'] );
+			foreach ( $this->mysql_index_metadata[ $schema ] ?? array() as $table => &$rows ) {
+				$index_name = $this->get_fixture_mysql_index_name_from_postgresql_name( $table, $matches['index'] );
+				foreach ( $rows as &$row ) {
+					if ( 0 !== strcasecmp( (string) $row['key_name'], $index_name ) ) {
+						continue;
+					}
+
+					$index_comment = array();
+					foreach ( explode( "\n", $comment ) as $line ) {
+						if ( 0 === strpos( $line, '__wp_mysql_index_sub_part:' ) ) {
+							$parts = explode( ':', $line, 3 );
+							if ( isset( $parts[1], $parts[2] ) && (int) $parts[1] === (int) $row['seq_in_index'] ) {
+								$row['sub_part'] = $parts[2];
+							}
+							continue;
+						}
+
+						if ( 0 === strpos( $line, '__wp_mysql_index_type:' ) ) {
+							$decoded_index_type = base64_decode( substr( $line, strlen( '__wp_mysql_index_type:' ) ), true );
+							if ( false !== $decoded_index_type && '' !== $decoded_index_type ) {
+								$row['index_type'] = $decoded_index_type;
+							}
+							continue;
+						}
+
+						$index_comment[] = $line;
+					}
+
+					$row['index_comment'] = implode( "\n", $index_comment );
+				}
+				unset( $row );
+			}
+			unset( $rows );
+		}
+	}
+
+	/**
+	 * Add a fixture column metadata row.
+	 *
+	 * @param string $schema     Backend schema.
+	 * @param string $table      Table name.
+	 * @param string $column     Column name.
+	 * @param string $definition PostgreSQL column definition.
+	 */
+	private function add_fixture_column_metadata_row( string $schema, string $table, string $column, string $definition ): void {
+		$definition_without_checks = preg_replace( '/\s+CONSTRAINT\s+"[^"]+"\s+CHECK\s+[(].*[)]/is', '', $definition );
+		$column_type               = $this->get_fixture_mysql_column_type_from_postgresql_definition( (string) $definition_without_checks );
+		if ( ! isset( $this->mysql_column_metadata[ $schema ][ $table ] ) ) {
+			$this->mysql_column_metadata[ $schema ][ $table ] = $this->get_fixture_column_metadata_rows_from_sqlite( $schema, $table );
+		}
+		$rows   = $this->mysql_column_metadata[ $schema ][ $table ];
+		$rows[] = array(
+			'column_name'        => $column,
+			'ordinal_position'   => count( $rows ) + 1,
+			'column_type'        => $column_type,
+			'collation_name'     => $this->get_fixture_default_collation_for_mysql_column_type( $column_type ),
+			'is_nullable'        => false !== stripos( $definition_without_checks, ' NOT NULL' ) ? 'NO' : 'YES',
+			'column_default'     => $this->get_fixture_default_from_postgresql_definition( (string) $definition_without_checks ),
+			'extra'              => false !== stripos( $definition_without_checks, 'GENERATED BY DEFAULT AS IDENTITY' ) ? 'auto_increment' : '',
+			'data_type'          => $this->get_fixture_data_type_from_mysql_column_type( $column_type ),
+			'is_identity'        => false !== stripos( $definition_without_checks, 'GENERATED BY DEFAULT AS IDENTITY' ) ? 'YES' : 'NO',
+			'sequence_schema'    => $schema,
+			'sequence_name'      => $table . '_' . $column . '_seq',
+			'character_set_name' => $this->get_fixture_default_charset_for_mysql_column_type( $column_type ),
+			'column_comment'     => '',
+		);
+
+		$this->mysql_column_metadata[ $schema ][ $table ] = $rows;
+	}
+
+	/**
+	 * Add inline CHECK metadata rows from an ADD COLUMN definition.
+	 *
+	 * @param string $schema     Backend schema.
+	 * @param string $table      Table name.
+	 * @param string $definition PostgreSQL column definition.
+	 */
+	private function add_fixture_inline_check_metadata_rows( string $schema, string $table, string $definition ): void {
+		if (
+			1 === preg_match_all(
+				'/CONSTRAINT\s+"(?P<name>[^"]+)"\s+CHECK\s+[(](?P<clause>[^)]+)[)]/i',
+				$definition,
+				$matches,
+				PREG_SET_ORDER
+			)
+		) {
+			foreach ( $matches as $match ) {
+				$this->add_fixture_check_metadata_row( $schema, $table, $match['name'], $match['clause'], 'YES' );
+			}
+		}
+	}
+
+	/**
+	 * Update a fixture column row.
+	 *
+	 * @param string $schema  Backend schema.
+	 * @param string $table   Table name.
+	 * @param string $column  Column name.
+	 * @param array  $updates Column updates.
+	 */
+	private function update_fixture_column( string $schema, string $table, string $column, array $updates ): void {
+		if ( ! isset( $this->mysql_column_metadata[ $schema ][ $table ] ) ) {
+			return;
+		}
+
+		foreach ( $this->mysql_column_metadata[ $schema ][ $table ] as &$row ) {
+			if ( 0 !== strcasecmp( (string) $row['column_name'], $column ) ) {
+				continue;
+			}
+			foreach ( $updates as $key => $value ) {
+				$row[ $key ] = $value;
+			}
+			if ( isset( $updates['column_type'] ) ) {
+				$row['data_type']          = $this->get_fixture_data_type_from_mysql_column_type( (string) $updates['column_type'] );
+				$row['character_set_name'] = $this->get_fixture_default_charset_for_mysql_column_type( (string) $updates['column_type'] );
+				$row['collation_name']     = $this->get_fixture_default_collation_for_mysql_column_type( (string) $updates['column_type'] );
+			}
+		}
+		unset( $row );
+	}
+
+	/**
+	 * Rename a fixture column across column, index, and foreign-key metadata.
+	 *
+	 * @param string $schema Backend schema.
+	 * @param string $table  Table name.
+	 * @param string $old    Old column name.
+	 * @param string $new_column New column name.
+	 */
+	private function rename_fixture_column( string $schema, string $table, string $old, string $new_column ): void {
+		if ( isset( $this->mysql_column_metadata[ $schema ][ $table ] ) ) {
+			foreach ( $this->mysql_column_metadata[ $schema ][ $table ] as &$row ) {
+				if ( 0 === strcasecmp( (string) $row['column_name'], $old ) ) {
+					$row['column_name'] = $new_column;
+				}
+			}
+			unset( $row );
+		}
+
+		if ( isset( $this->mysql_index_metadata[ $schema ][ $table ] ) ) {
+			foreach ( $this->mysql_index_metadata[ $schema ][ $table ] as &$row ) {
+				if ( 0 === strcasecmp( (string) $row['column_name'], $old ) ) {
+					$row['column_name'] = $new_column;
+				}
+			}
+			unset( $row );
+		}
+
+		if ( isset( $this->mysql_foreign_key_metadata[ $schema ][ $table ] ) ) {
+			foreach ( $this->mysql_foreign_key_metadata[ $schema ][ $table ] as &$row ) {
+				if ( 0 === strcasecmp( (string) $row['column_name'], $old ) ) {
+					$row['column_name'] = $new_column;
+				}
+			}
+			unset( $row );
+		}
+	}
+
+	/**
+	 * Add index metadata rows.
+	 *
+	 * @param string $schema     Backend schema.
+	 * @param string $table      Table name.
+	 * @param string $index      MySQL index name.
+	 * @param string $columns    PostgreSQL column list.
+	 * @param string $non_unique MySQL non_unique value.
+	 * @param string $index_type MySQL index type.
+	 */
+	private function add_fixture_index_metadata_rows( string $schema, string $table, string $index, string $columns, string $non_unique, string $index_type ): void {
+		$this->drop_fixture_index( $schema, $table, $index );
+		$index_ordinal = count( array_unique( array_column( $this->mysql_index_metadata[ $schema ][ $table ] ?? array(), 'key_name' ) ) ) + 1;
+		foreach ( $this->parse_fixture_index_column_list( $columns ) as $position => $column ) {
+			$this->mysql_index_metadata[ $schema ][ $table ][] = array(
+				'key_name'      => $index,
+				'index_ordinal' => $index_ordinal,
+				'seq_in_index'  => $position + 1,
+				'column_name'   => $column['name'],
+				'non_unique'    => $non_unique,
+				'index_type'    => $index_type,
+				'collation'     => $column['descending'] ? 'D' : 'A',
+				'sub_part'      => null === $column['sub_part'] ? null : (string) $column['sub_part'],
+				'index_comment' => '',
+				'nullable'      => '',
+			);
+		}
+	}
+
+	/**
+	 * Remove fixture index metadata rows.
+	 *
+	 * @param string $schema Backend schema.
+	 * @param string $table  Table name.
+	 * @param string $index  MySQL index name.
+	 */
+	private function drop_fixture_index( string $schema, string $table, string $index ): void {
+		$this->mysql_index_metadata[ $schema ][ $table ] = array_values(
+			array_filter(
+				$this->mysql_index_metadata[ $schema ][ $table ] ?? array(),
+				static function ( array $row ) use ( $index ): bool {
+					return 0 !== strcasecmp( (string) $row['key_name'], $index );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Drop a fixture constraint.
+	 *
+	 * @param string $schema     Backend schema.
+	 * @param string $table      Table name.
+	 * @param string $constraint Constraint name.
+	 */
+	private function drop_fixture_constraint( string $schema, string $table, string $constraint ): void {
+		$this->mysql_check_metadata[ $schema ][ $table ]       = array_values(
+			array_filter(
+				$this->mysql_check_metadata[ $schema ][ $table ] ?? array(),
+				static function ( array $row ) use ( $constraint ): bool {
+					return 0 !== strcasecmp( (string) $row['constraint_name'], $constraint );
+				}
+			)
+		);
+		$this->mysql_foreign_key_metadata[ $schema ][ $table ] = array_values(
+			array_filter(
+				$this->mysql_foreign_key_metadata[ $schema ][ $table ] ?? array(),
+				static function ( array $row ) use ( $constraint ): bool {
+					return 0 !== strcasecmp( (string) $row['constraint_name'], $constraint );
+				}
+			)
+		);
+		if ( 0 === strcasecmp( $constraint, $table . '_pkey' ) ) {
+			$this->drop_fixture_index( $schema, $table, 'PRIMARY' );
+		} else {
+			$this->drop_fixture_index( $schema, $table, $constraint );
+		}
+	}
+
+	/**
+	 * Add CHECK metadata row.
+	 *
+	 * @param string $schema     Backend schema.
+	 * @param string $table      Table name.
+	 * @param string $constraint Constraint name.
+	 * @param string $clause     CHECK clause.
+	 * @param string $enforced   Enforced flag.
+	 */
+	private function add_fixture_check_metadata_row( string $schema, string $table, string $constraint, string $clause, string $enforced ): void {
+		$this->mysql_check_metadata[ $schema ][ $table ][] = array(
+			'constraint_name' => $constraint,
+			'check_clause'    => trim( $clause ),
+			'enforced'        => $enforced,
+		);
+	}
+
+	/**
+	 * Normalize CREATE TABLE foreign-key metadata rows.
+	 *
+	 * @param array<int, array<string, mixed>> $rows Foreign-key metadata rows.
+	 * @return array<int, array<string, mixed>> Normalized rows.
+	 */
+	private function normalize_fixture_foreign_key_metadata_rows( array $rows ): array {
+		$normalized = array();
+		foreach ( $rows as $row ) {
+			foreach ( $row['columns'] ?? array() as $index => $column ) {
+				$normalized[] = array(
+					'constraint_name'        => (string) $row['name'],
+					'seq_in_index'           => $index + 1,
+					'column_name'            => (string) $column,
+					'referenced_table_name'  => (string) ( $row['referenced_table'] ?? '' ),
+					'referenced_column_name' => (string) ( ( $row['referenced_columns'] ?? array() )[ $index ] ?? '' ),
+					'update_rule'            => (string) ( $row['update_rule'] ?? 'NO ACTION' ),
+					'delete_rule'            => (string) ( $row['delete_rule'] ?? 'NO ACTION' ),
+				);
+			}
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * Normalize CREATE TABLE CHECK metadata rows.
+	 *
+	 * @param array<int, array<string, mixed>> $rows CHECK metadata rows.
+	 * @return array<int, array<string, mixed>> Normalized rows.
+	 */
+	private function normalize_fixture_check_metadata_rows( array $rows ): array {
+		return array_map(
+			static function ( array $row ): array {
+				return array(
+					'constraint_name' => (string) ( $row['name'] ?? $row['constraint_name'] ?? '' ),
+					'check_clause'    => (string) ( $row['check_clause'] ?? '' ),
+					'enforced'        => (string) ( $row['enforced'] ?? 'YES' ),
+				);
+			},
+			$rows
+		);
+	}
+
+	/**
+	 * Get the MySQL index name from a PostgreSQL index name.
+	 *
+	 * @param string $table Table name.
+	 * @param string $index PostgreSQL index name.
+	 * @return string MySQL index name.
+	 */
+	private function get_fixture_mysql_index_name_from_postgresql_name( string $table, string $index ): string {
+		if ( 0 === strcasecmp( $index, $table . '_pkey' ) ) {
+			return 'PRIMARY';
+		}
+
+		$prefix = $table . '__';
+		return 0 === strpos( $index, $prefix ) ? substr( $index, strlen( $prefix ) ) : $index;
+	}
+
+	/**
+	 * Parse a quoted PostgreSQL identifier list.
+	 *
+	 * @param string $identifier_list Identifier list.
+	 * @return string[] Identifiers.
+	 */
+	private function parse_fixture_identifier_list( string $identifier_list ): array {
+		return array_map(
+			static function ( string $identifier ): string {
+				return trim( $identifier, " \t\n\r\0\x0B\"" );
+			},
+			explode( ',', $identifier_list )
+		);
+	}
+
+	/**
+	 * Parse a PostgreSQL index column list.
+	 *
+	 * @param string $column_list Index column list.
+	 * @return array<int, array{name:string, descending:bool, sub_part:string|null}> Column rows.
+	 */
+	private function parse_fixture_index_column_list( string $column_list ): array {
+		$columns = array();
+		foreach ( $this->split_fixture_index_column_list( $column_list ) as $part ) {
+			$part = trim( $part );
+			if (
+				1 === preg_match(
+					'/^SUBSTR\s*\(\s*CAST\s*\(\s*"(?P<name>[^"]+)"\s+AS\s+text\s*\)\s*,\s*1\s*,\s*(?P<sub_part>\d+)\s*\)(?P<suffix>.*)$/i',
+					$part,
+					$matches
+				)
+			) {
+				$columns[] = array(
+					'name'       => $matches['name'],
+					'descending' => false !== stripos( $matches['suffix'], 'DESC' ),
+					'sub_part'   => $matches['sub_part'],
+				);
+				continue;
+			}
+			if (
+				1 === preg_match(
+					'/^SUBSTR\s*\(\s*CAST\s*\(\s*(?P<name>[A-Za-z_][A-Za-z0-9_$]*)\s+AS\s+text\s*\)\s*,\s*1\s*,\s*(?P<sub_part>\d+)\s*\)(?P<suffix>.*)$/i',
+					$part,
+					$matches
+				)
+			) {
+				$columns[] = array(
+					'name'       => $matches['name'],
+					'descending' => false !== stripos( $matches['suffix'], 'DESC' ),
+					'sub_part'   => $matches['sub_part'],
+				);
+				continue;
+			}
+
+			if ( 1 === preg_match( '/"(?P<name>[^"]+)"(?P<suffix>.*)$/s', $part, $matches ) ) {
+				$columns[] = array(
+					'name'       => $matches['name'],
+					'descending' => false !== stripos( $matches['suffix'], 'DESC' ),
+					'sub_part'   => null,
+				);
+			}
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Split a PostgreSQL index column list at top-level commas.
+	 *
+	 * @param string $column_list Index column list.
+	 * @return string[] Column/expression parts.
+	 */
+	private function split_fixture_index_column_list( string $column_list ): array {
+		$parts    = array();
+		$part     = '';
+		$depth    = 0;
+		$in_quote = false;
+		$length   = strlen( $column_list );
+
+		for ( $i = 0; $i < $length; ++$i ) {
+			$char = $column_list[ $i ];
+			if ( '"' === $char ) {
+				$in_quote = ! $in_quote;
+			} elseif ( ! $in_quote && '(' === $char ) {
+				++$depth;
+			} elseif ( ! $in_quote && ')' === $char && $depth > 0 ) {
+				--$depth;
+			} elseif ( ! $in_quote && 0 === $depth && ',' === $char ) {
+				$parts[] = $part;
+				$part    = '';
+				continue;
+			}
+
+			$part .= $char;
+		}
+
+		$parts[] = $part;
+		return $parts;
+	}
+
+	/**
+	 * Get a MySQL column type from a PostgreSQL column definition.
+	 *
+	 * @param string $definition PostgreSQL definition or type.
+	 * @return string MySQL column type.
+	 */
+	private function get_fixture_mysql_column_type_from_postgresql_definition( string $definition ): string {
+		$definition = trim( $definition );
+		if ( 1 === preg_match( '/^__wp_mysql_(?P<type>[A-Za-z]+)(?:_(?P<a>\d+))?(?:_(?P<b>\d+))?\b/', $definition, $matches ) ) {
+			$type = strtolower( $matches['type'] );
+			if ( in_array( $type, array( 'dec', 'fixed' ), true ) && isset( $matches['a'], $matches['b'] ) ) {
+				return $type . '(' . $matches['a'] . ',' . $matches['b'] . ')';
+			}
+			if ( 'bit' === $type && isset( $matches['a'] ) ) {
+				return 'bit(' . $matches['a'] . ')';
+			}
+			if ( in_array( $type, array( 'bool', 'boolean', 'json', 'mediumtext', 'mediumblob', 'real' ), true ) ) {
+				return $type;
+			}
+		}
+
+		if ( 1 === preg_match( '/^(?P<type>[A-Za-z ]+(?:\(\d+(?:,\d+)?\))?)/', $definition, $matches ) ) {
+			$type = strtolower( trim( $matches['type'] ) );
+			return 'integer' === $type ? 'int' : $type;
+		}
+
+		return 'longtext';
+	}
+
+	/**
+	 * Get the default value from a PostgreSQL column definition.
+	 *
+	 * @param string $definition PostgreSQL definition.
+	 * @return string|null MySQL metadata default.
+	 */
+	private function get_fixture_default_from_postgresql_definition( string $definition ): ?string {
+		if ( 1 !== preg_match( '/\bDEFAULT\s+(?P<default>NULL|\'(?:\'\'|[^\'])*\'|[^ ]+)/i', $definition, $matches ) ) {
+			return null;
+		}
+		if ( 0 === strcasecmp( $matches['default'], 'NULL' ) ) {
+			return null;
+		}
+
+		return $this->normalize_sqlite_default_for_mysql_fixture( $matches['default'] );
+	}
+
+	/**
+	 * Get the default MySQL charset for a column type.
+	 *
+	 * @param string $column_type MySQL column type.
+	 * @return string|null Charset.
+	 */
+	private function get_fixture_default_charset_for_mysql_column_type( string $column_type ): ?string {
+		$type = strtolower( $column_type );
+		if ( false !== strpos( $type, 'blob' ) || 'json' === $type ) {
+			return null;
+		}
+
+		return preg_match( '/char|text|enum|set/i', $type ) ? 'utf8mb4' : null;
+	}
+
+	/**
+	 * Get the default MySQL collation for a column type.
+	 *
+	 * @param string $column_type MySQL column type.
+	 * @return string|null Collation.
+	 */
+	private function get_fixture_default_collation_for_mysql_column_type( string $column_type ): ?string {
+		return null === $this->get_fixture_default_charset_for_mysql_column_type( $column_type ) ? null : 'utf8mb4_unicode_ci';
+	}
+
+	/**
+	 * Parse a PostgreSQL string literal from COMMENT ON SQL.
+	 *
+	 * @param string $literal SQL literal.
+	 * @return string Parsed literal.
+	 */
+	private function parse_fixture_postgresql_literal( string $literal ): string {
+		$literal = trim( $literal );
+		if ( 0 === strcasecmp( $literal, 'NULL' ) ) {
+			return '';
+		}
+		if ( 0 === stripos( $literal, 'E' ) ) {
+			$literal = substr( $literal, 1 );
+		}
+		if ( strlen( $literal ) >= 2 && "'" === $literal[0] && "'" === $literal[ strlen( $literal ) - 1 ] ) {
+			$literal = substr( $literal, 1, -1 );
+		}
+
+		return str_replace( array( "\\n", "\\'", "''" ), array( "\n", "'", "'" ), $literal );
+	}
+
+	/**
+	 * Get an information_schema-style data type from a MySQL column type.
+	 *
+	 * @param string $column_type MySQL column type.
+	 * @return string Data type.
+	 */
+	private function get_fixture_data_type_from_mysql_column_type( string $column_type ): string {
+		$base_type = strtolower( preg_replace( '/\s+unsigned\b/i', '', preg_replace( '/\(.+\)/', '', trim( $column_type ) ) ) );
+		if ( '' === $base_type ) {
+			return 'text';
+		}
+
+		return $base_type;
+	}
+
+	/**
+	 * Get a MySQL type approximation from a SQLite type.
+	 *
+	 * @param string $sqlite_type SQLite column type.
+	 * @return string MySQL type.
+	 */
+	private function get_fixture_mysql_column_type_from_sqlite_type( string $sqlite_type ): string {
+		$type = strtolower( $sqlite_type );
+		if ( false !== strpos( $type, 'int' ) ) {
+			return 'bigint(20)';
+		}
+
+		if ( false !== strpos( $type, 'real' ) || false !== strpos( $type, 'floa' ) || false !== strpos( $type, 'doub' ) ) {
+			return 'double';
+		}
+
+		return 'longtext';
+	}
+
+	/**
+	 * Normalize SQLite/PostgreSQL literal defaults to raw MySQL metadata values.
+	 *
+	 * @param mixed $raw_default Default value.
+	 * @return string|null Normalized default.
+	 */
+	private function normalize_sqlite_default_for_mysql_fixture( $raw_default ): ?string {
+		if ( null === $raw_default ) {
+			return null;
+		}
+
+		$default = trim( (string) $raw_default );
+		if ( strlen( $default ) >= 2 && "'" === $default[0] && "'" === $default[ strlen( $default ) - 1 ] ) {
+			return str_replace( "''", "'", substr( $default, 1, -1 ) );
+		}
+
+		return $default;
+	}
+
+	/**
+	 * Get a schema-aware SQLite PRAGMA statement.
+	 *
+	 * @param string $pragma PRAGMA name.
+	 * @param string $schema Backend schema.
+	 * @param string $name   Table or index name.
+	 * @return string SQLite PRAGMA statement.
+	 */
+	private function get_sqlite_fixture_pragma_statement_sql( string $pragma, string $schema, string $name ): string {
+		$quoted_name = $this->quote_sqlite_identifier( $name );
+		if ( '' === $schema ) {
+			return sprintf( 'PRAGMA %s(%s)', $pragma, $quoted_name );
+		}
+
+		$sqlite_schema = 'public' === $schema ? 'main' : $schema;
+		return sprintf(
+			'PRAGMA %s.%s(%s)',
+			$this->quote_sqlite_identifier( $sqlite_schema ),
+			$pragma,
+			$quoted_name
+		);
+	}
+
+	/**
+	 * Quote a SQLite identifier.
+	 *
+	 * @param string $identifier Identifier.
+	 * @return string Quoted identifier.
+	 */
+	private function quote_sqlite_identifier( string $identifier ): string {
+		return '"' . str_replace( '"', '""', $identifier ) . '"';
+	}
+}
+
+/**
+ * Catalog metadata fixture connection with a stale backend insert ID.
+ */
+class WP_PostgreSQL_Catalog_Metadata_Stale_Insert_ID_SQLite_Connection extends WP_PostgreSQL_Catalog_Metadata_SQLite_Connection {
+	/**
+	 * Return a stale insert ID to verify driver-level MySQL compatibility.
+	 *
+	 * @param string|null $sequence Optional sequence name.
+	 * @return string
+	 */
+	public function get_last_insert_id( ?string $sequence = null ): string {
+		return '29';
+	}
+}
+
+/**
+ * Catalog metadata fixture connection that uses PostgreSQL quote semantics.
+ */
+class WP_PostgreSQL_Catalog_Metadata_Pgsql_Quote_SQLite_Connection extends WP_PostgreSQL_Catalog_Metadata_SQLite_Connection {
+	/**
+	 * Report PostgreSQL for quote() while keeping the SQLite PDO available.
+	 *
+	 * @return string PDO driver name.
+	 */
+	public function get_driver_name(): string {
+		return 'pgsql';
+	}
 }
 
 /**

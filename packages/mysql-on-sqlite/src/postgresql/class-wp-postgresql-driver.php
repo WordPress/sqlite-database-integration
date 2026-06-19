@@ -13,21 +13,8 @@
  * emulation layer is extracted in later work.
  */
 class WP_PostgreSQL_Driver {
-	const MYSQL_COLUMN_METADATA_TABLE      = '__wp_postgresql_mysql_column_metadata';
-	const MYSQL_INDEX_METADATA_TABLE       = '__wp_postgresql_mysql_index_metadata';
-	const MYSQL_FOREIGN_KEY_METADATA_TABLE = '__wp_postgresql_mysql_foreign_key_metadata';
-	const MYSQL_CHECK_METADATA_TABLE       = '__wp_postgresql_mysql_check_metadata';
-	const MYSQL_TABLE_METADATA_TABLE       = '__wp_postgresql_mysql_table_metadata';
-	const DEFAULT_MYSQL_CHARSET            = 'utf8mb4';
-	const DEFAULT_MYSQL_COLLATION          = 'utf8mb4_unicode_ci';
-
-	private const MYSQL_SCHEMA_SIDE_METADATA_TABLES = array(
-		self::MYSQL_TABLE_METADATA_TABLE,
-		self::MYSQL_COLUMN_METADATA_TABLE,
-		self::MYSQL_INDEX_METADATA_TABLE,
-		self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-		self::MYSQL_CHECK_METADATA_TABLE,
-	);
+	const DEFAULT_MYSQL_CHARSET   = 'utf8mb4';
+	const DEFAULT_MYSQL_COLLATION = 'utf8mb4_unicode_ci';
 
 	private const DEFAULT_MYSQL_SQL_MODES = array(
 		'ERROR_FOR_DIVISION_BY_ZERO',
@@ -305,13 +292,6 @@ class WP_PostgreSQL_Driver {
 	 * @var array
 	 */
 	private $last_postgresql_queries = array();
-
-	/**
-	 * Whether the MySQL metadata side tables were ensured for this connection.
-	 *
-	 * @var bool
-	 */
-	private $mysql_schema_metadata_tables_ensured = false;
 
 	/**
 	 * Resolved backend schema names for MySQL table introspection.
@@ -919,23 +899,24 @@ class WP_PostgreSQL_Driver {
 				return $this->execute_mysql_admin_noop_query();
 			}
 
-			$use_postgresql_catalog_schema_metadata = null !== $create_table_select_query['metadata_query']
-				? $this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $create_table_select_query['metadata_query'] )
-				: false;
-			$result                                 = $this->execute_postgresql_statements(
+			$use_postgresql_catalog_schema_metadata = null !== $create_table_select_query['metadata_query'];
+			if ( $use_postgresql_catalog_schema_metadata ) {
+				$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $create_table_select_query['metadata_query'] );
+			}
+			$result          = $this->execute_postgresql_statements(
 				$this->prepend_postgresql_mysql_helper_type_statements(
 					$create_table_select_query['statements'],
 					$create_table_select_query['metadata_query'],
 					$use_postgresql_catalog_schema_metadata
 				)
 			);
-			$metadata_schema                        = $create_table_select_query['temporary']
+			$metadata_schema = $create_table_select_query['temporary']
 				? $this->get_temporary_schema_for_metadata_table( $create_table_select_query['table'] )
 				: $create_table_select_query['schema'];
 			if ( null !== $create_table_select_query['metadata_query'] ) {
 				if ( $create_table_select_query['temporary'] ) {
 					$this->store_mysql_temporary_schema_metadata( $create_table_select_query['metadata_query'] );
-				} elseif ( $use_postgresql_catalog_schema_metadata ) {
+				} else {
 					$this->clear_mysql_metadata_cache_for_tables(
 						$this->get_mysql_schema_metadata_table_names( $create_table_select_query['metadata_query'] ),
 						$metadata_schema
@@ -944,36 +925,11 @@ class WP_PostgreSQL_Driver {
 						$create_table_select_query['metadata_query'],
 						$metadata_schema
 					);
-				} else {
-					$this->store_mysql_schema_metadata_for_schema(
-						$create_table_select_query['metadata_query'],
-						$metadata_schema
-					);
 				}
 			} else {
-				if ( $this->should_use_postgresql_catalog_metadata() ) {
-					$this->clear_mysql_metadata_cache_for_table( $metadata_schema, $create_table_select_query['table'] );
-					if ( '' !== $create_table_select_query['table_comment'] ) {
-						$this->sync_postgresql_catalog_table_comment( $metadata_schema, $create_table_select_query['table'], $create_table_select_query['table_comment'] );
-					}
-				} else {
-					$this->delete_mysql_schema_metadata_for_tables( array( $create_table_select_query['table'] ), $metadata_schema );
-
-					if ( '' !== $create_table_select_query['table_comment'] ) {
-						$this->insert_mysql_table_metadata(
-							$metadata_schema,
-							$create_table_select_query['table'],
-							array(
-								'comment' => $create_table_select_query['table_comment'],
-							)
-						);
-					}
-
-					foreach ( $this->get_mysql_create_table_select_column_metadata( $metadata_schema, $create_table_select_query['table'] ) as $column ) {
-						$this->insert_mysql_column_metadata( $metadata_schema, $create_table_select_query['table'], $column );
-					}
-
-					$this->clear_mysql_metadata_cache_for_table( $metadata_schema, $create_table_select_query['table'] );
+				$this->clear_mysql_metadata_cache_for_table( $metadata_schema, $create_table_select_query['table'] );
+				if ( '' !== $create_table_select_query['table_comment'] ) {
+					$this->sync_postgresql_catalog_table_comment( $metadata_schema, $create_table_select_query['table'], $create_table_select_query['table_comment'] );
 				}
 			}
 			return $result;
@@ -995,17 +951,12 @@ class WP_PostgreSQL_Driver {
 			);
 			if ( $create_table_like_query['temporary'] ) {
 				$this->store_mysql_temporary_schema_metadata( $create_table_like_query['metadata_query'] );
-			} elseif ( $use_postgresql_catalog_schema_metadata ) {
+			} else {
 				$this->clear_mysql_metadata_cache_for_tables(
 					array( $create_table_like_query['table'] ),
 					$create_table_like_query['schema']
 				);
 				$this->sync_mysql_schema_catalog_side_effects_for_schema(
-					$create_table_like_query['metadata_query'],
-					$create_table_like_query['schema']
-				);
-			} else {
-				$this->store_mysql_schema_metadata_for_schema(
 					$create_table_like_query['metadata_query'],
 					$create_table_like_query['schema']
 				);
@@ -1105,30 +1056,11 @@ class WP_PostgreSQL_Driver {
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
 			$this->execute_postgresql_statements( $drop_query['statements'] );
-			foreach ( $drop_query['tables'] as $table_name ) {
-				if (
-					! $this->should_use_postgresql_catalog_metadata()
-					&& in_array( (string) $table_name, self::MYSQL_SCHEMA_SIDE_METADATA_TABLES, true )
-				) {
-					$this->mysql_schema_metadata_tables_ensured = false;
-					$this->clear_mysql_metadata_caches();
-					break;
-				}
-			}
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				foreach ( $drop_query['metadata_targets'] as $target ) {
-					$this->clear_mysql_metadata_cache_for_table(
-						$target['schema'],
-						$target['table']
-					);
-				}
-			} else {
-				foreach ( $drop_query['metadata_targets'] as $target ) {
-					$this->delete_mysql_schema_metadata_for_tables(
-						array( $target['table'] ),
-						$target['schema']
-					);
-				}
+			foreach ( $drop_query['metadata_targets'] as $target ) {
+				$this->clear_mysql_metadata_cache_for_table(
+					$target['schema'],
+					$target['table']
+				);
 			}
 			$this->last_result = 0;
 			return $this->last_result;
@@ -4186,110 +4118,7 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Create the MySQL schema metadata tables used by dbDelta emulation.
-	 */
-	private function ensure_mysql_schema_metadata_tables(): void {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			throw new LogicException( 'PostgreSQL catalog metadata must not initialize hidden MySQL metadata tables.' );
-		}
-
-		if ( $this->mysql_schema_metadata_tables_ensured ) {
-			return;
-		}
-
-		$this->connection->query(
-			sprintf(
-				'CREATE TABLE IF NOT EXISTS %s (
-					table_schema TEXT NOT NULL,
-					table_name TEXT NOT NULL,
-					table_comment TEXT NOT NULL DEFAULT \'\',
-					PRIMARY KEY (table_schema, table_name)
-				)',
-				$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
-			)
-		);
-
-		$this->connection->query(
-			sprintf(
-				'CREATE TABLE IF NOT EXISTS %s (
-					table_schema TEXT NOT NULL,
-					table_name TEXT NOT NULL,
-					column_name TEXT NOT NULL,
-					ordinal_position INTEGER NOT NULL,
-					column_type TEXT NOT NULL,
-					character_set_name TEXT,
-					collation_name TEXT,
-					is_nullable TEXT NOT NULL,
-					column_default TEXT,
-					extra TEXT NOT NULL,
-					column_comment TEXT NOT NULL DEFAULT \'\',
-					PRIMARY KEY (table_schema, table_name, column_name)
-				)',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			)
-		);
-
-		$this->connection->query(
-			sprintf(
-				'CREATE TABLE IF NOT EXISTS %s (
-					table_schema TEXT NOT NULL,
-					table_name TEXT NOT NULL,
-					key_name TEXT NOT NULL,
-					index_ordinal INTEGER NOT NULL,
-					seq_in_index INTEGER NOT NULL,
-					column_name TEXT NOT NULL,
-						non_unique TEXT NOT NULL,
-						index_type TEXT NOT NULL,
-						"collation" TEXT,
-						sub_part TEXT,
-					nullable TEXT NOT NULL,
-					index_comment TEXT NOT NULL DEFAULT \'\',
-					PRIMARY KEY (table_schema, table_name, key_name, seq_in_index)
-				)',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			)
-		);
-
-		$this->connection->query(
-			sprintf(
-				'CREATE TABLE IF NOT EXISTS %s (
-					table_schema TEXT NOT NULL,
-					table_name TEXT NOT NULL,
-					constraint_name TEXT NOT NULL,
-					constraint_ordinal INTEGER NOT NULL,
-					seq_in_index INTEGER NOT NULL,
-					column_name TEXT NOT NULL,
-					referenced_table_schema TEXT NOT NULL,
-					referenced_table_name TEXT NOT NULL,
-					referenced_column_name TEXT NOT NULL,
-					update_rule TEXT NOT NULL,
-					delete_rule TEXT NOT NULL,
-					PRIMARY KEY (table_schema, table_name, constraint_name, seq_in_index)
-				)',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			)
-		);
-
-		$this->connection->query(
-			sprintf(
-				'CREATE TABLE IF NOT EXISTS %s (
-					table_schema TEXT NOT NULL,
-					table_name TEXT NOT NULL,
-					constraint_name TEXT NOT NULL,
-					constraint_ordinal INTEGER NOT NULL,
-					check_clause TEXT NOT NULL,
-					enforced TEXT NOT NULL,
-					PRIMARY KEY (table_schema, table_name, constraint_name)
-				)',
-				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
-			)
-		);
-
-		$this->mysql_schema_metadata_tables_ensured = true;
-	}
-
-	/**
-	 * Clear all cached MySQL metadata derived from side tables.
+	 * Clear all cached MySQL metadata derived from PostgreSQL catalogs.
 	 */
 	private function clear_mysql_metadata_caches(): void {
 		$this->mysql_table_schema_introspection_cache = array();
@@ -4357,14 +4186,9 @@ class WP_PostgreSQL_Driver {
 			return;
 		}
 
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query );
-			$this->clear_mysql_metadata_cache_for_tables( $this->get_mysql_schema_metadata_table_names( $query ), 'public' );
-			$this->sync_mysql_schema_catalog_side_effects_for_schema( $query, 'public' );
-			return;
-		}
-
-		$this->store_mysql_schema_metadata_for_schema( $query, 'public' );
+		$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query );
+		$this->clear_mysql_metadata_cache_for_tables( $this->get_mysql_schema_metadata_table_names( $query ), 'public' );
+		$this->sync_mysql_schema_catalog_side_effects_for_schema( $query, 'public' );
 	}
 
 	/**
@@ -4373,21 +4197,14 @@ class WP_PostgreSQL_Driver {
 	 * @param string $query MySQL CREATE TEMPORARY TABLE query.
 	 */
 	private function store_mysql_temporary_schema_metadata( string $query ): void {
-		if ( $this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query ) ) {
-			$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
-			foreach ( $metadata_tables as $metadata ) {
-				$table_name  = (string) $metadata['table_name'];
-				$schema_name = $this->get_temporary_schema_for_metadata_table( $table_name );
-				$this->clear_mysql_metadata_cache_for_tables( array( $table_name ), $schema_name );
-			}
-			$this->sync_mysql_schema_catalog_side_effects_for_schema(
-				$query,
-				array( $this, 'get_temporary_schema_for_metadata_table' )
-			);
-			return;
+		$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query );
+		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
+		foreach ( $metadata_tables as $metadata ) {
+			$table_name  = (string) $metadata['table_name'];
+			$schema_name = $this->get_temporary_schema_for_metadata_table( $table_name );
+			$this->clear_mysql_metadata_cache_for_tables( array( $table_name ), $schema_name );
 		}
-
-		$this->store_mysql_schema_metadata_for_schema(
+		$this->sync_mysql_schema_catalog_side_effects_for_schema(
 			$query,
 			array( $this, 'get_temporary_schema_for_metadata_table' )
 		);
@@ -4404,10 +4221,6 @@ class WP_PostgreSQL_Driver {
 	 * @return bool Whether the PostgreSQL catalog path should be used.
 	 */
 	private function use_postgresql_catalog_for_mysql_schema_metadata_or_fail( string $query ): bool {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return false;
-		}
-
 		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
 		if ( empty( $metadata_tables ) ) {
 			throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.' );
@@ -4437,45 +4250,6 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return true;
-	}
-
-	/**
-	 * Store MySQL-facing schema metadata for translated CREATE TABLE statements in one backend schema.
-	 *
-	 * @param string          $query        MySQL CREATE TABLE query.
-	 * @param string|callable $table_schema Metadata schema, or resolver receiving the table name.
-	 */
-	private function store_mysql_schema_metadata_for_schema( string $query, $table_schema ): void {
-		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
-		foreach ( $metadata_tables as $metadata ) {
-			$schema_name = is_callable( $table_schema )
-				? (string) call_user_func( $table_schema, $metadata['table_name'] )
-				: (string) $table_schema;
-			$table_name  = $metadata['table_name'];
-
-			$this->delete_mysql_schema_metadata_for_tables( array( $table_name ), $schema_name );
-			$this->clear_mysql_metadata_cache_for_table( $schema_name, $table_name );
-			$this->insert_mysql_table_metadata( $schema_name, $table_name, $metadata );
-
-			$column_nullable = array();
-			foreach ( $metadata['columns'] as $column ) {
-				$this->insert_mysql_column_metadata( $schema_name, $table_name, $column );
-				$column_nullable[ strtolower( $column['name'] ) ] = $column['nullable'] ?? 'YES';
-			}
-
-			foreach ( $metadata['indexes'] ?? array() as $index ) {
-				$this->insert_mysql_index_metadata( $schema_name, $table_name, $index, $column_nullable );
-			}
-
-			foreach ( $metadata['foreign_keys'] ?? array() as $foreign_key ) {
-				$foreign_key['referenced_schema'] = $foreign_key['referenced_schema'] ?? $schema_name;
-				$this->insert_mysql_foreign_key_metadata( $schema_name, $table_name, $foreign_key );
-			}
-
-			foreach ( $metadata['checks'] ?? array() as $check ) {
-				$this->insert_mysql_check_metadata( $schema_name, $table_name, $check );
-			}
-		}
 	}
 
 	/**
@@ -4866,34 +4640,6 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Delete stored MySQL schema metadata for dropped tables.
-	 *
-	 * @param string[] $table_names Table names.
-	 * @param string   $table_schema Metadata schema name.
-	 */
-	private function delete_mysql_schema_metadata_for_tables( array $table_names, string $table_schema = 'public' ): void {
-		if ( empty( $table_names ) ) {
-			return;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		foreach ( $table_names as $table_name ) {
-			$params = array( $table_schema, $table_name );
-			foreach ( self::MYSQL_SCHEMA_SIDE_METADATA_TABLES as $metadata_table ) {
-				$this->connection->query(
-					sprintf(
-						'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
-						$this->connection->quote_identifier( $metadata_table )
-					),
-					$params
-				);
-			}
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-		}
-	}
-
-	/**
 	 * Apply metadata changes for a translated dbDelta ALTER TABLE statement.
 	 *
 	 * @param array $metadata ALTER metadata.
@@ -4911,11 +4657,7 @@ $wp_mysql_on_update$',
 			return;
 		}
 
-		if ( 'noop' === $metadata['operation'] ) {
-			return;
-		}
-
-		if ( 'set_auto_increment' === $metadata['operation'] ) {
+		if ( 'noop' === $metadata['operation'] || 'set_auto_increment' === $metadata['operation'] ) {
 			return;
 		}
 
@@ -4936,20 +4678,7 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'rename_index' === $metadata['operation'] ) {
-			$use_catalog_metadata = $this->should_use_postgresql_catalog_metadata();
-			if ( ! $use_catalog_metadata ) {
-				$this->ensure_mysql_schema_metadata_tables();
-				if ( $metadata['old_index'] !== $metadata['new_index'] ) {
-					$this->connection->query(
-						sprintf(
-							'UPDATE %s SET key_name = ? WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?)',
-							$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-						),
-						array( $metadata['new_index'], $table_schema, $table_name, $metadata['old_index'] )
-					);
-				}
-			}
-			if ( $use_catalog_metadata || $metadata['old_index'] !== $metadata['new_index'] ) {
+			if ( $metadata['old_index'] !== $metadata['new_index'] ) {
 				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			}
 			return;
@@ -4966,191 +4695,69 @@ $wp_mysql_on_update$',
 			return;
 		}
 
-		if ( 'add_foreign_key' === $metadata['operation'] ) {
-			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-				$this->ensure_mysql_schema_metadata_tables();
-				$this->insert_mysql_foreign_key_metadata( $table_schema, $table_name, $metadata['foreign_key'] );
-			}
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			return;
-		}
-
-		if ( 'drop_foreign_key' === $metadata['operation'] ) {
-			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-				$this->ensure_mysql_schema_metadata_tables();
-				$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, $metadata['constraint'] );
-			}
+		if ( 'add_foreign_key' === $metadata['operation'] || 'drop_foreign_key' === $metadata['operation'] || 'drop_check' === $metadata['operation'] ) {
 			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
 		if ( 'set_table_comment' === $metadata['operation'] ) {
-			$table_comment = (string) ( $metadata['comment'] ?? '' );
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$logged_queries  = $this->last_postgresql_queries;
+			$table_comment   = (string) ( $metadata['comment'] ?? '' );
+			$logged_queries  = $this->last_postgresql_queries;
+			$table_collation = '';
+			try {
+				$table_metadata  = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
+				$table_collation = (string) ( $table_metadata['collation'] ?? '' );
+			} catch ( PDOException $e ) {
 				$table_collation = '';
-				try {
-					$table_metadata  = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
-					$table_collation = (string) ( $table_metadata['collation'] ?? '' );
-				} catch ( PDOException $e ) {
-					$table_collation = '';
-				}
-				$this->last_postgresql_queries = $logged_queries;
-
-				$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment, $table_collation );
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-				return;
 			}
+			$this->last_postgresql_queries = $logged_queries;
 
-			$this->ensure_mysql_schema_metadata_tables();
-			$this->connection->query(
-				sprintf(
-					'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
-					$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
-				),
-				array( $table_schema, $table_name )
-			);
-			$this->insert_mysql_table_metadata(
-				$table_schema,
-				$table_name,
-				array(
-					'comment' => $table_comment,
-				)
-			);
+			$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment, $table_collation );
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
 		if ( 'add_check' === $metadata['operation'] ) {
 			$check = $metadata['check'];
-			if (
-				$this->should_use_postgresql_catalog_metadata()
-				&& $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check )
-			) {
-				$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-				return;
-			}
-
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
+			if ( ! $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check ) ) {
 				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
 			}
 
-			$this->ensure_mysql_schema_metadata_tables();
-			$this->insert_mysql_check_metadata( $table_schema, $table_name, $check );
-			return;
-		}
-
-		if ( 'drop_check' === $metadata['operation'] ) {
-			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-				$this->ensure_mysql_schema_metadata_tables();
-				$this->delete_mysql_check_metadata( $table_schema, $table_name, $metadata['constraint'] );
-			}
+			$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
 			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
 		if ( 'add_column' === $metadata['operation'] ) {
-			$column              = $metadata['column'];
-			$catalog_recoverable = $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata );
-			if ( $this->should_use_postgresql_catalog_metadata() && $catalog_recoverable ) {
-				$column_comment = $this->get_postgresql_catalog_column_comment( $column );
-				if ( '' !== $column_comment ) {
-					$this->sync_postgresql_catalog_column_comment(
-						$table_schema,
-						$table_name,
-						(string) $column['name'],
-						$column_comment
-					);
-				}
-				$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
-				if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
-					$this->execute_postgresql_side_effect_statements(
-						$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
-					);
-				}
-				foreach ( $metadata['checks'] ?? array() as $check ) {
-					$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-				}
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-				return;
-			}
-
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$column = $metadata['column'];
+			if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata ) ) {
 				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
 			}
 
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$column['ordinal'] = $this->get_next_mysql_column_ordinal( $table_schema, $table_name );
-			$column_nullable   = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
-			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
+			$column_comment = $this->get_postgresql_catalog_column_comment( $column );
+			if ( '' !== $column_comment ) {
+				$this->sync_postgresql_catalog_column_comment(
+					$table_schema,
+					$table_name,
+					(string) $column['name'],
+					$column_comment
+				);
+			}
+			$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
 			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
 				$this->execute_postgresql_side_effect_statements(
 					$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
 				);
 			}
-			$index_ordinal = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
-			foreach ( $metadata['indexes'] ?? array() as $index ) {
-				$index['ordinal'] = $index_ordinal;
-				$this->insert_mysql_index_metadata( $table_schema, $table_name, $index, $column_nullable );
-				++$index_ordinal;
-			}
-			foreach ( $metadata['foreign_keys'] ?? array() as $foreign_key ) {
-				$foreign_key['referenced_schema'] = $foreign_key['referenced_schema'] ?? $table_schema;
-				$this->insert_mysql_foreign_key_metadata( $table_schema, $table_name, $foreign_key );
-			}
 			foreach ( $metadata['checks'] ?? array() as $check ) {
-				$this->insert_mysql_check_metadata( $table_schema, $table_name, $check );
+				$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
 			}
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
 		if ( 'rename_column' === $metadata['operation'] ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				if ( $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] ) ) {
-					$this->execute_postgresql_side_effect_statements(
-						array_merge(
-							$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] ),
-							$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $metadata['new_column'] )
-						)
-					);
-				}
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-				return;
-			}
-
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
-			if ( $metadata['old_column'] !== $metadata['new_column'] ) {
-				$this->connection->query(
-					sprintf(
-						'UPDATE %s SET column_name = ? WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-						$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-					),
-					array( $metadata['new_column'], $table_schema, $table_name, $metadata['old_column'] )
-				);
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			}
-			$this->rename_mysql_index_column_metadata(
-				$table_schema,
-				$table_name,
-				$metadata['old_column'],
-				$metadata['new_column']
-			);
-			$this->rename_mysql_foreign_key_column_metadata(
-				$table_schema,
-				$table_name,
-				$metadata['old_column'],
-				$metadata['new_column']
-			);
-			$this->rename_mysql_referenced_foreign_key_column_metadata(
-				$table_schema,
-				$table_name,
-				$metadata['old_column'],
-				$metadata['new_column']
-			);
-			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
+			if ( $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] ) ) {
 				$this->execute_postgresql_side_effect_statements(
 					array_merge(
 						$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] ),
@@ -5158,29 +4765,15 @@ $wp_mysql_on_update$',
 					)
 				);
 			}
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
 		if ( 'drop_column' === $metadata['operation'] ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$this->execute_postgresql_side_effect_statements(
-					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
-				);
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-				return;
-			}
-
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['column'] );
-			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
-				$this->execute_postgresql_side_effect_statements(
-					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
-				);
-			}
-			$this->delete_mysql_index_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
-			$this->delete_mysql_foreign_key_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
-			$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['column'] );
+			$this->execute_postgresql_side_effect_statements(
+				$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
+			);
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
@@ -5195,92 +4788,36 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'change_column' === $metadata['operation'] ) {
-			$column              = $metadata['column'];
-			$catalog_recoverable = $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata );
-
-			if ( $this->should_use_postgresql_catalog_metadata() && $catalog_recoverable ) {
-				$old_has_on_update = $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] );
-				$new_has_on_update = $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' );
-
-				if ( $old_has_on_update ) {
-					$this->execute_postgresql_side_effect_statements(
-						$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
-					);
-				}
-				if ( $new_has_on_update ) {
-					$this->execute_postgresql_side_effect_statements(
-						$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
-					);
-				}
-
-				$this->sync_postgresql_catalog_column_comment(
-					$table_schema,
-					$table_name,
-					(string) $column['name'],
-					$this->get_postgresql_catalog_column_comment( $column )
-				);
-				$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
-				foreach ( $metadata['checks'] ?? array() as $check ) {
-					$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-				}
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-				return;
-			}
-
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$column = $metadata['column'];
+			if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata ) ) {
 				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
 			}
 
-			$this->ensure_mysql_schema_metadata_tables();
+			$old_has_on_update = $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] );
+			$new_has_on_update = $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' );
 
-			$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
-			$ordinal   = $this->get_mysql_column_ordinal_metadata( $table_schema, $table_name, $metadata['old_column'] );
-
-			$column['ordinal'] = null === $ordinal
-				? $this->get_next_mysql_column_ordinal( $table_schema, $table_name )
-				: (int) $ordinal;
-
-			$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['old_column'] );
-			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
-			$column_nullable = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
-			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
+			if ( $old_has_on_update ) {
 				$this->execute_postgresql_side_effect_statements(
 					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
 				);
 			}
-			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
+			if ( $new_has_on_update ) {
 				$this->execute_postgresql_side_effect_statements(
 					$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
 				);
 			}
-			$this->rename_mysql_index_column_metadata(
+
+			$this->sync_postgresql_catalog_column_comment(
 				$table_schema,
 				$table_name,
-				$metadata['old_column'],
-				$column['name']
+				(string) $column['name'],
+				$this->get_postgresql_catalog_column_comment( $column )
 			);
-			$this->rename_mysql_foreign_key_column_metadata(
-				$table_schema,
-				$table_name,
-				$metadata['old_column'],
-				$column['name']
-			);
-			$this->rename_mysql_referenced_foreign_key_column_metadata(
-				$table_schema,
-				$table_name,
-				$metadata['old_column'],
-				$column['name']
-			);
-			$index_ordinal = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
-			foreach ( $metadata['indexes'] ?? array() as $index ) {
-				$index['ordinal'] = $index_ordinal;
-				$this->delete_mysql_index_metadata( $table_schema, $table_name, $index['name'] );
-				$this->insert_mysql_index_metadata( $table_schema, $table_name, $index, $column_nullable );
-				++$index_ordinal;
-			}
+			$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
 			foreach ( $metadata['checks'] ?? array() as $check ) {
-				$this->insert_mysql_check_metadata( $table_schema, $table_name, $check );
+				$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
 			}
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
@@ -5295,7 +4832,7 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Apply MySQL-facing metadata changes after a table rename.
+	 * Apply MySQL-facing metadata cache invalidation after a table rename.
 	 *
 	 * @param array{schema?: string, old_table?: string, new_table?: string, renames?: array<int,array{schema:string,old_table:string,new_table:string}>} $metadata Rename metadata.
 	 */
@@ -5307,55 +4844,12 @@ $wp_mysql_on_update$',
 			return;
 		}
 
-		$table_schema   = $metadata['schema'];
-		$old_table_name = $metadata['old_table'];
-		$new_table_name = $metadata['new_table'];
-		if ( $old_table_name === $new_table_name ) {
+		if ( $metadata['old_table'] === $metadata['new_table'] ) {
 			return;
 		}
 
-		$referencing_tables = array();
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$stmt               = $this->connection->query(
-				sprintf(
-					'SELECT DISTINCT table_schema, table_name FROM %s WHERE referenced_table_schema = ? AND referenced_table_name = ?',
-					$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-				),
-				array( $table_schema, $old_table_name )
-			);
-			$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
-
-			foreach ( self::MYSQL_SCHEMA_SIDE_METADATA_TABLES as $metadata_table ) {
-				$this->connection->query(
-					sprintf(
-						'UPDATE %s SET table_name = ? WHERE table_schema = ? AND table_name = ?',
-						$this->connection->quote_identifier( $metadata_table )
-					),
-					array( $new_table_name, $table_schema, $old_table_name )
-				);
-			}
-
-			$this->connection->query(
-				sprintf(
-					'UPDATE %s SET referenced_table_name = ? WHERE referenced_table_schema = ? AND referenced_table_name = ?',
-					$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-				),
-				array( $new_table_name, $table_schema, $old_table_name )
-			);
-		}
-
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $old_table_name );
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $new_table_name );
-		foreach ( $referencing_tables as $referencing_table ) {
-			$this->clear_mysql_metadata_cache_for_table(
-				(string) $referencing_table['table_schema'],
-				(string) $referencing_table['table_name']
-			);
-		}
+		$this->clear_mysql_metadata_caches();
 	}
-
 	/**
 	 * Check whether ALTER metadata contains an operation.
 	 *
@@ -5391,17 +4885,9 @@ $wp_mysql_on_update$',
 		$table_name   = $metadata['table'];
 		$index        = $metadata['index'];
 
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $index );
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			$this->sync_postgresql_catalog_index_comment( $table_schema, $table_name, $index, true );
-			return;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->delete_mysql_index_metadata( $table_schema, $table_name, $index['name'] );
-		$index['ordinal'] = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
-		$this->insert_mysql_index_metadata( $table_schema, $table_name, $index );
+		$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $index );
+		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+		$this->sync_postgresql_catalog_index_comment( $table_schema, $table_name, $index, true );
 	}
 
 	/**
@@ -5410,41 +4896,8 @@ $wp_mysql_on_update$',
 	 * @param array $metadata DROP INDEX metadata.
 	 */
 	private function apply_mysql_drop_index_metadata( array $metadata ): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			$this->ensure_mysql_schema_metadata_tables();
-			$this->delete_mysql_index_metadata(
-				$metadata['schema'],
-				$metadata['table'],
-				$metadata['index']
-			);
-		}
 		$this->clear_mysql_metadata_cache_for_table( $metadata['schema'], $metadata['table'] );
 	}
-
-	/**
-	 * Insert or replace table metadata.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $metadata     Table metadata.
-	 */
-	private function insert_mysql_table_metadata( string $table_schema, string $table_name, array $metadata ): void {
-		$this->connection->query(
-			sprintf(
-				'INSERT INTO %s
-					(table_schema, table_name, table_comment)
-				VALUES (?, ?, ?)',
-				$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
-			),
-			array(
-				$table_schema,
-				$table_name,
-				$metadata['comment'] ?? '',
-			)
-		);
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
 	/**
 	 * Check whether PostgreSQL catalogs can reconstruct ALTER COLUMN metadata.
 	 *
@@ -5524,6 +4977,21 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Check whether PostgreSQL catalogs can reconstruct MySQL CHECK metadata.
+	 *
+	 * @param array $check CHECK constraint metadata.
+	 * @return bool Whether catalog metadata can preserve the check.
+	 */
+	private function is_postgresql_catalog_recoverable_mysql_check_metadata( array $check ): bool {
+		$enforced = strtoupper( (string) ( $check['enforced'] ?? 'YES' ) );
+		if ( ! in_array( $enforced, array( 'YES', 'NO' ), true ) ) {
+			return false;
+		}
+
+		return '' !== trim( (string) ( $check['check_clause'] ?? '' ) );
+	}
+
+	/**
 	 * Apply metadata updates for ALTER COLUMN SET/DROP DEFAULT.
 	 *
 	 * @param string      $table_schema   Metadata schema.
@@ -5532,100 +5000,53 @@ $wp_mysql_on_update$',
 	 * @param string|null $column_default MySQL-facing column default, or null for no default.
 	 */
 	private function apply_mysql_column_default_metadata( string $table_schema, string $table_name, string $column_name, ?string $column_default ): void {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$sql    = 'SELECT pg_catalog.col_description(c.oid, a.attnum) AS column_comment
-				FROM pg_catalog.pg_class c
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = c.relnamespace
-				INNER JOIN pg_catalog.pg_attribute a
-					ON a.attrelid = c.oid
-				WHERE n.nspname = ?
-					AND c.relname = ?
-					AND c.relkind IN (\'r\', \'p\', \'v\', \'m\')
-					AND a.attname = ?
-					AND a.attnum > 0
-				LIMIT 1';
-			$params = array( $table_schema, $table_name, $column_name );
+		$sql    = 'SELECT pg_catalog.col_description(c.oid, a.attnum) AS column_comment
+			FROM pg_catalog.pg_class c
+			INNER JOIN pg_catalog.pg_namespace n
+				ON n.oid = c.relnamespace
+			INNER JOIN pg_catalog.pg_attribute a
+				ON a.attrelid = c.oid
+			WHERE n.nspname = ?
+				AND c.relname = ?
+				AND c.relkind IN (\'r\', \'p\', \'v\', \'m\')
+				AND a.attname = ?
+				AND a.attnum > 0
+			LIMIT 1';
+		$params = array( $table_schema, $table_name, $column_name );
 
-			try {
-				$stmt = $this->connection->query( $sql, $params );
-			} catch ( PDOException $e ) {
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-				return;
-			}
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
-			);
-
-			$current_comment = $stmt->fetchColumn();
-			if ( false !== $current_comment && null !== $current_comment ) {
-				$lines = explode( "\n", (string) $current_comment );
-				foreach ( array( 0, 1 ) as $offset ) {
-					if (
-						isset( $lines[ $offset ] )
-						&& 0 === strpos( $lines[ $offset ], self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX )
-					) {
-						unset( $lines[ $offset ] );
-						break;
-					}
-				}
-
-				$clean_comment = implode( "\n", array_values( $lines ) );
-				if ( $clean_comment !== $current_comment ) {
-					$this->sync_postgresql_catalog_column_comment( $table_schema, $table_name, $column_name, $clean_comment );
-				}
-			}
-
+		try {
+			$stmt = $this->connection->query( $sql, $params );
+		} catch ( PDOException $e ) {
 			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->connection->query(
-			sprintf(
-				'UPDATE %s SET column_default = ? WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $column_default, $table_schema, $table_name, $column_name )
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
 		);
+
+		$current_comment = $stmt->fetchColumn();
+		if ( false !== $current_comment && null !== $current_comment ) {
+			$lines = explode( "\n", (string) $current_comment );
+			foreach ( array( 0, 1 ) as $offset ) {
+				if (
+					isset( $lines[ $offset ] )
+					&& 0 === strpos( $lines[ $offset ], self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX )
+				) {
+					unset( $lines[ $offset ] );
+					break;
+				}
+			}
+
+			$clean_comment = implode( "\n", array_values( $lines ) );
+			if ( $clean_comment !== $current_comment ) {
+				$this->sync_postgresql_catalog_column_comment( $table_schema, $table_name, $column_name, $clean_comment );
+			}
+		}
+
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
-
-	/**
-	 * Insert or replace column metadata.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $column       Column metadata.
-	 */
-	private function insert_mysql_column_metadata( string $table_schema, string $table_name, array $column ): void {
-		$this->delete_mysql_column_metadata( $table_schema, $table_name, $column['name'] );
-		$this->connection->query(
-			sprintf(
-				'INSERT INTO %s
-					(table_schema, table_name, column_name, ordinal_position, column_type, character_set_name, collation_name, is_nullable, column_default, extra, column_comment)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array(
-				$table_schema,
-				$table_name,
-				$column['name'],
-				$column['ordinal'],
-				$column['type'],
-				$column['charset'] ?? null,
-				$column['collation'] ?? null,
-				$column['nullable'] ?? 'YES',
-				$column['default'] ?? null,
-				$column['extra'] ?? '',
-				$column['comment'] ?? '',
-			)
-		);
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
 	/**
 	 * Sync a MySQL table comment into PostgreSQL catalog comments.
 	 *
@@ -5878,83 +5299,6 @@ END',
 	}
 
 	/**
-	 * Delete metadata for one column.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 */
-	private function delete_mysql_column_metadata( string $table_schema, string $table_name, string $column_name ): void {
-		$this->connection->query(
-			sprintf(
-				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Insert MySQL SHOW INDEX metadata rows for an index.
-	 *
-	 * @param string     $table_schema    Table schema.
-	 * @param string     $table_name      Table name.
-	 * @param array      $index           Index metadata.
-	 * @param array|null $column_nullable Optional nullable metadata keyed by lowercase column.
-	 */
-	private function insert_mysql_index_metadata(
-		string $table_schema,
-		string $table_name,
-		array $index,
-		?array $column_nullable = null
-	): void {
-		$column_nullable = $column_nullable ?? array();
-
-		foreach ( $index['columns'] as $column ) {
-			$is_nullable = $column_nullable[ strtolower( $column['column_name'] ) ]
-				?? null;
-			if ( null === $is_nullable ) {
-				$stmt = $this->connection->query(
-					sprintf(
-						'SELECT is_nullable FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-						$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-					),
-					array( $table_schema, $table_name, $column['column_name'] )
-				);
-
-				$nullable    = $stmt->fetchColumn();
-				$is_nullable = false === $nullable ? 'YES' : (string) $nullable;
-			}
-
-			$this->connection->query(
-				sprintf(
-					'INSERT INTO %s
-						(table_schema, table_name, key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, "collation", sub_part, nullable, index_comment)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-				),
-				array(
-					$table_schema,
-					$table_name,
-					$index['name'],
-					$index['ordinal'],
-					$column['seq_in_index'],
-					$column['column_name'],
-					$index['non_unique'],
-					$index['index_type'],
-					strtoupper( (string) $index['index_type'] ) === 'FULLTEXT' ? null : ( $column['collation'] ?? 'A' ),
-					null === $column['sub_part'] ? null : (string) $column['sub_part'],
-					'NO' === $is_nullable ? '' : 'YES',
-					$index['comment'] ?? '',
-				)
-			);
-		}
-
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
 	 * Sync a MySQL index comment into PostgreSQL catalog comments.
 	 *
 	 * @param string $table_schema Backend schema.
@@ -6053,208 +5397,105 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Delete metadata rows for one index.
+	 * Check whether PostgreSQL catalog metadata has an index with the given name.
 	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $index_name   Index name.
-	 */
-	private function delete_mysql_index_metadata( string $table_schema, string $table_name, string $index_name ): void {
-		$this->connection->query(
-			sprintf(
-				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $index_name )
-		);
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Check whether stored MySQL metadata has an index with the given name.
-	 *
-	 * @param string $table_schema Metadata schema.
+	 * @param string $table_schema Backend schema.
 	 * @param string $table_name   Table name.
 	 * @param string $index_name   Index name.
 	 * @param bool   $unique_only  Whether only unique indexes should match.
 	 * @return bool Whether the index metadata exists.
 	 */
 	private function mysql_index_metadata_exists( string $table_schema, string $table_name, string $index_name, bool $unique_only = false ): bool {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			try {
-				foreach ( $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name, false ) as $row ) {
-					if ( $unique_only && '0' !== (string) ( $row['non_unique'] ?? '' ) ) {
-						continue;
-					}
-
-					if ( 0 === strcasecmp( (string) ( $row['key_name'] ?? '' ), $index_name ) ) {
-						return true;
-					}
-				}
-			} catch ( PDOException $e ) {
-				return false;
-			}
-
-			return false;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?)%s LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE ),
-				$unique_only ? ' AND non_unique = \'0\'' : ''
-			),
-			array( $table_schema, $table_name, $index_name )
-		);
-
-		return false !== $stmt->fetchColumn();
-	}
-
-	/**
-	 * Insert MySQL foreign key metadata rows for a constraint.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $foreign_key  Foreign key metadata.
-	 */
-	private function insert_mysql_foreign_key_metadata( string $table_schema, string $table_name, array $foreign_key ): void {
-		$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, $foreign_key['name'] );
-
-		$stmt    = $this->connection->query(
-			sprintf(
-				'SELECT COALESCE(MAX(constraint_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
-		$ordinal = (int) $stmt->fetchColumn();
-		foreach ( $foreign_key['columns'] as $index => $column_name ) {
-			$this->connection->query(
-				sprintf(
-					'INSERT INTO %s
-						(table_schema, table_name, constraint_name, constraint_ordinal, seq_in_index, column_name, referenced_table_schema, referenced_table_name, referenced_column_name, update_rule, delete_rule)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-					$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-				),
-				array(
-					$table_schema,
-					$table_name,
-					$foreign_key['name'],
-					$ordinal,
-					$index + 1,
-					$column_name,
-					$foreign_key['referenced_schema'],
-					$foreign_key['referenced_table'],
-					$foreign_key['referenced_columns'][ $index ],
-					$foreign_key['update_rule'],
-					$foreign_key['delete_rule'],
-				)
+		try {
+			$stmt = $this->connection->query(
+				'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
+					'',
+					'',
+					array_merge(
+						array(
+							'n.nspname = ?',
+							't.relname = ?',
+							't.relkind IN (\'r\', \'p\')',
+						),
+						$unique_only ? array( 'i.indisunique' ) : array()
+					)
+				) . '
+				SELECT 1
+				FROM index_columns
+				WHERE (indisprimary AND LOWER(?) = \'primary\')
+					OR (
+						NOT indisprimary
+						AND (
+							LOWER(postgresql_index_name) = LOWER(?)
+							OR LOWER(postgresql_index_name) = LOWER(table_name || \'__\' || ?)
+						)
+					)
+				LIMIT 1',
+				array( $table_schema, $table_name, $index_name, $index_name, $index_name )
 			);
-		}
 
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Insert MySQL CHECK constraint metadata.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $check        CHECK constraint metadata.
-	 */
-	private function insert_mysql_check_metadata( string $table_schema, string $table_name, array $check ): void {
-		$this->delete_mysql_check_metadata( $table_schema, $table_name, $check['name'] );
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT COALESCE(MAX(constraint_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
-
-		$this->connection->query(
-			sprintf(
-				'INSERT INTO %s
-					(table_schema, table_name, constraint_name, constraint_ordinal, check_clause, enforced)
-				VALUES (?, ?, ?, ?, ?, ?)',
-				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
-			),
-			array(
-				$table_schema,
-				$table_name,
-				$check['name'],
-				(int) $stmt->fetchColumn(),
-				$check['check_clause'],
-				$check['enforced'] ?? 'YES',
-			)
-		);
-
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Check whether PostgreSQL catalogs can reconstruct MySQL CHECK metadata.
-	 *
-	 * @param array $check CHECK constraint metadata.
-	 * @return bool Whether stored side metadata can be skipped.
-	 */
-	private function is_postgresql_catalog_recoverable_mysql_check_metadata( array $check ): bool {
-		$enforced = strtoupper( (string) ( $check['enforced'] ?? 'YES' ) );
-		if ( ! in_array( $enforced, array( 'YES', 'NO' ), true ) ) {
+			return false !== $stmt->fetchColumn();
+		} catch ( PDOException $e ) {
 			return false;
 		}
-
-		return '' !== trim( (string) ( $check['check_clause'] ?? '' ) );
 	}
 
 	/**
-	 * Delete metadata rows for one CHECK constraint.
+	 * Check whether PostgreSQL catalog metadata has indexes for a table.
 	 *
-	 * @param string $table_schema    Metadata schema.
-	 * @param string $table_name      Table name.
-	 * @param string $constraint_name Constraint name.
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return bool Whether index metadata exists.
 	 */
-	private function delete_mysql_check_metadata( string $table_schema, string $table_name, string $constraint_name ): void {
-		$this->connection->query(
-			sprintf(
-				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(constraint_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $constraint_name )
-		);
+	private function mysql_index_metadata_has_rows( string $table_schema, string $table_name ): bool {
+		try {
+			$stmt = $this->connection->query(
+				'SELECT 1
+				FROM pg_catalog.pg_class t
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = t.relnamespace
+				INNER JOIN pg_catalog.pg_index i
+					ON i.indrelid = t.oid
+				WHERE n.nspname = ?
+					AND t.relname = ?
+					AND t.relkind IN (\'r\', \'p\')
+				LIMIT 1',
+				array( $table_schema, $table_name )
+			);
 
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+			return false !== $stmt->fetchColumn();
+		} catch ( PDOException $e ) {
+			return false;
+		}
 	}
 
 	/**
-	 * Get stored metadata for one CHECK constraint.
+	 * Get catalog metadata for one CHECK constraint.
 	 *
-	 * @param string $table_schema    Metadata schema.
+	 * @param string $table_schema    Backend schema.
 	 * @param string $table_name      Table name.
 	 * @param string $constraint_name Constraint name.
 	 * @return array|null CHECK metadata row, or null when absent.
 	 */
 	private function get_mysql_check_metadata( string $table_schema, string $table_name, string $constraint_name ): ?array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			try {
-				$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
-					'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
-					'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
-				);
-				$enforced_sql     = $this->get_postgresql_mysql_check_enforced_comment_sql(
-					'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
-				);
-				$stmt             = $this->connection->query(
-					sprintf(
-						'SELECT
-					con.conname AS constraint_name,
-					%1$s AS check_clause,
-					%2$s AS enforced,
-					\'catalog\' AS metadata_source
-				FROM pg_catalog.pg_constraint con
-				INNER JOIN pg_catalog.pg_class t
-					ON t.oid = con.conrelid
+		try {
+			$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
+				'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
+				'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
+			);
+			$enforced_sql     = $this->get_postgresql_mysql_check_enforced_comment_sql(
+				'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
+			);
+			$stmt             = $this->connection->query(
+				sprintf(
+					'SELECT
+						con.conname AS constraint_name,
+						%1$s AS check_clause,
+						%2$s AS enforced,
+						\'catalog\' AS metadata_source
+					FROM pg_catalog.pg_constraint con
+					INNER JOIN pg_catalog.pg_class t
+						ON t.oid = con.conrelid
 					INNER JOIN pg_catalog.pg_namespace n
 						ON n.oid = t.relnamespace
 					WHERE n.nspname = ?
@@ -6263,178 +5504,32 @@ $wp_mysql_primary_index_comment$',
 						AND con.contype = \'c\'
 						AND LOWER(con.conname) = LOWER(?)
 					LIMIT 1',
-						$check_clause_sql,
-						$enforced_sql
-					),
-					array( $table_schema, $table_name, $constraint_name )
-				);
-
-				$row = $stmt->fetch( PDO::FETCH_ASSOC );
-				return false === $row ? null : $row;
-			} catch ( PDOException $e ) {
-				return null;
-			}
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT constraint_name, check_clause, enforced
-				FROM %s
-				WHERE table_schema = ? AND table_name = ? AND LOWER(constraint_name) = LOWER(?)
-				LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $constraint_name )
-		);
-
-		$row = $stmt->fetch( PDO::FETCH_ASSOC );
-		return false === $row ? null : $row;
-	}
-
-	/**
-	 * Delete metadata rows for one foreign key.
-	 *
-	 * @param string $table_schema    Metadata schema.
-	 * @param string $table_name      Table name.
-	 * @param string $constraint_name Constraint name.
-	 */
-	private function delete_mysql_foreign_key_metadata( string $table_schema, string $table_name, string $constraint_name ): void {
-		$this->connection->query(
-			sprintf(
-				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(constraint_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $constraint_name )
-		);
-
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Delete metadata for foreign keys that reference one local column.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Dropped column name.
-	 */
-	private function delete_mysql_foreign_key_metadata_for_column( string $table_schema, string $table_name, string $column_name ): void {
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT DISTINCT constraint_name FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(column_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $constraint_name ) {
-			$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, (string) $constraint_name );
-		}
-
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Rename local foreign key column metadata after ALTER TABLE CHANGE COLUMN.
-	 *
-	 * @param string $table_schema    Metadata schema.
-	 * @param string $table_name      Table name.
-	 * @param string $old_column_name Old column name.
-	 * @param string $new_column_name New column name.
-	 */
-	private function rename_mysql_foreign_key_column_metadata(
-		string $table_schema,
-		string $table_name,
-		string $old_column_name,
-		string $new_column_name
-	): void {
-		if ( $old_column_name === $new_column_name ) {
-			return;
-		}
-
-		$this->connection->query(
-			sprintf(
-				'UPDATE %s SET column_name = ? WHERE table_schema = ? AND table_name = ? AND LOWER(column_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $new_column_name, $table_schema, $table_name, $old_column_name )
-		);
-
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Rename referenced foreign key column metadata after a referenced column rename.
-	 *
-	 * @param string $table_schema    Referenced table schema.
-	 * @param string $table_name      Referenced table name.
-	 * @param string $old_column_name Old referenced column name.
-	 * @param string $new_column_name New referenced column name.
-	 */
-	private function rename_mysql_referenced_foreign_key_column_metadata(
-		string $table_schema,
-		string $table_name,
-		string $old_column_name,
-		string $new_column_name
-	): void {
-		if ( $old_column_name === $new_column_name ) {
-			return;
-		}
-
-		$stmt               = $this->connection->query(
-			sprintf(
-				'SELECT DISTINCT table_schema, table_name FROM %s WHERE referenced_table_schema = ? AND referenced_table_name = ? AND LOWER(referenced_column_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $old_column_name )
-		);
-		$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
-
-		$this->connection->query(
-			sprintf(
-				'UPDATE %s SET referenced_column_name = ? WHERE referenced_table_schema = ? AND referenced_table_name = ? AND LOWER(referenced_column_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $new_column_name, $table_schema, $table_name, $old_column_name )
-		);
-
-		foreach ( $referencing_tables as $referencing_table ) {
-			$this->clear_mysql_metadata_cache_for_table(
-				(string) $referencing_table['table_schema'],
-				(string) $referencing_table['table_name']
+					$check_clause_sql,
+					$enforced_sql
+				),
+				array( $table_schema, $table_name, $constraint_name )
 			);
+
+			$row = $stmt->fetch( PDO::FETCH_ASSOC );
+			return false === $row ? null : $row;
+		} catch ( PDOException $e ) {
+			return null;
 		}
 	}
 
 	/**
 	 * Generate the next MySQL-style unnamed foreign key constraint name.
 	 *
-	 * @param string   $table_schema Metadata schema.
+	 * @param string   $table_schema Backend schema.
 	 * @param string   $table_name   Table name.
 	 * @param string[] $reserved     Names already generated for this statement.
 	 * @return string Constraint name.
 	 */
 	private function get_next_mysql_foreign_key_constraint_name( string $table_schema, string $table_name, array $reserved = array() ): string {
-		$constraint_names = $reserved;
-
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$constraint_names = array_merge(
-				$constraint_names,
-				$this->get_postgresql_catalog_foreign_key_constraint_names( $table_schema, $table_name )
-			);
-
-			return $this->get_next_mysql_foreign_key_constraint_name_from_names( $table_name, $constraint_names );
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt             = $this->connection->query(
-			sprintf(
-				'SELECT DISTINCT constraint_name FROM %s WHERE table_schema = ? AND table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
+		$constraint_names = array_merge(
+			$reserved,
+			$this->get_postgresql_catalog_foreign_key_constraint_names( $table_schema, $table_name )
 		);
-		$constraint_names = array_merge( $constraint_names, $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
 
 		return $this->get_next_mysql_foreign_key_constraint_name_from_names( $table_name, $constraint_names );
 	}
@@ -6511,153 +5606,40 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Check whether stored MySQL metadata has a foreign key with the given name.
+	 * Check whether PostgreSQL catalog metadata has a foreign key with the given name.
 	 *
-	 * @param string $table_schema    Metadata schema.
+	 * @param string $table_schema    Backend schema.
 	 * @param string $table_name      Table name.
 	 * @param string $constraint_name Constraint name.
 	 * @return bool Whether the foreign key metadata exists.
 	 */
 	private function mysql_foreign_key_metadata_exists( string $table_schema, string $table_name, string $constraint_name ): bool {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$constraint_name_sql = $this->get_postgresql_catalog_foreign_key_constraint_name_sql( 'con.conname', 't.relname' );
+		$constraint_name_sql = $this->get_postgresql_catalog_foreign_key_constraint_name_sql( 'con.conname', 't.relname' );
 
-			try {
-				$stmt = $this->connection->query(
-					sprintf(
-						'SELECT 1
-						FROM pg_catalog.pg_constraint con
-						INNER JOIN pg_catalog.pg_class t
-							ON t.oid = con.conrelid
-						INNER JOIN pg_catalog.pg_namespace n
-							ON n.oid = t.relnamespace
-						WHERE n.nspname = ?
-							AND t.relname = ?
-							AND t.relkind IN (\'r\', \'p\')
-							AND con.contype = \'f\'
-							AND LOWER(%s) = LOWER(?)
-						LIMIT 1',
-						$constraint_name_sql
-					),
-					array( $table_schema, $table_name, $constraint_name )
-				);
-
-				return false !== $stmt->fetchColumn();
-			} catch ( PDOException $e ) {
-				return false;
-			}
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(constraint_name) = LOWER(?) LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $constraint_name )
-		);
-
-		return false !== $stmt->fetchColumn();
-	}
-
-	/**
-	 * Delete metadata key parts for one dropped column and renumber surviving parts.
-	 *
-	 * MySQL removes a dropped column from every index that contains it. Indexes
-	 * remain visible when at least one key part survives.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Dropped column name.
-	 */
-	private function delete_mysql_index_metadata_for_column( string $table_schema, string $table_name, string $column_name ): void {
-		$index_metadata_table = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
-
-		$this->connection->query(
-			sprintf(
-				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(column_name) = LOWER(?)',
-				$index_metadata_table
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$this->connection->query(
-			sprintf(
-				'WITH renumbered AS (
-					SELECT
-						table_schema,
-						table_name,
-						key_name,
-						seq_in_index AS old_seq_in_index,
-						row_number() OVER (PARTITION BY key_name ORDER BY seq_in_index) AS new_seq_in_index
-					FROM %1$s
-					WHERE table_schema = ?
-						AND table_name = ?
-				)
-				UPDATE %1$s AS im
-				SET seq_in_index = -(
-					SELECT new_seq_in_index
-					FROM renumbered
-					WHERE renumbered.table_schema = im.table_schema
-						AND renumbered.table_name = im.table_name
-						AND renumbered.key_name = im.key_name
-						AND renumbered.old_seq_in_index = im.seq_in_index
-				)
-				WHERE im.table_schema = ?
-					AND im.table_name = ?
-					AND EXISTS (
-						SELECT 1
-						FROM renumbered
-						WHERE renumbered.table_schema = im.table_schema
-							AND renumbered.table_name = im.table_name
-							AND renumbered.key_name = im.key_name
-							AND renumbered.old_seq_in_index = im.seq_in_index
-					)',
-				$index_metadata_table
-			),
-			array( $table_schema, $table_name, $table_schema, $table_name )
-		);
-
-		$this->connection->query(
-			sprintf(
-				'UPDATE %s SET seq_in_index = -seq_in_index WHERE table_schema = ? AND table_name = ? AND seq_in_index < 0',
-				$index_metadata_table
-			),
-			array( $table_schema, $table_name )
-		);
-
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Get the backend primary key constraint name for a MySQL table.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @return string PostgreSQL primary key constraint name.
-	 */
-	private function get_postgresql_primary_key_constraint_name( string $table_schema, string $table_name ): string {
 		try {
 			$stmt = $this->connection->query(
-				"SELECT constraint_name
-				FROM information_schema.table_constraints
-				WHERE table_schema = ?
-					AND table_name = ?
-					AND constraint_type = 'PRIMARY KEY'
-				ORDER BY constraint_name
-				LIMIT 1",
-				array( $table_schema, $table_name )
+				sprintf(
+					'SELECT 1
+					FROM pg_catalog.pg_constraint con
+					INNER JOIN pg_catalog.pg_class t
+						ON t.oid = con.conrelid
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					WHERE n.nspname = ?
+						AND t.relname = ?
+						AND t.relkind IN (\'r\', \'p\')
+						AND con.contype = \'f\'
+						AND LOWER(%s) = LOWER(?)
+					LIMIT 1',
+					$constraint_name_sql
+				),
+				array( $table_schema, $table_name, $constraint_name )
 			);
 
-			$constraint_name = $stmt->fetchColumn();
-			if ( false !== $constraint_name && '' !== (string) $constraint_name ) {
-				return (string) $constraint_name;
-			}
+			return false !== $stmt->fetchColumn();
 		} catch ( PDOException $e ) {
-			// Test fixtures and SQLite-backed connections may not expose PostgreSQL catalogs.
+			return false;
 		}
-
-		return $table_name . '_pkey';
 	}
 
 	/**
@@ -6669,33 +5651,10 @@ $wp_mysql_primary_index_comment$',
 	 * @return string Generated CHECK constraint name.
 	 */
 	private function get_next_mysql_check_constraint_name( string $table_schema, string $table_name, array $reserved = array() ): string {
-		$constraint_names = $reserved;
-
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$constraint_names = array_merge(
-				$constraint_names,
-				$this->get_postgresql_catalog_check_constraint_names( $table_schema, $table_name )
-			);
-
-			return $this->get_next_mysql_check_constraint_name_from_names( $table_name, $constraint_names );
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		try {
-			$stmt             = $this->connection->query(
-				sprintf(
-					'SELECT constraint_name
-						FROM %s
-						WHERE table_schema = ?
-							AND table_name = ?',
-					$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
-				),
-				array( $table_schema, $table_name )
-			);
-			$constraint_names = array_merge( $constraint_names, $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
-		} catch ( PDOException $e ) {
-			// Test fixtures and SQLite-backed connections may not expose metadata side tables yet.
-		}
+		$constraint_names = array_merge(
+			$reserved,
+			$this->get_postgresql_catalog_check_constraint_names( $table_schema, $table_name )
+		);
 
 		return $this->get_next_mysql_check_constraint_name_from_names( $table_name, $constraint_names );
 	}
@@ -6748,159 +5707,41 @@ $wp_mysql_primary_index_comment$',
 
 		return $prefix . ( $max + 1 );
 	}
-
 	/**
-	 * Rename index column metadata after ALTER TABLE CHANGE COLUMN.
+	 * Get the backend primary key constraint name for a MySQL table.
 	 *
-	 * @param string $table_schema    Table schema.
-	 * @param string $table_name      Table name.
-	 * @param string $old_column_name Old column name.
-	 * @param string $new_column_name New column name.
-	 */
-	private function rename_mysql_index_column_metadata(
-		string $table_schema,
-		string $table_name,
-		string $old_column_name,
-		string $new_column_name
-	): void {
-		if ( $old_column_name === $new_column_name ) {
-			return;
-		}
-
-		$this->connection->query(
-			sprintf(
-				'UPDATE %s SET column_name = ? WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $new_column_name, $table_schema, $table_name, $old_column_name )
-		);
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Get the next stored column ordinal for a table.
-	 *
-	 * @param string $table_schema Table schema.
+	 * @param string $table_schema Backend schema.
 	 * @param string $table_name   Table name.
-	 * @return int Next ordinal.
+	 * @return string PostgreSQL primary key constraint name.
 	 */
-	private function get_next_mysql_column_ordinal( string $table_schema, string $table_name ): int {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
+	private function get_postgresql_primary_key_constraint_name( string $table_schema, string $table_name ): string {
+		try {
 			$stmt = $this->connection->query(
-				'SELECT COALESCE(MAX(c.ordinal_position), 0) + 1
-				FROM information_schema.columns c
-				WHERE c.table_schema = ?
-					AND c.table_name = ?',
+				"SELECT constraint_name
+				FROM information_schema.table_constraints
+				WHERE table_schema = ?
+					AND table_name = ?
+					AND constraint_type = 'PRIMARY KEY'
+				ORDER BY constraint_name
+				LIMIT 1",
 				array( $table_schema, $table_name )
 			);
 
-			return (int) $stmt->fetchColumn();
-		}
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT COALESCE(MAX(ordinal_position), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
-
-		return (int) $stmt->fetchColumn();
-	}
-
-	/**
-	 * Get stored MySQL ordinal metadata for a table column.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 * @return int|null Column ordinal, or null when unavailable.
-	 */
-	private function get_mysql_column_ordinal_metadata( string $table_schema, string $table_name, string $column_name ): ?int {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$stmt = $this->connection->query(
-				'SELECT c.ordinal_position
-				FROM information_schema.columns c
-				WHERE c.table_schema = ?
-					AND c.table_name = ?
-					AND LOWER(c.column_name) = LOWER(?)
-				ORDER BY c.ordinal_position
-				LIMIT 2',
-				array( $table_schema, $table_name, $column_name )
-			);
-
-			$ordinals = $stmt->fetchAll( PDO::FETCH_COLUMN );
-			return 1 === count( $ordinals ) ? (int) $ordinals[0] : null;
-		}
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT ordinal_position FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$ordinal = $stmt->fetchColumn();
-		return false === $ordinal ? null : (int) $ordinal;
-	}
-
-	/**
-	 * Get the next stored index ordinal for a table.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @return int Next ordinal.
-	 */
-	private function get_next_mysql_index_ordinal( string $table_schema, string $table_name ): int {
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT COALESCE(MAX(index_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
-
-		return (int) $stmt->fetchColumn();
-	}
-
-	/**
-	 * Get stored MySQL extra metadata for a table column.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 * @return string Extra metadata.
-	 */
-	private function get_mysql_column_extra_metadata( string $table_schema, string $table_name, string $column_name ): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			try {
-				$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
-			} catch ( PDOException $e ) {
-				return '';
+			$constraint_name = $stmt->fetchColumn();
+			if ( false !== $constraint_name && '' !== (string) $constraint_name ) {
+				return (string) $constraint_name;
 			}
-
-			return null === $metadata ? '' : (string) ( $metadata['extra'] ?? '' );
+		} catch ( PDOException $e ) {
+			// Test fixtures and SQLite-backed connections may not expose PostgreSQL catalogs.
 		}
 
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT extra FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$extra = $stmt->fetchColumn();
-		return false === $extra ? '' : (string) $extra;
+		return $table_name . '_pkey';
 	}
 
 	/**
 	 * Get the stored MySQL type for a table column.
 	 *
-	 * @param string $table_schema Metadata schema.
+	 * @param string $table_schema Backend schema.
 	 * @param string $table_name   Table name.
 	 * @param string $column_name  Column name.
 	 * @return string|null MySQL column type, or null when unavailable.
@@ -6910,34 +5751,16 @@ $wp_mysql_primary_index_comment$',
 		string $table_name,
 		string $column_name
 	): ?string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
-			return null === $metadata || ! array_key_exists( 'column_type', $metadata )
-				? null
-				: (string) $metadata['column_type'];
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT column_type FROM %s
-				WHERE table_schema = ?
-					AND table_name = ?
-					AND LOWER(column_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$column_type = $stmt->fetchColumn();
-		return false === $column_type ? null : (string) $column_type;
+		$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+		return null === $metadata || ! array_key_exists( 'column_type', $metadata )
+			? null
+			: (string) $metadata['column_type'];
 	}
 
 	/**
 	 * Get the stored MySQL collation for a table column.
 	 *
-	 * @param string $table_schema Metadata schema.
+	 * @param string $table_schema Backend schema.
 	 * @param string $table_name   Table name.
 	 * @param string $column_name  Column name.
 	 * @return string|null MySQL collation, or null when unavailable.
@@ -6947,26 +5770,8 @@ $wp_mysql_primary_index_comment$',
 		string $table_name,
 		string $column_name
 	): ?string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
-			return null === $metadata || null === ( $metadata['collation_name'] ?? null ) ? null : (string) $metadata['collation_name'];
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT collation_name FROM %s
-				WHERE table_schema = ?
-					AND table_name = ?
-					AND LOWER(column_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$collation = $stmt->fetchColumn();
-		return false === $collation || null === $collation ? null : (string) $collation;
+		$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+		return null === $metadata || null === ( $metadata['collation_name'] ?? null ) ? null : (string) $metadata['collation_name'];
 	}
 
 	/**
@@ -7018,8 +5823,137 @@ $wp_mysql_primary_index_comment$',
 			$params[] = $column_name;
 		}
 
-		$stmt = $this->connection->query( $sql, $params );
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+		try {
+			$stmt = $this->connection->query( $sql, $params );
+			$rows = $this->normalize_mysql_table_catalog_column_metadata_rows( $stmt->fetchAll( PDO::FETCH_ASSOC ) );
+			if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
+				$rows = $this->merge_sqlite_table_catalog_column_metadata_rows(
+					$rows,
+					$table_schema,
+					$table_name,
+					$column_name,
+					$case_sensitive_column
+				);
+			}
+			return $rows;
+		} catch ( PDOException $e ) {
+			if ( 'sqlite' !== (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
+				throw $e;
+			}
+
+			return $this->get_sqlite_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name, $case_sensitive_column );
+		}
+	}
+
+	/**
+	 * Normalize column metadata aliases returned by catalog fixtures.
+	 *
+	 * @param array[] $rows Column metadata rows.
+	 * @return array[] Normalized rows.
+	 */
+	private function normalize_mysql_table_catalog_column_metadata_rows( array $rows ): array {
+		foreach ( $rows as &$row ) {
+			if ( ! array_key_exists( 'column_type', $row ) && array_key_exists( 'mysql_column_type', $row ) ) {
+				$row['column_type'] = $row['mysql_column_type'];
+			}
+			if ( ! array_key_exists( 'extra', $row ) && array_key_exists( 'mysql_extra', $row ) ) {
+				$row['extra'] = $row['mysql_extra'];
+			}
+			if ( ! array_key_exists( 'ordinal_position', $row ) ) {
+				$row['ordinal_position'] = count( $rows );
+			}
+		}
+		unset( $row );
+
+		return $rows;
+	}
+
+	/**
+	 * Merge SQLite fixture column rows into partial catalog metadata.
+	 *
+	 * @param array[]     $rows                  Catalog rows.
+	 * @param string      $table_schema          Backend schema.
+	 * @param string      $table_name            Table name.
+	 * @param string|null $column_name           Column filter.
+	 * @param bool        $case_sensitive_column Whether the filter is case-sensitive.
+	 * @return array[] Merged rows.
+	 */
+	private function merge_sqlite_table_catalog_column_metadata_rows(
+		array $rows,
+		string $table_schema,
+		string $table_name,
+		?string $column_name,
+		bool $case_sensitive_column
+	): array {
+		$seen = array();
+		foreach ( $rows as $row ) {
+			$name = (string) ( $row['column_name'] ?? '' );
+			if ( '' !== $name ) {
+				$seen[ strtolower( $name ) ] = true;
+			}
+		}
+
+		foreach ( $this->get_sqlite_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name, $case_sensitive_column ) as $fallback_row ) {
+			$name = (string) ( $fallback_row['column_name'] ?? '' );
+			if ( '' === $name || isset( $seen[ strtolower( $name ) ] ) ) {
+				continue;
+			}
+
+			$rows[]                      = $fallback_row;
+			$seen[ strtolower( $name ) ] = true;
+		}
+
+		usort(
+			$rows,
+			static function ( array $left, array $right ): int {
+				return (int) ( $left['ordinal_position'] ?? 0 ) <=> (int) ( $right['ordinal_position'] ?? 0 );
+			}
+		);
+
+		return $rows;
+	}
+
+	/**
+	 * Get MySQL-shaped column metadata from a SQLite-backed test fixture.
+	 *
+	 * @param string      $table_schema          Backend schema.
+	 * @param string      $table_name            Table name.
+	 * @param string|null $column_name           Column name filter.
+	 * @param bool        $case_sensitive_column Whether the filter is case-sensitive.
+	 * @return array[] Column metadata rows.
+	 */
+	private function get_sqlite_table_catalog_column_metadata_rows(
+		string $table_schema,
+		string $table_name,
+		?string $column_name = null,
+		bool $case_sensitive_column = false
+	): array {
+		$stmt = $this->connection->query(
+			$this->get_sqlite_pragma_statement_sql( 'table_info', $table_schema, $table_name )
+		);
+		$rows = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
+			$name = (string) ( $column['name'] ?? '' );
+			if ( null !== $column_name ) {
+				$matches = $case_sensitive_column ? $name === $column_name : 0 === strcasecmp( $name, $column_name );
+				if ( ! $matches ) {
+					continue;
+				}
+			}
+
+			$column_type = $this->get_mysql_column_type_from_sqlite_type( (string) ( $column['type'] ?? '' ) );
+			$rows[]      = array(
+				'column_name'      => $name,
+				'ordinal_position' => (int) ( $column['cid'] ?? 0 ) + 1,
+				'column_type'      => $column_type,
+				'collation_name'   => $this->mysql_column_type_uses_charset( $column_type ) ? $this->collation : null,
+				'is_nullable'      => ! empty( $column['notnull'] ) ? 'NO' : 'YES',
+				'column_default'   => null === ( $column['dflt_value'] ?? null ) ? null : (string) $column['dflt_value'],
+				'extra'            => '',
+			);
+		}
+
+		return $rows;
 	}
 
 	/**
@@ -7082,24 +6016,19 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Check whether stored MySQL metadata exists for a table.
+	 * Check whether PostgreSQL catalog metadata exists for a table.
 	 *
-	 * @param string $table_schema Metadata schema.
+	 * @param string $table_schema Backend schema.
 	 * @param string $table_name   Table name.
 	 * @return bool Whether metadata exists.
 	 */
 	private function mysql_table_has_column_metadata( string $table_schema, string $table_name ): bool {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return count( $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name ) ) > 0;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
 		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
+			'SELECT 1
+			FROM information_schema.columns c
+			WHERE c.table_schema = ?
+				AND c.table_name = ?
+			LIMIT 1',
 			array( $table_schema, $table_name )
 		);
 
@@ -9231,35 +8160,15 @@ $wp_mysql_primary_index_comment$',
 			return array();
 		}
 
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			try {
-				return $this->get_mysql_index_names_removed_by_dropped_column_rows(
-					$this->get_show_create_table_index_catalog_rows( $table_schema, $table_name ),
-					$dropped_column_keys
-				);
-			} catch ( PDOException $e ) {
-				return array();
-			}
+		try {
+			return $this->get_mysql_index_names_removed_by_dropped_column_rows(
+				$this->get_show_create_table_index_catalog_rows( $table_schema, $table_name ),
+				$dropped_column_keys
+			);
+		} catch ( PDOException $e ) {
+			return array();
 		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT key_name, column_name
-					FROM %s
-					WHERE table_schema = ? AND table_name = ?
-					ORDER BY key_name, seq_in_index',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
-
-		return $this->get_mysql_index_names_removed_by_dropped_column_rows(
-			$stmt->fetchAll( PDO::FETCH_ASSOC ),
-			$dropped_column_keys
-		);
 	}
-
 	/**
 	 * Get index names removed by dropped columns from MySQL-shaped index rows.
 	 *
@@ -9847,32 +8756,11 @@ $wp_mysql_primary_index_comment$',
 		);
 		$table_schema    = $this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
 
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			if (
-				! $this->mysql_index_metadata_exists( $table_schema, $table_name, $old_index_name )
-				|| $this->mysql_index_metadata_exists( $table_schema, $table_name, $new_index_name )
-			) {
-				return null;
-			}
-		} else {
-			$this->ensure_mysql_schema_metadata_tables();
-			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? LIMIT 1',
-					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-				),
-				array( $table_schema, $table_name )
-			);
-
-			if (
-				false !== $stmt->fetchColumn()
-				&& (
-					! $this->mysql_index_metadata_exists( $table_schema, $table_name, $old_index_name )
-					|| $this->mysql_index_metadata_exists( $table_schema, $table_name, $new_index_name )
-				)
-			) {
-				return null;
-			}
+		if (
+			! $this->mysql_index_metadata_exists( $table_schema, $table_name, $old_index_name )
+			|| $this->mysql_index_metadata_exists( $table_schema, $table_name, $new_index_name )
+		) {
+			return null;
 		}
 
 		$index_type = $this->get_stored_mysql_index_type( $table_schema, $table_name, $old_index_name );
@@ -11881,10 +10769,6 @@ $wp_mysql_primary_index_comment$',
 		string $old_column,
 		array $column
 	): bool {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return false;
-		}
-
 		if ( 'auto_increment' === strtolower( (string) ( $column['extra'] ?? '' ) ) ) {
 			return false;
 		}
@@ -11902,66 +10786,37 @@ $wp_mysql_primary_index_comment$',
 	 * @return array|null Existing column metadata, or null.
 	 */
 	private function get_existing_dbdelta_column_identity_metadata( string $table_schema, string $table_name, string $column_name ): ?array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-			$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
-				'c',
-				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-				$column_comment_sql
-			);
-			$extra              = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );
+		$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+		$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
+			'c',
+			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+			$column_comment_sql
+		);
+		$extra              = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );
 
-			try {
-				$stmt = $this->connection->query(
-					$this->get_postgresql_catalog_column_metadata_sql(
-						sprintf(
-							'c.data_type,
-							c.is_identity,
-							c.column_default,
-							%1$s AS mysql_column_type,
-							%2$s AS mysql_extra',
-							$column_type,
-							$extra
-						),
-						true
+		try {
+			$stmt = $this->connection->query(
+				$this->get_postgresql_catalog_column_metadata_sql(
+					sprintf(
+						'c.data_type,
+						c.is_identity,
+						c.column_default,
+						%1$s AS mysql_column_type,
+						%2$s AS mysql_extra',
+						$column_type,
+						$extra
 					),
-					array( $table_schema, $table_name, $column_name )
-				);
-			} catch ( PDOException $e ) {
-				return null;
-			}
-
-			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			return 1 === count( $rows ) ? $rows[0] : null;
+					true
+				),
+				array( $table_schema, $table_name, $column_name )
+			);
+		} catch ( PDOException $e ) {
+			return null;
 		}
 
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT
-					c.data_type,
-					c.is_identity,
-					c.column_default,
-					cm.column_type AS mysql_column_type,
-					cm.extra AS mysql_extra
-				FROM information_schema.columns c
-				LEFT JOIN %s cm
-					ON cm.table_schema = c.table_schema
-					AND cm.table_name = c.table_name
-					AND cm.column_name = c.column_name
-				WHERE c.table_schema = ?
-					AND c.table_name = ?
-					AND c.column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$row = $stmt->fetch( PDO::FETCH_ASSOC );
-		return false === $row ? null : $row;
+		$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		return 1 === count( $rows ) ? $rows[0] : null;
 	}
-
 	/**
 	 * Check whether existing metadata describes a PostgreSQL identity column.
 	 *
@@ -12556,10 +11411,6 @@ $wp_mysql_primary_index_comment$',
 	 * @return string[] PostgreSQL statements.
 	 */
 	private function get_mysql_rename_table_on_update_current_timestamp_statements( string $table_schema, string $old_table_name, string $new_table_name, string $metadata_table_name ): array {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return array();
-		}
-
 		$columns = $this->get_postgresql_catalog_on_update_current_timestamp_column_names( $table_schema, $metadata_table_name );
 		if ( null === $columns ) {
 			return array();
@@ -12627,74 +11478,44 @@ $wp_mysql_primary_index_comment$',
 	/**
 	 * Build PostgreSQL index rename statements for indexes whose physical names include the table name.
 	 *
-	 * @param string $table_schema   Backend schema name.
-	 * @param string $old_table_name Old table name.
-	 * @param string $new_table_name New table name.
+	 * @param string $table_schema        Backend schema name.
+	 * @param string $old_table_name      Old table name.
+	 * @param string $new_table_name      New table name.
+	 * @param string $metadata_table_name Table name that still exposes pre-rename catalogs.
 	 * @return string[] PostgreSQL ALTER INDEX statements.
 	 */
 	private function get_mysql_rename_table_index_statements( string $table_schema, string $old_table_name, string $new_table_name, string $metadata_table_name ): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$index_prefix = $metadata_table_name . '__';
-			try {
-				$stmt = $this->connection->query(
-					'SELECT idx.relname
-					FROM pg_catalog.pg_class t
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					INNER JOIN pg_catalog.pg_index i
-						ON i.indrelid = t.oid
-					INNER JOIN pg_catalog.pg_class idx
-						ON idx.oid = i.indexrelid
-					WHERE n.nspname = ?
-						AND t.relname = ?
-						AND t.relkind IN (\'r\', \'p\')
-						AND i.indisvalid
-						AND i.indislive
-						AND NOT i.indisprimary
-						AND LEFT(idx.relname, CHAR_LENGTH(?)) = ?
-					ORDER BY idx.relname',
-					array( $table_schema, $metadata_table_name, $index_prefix, $index_prefix )
-				);
-			} catch ( PDOException $e ) {
-				return array();
-			}
-
-			$key_names = array();
-			foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $index_name ) {
-				$key_name = substr( (string) $index_name, strlen( $index_prefix ) );
-				if ( '' !== $key_name ) {
-					$key_names[] = $key_name;
-				}
-			}
-
-			return $this->get_mysql_rename_table_index_statements_for_key_names(
-				$table_schema,
-				$old_table_name,
-				$new_table_name,
-				$key_names
+		$index_prefix = $metadata_table_name . '__';
+		try {
+			$stmt = $this->connection->query(
+				'SELECT idx.relname
+				FROM pg_catalog.pg_class t
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = t.relnamespace
+				INNER JOIN pg_catalog.pg_index i
+					ON i.indrelid = t.oid
+				INNER JOIN pg_catalog.pg_class idx
+					ON idx.oid = i.indexrelid
+				WHERE n.nspname = ?
+					AND t.relname = ?
+					AND t.relkind IN (\'r\', \'p\')
+					AND i.indisvalid
+					AND i.indislive
+					AND NOT i.indisprimary
+					AND LEFT(idx.relname, CHAR_LENGTH(?)) = ?
+				ORDER BY idx.relname',
+				array( $table_schema, $metadata_table_name, $index_prefix, $index_prefix )
 			);
+		} catch ( PDOException $e ) {
+			return array();
 		}
 
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT DISTINCT key_name, index_type
-				FROM %s
-				WHERE table_schema = ? AND table_name = ? AND UPPER(key_name) <> \'PRIMARY\'
-				ORDER BY key_name',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $table_schema, $metadata_table_name )
-		);
-
 		$key_names = array();
-		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
-			$index_type = (string) $row['index_type'];
-			if ( $this->is_mysql_metadata_only_index_type( $index_type ) ) {
-				continue;
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $index_name ) {
+			$key_name = substr( (string) $index_name, strlen( $index_prefix ) );
+			if ( '' !== $key_name ) {
+				$key_names[] = $key_name;
 			}
-
-			$key_names[] = (string) $row['key_name'];
 		}
 
 		return $this->get_mysql_rename_table_index_statements_for_key_names(
@@ -12704,7 +11525,6 @@ $wp_mysql_primary_index_comment$',
 			$key_names
 		);
 	}
-
 	/**
 	 * Build PostgreSQL index rename statements from MySQL-facing key names.
 	 *
@@ -12728,67 +11548,37 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Get a stored MySQL index type from side metadata.
+	 * Get a stored MySQL index type from PostgreSQL catalog metadata.
 	 *
-	 * @param string $table_schema Metadata schema.
+	 * @param string $table_schema Backend schema.
 	 * @param string $table_name   Table name.
 	 * @param string $index_name   Index name.
 	 * @return string|null Stored index type, or null when unavailable.
 	 */
 	private function get_stored_mysql_index_type( string $table_schema, string $table_name, string $index_name ): ?string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$catalog_index_type = null;
-			try {
-				foreach ( $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name, false ) as $row ) {
-					if ( 0 === strcasecmp( (string) ( $row['key_name'] ?? '' ), $index_name ) ) {
-						$index_type         = (string) ( $row['index_type'] ?? '' );
-						$catalog_index_type = '' === $index_type ? null : strtoupper( $index_type );
-						break;
-					}
-				}
-			} catch ( PDOException $e ) {
-				// Fall through to the legacy type-only side-table fallback below.
-			}
-
-			if ( null !== $catalog_index_type ) {
-				return $catalog_index_type;
-			}
-
-			$index_type = $this->get_stored_mysql_index_type_from_side_table( $table_schema, $table_name, $index_name, false );
-			return in_array( $index_type, array( 'FULLTEXT', 'SPATIAL', 'HASH' ), true ) ? $index_type : $catalog_index_type;
-		}
-
-		return $this->get_stored_mysql_index_type_from_side_table( $table_schema, $table_name, $index_name, true );
-	}
-
-	/**
-	 * Get a stored MySQL index type from the legacy side metadata table.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param string $index_name   Index name.
-	 * @param bool   $ensure_table Whether to create side metadata tables first.
-	 * @return string|null Stored index type, or null when unavailable.
-	 */
-	private function get_stored_mysql_index_type_from_side_table( string $table_schema, string $table_name, string $index_name, bool $ensure_table ): ?string {
-		if ( $ensure_table ) {
-			$this->ensure_mysql_schema_metadata_tables();
-		}
-
 		try {
-			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT index_type FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?) ORDER BY seq_in_index LIMIT 1',
-					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-				),
-				array( $table_schema, $table_name, $index_name )
-			);
+			$rows = $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name, false );
 		} catch ( PDOException $e ) {
 			return null;
 		}
 
-		$index_type = $stmt->fetchColumn();
-		return false === $index_type ? null : strtoupper( (string) $index_type );
+		foreach ( $rows as $row ) {
+			$key_name = (string) ( $row['key_name'] ?? '' );
+			if (
+				0 !== strcasecmp( $key_name, $index_name )
+				&& ! ( 'PRIMARY' === strtoupper( $key_name ) && 0 === strcasecmp( 'primary', $index_name ) )
+				&& 0 !== strcasecmp( $table_name . '__' . $key_name, $index_name )
+			) {
+				continue;
+			}
+
+			$index_type = $row['index_type'] ?? null;
+			return null === $index_type || '' === (string) $index_type
+				? null
+				: strtoupper( (string) $index_type );
+		}
+
+		return null;
 	}
 
 	/**
@@ -17136,7 +15926,8 @@ ORDER BY ordinal_position';
 				'SELECT %1$s AS %2$s%3$s
 		FROM (%4$s) information_schema_tables
 		WHERE "TABLE_SCHEMA" = ?
-				AND %5$s IN (\'BASE TABLE\', \'VIEW\')',
+				AND %5$s IN (\'BASE TABLE\', \'VIEW\')
+				AND "TABLE_NAME" NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE \'\\\'',
 				$table_name_sql,
 				$table_column,
 				$is_full ? ', ' . $table_type_sql . ' AS "Table_type"' : '',
@@ -17153,12 +15944,11 @@ ORDER BY ordinal_position';
 		FROM information_schema.tables
 		WHERE table_schema = ?
 				AND %4$s IN (\'BASE TABLE\', \'VIEW\')
-				AND %1$s NOT IN (%5$s)',
+				AND table_name NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE \'\\\'',
 				$table_name_sql,
 				$table_column,
 				$is_full ? ', CASE WHEN ' . $table_type_sql . ' = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "Table_type"' : '',
-				$table_type_sql,
-				$this->get_direct_information_schema_hidden_table_list_sql()
+				$table_type_sql
 			);
 			$params                = array( $schema_name );
 		}
@@ -22629,10 +21419,7 @@ WHERE option_name IN (
 		sort( $insert_columns, SORT_STRING );
 
 		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			$this->ensure_mysql_schema_metadata_tables();
-		}
-		$cache_key = $this->get_mysql_metadata_cache_key( $table_schema, $table_name ) . "\0" . serialize( $insert_columns );
+		$cache_key    = $this->get_mysql_metadata_cache_key( $table_schema, $table_name ) . "\0" . serialize( $insert_columns );
 		if ( array_key_exists( $cache_key, $this->mysql_upsert_conflict_target_cache ) ) {
 			$cached = $this->mysql_upsert_conflict_target_cache[ $cache_key ];
 			return null === $cached ? null : $cached;
@@ -22724,43 +21511,222 @@ WHERE option_name IN (
 	 * @return array[] MySQL-shaped unique index metadata rows.
 	 */
 	private function get_mysql_unique_index_metadata_rows( string $table_schema, string $table_name ): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$rows = array();
-			foreach ( $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name, false ) as $row ) {
-				if ( '0' !== (string) ( $row['non_unique'] ?? '' ) ) {
-					continue;
-				}
-
-				$rows[] = array(
-					'key_name'    => $row['key_name'],
-					'column_name' => $row['column_name'],
-					'index_type'  => $row['index_type'],
-					'sub_part'    => $row['sub_part'],
-				);
+		$rows = array();
+		try {
+			$index_rows = $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name, false );
+		} catch ( PDOException $e ) {
+			if ( 'sqlite' !== (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
+				throw $e;
 			}
 
-			return $rows;
+			$index_rows = $this->get_sqlite_unique_index_metadata_rows( $table_schema, $table_name );
 		}
 
-		$this->ensure_mysql_schema_metadata_tables();
+		foreach ( $index_rows as $row ) {
+			if ( '0' !== (string) ( $row['non_unique'] ?? '' ) ) {
+				continue;
+			}
 
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT key_name, column_name, index_type, sub_part
-				FROM %s
-				WHERE table_schema = ? AND table_name = ? AND non_unique = \'0\'
-				ORDER BY
-					CASE WHEN UPPER(key_name) = \'PRIMARY\' THEN 0 ELSE 1 END,
-					index_ordinal,
-					seq_in_index',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
+			$rows[] = array(
+				'key_name'    => $row['key_name'],
+				'column_name' => $row['column_name'],
+				'index_type'  => $row['index_type'],
+				'sub_part'    => $row['sub_part'],
+			);
+		}
 
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+		return $rows;
 	}
 
+	/**
+	 * Get MySQL-shaped unique index rows from SQLite fixture metadata.
+	 *
+	 * This is only used by SQLite-backed driver tests when PostgreSQL catalog SQL
+	 * cannot execute. Real PostgreSQL connections continue to use pg_catalog.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return array[] MySQL-shaped unique index metadata rows.
+	 */
+	private function get_sqlite_unique_index_metadata_rows( string $table_schema, string $table_name ): array {
+		$rows       = array();
+		$stmt       = $this->connection->query(
+			$this->get_sqlite_pragma_statement_sql( 'table_info', $table_schema, $table_name )
+		);
+		$table_info = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		$pk_columns = array();
+		foreach ( $table_info as $column ) {
+			if ( isset( $column['pk'] ) && (int) $column['pk'] > 0 ) {
+				$pk_columns[ (int) $column['pk'] ] = (string) $column['name'];
+			}
+		}
+		ksort( $pk_columns, SORT_NUMERIC );
+
+		$index_ordinal = 1;
+		foreach ( array_values( $pk_columns ) as $offset => $column_name ) {
+			$rows[] = array(
+				'key_name'     => 'PRIMARY',
+				'column_name'  => $column_name,
+				'index_type'   => 'BTREE',
+				'sub_part'     => null,
+				'seq_in_index' => $offset + 1,
+				'non_unique'   => '0',
+			);
+		}
+
+			$stmt   = $this->connection->query(
+				$this->get_sqlite_pragma_statement_sql( 'index_list', $table_schema, $table_name )
+			);
+		$index_list = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		foreach ( $index_list as $index ) {
+			if ( empty( $index['unique'] ) || 'pk' === (string) ( $index['origin'] ?? '' ) ) {
+				continue;
+			}
+
+			$index_name = (string) ( $index['name'] ?? '' );
+			if ( '' === $index_name ) {
+				continue;
+			}
+
+			$index_parts = $this->get_sqlite_unique_index_parts( $table_schema, $index_name );
+			if ( empty( $index_parts ) ) {
+				continue;
+			}
+
+			++$index_ordinal;
+			foreach ( $index_parts as $offset => $index_part ) {
+				$rows[] = array(
+					'key_name'     => $index_name,
+					'column_name'  => $index_part['column_name'],
+					'index_type'   => 'BTREE',
+					'sub_part'     => $index_part['sub_part'],
+					'seq_in_index' => $offset + 1,
+					'non_unique'   => '0',
+				);
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Get SQLite unique index parts, including supported prefix expressions.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $index_name   Index name.
+	 * @return array<int, array{column_name: string, sub_part: string|null}> Index parts.
+	 */
+	private function get_sqlite_unique_index_parts( string $table_schema, string $index_name ): array {
+		$stmt      = $this->connection->query(
+			$this->get_sqlite_pragma_statement_sql( 'index_info', $table_schema, $index_name )
+		);
+		$info_rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		$parts     = array();
+		foreach ( $info_rows as $row ) {
+			if ( null === ( $row['name'] ?? null ) || '' === (string) $row['name'] ) {
+				continue;
+			}
+
+			$parts[] = array(
+				'column_name' => (string) $row['name'],
+				'sub_part'    => null,
+			);
+		}
+
+		if ( ! empty( $parts ) ) {
+			return $parts;
+		}
+
+		$create_sql = $this->get_sqlite_index_create_sql( $table_schema, $index_name );
+		if ( null === $create_sql ) {
+			return array();
+		}
+
+		if (
+			1 === preg_match(
+				'/SUBSTR\s*\(\s*CAST\s*\(\s*"?([A-Za-z_][A-Za-z0-9_$]*)"?\s+AS\s+text\s*\)\s*,\s*1\s*,\s*(\d+)\s*\)/i',
+				$create_sql,
+				$matches
+			)
+		) {
+			return array(
+				array(
+					'column_name' => str_replace( '""', '"', $matches[1] ),
+					'sub_part'    => $matches[2],
+				),
+			);
+		}
+
+		return array();
+	}
+
+	/**
+	 * Get a SQLite index CREATE statement.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $index_name   Index name.
+	 * @return string|null CREATE SQL, or null when unavailable.
+	 */
+	private function get_sqlite_index_create_sql( string $table_schema, string $index_name ): ?string {
+		$catalog_sql = $this->get_sqlite_schema_catalog_sql( $table_schema );
+		$stmt        = $this->connection->query(
+			sprintf(
+				'SELECT sql FROM %s WHERE type = \'index\' AND name = ? LIMIT 1',
+				$catalog_sql
+			),
+			array( $index_name )
+		);
+		$sql         = $stmt->fetchColumn();
+
+		return false === $sql || null === $sql ? null : (string) $sql;
+	}
+
+	/**
+	 * Get a SQLite PRAGMA table/index statement.
+	 *
+	 * @param string $pragma       PRAGMA name.
+	 * @param string $table_schema Backend schema.
+	 * @param string $name         Table or index name.
+	 * @return string SQLite PRAGMA statement.
+	 */
+	private function get_sqlite_pragma_statement_sql( string $pragma, string $table_schema, string $name ): string {
+		$quoted_name = $this->quote_sqlite_identifier( $name );
+		if ( '' === $table_schema ) {
+			return sprintf( 'PRAGMA %s(%s)', $pragma, $quoted_name );
+		}
+
+		$sqlite_schema = 'public' === $table_schema ? 'main' : $table_schema;
+		return sprintf(
+			'PRAGMA %s.%s(%s)',
+			$this->quote_sqlite_identifier( $sqlite_schema ),
+			$pragma,
+			$quoted_name
+		);
+	}
+
+	/**
+	 * Get the SQLite schema catalog relation.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @return string SQLite catalog relation.
+	 */
+	private function get_sqlite_schema_catalog_sql( string $table_schema ): string {
+		if ( '' === $table_schema || 'public' === $table_schema ) {
+			return 'sqlite_master';
+		}
+
+		return $this->quote_sqlite_identifier( $table_schema ) . '.sqlite_master';
+	}
+
+	/**
+	 * Quote an SQLite identifier.
+	 *
+	 * @param string $identifier Identifier.
+	 * @return string Quoted identifier.
+	 */
+	private function quote_sqlite_identifier( string $identifier ): string {
+		return '"' . str_replace( '"', '""', $identifier ) . '"';
+	}
 	/**
 	 * Build upsert conflict candidates from MySQL-shaped index metadata rows.
 	 *
@@ -32023,32 +30989,7 @@ WHERE option_name IN (
 	private function get_mysql_dml_column_metadata( string $table_name ): array {
 		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
 
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name );
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		try {
-			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, extra
-					FROM %s
-					WHERE table_schema = ? AND table_name = ?
-					ORDER BY ordinal_position',
-					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-				),
-				array( $table_schema, $table_name )
-			);
-		} catch ( PDOException $e ) {
-			if ( 'pgsql' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
-				throw $e;
-			}
-
-			return array();
-		}
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+		return $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name );
 	}
 
 	/**
@@ -37950,21 +36891,6 @@ FROM ' . $definition['from'];
 	 */
 	private function get_direct_information_schema_display_schema( string $schema ): string {
 		return 0 === strcasecmp( $schema, 'public' ) ? $this->main_db_name : $schema;
-	}
-
-	/**
-	 * Get SQL for the fallback hidden metadata table exclusion list.
-	 *
-	 * @return string SQL literal list.
-	 */
-	private function get_direct_information_schema_hidden_table_list_sql(): string {
-		return implode(
-			', ',
-			array_map(
-				array( $this->connection, 'quote' ),
-				self::MYSQL_SCHEMA_SIDE_METADATA_TABLES
-			)
-		);
 	}
 
 	/**
@@ -48184,7 +47110,7 @@ END',
 	/**
 	 * Get the metadata-backed stored column name for a MySQL column reference.
 	 *
-	 * @param string $table_schema Metadata schema.
+	 * @param string $table_schema Backend schema.
 	 * @param string $table_name   Table name.
 	 * @param string $column_name  Referenced column name.
 	 * @return string|null Stored column name, or null when no safe casing rewrite exists.
@@ -48194,57 +47120,20 @@ END',
 		string $table_name,
 		string $column_name
 	): ?string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
-			if ( null !== $metadata && array_key_exists( 'column_name', $metadata ) ) {
-				return (string) $metadata['column_name'];
-			}
-
-				$exact_metadata = $this->get_mysql_table_catalog_column_metadata_rows(
-					$table_schema,
-					$table_name,
-					$column_name,
-					true
-				);
-				return 1 === count( $exact_metadata ) && array_key_exists( 'column_name', $exact_metadata[0] )
-					? (string) $exact_metadata[0]['column_name']
-					: null;
+		$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+		if ( null !== $metadata && array_key_exists( 'column_name', $metadata ) ) {
+			return (string) $metadata['column_name'];
 		}
 
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT column_name FROM %s
-				WHERE table_schema = ?
-					AND table_name = ?
-					AND column_name = ?
-				LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
+		$exact_metadata = $this->get_mysql_table_catalog_column_metadata_rows(
+			$table_schema,
+			$table_name,
+			$column_name,
+			true
 		);
-
-		$stored_column_name = $stmt->fetchColumn();
-		if ( false !== $stored_column_name ) {
-			return (string) $stored_column_name;
-		}
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT column_name FROM %s
-				WHERE table_schema = ?
-					AND table_name = ?
-					AND LOWER(column_name) = LOWER(?)
-				ORDER BY ordinal_position
-				LIMIT 2',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$stored_column_names = $stmt->fetchAll( PDO::FETCH_COLUMN );
-		return 1 === count( $stored_column_names ) ? (string) $stored_column_names[0] : null;
+		return 1 === count( $exact_metadata ) && array_key_exists( 'column_name', $exact_metadata[0] )
+			? (string) $exact_metadata[0]['column_name']
+			: null;
 	}
 
 	/**
