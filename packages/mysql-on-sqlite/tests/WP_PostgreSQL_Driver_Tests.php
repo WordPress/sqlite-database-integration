@@ -38040,13 +38040,19 @@ $wp_mysql_on_update$',
 	 * Tests MySQL comments are represented as PostgreSQL catalog comments.
 	 */
 	public function test_mysql_comments_sync_to_postgresql_catalog_comment_statements(): void {
-		$driver         = $this->create_driver();
-		$get_statements = Closure::bind(
+		$connection           = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( 0 === strpos( $sql, 'COMMENT ON ' ) ) {
+					return parent::query( 'SELECT 1 WHERE 0 = 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver               = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_index_statements = Closure::bind(
 			function (): array {
 				return array(
-					$this->get_postgresql_catalog_table_comment_statement( 'public', 'wptests_posts', "Table's note" ),
-					$this->get_postgresql_catalog_column_comment_statement( 'public', 'wptests_posts', 'post_title', "Title's note" ),
-					$this->get_postgresql_catalog_column_comment_statement( 'public', 'wptests_posts', 'post_excerpt', '' ),
 					$this->get_postgresql_catalog_index_comment_statement( 'public', 'wptests_posts', 'post_title', "Index's note" ),
 					$this->get_postgresql_catalog_index_comment_statement( 'public', 'wptests_posts', 'post_title', '' ),
 					$this->get_postgresql_catalog_index_comment_statement( 'public', 'wptests_posts', 'PRIMARY', 'Primary note' ),
@@ -38056,40 +38062,45 @@ $wp_mysql_on_update$',
 			$driver,
 			WP_PostgreSQL_Driver::class
 		);
-		$sync_comments  = Closure::bind(
+		$sync_comments        = Closure::bind(
 			function (): void {
-				$this->sync_postgresql_catalog_table_comment( 'public', 'wptests_posts', 'Table note' );
-				$this->sync_postgresql_catalog_column_comment( 'public', 'wptests_posts', 'post_title', 'Title note' );
-				$this->sync_postgresql_catalog_index_comment(
-					'public',
-					'wptests_posts',
-					array(
-						'name'       => 'post_title',
-						'index_type' => 'BTREE',
-						'comment'    => 'Index note',
-					)
-				);
+				$this->sync_postgresql_catalog_table_comment( 'public', 'wptests_posts', "Table's note" );
+				$this->sync_postgresql_catalog_column_comment( 'public', 'wptests_posts', 'post_title', "Title's note" );
+				$this->sync_postgresql_catalog_column_comment( 'public', 'wptests_posts', 'post_excerpt', '' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
 		);
 
+		$sync_comments();
+
 		$this->assertSame(
 			array(
-				'COMMENT ON TABLE "public"."wptests_posts" IS \'Table\'\'s note\'',
-				'COMMENT ON COLUMN "public"."wptests_posts"."post_title" IS \'Title\'\'s note\'',
-				'COMMENT ON COLUMN "public"."wptests_posts"."post_excerpt" IS NULL',
+				array(
+					'sql'    => 'COMMENT ON TABLE "public"."wptests_posts" IS \'Table\'\'s note\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."wptests_posts"."post_title" IS \'Title\'\'s note\'',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."wptests_posts"."post_excerpt" IS NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			array(
 				'COMMENT ON INDEX "public"."wptests_posts__post_title" IS \'Index\'\'s note\'',
 				'COMMENT ON INDEX "public"."wptests_posts__post_title" IS NULL',
 				null,
-				"COMMENT ON INDEX \"public\".\"wptests_posts__post_title\" IS '__wp_mysql_index_type:RlVMTFRFWFQ=\nFulltext note'",
+				"COMMENT ON INDEX \"public\".\"wptests_posts__post_title\" IS E'__wp_mysql_index_type:RlVMTFRFWFQ=\\nFulltext note'",
 			),
-			$get_statements()
+			$get_index_statements()
 		);
-
-		$sync_comments();
-
-		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 	}
 
 	/**

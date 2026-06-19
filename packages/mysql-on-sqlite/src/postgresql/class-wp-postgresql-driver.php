@@ -6057,7 +6057,13 @@ $wp_mysql_on_update$',
 
 		$this->execute_postgresql_side_effect_statements(
 			array(
-				$this->get_postgresql_catalog_table_comment_statement( $table_schema, $table_name, $table_comment, $table_collation ),
+				sprintf(
+					'COMMENT ON TABLE %s IS %s',
+					$this->get_postgresql_qualified_identifier( $table_schema, $table_name ),
+					$this->get_postgresql_catalog_comment_literal(
+						$this->get_postgresql_catalog_table_comment( $table_comment, $table_collation )
+					)
+				),
 			)
 		);
 	}
@@ -6077,7 +6083,12 @@ $wp_mysql_on_update$',
 
 		$this->execute_postgresql_side_effect_statements(
 			array(
-				$this->get_postgresql_catalog_column_comment_statement( $table_schema, $table_name, $column_name, $column_comment ),
+				sprintf(
+					'COMMENT ON COLUMN %s.%s IS %s',
+					$this->get_postgresql_qualified_identifier( $table_schema, $table_name ),
+					$this->connection->quote_identifier( $column_name ),
+					$this->get_postgresql_catalog_comment_literal( $column_comment )
+				),
 			)
 		);
 	}
@@ -6163,11 +6174,21 @@ $wp_mysql_on_update$',
 
 		$this->execute_postgresql_side_effect_statements(
 			array(
-				$this->get_postgresql_catalog_identity_sequence_comment_statement(
-					$table_schema,
-					$table_name,
-					(string) $column['name'],
-					(string) $column['type']
+				sprintf(
+					'DO $wp_mysql_identity_sequence_comment$
+DECLARE
+	identity_sequence regclass;
+BEGIN
+	identity_sequence := pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', %1$s, %2$s), %3$s)::regclass;
+	IF identity_sequence IS NOT NULL THEN
+		EXECUTE format(\'COMMENT ON SEQUENCE %%s IS %%L\', identity_sequence, %4$s);
+	END IF;
+END;
+$wp_mysql_identity_sequence_comment$',
+					$this->connection->quote( $table_schema ),
+					$this->connection->quote( $table_name ),
+					$this->connection->quote( (string) $column['name'] ),
+					$this->connection->quote( self::MYSQL_IDENTITY_SEQUENCE_COMMENT_TYPE_PREFIX . strtolower( trim( (string) $column['type'] ) ) )
 				),
 			)
 		);
@@ -6209,31 +6230,12 @@ $wp_mysql_on_update$',
 
 		$this->execute_postgresql_side_effect_statements(
 			array(
-				$this->get_postgresql_catalog_check_comment_statement(
-					$table_schema,
-					$table_name,
-					(string) $check['name'],
-					$constraint_comment
+				sprintf(
+					'COMMENT ON CONSTRAINT %s ON %s IS %s',
+					$this->connection->quote_identifier( (string) $check['name'] ),
+					$this->get_postgresql_qualified_identifier( $table_schema, $table_name ),
+					$this->get_postgresql_catalog_comment_literal( $constraint_comment )
 				),
-			)
-		);
-	}
-
-	/**
-	 * Build a PostgreSQL COMMENT ON TABLE statement.
-	 *
-	 * @param string $table_schema  Backend schema.
-	 * @param string $table_name    Table name.
-	 * @param string $table_comment Table comment.
-	 * @param string $table_collation MySQL table collation.
-	 * @return string COMMENT statement.
-	 */
-	private function get_postgresql_catalog_table_comment_statement( string $table_schema, string $table_name, string $table_comment, string $table_collation = '' ): string {
-		return sprintf(
-			'COMMENT ON TABLE %s IS %s',
-			$this->get_postgresql_qualified_identifier( $table_schema, $table_name ),
-			$this->get_postgresql_catalog_comment_literal(
-				$this->get_postgresql_catalog_table_comment( $table_comment, $table_collation )
 			)
 		);
 	}
@@ -6258,75 +6260,6 @@ $wp_mysql_on_update$',
 		}
 
 		return implode( "\n", $metadata_lines );
-	}
-
-	/**
-	 * Build a PostgreSQL COMMENT ON COLUMN statement.
-	 *
-	 * @param string $table_schema   Backend schema.
-	 * @param string $table_name     Table name.
-	 * @param string $column_name    Column name.
-	 * @param string $column_comment Column comment.
-	 * @return string COMMENT statement.
-	 */
-	private function get_postgresql_catalog_column_comment_statement( string $table_schema, string $table_name, string $column_name, string $column_comment ): string {
-		return sprintf(
-			'COMMENT ON COLUMN %s.%s IS %s',
-			$this->get_postgresql_qualified_identifier( $table_schema, $table_name ),
-			$this->connection->quote_identifier( $column_name ),
-			$this->get_postgresql_catalog_comment_literal( $column_comment )
-		);
-	}
-
-	/**
-	 * Build a PostgreSQL COMMENT ON CONSTRAINT statement.
-	 *
-	 * @param string $table_schema       Backend schema.
-	 * @param string $table_name         Table name.
-	 * @param string $constraint_name    Constraint name.
-	 * @param string $constraint_comment Constraint comment.
-	 * @return string COMMENT statement.
-	 */
-	private function get_postgresql_catalog_check_comment_statement( string $table_schema, string $table_name, string $constraint_name, string $constraint_comment ): string {
-		return sprintf(
-			'COMMENT ON CONSTRAINT %s ON %s IS %s',
-			$this->connection->quote_identifier( $constraint_name ),
-			$this->get_postgresql_qualified_identifier( $table_schema, $table_name ),
-			$this->get_postgresql_catalog_comment_literal( $constraint_comment )
-		);
-	}
-
-	/**
-	 * Build a PostgreSQL COMMENT statement for an identity sequence.
-	 *
-	 * @param string $table_schema      Backend schema.
-	 * @param string $table_name        Table name.
-	 * @param string $column_name       Identity column name.
-	 * @param string $mysql_column_type MySQL-facing column type.
-	 * @return string COMMENT statement wrapped in a lookup block.
-	 */
-	private function get_postgresql_catalog_identity_sequence_comment_statement(
-		string $table_schema,
-		string $table_name,
-		string $column_name,
-		string $mysql_column_type
-	): string {
-		return sprintf(
-			'DO $wp_mysql_identity_sequence_comment$
-DECLARE
-	identity_sequence regclass;
-BEGIN
-	identity_sequence := pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', %1$s, %2$s), %3$s)::regclass;
-	IF identity_sequence IS NOT NULL THEN
-		EXECUTE format(\'COMMENT ON SEQUENCE %%s IS %%L\', identity_sequence, %4$s);
-	END IF;
-END;
-$wp_mysql_identity_sequence_comment$',
-			$this->connection->quote( $table_schema ),
-			$this->connection->quote( $table_name ),
-			$this->connection->quote( $column_name ),
-			$this->connection->quote( self::MYSQL_IDENTITY_SEQUENCE_COMMENT_TYPE_PREFIX . strtolower( trim( $mysql_column_type ) ) )
-		);
 	}
 
 	/**
