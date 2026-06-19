@@ -54573,7 +54573,14 @@ END',
 
 			case 'from_unixtime':
 				if ( 1 === $count ) {
-					return $this->get_postgresql_mysql_from_unixtime_sql( $argument_sql[0] );
+					$unix_double_sql = sprintf( 'CAST(%s AS double precision)', $argument_sql[0] );
+					$timestamp_sql   = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $argument_sql[0] );
+
+					return sprintf(
+						"CASE WHEN %1\$s IS NULL THEN NULL WHEN %1\$s = FLOOR(%1\$s) THEN TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS') ELSE TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS.US') END",
+						$unix_double_sql,
+						$timestamp_sql
+					);
 				}
 				if ( 2 === $count ) {
 					$timestamp_sql = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $argument_sql[0] );
@@ -54686,29 +54693,12 @@ END',
 		return sprintf( 'CASE WHEN %1$s IS NULL THEN NULL ELSE json_valid(CAST(%1$s AS text)) END', $argument_sql );
 	}
 
-		/**
-		 * Get PostgreSQL SQL for one-argument MySQL FROM_UNIXTIME().
-		 *
-		 * @param string $unix_timestamp_sql PostgreSQL Unix timestamp expression SQL.
-		 * @return string PostgreSQL expression SQL.
-		 */
-	private function get_postgresql_mysql_from_unixtime_sql( string $unix_timestamp_sql ): string {
-		$unix_double_sql = sprintf( 'CAST(%s AS double precision)', $unix_timestamp_sql );
-		$timestamp_sql   = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $unix_timestamp_sql );
-
-		return sprintf(
-			"CASE WHEN %1\$s IS NULL THEN NULL WHEN %1\$s = FLOOR(%1\$s) THEN TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS') ELSE TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS.US') END",
-			$unix_double_sql,
-			$timestamp_sql
-		);
-	}
-
-		/**
-		 * Get PostgreSQL timestamp SQL for MySQL FROM_UNIXTIME() in the session time zone.
-		 *
-		 * @param string $unix_timestamp_sql PostgreSQL Unix timestamp expression SQL.
-		 * @return string PostgreSQL timestamp SQL.
-		 */
+	/**
+	 * Get PostgreSQL timestamp SQL for MySQL FROM_UNIXTIME() in the session time zone.
+	 *
+	 * @param string $unix_timestamp_sql PostgreSQL Unix timestamp expression SQL.
+	 * @return string PostgreSQL timestamp SQL.
+	 */
 	private function get_postgresql_mysql_from_unixtime_timestamp_sql( string $unix_timestamp_sql ): string {
 		$timestamp_sql = sprintf( "TO_TIMESTAMP(CAST(%s AS double precision)) AT TIME ZONE 'UTC'", $unix_timestamp_sql );
 		$time_zone     = $this->get_mysql_system_variable_value( 'time_zone' );
@@ -54725,12 +54715,12 @@ END',
 		);
 	}
 
-		/**
-		 * Get a numeric minute offset from a MySQL time_zone value.
-		 *
-		 * @param string $time_zone MySQL time_zone value.
-		 * @return int|null Offset minutes, or null for UTC/SYSTEM/unsupported named zones.
-		 */
+	/**
+	 * Get a numeric minute offset from a MySQL time_zone value.
+	 *
+	 * @param string $time_zone MySQL time_zone value.
+	 * @return int|null Offset minutes, or null for UTC/SYSTEM/unsupported named zones.
+	 */
 	private function get_mysql_time_zone_offset_minutes( string $time_zone ): ?int {
 		$time_zone = trim( $time_zone, "'\"` \t\n\r\0\x0B" );
 		if ( '' === $time_zone || 0 === strcasecmp( $time_zone, 'SYSTEM' ) || 0 === strcasecmp( $time_zone, 'UTC' ) ) {
