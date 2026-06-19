@@ -4248,7 +4248,16 @@ class WP_PostgreSQL_Driver {
 		);
 
 		if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
-			$this->reset_sqlite_autoincrement_sequence( $table_name );
+			try {
+				$this->connection->query(
+					'DELETE FROM sqlite_sequence WHERE name = ?',
+					array( $table_name )
+				);
+			} catch ( PDOException $e ) {
+				if ( false === strpos( $e->getMessage(), 'no such table' ) ) {
+					throw $e;
+				}
+			}
 		}
 
 		$this->mysql_introspection_result_cache = array();
@@ -4256,24 +4265,6 @@ class WP_PostgreSQL_Driver {
 		$this->clear_last_column_meta();
 
 		return $this->last_result;
-	}
-
-	/**
-	 * Reset a SQLite AUTOINCREMENT sequence after TRUNCATE emulation.
-	 *
-	 * @param string $table_name Table name.
-	 */
-	private function reset_sqlite_autoincrement_sequence( string $table_name ): void {
-		try {
-			$this->connection->query(
-				'DELETE FROM sqlite_sequence WHERE name = ?',
-				array( $table_name )
-			);
-		} catch ( PDOException $e ) {
-			if ( false === strpos( $e->getMessage(), 'no such table' ) ) {
-				throw $e;
-			}
-		}
 	}
 
 	/**
@@ -37826,7 +37817,7 @@ WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 
 		if (
 			! $this->should_use_postgresql_catalog_metadata()
-			&& in_array( $view, explode( ' ', 'files tablespaces_extensions tablespaces innodb_tables innodb_tablespaces innodb_tablespaces_brief innodb_datafiles innodb_indexes innodb_fields innodb_columns partitions plugins user_privileges schema_privileges table_privileges column_privileges role_table_grants role_column_grants role_routine_grants applicable_roles administrable_role_authorizations enabled_roles views triggers routines parameters columns_extensions table_constraints_extensions schemata_extensions view_table_usage view_routine_usage st_geometry_columns innodb_lock_waits column_statistics' ), true )
+			&& ! in_array( $view, explode( ' ', 'processlist keywords table_constraints key_column_usage referential_constraints check_constraints statistics' ), true )
 		) {
 			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
