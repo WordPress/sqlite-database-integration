@@ -35193,17 +35193,19 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$star_columns = $this->get_direct_information_schema_star_projection_output_columns(
+			$star_sources = $this->get_direct_information_schema_star_projection_sources(
 				$tokens,
 				$expression_bounds['start'],
 				$expression_bounds['end'],
 				$context
 			);
-			if ( null !== $star_columns ) {
+			if ( null !== $star_sources ) {
 				if ( null !== $this->get_mysql_select_projection_explicit_or_implicit_alias( $tokens, $range['start'], $range['end'] ) ) {
 					return null;
 				}
-				$columns = array_merge( $columns, $star_columns );
+				foreach ( $star_sources as $source ) {
+					$columns = array_merge( $columns, $source['columns'] );
+				}
 				continue;
 			}
 
@@ -35376,17 +35378,21 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$star_select_list = $this->get_direct_information_schema_star_projection_select_list(
+			$star_sources = $this->get_direct_information_schema_star_projection_sources(
 				$tokens,
 				$expression_bounds['start'],
 				$expression_bounds['end'],
 				$context
 			);
-			if ( null !== $star_select_list ) {
+			if ( null !== $star_sources ) {
+				$select_lists = array();
+				foreach ( $star_sources as $source ) {
+					$select_lists[] = $this->get_direct_information_schema_column_select_list( $source['columns'], $source['alias'] );
+				}
 				$replacements[] = array(
 					'start' => $expression_bounds['start'],
 					'end'   => $expression_bounds['end'],
-					'sql'   => $star_select_list,
+					'sql'   => implode( ', ', $select_lists ),
 				);
 				continue;
 			}
@@ -36644,17 +36650,19 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$star_columns = $this->get_direct_information_schema_star_projection_output_columns(
+			$star_sources = $this->get_direct_information_schema_star_projection_sources(
 				$tokens,
 				$expression_bounds['start'],
 				$expression_bounds['end'],
 				$context
 			);
-			if ( null !== $star_columns ) {
+			if ( null !== $star_sources ) {
 				if ( null !== $this->get_mysql_select_projection_explicit_or_implicit_alias( $tokens, $range['start'], $range['end'] ) ) {
 					return null;
 				}
-				$columns = array_merge( $columns, $star_columns );
+				foreach ( $star_sources as $source ) {
+					$columns = array_merge( $columns, $source['columns'] );
+				}
 				continue;
 			}
 
@@ -36726,21 +36734,17 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Get output columns for a star projection.
+	 * Get source relations for a star projection.
 	 *
 	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
 	 * @param int              $start   First expression token.
 	 * @param int              $end     Final expression token, exclusive.
 	 * @param array            $context Direct information_schema SELECT context.
-	 * @return string[]|null Output columns, or null when not a supported star.
+	 * @return array[]|null Source relations, or null when not a supported star.
 	 */
-	private function get_direct_information_schema_star_projection_output_columns( array $tokens, int $start, int $end, array $context ): ?array {
+	private function get_direct_information_schema_star_projection_sources( array $tokens, int $start, int $end, array $context ): ?array {
 		if ( $start + 1 === $end && isset( $tokens[ $start ] ) && '*' === $tokens[ $start ]->get_bytes() ) {
-			$columns = array();
-			foreach ( $context['sources'] as $source ) {
-				$columns = array_merge( $columns, $source['columns'] );
-			}
-			return $columns;
+			return $context['sources'];
 		}
 
 		if (
@@ -36751,7 +36755,7 @@ WHERE option_name IN (
 		) {
 			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
 			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-			return null === $source ? null : $source['columns'];
+			return null === $source ? null : array( $source );
 		}
 
 		if (
@@ -36768,7 +36772,7 @@ WHERE option_name IN (
 
 			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
 			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-			return null === $source ? null : $source['columns'];
+			return null === $source ? null : array( $source );
 		}
 
 		return null;
@@ -39472,55 +39476,6 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 				$this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' ),
 				$this->get_direct_information_schema_hidden_table_list_sql()
 			);
-		}
-
-		return null;
-	}
-
-	/**
-	 * Get an explicit SELECT list for a supported information_schema star.
-	 *
-	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
-	 * @param int              $start   First expression token.
-	 * @param int              $end     Final expression token, exclusive.
-	 * @param array            $context Direct information_schema SELECT context.
-	 * @return string|null SELECT list SQL, or null when the expression is not a rewritable star.
-	 */
-	private function get_direct_information_schema_star_projection_select_list( array $tokens, int $start, int $end, array $context ): ?string {
-		if ( $start + 1 === $end && isset( $tokens[ $start ] ) && '*' === $tokens[ $start ]->get_bytes() ) {
-			$select_lists = array();
-			foreach ( $context['sources'] as $source ) {
-				$select_lists[] = $this->get_direct_information_schema_column_select_list( $source['columns'], $source['alias'] );
-			}
-			return implode( ', ', $select_lists );
-		}
-
-		if (
-			$start + 3 === $end
-			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
-			&& '*' === $tokens[ $start + 2 ]->get_bytes()
-		) {
-			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-			return null === $source ? null : $this->get_direct_information_schema_column_select_list( $source['columns'], $source['alias'] );
-		}
-
-		if (
-			$start + 5 === $end
-			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
-			&& '*' === $tokens[ $start + 4 ]->get_bytes()
-		) {
-			$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-			if ( null === $schema || 0 !== strcasecmp( $schema, 'information_schema' ) ) {
-				return null;
-			}
-
-			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
-			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-			return null === $source ? null : $this->get_direct_information_schema_column_select_list( $source['columns'], $source['alias'] );
 		}
 
 		return null;
