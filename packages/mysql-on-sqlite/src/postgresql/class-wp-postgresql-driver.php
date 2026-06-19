@@ -1384,11 +1384,11 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
 		}
 
-		if ( $this->contains_unsupported_mysql_rand_function_query( $query ) ) {
+		if ( $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_rand_function' ) ) ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
 		}
 
-		if ( $this->contains_unsupported_mysql_convert_function_query( $query ) ) {
+		if ( $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_convert_function' ) ) ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
 		}
 
@@ -1396,7 +1396,7 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL full-text search syntax.' );
 		}
 
-		if ( $this->contains_unsupported_mysql_common_function_query( $query ) ) {
+		if ( $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_common_function' ) ) ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
 		}
 
@@ -9719,7 +9719,7 @@ $wp_mysql_primary_index_comment$',
 			$this->contains_mysql_index_hint_syntax( $select_sql )
 			|| $this->contains_unsupported_mysql_date_arithmetic_function_query( $select_sql )
 			|| $this->contains_unsupported_mysql_fulltext_search_query( $select_sql )
-			|| $this->contains_unsupported_mysql_common_function_query( $select_sql )
+			|| $this->contains_unsupported_mysql_range_scanner_query( $select_sql, array( 'contains_unsupported_mysql_common_function' ) )
 			|| $this->contains_unsupported_mysql_group_concat_function_query( $select_sql )
 			|| $this->contains_unsupported_mysql_week_function_query( $select_sql )
 		) {
@@ -58101,10 +58101,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		return false;
 	}
 
-	private function contains_unsupported_mysql_rand_function_query( string $query ): bool {
-		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_rand_function' ) );
-	}
-
 	/**
 	 * Get a literal MySQL RAND(seed) value using shared MySQL-compatible seed coercion.
 	 *
@@ -58822,14 +58818,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		}
 
 		return false;
-	}
-
-	private function contains_unsupported_mysql_convert_function_query( string $query ): bool {
-		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_convert_function' ) );
-	}
-
-	private function contains_unsupported_mysql_common_function_query( string $query ): bool {
-		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_common_function' ) );
 	}
 
 	/**
