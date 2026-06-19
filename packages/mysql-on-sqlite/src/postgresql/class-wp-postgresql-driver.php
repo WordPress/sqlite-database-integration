@@ -37910,13 +37910,34 @@ WHERE option_name IN (
 		}
 
 		if ( 'global_variables' === $view || 'session_variables' === $view ) {
-			return $this->get_direct_information_schema_variables_relation_sql(
-				'global_variables' === $view ? 'global' : 'session'
+			$rows      = array();
+			$variables = 'global_variables' === $view ? $this->get_mysql_global_variables() : $this->get_mysql_session_variables();
+			foreach ( $variables as $name => $value ) {
+				$rows[] = array(
+					'VARIABLE_NAME'  => $name,
+					'VARIABLE_VALUE' => $value,
+				);
+			}
+
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'session_variables' ),
+				$rows
 			);
 		}
 
 		if ( 'global_status' === $view || 'session_status' === $view || 'server_status' === $view ) {
-			return $this->get_direct_information_schema_status_relation_sql();
+			$rows = array();
+			foreach ( $this->get_mysql_status_variables() as $name => $value ) {
+				$rows[] = array(
+					'VARIABLE_NAME'  => $name,
+					'VARIABLE_VALUE' => $value,
+				);
+			}
+
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'session_status' ),
+				$rows
+			);
 		}
 
 		if ( 'character_sets' === $view ) {
@@ -39331,54 +39352,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 			$this->get_direct_information_schema_display_schema_sql( 'parent_ns.nspname' ),
 			$this->get_direct_information_schema_hidden_table_list_sql(),
 			$this->get_direct_information_schema_display_schema_sql( 't.table_schema' )
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.SESSION_VARIABLES/GLOBAL_VARIABLES relation.
-	 *
-	 * These expose the driver's MySQL compatibility session/global state rather
-	 * than PostgreSQL server settings. Keep them literal and stateless.
-	 *
-	 * @param string $scope Variable scope.
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_variables_relation_sql( string $scope ): string {
-		$rows      = array();
-		$variables = 'global' === $scope ? $this->get_mysql_global_variables() : $this->get_mysql_session_variables();
-		foreach ( $variables as $name => $value ) {
-			$rows[] = array(
-				'VARIABLE_NAME'  => $name,
-				'VARIABLE_VALUE' => $value,
-			);
-		}
-
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( 'session_variables' ),
-			$rows
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.SESSION_STATUS/GLOBAL_STATUS relation.
-	 *
-	 * This is a static MySQL compatibility surface, not PostgreSQL object
-	 * metadata. Keep it literal and stateless.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_status_relation_sql(): string {
-		$rows = array();
-		foreach ( $this->get_mysql_status_variables() as $name => $value ) {
-			$rows[] = array(
-				'VARIABLE_NAME'  => $name,
-				'VARIABLE_VALUE' => $value,
-			);
-		}
-
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( 'session_status' ),
-			$rows
 		);
 	}
 
