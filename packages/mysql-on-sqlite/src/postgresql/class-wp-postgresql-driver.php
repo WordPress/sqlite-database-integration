@@ -53495,12 +53495,12 @@ $wp_mysql_%1$s_domain$',
 			return $if_sql;
 		}
 
-		$searched_case = $this->get_mysql_searched_case_expression_branches( $tokens, $start, $end );
+		$searched_case = $this->get_mysql_case_expression_branches( $tokens, $start, $end, false );
 		if ( null !== $searched_case ) {
 			return $this->get_postgresql_mysql_finite_date_format_case_choice_sql( $tokens, $searched_case, $expression_sql, $force_string );
 		}
 
-		$simple_case = $this->get_mysql_simple_case_expression_branches( $tokens, $start, $end );
+		$simple_case = $this->get_mysql_case_expression_branches( $tokens, $start, $end, true );
 		if ( null === $simple_case ) {
 			return null;
 		}
@@ -53623,30 +53623,6 @@ $wp_mysql_%1$s_domain$',
 		$parts[] = 'END';
 
 		return implode( ' ', $parts );
-	}
-
-	/**
-	 * Get searched CASE branch ranges.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  CASE token position.
-	 * @param int              $end    Final CASE expression token position, exclusive.
-	 * @return array{branches:array<int,array{condition_start:int,condition_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null}|null Branch ranges, or null when unsupported.
-	 */
-	private function get_mysql_searched_case_expression_branches( array $tokens, int $start, int $end ): ?array {
-		return $this->get_mysql_case_expression_branches( $tokens, $start, $end, false );
-	}
-
-	/**
-	 * Get simple CASE branch ranges.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  CASE token position.
-	 * @param int              $end    Final CASE expression token position, exclusive.
-	 * @return array{value_start:int,value_end:int,branches:array<int,array{compare_start:int,compare_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null}|null Branch ranges, or null when unsupported.
-	 */
-	private function get_mysql_simple_case_expression_branches( array $tokens, int $start, int $end ): ?array {
-		return $this->get_mysql_case_expression_branches( $tokens, $start, $end, true );
 	}
 
 	/**
