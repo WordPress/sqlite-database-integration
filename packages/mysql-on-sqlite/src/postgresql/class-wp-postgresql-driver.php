@@ -36669,12 +36669,32 @@ WHERE option_name IN (
 				continue;
 			}
 
-			$column = $this->get_direct_information_schema_projection_column_name(
-				$tokens,
-				$expression_bounds['start'],
-				$expression_bounds['end'],
-				$context
-			);
+			$start  = $expression_bounds['start'];
+			$end    = $expression_bounds['end'];
+			$column = null;
+			if ( $start + 1 === $end && isset( $tokens[ $start ] ) ) {
+				$column = $this->get_direct_information_schema_unqualified_column_name( $tokens[ $start ], $context );
+			} elseif (
+				$start + 3 === $end
+				&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+			) {
+				$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+				$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+				$column    = null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 2 ], $source['column_map'] );
+			} elseif (
+				$start + 5 === $end
+				&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
+			) {
+				$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+				if ( null !== $schema && 0 === strcasecmp( $schema, 'information_schema' ) ) {
+					$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
+					$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+					$column    = null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 4 ], $source['column_map'] );
+				}
+			}
 			if ( null === $column ) {
 				return null;
 			}
@@ -36749,49 +36769,6 @@ WHERE option_name IN (
 			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
 			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
 			return null === $source ? null : $source['columns'];
-		}
-
-		return null;
-	}
-
-	/**
-	 * Get the visible column name for a simple information_schema projection.
-	 *
-	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
-	 * @param int              $start   First expression token.
-	 * @param int              $end     Final expression token, exclusive.
-	 * @param array            $context Direct information_schema SELECT context.
-	 * @return string|null Output column name, or null.
-	 */
-	private function get_direct_information_schema_projection_column_name( array $tokens, int $start, int $end, array $context ): ?string {
-		if ( $start + 1 === $end && isset( $tokens[ $start ] ) ) {
-			return $this->get_direct_information_schema_unqualified_column_name( $tokens[ $start ], $context );
-		}
-
-		if (
-			$start + 3 === $end
-			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
-		) {
-			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-			return null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 2 ], $source['column_map'] );
-		}
-
-		if (
-			$start + 5 === $end
-			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
-		) {
-			$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-			if ( null === $schema || 0 !== strcasecmp( $schema, 'information_schema' ) ) {
-				return null;
-			}
-
-			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
-			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-			return null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 4 ], $source['column_map'] );
 		}
 
 		return null;
