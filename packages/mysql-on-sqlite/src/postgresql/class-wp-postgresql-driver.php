@@ -8030,35 +8030,31 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_mysql_column_type_from_backend_metadata( array $column ): string {
 		$data_type = strtolower( (string) $column['data_type'] );
-		switch ( $data_type ) {
-			case 'character varying':
-				return null === $column['character_maximum_length'] ? 'varchar' : 'varchar(' . (int) $column['character_maximum_length'] . ')';
-			case 'character':
-				return null === $column['character_maximum_length'] ? 'char' : 'char(' . (int) $column['character_maximum_length'] . ')';
-			case 'integer':
-				return 'int';
-			case 'boolean':
-				return 'tinyint(1)';
-			case 'timestamp without time zone':
-				return 'datetime';
-			case 'timestamp with time zone':
-				return 'timestamp';
-			case 'numeric':
-			case 'decimal':
-				if ( null !== $column['numeric_precision'] && null !== $column['numeric_scale'] ) {
-					return 'decimal(' . (int) $column['numeric_precision'] . ',' . (int) $column['numeric_scale'] . ')';
-				}
-				if ( null !== $column['numeric_precision'] ) {
-					return 'decimal(' . (int) $column['numeric_precision'] . ')';
-				}
-				return 'decimal';
-			case 'double precision':
-				return 'double';
-			case 'real':
-				return 'float';
-			default:
-				return '' === $data_type ? 'text' : $data_type;
+		if ( 'character varying' === $data_type || 'character' === $data_type ) {
+			$type = 'character varying' === $data_type ? 'varchar' : 'char';
+			return null === $column['character_maximum_length'] ? $type : $type . '(' . (int) $column['character_maximum_length'] . ')';
 		}
+
+		if ( 'numeric' === $data_type || 'decimal' === $data_type ) {
+			if ( null !== $column['numeric_precision'] && null !== $column['numeric_scale'] ) {
+				return 'decimal(' . (int) $column['numeric_precision'] . ',' . (int) $column['numeric_scale'] . ')';
+			}
+			if ( null !== $column['numeric_precision'] ) {
+				return 'decimal(' . (int) $column['numeric_precision'] . ')';
+			}
+			return 'decimal';
+		}
+
+		$types = array(
+			'integer'                     => 'int',
+			'boolean'                     => 'tinyint(1)',
+			'timestamp without time zone' => 'datetime',
+			'timestamp with time zone'    => 'timestamp',
+			'double precision'            => 'double',
+			'real'                        => 'float',
+		);
+
+		return $types[ $data_type ] ?? ( '' === $data_type ? 'text' : $data_type );
 	}
 
 	/**
