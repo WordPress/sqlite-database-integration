@@ -19106,56 +19106,25 @@ ORDER BY table_name';
 			'params' => $params,
 		);
 
-		$comment = $stmt->fetchColumn();
-		$comment = false === $comment ? '' : (string) $comment;
+		$comment   = $stmt->fetchColumn();
+		$comment   = false === $comment ? '' : (string) $comment;
+		$collation = self::DEFAULT_MYSQL_COLLATION;
+		if ( 0 === strpos( $comment, self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) ) {
+			$line    = explode( "\n", $comment, 2 )[0];
+			$payload = substr( $line, strlen( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) );
+			$decoded = '' === $payload ? false : base64_decode( $payload, true );
+			if ( false !== $decoded && '' !== $decoded ) {
+				$collation = (string) $decoded;
+			}
+
+			$newline_position = strpos( $comment, "\n" );
+			$comment          = false === $newline_position ? '' : substr( $comment, $newline_position + 1 );
+		}
+
 		return array(
-			'comment'   => $this->get_postgresql_catalog_table_comment_text( $comment ),
-			'collation' => $this->get_postgresql_catalog_table_collation_comment( $comment ) ?? self::DEFAULT_MYSQL_COLLATION,
+			'comment'   => $comment,
+			'collation' => $collation,
 		);
-	}
-
-	/**
-	 * Get the user-facing table comment after removing internal catalog metadata.
-	 *
-	 * @param string $table_comment PostgreSQL table comment.
-	 * @return string User-facing table comment.
-	 */
-	private function get_postgresql_catalog_table_comment_text( string $table_comment ): string {
-		if ( 0 !== strpos( $table_comment, self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) ) {
-			return $table_comment;
-		}
-
-		$newline_position = strpos( $table_comment, "\n" );
-		if ( false === $newline_position ) {
-			return '';
-		}
-
-		return substr( $table_comment, $newline_position + 1 );
-	}
-
-	/**
-	 * Get MySQL table collation metadata from a PostgreSQL table comment.
-	 *
-	 * @param string $table_comment PostgreSQL table comment.
-	 * @return string|null MySQL collation, or null when absent.
-	 */
-	private function get_postgresql_catalog_table_collation_comment( string $table_comment ): ?string {
-		if ( 0 !== strpos( $table_comment, self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) ) {
-			return null;
-		}
-
-		$line    = explode( "\n", $table_comment, 2 )[0];
-		$payload = substr( $line, strlen( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) );
-		if ( '' === $payload ) {
-			return null;
-		}
-
-		$collation = base64_decode( $payload, true );
-		if ( false === $collation || '' === $collation ) {
-			return null;
-		}
-
-		return (string) $collation;
 	}
 
 	/**
@@ -42208,7 +42177,7 @@ END',
 		$quoted_literal_default_pattern       = $this->connection->quote( '^\'(.*)\'::(character varying|character|text|bpchar|timestamp without time zone|timestamp with time zone|date|time without time zone|time with time zone|integer|bigint|smallint|numeric|decimal|double precision|real|boolean)$' );
 		$column_default_comment_sql           = null === $column_comment_sql
 			? 'NULL'
-			: $this->get_postgresql_catalog_column_default_comment_sql( $column_comment_sql );
+			: $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX );
 		return sprintf(
 			'CASE
 	WHEN %1$s.is_identity = \'YES\' THEN NULL
@@ -42322,16 +42291,6 @@ END',
 				$column_comment_sql,
 				$marker_condition_sql
 			);
-	}
-
-	/**
-	 * Get MySQL generated DEFAULT metadata from a PostgreSQL column comment.
-	 *
-	 * @param string $column_comment_sql SQL expression returning a PostgreSQL column comment.
-	 * @return string SQL expression returning the decoded MySQL default, or NULL.
-	 */
-	private function get_postgresql_catalog_column_default_comment_sql( string $column_comment_sql ): string {
-		return $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX );
 	}
 
 	/**
@@ -42453,28 +42412,6 @@ END',
 	}
 
 	/**
-	 * Get MySQL prefix length metadata from a PostgreSQL index comment.
-	 *
-	 * @param string $index_comment_sql SQL expression returning a PostgreSQL index comment.
-	 * @param string $seq_in_index_sql  SQL expression returning the MySQL index part ordinal.
-	 * @return string SQL expression returning a MySQL Sub_part value, or NULL.
-	 */
-	private function get_postgresql_catalog_index_sub_part_comment_sql( string $index_comment_sql, string $seq_in_index_sql ): string {
-		$prefix_sql  = $this->connection->quote( self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX );
-		$comment_sql = sprintf( 'COALESCE(%s, \'\')', $index_comment_sql );
-
-		return sprintf(
-			'(pg_catalog.regexp_match(
-	%1$s,
-	\'(^|\' || CHR(10) || \')\' || %2$s || CAST(%3$s AS text) || \':([0-9]+)($|\' || CHR(10) || \')\'
-))[2]',
-			$comment_sql,
-			$prefix_sql,
-			$seq_in_index_sql
-		);
-	}
-
-	/**
 	 * Get MySQL prefix length metadata from PostgreSQL catalog display sources.
 	 *
 	 * @param string $expression_sql    SQL expression yielding PostgreSQL index expression text.
@@ -42483,10 +42420,18 @@ END',
 	 * @return string SQL expression returning a MySQL Sub_part value, or NULL.
 	 */
 	private function get_postgresql_catalog_display_index_sub_part_sql( string $expression_sql, string $index_comment_sql, string $seq_in_index_sql ): string {
+		$prefix_sql  = $this->connection->quote( self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX );
+		$comment_sql = sprintf( 'COALESCE(%s, \'\')', $index_comment_sql );
+
 		return sprintf(
-			'COALESCE(%s, %s)',
+			'COALESCE(%1$s, (pg_catalog.regexp_match(
+	%2$s,
+	\'(^|\' || CHR(10) || \')\' || %3$s || CAST(%4$s AS text) || \':([0-9]+)($|\' || CHR(10) || \')\'
+))[2])',
 			$this->get_postgresql_prefix_index_expression_sub_part_sql( $expression_sql ),
-			$this->get_postgresql_catalog_index_sub_part_comment_sql( $index_comment_sql, $seq_in_index_sql )
+			$comment_sql,
+			$prefix_sql,
+			$seq_in_index_sql
 		);
 	}
 
@@ -42788,7 +42733,7 @@ END',
 				$default_generated = sprintf(
 					'(%1$s OR %2$s IS NOT NULL)',
 					$default_generated,
-					$this->get_postgresql_catalog_column_default_comment_sql( $column_comment_sql )
+					$this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX )
 				);
 			}
 
