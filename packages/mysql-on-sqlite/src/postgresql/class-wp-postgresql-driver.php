@@ -38886,15 +38886,11 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 	}
 
 	/**
-	 * Get SQL for the hidden metadata table exclusion list.
+	 * Get SQL for the fallback hidden metadata table exclusion list.
 	 *
 	 * @return string SQL literal list.
 	 */
 	private function get_direct_information_schema_hidden_table_list_sql(): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->connection->quote( '' );
-		}
-
 		return implode(
 			', ',
 			array_map(
