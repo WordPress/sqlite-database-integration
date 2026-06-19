@@ -39823,30 +39823,20 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 		foreach ( $rows as $row ) {
 			$select = array();
 			foreach ( $columns as $column ) {
-				$select[] = $this->get_direct_information_schema_literal_sql( $row[ $column ] ?? null ) . ' AS ' . $this->connection->quote_identifier( $column );
+				$value = $row[ $column ] ?? null;
+				if ( null === $value ) {
+					$literal_sql = 'NULL';
+				} elseif ( is_int( $value ) || is_float( $value ) || ( is_string( $value ) && 1 === preg_match( '/^-?[0-9]+(?:\.[0-9]+)?$/', $value ) ) ) {
+					$literal_sql = (string) $value;
+				} else {
+					$literal_sql = $this->connection->quote( (string) $value );
+				}
+				$select[] = $literal_sql . ' AS ' . $this->connection->quote_identifier( $column );
 			}
 			$selects[] = 'SELECT ' . implode( ', ', $select );
 		}
 
 		return implode( ' UNION ALL ', $selects );
-	}
-
-	/**
-	 * Convert a PHP value into relation-literal SQL.
-	 *
-	 * @param mixed $value Value.
-	 * @return string SQL literal.
-	 */
-	private function get_direct_information_schema_literal_sql( $value ): string {
-		if ( null === $value ) {
-			return 'NULL';
-		}
-
-		if ( is_int( $value ) || is_float( $value ) || ( is_string( $value ) && 1 === preg_match( '/^-?[0-9]+(?:\.[0-9]+)?$/', $value ) ) ) {
-			return (string) $value;
-		}
-
-		return $this->connection->quote( (string) $value );
 	}
 
 	/**
