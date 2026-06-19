@@ -636,9 +636,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests DML column metadata is cached and invalidated after metadata changes.
+	 * Tests DML column metadata is read fresh after metadata changes.
 	 */
-	public function test_dml_column_metadata_cache_reuses_rows_until_metadata_changes(): void {
+	public function test_dml_column_metadata_reads_fresh_rows_after_metadata_changes(): void {
 		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection();
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$driver->set_sql_mode( '' );
@@ -659,25 +659,29 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)"
 		);
 
-		$metadata_select_count = 0;
-		$connection->set_query_logger(
-			static function ( string $sql, array $params ) use ( &$metadata_select_count ): void {
-				if (
+			$metadata_select_count = 0;
+			$connection->set_query_logger(
+				static function ( string $sql, array $params ) use ( &$metadata_select_count ): void {
+					if (
 					false !== strpos( $sql, 'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, extra' )
 					&& false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE )
-				) {
-					++$metadata_select_count;
+					) {
+						++$metadata_select_count;
+					}
 				}
-			}
-		);
+			);
 
 		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (1)' ) );
+		$after_first_insert = $metadata_select_count;
+		$this->assertGreaterThan( 0, $after_first_insert );
+
 		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (2)' ) );
-		$this->assertSame( 1, $metadata_select_count );
+		$after_second_insert = $metadata_select_count;
+		$this->assertGreaterThan( $after_first_insert, $after_second_insert );
 
 		$driver->query( "ALTER TABLE wptests_cache_dml ALTER COLUMN status SET DEFAULT 'published'" );
 		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (3)' ) );
-		$this->assertSame( 2, $metadata_select_count );
+		$this->assertGreaterThan( $after_second_insert, $metadata_select_count );
 
 		$rows = $driver->query( 'SELECT id, label, status FROM wptests_cache_dml ORDER BY id' );
 		$this->assertSame(
@@ -696,9 +700,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests DML identity metadata is cached and invalidated after metadata changes.
+	 * Tests DML identity metadata is read fresh after metadata changes.
 	 */
-	public function test_dml_identity_metadata_cache_reuses_rows_until_metadata_changes(): void {
+	public function test_dml_identity_metadata_reads_fresh_rows_after_metadata_changes(): void {
 		$connection = new WP_PostgreSQL_Driver_Alter_Table_Fixture_Connection(
 			$this->get_dml_identity_metadata_fixture( 'wptests_cache_identity', 'id', 'wptests_cache_identity_id_seq' )
 		);
@@ -716,8 +720,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_cache_identity` (`id`, `label`) VALUES (1, 'first')" ) );
+		$after_first_insert = $metadata_select_count;
+		$this->assertGreaterThan( 0, $after_first_insert );
+
 		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_cache_identity` (`id`, `label`) VALUES (2, 'second')" ) );
-		$this->assertSame( 1, $metadata_select_count );
+		$after_second_insert = $metadata_select_count;
+		$this->assertGreaterThan( $after_first_insert, $after_second_insert );
 
 		$driver->store_mysql_schema_metadata(
 			"CREATE TABLE wptests_cache_identity (
@@ -726,8 +734,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				PRIMARY KEY (id)
 			)"
 		);
-		$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_cache_identity` (`id`, `label`) VALUES (3, 'third')" ) );
-		$this->assertSame( 2, $metadata_select_count );
+			$this->assertSame( 1, $driver->query( "INSERT INTO `wptests_cache_identity` (`id`, `label`) VALUES (3, 'third')" ) );
+			$this->assertGreaterThan( $after_second_insert, $metadata_select_count );
 	}
 
 	/**
@@ -33824,50 +33832,51 @@ $wp_mysql_on_update$',
 	 * Tests column-reference metadata lookups use PostgreSQL catalogs.
 	 */
 	public function test_column_reference_metadata_lookups_use_postgresql_catalog_for_pgsql_connections(): void {
-		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
-			array(
-				'pdo' => new PDO( 'sqlite::memory:' ),
-			)
-		);
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
-		$pdo        = $connection->get_pdo();
-		$pdo->exec( "ATTACH DATABASE ':memory:' AS information_schema" );
-		$pdo->exec(
-			'CREATE TABLE information_schema.columns (
-				table_schema TEXT NOT NULL,
-				table_name TEXT NOT NULL,
-				column_name TEXT NOT NULL,
-				ordinal_position INTEGER NOT NULL,
-				data_type TEXT NOT NULL,
-				character_maximum_length INTEGER,
-				numeric_precision INTEGER,
-				numeric_scale INTEGER,
-				collation_name TEXT,
-				column_default TEXT,
-				is_identity TEXT,
-				domain_name TEXT
-			)'
-		);
-		$pdo->exec(
-			"INSERT INTO information_schema.columns
-				(table_schema, table_name, column_name, ordinal_position, data_type, character_maximum_length, numeric_precision, numeric_scale, collation_name, column_default, is_identity, domain_name)
-			VALUES
-				('public', 'wptests_posts', 'ID', 1, 'integer', NULL, NULL, NULL, NULL, NULL, 'NO', NULL),
-				('public', 'wptests_posts', 'post_title', 2, 'character varying', 191, NULL, NULL, 'utf8mb4_unicode_ci', NULL, 'NO', NULL)"
-		);
-		$get_name = Closure::bind(
-			function ( string $column ): ?string {
-				return $this->get_mysql_table_catalog_column_name( 'public', 'wptests_posts', $column );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
+		$connection   = new class(
+				array(
+					'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+				)
+			) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed PostgreSQL catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& isset( $params[2] )
+				) {
+					if ( 'id' === strtolower( (string) $params[2] ) ) {
+						return parent::query( "SELECT 'ID' AS column_name" );
+					}
+
+					if ( 'post_title' === strtolower( (string) $params[2] ) ) {
+						return parent::query( "SELECT 'post_title' AS column_name" );
+					}
+
+					return parent::query( 'SELECT NULL AS column_name WHERE 0 = 1' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+			$driver   = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+			$get_name = Closure::bind(
+				function ( string $column ): ?string {
+					return $this->get_mysql_table_column_name( 'public', 'wptests_posts', $column );
+				},
+				$driver,
+				WP_PostgreSQL_Driver::class
+			);
 
 		$this->assertSame( 'ID', $get_name( 'id' ) );
 		$this->assertSame( 'post_title', $get_name( 'post_title' ) );
 		$this->assertNull( $get_name( 'missing_column' ) );
 
-		$pgsql_pdo         = new class( 'sqlite::memory:' ) extends PDO {
+		$pgsql_pdo            = new class( 'sqlite::memory:' ) extends PDO {
 			/**
 			 * Report pgsql for catalog branch selection while keeping SQLite execution.
 			 *
@@ -33883,76 +33892,79 @@ $wp_mysql_on_update$',
 				return parent::getAttribute( $attribute );
 			}
 		};
-		$pgsql_connection  = new class( array( 'pdo' => $pgsql_pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
-			/**
-			 * Captured catalog queries.
-			 *
-			 * @var array[]
-			 */
-			private $catalog_queries = array();
+			$pgsql_connection = new class( array( 'pdo' => $pgsql_pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+				/**
+				 * Captured catalog queries.
+				 *
+				 * @var array[]
+				 */
+				private $catalog_queries = array();
 
-			/**
-			 * Execute fixture-backed catalog queries.
-			 *
-			 * @param string $sql    SQL query.
-			 * @param array  $params Query parameters.
-			 * @return PDOStatement Statement.
-			 */
-			public function query( string $sql, array $params = array() ): PDOStatement {
-				if (
+				/**
+				 * Execute fixture-backed catalog queries.
+				 *
+				 * @param string $sql    SQL query.
+				 * @param array  $params Query parameters.
+				 * @return PDOStatement Statement.
+				 */
+				public function query( string $sql, array $params = array() ): PDOStatement {
+					if (
 					false !== strpos( $sql, 'FROM information_schema.columns c' )
 					&& false !== strpos( $sql, 'pg_catalog.col_description(pc.oid, pa.attnum)' )
 					&& isset( $params[2] )
-				) {
-					$this->catalog_queries[] = array(
-						'sql'    => $sql,
-						'params' => $params,
-					);
+					) {
+						$this->catalog_queries[] = array(
+							'sql'    => $sql,
+							'params' => $params,
+						);
 
-					if ( false !== strpos( $sql, ' AS column_type' ) ) {
-						return parent::query( "SELECT 'enum(''draft'',''published'')' AS column_type" );
+						return parent::query(
+							"SELECT 'status' AS column_name,
+							'enum(''draft'',''published'')' AS column_type,
+							'utf8mb4_unicode_ci' AS collation_name"
+						);
 					}
 
-					return parent::query( "SELECT 'utf8mb4_unicode_ci' AS collation_name" );
-				}
-
-				if (
+					if (
 					false !== strpos( $sql, 'FROM information_schema.columns c' )
-					&& false !== strpos( $sql, 'SELECT 1' )
 					&& isset( $params[1] )
 					&& ! isset( $params[2] )
-				) {
-					return parent::query( 'wptests_posts' === $params[1] ? 'SELECT 1' : 'SELECT 1 WHERE 0 = 1' );
+					) {
+						return parent::query(
+							'wptests_posts' === $params[1]
+							? "SELECT 'ID' AS column_name"
+							: 'SELECT NULL AS column_name WHERE 0 = 1'
+						);
+					}
+
+					return parent::query( $sql, $params );
 				}
 
-				return parent::query( $sql, $params );
-			}
-
-			/**
-			 * Get captured catalog queries.
-			 *
-			 * @return array[] Catalog queries.
-			 */
-			public function get_catalog_queries(): array {
-				return $this->catalog_queries;
-			}
-		};
-		$pgsql_driver      = new WP_PostgreSQL_Driver( $pgsql_connection, 'wptests' );
-		$pgsql_get_type    = Closure::bind(
-			function ( string $column ): ?string {
-				return $this->get_mysql_table_column_type( 'public', 'wptests_posts', $column );
-			},
-			$pgsql_driver,
-			WP_PostgreSQL_Driver::class
-		);
-		$pgsql_get_collate = Closure::bind(
+				/**
+				 * Get captured catalog queries.
+				 *
+				 * @return array[] Catalog queries.
+				 */
+				public function get_catalog_queries(): array {
+					return $this->catalog_queries;
+				}
+			};
+			$pgsql_driver     = new WP_PostgreSQL_Driver( $pgsql_connection, 'wptests' );
+			$pgsql_get_type   = Closure::bind(
+				function ( string $column ): ?string {
+					return $this->get_mysql_table_column_type( 'public', 'wptests_posts', $column );
+				},
+				$pgsql_driver,
+				WP_PostgreSQL_Driver::class
+			);
+		$pgsql_get_collate    = Closure::bind(
 			function ( string $column ): ?string {
 				return $this->get_mysql_table_column_collation( 'public', 'wptests_posts', $column );
 			},
 			$pgsql_driver,
 			WP_PostgreSQL_Driver::class
 		);
-		$pgsql_has_columns = Closure::bind(
+		$pgsql_has_columns    = Closure::bind(
 			function ( string $table ): bool {
 				return $this->mysql_table_has_column_metadata( 'public', $table );
 			},

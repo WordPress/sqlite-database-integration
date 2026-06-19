@@ -321,48 +321,6 @@ class WP_PostgreSQL_Driver {
 	private $mysql_table_schema_introspection_cache = array();
 
 	/**
-	 * Ordered DML column metadata rows keyed by backend schema and table.
-	 *
-	 * @var array<string, array>
-	 */
-	private $mysql_dml_column_metadata_cache = array();
-
-	/**
-	 * DML identity metadata rows keyed by backend schema and table.
-	 *
-	 * @var array<string, array>
-	 */
-	private $mysql_dml_identity_column_metadata_cache = array();
-
-	/**
-	 * MySQL column type metadata keyed by backend schema, table, and column.
-	 *
-	 * @var array<string, array<string, string|null>>
-	 */
-	private $mysql_table_column_type_cache = array();
-
-	/**
-	 * MySQL column collation metadata keyed by backend schema, table, and column.
-	 *
-	 * @var array<string, array<string, string|null>>
-	 */
-	private $mysql_table_column_collation_cache = array();
-
-	/**
-	 * Stored MySQL column metadata existence keyed by backend schema and table.
-	 *
-	 * @var array<string, bool>
-	 */
-	private $mysql_table_has_column_metadata_cache = array();
-
-	/**
-	 * Stored MySQL column names keyed by backend schema, table, and requested column.
-	 *
-	 * @var array<string, array<string, string|null>>
-	 */
-	private $mysql_table_column_name_cache = array();
-
-	/**
 	 * Cached MySQL upsert conflict targets keyed by table and inserted columns.
 	 *
 	 * @var array<string, string[]|null>
@@ -4334,15 +4292,9 @@ class WP_PostgreSQL_Driver {
 	 * Clear all cached MySQL metadata derived from side tables.
 	 */
 	private function clear_mysql_metadata_caches(): void {
-		$this->mysql_table_schema_introspection_cache   = array();
-		$this->mysql_dml_column_metadata_cache          = array();
-		$this->mysql_dml_identity_column_metadata_cache = array();
-		$this->mysql_table_column_type_cache            = array();
-		$this->mysql_table_column_collation_cache       = array();
-		$this->mysql_table_has_column_metadata_cache    = array();
-		$this->mysql_table_column_name_cache            = array();
-		$this->mysql_upsert_conflict_target_cache       = array();
-		$this->mysql_introspection_result_cache         = array();
+		$this->mysql_table_schema_introspection_cache = array();
+		$this->mysql_upsert_conflict_target_cache     = array();
+		$this->mysql_introspection_result_cache       = array();
 		$this->clear_mysql_query_translation_caches();
 	}
 
@@ -4353,15 +4305,6 @@ class WP_PostgreSQL_Driver {
 	 * @param string $table_name   Table name.
 	 */
 	private function clear_mysql_metadata_cache_for_table( string $table_schema, string $table_name ): void {
-		$cache_key = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
-		unset(
-			$this->mysql_dml_column_metadata_cache[ $cache_key ],
-			$this->mysql_dml_identity_column_metadata_cache[ $cache_key ],
-			$this->mysql_table_column_type_cache[ $cache_key ],
-			$this->mysql_table_column_collation_cache[ $cache_key ],
-			$this->mysql_table_has_column_metadata_cache[ $cache_key ],
-			$this->mysql_table_column_name_cache[ $cache_key ]
-		);
 		$this->mysql_upsert_conflict_target_cache = array();
 		$this->mysql_introspection_result_cache   = array();
 		$this->clear_mysql_query_translation_caches();
@@ -6990,18 +6933,13 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_mysql_column_extra_metadata( string $table_schema, string $table_name, string $column_name ): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-			$extra_sql          = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );
-			$sql                = $this->get_postgresql_catalog_column_metadata_sql( $extra_sql . ' AS extra', true );
-
 			try {
-				$stmt = $this->connection->query( $sql, array( $table_schema, $table_name, $column_name ) );
+				$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
 			} catch ( PDOException $e ) {
 				return '';
 			}
 
-			$rows = $stmt->fetchAll( PDO::FETCH_COLUMN );
-			return 1 === count( $rows ) ? (string) $rows[0] : '';
+			return null === $metadata ? '' : (string) ( $metadata['extra'] ?? '' );
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -7031,33 +6969,11 @@ $wp_mysql_primary_index_comment$',
 		string $table_name,
 		string $column_name
 	): ?string {
-		$table_cache_key  = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
-		$column_cache_key = strtolower( $column_name );
-		if (
-			isset( $this->mysql_table_column_type_cache[ $table_cache_key ] )
-			&& array_key_exists( $column_cache_key, $this->mysql_table_column_type_cache[ $table_cache_key ] )
-		) {
-			return $this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ];
-		}
-
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-			$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
-				'c',
-				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-				$column_comment_sql,
-				true
-			);
-			$stmt               = $this->connection->query(
-				$this->get_postgresql_catalog_column_metadata_sql( $column_type . ' AS column_type', true ),
-				array( $table_schema, $table_name, $column_name )
-			);
-			$rows               = $stmt->fetchAll( PDO::FETCH_COLUMN );
-
-			$this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ] = 1 === count( $rows )
-				? (string) $rows[0]
-				: null;
-			return $this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ];
+			$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+			return null === $metadata || ! array_key_exists( 'column_type', $metadata )
+				? null
+				: (string) $metadata['column_type'];
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -7074,11 +6990,7 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		$column_type = $stmt->fetchColumn();
-		$this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ] = false === $column_type
-			? null
-			: (string) $column_type;
-
-		return $this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ];
+		return false === $column_type ? null : (string) $column_type;
 	}
 
 	/**
@@ -7094,36 +7006,9 @@ $wp_mysql_primary_index_comment$',
 		string $table_name,
 		string $column_name
 	): ?string {
-		$table_cache_key  = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
-		$column_cache_key = strtolower( $column_name );
-		if (
-			isset( $this->mysql_table_column_collation_cache[ $table_cache_key ] )
-			&& array_key_exists( $column_cache_key, $this->mysql_table_column_collation_cache[ $table_cache_key ] )
-		) {
-			return $this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ];
-		}
-
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-			$column_type        = $this->get_direct_information_schema_catalog_column_type_expression( 'c', null, $column_comment_sql, true );
-			$stmt               = $this->connection->query(
-				$this->get_postgresql_catalog_column_metadata_sql(
-					$this->get_direct_information_schema_collation_expression(
-						$column_type,
-						'c.collation_name',
-						$column_comment_sql,
-						$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-					) . ' AS collation_name',
-					true
-				),
-				array( $table_schema, $table_name, $column_name )
-			);
-			$rows               = $stmt->fetchAll( PDO::FETCH_COLUMN );
-
-			$this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ] = 1 === count( $rows ) && null !== $rows[0]
-				? (string) $rows[0]
-				: null;
-			return $this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ];
+			$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+			return null === $metadata || null === ( $metadata['collation_name'] ?? null ) ? null : (string) $metadata['collation_name'];
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -7140,21 +7025,99 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		$collation = $stmt->fetchColumn();
-		$this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ] = false === $collation || null === $collation
-			? null
-			: (string) $collation;
+		return false === $collation || null === $collation ? null : (string) $collation;
+	}
 
-		return $this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ];
+	/**
+	 * Get MySQL-shaped column metadata from PostgreSQL catalogs.
+	 *
+	 * @param string      $table_schema          Backend schema.
+	 * @param string      $table_name            Table name.
+	 * @param string|null $column_name           Column name filter, or null for all columns.
+	 * @param bool        $case_sensitive_column Whether the column filter is case-sensitive.
+	 * @return array[] Column metadata rows.
+	 */
+	private function get_mysql_table_catalog_column_metadata_rows(
+		string $table_schema,
+		string $table_name,
+		?string $column_name = null,
+		bool $case_sensitive_column = false
+	): array {
+		$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+		$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
+			'c',
+			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+			$column_comment_sql
+		);
+		$collation          = $this->get_direct_information_schema_collation_expression(
+			$column_type,
+			'c.collation_name',
+			$column_comment_sql,
+			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+		);
+		$sql                = $this->get_postgresql_catalog_column_metadata_sql(
+			sprintf(
+				'c.column_name,
+				c.ordinal_position,
+				%1$s AS column_type,
+				%2$s AS collation_name,
+				c.is_nullable,
+				%3$s AS column_default,
+				%4$s AS extra',
+				$column_type,
+				$collation,
+				$this->get_direct_information_schema_column_default_expression( 'c', $column_comment_sql ),
+				$this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql )
+			),
+			null !== $column_name,
+			$case_sensitive_column
+		);
+		$params             = array( $table_schema, $table_name );
+		if ( null !== $column_name ) {
+			$params[] = $column_name;
+		}
+
+		$stmt = $this->connection->query( $sql, $params );
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Get one unambiguous MySQL-shaped column metadata row from PostgreSQL catalogs.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return array|null Column metadata row, or null when missing/ambiguous.
+	 */
+	private function get_mysql_table_catalog_column_metadata_row(
+		string $table_schema,
+		string $table_name,
+		string $column_name
+	): ?array {
+		$rows = $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name );
+		return 1 === count( $rows ) ? $rows[0] : null;
 	}
 
 	/**
 	 * Get a PostgreSQL catalog column metadata query.
 	 *
-	 * @param string $projection_sql SQL projection list.
-	 * @param bool   $filter_column  Whether to filter by one column name.
+	 * @param string $projection_sql        SQL projection list.
+	 * @param bool   $filter_column         Whether to filter by one column name.
+	 * @param bool   $case_sensitive_column Whether the column filter is case-sensitive.
 	 * @return string SQL query.
 	 */
-	private function get_postgresql_catalog_column_metadata_sql( string $projection_sql, bool $filter_column ): string {
+	private function get_postgresql_catalog_column_metadata_sql(
+		string $projection_sql,
+		bool $filter_column,
+		bool $case_sensitive_column = false
+	): string {
+		$column_filter_sql = '';
+		if ( $filter_column ) {
+			$column_filter_sql = $case_sensitive_column
+				? "\n\t\t\t\t\tAND c.column_name = ?"
+				: "\n\t\t\t\t\tAND LOWER(c.column_name) = LOWER(?)";
+		}
+
 		return sprintf(
 			'SELECT %1$s
 				FROM information_schema.columns c
@@ -7168,11 +7131,11 @@ $wp_mysql_primary_index_comment$',
 					ON pa.attrelid = pc.oid
 					AND pa.attname = c.column_name
 					AND pa.attnum > 0
-				WHERE c.table_schema = ?
-					AND c.table_name = ?%2$s
-				ORDER BY c.ordinal_position%3$s',
+					WHERE c.table_schema = ?
+						AND c.table_name = ?%2$s
+					ORDER BY c.ordinal_position%3$s',
 			$projection_sql,
-			$filter_column ? "\n\t\t\t\t\tAND LOWER(c.column_name) = LOWER(?)" : '',
+			$column_filter_sql,
 			$filter_column ? "\n\t\t\t\tLIMIT 2" : ''
 		);
 	}
@@ -7185,23 +7148,8 @@ $wp_mysql_primary_index_comment$',
 	 * @return bool Whether metadata exists.
 	 */
 	private function mysql_table_has_column_metadata( string $table_schema, string $table_name ): bool {
-		$cache_key = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
-		if ( array_key_exists( $cache_key, $this->mysql_table_has_column_metadata_cache ) ) {
-			return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
-		}
-
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$stmt = $this->connection->query(
-				'SELECT 1
-				FROM information_schema.columns c
-				WHERE c.table_schema = ?
-					AND c.table_name = ?
-				LIMIT 1',
-				array( $table_schema, $table_name )
-			);
-
-			$this->mysql_table_has_column_metadata_cache[ $cache_key ] = false !== $stmt->fetchColumn();
-			return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
+			return count( $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name ) ) > 0;
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -7214,8 +7162,7 @@ $wp_mysql_primary_index_comment$',
 			array( $table_schema, $table_name )
 		);
 
-		$this->mysql_table_has_column_metadata_cache[ $cache_key ] = false !== $stmt->fetchColumn();
-		return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
+		return false !== $stmt->fetchColumn();
 	}
 
 	/**
@@ -21637,7 +21584,7 @@ WHERE option_name IN (
 			$column_metadata
 		);
 
-			$table_column_lookup          = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+			$table_column_lookup          = $this->get_mysql_dml_column_metadata_lookup_from_rows( $column_metadata );
 			$conflict_target              = $this->get_mysql_upsert_conflict_target(
 				$table_name,
 				$columns,
@@ -26542,11 +26489,6 @@ WHERE option_name IN (
 	 * @return array[] Column metadata rows.
 	 */
 	private function get_dml_identity_column_metadata( string $table_schema, string $table_name ): array {
-		$cache_key = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
-		if ( array_key_exists( $cache_key, $this->mysql_dml_identity_column_metadata_cache ) ) {
-			return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
-		}
-
 		$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
 			'c',
 			'pg_catalog.obj_description(seq.oid, \'pg_class\')'
@@ -26574,22 +26516,20 @@ WHERE option_name IN (
 					ON seq_ns.oid = seq.relnamespace
 				WHERE c.table_schema = ?
 					AND c.table_name = ?
-				ORDER BY c.ordinal_position',
+					ORDER BY c.ordinal_position',
 					$column_type,
 					$extra
 				),
 				array( $table_schema, $table_name )
 			);
-			$this->mysql_dml_identity_column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
+				return $stmt->fetchAll( PDO::FETCH_ASSOC );
 		} catch ( PDOException $e ) {
 			if ( 'pgsql' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
 				throw $e;
 			}
 
-			$this->mysql_dml_identity_column_metadata_cache[ $cache_key ] = array();
+			return array();
 		}
-
-		return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
 	}
 
 	/**
@@ -32129,54 +32069,33 @@ WHERE option_name IN (
 	 */
 	private function get_mysql_dml_column_metadata( string $table_name ): array {
 		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
-		$cache_key    = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
-		if ( array_key_exists( $cache_key, $this->mysql_dml_column_metadata_cache ) ) {
-			return $this->mysql_dml_column_metadata_cache[ $cache_key ];
-		}
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-			$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
-				'c',
-				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-				$comment_sql
-			);
-			$sql         = $this->get_postgresql_catalog_column_metadata_sql(
-				sprintf(
-					'
-					c.column_name,
-					c.ordinal_position,
-					%1$s AS column_type,
-					c.is_nullable,
-					%3$s AS column_default,
-					%2$s AS extra',
-					$column_type,
-					$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-					$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql )
-				),
-				false
-			);
-			$stmt        = $this->connection->query( $sql, array( $table_schema, $table_name ) );
-
-			$this->mysql_dml_column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			return $this->mysql_dml_column_metadata_cache[ $cache_key ];
+			return $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name );
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
 
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, extra
-				FROM %s
-				WHERE table_schema = ? AND table_name = ?
-				ORDER BY ordinal_position',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
+		try {
+			$stmt = $this->connection->query(
+				sprintf(
+					'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, extra
+					FROM %s
+					WHERE table_schema = ? AND table_name = ?
+					ORDER BY ordinal_position',
+					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+				),
+				array( $table_schema, $table_name )
+			);
+		} catch ( PDOException $e ) {
+			if ( 'pgsql' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
+				throw $e;
+			}
 
-		$this->mysql_dml_column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
-		return $this->mysql_dml_column_metadata_cache[ $cache_key ];
+			return array();
+		}
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 
 	/**
@@ -48322,22 +48241,21 @@ END',
 		string $table_name,
 		string $column_name
 	): ?string {
-		$table_cache_key  = $this->get_mysql_metadata_cache_key( $table_schema, $table_name );
-		$column_cache_key = $column_name;
-		if (
-			isset( $this->mysql_table_column_name_cache[ $table_cache_key ] )
-			&& array_key_exists( $column_cache_key, $this->mysql_table_column_name_cache[ $table_cache_key ] )
-		) {
-			return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
-		}
-
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ] = $this->get_mysql_table_catalog_column_name(
-				$table_schema,
-				$table_name,
-				$column_name
-			);
-			return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
+			$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+			if ( null !== $metadata && array_key_exists( 'column_name', $metadata ) ) {
+				return (string) $metadata['column_name'];
+			}
+
+				$exact_metadata = $this->get_mysql_table_catalog_column_metadata_rows(
+					$table_schema,
+					$table_name,
+					$column_name,
+					true
+				);
+				return 1 === count( $exact_metadata ) && array_key_exists( 'column_name', $exact_metadata[0] )
+					? (string) $exact_metadata[0]['column_name']
+					: null;
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -48356,8 +48274,7 @@ END',
 
 		$stored_column_name = $stmt->fetchColumn();
 		if ( false !== $stored_column_name ) {
-			$this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ] = (string) $stored_column_name;
-			return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
+			return (string) $stored_column_name;
 		}
 
 		$stmt = $this->connection->query(
@@ -48370,48 +48287,6 @@ END',
 				LIMIT 2',
 				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
 			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$stored_column_names = $stmt->fetchAll( PDO::FETCH_COLUMN );
-		$this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ] = 1 === count( $stored_column_names )
-			? (string) $stored_column_names[0]
-			: null;
-		return $this->mysql_table_column_name_cache[ $table_cache_key ][ $column_cache_key ];
-	}
-
-	/**
-	 * Resolve a stored column name from PostgreSQL catalogs.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Referenced column name.
-	 * @return string|null Stored column name, or null when no safe casing rewrite exists.
-	 */
-	private function get_mysql_table_catalog_column_name( string $table_schema, string $table_name, string $column_name ): ?string {
-		$stmt = $this->connection->query(
-			'SELECT c.column_name
-			FROM information_schema.columns c
-			WHERE c.table_schema = ?
-				AND c.table_name = ?
-				AND c.column_name = ?
-			LIMIT 1',
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$stored_column_name = $stmt->fetchColumn();
-		if ( false !== $stored_column_name ) {
-			return (string) $stored_column_name;
-		}
-
-		$stmt = $this->connection->query(
-			'SELECT c.column_name
-			FROM information_schema.columns c
-			WHERE c.table_schema = ?
-				AND c.table_name = ?
-				AND LOWER(c.column_name) = LOWER(?)
-			ORDER BY c.ordinal_position
-			LIMIT 2',
 			array( $table_schema, $table_name, $column_name )
 		);
 
