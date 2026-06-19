@@ -16794,11 +16794,6 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 
-		$use_postgresql_catalog = $this->should_use_postgresql_catalog_metadata();
-		if ( ! $use_postgresql_catalog ) {
-			$this->ensure_mysql_schema_metadata_tables();
-		}
-
 		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
 		$cache_key       = $this->get_mysql_introspection_result_cache_key(
 			'describe',
@@ -16863,11 +16858,6 @@ ORDER BY "ORDINAL_POSITION"',
 				$fetch_mode,
 				...$fetch_mode_args
 			);
-		}
-
-		$use_postgresql_catalog = $this->should_use_postgresql_catalog_metadata();
-		if ( ! $use_postgresql_catalog ) {
-			$this->ensure_mysql_schema_metadata_tables();
 		}
 
 		$cache_key = $this->get_mysql_introspection_result_cache_key(

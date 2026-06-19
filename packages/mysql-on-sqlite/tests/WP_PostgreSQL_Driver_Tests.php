@@ -44203,34 +44203,6 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Install SHOW TABLE STATUS AUTO_INCREMENT fixture rows.
-	 *
-	 * @param WP_PostgreSQL_Driver $driver Driver under test.
-	 */
-	private function install_show_table_status_auto_increment_fixture( WP_PostgreSQL_Driver $driver ): void {
-		$pdo = $driver->get_connection()->get_pdo();
-
-		$pdo->exec( 'CREATE TABLE wptests_posts ("ID" INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT)' );
-		$pdo->exec(
-			"INSERT INTO wptests_posts (value)
-			VALUES ('a'), ('b'), ('c'), ('d'), ('e')"
-		);
-		$pdo->exec(
-			"INSERT INTO information_schema.tables
-				(table_schema, table_name, table_type)
-			VALUES
-				('public', 'wptests_plain', 'BASE TABLE')"
-		);
-		$pdo->exec(
-			"INSERT INTO information_schema.columns
-				(table_schema, table_name, column_name, ordinal_position, data_type, character_maximum_length, collation_name, is_nullable, column_default, is_identity)
-			VALUES
-				('public', 'wptests_posts', 'ID', 1, 'bigint', NULL, NULL, 'NO', NULL, 'YES'),
-				('public', 'wptests_plain', 'id', 1, 'bigint', NULL, NULL, 'NO', NULL, 'NO')"
-		);
-	}
-
-	/**
 	 * Install MySQL-facing metadata for direct information_schema SELECT tests.
 	 *
 	 * @param WP_PostgreSQL_Driver $driver Driver under test.
