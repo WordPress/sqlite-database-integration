@@ -54,6 +54,24 @@ class WP_PostgreSQL_Driver {
 		'EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, ' .
 		'CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION';
 
+	private const MYSQL_EMPTY_SHOW_EVENTS_COLUMNS = array(
+		'Db',
+		'Name',
+		'Definer',
+		'Time zone',
+		'Type',
+		'Execute at',
+		'Interval value',
+		'Interval field',
+		'Starts',
+		'Ends',
+		'Status',
+		'Originator',
+		'character_set_client',
+		'collation_connection',
+		'Database Collation',
+	);
+
 	/**
 	 * Prefix for encoded MySQL text bytes PostgreSQL text cannot store directly.
 	 */
@@ -666,180 +684,35 @@ class WP_PostgreSQL_Driver {
 			return $procedure_result;
 		}
 
-		$mysql_variable_select_query = $this->get_mysql_variable_select_query( $query );
-		if ( null !== $mysql_variable_select_query ) {
-			return $this->set_mysql_static_show_result(
-				$mysql_variable_select_query['columns'],
-				array( $mysql_variable_select_query['row'] ),
-				$fetch_mode,
-				...$fetch_mode_args
-			);
+		$static_select_result = $this->execute_mysql_static_select_query( $query, $fetch_mode, $fetch_mode_args );
+		if ( null !== $static_select_result ) {
+			return $static_select_result;
 		}
 
-		$database_function_column = $this->get_mysql_database_function_select_column( $query );
-		if ( null !== $database_function_column ) {
-			return $this->set_mysql_static_show_result(
-				array( $database_function_column ),
-				array( array( $database_function_column => $this->db_name ) ),
-				$fetch_mode,
-				...$fetch_mode_args
-			);
+		$show_result = $this->execute_mysql_show_query( $query, $fetch_mode, $fetch_mode_args );
+		if ( null !== $show_result ) {
+			return $show_result;
 		}
 
-		$show_variables_query = $this->get_show_variables_query( $query );
-		if ( null !== $show_variables_query ) {
-			return $this->execute_show_variables_query( $show_variables_query, $fetch_mode, ...$fetch_mode_args );
-		}
+		$this->reject_unsupported_mysql_constructs(
+			$query,
+			array(
+				array( 'contains_unsupported_mysql_group_concat_function_query', 'Unsupported MySQL runtime function form.' ),
+				array( 'contains_unsupported_mysql_fulltext_search_query', 'Unsupported MySQL full-text search syntax.' ),
+			)
+		);
 
-		$show_character_set_query = $this->get_show_character_set_query( $query );
-		if ( null !== $show_character_set_query ) {
-			return $this->execute_show_character_set_query( $show_character_set_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_collation_query = $this->get_show_collation_query( $query );
-		if ( null !== $show_collation_query ) {
-			return $this->execute_show_collation_query( $show_collation_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_databases_query = $this->get_show_databases_query( $query );
-		if ( null !== $show_databases_query ) {
-			return $this->execute_show_databases_query( $show_databases_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_create_database_query = $this->get_show_create_database_query( $query );
-		if ( null !== $show_create_database_query ) {
-			$database      = (string) $show_create_database_query['database'];
-			$if_not_exists = ! empty( $show_create_database_query['if_not_exists'] );
-			if (
-				$this->should_use_postgresql_catalog_metadata()
-				? ! $this->mysql_database_exists_in_postgresql_catalog( $database )
-				: ( 0 !== strcasecmp( $database, $this->main_db_name ) && 0 !== strcasecmp( $database, 'information_schema' ) )
-			) {
-				$rows = array();
-			} else {
-				$rows = array(
-					array(
-						'Database'        => $database,
-						'Create Database' => sprintf(
-							'CREATE DATABASE %s%s DEFAULT CHARACTER SET %s COLLATE %s',
-							$if_not_exists ? 'IF NOT EXISTS ' : '',
-							$this->quote_mysql_identifier( $database ),
-							$this->charset,
-							$this->collation
-						),
-					),
-				);
-			}
-
-			return $this->set_mysql_static_show_result(
-				array( 'Database', 'Create Database' ),
-				$rows,
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$show_engines_query = $this->get_show_engines_query( $query );
-		if ( null !== $show_engines_query ) {
-			return $this->execute_show_engines_query( $show_engines_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_plugins_query = $this->get_show_plugins_query( $query );
-		if ( null !== $show_plugins_query ) {
-			return $this->execute_show_plugins_query( $show_plugins_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_routine_status_query = $this->get_show_routine_status_query( $query );
-		if ( null !== $show_routine_status_query ) {
-			return $this->execute_show_routine_status_query( $show_routine_status_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_events_query = $this->get_show_events_query( $query );
-		if ( null !== $show_events_query ) {
-			return $this->set_mysql_static_show_result(
-				array(
-					'Db',
-					'Name',
-					'Definer',
-					'Time zone',
-					'Type',
-					'Execute at',
-					'Interval value',
-					'Interval field',
-					'Starts',
-					'Ends',
-					'Status',
-					'Originator',
-					'character_set_client',
-					'collation_connection',
-					'Database Collation',
-				),
-				array(),
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$show_grants_query = $this->get_show_grants_query( $query );
-		if ( null !== $show_grants_query ) {
-			return $this->execute_show_grants_query( $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_status_query = $this->get_show_status_query( $query );
-		if ( null !== $show_status_query ) {
-			return $this->execute_show_status_query( $show_status_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_warnings_query = $this->get_show_diagnostics_query( $query, WP_MySQL_Lexer::WARNINGS_SYMBOL, 'warnings' );
-		if ( null !== $show_warnings_query ) {
-			return $this->execute_show_diagnostics_query( $show_warnings_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_errors_query = $this->get_show_diagnostics_query( $query, WP_MySQL_Lexer::ERRORS_SYMBOL, 'errors' );
-		if ( null !== $show_errors_query ) {
-			return $this->execute_show_diagnostics_query( $show_errors_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_processlist_query = $this->get_show_processlist_query( $query );
-		if ( null !== $show_processlist_query ) {
-			return $this->execute_show_processlist_query( $show_processlist_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_open_tables_query = $this->get_show_open_tables_query( $query );
-		if ( null !== $show_open_tables_query ) {
-			return $this->execute_show_open_tables_query( $show_open_tables_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$show_triggers_query = $this->get_show_triggers_query( $query );
-		if ( null !== $show_triggers_query ) {
-			return $this->execute_show_triggers_query( $show_triggers_query, $fetch_mode, ...$fetch_mode_args );
-		}
-
-		if ( $this->contains_unsupported_mysql_group_concat_function_query( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_fulltext_search_query( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL full-text search syntax.' );
-		}
-
-		$direct_information_schema_translated = false;
-		$direct_information_schema_cte_query  = $this->translate_direct_information_schema_cte_select_query( $query );
-		if ( null !== $direct_information_schema_cte_query ) {
-			$query                                = $direct_information_schema_cte_query;
-			$direct_information_schema_translated = true;
-		} else {
-			$direct_information_schema_query = $this->translate_direct_information_schema_select_query( $query );
-			if ( null !== $direct_information_schema_query ) {
-				$query                                = $direct_information_schema_query;
-				$direct_information_schema_translated = true;
-			} else {
-				$direct_information_schema_nested_query = $this->translate_application_select_with_direct_information_schema_nested_selects( $query );
-				if ( null !== $direct_information_schema_nested_query ) {
-					$query                                = $direct_information_schema_nested_query;
-					$direct_information_schema_translated = true;
-				}
-			}
+		$direct_information_schema_query      = $this->translate_first_mysql_query(
+			$query,
+			array(
+				'translate_direct_information_schema_cte_select_query',
+				'translate_direct_information_schema_select_query',
+				'translate_application_select_with_direct_information_schema_nested_selects',
+			)
+		);
+		$direct_information_schema_translated = null !== $direct_information_schema_query;
+		if ( $direct_information_schema_translated ) {
+			$query = $direct_information_schema_query;
 		}
 
 		if ( ! $direct_information_schema_translated && $this->should_reject_information_schema_backend_query( $query ) ) {
@@ -1024,25 +897,17 @@ class WP_PostgreSQL_Driver {
 
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
-			$this->execute_postgresql_statements( $drop_query['statements'] );
-			$this->clear_mysql_metadata_caches();
-			$this->last_result = 0;
-			return $this->last_result;
+			return $this->execute_mysql_admin_statements( $drop_query['statements'], true );
 		}
 
 		$drop_view_query = $this->translate_mysql_drop_view_query( $query );
 		if ( null !== $drop_view_query ) {
-			$this->execute_postgresql_statements( $drop_view_query['statements'] );
-			$this->last_result = 0;
-			return $this->last_result;
+			return $this->execute_mysql_admin_statements( $drop_view_query['statements'], false );
 		}
 
 		$drop_index_query = $this->translate_mysql_drop_index_query( $query );
 		if ( null !== $drop_index_query ) {
-			$this->execute_postgresql_statements( $drop_index_query['statements'] );
-			$this->clear_mysql_metadata_caches();
-			$this->last_result = 0;
-			return $this->last_result;
+			return $this->execute_mysql_admin_statements( $drop_index_query['statements'], true );
 		}
 		$unsupported_drop_statement = $this->get_unsupported_mysql_drop_statement_message( $query );
 		if ( null !== $unsupported_drop_statement ) {
@@ -1051,10 +916,7 @@ class WP_PostgreSQL_Driver {
 
 		$rename_table_query = $this->translate_mysql_rename_table_query( $query );
 		if ( null !== $rename_table_query ) {
-			$this->execute_postgresql_statements( $rename_table_query['statements'] );
-			$this->clear_mysql_metadata_caches();
-			$this->last_result = 0;
-			return $this->last_result;
+			return $this->execute_mysql_admin_statements( $rename_table_query['statements'], true );
 		}
 		$rename_tokens = $this->get_mysql_tokens( $query );
 		if (
@@ -1065,81 +927,9 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
 		}
 
-		$describe_table_reference = $this->get_describe_table_reference( $query );
-		if ( null !== $describe_table_reference ) {
-			return $this->execute_show_columns_query(
-				$describe_table_reference['schema'],
-				$describe_table_reference['table'],
-				false,
-				null,
-				null,
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$show_tables_query = $this->get_show_tables_query( $query );
-		if ( null !== $show_tables_query ) {
-			return $this->execute_show_tables_query(
-				$show_tables_query['full'],
-				$show_tables_query['schema'],
-				$show_tables_query['database'],
-				$show_tables_query['like'],
-				$show_tables_query['where'],
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$show_table_status_query = $this->get_show_table_status_query( $query );
-		if ( null !== $show_table_status_query ) {
-			return $this->execute_show_table_status_query(
-				$show_table_status_query,
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$show_create_table_query = $this->get_show_create_table_query( $query );
-		if ( null !== $show_create_table_query ) {
-			return $this->execute_show_create_table_query(
-				$show_create_table_query,
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$show_columns_query = $this->get_show_columns_query( $query );
-		if ( null !== $show_columns_query ) {
-			return $this->execute_show_columns_query(
-				$show_columns_query['schema'],
-				$show_columns_query['table'],
-				$show_columns_query['full'],
-				$show_columns_query['like'],
-				$show_columns_query['where'],
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$show_index_query = $this->get_show_index_query( $query );
-		if ( null !== $show_index_query ) {
-			return $this->execute_show_index_query(
-				$show_index_query['schema'],
-				$show_index_query['table'],
-				$show_index_query['where'],
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$table_administration_query = $this->get_mysql_table_administration_query( $query );
-		if ( null !== $table_administration_query ) {
-			return $this->execute_mysql_table_administration_query(
-				$table_administration_query,
-				$fetch_mode,
-				...$fetch_mode_args
-			);
+		$metadata_show_result = $this->execute_mysql_metadata_show_query( $query, $fetch_mode, $fetch_mode_args );
+		if ( null !== $metadata_show_result ) {
+			return $metadata_show_result;
 		}
 
 		$translated_for_postgresql    = $direct_information_schema_translated;
@@ -1310,41 +1100,20 @@ class WP_PostgreSQL_Driver {
 			}
 		}
 
-		if ( $this->contains_mysql_index_hint_syntax( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL index hint syntax.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_date_arithmetic_function_query( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL date arithmetic statement.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_date_format_function' ) ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_rand_function' ) ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_convert_function' ) ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_fulltext_search_query( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL full-text search syntax.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_common_function' ) ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_group_concat_function_query( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
-		}
-
-		if ( $this->contains_unsupported_mysql_week_function_query( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
-		}
+		$this->reject_unsupported_mysql_constructs(
+			$query,
+			array(
+				array( 'contains_mysql_index_hint_syntax', 'Unsupported MySQL index hint syntax.' ),
+				array( 'contains_unsupported_mysql_date_arithmetic_function_query', 'Unsupported MySQL date arithmetic statement.' ),
+				array( 'contains_unsupported_mysql_range_scanner_query', 'Unsupported MySQL runtime function form.', array( 'contains_unsupported_mysql_date_format_function' ) ),
+				array( 'contains_unsupported_mysql_range_scanner_query', 'Unsupported MySQL runtime function form.', array( 'contains_unsupported_mysql_rand_function' ) ),
+				array( 'contains_unsupported_mysql_range_scanner_query', 'Unsupported MySQL runtime function form.', array( 'contains_unsupported_mysql_convert_function' ) ),
+				array( 'contains_unsupported_mysql_fulltext_search_query', 'Unsupported MySQL full-text search syntax.' ),
+				array( 'contains_unsupported_mysql_range_scanner_query', 'Unsupported MySQL runtime function form.', array( 'contains_unsupported_mysql_common_function' ) ),
+				array( 'contains_unsupported_mysql_group_concat_function_query', 'Unsupported MySQL runtime function form.' ),
+				array( 'contains_unsupported_mysql_week_function_query', 'Unsupported MySQL WEEK() mode.' ),
+			)
+		);
 
 		$unsupported_mysql_administration_statement = $this->get_unsupported_mysql_administration_statement_message( $query );
 		if ( null !== $unsupported_mysql_administration_statement ) {
@@ -1395,6 +1164,194 @@ class WP_PostgreSQL_Driver {
 		return $this->last_result;
 	}
 
+	private function execute_mysql_static_select_query( string $query, $fetch_mode, array $fetch_mode_args ) {
+		$mysql_variable_select_query = $this->get_mysql_variable_select_query( $query );
+		if ( null !== $mysql_variable_select_query ) {
+			return $this->set_mysql_static_show_result(
+				$mysql_variable_select_query['columns'],
+				array( $mysql_variable_select_query['row'] ),
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
+		$database_function_column = $this->get_mysql_database_function_select_column( $query );
+		if ( null === $database_function_column ) {
+			return null;
+		}
+
+		return $this->set_mysql_static_show_result(
+			array( $database_function_column ),
+			array( array( $database_function_column => $this->db_name ) ),
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+
+	private function execute_mysql_show_query( string $query, $fetch_mode, array $fetch_mode_args ) {
+		foreach (
+			array(
+				array( 'get_show_variables_query', 'execute_show_variables_query' ),
+				array( 'get_show_character_set_query', 'execute_show_character_set_query' ),
+				array( 'get_show_collation_query', 'execute_show_collation_query' ),
+				array( 'get_show_databases_query', 'execute_show_databases_query' ),
+				array( 'get_show_create_database_query', 'execute_show_create_database_dispatch_query' ),
+				array( 'get_show_engines_query', 'execute_show_engines_query' ),
+				array( 'get_show_plugins_query', 'execute_show_plugins_query' ),
+				array( 'get_show_routine_status_query', 'execute_show_routine_status_query' ),
+				array( 'get_show_events_query', 'execute_show_events_dispatch_query' ),
+				array( 'get_show_grants_query', 'execute_show_grants_dispatch_query' ),
+				array( 'get_show_status_query', 'execute_show_status_query' ),
+				array( 'get_show_warnings_query', 'execute_show_diagnostics_query' ),
+				array( 'get_show_errors_query', 'execute_show_diagnostics_query' ),
+				array( 'get_show_processlist_query', 'execute_show_processlist_query' ),
+				array( 'get_show_open_tables_query', 'execute_show_open_tables_query' ),
+				array( 'get_show_triggers_query', 'execute_show_triggers_query' ),
+			) as $dispatcher
+		) {
+			$parsed_query = $this->{$dispatcher[0]}( $query );
+			if ( null !== $parsed_query ) {
+				return $this->{$dispatcher[1]}( $parsed_query, $fetch_mode, ...$fetch_mode_args );
+			}
+		}
+
+		return null;
+	}
+
+	private function execute_show_create_database_dispatch_query( array $show_create_database_query, $fetch_mode, ...$fetch_mode_args ) {
+		$database      = (string) $show_create_database_query['database'];
+		$if_not_exists = ! empty( $show_create_database_query['if_not_exists'] );
+		$exists        = $this->should_use_postgresql_catalog_metadata()
+			? $this->mysql_database_exists_in_postgresql_catalog( $database )
+			: ( 0 === strcasecmp( $database, $this->main_db_name ) || 0 === strcasecmp( $database, 'information_schema' ) );
+		$rows          = $exists ? array(
+			array(
+				'Database'        => $database,
+				'Create Database' => sprintf(
+					'CREATE DATABASE %s%s DEFAULT CHARACTER SET %s COLLATE %s',
+					$if_not_exists ? 'IF NOT EXISTS ' : '',
+					$this->quote_mysql_identifier( $database ),
+					$this->charset,
+					$this->collation
+				),
+			),
+		) : array();
+
+		return $this->set_mysql_static_show_result( array( 'Database', 'Create Database' ), $rows, $fetch_mode, ...$fetch_mode_args );
+	}
+
+	private function execute_show_events_dispatch_query( array $show_events_query, $fetch_mode, ...$fetch_mode_args ) {
+		return $this->set_mysql_static_show_result( self::MYSQL_EMPTY_SHOW_EVENTS_COLUMNS, array(), $fetch_mode, ...$fetch_mode_args );
+	}
+
+	private function execute_show_grants_dispatch_query( array $show_grants_query, $fetch_mode, ...$fetch_mode_args ) {
+		return $this->execute_show_grants_query( $fetch_mode, ...$fetch_mode_args );
+	}
+
+	private function get_show_warnings_query( string $query ): ?array {
+		return $this->get_show_diagnostics_query( $query, WP_MySQL_Lexer::WARNINGS_SYMBOL, 'warnings' );
+	}
+
+	private function get_show_errors_query( string $query ): ?array {
+		return $this->get_show_diagnostics_query( $query, WP_MySQL_Lexer::ERRORS_SYMBOL, 'errors' );
+	}
+
+	private function execute_mysql_metadata_show_query( string $query, $fetch_mode, array $fetch_mode_args ) {
+		$describe_table_reference = $this->get_describe_table_reference( $query );
+		if ( null !== $describe_table_reference ) {
+			return $this->execute_show_columns_query( $describe_table_reference['schema'], $describe_table_reference['table'], false, null, null, $fetch_mode, ...$fetch_mode_args );
+		}
+
+		$show_tables_query = $this->get_show_tables_query( $query );
+		if ( null !== $show_tables_query ) {
+			return $this->execute_show_tables_query(
+				$show_tables_query['full'],
+				$show_tables_query['schema'],
+				$show_tables_query['database'],
+				$show_tables_query['like'],
+				$show_tables_query['where'],
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
+		foreach (
+			array(
+				array( 'get_show_table_status_query', 'execute_show_table_status_query' ),
+				array( 'get_show_create_table_query', 'execute_show_create_table_query' ),
+			) as $dispatcher
+		) {
+			$parsed_query = $this->{$dispatcher[0]}( $query );
+			if ( null !== $parsed_query ) {
+				return $this->{$dispatcher[1]}( $parsed_query, $fetch_mode, ...$fetch_mode_args );
+			}
+		}
+
+		$show_columns_query = $this->get_show_columns_query( $query );
+		if ( null !== $show_columns_query ) {
+			return $this->execute_show_columns_query(
+				$show_columns_query['schema'],
+				$show_columns_query['table'],
+				$show_columns_query['full'],
+				$show_columns_query['like'],
+				$show_columns_query['where'],
+				$fetch_mode,
+				...$fetch_mode_args
+			);
+		}
+
+		$show_index_query = $this->get_show_index_query( $query );
+		if ( null !== $show_index_query ) {
+			return $this->execute_show_index_query( $show_index_query['schema'], $show_index_query['table'], $show_index_query['where'], $fetch_mode, ...$fetch_mode_args );
+		}
+
+		$table_administration_query = $this->get_mysql_table_administration_query( $query );
+		if ( null !== $table_administration_query ) {
+			return $this->execute_mysql_table_administration_query( $table_administration_query, $fetch_mode, ...$fetch_mode_args );
+		}
+
+		return null;
+	}
+
+	private function reject_unsupported_mysql_constructs( string $query, array $guards ): void {
+		foreach ( $guards as $guard ) {
+			$guard_args = array_slice( $guard, 2 );
+			if ( $this->{$guard[0]}( $query, ...$guard_args ) ) {
+				throw new InvalidArgumentException( $guard[1] );
+			}
+		}
+	}
+
+	private function translate_first_mysql_query( string $query, array $translator_names ): ?string {
+		foreach ( $translator_names as $translator_name ) {
+			$translated_query = $this->{$translator_name}( $query );
+			if ( null !== $translated_query ) {
+				return $translated_query;
+			}
+		}
+
+		return null;
+	}
+
+	private function execute_mysql_admin_statements( array $statements, bool $clear_metadata_caches ): int {
+		$this->execute_postgresql_statements( $statements );
+		if ( $clear_metadata_caches ) {
+			$this->clear_mysql_metadata_caches();
+		}
+		$this->last_result = 0;
+		return $this->last_result;
+	}
+
+	/**
+	 * Get an explicit unsupported error for unclaimed MySQL administration SQL.
+	 *
+	 * Supported SHOW/table-administration forms are dispatched before this guard.
+	 * If one of these MySQL-only statement families reaches the backend fallback,
+	 * fail closed rather than letting PostgreSQL parse incompatible SQL.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Unsupported error message, or null when not guarded.
+	 */
 	private function get_unsupported_mysql_administration_statement_message( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) ) {
@@ -1656,23 +1613,14 @@ class WP_PostgreSQL_Driver {
 	}
 
 	private function translate_mysql_select_query_for_postgresql( string $query ): array {
-		$translated_query = $this->translate_mysql_select_row_locking_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_direct_information_schema_select_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_application_select_with_direct_information_schema_nested_selects( $query );
+		$translated_query = $this->translate_first_mysql_query(
+			$query,
+			array(
+				'translate_mysql_select_row_locking_query',
+				'translate_direct_information_schema_select_query',
+				'translate_application_select_with_direct_information_schema_nested_selects',
+			)
+		);
 		if ( null !== $translated_query ) {
 			return array(
 				'sql'        => $translated_query,
@@ -1698,15 +1646,13 @@ class WP_PostgreSQL_Driver {
 			}
 		}
 
-		$translated_query = $this->translate_strict_aggregate_grouped_order_by_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_grouped_having_alias_query( $query );
+		$translated_query = $this->translate_first_mysql_query(
+			$query,
+			array(
+				'translate_strict_aggregate_grouped_order_by_query',
+				'translate_grouped_having_alias_query',
+			)
+		);
 		if ( null !== $translated_query ) {
 			return array(
 				'sql'        => $translated_query,
@@ -1723,47 +1669,17 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
-		$translated_query = $this->translate_mysql_version_function_select_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_simple_mysql_select_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_information_schema_main_database_select_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_distinct_order_by_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_sql_calc_found_rows_select_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_mysql_compatible_query( $query );
+		$translated_query = $this->translate_first_mysql_query(
+			$query,
+			array(
+				'translate_mysql_version_function_select_query',
+				'translate_simple_mysql_select_query',
+				'translate_information_schema_main_database_select_query',
+				'translate_distinct_order_by_query',
+				'translate_sql_calc_found_rows_select_query',
+				'translate_mysql_compatible_query',
+			)
+		);
 		if ( null !== $translated_query ) {
 			return array(
 				'sql'        => $translated_query,
