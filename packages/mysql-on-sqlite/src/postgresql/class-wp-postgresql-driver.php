@@ -8413,9 +8413,33 @@ $wp_mysql_primary_index_comment$',
 				throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
 			}
 
-			$columns = $this->parse_mysql_view_column_list( $tokens, $position + 1, $columns_end - 1 );
-			if ( null === $columns ) {
+			$column_start = $position + 1;
+			$column_end   = $columns_end - 1;
+			if ( $column_start >= $column_end ) {
 				throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+			}
+
+			$columns = array();
+			for ( $column_position = $column_start; $column_position < $column_end; ++$column_position ) {
+				$column_name = $this->get_mysql_identifier_token_value( $tokens[ $column_position ] ?? null );
+				if ( null === $column_name ) {
+					throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+				}
+
+				$columns[] = $this->connection->quote_identifier( $column_name );
+				++$column_position;
+
+				if ( $column_position === $column_end ) {
+					break;
+				}
+
+				if ( ! isset( $tokens[ $column_position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $column_position ]->id ) {
+					throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+				}
+
+				if ( $column_position + 1 === $column_end ) {
+					throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+				}
 			}
 
 			$columns_sql = ' (' . implode( ', ', $columns ) . ')';
@@ -8452,47 +8476,6 @@ $wp_mysql_primary_index_comment$',
 				),
 			),
 		);
-	}
-
-	/**
-	 * Parse a CREATE/ALTER VIEW column list.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First column token position.
-	 * @param int              $end    Final column token position, exclusive.
-	 * @return string[]|null PostgreSQL-quoted column identifiers, or null when unsupported.
-	 */
-	private function parse_mysql_view_column_list( array $tokens, int $start, int $end ): ?array {
-		if ( $start >= $end ) {
-			return null;
-		}
-
-		$columns  = array();
-		$position = $start;
-		while ( $position < $end ) {
-			$column_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
-			if ( null === $column_name ) {
-				return null;
-			}
-
-			$columns[] = $this->connection->quote_identifier( $column_name );
-			++$position;
-
-			if ( $position === $end ) {
-				break;
-			}
-
-			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $position ]->id ) {
-				return null;
-			}
-
-			++$position;
-			if ( $position === $end ) {
-				return null;
-			}
-		}
-
-		return $columns;
 	}
 
 	/**
