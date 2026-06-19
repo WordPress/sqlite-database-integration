@@ -20281,24 +20281,7 @@ ORDER BY table_name';
 			),
 		);
 
-		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
-			$this->last_result = $rows;
-			return $this->last_result;
-		}
-
-		if ( PDO::FETCH_NUM === $fetch_mode ) {
-			$this->last_result = array_map( 'array_values', $rows );
-			return $this->last_result;
-		}
-
-		$this->last_result = array_map(
-			static function ( array $row ) {
-				return (object) $row;
-			},
-			$rows
-		);
-
-		return $this->last_result;
+		return $this->set_mysql_associative_rows_fetch_result( $rows, $fetch_mode, ...$fetch_mode_args );
 	}
 
 	/**
@@ -21748,24 +21731,7 @@ ORDER BY t."TRIGGER_NAME"';
 		}
 		$this->last_column_count = count( $this->last_column_meta );
 
-		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
-			$this->last_result = $rows;
-			return $this->last_result;
-		}
-
-		if ( PDO::FETCH_NUM === $fetch_mode ) {
-			$this->last_result = array_map( 'array_values', $rows );
-			return $this->last_result;
-		}
-
-		$this->last_result = array_map(
-			static function ( array $row ) {
-				return (object) $row;
-			},
-			$rows
-		);
-
-		return $this->last_result;
+		return $this->set_mysql_associative_rows_fetch_result( $rows, $fetch_mode, ...$fetch_mode_args );
 	}
 
 	/**
@@ -21779,6 +21745,18 @@ ORDER BY t."TRIGGER_NAME"';
 	private function set_mysql_associative_result_rows( array $rows, $fetch_mode, ...$fetch_mode_args ) {
 		$this->last_found_rows = count( $rows );
 
+		return $this->set_mysql_associative_rows_fetch_result( $rows, $fetch_mode, ...$fetch_mode_args );
+	}
+
+	/**
+	 * Store already-fetched associative rows using the requested fetch mode.
+	 *
+	 * @param array[] $rows            Rows keyed by result column names.
+	 * @param int     $fetch_mode      PDO fetch mode.
+	 * @param array   ...$fetch_mode_args Additional fetch mode arguments.
+	 * @return mixed Result rows formatted for the requested fetch mode.
+	 */
+	private function set_mysql_associative_rows_fetch_result( array $rows, $fetch_mode, ...$fetch_mode_args ) {
 		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
 			$this->last_result = $rows;
 			return $this->last_result;
