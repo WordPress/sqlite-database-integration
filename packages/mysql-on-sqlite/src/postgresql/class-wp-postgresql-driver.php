@@ -5137,10 +5137,37 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'set_table_comment' === $metadata['operation'] ) {
-			$this->apply_mysql_set_table_comment_metadata(
+			$table_comment = (string) ( $metadata['comment'] ?? '' );
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				$logged_queries  = $this->last_postgresql_queries;
+				$table_collation = '';
+				try {
+					$table_metadata  = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
+					$table_collation = (string) ( $table_metadata['collation'] ?? '' );
+				} catch ( PDOException $e ) {
+					$table_collation = '';
+				}
+				$this->last_postgresql_queries = $logged_queries;
+
+				$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment, $table_collation );
+				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+				return;
+			}
+
+			$this->ensure_mysql_schema_metadata_tables();
+			$this->connection->query(
+				sprintf(
+					'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+				),
+				array( $table_schema, $table_name )
+			);
+			$this->insert_mysql_table_metadata(
 				$table_schema,
 				$table_name,
-				(string) ( $metadata['comment'] ?? '' )
+				array(
+					'comment' => $table_comment,
+				)
 			);
 			return;
 		}
@@ -5186,7 +5213,25 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'drop_column' === $metadata['operation'] ) {
-			$this->apply_mysql_drop_column_metadata( $table_schema, $table_name, $metadata );
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				$this->execute_postgresql_side_effect_statements(
+					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
+				);
+				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+				return;
+			}
+
+			$this->ensure_mysql_schema_metadata_tables();
+
+			$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['column'] );
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
+				$this->execute_postgresql_side_effect_statements(
+					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
+				);
+			}
+			$this->delete_mysql_index_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
+			$this->delete_mysql_foreign_key_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
+			$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['column'] );
 			return;
 		}
 
@@ -5377,47 +5422,6 @@ $wp_mysql_on_update$',
 			)
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Store table comment metadata.
-	 *
-	 * @param string $table_schema  Table schema.
-	 * @param string $table_name    Table name.
-	 * @param string $table_comment Table comment.
-	 */
-	private function apply_mysql_set_table_comment_metadata( string $table_schema, string $table_name, string $table_comment ): void {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$logged_queries  = $this->last_postgresql_queries;
-			$table_collation = '';
-			try {
-				$table_metadata  = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
-				$table_collation = (string) ( $table_metadata['collation'] ?? '' );
-			} catch ( PDOException $e ) {
-				$table_collation = '';
-			}
-			$this->last_postgresql_queries = $logged_queries;
-
-			$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment, $table_collation );
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			return;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->connection->query(
-			sprintf(
-				'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
-		$this->insert_mysql_table_metadata(
-			$table_schema,
-			$table_name,
-			array(
-				'comment' => $table_comment,
-			)
-		);
 	}
 
 	/**
@@ -5654,35 +5658,6 @@ $wp_mysql_on_update$',
 		}
 
 		return $has_default_generated || $has_on_update;
-	}
-
-	/**
-	 * Apply metadata updates for ALTER TABLE DROP COLUMN.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $metadata     DROP COLUMN metadata.
-	 */
-	private function apply_mysql_drop_column_metadata( string $table_schema, string $table_name, array $metadata ): void {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->execute_postgresql_side_effect_statements(
-				$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
-			);
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			return;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['column'] );
-		if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
-			$this->execute_postgresql_side_effect_statements(
-				$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
-			);
-		}
-		$this->delete_mysql_index_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
-		$this->delete_mysql_foreign_key_metadata_for_column( $table_schema, $table_name, $metadata['column'] );
-		$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['column'] );
 	}
 
 	/**
