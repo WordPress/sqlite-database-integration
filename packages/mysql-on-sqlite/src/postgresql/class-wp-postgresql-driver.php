@@ -5348,7 +5348,99 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'change_column' === $metadata['operation'] ) {
-			$this->apply_mysql_change_column_metadata( $table_schema, $table_name, $metadata );
+			$column              = $metadata['column'];
+			$catalog_recoverable = $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata );
+
+			if ( $this->should_use_postgresql_catalog_metadata() && $catalog_recoverable ) {
+				$old_has_on_update = $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] );
+				$new_has_on_update = $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' );
+
+				if ( $old_has_on_update ) {
+					$this->execute_postgresql_side_effect_statements(
+						$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
+					);
+				}
+				if ( $new_has_on_update ) {
+					$this->execute_postgresql_side_effect_statements(
+						$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
+					);
+				}
+
+				$this->sync_postgresql_catalog_column_comment(
+					$table_schema,
+					$table_name,
+					(string) $column['name'],
+					$this->get_postgresql_catalog_column_comment( $column )
+				);
+				$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
+				foreach ( $metadata['checks'] ?? array() as $check ) {
+					$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
+				}
+				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+				return;
+			}
+
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
+			}
+
+			$this->ensure_mysql_schema_metadata_tables();
+
+			$old_extra    = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
+			$ordinal_stmt = $this->connection->query(
+				sprintf(
+					'SELECT ordinal_position FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+				),
+				array( $table_schema, $table_name, $metadata['old_column'] )
+			);
+			$ordinal      = $ordinal_stmt->fetchColumn();
+
+			$column['ordinal'] = false === $ordinal
+				? $this->get_next_mysql_column_ordinal( $table_schema, $table_name )
+				: (int) $ordinal;
+
+			$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['old_column'] );
+			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
+			$column_nullable = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
+				$this->execute_postgresql_side_effect_statements(
+					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
+				);
+			}
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
+				$this->execute_postgresql_side_effect_statements(
+					$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
+				);
+			}
+			$this->rename_mysql_index_column_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_column'],
+				$column['name']
+			);
+			$this->rename_mysql_foreign_key_column_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_column'],
+				$column['name']
+			);
+			$this->rename_mysql_referenced_foreign_key_column_metadata(
+				$table_schema,
+				$table_name,
+				$metadata['old_column'],
+				$column['name']
+			);
+			$index_ordinal = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
+			foreach ( $metadata['indexes'] ?? array() as $index ) {
+				$index['ordinal'] = $index_ordinal;
+				$this->delete_mysql_index_metadata( $table_schema, $table_name, $index['name'] );
+				$this->insert_mysql_index_metadata( $table_schema, $table_name, $index, $column_nullable );
+				++$index_ordinal;
+			}
+			foreach ( $metadata['checks'] ?? array() as $check ) {
+				$this->insert_mysql_check_metadata( $table_schema, $table_name, $check );
+			}
 			return;
 		}
 
@@ -5524,109 +5616,6 @@ $wp_mysql_on_update$',
 			)
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Apply metadata updates for ALTER TABLE CHANGE/MODIFY COLUMN.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $metadata     CHANGE/MODIFY COLUMN metadata.
-	 */
-	private function apply_mysql_change_column_metadata( string $table_schema, string $table_name, array $metadata ): void {
-		$column              = $metadata['column'];
-		$catalog_recoverable = $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata );
-
-		if ( $this->should_use_postgresql_catalog_metadata() && $catalog_recoverable ) {
-			$old_has_on_update = $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] );
-			$new_has_on_update = $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' );
-
-			if ( $old_has_on_update ) {
-				$this->execute_postgresql_side_effect_statements(
-					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
-				);
-			}
-			if ( $new_has_on_update ) {
-				$this->execute_postgresql_side_effect_statements(
-					$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
-				);
-			}
-
-			$this->sync_postgresql_catalog_column_comment(
-				$table_schema,
-				$table_name,
-				(string) $column['name'],
-				$this->get_postgresql_catalog_column_comment( $column )
-			);
-			$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
-			foreach ( $metadata['checks'] ?? array() as $check ) {
-				$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-			}
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			return;
-		}
-
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$old_extra    = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
-		$ordinal_stmt = $this->connection->query(
-			sprintf(
-				'SELECT ordinal_position FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $metadata['old_column'] )
-		);
-		$ordinal      = $ordinal_stmt->fetchColumn();
-
-		$column['ordinal'] = false === $ordinal
-			? $this->get_next_mysql_column_ordinal( $table_schema, $table_name )
-			: (int) $ordinal;
-
-		$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['old_column'] );
-		$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
-		$column_nullable = array( strtolower( $column['name'] ) => $column['nullable'] ?? 'YES' );
-		if ( $this->mysql_column_extra_has_on_update_current_timestamp( $old_extra ) ) {
-			$this->execute_postgresql_side_effect_statements(
-				$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
-			);
-		}
-		if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
-			$this->execute_postgresql_side_effect_statements(
-				$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
-			);
-		}
-		$this->rename_mysql_index_column_metadata(
-			$table_schema,
-			$table_name,
-			$metadata['old_column'],
-			$column['name']
-		);
-		$this->rename_mysql_foreign_key_column_metadata(
-			$table_schema,
-			$table_name,
-			$metadata['old_column'],
-			$column['name']
-		);
-		$this->rename_mysql_referenced_foreign_key_column_metadata(
-			$table_schema,
-			$table_name,
-			$metadata['old_column'],
-			$column['name']
-		);
-		$index_ordinal = $this->get_next_mysql_index_ordinal( $table_schema, $table_name );
-		foreach ( $metadata['indexes'] ?? array() as $index ) {
-			$index['ordinal'] = $index_ordinal;
-			$this->delete_mysql_index_metadata( $table_schema, $table_name, $index['name'] );
-			$this->insert_mysql_index_metadata( $table_schema, $table_name, $index, $column_nullable );
-			++$index_ordinal;
-		}
-		foreach ( $metadata['checks'] ?? array() as $check ) {
-			$this->insert_mysql_check_metadata( $table_schema, $table_name, $check );
-		}
 	}
 
 	/**
