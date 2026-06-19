@@ -36581,7 +36581,7 @@ $wp_mysql_on_update$',
 		)();
 		$get_sql = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_tables_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'tables' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

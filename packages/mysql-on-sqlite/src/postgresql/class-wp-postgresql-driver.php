@@ -18021,7 +18021,7 @@ ORDER BY table_name';
 			WHERE "TABLE_SCHEMA" = ?
 				AND "TABLE_TYPE" = ?
 			ORDER BY "TABLE_NAME"',
-			$this->get_direct_information_schema_tables_relation_sql()
+			$this->get_direct_information_schema_relation_sql( 'tables' )
 		);
 		$params = array(
 			$this->get_direct_information_schema_display_schema( $show_table_status_query['schema'] ),
@@ -37988,6 +37988,83 @@ WHERE option_name IN (
 			);
 		}
 
+		if ( 'tables' === $view ) {
+			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
+				return $this->get_direct_information_schema_literal_relation_sql(
+					$this->get_direct_information_schema_relation_columns( 'tables' ),
+					$this->get_direct_information_schema_table_rows()
+				);
+			}
+
+			$table_comment_sql = "pg_catalog.obj_description(pc.oid, 'pg_class')";
+			return sprintf(
+				'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	t.table_name AS "TABLE_NAME",
+	CASE WHEN t.table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "TABLE_TYPE",
+	\'InnoDB\' AS "ENGINE",
+	10 AS "VERSION",
+	\'Dynamic\' AS "ROW_FORMAT",
+	GREATEST(CAST(COALESCE(pc.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS",
+	0 AS "AVG_ROW_LENGTH",
+	0 AS "DATA_LENGTH",
+	0 AS "MAX_DATA_LENGTH",
+	0 AS "INDEX_LENGTH",
+	0 AS "DATA_FREE",
+	CASE
+		WHEN identity_column.column_name IS NULL THEN NULL
+		ELSE CAST(COALESCE(ps.last_value + ps.increment_by, ps.start_value, 1) AS bigint)
+	END AS "AUTO_INCREMENT",
+	TO_CHAR(CURRENT_TIMESTAMP, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATE_TIME",
+	NULL AS "UPDATE_TIME",
+	NULL AS "CHECK_TIME",
+	%2$s AS "TABLE_COLLATION",
+	NULL AS "CHECKSUM",
+	\'\' AS "CREATE_OPTIONS",
+	%4$s AS "TABLE_COMMENT"
+FROM information_schema.tables t
+LEFT JOIN pg_catalog.pg_namespace pn
+	ON pn.nspname = t.table_schema
+LEFT JOIN pg_catalog.pg_class pc
+	ON pc.relnamespace = pn.oid
+	AND pc.relname = t.table_name
+	AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+LEFT JOIN LATERAL (
+	SELECT
+		c.column_name,
+		pg_catalog.pg_get_serial_sequence(
+			pg_catalog.format(\'%%I.%%I\', t.table_schema, t.table_name),
+			c.column_name
+		)::regclass AS sequence_oid
+	FROM information_schema.columns c
+	WHERE c.table_schema = t.table_schema
+		AND c.table_name = t.table_name
+		AND (
+			c.is_identity = \'YES\'
+			OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\'
+		)
+	ORDER BY c.ordinal_position
+	LIMIT 1
+) identity_column
+	ON TRUE
+LEFT JOIN pg_catalog.pg_class seq
+	ON seq.oid = identity_column.sequence_oid
+LEFT JOIN pg_catalog.pg_namespace seq_ns
+	ON seq_ns.oid = seq.relnamespace
+LEFT JOIN pg_catalog.pg_sequences ps
+	ON ps.schemaname = seq_ns.nspname
+	AND ps.sequencename = seq.relname
+WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
+	AND t.table_name NOT IN (%3$s)',
+				$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
+				$this->get_direct_information_schema_table_collation_catalog_sql( 't.table_schema', 't.table_name', $table_comment_sql ),
+				$this->get_direct_information_schema_hidden_table_list_sql(),
+				$this->get_postgresql_catalog_table_comment_sql( $table_comment_sql )
+			);
+		}
+
 		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) ) {
 			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
@@ -39855,98 +39932,6 @@ WHERE s.schema_name = \'information_schema\'
 		return $this->get_direct_information_schema_literal_relation_sql(
 			$this->get_direct_information_schema_relation_columns( $view ),
 			array()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.TABLES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_tables_relation_sql(): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_tables_catalog_relation_sql();
-		}
-
-		$columns = $this->get_direct_information_schema_relation_columns( 'tables' );
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$columns,
-			$this->get_direct_information_schema_table_rows()
-		);
-	}
-
-	/**
-	 * Build information_schema.TABLES rows from PostgreSQL catalogs.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_tables_catalog_relation_sql(): string {
-		$table_comment_sql = "pg_catalog.obj_description(pc.oid, 'pg_class')";
-		return sprintf(
-			'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	t.table_name AS "TABLE_NAME",
-	CASE WHEN t.table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "TABLE_TYPE",
-	\'InnoDB\' AS "ENGINE",
-	10 AS "VERSION",
-	\'Dynamic\' AS "ROW_FORMAT",
-	GREATEST(CAST(COALESCE(pc.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS",
-	0 AS "AVG_ROW_LENGTH",
-	0 AS "DATA_LENGTH",
-	0 AS "MAX_DATA_LENGTH",
-	0 AS "INDEX_LENGTH",
-	0 AS "DATA_FREE",
-	CASE
-		WHEN identity_column.column_name IS NULL THEN NULL
-		ELSE CAST(COALESCE(ps.last_value + ps.increment_by, ps.start_value, 1) AS bigint)
-	END AS "AUTO_INCREMENT",
-	TO_CHAR(CURRENT_TIMESTAMP, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATE_TIME",
-	NULL AS "UPDATE_TIME",
-	NULL AS "CHECK_TIME",
-	%2$s AS "TABLE_COLLATION",
-	NULL AS "CHECKSUM",
-	\'\' AS "CREATE_OPTIONS",
-	%4$s AS "TABLE_COMMENT"
-FROM information_schema.tables t
-LEFT JOIN pg_catalog.pg_namespace pn
-	ON pn.nspname = t.table_schema
-LEFT JOIN pg_catalog.pg_class pc
-	ON pc.relnamespace = pn.oid
-	AND pc.relname = t.table_name
-	AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-LEFT JOIN LATERAL (
-	SELECT
-		c.column_name,
-		pg_catalog.pg_get_serial_sequence(
-			pg_catalog.format(\'%%I.%%I\', t.table_schema, t.table_name),
-			c.column_name
-		)::regclass AS sequence_oid
-	FROM information_schema.columns c
-	WHERE c.table_schema = t.table_schema
-		AND c.table_name = t.table_name
-		AND (
-			c.is_identity = \'YES\'
-			OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\'
-		)
-	ORDER BY c.ordinal_position
-	LIMIT 1
-) identity_column
-	ON TRUE
-LEFT JOIN pg_catalog.pg_class seq
-	ON seq.oid = identity_column.sequence_oid
-LEFT JOIN pg_catalog.pg_namespace seq_ns
-	ON seq_ns.oid = seq.relnamespace
-LEFT JOIN pg_catalog.pg_sequences ps
-	ON ps.schemaname = seq_ns.nspname
-	AND ps.sequencename = seq.relname
-WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
-	AND t.table_name NOT IN (%3$s)',
-			$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
-			$this->get_direct_information_schema_table_collation_catalog_sql( 't.table_schema', 't.table_name', $table_comment_sql ),
-			$this->get_direct_information_schema_hidden_table_list_sql(),
-			$this->get_postgresql_catalog_table_comment_sql( $table_comment_sql )
 		);
 	}
 
