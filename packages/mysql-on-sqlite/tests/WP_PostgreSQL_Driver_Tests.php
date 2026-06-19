@@ -38310,7 +38310,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_schemata_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'schemata' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

@@ -19539,7 +19539,7 @@ ORDER BY table_name';
 	private function execute_show_databases_query( array $show_databases_query, $fetch_mode, ...$fetch_mode_args ) {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			$sql    = 'SELECT s."SCHEMA_NAME" AS "Database"
-				FROM (' . $this->get_direct_information_schema_schemata_relation_sql() . ') s
+				FROM (' . $this->get_direct_information_schema_relation_sql( 'schemata' ) . ') s
 				ORDER BY "Database"';
 			$params = array();
 			$stmt   = $this->connection->query( $sql, $params );
@@ -19617,7 +19617,7 @@ ORDER BY table_name';
 	 */
 	private function mysql_database_exists_in_postgresql_catalog( string $database ): bool {
 		$sql    = 'SELECT 1
-			FROM (' . $this->get_direct_information_schema_schemata_relation_sql() . ') s
+			FROM (' . $this->get_direct_information_schema_relation_sql( 'schemata' ) . ') s
 			WHERE ? IS NOT NULL AND s."SCHEMA_NAME" = ?
 			LIMIT 1';
 		$params = array( $this->main_db_name, $database );
@@ -37988,6 +37988,48 @@ WHERE option_name IN (
 			);
 		}
 
+		if ( 'schemata' === $view ) {
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				return sprintf(
+					'SELECT
+	\'def\' AS "CATALOG_NAME",
+	%1$s AS "SCHEMA_NAME",
+	%2$s AS "DEFAULT_CHARACTER_SET_NAME",
+	%3$s AS "DEFAULT_COLLATION_NAME",
+	NULL AS "SQL_PATH",
+	\'NO\' AS "DEFAULT_ENCRYPTION"
+FROM information_schema.schemata s
+WHERE s.schema_name = \'information_schema\'
+	OR LEFT(s.schema_name, 3) <> \'pg_\'',
+					$this->get_direct_information_schema_display_schema_sql( 's.schema_name' ),
+					$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
+					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+				);
+			}
+
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'schemata' ),
+				array(
+					array(
+						'CATALOG_NAME'               => 'def',
+						'SCHEMA_NAME'                => 'information_schema',
+						'DEFAULT_CHARACTER_SET_NAME' => self::DEFAULT_MYSQL_CHARSET,
+						'DEFAULT_COLLATION_NAME'     => self::DEFAULT_MYSQL_COLLATION,
+						'SQL_PATH'                   => null,
+						'DEFAULT_ENCRYPTION'         => 'NO',
+					),
+					array(
+						'CATALOG_NAME'               => 'def',
+						'SCHEMA_NAME'                => $this->main_db_name,
+						'DEFAULT_CHARACTER_SET_NAME' => self::DEFAULT_MYSQL_CHARSET,
+						'DEFAULT_COLLATION_NAME'     => self::DEFAULT_MYSQL_COLLATION,
+						'SQL_PATH'                   => null,
+						'DEFAULT_ENCRYPTION'         => 'NO',
+					),
+				)
+			);
+		}
+
 		if ( 'tables' === $view ) {
 			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
 				return $this->get_direct_information_schema_literal_relation_sql(
@@ -40288,54 +40330,6 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 			array_map(
 				array( $this->connection, 'quote' ),
 				$this->get_direct_information_schema_hidden_table_names()
-			)
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.SCHEMATA relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_schemata_relation_sql(): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "CATALOG_NAME",
-	%1$s AS "SCHEMA_NAME",
-	%2$s AS "DEFAULT_CHARACTER_SET_NAME",
-	%3$s AS "DEFAULT_COLLATION_NAME",
-	NULL AS "SQL_PATH",
-	\'NO\' AS "DEFAULT_ENCRYPTION"
-FROM information_schema.schemata s
-WHERE s.schema_name = \'information_schema\'
-	OR LEFT(s.schema_name, 3) <> \'pg_\'',
-				$this->get_direct_information_schema_display_schema_sql( 's.schema_name' ),
-				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-			);
-		}
-
-		$columns = $this->get_direct_information_schema_relation_columns( 'schemata' );
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$columns,
-			array(
-				array(
-					'CATALOG_NAME'               => 'def',
-					'SCHEMA_NAME'                => 'information_schema',
-					'DEFAULT_CHARACTER_SET_NAME' => self::DEFAULT_MYSQL_CHARSET,
-					'DEFAULT_COLLATION_NAME'     => self::DEFAULT_MYSQL_COLLATION,
-					'SQL_PATH'                   => null,
-					'DEFAULT_ENCRYPTION'         => 'NO',
-				),
-				array(
-					'CATALOG_NAME'               => 'def',
-					'SCHEMA_NAME'                => $this->main_db_name,
-					'DEFAULT_CHARACTER_SET_NAME' => self::DEFAULT_MYSQL_CHARSET,
-					'DEFAULT_COLLATION_NAME'     => self::DEFAULT_MYSQL_COLLATION,
-					'SQL_PATH'                   => null,
-					'DEFAULT_ENCRYPTION'         => 'NO',
-				),
 			)
 		);
 	}
