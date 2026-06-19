@@ -16040,22 +16040,16 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		switch ( $tokens[0]->id ) {
-			case WP_MySQL_Lexer::ANALYZE_SYMBOL:
-				$operation = 'analyze';
-				break;
-			case WP_MySQL_Lexer::CHECK_SYMBOL:
-				$operation = 'check';
-				break;
-			case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
-				$operation = 'optimize';
-				break;
-			case WP_MySQL_Lexer::REPAIR_SYMBOL:
-				$operation = 'repair';
-				break;
-			default:
-				return null;
+		$operations = array(
+			WP_MySQL_Lexer::ANALYZE_SYMBOL  => 'analyze',
+			WP_MySQL_Lexer::CHECK_SYMBOL    => 'check',
+			WP_MySQL_Lexer::OPTIMIZE_SYMBOL => 'optimize',
+			WP_MySQL_Lexer::REPAIR_SYMBOL   => 'repair',
+		);
+		if ( ! isset( $operations[ $tokens[0]->id ] ) ) {
+			return null;
 		}
+		$operation = $operations[ $tokens[0]->id ];
 
 		$position = 1;
 		$this->consume_mysql_table_administration_leading_option( $tokens, $position, $operation );
