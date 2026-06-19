@@ -27446,32 +27446,11 @@ WHERE option_name IN (
 			$select_rows[] = 'SELECT ' . implode( ', ', $projections );
 		}
 
-		$select_sql           = implode( ' UNION ALL ', $select_rows );
-		$temp_table_hash      = substr( md5( $table_name . "\0" . implode( "\0", $columns ) . "\0" . implode( "\0", array_map( 'implode', $value_rows ) ) ), 0, 12 );
-		$temp_table_name      = '__wp_pg_replace_values_' . $temp_table_hash;
-		$ordinal_table_name   = '__wp_pg_replace_values_ord_' . $temp_table_hash;
-		$quoted_temp_table    = $this->connection->quote_identifier( $temp_table_name );
-		$quoted_ordinal_table = $this->connection->quote_identifier( $ordinal_table_name );
-		$rows_alias           = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
-		$target_alias         = $this->connection->quote_identifier( '__wp_pg_replace_target' );
-		$quoted_target_table  = $this->get_postgresql_unqualified_dml_table_reference_sql( $table_name );
-		$delete_predicate_sql = $this->get_mysql_replace_select_delete_predicate_sql(
-			$target_alias,
-			$rows_alias,
-			$conflict_index_groups
-		);
-		if ( null === $delete_predicate_sql ) {
-			return null;
-		}
-
-		$insert_projection_sql = array();
-		foreach ( $columns as $column ) {
-			$insert_projection_sql[] = sprintf(
-				'%s.%s',
-				$rows_alias,
-				$this->connection->quote_identifier( $column )
-			);
-		}
+		$select_sql         = implode( ' UNION ALL ', $select_rows );
+		$temp_table_hash    = substr( md5( $table_name . "\0" . implode( "\0", $columns ) . "\0" . implode( "\0", array_map( 'implode', $value_rows ) ) ), 0, 12 );
+		$temp_table_name    = '__wp_pg_replace_values_' . $temp_table_hash;
+		$ordinal_table_name = '__wp_pg_replace_values_ord_' . $temp_table_hash;
+		$quoted_temp_table  = $this->connection->quote_identifier( $temp_table_name );
 
 		$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
 			$table_name,
@@ -27489,60 +27468,15 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$duplicate_conflict_rows_sql = $this->get_mysql_replace_select_duplicate_conflict_rows_sql(
-			$quoted_temp_table,
-			$rows_alias,
-			$conflict_index_groups
-		);
-		if ( null === $duplicate_conflict_rows_sql ) {
-			return null;
-		}
-
-		$delete_sql = sprintf(
-			'DELETE FROM %s AS %s WHERE EXISTS (SELECT 1 FROM %s AS %s WHERE %s)',
-			$quoted_target_table,
-			$target_alias,
-			$quoted_temp_table,
-			$rows_alias,
-			$delete_predicate_sql
-		);
-		$insert_sql = sprintf(
-			'INSERT INTO %s (%s) SELECT %s FROM %s AS %s',
-			$quoted_target_table,
-			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
-			implode( ', ', $insert_projection_sql ),
-			$quoted_temp_table,
-			$rows_alias
-		);
-		$drop_sql   = sprintf( 'DROP TABLE IF EXISTS %s', $quoted_temp_table );
-
-		return array(
-			'sql'                              => $insert_sql,
-			'statements'                       => array(
-				$drop_sql,
-				sprintf( 'CREATE TEMPORARY TABLE %s AS %s', $quoted_temp_table, $select_sql ),
-				$delete_sql,
-				$insert_sql,
-				$drop_sql,
-			),
-			'materialize_statements'           => array(
-				$drop_sql,
-				sprintf( 'CREATE TEMPORARY TABLE %s AS %s', $quoted_temp_table, $select_sql ),
-			),
-			'mutation_statements'              => array(
-				$delete_sql,
-				$insert_sql,
-			),
-			'cleanup_statements'               => array(
-				$drop_sql,
-			),
-			'replace_select_materialized'      => true,
-			'replace_select_affected_rows_sql' => $affected_rows_count_sql,
-			'duplicate_conflict_rows_sql'      => $duplicate_conflict_rows_sql,
-			'source_table_sql'                 => $quoted_temp_table,
-			'ordinal_source_table_sql'         => $quoted_ordinal_table,
-			'conflict_indexes'                 => $conflict_indexes,
-			'conflict_index_groups'            => $conflict_index_groups,
+		return $this->get_mysql_replace_materialized_delete_insert_flow(
+			$table_name,
+			$columns,
+			$select_sql,
+			$temp_table_name,
+			$ordinal_table_name,
+			$conflict_indexes,
+			$conflict_index_groups,
+			$affected_rows_count_sql
 		);
 	}
 
@@ -27581,9 +27515,53 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$temp_table_hash      = substr( md5( $table_name . "\0" . $select_start . "\0" . $select_end . "\0" . implode( "\0", $columns ) ), 0, 12 );
-		$temp_table_name      = '__wp_pg_replace_select_' . $temp_table_hash;
-		$ordinal_table_name   = '__wp_pg_replace_select_ord_' . $temp_table_hash;
+		$temp_table_hash    = substr( md5( $table_name . "\0" . $select_start . "\0" . $select_end . "\0" . implode( "\0", $columns ) ), 0, 12 );
+		$temp_table_name    = '__wp_pg_replace_select_' . $temp_table_hash;
+		$ordinal_table_name = '__wp_pg_replace_select_ord_' . $temp_table_hash;
+		$quoted_temp_table  = $this->connection->quote_identifier( $temp_table_name );
+
+		$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
+			$table_name,
+			$columns,
+			$select_columns,
+			$default_columns,
+			$conflict_target,
+			$tokens,
+			$select_start,
+			$select_end,
+			$quoted_temp_table,
+			$conflict_index_groups
+		);
+		if ( null === $affected_rows_count_sql ) {
+			return null;
+		}
+
+		return $this->get_mysql_replace_materialized_delete_insert_flow(
+			$table_name,
+			$columns,
+			$select_sql,
+			$temp_table_name,
+			$ordinal_table_name,
+			$conflict_indexes,
+			$conflict_index_groups,
+			$affected_rows_count_sql
+		);
+	}
+
+	/**
+	 * Build shared materialized delete and insert statements for REPLACE flows.
+	 *
+	 * @param string   $table_name              Target table name.
+	 * @param string[] $columns                 Target column names.
+	 * @param string   $select_sql              SELECT SQL to materialize.
+	 * @param string   $temp_table_name         Temporary source table name.
+	 * @param string   $ordinal_table_name      Temporary ordinal table name.
+	 * @param array    $conflict_indexes        Conflict indexes used for INSERT metadata.
+	 * @param array[]  $conflict_index_groups   Conflict target column/index tuple groups.
+	 * @param string   $affected_rows_count_sql Affected row count SQL.
+	 * @return array|null Materialized flow metadata, or null when unsupported.
+	 */
+	private function get_mysql_replace_materialized_delete_insert_flow( string $table_name, array $columns, string $select_sql, string $temp_table_name, string $ordinal_table_name, array $conflict_indexes, array $conflict_index_groups, string $affected_rows_count_sql ): ?array {
 		$quoted_temp_table    = $this->connection->quote_identifier( $temp_table_name );
 		$quoted_ordinal_table = $this->connection->quote_identifier( $ordinal_table_name );
 		$rows_alias           = $this->connection->quote_identifier( '__wp_pg_replace_rows' );
@@ -27605,22 +27583,6 @@ WHERE option_name IN (
 				$rows_alias,
 				$this->connection->quote_identifier( $column )
 			);
-		}
-
-		$affected_rows_count_sql = $this->get_mysql_replace_select_affected_rows_count_sql(
-			$table_name,
-			$columns,
-			$select_columns,
-			$default_columns,
-			$conflict_target,
-			$tokens,
-			$select_start,
-			$select_end,
-			$quoted_temp_table,
-			$conflict_index_groups
-		);
-		if ( null === $affected_rows_count_sql ) {
-			return null;
 		}
 
 		$duplicate_conflict_rows_sql = $this->get_mysql_replace_select_duplicate_conflict_rows_sql(
