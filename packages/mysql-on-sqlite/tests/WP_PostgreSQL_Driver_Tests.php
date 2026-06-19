@@ -33665,7 +33665,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_column_privileges_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'column_privileges' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33715,7 +33715,7 @@ $wp_mysql_on_update$',
 
 		$get_administrable_roles_sql = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_administrable_role_authorizations_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'administrable_role_authorizations' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33731,7 +33731,7 @@ $wp_mysql_on_update$',
 
 		$get_enabled_roles_sql = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_enabled_roles_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'enabled_roles' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33778,7 +33778,7 @@ $wp_mysql_on_update$',
 
 		$get_column_sql = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_role_column_grants_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'role_column_grants' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33795,7 +33795,7 @@ $wp_mysql_on_update$',
 
 		$get_routine_sql = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_role_routine_grants_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'role_routine_grants' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -34342,7 +34342,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_keywords_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'keywords' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -34586,7 +34586,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_innodb_lock_waits_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'innodb_lock_waits' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

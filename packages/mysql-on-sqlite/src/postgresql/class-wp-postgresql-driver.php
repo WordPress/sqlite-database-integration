@@ -38129,6 +38129,160 @@ WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
 			);
 		}
 
+		if ( 'column_privileges' === $view ) {
+			return str_replace(
+				array(
+					'tp.table_name AS "TABLE_NAME",',
+					'information_schema.table_privileges tp',
+					'tp.',
+				),
+				array(
+					'tp.table_name AS "TABLE_NAME",
+	tp.column_name AS "COLUMN_NAME",',
+					'information_schema.column_privileges cp',
+					'cp.',
+				),
+				$this->get_direct_information_schema_table_privileges_relation_sql()
+			);
+		}
+
+		if ( 'role_column_grants' === $view ) {
+			return str_replace(
+				array(
+					'rtg.table_name AS "TABLE_NAME",',
+					'information_schema.role_table_grants rtg',
+					'rtg.',
+				),
+				array(
+					'rtg.table_name AS "TABLE_NAME",
+	rtg.column_name AS "COLUMN_NAME",',
+					'information_schema.role_column_grants rcg',
+					'rcg.',
+				),
+				$this->get_direct_information_schema_role_table_grants_relation_sql()
+			);
+		}
+
+		if ( 'role_routine_grants' === $view ) {
+			return sprintf(
+				'SELECT
+	rrg.grantor AS "GRANTOR",
+	\'%%\' AS "GRANTOR_HOST",
+	rrg.grantee AS "GRANTEE",
+	\'%%\' AS "GRANTEE_HOST",
+	\'def\' AS "SPECIFIC_CATALOG",
+	%1$s AS "SPECIFIC_SCHEMA",
+	rrg.specific_name AS "SPECIFIC_NAME",
+	\'def\' AS "ROUTINE_CATALOG",
+	%2$s AS "ROUTINE_SCHEMA",
+	rrg.routine_name AS "ROUTINE_NAME",
+	rrg.privilege_type AS "PRIVILEGE_TYPE",
+	rrg.is_grantable AS "IS_GRANTABLE"
+FROM information_schema.role_routine_grants rrg
+WHERE rrg.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(rrg.specific_schema, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'rrg.specific_schema' ),
+				$this->get_direct_information_schema_display_schema_sql( 'rrg.routine_schema' )
+			);
+		}
+
+		if ( 'administrable_role_authorizations' === $view ) {
+			return str_replace(
+				array( 'applicable_roles ar', 'ar.' ),
+				array( 'administrable_role_authorizations ara', 'ara.' ),
+				$this->get_direct_information_schema_applicable_roles_relation_sql()
+			);
+		}
+
+		if ( 'enabled_roles' === $view ) {
+			return 'SELECT
+	er.role_name AS "ROLE_NAME",
+	\'%\' AS "ROLE_HOST",
+	\'NO\' AS "IS_DEFAULT",
+	\'NO\' AS "IS_MANDATORY"
+FROM information_schema.enabled_roles er';
+		}
+
+		if ( 'keywords' === $view ) {
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				return 'SELECT
+	UPPER(k.word) AS "WORD",
+	CASE WHEN k.catcode = \'R\' THEN 1 ELSE 0 END AS "RESERVED"
+FROM pg_catalog.pg_get_keywords() k';
+			}
+
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'keywords' ),
+				array(
+					array(
+						'WORD'     => 'SELECT',
+						'RESERVED' => 1,
+					),
+					array(
+						'WORD'     => 'FROM',
+						'RESERVED' => 1,
+					),
+					array(
+						'WORD'     => 'WHERE',
+						'RESERVED' => 1,
+					),
+					array(
+						'WORD'     => 'VALUE',
+						'RESERVED' => 0,
+					),
+				)
+			);
+		}
+
+		if ( 'innodb_lock_waits' === $view ) {
+			return 'SELECT
+	CAST(waiting.pid AS text) AS "REQUESTING_TRX_ID",
+	pg_catalog.concat_ws(
+		\':\',
+		waiting.locktype,
+		waiting.mode,
+		CAST(waiting.database AS text),
+		CAST(waiting.relation AS text),
+		CAST(waiting.page AS text),
+		CAST(waiting.tuple AS text),
+		CAST(waiting.virtualxid AS text),
+		CAST(waiting.transactionid AS text),
+		CAST(waiting.classid AS text),
+		CAST(waiting.objid AS text),
+		CAST(waiting.objsubid AS text)
+	) AS "REQUESTED_LOCK_ID",
+	CAST(blocking.pid AS text) AS "BLOCKING_TRX_ID",
+	pg_catalog.concat_ws(
+		\':\',
+		blocking.locktype,
+		blocking.mode,
+		CAST(blocking.database AS text),
+		CAST(blocking.relation AS text),
+		CAST(blocking.page AS text),
+		CAST(blocking.tuple AS text),
+		CAST(blocking.virtualxid AS text),
+		CAST(blocking.transactionid AS text),
+		CAST(blocking.classid AS text),
+		CAST(blocking.objid AS text),
+		CAST(blocking.objsubid AS text)
+	) AS "BLOCKING_LOCK_ID"
+FROM pg_catalog.pg_locks waiting
+JOIN pg_catalog.pg_locks blocking
+	ON blocking.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid))
+	AND blocking.granted
+	AND waiting.locktype = blocking.locktype
+	AND waiting.database IS NOT DISTINCT FROM blocking.database
+	AND waiting.relation IS NOT DISTINCT FROM blocking.relation
+	AND waiting.page IS NOT DISTINCT FROM blocking.page
+	AND waiting.tuple IS NOT DISTINCT FROM blocking.tuple
+	AND waiting.virtualxid IS NOT DISTINCT FROM blocking.virtualxid
+	AND waiting.transactionid IS NOT DISTINCT FROM blocking.transactionid
+	AND waiting.classid IS NOT DISTINCT FROM blocking.classid
+	AND waiting.objid IS NOT DISTINCT FROM blocking.objid
+	AND waiting.objsubid IS NOT DISTINCT FROM blocking.objsubid
+WHERE NOT waiting.granted';
+		}
+
 		if ( 'tablespaces_extensions' === $view ) {
 			return 'SELECT
 	ts.spcname AS "TABLESPACE_NAME",
@@ -39672,28 +39826,6 @@ WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	}
 
 	/**
-	 * Build the MySQL-shaped information_schema.COLUMN_PRIVILEGES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_column_privileges_relation_sql(): string {
-		return str_replace(
-			array(
-				'tp.table_name AS "TABLE_NAME",',
-				'information_schema.table_privileges tp',
-				'tp.',
-			),
-			array(
-				'tp.table_name AS "TABLE_NAME",
-	tp.column_name AS "COLUMN_NAME",',
-				'information_schema.column_privileges cp',
-				'cp.',
-			),
-			$this->get_direct_information_schema_table_privileges_relation_sql()
-		);
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.ROLE_TABLE_GRANTS relation.
 	 *
 	 * @return string Relation SQL.
@@ -39720,56 +39852,6 @@ WHERE rtg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	}
 
 	/**
-	 * Build the MySQL-shaped information_schema.ROLE_COLUMN_GRANTS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_role_column_grants_relation_sql(): string {
-		return str_replace(
-			array(
-				'rtg.table_name AS "TABLE_NAME",',
-				'information_schema.role_table_grants rtg',
-				'rtg.',
-			),
-			array(
-				'rtg.table_name AS "TABLE_NAME",
-	rtg.column_name AS "COLUMN_NAME",',
-				'information_schema.role_column_grants rcg',
-				'rcg.',
-			),
-			$this->get_direct_information_schema_role_table_grants_relation_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.ROLE_ROUTINE_GRANTS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_role_routine_grants_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	rrg.grantor AS "GRANTOR",
-	\'%%\' AS "GRANTOR_HOST",
-	rrg.grantee AS "GRANTEE",
-	\'%%\' AS "GRANTEE_HOST",
-	\'def\' AS "SPECIFIC_CATALOG",
-	%1$s AS "SPECIFIC_SCHEMA",
-	rrg.specific_name AS "SPECIFIC_NAME",
-	\'def\' AS "ROUTINE_CATALOG",
-	%2$s AS "ROUTINE_SCHEMA",
-	rrg.routine_name AS "ROUTINE_NAME",
-	rrg.privilege_type AS "PRIVILEGE_TYPE",
-	rrg.is_grantable AS "IS_GRANTABLE"
-FROM information_schema.role_routine_grants rrg
-WHERE rrg.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(rrg.specific_schema, 3) <> \'pg_\'',
-			$this->get_direct_information_schema_display_schema_sql( 'rrg.specific_schema' ),
-			$this->get_direct_information_schema_display_schema_sql( 'rrg.routine_schema' )
-		);
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.APPLICABLE_ROLES relation.
 	 *
 	 * @return string Relation SQL.
@@ -39786,123 +39868,6 @@ WHERE rrg.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	\'NO\' AS "IS_DEFAULT",
 	\'NO\' AS "IS_MANDATORY"
 FROM information_schema.applicable_roles ar';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.ADMINISTRABLE_ROLE_AUTHORIZATIONS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_administrable_role_authorizations_relation_sql(): string {
-		return str_replace(
-			array( 'applicable_roles ar', 'ar.' ),
-			array( 'administrable_role_authorizations ara', 'ara.' ),
-			$this->get_direct_information_schema_applicable_roles_relation_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.ENABLED_ROLES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_enabled_roles_relation_sql(): string {
-		return 'SELECT
-	er.role_name AS "ROLE_NAME",
-	\'%\' AS "ROLE_HOST",
-	\'NO\' AS "IS_DEFAULT",
-	\'NO\' AS "IS_MANDATORY"
-FROM information_schema.enabled_roles er';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.KEYWORDS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_keywords_relation_sql(): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return 'SELECT
-	UPPER(k.word) AS "WORD",
-	CASE WHEN k.catcode = \'R\' THEN 1 ELSE 0 END AS "RESERVED"
-FROM pg_catalog.pg_get_keywords() k';
-		}
-
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( 'keywords' ),
-			array(
-				array(
-					'WORD'     => 'SELECT',
-					'RESERVED' => 1,
-				),
-				array(
-					'WORD'     => 'FROM',
-					'RESERVED' => 1,
-				),
-				array(
-					'WORD'     => 'WHERE',
-					'RESERVED' => 1,
-				),
-				array(
-					'WORD'     => 'VALUE',
-					'RESERVED' => 0,
-				),
-			)
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.INNODB_LOCK_WAITS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_innodb_lock_waits_relation_sql(): string {
-		return 'SELECT
-	CAST(waiting.pid AS text) AS "REQUESTING_TRX_ID",
-	pg_catalog.concat_ws(
-		\':\',
-		waiting.locktype,
-		waiting.mode,
-		CAST(waiting.database AS text),
-		CAST(waiting.relation AS text),
-		CAST(waiting.page AS text),
-		CAST(waiting.tuple AS text),
-		CAST(waiting.virtualxid AS text),
-		CAST(waiting.transactionid AS text),
-		CAST(waiting.classid AS text),
-		CAST(waiting.objid AS text),
-		CAST(waiting.objsubid AS text)
-	) AS "REQUESTED_LOCK_ID",
-	CAST(blocking.pid AS text) AS "BLOCKING_TRX_ID",
-	pg_catalog.concat_ws(
-		\':\',
-		blocking.locktype,
-		blocking.mode,
-		CAST(blocking.database AS text),
-		CAST(blocking.relation AS text),
-		CAST(blocking.page AS text),
-		CAST(blocking.tuple AS text),
-		CAST(blocking.virtualxid AS text),
-		CAST(blocking.transactionid AS text),
-		CAST(blocking.classid AS text),
-		CAST(blocking.objid AS text),
-		CAST(blocking.objsubid AS text)
-	) AS "BLOCKING_LOCK_ID"
-FROM pg_catalog.pg_locks waiting
-JOIN pg_catalog.pg_locks blocking
-	ON blocking.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid))
-	AND blocking.granted
-	AND waiting.locktype = blocking.locktype
-	AND waiting.database IS NOT DISTINCT FROM blocking.database
-	AND waiting.relation IS NOT DISTINCT FROM blocking.relation
-	AND waiting.page IS NOT DISTINCT FROM blocking.page
-	AND waiting.tuple IS NOT DISTINCT FROM blocking.tuple
-	AND waiting.virtualxid IS NOT DISTINCT FROM blocking.virtualxid
-	AND waiting.transactionid IS NOT DISTINCT FROM blocking.transactionid
-	AND waiting.classid IS NOT DISTINCT FROM blocking.classid
-	AND waiting.objid IS NOT DISTINCT FROM blocking.objid
-	AND waiting.objsubid IS NOT DISTINCT FROM blocking.objsubid
-WHERE NOT waiting.granted';
 	}
 
 	/**
