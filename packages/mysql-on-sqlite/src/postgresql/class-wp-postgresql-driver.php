@@ -60107,130 +60107,40 @@ $wp_mysql_%1$s_domain$',
 	 * @return array
 	 */
 	private function map_native_type( string $native_type ): array {
-		$defaults = array(
+		static $map = null;
+		if ( null === $map ) {
+			$map = array();
+			foreach (
+				array(
+					array( array( 'int2', 'smallint' ), 'SHORT', PDO::PARAM_INT, 2, 63 ),
+					array( array( 'int4', 'integer' ), 'LONG', PDO::PARAM_INT, 3, 63 ),
+					array( array( 'int8', 'bigint' ), 'LONGLONG', PDO::PARAM_INT, 8, 63 ),
+					array( array( 'bytea', 'blob' ), 'BLOB', PDO::PARAM_LOB, 252, 63 ),
+					array( array( 'bool', 'boolean' ), 'TINY', PDO::PARAM_BOOL, 1, 63 ),
+					array( array( 'numeric', 'decimal' ), 'NEWDECIMAL', PDO::PARAM_STR, 246, 63 ),
+					array( array( 'float4' ), 'FLOAT', PDO::PARAM_STR, 4, 63 ),
+					array( array( 'float8' ), 'DOUBLE', PDO::PARAM_STR, 5, 63 ),
+					array( array( 'date' ), 'DATE', PDO::PARAM_STR, 10, 63 ),
+					array( array( 'time' ), 'TIME', PDO::PARAM_STR, 11, 63 ),
+					array( array( 'timestamp', 'timestamptz', 'datetime' ), 'DATETIME', PDO::PARAM_STR, 12, 63 ),
+				) as $type
+			) {
+				foreach ( $type[0] as $alias ) {
+					$map[ $alias ] = array(
+						'native_type' => $type[1],
+						'pdo_type'    => $type[2],
+						'mysqli_type' => $type[3],
+						'charsetnr'   => $type[4],
+					);
+				}
+			}
+		}
+
+		return $map[ $native_type ] ?? array(
 			'native_type' => 'VAR_STRING',
 			'pdo_type'    => PDO::PARAM_STR,
 			'mysqli_type' => 253,
 			'charsetnr'   => 255,
 		);
-
-		$map = array(
-			'int2'        => array(
-				'native_type' => 'SHORT',
-				'pdo_type'    => PDO::PARAM_INT,
-				'mysqli_type' => 2,
-				'charsetnr'   => 63,
-			),
-			'smallint'    => array(
-				'native_type' => 'SHORT',
-				'pdo_type'    => PDO::PARAM_INT,
-				'mysqli_type' => 2,
-				'charsetnr'   => 63,
-			),
-			'int4'        => array(
-				'native_type' => 'LONG',
-				'pdo_type'    => PDO::PARAM_INT,
-				'mysqli_type' => 3,
-				'charsetnr'   => 63,
-			),
-			'integer'     => array(
-				'native_type' => 'LONG',
-				'pdo_type'    => PDO::PARAM_INT,
-				'mysqli_type' => 3,
-				'charsetnr'   => 63,
-			),
-			'int8'        => array(
-				'native_type' => 'LONGLONG',
-				'pdo_type'    => PDO::PARAM_INT,
-				'mysqli_type' => 8,
-				'charsetnr'   => 63,
-			),
-			'bigint'      => array(
-				'native_type' => 'LONGLONG',
-				'pdo_type'    => PDO::PARAM_INT,
-				'mysqli_type' => 8,
-				'charsetnr'   => 63,
-			),
-			'bytea'       => array(
-				'native_type' => 'BLOB',
-				'pdo_type'    => PDO::PARAM_LOB,
-				'mysqli_type' => 252,
-				'charsetnr'   => 63,
-			),
-			'blob'        => array(
-				'native_type' => 'BLOB',
-				'pdo_type'    => PDO::PARAM_LOB,
-				'mysqli_type' => 252,
-				'charsetnr'   => 63,
-			),
-			'bool'        => array(
-				'native_type' => 'TINY',
-				'pdo_type'    => PDO::PARAM_BOOL,
-				'mysqli_type' => 1,
-				'charsetnr'   => 63,
-			),
-			'boolean'     => array(
-				'native_type' => 'TINY',
-				'pdo_type'    => PDO::PARAM_BOOL,
-				'mysqli_type' => 1,
-				'charsetnr'   => 63,
-			),
-			'numeric'     => array(
-				'native_type' => 'NEWDECIMAL',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 246,
-				'charsetnr'   => 63,
-			),
-			'decimal'     => array(
-				'native_type' => 'NEWDECIMAL',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 246,
-				'charsetnr'   => 63,
-			),
-			'float4'      => array(
-				'native_type' => 'FLOAT',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 4,
-				'charsetnr'   => 63,
-			),
-			'float8'      => array(
-				'native_type' => 'DOUBLE',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 5,
-				'charsetnr'   => 63,
-			),
-			'date'        => array(
-				'native_type' => 'DATE',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 10,
-				'charsetnr'   => 63,
-			),
-			'time'        => array(
-				'native_type' => 'TIME',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 11,
-				'charsetnr'   => 63,
-			),
-			'timestamp'   => array(
-				'native_type' => 'DATETIME',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 12,
-				'charsetnr'   => 63,
-			),
-			'timestamptz' => array(
-				'native_type' => 'DATETIME',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 12,
-				'charsetnr'   => 63,
-			),
-			'datetime'    => array(
-				'native_type' => 'DATETIME',
-				'pdo_type'    => PDO::PARAM_STR,
-				'mysqli_type' => 12,
-				'charsetnr'   => 63,
-			),
-		);
-
-		return isset( $map[ $native_type ] ) ? $map[ $native_type ] : $defaults;
 	}
 }
