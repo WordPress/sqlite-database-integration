@@ -17854,10 +17854,18 @@ ORDER BY ordinal_position';
 		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
 		if ( null !== $where_filter && null === $where_expression_filter ) {
 			foreach ( $where_filter as $filter ) {
+				if ( $table_column === $this->connection->quote_identifier( $filter['column'] ) ) {
+					$filter_column = 'table_name';
+				} elseif ( 'Table_type' === $filter['column'] ) {
+					$filter_column = "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END";
+				} else {
+					throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
+				}
+
 				$sql     .= sprintf(
 					' AND %s',
 					$this->get_mysql_show_where_filter_condition_sql(
-						$this->get_show_tables_filter_column_expression( $filter['column'], $table_column ),
+						$filter_column,
 						$filter
 					)
 				);
@@ -17947,25 +17955,6 @@ ORDER BY table_name';
 			$fetch_mode,
 			...$fetch_mode_args
 		);
-	}
-
-	/**
-	 * Get the SQL expression that backs a MySQL SHOW TABLES output column.
-	 *
-	 * @param string $column       MySQL output column name.
-	 * @param string $table_column Quoted Tables_in_* output column.
-	 * @return string SQL expression.
-	 */
-	private function get_show_tables_filter_column_expression( string $column, string $table_column ): string {
-		if ( $table_column === $this->connection->quote_identifier( $column ) ) {
-			return 'table_name';
-		}
-
-		if ( 'Table_type' === $column ) {
-			return "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END";
-		}
-
-		throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
 	}
 
 	/**
