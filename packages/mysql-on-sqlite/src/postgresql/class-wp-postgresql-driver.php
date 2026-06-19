@@ -54297,7 +54297,40 @@ END',
 
 		switch ( $function_name ) {
 			case 'ascii':
-				return 1 === $count ? $this->get_postgresql_mysql_ascii_sql( $argument_sql[0] ) : null;
+				if ( 1 !== $count ) {
+					return null;
+				}
+
+				$text_sql           = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
+				$prefix_chars       = preg_match_all( '/./us', self::MYSQL_TEXT_ENCODING_PREFIX );
+				$prefix_length      = false === $prefix_chars ? strlen( self::MYSQL_TEXT_ENCODING_PREFIX ) : $prefix_chars;
+				$prefix_sql         = $this->connection->get_pdo()->quote( self::MYSQL_TEXT_ENCODING_PREFIX );
+				$payload_sql        = sprintf( 'SUBSTR(%s, %d)', $text_sql, $prefix_length + 1 );
+				$separator_sql      = sprintf( "STRPOS(%s, ':')", $payload_sql );
+				$length_sql         = sprintf( 'SUBSTR(%s, 1, GREATEST(%s - 1, 0))', $payload_sql, $separator_sql );
+				$after_length_sql   = sprintf( 'SUBSTR(%s, GREATEST(%s + 1, 1))', $payload_sql, $separator_sql );
+				$hash_separator_sql = sprintf( "STRPOS(%s, ':')", $after_length_sql );
+				$hash_sql           = sprintf( 'SUBSTR(%s, 1, GREATEST(%s - 1, 0))', $after_length_sql, $hash_separator_sql );
+				$hex_sql            = sprintf( 'SUBSTR(%s, GREATEST(%s + 1, 1))', $after_length_sql, $hash_separator_sql );
+				$envelope_sql       = sprintf(
+					"SUBSTR(%1\$s, 1, %2\$d) = %3\$s AND %4\$s > 1 AND %5\$s > 1 AND TRANSLATE(%6\$s, '0123456789', '') = '' AND (%6\$s = '0' OR SUBSTR(%6\$s, 1, 1) <> '0') AND %7\$s ~ '^[0-9a-f]{64}$' AND MOD(CHAR_LENGTH(%8\$s), 2) = 0 AND %8\$s ~ '^[0-9a-f]*$' AND (%6\$s = '0' OR CHAR_LENGTH(%8\$s) >= 2)",
+					$text_sql,
+					$prefix_length,
+					$prefix_sql,
+					$separator_sql,
+					$hash_separator_sql,
+					$length_sql,
+					$hash_sql,
+					$hex_sql
+				);
+
+				return sprintf(
+					"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s THEN CASE WHEN CAST(%3\$s AS bigint) = 0 THEN 0 ELSE GET_BYTE(DECODE(SUBSTR(%4\$s, 1, 2), 'hex'), 0) END WHEN %1\$s = '' THEN 0 ELSE GET_BYTE(CONVERT_TO(%1\$s, 'UTF8'), 0) END",
+					$text_sql,
+					$envelope_sql,
+					$length_sql,
+					$hex_sql
+				);
 
 			case 'length':
 				return 1 === $count ? $this->get_postgresql_mysql_text_byte_length_sql( $argument_sql[0] ) : null;
@@ -55131,50 +55164,6 @@ $wp_mysql_%1$s_domain$',
 			$prefix_sql,
 			$separator_sql,
 			$length_sql
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL byte-oriented ASCII(text).
-	 *
-	 * MySQL returns the first byte of the first character, 0 for an empty string,
-	 * and NULL for NULL. PostgreSQL's ASCII() returns a Unicode code point, so use
-	 * bytea inspection instead. Text envelopes carry original MySQL bytes as hex;
-	 * read their first encoded byte directly when present.
-	 *
-	 * @param string $argument_sql Translated argument SQL.
-	 * @return string PostgreSQL ASCII-compatible SQL.
-	 */
-	private function get_postgresql_mysql_ascii_sql( string $argument_sql ): string {
-		$text_sql           = sprintf( 'CAST(%s AS text)', $argument_sql );
-		$prefix_chars       = preg_match_all( '/./us', self::MYSQL_TEXT_ENCODING_PREFIX );
-		$prefix_length      = false === $prefix_chars ? strlen( self::MYSQL_TEXT_ENCODING_PREFIX ) : $prefix_chars;
-		$prefix_sql         = $this->connection->get_pdo()->quote( self::MYSQL_TEXT_ENCODING_PREFIX );
-		$payload_sql        = sprintf( 'SUBSTR(%s, %d)', $text_sql, $prefix_length + 1 );
-		$separator_sql      = sprintf( "STRPOS(%s, ':')", $payload_sql );
-		$length_sql         = sprintf( 'SUBSTR(%s, 1, GREATEST(%s - 1, 0))', $payload_sql, $separator_sql );
-		$after_length_sql   = sprintf( 'SUBSTR(%s, GREATEST(%s + 1, 1))', $payload_sql, $separator_sql );
-		$hash_separator_sql = sprintf( "STRPOS(%s, ':')", $after_length_sql );
-		$hash_sql           = sprintf( 'SUBSTR(%s, 1, GREATEST(%s - 1, 0))', $after_length_sql, $hash_separator_sql );
-		$hex_sql            = sprintf( 'SUBSTR(%s, GREATEST(%s + 1, 1))', $after_length_sql, $hash_separator_sql );
-		$envelope_sql       = sprintf(
-			"SUBSTR(%1\$s, 1, %2\$d) = %3\$s AND %4\$s > 1 AND %5\$s > 1 AND TRANSLATE(%6\$s, '0123456789', '') = '' AND (%6\$s = '0' OR SUBSTR(%6\$s, 1, 1) <> '0') AND %7\$s ~ '^[0-9a-f]{64}$' AND MOD(CHAR_LENGTH(%8\$s), 2) = 0 AND %8\$s ~ '^[0-9a-f]*$' AND (%6\$s = '0' OR CHAR_LENGTH(%8\$s) >= 2)",
-			$text_sql,
-			$prefix_length,
-			$prefix_sql,
-			$separator_sql,
-			$hash_separator_sql,
-			$length_sql,
-			$hash_sql,
-			$hex_sql
-		);
-
-		return sprintf(
-			"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s THEN CASE WHEN CAST(%3\$s AS bigint) = 0 THEN 0 ELSE GET_BYTE(DECODE(SUBSTR(%4\$s, 1, 2), 'hex'), 0) END WHEN %1\$s = '' THEN 0 ELSE GET_BYTE(CONVERT_TO(%1\$s, 'UTF8'), 0) END",
-			$text_sql,
-			$envelope_sql,
-			$length_sql,
-			$hex_sql
 		);
 	}
 
