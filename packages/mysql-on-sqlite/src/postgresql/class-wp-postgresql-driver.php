@@ -23054,8 +23054,9 @@ ORDER BY
 			return $this->get_describe_postgresql_catalog_query();
 		}
 
-		$column_metadata_table = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
-		$index_metadata_table  = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
+		$column_metadata_table   = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
+		$catalog_key_expression  = $this->get_direct_information_schema_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
+		$metadata_key_expression = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name', false );
 
 		return sprintf(
 			'WITH requested_table AS (
@@ -23083,58 +23084,7 @@ catalog_columns AS (
 			END
 		) AS column_type,
 		COALESCE(cm.is_nullable, c.is_nullable) AS is_nullable,
-		CASE
-			WHEN EXISTS (
-				SELECT 1
-				FROM %2$s im
-				WHERE im.table_schema = c.table_schema
-					AND im.table_name = c.table_name
-					AND im.column_name = c.column_name
-					AND UPPER(im.key_name) = \'PRIMARY\'
-			) THEN \'PRI\'
-			WHEN EXISTS (
-				SELECT 1
-				FROM %2$s im
-				WHERE im.table_schema = c.table_schema
-					AND im.table_name = c.table_name
-					AND im.column_name = c.column_name
-					AND im.non_unique = \'0\'
-			) THEN \'UNI\'
-			WHEN EXISTS (
-				SELECT 1
-				FROM %2$s im
-				WHERE im.table_schema = c.table_schema
-					AND im.table_name = c.table_name
-					AND im.column_name = c.column_name
-			) THEN \'MUL\'
-			WHEN EXISTS (
-				SELECT 1
-				FROM information_schema.table_constraints tc
-				INNER JOIN information_schema.key_column_usage kcu
-					ON kcu.constraint_schema = tc.constraint_schema
-					AND kcu.constraint_name = tc.constraint_name
-					AND kcu.table_schema = tc.table_schema
-					AND kcu.table_name = tc.table_name
-				WHERE tc.table_schema = c.table_schema
-					AND tc.table_name = c.table_name
-					AND tc.constraint_type = \'PRIMARY KEY\'
-					AND kcu.column_name = c.column_name
-			) THEN \'PRI\'
-			WHEN EXISTS (
-				SELECT 1
-				FROM information_schema.table_constraints tc
-				INNER JOIN information_schema.key_column_usage kcu
-					ON kcu.constraint_schema = tc.constraint_schema
-					AND kcu.constraint_name = tc.constraint_name
-					AND kcu.table_schema = tc.table_schema
-					AND kcu.table_name = tc.table_name
-				WHERE tc.table_schema = c.table_schema
-					AND tc.table_name = c.table_name
-					AND tc.constraint_type = \'UNIQUE\'
-					AND kcu.column_name = c.column_name
-			) THEN \'UNI\'
-			ELSE \'\'
-		END AS column_key,
+		%2$s AS column_key,
 			CASE
 				WHEN cm.column_name IS NOT NULL THEN cm.column_default
 				ELSE c.column_default
@@ -23162,32 +23112,7 @@ metadata_columns AS (
 		cm.column_name AS field_name,
 		cm.column_type,
 		cm.is_nullable,
-		CASE
-			WHEN EXISTS (
-				SELECT 1
-				FROM %2$s im
-				WHERE im.table_schema = cm.table_schema
-					AND im.table_name = cm.table_name
-					AND im.column_name = cm.column_name
-					AND UPPER(im.key_name) = \'PRIMARY\'
-			) THEN \'PRI\'
-			WHEN EXISTS (
-				SELECT 1
-				FROM %2$s im
-				WHERE im.table_schema = cm.table_schema
-					AND im.table_name = cm.table_name
-					AND im.column_name = cm.column_name
-					AND im.non_unique = \'0\'
-			) THEN \'UNI\'
-			WHEN EXISTS (
-				SELECT 1
-				FROM %2$s im
-				WHERE im.table_schema = cm.table_schema
-					AND im.table_name = cm.table_name
-					AND im.column_name = cm.column_name
-			) THEN \'MUL\'
-			ELSE \'\'
-		END AS column_key,
+		%3$s AS column_key,
 		cm.column_default,
 		cm.extra AS column_extra,
 		cm.ordinal_position
@@ -23218,7 +23143,8 @@ SELECT
 FROM describe_rows
 ORDER BY ordinal_position',
 			$column_metadata_table,
-			$index_metadata_table
+			$catalog_key_expression,
+			$metadata_key_expression
 		);
 	}
 
@@ -23290,7 +23216,6 @@ ORDER BY ordinal_position',
 		}
 
 		$column_metadata_table = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
-		$index_metadata_table  = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
 
 		$type_expression = 'CASE
 		WHEN c.data_type = \'character varying\' THEN
@@ -23327,91 +23252,8 @@ ORDER BY ordinal_position',
 		ELSE NULL
 	END';
 
-		$catalog_key_expression = sprintf(
-			'CASE
-		WHEN EXISTS (
-			SELECT 1
-			FROM %1$s im
-			WHERE im.table_schema = c.table_schema
-				AND im.table_name = c.table_name
-				AND im.column_name = c.column_name
-				AND UPPER(im.key_name) = \'PRIMARY\'
-		) THEN \'PRI\'
-		WHEN EXISTS (
-			SELECT 1
-			FROM %1$s im
-			WHERE im.table_schema = c.table_schema
-				AND im.table_name = c.table_name
-				AND im.column_name = c.column_name
-				AND im.non_unique = \'0\'
-		) THEN \'UNI\'
-		WHEN EXISTS (
-			SELECT 1
-			FROM %1$s im
-			WHERE im.table_schema = c.table_schema
-				AND im.table_name = c.table_name
-				AND im.column_name = c.column_name
-		) THEN \'MUL\'
-		WHEN EXISTS (
-			SELECT 1
-			FROM information_schema.table_constraints tc
-			INNER JOIN information_schema.key_column_usage kcu
-				ON kcu.constraint_schema = tc.constraint_schema
-				AND kcu.constraint_name = tc.constraint_name
-				AND kcu.table_schema = tc.table_schema
-				AND kcu.table_name = tc.table_name
-			WHERE tc.table_schema = c.table_schema
-				AND tc.table_name = c.table_name
-				AND tc.constraint_type = \'PRIMARY KEY\'
-				AND kcu.column_name = c.column_name
-		) THEN \'PRI\'
-		WHEN EXISTS (
-			SELECT 1
-			FROM information_schema.table_constraints tc
-			INNER JOIN information_schema.key_column_usage kcu
-				ON kcu.constraint_schema = tc.constraint_schema
-				AND kcu.constraint_name = tc.constraint_name
-				AND kcu.table_schema = tc.table_schema
-				AND kcu.table_name = tc.table_name
-			WHERE tc.table_schema = c.table_schema
-				AND tc.table_name = c.table_name
-				AND tc.constraint_type = \'UNIQUE\'
-				AND kcu.column_name = c.column_name
-		) THEN \'UNI\'
-		ELSE \'\'
-	END',
-			$index_metadata_table
-		);
-
-		$metadata_key_expression = sprintf(
-			'CASE
-		WHEN EXISTS (
-			SELECT 1
-			FROM %1$s im
-			WHERE im.table_schema = cm.table_schema
-				AND im.table_name = cm.table_name
-				AND im.column_name = cm.column_name
-				AND UPPER(im.key_name) = \'PRIMARY\'
-		) THEN \'PRI\'
-		WHEN EXISTS (
-			SELECT 1
-			FROM %1$s im
-			WHERE im.table_schema = cm.table_schema
-				AND im.table_name = cm.table_name
-				AND im.column_name = cm.column_name
-				AND im.non_unique = \'0\'
-		) THEN \'UNI\'
-		WHEN EXISTS (
-			SELECT 1
-			FROM %1$s im
-			WHERE im.table_schema = cm.table_schema
-				AND im.table_name = cm.table_name
-				AND im.column_name = cm.column_name
-		) THEN \'MUL\'
-		ELSE \'\'
-	END',
-			$index_metadata_table
-		);
+		$catalog_key_expression  = $this->get_direct_information_schema_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
+		$metadata_key_expression = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name', false );
 
 		$catalog_extra_expression = 'CASE
 		WHEN c.is_identity = \'YES\' THEN \'auto_increment\'
@@ -23442,20 +23284,20 @@ ORDER BY ordinal_position',
 			'WITH requested_table AS (
 	SELECT ? AS table_schema, ? AS table_name
 ),
-catalog_columns AS (
-	SELECT
-		c.column_name AS field_name,
-		COALESCE(cm.column_type, %3$s) AS column_type,
-		%4$s AS collation_name,
-		COALESCE(cm.is_nullable, c.is_nullable) AS is_nullable,
-		%5$s AS column_key,
-			CASE
-				WHEN cm.column_name IS NOT NULL THEN cm.column_default
-				ELSE c.column_default
-			END AS column_default,
-			COALESCE(cm.extra, %7$s) AS column_extra,
-			COALESCE(cm.column_comment, \'\') AS column_comment,
-			c.ordinal_position
+	catalog_columns AS (
+		SELECT
+			c.column_name AS field_name,
+			COALESCE(cm.column_type, %2$s) AS column_type,
+			%3$s AS collation_name,
+			COALESCE(cm.is_nullable, c.is_nullable) AS is_nullable,
+			%4$s AS column_key,
+				CASE
+					WHEN cm.column_name IS NOT NULL THEN cm.column_default
+					ELSE c.column_default
+				END AS column_default,
+				COALESCE(cm.extra, %6$s) AS column_extra,
+				COALESCE(cm.column_comment, \'\') AS column_comment,
+				c.ordinal_position
 	FROM requested_table rt
 	INNER JOIN information_schema.columns c
 		ON c.table_schema = rt.table_schema
@@ -23467,13 +23309,13 @@ catalog_columns AS (
 ),
 metadata_columns AS (
 	SELECT
-		cm.column_name AS field_name,
-		cm.column_type,
-		%8$s AS collation_name,
-		cm.is_nullable,
-		%6$s AS column_key,
-			cm.column_default,
-			cm.extra AS column_extra,
+			cm.column_name AS field_name,
+			cm.column_type,
+			%7$s AS collation_name,
+			cm.is_nullable,
+			%5$s AS column_key,
+				cm.column_default,
+				cm.extra AS column_extra,
 			cm.column_comment,
 			cm.ordinal_position
 	FROM requested_table rt
@@ -23492,13 +23334,12 @@ show_columns_rows AS (
 	SELECT * FROM catalog_columns
 	UNION ALL
 	SELECT * FROM metadata_columns
-)
-SELECT
-	%9$s
-FROM show_columns_rows
-WHERE 1 = 1',
+	)
+	SELECT
+		%8$s
+	FROM show_columns_rows
+	WHERE 1 = 1',
 			$column_metadata_table,
-			$index_metadata_table,
 			$type_expression,
 			$catalog_collation_expression,
 			$catalog_key_expression,
@@ -44041,10 +43882,45 @@ END',
 	 * @param string $schema_sql SQL expression for backend schema.
 	 * @param string $table_sql  SQL expression for table name.
 	 * @param string $column_sql SQL expression for column name.
+	 * @param bool   $include_catalog_constraints Whether to include native catalog constraints.
 	 * @return string SQL expression.
 	 */
-	private function get_direct_information_schema_column_key_expression( string $schema_sql, string $table_sql, string $column_sql ): string {
+	private function get_direct_information_schema_column_key_expression( string $schema_sql, string $table_sql, string $column_sql, bool $include_catalog_constraints = true ): string {
 		$index_metadata_table = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
+		$catalog_constraints  = $include_catalog_constraints
+			? sprintf(
+				'
+	WHEN EXISTS (
+		SELECT 1
+		FROM information_schema.table_constraints tc
+		INNER JOIN information_schema.key_column_usage kcu
+			ON kcu.constraint_schema = tc.constraint_schema
+			AND kcu.constraint_name = tc.constraint_name
+			AND kcu.table_schema = tc.table_schema
+			AND kcu.table_name = tc.table_name
+		WHERE tc.table_schema = %1$s
+			AND tc.table_name = %2$s
+			AND tc.constraint_type = \'PRIMARY KEY\'
+			AND kcu.column_name = %3$s
+	) THEN \'PRI\'
+	WHEN EXISTS (
+		SELECT 1
+		FROM information_schema.table_constraints tc
+		INNER JOIN information_schema.key_column_usage kcu
+			ON kcu.constraint_schema = tc.constraint_schema
+			AND kcu.constraint_name = tc.constraint_name
+			AND kcu.table_schema = tc.table_schema
+			AND kcu.table_name = tc.table_name
+		WHERE tc.table_schema = %1$s
+			AND tc.table_name = %2$s
+			AND tc.constraint_type = \'UNIQUE\'
+			AND kcu.column_name = %3$s
+	) THEN \'UNI\'',
+				$schema_sql,
+				$table_sql,
+				$column_sql
+			)
+			: '';
 
 		return sprintf(
 			'CASE
@@ -44068,38 +43944,14 @@ END',
 			AND im.table_name = %3$s
 			AND im.column_name = %4$s
 	) THEN \'MUL\'
-	WHEN EXISTS (
-		SELECT 1
-		FROM information_schema.table_constraints tc
-		INNER JOIN information_schema.key_column_usage kcu
-			ON kcu.constraint_schema = tc.constraint_schema
-			AND kcu.constraint_name = tc.constraint_name
-			AND kcu.table_schema = tc.table_schema
-			AND kcu.table_name = tc.table_name
-		WHERE tc.table_schema = %2$s
-			AND tc.table_name = %3$s
-			AND tc.constraint_type = \'PRIMARY KEY\'
-			AND kcu.column_name = %4$s
-	) THEN \'PRI\'
-	WHEN EXISTS (
-		SELECT 1
-		FROM information_schema.table_constraints tc
-		INNER JOIN information_schema.key_column_usage kcu
-			ON kcu.constraint_schema = tc.constraint_schema
-			AND kcu.constraint_name = tc.constraint_name
-			AND kcu.table_schema = tc.table_schema
-			AND kcu.table_name = tc.table_name
-		WHERE tc.table_schema = %2$s
-			AND tc.table_name = %3$s
-			AND tc.constraint_type = \'UNIQUE\'
-			AND kcu.column_name = %4$s
-	) THEN \'UNI\'
+%5$s
 	ELSE \'\'
 END',
 			$index_metadata_table,
 			$schema_sql,
 			$table_sql,
-			$column_sql
+			$column_sql,
+			$catalog_constraints
 		);
 	}
 
