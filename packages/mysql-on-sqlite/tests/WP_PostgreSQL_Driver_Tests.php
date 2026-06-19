@@ -22272,33 +22272,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests explicit PostgreSQL catalog metadata sync cannot fall back to hidden side tables.
-	 */
-	public function test_postgresql_catalog_schema_sync_requires_catalog_connection(): void {
-		$driver = $this->create_driver();
-		$pdo    = $driver->get_connection()->get_pdo();
-		$sync   = Closure::bind(
-			function (): void {
-				$this->sync_postgresql_catalog_schema_metadata( 'CREATE TABLE catalog_sync_requires_pgsql (id int NOT NULL)' );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
-
-		try {
-			$sync();
-			$this->fail( 'Expected explicit PostgreSQL catalog metadata sync to require a catalog connection.' );
-		} catch ( LogicException $e ) {
-			$this->assertSame( 'PostgreSQL catalog metadata sync requires a PostgreSQL catalog connection.', $e->getMessage() );
-		}
-
-		$this->assertSame(
-			array(),
-			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
-		);
-	}
-
-	/**
 	 * Tests direct side metadata helpers fail for PostgreSQL catalog connections.
 	 */
 	public function test_side_metadata_helpers_fail_for_pgsql_catalog_connections(): void {
@@ -42023,8 +41996,8 @@ $wp_mysql_on_update$',
 	public function test_wordpress_core_schema_is_catalog_recoverable_for_pgsql_connections(): void {
 		$driver    = $this->create_driver();
 		$can_store = Closure::bind(
-			function ( string $schema ): bool {
-				return $this->can_use_postgresql_catalog_for_mysql_schema_metadata( $schema );
+			function ( array $metadata ): bool {
+				return $this->can_use_postgresql_catalog_for_mysql_table_metadata( $metadata );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -42033,7 +42006,6 @@ $wp_mysql_on_update$',
 		$schema   = $this->get_wordpress_core_schema();
 		$metadata = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $schema, true );
 
-		$this->assertTrue( $can_store( $schema ) );
 		$this->assertSame(
 			array(
 				'wp_users',
@@ -42051,6 +42023,9 @@ $wp_mysql_on_update$',
 			),
 			array_column( $metadata, 'table_name' )
 		);
+		foreach ( $metadata as $table ) {
+			$this->assertTrue( $can_store( $table ) );
+		}
 
 		$pdo          = new class( 'sqlite::memory:' ) extends PDO {
 			/**

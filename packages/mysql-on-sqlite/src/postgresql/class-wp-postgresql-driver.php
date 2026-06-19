@@ -4466,34 +4466,13 @@ class WP_PostgreSQL_Driver {
 		}
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->sync_postgresql_catalog_schema_metadata( $query );
+			$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query );
+			$this->clear_mysql_metadata_cache_for_tables( $this->get_mysql_schema_metadata_table_names( $query ), 'public' );
+			$this->sync_mysql_schema_catalog_side_effects_for_schema( $query, 'public' );
 			return;
 		}
 
 		$this->store_mysql_schema_metadata_for_schema( $query, 'public' );
-	}
-
-	/**
-	 * Sync MySQL-facing schema metadata into PostgreSQL catalogs.
-	 *
-	 * Real PostgreSQL connections must not use hidden side tables. MySQL-only
-	 * details that PostgreSQL does not expose natively are attached to the
-	 * PostgreSQL objects that own them.
-	 *
-	 * @param string $query MySQL CREATE TABLE query.
-	 */
-	private function sync_postgresql_catalog_schema_metadata( string $query ): void {
-		if ( $this->is_temporary_create_table_query( $query ) ) {
-			return;
-		}
-
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			throw new LogicException( 'PostgreSQL catalog metadata sync requires a PostgreSQL catalog connection.' );
-		}
-
-		$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query );
-		$this->clear_mysql_metadata_cache_for_tables( $this->get_mysql_schema_metadata_table_names( $query ), 'public' );
-		$this->sync_mysql_schema_catalog_side_effects_for_schema( $query, 'public' );
 	}
 
 	/**
@@ -4537,8 +4516,15 @@ class WP_PostgreSQL_Driver {
 			return false;
 		}
 
-		if ( ! $this->can_use_postgresql_catalog_for_mysql_schema_metadata( $query ) ) {
+		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
+		if ( empty( $metadata_tables ) ) {
 			throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.' );
+		}
+
+		foreach ( $metadata_tables as $metadata ) {
+			if ( ! $this->can_use_postgresql_catalog_for_mysql_table_metadata( $metadata ) ) {
+				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.' );
+			}
 		}
 
 		return true;
@@ -4584,27 +4570,6 @@ class WP_PostgreSQL_Driver {
 				$this->insert_mysql_check_metadata( $schema_name, $table_name, $check );
 			}
 		}
-	}
-
-	/**
-	 * Check whether PostgreSQL catalogs can faithfully replace stored MySQL metadata.
-	 *
-	 * @param string $query MySQL CREATE TABLE query.
-	 * @return bool Whether side-table metadata can be skipped.
-	 */
-	private function can_use_postgresql_catalog_for_mysql_schema_metadata( string $query ): bool {
-		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
-		if ( empty( $metadata_tables ) ) {
-			return false;
-		}
-
-		foreach ( $metadata_tables as $metadata ) {
-			if ( ! $this->can_use_postgresql_catalog_for_mysql_table_metadata( $metadata ) ) {
-				return false;
-			}
-		}
-
-		return true;
 	}
 
 	/**
@@ -36833,8 +36798,11 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$source['columns']      = $columns;
-			$source['column_map']   = $this->get_direct_information_schema_relation_column_map( $columns );
+			$source['columns']    = $columns;
+			$source['column_map'] = array();
+			foreach ( $columns as $column ) {
+				$source['column_map'][ strtolower( $column ) ] = $column;
+			}
 			$source['source_start'] = $source_start;
 			$source['source_end']   = $source['position'];
 			$sources[]              = $source;
@@ -38120,20 +38088,6 @@ WHERE option_name IN (
 		$view = strtolower( $view );
 		return isset( $columns[ $view ] ) ? explode( ' ', $columns[ $view ] ) : null;
 	}
-	/**
-	 * Get a lookup map keyed by lowercase information_schema column name.
-	 *
-	 * @param string[] $columns Uppercase column names.
-	 * @return array<string, string> Column map.
-	 */
-	private function get_direct_information_schema_relation_column_map( array $columns ): array {
-		$map = array();
-		foreach ( $columns as $column ) {
-			$map[ strtolower( $column ) ] = $column;
-		}
-		return $map;
-	}
-
 	/**
 	 * Build a MySQL-shaped SHOW CREATE TABLE statement for a supported information_schema view.
 	 *
