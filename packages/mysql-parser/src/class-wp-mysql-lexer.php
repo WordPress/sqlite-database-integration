@@ -286,22 +286,15 @@ class WP_MySQL_Lexer {
 	private $no_backslash_escapes = false;
 
 	/**
-	 * Grammar tokens produced ahead of the cursor, waiting to be emitted.
+	 * A grammar token produced ahead of the cursor, waiting to be emitted.
 	 *
-	 * A single scan step can yield more than one grammar token (e.g. "@" plus
-	 * its name, or the two end terminals), so produced tokens are buffered here
-	 * and handed out one at a time by next_token().
+	 * A single scan step can yield two grammar tokens (e.g. "@" plus its name,
+	 * or the two end terminals); next_token() returns the first and holds the
+	 * second here for the following call.
 	 *
-	 * @var WP_MySQL_Token[]
+	 * @var WP_MySQL_Token|null
 	 */
-	private $token_queue = array();
-
-	/**
-	 * Index of the next token to emit from "$this->token_queue".
-	 *
-	 * @var int
-	 */
-	private $queue_index = 0;
+	private $pending_token = null;
 
 	/**
 	 * A scanned-ahead grammar token held back to be processed on the next step.
@@ -369,24 +362,29 @@ class WP_MySQL_Lexer {
 	 * @return bool Whether a token is available at the new cursor position.
 	 */
 	public function next_token(): bool {
-		if ( $this->queue_index < count( $this->token_queue ) ) {
-			$this->current_token = $this->token_queue[ $this->queue_index++ ];
+		if ( null !== $this->pending_token ) {
+			$this->current_token = $this->pending_token;
+			$this->pending_token = null;
 			return true;
 		}
-
-		// The buffer is drained; produce the next token (or tokens) into it.
-		$this->token_queue = array();
-		$this->queue_index = 0;
-		if ( ! $this->stream_ended ) {
-			$this->produce();
+		if ( $this->stream_ended ) {
+			$this->current_token = null;
+			return false;
 		}
 
-		if ( $this->queue_index < count( $this->token_queue ) ) {
-			$this->current_token = $this->token_queue[ $this->queue_index++ ];
-			return true;
+		// A scan step yields one or two grammar tokens: return the first and
+		// hold the second (if any) back for the next call.
+		$out = array();
+		$this->produce( $out );
+		if ( ! $out ) {
+			$this->current_token = null;
+			return false;
 		}
-		$this->current_token = null;
-		return false;
+		$this->current_token = $out[0];
+		if ( isset( $out[1] ) ) {
+			$this->pending_token = $out[1];
+		}
+		return true;
 	}
 
 	/**
@@ -416,7 +414,7 @@ class WP_MySQL_Lexer {
 	 *                          terminators on invalid input.
 	 */
 	public function remaining_tokens(): array {
-		if ( $this->stream_ended || $this->queue_index > 0 || null !== $this->current_token ) {
+		if ( $this->stream_ended || null !== $this->pending_token || null !== $this->current_token ) {
 			$tokens = array();
 			while ( $this->next_token() ) {
 				$tokens[] = $this->current_token;
@@ -463,24 +461,20 @@ class WP_MySQL_Lexer {
 				continue;
 			}
 
-			// Multi-token lexemes: reuse the buffered producers, then drain.
-			$this->token_queue = array();
+			// Multi-token lexemes: the shared producers append straight to the list.
 			if ( self::EOF === $type ) {
-				$this->emit_end_markers();
+				$this->emit_end_markers( $tokens );
+				break;
 			} elseif ( self::WITH_SYMBOL === $type ) {
-				$this->produce_with_or_rollup( $start, $length );
+				$this->produce_with_or_rollup( $tokens, $start, $length );
 			} else {
-				$this->produce_at_variable( $start );
-			}
-			foreach ( $this->token_queue as $token ) {
-				$tokens[] = $token;
+				$this->produce_at_variable( $tokens, $start );
 			}
 			if ( $this->stream_ended ) {
 				break;
 			}
 		}
 
-		$this->token_queue = array();
 		return $tokens;
 	}
 
@@ -574,7 +568,7 @@ class WP_MySQL_Lexer {
 	 * own lexer: "@" expands to the sign plus its name, "WITH ROLLUP" contracts
 	 * into one terminal, and the end of input yields the two end terminals.
 	 */
-	private function produce(): void {
+	private function produce( array &$out ): void {
 		// Take the lexeme held back by a "WITH" lookahead, or scan a new one.
 		if ( null !== $this->lookahead ) {
 			list( $type, $start, $length ) = $this->lookahead;
@@ -590,13 +584,13 @@ class WP_MySQL_Lexer {
 		}
 
 		if ( self::EOF === $type ) {
-			$this->emit_end_markers();
+			$this->emit_end_markers( $out );
 		} elseif ( self::WITH_SYMBOL === $type ) {
-			$this->produce_with_or_rollup( $start, $length );
+			$this->produce_with_or_rollup( $out, $start, $length );
 		} elseif ( self::AT_SIGN_SYMBOL === $type ) {
-			$this->produce_at_variable( $start );
+			$this->produce_at_variable( $out, $start );
 		} else {
-			$this->enqueue_token( $type, $start, $length );
+			$out[] = $this->make_token( $type, $start, $length );
 		}
 	}
 
@@ -609,16 +603,16 @@ class WP_MySQL_Lexer {
 	 * @param int $with_start  Byte offset of the "WITH" token.
 	 * @param int $with_length Byte length of the "WITH" token.
 	 */
-	private function produce_with_or_rollup( int $with_start, int $with_length ): void {
+	private function produce_with_or_rollup( array &$out, int $with_start, int $with_length ): void {
 		if ( ! $this->scan_lexeme() ) {
 			// "WITH" was the last valid token; the trailing input is invalid.
-			$this->enqueue_token( self::WITH_SYMBOL, $with_start, $with_length );
+			$out[]              = $this->make_token( self::WITH_SYMBOL, $with_start, $with_length );
 			$this->stream_ended = true;
 			return;
 		}
 
 		if ( self::ROLLUP_SYMBOL === $this->token_type ) {
-			$this->enqueue_token(
+			$out[] = $this->make_token(
 				self::WITH_ROLLUP_SYMBOL,
 				$with_start,
 				$this->bytes_already_read - $with_start
@@ -626,9 +620,9 @@ class WP_MySQL_Lexer {
 			return;
 		}
 
-		$this->enqueue_token( self::WITH_SYMBOL, $with_start, $with_length );
+		$out[] = $this->make_token( self::WITH_SYMBOL, $with_start, $with_length );
 		if ( self::EOF === $this->token_type ) {
-			$this->emit_end_markers();
+			$this->emit_end_markers( $out );
 			return;
 		}
 		$this->lookahead = array(
@@ -650,14 +644,14 @@ class WP_MySQL_Lexer {
 	 *
 	 * @param int $at_start Byte offset of the "@" token.
 	 */
-	private function produce_at_variable( int $at_start ): void {
-		$this->enqueue_token( self::AT_SIGN_SYMBOL, $at_start, 1 );
+	private function produce_at_variable( array &$out, int $at_start ): void {
+		$out[] = $this->make_token( self::AT_SIGN_SYMBOL, $at_start, 1 );
 
 		$position = $this->bytes_already_read;   // Right after the "@".
 		$next     = $this->sql[ $position ] ?? '';
 
 		if ( '@' === $next ) {
-			$this->enqueue_token( self::AT_SIGN_SYMBOL, $position, 1 );
+			$out[]                    = $this->make_token( self::AT_SIGN_SYMBOL, $position, 1 );
 			$this->bytes_already_read = $position + 1;
 			return;
 		}
@@ -668,10 +662,10 @@ class WP_MySQL_Lexer {
 			$position
 		);
 		if ( $name_length > 0 ) {
-			$this->enqueue_token( self::IDENTIFIER, $position, $name_length );
+			$out[]                    = $this->make_token( self::IDENTIFIER, $position, $name_length );
 			$this->bytes_already_read = $position + $name_length;
 		} elseif ( "'" !== $next && '"' !== $next && '`' !== $next ) {
-			$this->enqueue_token( self::IDENTIFIER, $position, 0 );
+			$out[] = $this->make_token( self::IDENTIFIER, $position, 0 );
 		}
 	}
 
@@ -679,10 +673,10 @@ class WP_MySQL_Lexer {
 	 * Emit the two terminals that close a valid stream: END_OF_INPUT and Bison's
 	 * end marker ($end), both at the end-of-input position.
 	 */
-	private function emit_end_markers(): void {
-		$end = $this->bytes_already_read;
-		$this->enqueue_token( self::END_OF_INPUT, $end, 0 );
-		$this->enqueue_token( self::END_MARKER, $end, 0 );
+	private function emit_end_markers( array &$out ): void {
+		$end                = $this->bytes_already_read;
+		$out[]              = $this->make_token( self::END_OF_INPUT, $end, 0 );
+		$out[]              = $this->make_token( self::END_MARKER, $end, 0 );
 		$this->stream_ended = true;
 	}
 
@@ -712,14 +706,15 @@ class WP_MySQL_Lexer {
 	}
 
 	/**
-	 * Append a grammar token to the output buffer.
+	 * Build a grammar token over the current input and SQL mode.
 	 *
 	 * @param int $type   The grammar token number.
 	 * @param int $start  Byte offset where the token begins.
 	 * @param int $length Byte length of the token.
+	 * @return WP_MySQL_Token
 	 */
-	private function enqueue_token( int $type, int $start, int $length ): void {
-		$this->token_queue[] = new WP_MySQL_Token(
+	private function make_token( int $type, int $start, int $length ): WP_MySQL_Token {
+		return new WP_MySQL_Token(
 			$type,
 			$start,
 			$length,
