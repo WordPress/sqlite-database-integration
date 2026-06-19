@@ -3510,11 +3510,20 @@ class WP_PostgreSQL_Driver {
 			}
 
 			if ( 'global' === ( $operation['scope'] ?? null ) ) {
-				$this->set_mysql_global_variable_value( $operation['name'], $operation['value'] );
+				$value = $operation['value'];
+				if ( 'sql_mode' === $operation['name'] ) {
+					$value = implode( ',', $this->normalize_mysql_sql_modes( $value ) );
+				}
+				$this->mysql_global_variable_values[ $operation['name'] ] = $value;
 				continue;
 			}
 
-			$this->set_mysql_session_variable_value( $operation['name'], $operation['value'] );
+			if ( 'sql_mode' === $operation['name'] ) {
+				$this->set_sql_mode( $operation['value'] );
+				continue;
+			}
+
+			$this->mysql_session_variable_values[ $operation['name'] ] = $operation['value'];
 		}
 
 		$this->last_result      = 0;
@@ -20754,35 +20763,6 @@ ORDER BY table_name';
 		) {
 			$this->mysql_session_variable_values[ $variable ] = $this->collation;
 		}
-	}
-
-	/**
-	 * Set an emulated MySQL session variable.
-	 *
-	 * @param string $name  Lowercase variable name.
-	 * @param string $value Variable value.
-	 */
-	private function set_mysql_session_variable_value( string $name, string $value ): void {
-		if ( 'sql_mode' === $name ) {
-			$this->set_sql_mode( $value );
-			return;
-		}
-
-		$this->mysql_session_variable_values[ $name ] = $value;
-	}
-
-	/**
-	 * Set an emulated MySQL global variable.
-	 *
-	 * @param string $name  Lowercase variable name.
-	 * @param string $value Variable value.
-	 */
-	private function set_mysql_global_variable_value( string $name, string $value ): void {
-		if ( 'sql_mode' === $name ) {
-			$value = implode( ',', $this->normalize_mysql_sql_modes( $value ) );
-		}
-
-		$this->mysql_global_variable_values[ $name ] = $value;
 	}
 
 	/**
