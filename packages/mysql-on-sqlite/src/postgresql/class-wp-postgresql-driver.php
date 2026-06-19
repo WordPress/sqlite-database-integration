@@ -39980,10 +39980,10 @@ WHERE option_name IN (
 			return;
 		}
 
+		$expected_relations = array_keys( $this->get_postgresql_information_schema_compatibility_view_definitions() );
+
 		$this->postgresql_information_schema_compatibility_view_relations = $relations;
-		$this->postgresql_information_schema_compatibility_views_ensured  = $this->postgresql_information_schema_compatibility_view_relations_cover(
-			array_keys( $this->get_postgresql_information_schema_compatibility_view_definitions() )
-		);
+		$this->postgresql_information_schema_compatibility_views_ensured  = array() === array_diff( $expected_relations, array_keys( $relations ) );
 
 		$this->sync_postgresql_mysql_compatibility_settings();
 	}
@@ -40007,22 +40007,6 @@ WHERE option_name IN (
 		}
 
 		return self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA_COMMENT === (string) $stmt->fetchColumn();
-	}
-
-	/**
-	 * Check whether discovered compatibility views cover all expected relations.
-	 *
-	 * @param string[] $relations Lowercase relation names.
-	 * @return bool Whether all relations are present.
-	 */
-	private function postgresql_information_schema_compatibility_view_relations_cover( array $relations ): bool {
-		foreach ( $relations as $relation ) {
-			if ( ! isset( $this->postgresql_information_schema_compatibility_view_relations[ $relation ] ) ) {
-				return false;
-			}
-		}
-
-		return true;
 	}
 
 	/**
