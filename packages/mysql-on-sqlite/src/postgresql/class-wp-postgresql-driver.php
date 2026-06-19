@@ -39932,7 +39932,19 @@ WHERE option_name IN (
 
 		$this->postgresql_information_schema_compatibility_view_relations_discovered = true;
 
-		if ( ! $this->postgresql_information_schema_compatibility_schema_is_current() ) {
+		try {
+			$stmt = $this->connection->query(
+				'SELECT pg_catalog.obj_description(n.oid, \'pg_namespace\')
+				FROM pg_catalog.pg_namespace n
+				WHERE n.nspname = ?
+				LIMIT 1',
+				array( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA )
+			);
+		} catch ( Throwable $e ) {
+			return;
+		}
+
+		if ( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA_COMMENT !== (string) $stmt->fetchColumn() ) {
 			return;
 		}
 
@@ -39968,27 +39980,6 @@ WHERE option_name IN (
 		$this->postgresql_information_schema_compatibility_views_ensured  = array() === array_diff( $expected_relations, array_keys( $relations ) );
 
 		$this->sync_postgresql_mysql_compatibility_settings();
-	}
-
-	/**
-	 * Check whether the installed PostgreSQL compatibility schema is current.
-	 *
-	 * @return bool Whether the schema comment matches the current view set.
-	 */
-	private function postgresql_information_schema_compatibility_schema_is_current(): bool {
-		try {
-			$stmt = $this->connection->query(
-				'SELECT pg_catalog.obj_description(n.oid, \'pg_namespace\')
-				FROM pg_catalog.pg_namespace n
-				WHERE n.nspname = ?
-				LIMIT 1',
-				array( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA )
-			);
-		} catch ( Throwable $e ) {
-			return false;
-		}
-
-		return self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA_COMMENT === (string) $stmt->fetchColumn();
 	}
 
 	/**
