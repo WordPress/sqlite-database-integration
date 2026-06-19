@@ -4993,9 +4993,8 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'rename_index' === $metadata['operation'] ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			} else {
+			$use_catalog_metadata = $this->should_use_postgresql_catalog_metadata();
+			if ( ! $use_catalog_metadata ) {
 				$this->ensure_mysql_schema_metadata_tables();
 				if ( $metadata['old_index'] !== $metadata['new_index'] ) {
 					$this->connection->query(
@@ -5005,8 +5004,10 @@ $wp_mysql_on_update$',
 						),
 						array( $metadata['new_index'], $table_schema, $table_name, $metadata['old_index'] )
 					);
-					$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 				}
+			}
+			if ( $use_catalog_metadata || $metadata['old_index'] !== $metadata['new_index'] ) {
+				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			}
 			return;
 		}
@@ -5023,22 +5024,20 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'add_foreign_key' === $metadata['operation'] ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			} else {
+			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
 				$this->ensure_mysql_schema_metadata_tables();
 				$this->insert_mysql_foreign_key_metadata( $table_schema, $table_name, $metadata['foreign_key'] );
 			}
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
 		if ( 'drop_foreign_key' === $metadata['operation'] ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			} else {
+			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
 				$this->ensure_mysql_schema_metadata_tables();
 				$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, $metadata['constraint'] );
 			}
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
@@ -5099,12 +5098,11 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'drop_check' === $metadata['operation'] ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			} else {
+			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
 				$this->ensure_mysql_schema_metadata_tables();
 				$this->delete_mysql_check_metadata( $table_schema, $table_name, $metadata['constraint'] );
 			}
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
 
@@ -5373,40 +5371,37 @@ $wp_mysql_on_update$',
 			return;
 		}
 
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $old_table_name );
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $new_table_name );
-			return;
-		}
+		$referencing_tables = array();
+		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
+			$this->ensure_mysql_schema_metadata_tables();
 
-		$this->ensure_mysql_schema_metadata_tables();
+			$stmt               = $this->connection->query(
+				sprintf(
+					'SELECT DISTINCT table_schema, table_name FROM %s WHERE referenced_table_schema = ? AND referenced_table_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+				),
+				array( $table_schema, $old_table_name )
+			);
+			$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
 
-		$stmt               = $this->connection->query(
-			sprintf(
-				'SELECT DISTINCT table_schema, table_name FROM %s WHERE referenced_table_schema = ? AND referenced_table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $table_schema, $old_table_name )
-		);
-		$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			foreach ( self::MYSQL_SCHEMA_SIDE_METADATA_TABLES as $metadata_table ) {
+				$this->connection->query(
+					sprintf(
+						'UPDATE %s SET table_name = ? WHERE table_schema = ? AND table_name = ?',
+						$this->connection->quote_identifier( $metadata_table )
+					),
+					array( $new_table_name, $table_schema, $old_table_name )
+				);
+			}
 
-		foreach ( self::MYSQL_SCHEMA_SIDE_METADATA_TABLES as $metadata_table ) {
 			$this->connection->query(
 				sprintf(
-					'UPDATE %s SET table_name = ? WHERE table_schema = ? AND table_name = ?',
-					$this->connection->quote_identifier( $metadata_table )
+					'UPDATE %s SET referenced_table_name = ? WHERE referenced_table_schema = ? AND referenced_table_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
 				),
 				array( $new_table_name, $table_schema, $old_table_name )
 			);
 		}
-
-		$this->connection->query(
-			sprintf(
-				'UPDATE %s SET referenced_table_name = ? WHERE referenced_table_schema = ? AND referenced_table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $new_table_name, $table_schema, $old_table_name )
-		);
 
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $old_table_name );
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $new_table_name );
@@ -5472,17 +5467,15 @@ $wp_mysql_on_update$',
 	 * @param array $metadata DROP INDEX metadata.
 	 */
 	private function apply_mysql_drop_index_metadata( array $metadata ): void {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->clear_mysql_metadata_cache_for_table( $metadata['schema'], $metadata['table'] );
-			return;
+		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
+			$this->ensure_mysql_schema_metadata_tables();
+			$this->delete_mysql_index_metadata(
+				$metadata['schema'],
+				$metadata['table'],
+				$metadata['index']
+			);
 		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->delete_mysql_index_metadata(
-			$metadata['schema'],
-			$metadata['table'],
-			$metadata['index']
-		);
+		$this->clear_mysql_metadata_cache_for_table( $metadata['schema'], $metadata['table'] );
 	}
 
 	/**
