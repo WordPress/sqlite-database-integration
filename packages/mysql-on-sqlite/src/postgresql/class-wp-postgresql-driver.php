@@ -18669,11 +18669,11 @@ ORDER BY table_name';
 			$definitions[] = $this->get_mysql_create_table_column_definition_from_metadata( $column );
 		}
 
-		foreach ( $this->group_show_create_table_index_metadata_rows( $indexes ) as $index ) {
+		foreach ( $this->group_show_create_table_metadata_rows( $indexes, 'key_name' ) as $index ) {
 			$definitions[] = $this->get_mysql_create_table_index_definition_from_metadata( $index );
 		}
 
-		foreach ( $this->group_show_create_table_foreign_key_metadata_rows( $foreign_keys ) as $foreign_key ) {
+		foreach ( $this->group_show_create_table_metadata_rows( $foreign_keys, 'constraint_name' ) as $foreign_key ) {
 			$definitions[] = $this->get_mysql_create_table_foreign_key_definition_from_metadata( $foreign_key );
 		}
 
@@ -18792,20 +18792,21 @@ ORDER BY table_name';
 	}
 
 	/**
-	 * Group stored index metadata rows by index name.
+	 * Group ordered SHOW CREATE TABLE metadata rows by a row key.
 	 *
-	 * @param array[] $indexes Index metadata rows.
-	 * @return array[] Grouped index metadata rows.
+	 * @param array[] $rows       Metadata rows.
+	 * @param string  $key_column Column used as the group key.
+	 * @return array[] Grouped metadata rows.
 	 */
-	private function group_show_create_table_index_metadata_rows( array $indexes ): array {
+	private function group_show_create_table_metadata_rows( array $rows, string $key_column ): array {
 		$grouped = array();
-		foreach ( $indexes as $index ) {
-			$key_name = (string) $index['key_name'];
-			if ( ! isset( $grouped[ $key_name ] ) ) {
-				$grouped[ $key_name ] = array();
+		foreach ( $rows as $row ) {
+			$key = (string) $row[ $key_column ];
+			if ( ! isset( $grouped[ $key ] ) ) {
+				$grouped[ $key ] = array();
 			}
 
-			$grouped[ $key_name ][] = $index;
+			$grouped[ $key ][] = $row;
 		}
 
 		return array_values( $grouped );
@@ -18862,26 +18863,6 @@ ORDER BY table_name';
 		}
 
 		return $columns;
-	}
-
-	/**
-	 * Group stored foreign key metadata rows by constraint name.
-	 *
-	 * @param array[] $foreign_keys Foreign key metadata rows.
-	 * @return array[] Grouped foreign key metadata rows.
-	 */
-	private function group_show_create_table_foreign_key_metadata_rows( array $foreign_keys ): array {
-		$grouped = array();
-		foreach ( $foreign_keys as $foreign_key ) {
-			$constraint_name = (string) $foreign_key['constraint_name'];
-			if ( ! isset( $grouped[ $constraint_name ] ) ) {
-				$grouped[ $constraint_name ] = array();
-			}
-
-			$grouped[ $constraint_name ][] = $foreign_key;
-		}
-
-		return array_values( $grouped );
 	}
 
 	/**
