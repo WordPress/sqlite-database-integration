@@ -13007,8 +13007,8 @@ $wp_mysql_primary_index_comment$',
 
 			$old_table_name       = $old_table_reference['table'];
 			$new_table_name       = $new_table_reference['table'];
-			$old_metadata_key     = $this->get_mysql_rename_table_metadata_key( $table_schema, $old_table_name );
-			$new_metadata_key     = $this->get_mysql_rename_table_metadata_key( $table_schema, $new_table_name );
+			$old_metadata_key     = strtolower( $table_schema ) . "\0" . strtolower( $old_table_name );
+			$new_metadata_key     = strtolower( $table_schema ) . "\0" . strtolower( $new_table_name );
 			$metadata_source_name = $metadata_source_names[ $old_metadata_key ] ?? $old_table_name;
 
 			$statements = array_merge(
@@ -13051,17 +13051,6 @@ $wp_mysql_primary_index_comment$',
 				'renames' => $renames,
 			),
 		);
-	}
-
-	/**
-	 * Get a virtual rename metadata key for an in-flight RENAME TABLE sequence.
-	 *
-	 * @param string $table_schema Backend schema name.
-	 * @param string $table_name   Current table name.
-	 * @return string Metadata key.
-	 */
-	private function get_mysql_rename_table_metadata_key( string $table_schema, string $table_name ): string {
-		return strtolower( $table_schema ) . "\0" . strtolower( $table_name );
 	}
 
 	/**
