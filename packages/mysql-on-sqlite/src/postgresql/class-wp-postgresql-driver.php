@@ -56647,35 +56647,25 @@ $wp_mysql_%1$s_domain$',
 	 */
 	private function get_postgresql_mysql_week_sql( string $expression_sql, int $mode ): string {
 		$timestamp_sql = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+		$mode_methods  = array(
+			0 => 'get_postgresql_mysql_sunday_week_mode_zero_sql',
+			1 => 'get_postgresql_mysql_week_mode_one_timestamp_sql',
+			2 => 'get_postgresql_mysql_sunday_week_mode_two_sql',
+			4 => 'get_postgresql_mysql_sunday_week_mode_four_sql',
+			5 => 'get_postgresql_mysql_monday_week_mode_five_sql',
+			6 => 'get_postgresql_mysql_sunday_week_mode_six_sql',
+			7 => 'get_postgresql_mysql_monday_week_mode_seven_sql',
+		);
+		if ( isset( $mode_methods[ $mode ] ) ) {
+			return $this->{$mode_methods[ $mode ]}( $timestamp_sql );
+		}
 
-		switch ( $mode ) {
-			case 0:
-				return $this->get_postgresql_mysql_sunday_week_mode_zero_sql( $timestamp_sql );
-
-			case 1:
-				return $this->get_postgresql_mysql_week_mode_one_timestamp_sql( $timestamp_sql );
-
-			case 2:
-				return $this->get_postgresql_mysql_sunday_week_mode_two_sql( $timestamp_sql );
-
-			case 3:
-				return sprintf(
-					'CAST(TO_CHAR(%s, %s) AS integer)',
-					$timestamp_sql,
-					$this->connection->quote( 'IW' )
-				);
-
-			case 4:
-				return $this->get_postgresql_mysql_sunday_week_mode_four_sql( $timestamp_sql );
-
-			case 5:
-				return $this->get_postgresql_mysql_monday_week_mode_five_sql( $timestamp_sql );
-
-			case 6:
-				return $this->get_postgresql_mysql_sunday_week_mode_six_sql( $timestamp_sql );
-
-			case 7:
-				return $this->get_postgresql_mysql_monday_week_mode_seven_sql( $timestamp_sql );
+		if ( 3 === $mode ) {
+			return sprintf(
+				'CAST(TO_CHAR(%s, %s) AS integer)',
+				$timestamp_sql,
+				$this->connection->quote( 'IW' )
+			);
 		}
 
 		throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
