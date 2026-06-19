@@ -1567,91 +1567,50 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		switch ( $tokens[0]->id ) {
-			case WP_MySQL_Lexer::SHOW_SYMBOL:
-				return 'Unsupported SHOW statement.';
+		$messages = array(
+			WP_MySQL_Lexer::SHOW_SYMBOL      => 'Unsupported SHOW statement.',
+			WP_MySQL_Lexer::ANALYZE_SYMBOL   => 'Unsupported table administration statement.',
+			WP_MySQL_Lexer::CHECK_SYMBOL     => 'Unsupported table administration statement.',
+			WP_MySQL_Lexer::OPTIMIZE_SYMBOL  => 'Unsupported table administration statement.',
+			WP_MySQL_Lexer::REPAIR_SYMBOL    => 'Unsupported table administration statement.',
+			WP_MySQL_Lexer::CHECKSUM_SYMBOL  => 'Unsupported CHECKSUM TABLE statement.',
+			WP_MySQL_Lexer::FLUSH_SYMBOL     => 'Unsupported FLUSH statement.',
+			WP_MySQL_Lexer::KILL_SYMBOL      => 'Unsupported KILL statement.',
+			WP_MySQL_Lexer::CACHE_SYMBOL     => 'Unsupported CACHE INDEX statement.',
+			WP_MySQL_Lexer::LOAD_SYMBOL      => 'Unsupported LOAD statement.',
+			WP_MySQL_Lexer::BINLOG_SYMBOL    => 'Unsupported BINLOG statement.',
+			WP_MySQL_Lexer::SHUTDOWN_SYMBOL  => 'Unsupported SHUTDOWN statement.',
+			WP_MySQL_Lexer::GRANT_SYMBOL     => 'Unsupported GRANT statement.',
+			WP_MySQL_Lexer::REVOKE_SYMBOL    => 'Unsupported REVOKE statement.',
+			WP_MySQL_Lexer::RESET_SYMBOL     => 'Unsupported RESET statement.',
+			WP_MySQL_Lexer::PURGE_SYMBOL     => 'Unsupported PURGE statement.',
+			WP_MySQL_Lexer::INSTALL_SYMBOL   => 'Unsupported INSTALL statement.',
+			WP_MySQL_Lexer::UNINSTALL_SYMBOL => 'Unsupported UNINSTALL statement.',
+		);
+		if ( isset( $messages[ $tokens[0]->id ] ) ) {
+			return $messages[ $tokens[0]->id ];
+		}
 
-			case WP_MySQL_Lexer::ANALYZE_SYMBOL:
-			case WP_MySQL_Lexer::CHECK_SYMBOL:
-			case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
-			case WP_MySQL_Lexer::REPAIR_SYMBOL:
-				return 'Unsupported table administration statement.';
+		if ( WP_MySQL_Lexer::ALTER_SYMBOL === $tokens[0]->id ) {
+			$alter_messages = array(
+				WP_MySQL_Lexer::DATABASE_SYMBOL   => 'Unsupported ALTER DATABASE statement.',
+				WP_MySQL_Lexer::EVENT_SYMBOL      => 'Unsupported ALTER EVENT statement.',
+				WP_MySQL_Lexer::LOGFILE_SYMBOL    => 'Unsupported ALTER LOGFILE statement.',
+				WP_MySQL_Lexer::SERVER_SYMBOL     => 'Unsupported ALTER SERVER statement.',
+				WP_MySQL_Lexer::TABLESPACE_SYMBOL => 'Unsupported ALTER TABLESPACE statement.',
+				WP_MySQL_Lexer::UNDO_SYMBOL       => 'Unsupported ALTER UNDO TABLESPACE statement.',
+				WP_MySQL_Lexer::USER_SYMBOL       => 'Unsupported ALTER USER statement.',
+				WP_MySQL_Lexer::VIEW_SYMBOL       => 'Unsupported ALTER VIEW statement.',
+			);
+			return $alter_messages[ $tokens[1]->id ?? null ] ?? null;
+		}
 
-			case WP_MySQL_Lexer::CHECKSUM_SYMBOL:
-				return 'Unsupported CHECKSUM TABLE statement.';
-
-			case WP_MySQL_Lexer::FLUSH_SYMBOL:
-				return 'Unsupported FLUSH statement.';
-
-			case WP_MySQL_Lexer::KILL_SYMBOL:
-				return 'Unsupported KILL statement.';
-
-			case WP_MySQL_Lexer::CACHE_SYMBOL:
-				return 'Unsupported CACHE INDEX statement.';
-
-			case WP_MySQL_Lexer::LOAD_SYMBOL:
-				return 'Unsupported LOAD statement.';
-
-			case WP_MySQL_Lexer::BINLOG_SYMBOL:
-				return 'Unsupported BINLOG statement.';
-
-			case WP_MySQL_Lexer::SHUTDOWN_SYMBOL:
-				return 'Unsupported SHUTDOWN statement.';
-
-			case WP_MySQL_Lexer::GRANT_SYMBOL:
-				return 'Unsupported GRANT statement.';
-
-			case WP_MySQL_Lexer::REVOKE_SYMBOL:
-				return 'Unsupported REVOKE statement.';
-
-			case WP_MySQL_Lexer::RESET_SYMBOL:
-				return 'Unsupported RESET statement.';
-
-			case WP_MySQL_Lexer::PURGE_SYMBOL:
-				return 'Unsupported PURGE statement.';
-
-			case WP_MySQL_Lexer::INSTALL_SYMBOL:
-				return 'Unsupported INSTALL statement.';
-
-			case WP_MySQL_Lexer::UNINSTALL_SYMBOL:
-				return 'Unsupported UNINSTALL statement.';
-
-			case WP_MySQL_Lexer::ALTER_SYMBOL:
-				switch ( $tokens[1]->id ?? null ) {
-					case WP_MySQL_Lexer::TABLE_SYMBOL:
-						return null;
-
-					case WP_MySQL_Lexer::DATABASE_SYMBOL:
-						return 'Unsupported ALTER DATABASE statement.';
-
-					case WP_MySQL_Lexer::EVENT_SYMBOL:
-						return 'Unsupported ALTER EVENT statement.';
-
-					case WP_MySQL_Lexer::LOGFILE_SYMBOL:
-						return 'Unsupported ALTER LOGFILE statement.';
-
-					case WP_MySQL_Lexer::SERVER_SYMBOL:
-						return 'Unsupported ALTER SERVER statement.';
-
-					case WP_MySQL_Lexer::TABLESPACE_SYMBOL:
-						return 'Unsupported ALTER TABLESPACE statement.';
-
-					case WP_MySQL_Lexer::UNDO_SYMBOL:
-						return 'Unsupported ALTER UNDO TABLESPACE statement.';
-
-					case WP_MySQL_Lexer::USER_SYMBOL:
-						return 'Unsupported ALTER USER statement.';
-
-					case WP_MySQL_Lexer::VIEW_SYMBOL:
-						return 'Unsupported ALTER VIEW statement.';
-				}
-				return null;
-
-			case WP_MySQL_Lexer::RENAME_SYMBOL:
-				if ( isset( $tokens[1] ) && WP_MySQL_Lexer::USER_SYMBOL === $tokens[1]->id ) {
-					return 'Unsupported RENAME USER statement.';
-				}
-				return null;
+		if (
+			WP_MySQL_Lexer::RENAME_SYMBOL === $tokens[0]->id
+			&& isset( $tokens[1] )
+			&& WP_MySQL_Lexer::USER_SYMBOL === $tokens[1]->id
+		) {
+			return 'Unsupported RENAME USER statement.';
 		}
 
 		return null;
@@ -1706,49 +1665,26 @@ class WP_PostgreSQL_Driver {
 			return 'Unsupported CREATE SPATIAL REFERENCE SYSTEM statement.';
 		}
 
-		switch ( $statement_token->id ?? null ) {
-			case WP_MySQL_Lexer::DATABASE_SYMBOL:
-			case WP_MySQL_Lexer::SCHEMA_SYMBOL:
-				return 'Unsupported CREATE DATABASE statement.';
+		$messages = array(
+			WP_MySQL_Lexer::DATABASE_SYMBOL   => 'Unsupported CREATE DATABASE statement.',
+			WP_MySQL_Lexer::SCHEMA_SYMBOL     => 'Unsupported CREATE DATABASE statement.',
+			WP_MySQL_Lexer::VIEW_SYMBOL       => 'Unsupported CREATE VIEW statement.',
+			WP_MySQL_Lexer::INDEX_SYMBOL      => 'Unsupported CREATE INDEX statement.',
+			WP_MySQL_Lexer::UNIQUE_SYMBOL     => 'Unsupported CREATE INDEX statement.',
+			WP_MySQL_Lexer::FULLTEXT_SYMBOL   => 'Unsupported CREATE INDEX statement.',
+			WP_MySQL_Lexer::SPATIAL_SYMBOL    => 'Unsupported CREATE INDEX statement.',
+			WP_MySQL_Lexer::PROCEDURE_SYMBOL  => 'Unsupported CREATE PROCEDURE statement.',
+			WP_MySQL_Lexer::FUNCTION_SYMBOL   => 'Unsupported CREATE FUNCTION statement.',
+			WP_MySQL_Lexer::TRIGGER_SYMBOL    => 'Unsupported CREATE TRIGGER statement.',
+			WP_MySQL_Lexer::EVENT_SYMBOL      => 'Unsupported CREATE EVENT statement.',
+			WP_MySQL_Lexer::USER_SYMBOL       => 'Unsupported CREATE USER statement.',
+			WP_MySQL_Lexer::ROLE_SYMBOL       => 'Unsupported CREATE ROLE statement.',
+			WP_MySQL_Lexer::SERVER_SYMBOL     => 'Unsupported CREATE SERVER statement.',
+			WP_MySQL_Lexer::LOGFILE_SYMBOL    => 'Unsupported CREATE LOGFILE statement.',
+			WP_MySQL_Lexer::TABLESPACE_SYMBOL => 'Unsupported CREATE TABLESPACE statement.',
+		);
 
-			case WP_MySQL_Lexer::VIEW_SYMBOL:
-				return 'Unsupported CREATE VIEW statement.';
-
-			case WP_MySQL_Lexer::INDEX_SYMBOL:
-			case WP_MySQL_Lexer::UNIQUE_SYMBOL:
-			case WP_MySQL_Lexer::FULLTEXT_SYMBOL:
-			case WP_MySQL_Lexer::SPATIAL_SYMBOL:
-				return 'Unsupported CREATE INDEX statement.';
-
-			case WP_MySQL_Lexer::PROCEDURE_SYMBOL:
-				return 'Unsupported CREATE PROCEDURE statement.';
-
-			case WP_MySQL_Lexer::FUNCTION_SYMBOL:
-				return 'Unsupported CREATE FUNCTION statement.';
-
-			case WP_MySQL_Lexer::TRIGGER_SYMBOL:
-				return 'Unsupported CREATE TRIGGER statement.';
-
-			case WP_MySQL_Lexer::EVENT_SYMBOL:
-				return 'Unsupported CREATE EVENT statement.';
-
-			case WP_MySQL_Lexer::USER_SYMBOL:
-				return 'Unsupported CREATE USER statement.';
-
-			case WP_MySQL_Lexer::ROLE_SYMBOL:
-				return 'Unsupported CREATE ROLE statement.';
-
-			case WP_MySQL_Lexer::SERVER_SYMBOL:
-				return 'Unsupported CREATE SERVER statement.';
-
-			case WP_MySQL_Lexer::LOGFILE_SYMBOL:
-				return 'Unsupported CREATE LOGFILE statement.';
-
-			case WP_MySQL_Lexer::TABLESPACE_SYMBOL:
-				return 'Unsupported CREATE TABLESPACE statement.';
-		}
-
-		return 'Unsupported CREATE statement.';
+		return $messages[ $statement_token->id ?? null ] ?? 'Unsupported CREATE statement.';
 	}
 
 	/**
