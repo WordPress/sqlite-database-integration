@@ -35468,15 +35468,17 @@ WHERE option_name IN (
 			return array();
 		}
 
-		$placeholders = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
-		$stmt         = $this->connection->query(
+		$hidden_table_names        = $this->get_direct_information_schema_hidden_table_names();
+		$hidden_table_placeholders = implode( ', ', array_fill( 0, count( $hidden_table_names ), '?' ) );
+		$placeholders              = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
+		$stmt                      = $this->connection->query(
 			sprintf(
 				'SELECT %1$s FROM %2$s WHERE %3$s = ? AND %4$s IN (?, ?) AND %1$s NOT IN (%5$s) AND %1$s IN (%6$s)',
 				$this->connection->quote_identifier( 'table_name' ),
 				$this->get_postgresql_qualified_identifier( 'information_schema', 'tables' ),
 				$this->connection->quote_identifier( 'table_schema' ),
 				$this->connection->quote_identifier( 'table_type' ),
-				$this->get_direct_information_schema_hidden_table_placeholders_sql(),
+				$hidden_table_placeholders,
 				$placeholders
 			),
 			array_merge(
@@ -35485,7 +35487,7 @@ WHERE option_name IN (
 					'BASE TABLE',
 					'VIEW',
 				),
-				$this->get_direct_information_schema_hidden_table_names(),
+				$hidden_table_names,
 				$table_names
 			)
 		);
@@ -39082,15 +39084,6 @@ WHERE option_name IN (
 				$this->get_direct_information_schema_hidden_table_names()
 			)
 		);
-	}
-
-	/**
-	 * Get SQL placeholders for the hidden metadata table exclusion list.
-	 *
-	 * @return string SQL placeholder list.
-	 */
-	private function get_direct_information_schema_hidden_table_placeholders_sql(): string {
-		return implode( ', ', array_fill( 0, count( $this->get_direct_information_schema_hidden_table_names() ), '?' ) );
 	}
 
 	/**
