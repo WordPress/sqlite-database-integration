@@ -1304,7 +1304,7 @@ class WP_PostgreSQL_Driver {
 		$sql_calc_found_rows_window   = false;
 
 		if ( ! $translated_for_postgresql ) {
-			$translated_query = null !== $sql_calc_found_rows_query && $this->is_sql_calc_found_rows_window_fetch_mode( $fetch_mode )
+			$translated_query = null !== $sql_calc_found_rows_query && in_array( (int) $fetch_mode, array( PDO::FETCH_OBJ, PDO::FETCH_ASSOC ), true )
 				? $this->translate_sql_calc_found_rows_window_select_query( $query )
 				: null;
 			if ( null !== $translated_query ) {
@@ -1341,7 +1341,7 @@ class WP_PostgreSQL_Driver {
 			throw new InvalidArgumentException( 'Unsupported MySQL date arithmetic statement.' );
 		}
 
-		if ( $this->contains_unsupported_mysql_date_format_function_query( $query ) ) {
+		if ( $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_date_format_function' ) ) ) {
 			throw new InvalidArgumentException( 'Unsupported MySQL runtime function form.' );
 		}
 
@@ -2235,16 +2235,6 @@ class WP_PostgreSQL_Driver {
 		);
 
 		$this->limit_mysql_query_translation_cache( $this->mysql_sql_calc_found_rows_count_query_cache );
-	}
-
-	/**
-	 * Check whether a fetch mode can hide the internal FOUND_ROWS window column.
-	 *
-	 * @param int $fetch_mode PDO fetch mode.
-	 * @return bool Whether the hidden window column can be removed safely.
-	 */
-	private function is_sql_calc_found_rows_window_fetch_mode( $fetch_mode ): bool {
-		return in_array( (int) $fetch_mode, array( PDO::FETCH_OBJ, PDO::FETCH_ASSOC ), true );
 	}
 
 	/**
@@ -4522,7 +4512,7 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function maybe_clear_mysql_schema_metadata_table_state( array $table_names ): void {
 		foreach ( $table_names as $table_name ) {
-			if ( ! $this->is_mysql_schema_metadata_table_name( (string) $table_name ) ) {
+			if ( ! in_array( (string) $table_name, $this->get_direct_information_schema_hidden_table_names(), true ) ) {
 				continue;
 			}
 
@@ -4530,16 +4520,6 @@ class WP_PostgreSQL_Driver {
 			$this->clear_mysql_metadata_caches();
 			return;
 		}
-	}
-
-	/**
-	 * Check whether a table name belongs to the driver's metadata side tables.
-	 *
-	 * @param string $table_name Table name.
-	 * @return bool Whether this is a metadata side table.
-	 */
-	private function is_mysql_schema_metadata_table_name( string $table_name ): bool {
-		return in_array( $table_name, $this->get_direct_information_schema_hidden_table_names(), true );
 	}
 
 	/**
@@ -4770,7 +4750,7 @@ class WP_PostgreSQL_Driver {
 			return true;
 		}
 
-		if ( $this->is_postgresql_mysql_binary_domain_column_type( $column_type ) ) {
+		if ( 1 === preg_match( '/^(?:var)?binary(?:\(\d+\))?$|^(?:tinyblob|blob|mediumblob|longblob)$/', $column_type ) ) {
 			return true;
 		}
 
@@ -4821,16 +4801,6 @@ class WP_PostgreSQL_Driver {
 		$type = 'integer' === $matches[1] ? 'int' : $matches[1];
 		return isset( self::MYSQL_INTEGER_DOMAIN_BASE_TYPES[ $type ] )
 			&& ! in_array( $column_type, array( 'int', 'bigint' ), true );
-	}
-
-	/**
-	 * Check whether a MySQL binary/blob type is preserved by a PostgreSQL domain.
-	 *
-	 * @param string $column_type MySQL-facing column type.
-	 * @return bool Whether a catalog domain preserves this binary/blob shape.
-	 */
-	private function is_postgresql_mysql_binary_domain_column_type( string $column_type ): bool {
-		return (bool) preg_match( '/^(?:var)?binary(?:\(\d+\))?$|^(?:tinyblob|blob|mediumblob|longblob)$/', $column_type );
 	}
 
 	/**
@@ -13083,7 +13053,7 @@ $wp_mysql_primary_index_comment$',
 			return $this->is_mysql_integer_family_column_type( $existing_mysql_type );
 		}
 
-		return $this->is_postgresql_integer_family_data_type( (string) ( $existing['data_type'] ?? '' ) );
+		return in_array( strtolower( trim( (string) ( $existing['data_type'] ?? '' ) ) ), array( 'bigint', 'integer', 'smallint' ), true );
 	}
 
 	/**
@@ -13275,16 +13245,6 @@ $wp_mysql_primary_index_comment$',
 	private function is_mysql_non_integer_numeric_family_column_type( string $column_type ): bool {
 		$base_type = $this->get_base_mysql_dml_column_type( $column_type );
 		return in_array( $base_type, array( 'decimal', 'double', 'float', 'numeric', 'real' ), true );
-	}
-
-	/**
-	 * Check whether a PostgreSQL catalog data type is integer-like.
-	 *
-	 * @param string $data_type PostgreSQL information_schema data_type.
-	 * @return bool Whether the type is integer-like.
-	 */
-	private function is_postgresql_integer_family_data_type( string $data_type ): bool {
-		return in_array( strtolower( trim( $data_type ) ), array( 'bigint', 'integer', 'smallint' ), true );
 	}
 
 	/**
@@ -40271,17 +40231,8 @@ WHERE option_name IN (
 			'CASE WHEN %1$s = %2$s THEN %3$s ELSE %1$s END',
 			$schema_sql,
 			$this->connection->quote( 'public' ),
-			$this->get_direct_information_schema_display_main_database_sql()
+			$this->connection->quote( $this->main_db_name )
 		);
-	}
-
-	/**
-	 * Get SQL for the MySQL-facing main database name in direct information_schema relations.
-	 *
-	 * @return string SQL expression.
-	 */
-	private function get_direct_information_schema_display_main_database_sql(): string {
-		return $this->connection->quote( $this->main_db_name );
 	}
 
 	/**
@@ -49166,7 +49117,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 				$target_metadata = $table_column_lookup[ strtolower( $target_column ) ];
 				$source_column   = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $value_start, $assignment_end, $values_column_lookup, $source_aliases );
-			if ( $this->is_mysql_default_keyword_expression( $tokens, $value_start, $assignment_end ) ) {
+			if ( $this->is_mysql_default_value_token_sequence( $tokens, $value_start, $assignment_end ) ) {
 				$value_sql = $this->get_mysql_dml_default_assignment_sql_for_column( $target_metadata );
 			} else {
 				$default_function_sql = $this->get_mysql_dml_default_function_assignment_sql( $tokens, $value_start, $assignment_end, $table_column_lookup );
@@ -49512,20 +49463,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'column' => $second_identifier,
 			'end'    => $position + 3,
 		);
-	}
-
-	/**
-	 * Check whether an expression is exactly the DEFAULT keyword.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First expression token.
-	 * @param int              $end    Final expression token, exclusive.
-	 * @return bool Whether this is DEFAULT.
-	 */
-	private function is_mysql_default_keyword_expression( array $tokens, int $start, int $end ): bool {
-		return $start + 1 === $end
-			&& isset( $tokens[ $start ] )
-			&& WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $start ]->id;
 	}
 
 	/**
@@ -57503,7 +57440,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 		if (
 			null === $comma_position
 			|| $comma_position <= $position + 2
-			|| ! $this->is_mysql_date_convert_type( $tokens, $comma_position + 1, $close_position )
+			|| ! $this->is_mysql_date_cast_type( $tokens, $comma_position + 1, $close_position )
 		) {
 			return null;
 		}
@@ -57513,20 +57450,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			'expression_end'   => $comma_position,
 			'close'            => $close_position,
 		);
-	}
-
-	/**
-	 * Check whether a CONVERT type is MySQL DATE.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int             $start  First convert type token.
-	 * @param int             $end    Final convert type token, exclusive.
-	 * @return bool Whether the type is supported.
-	 */
-	private function is_mysql_date_convert_type( array $tokens, int $start, int $end ): bool {
-		return $start + 1 === $end
-			&& isset( $tokens[ $start ] )
-			&& WP_MySQL_Lexer::DATE_SYMBOL === $tokens[ $start ]->id;
 	}
 
 	/**
@@ -58541,7 +58464,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			return sprintf( "%s(%s, ' ')", $function, $value_text_sql );
 		}
 
-		$remove_pattern = $this->get_postgresql_regex_escaped_literal_sql( $remove );
+		$remove_pattern = (string) preg_replace( '/([\\\\.^$|?*+()[\]{}])/', '\\\\$1', $remove );
 		if ( 'leading' === $direction ) {
 			return sprintf( 'REGEXP_REPLACE(%s, %s, \'\')', $value_text_sql, $this->connection->quote( '^(' . $remove_pattern . ')+' ) );
 		}
@@ -58605,16 +58528,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			$this->connection->quote( '([\\\\.^$|?*+()[\]{}])' ),
 			$this->connection->quote( '\\\\\1' )
 		);
-	}
-
-	/**
-	 * Escape a literal string for use inside a PostgreSQL regular expression.
-	 *
-	 * @param string $literal Literal string.
-	 * @return string Regular-expression fragment matching the literal.
-	 */
-	private function get_postgresql_regex_escaped_literal_sql( string $literal ): string {
-		return (string) preg_replace( '/([\\\\.^$|?*+()[\]{}])/', '\\\\$1', $literal );
 	}
 
 	/**
@@ -61935,10 +61848,6 @@ $wp_mysql_%1$s_domain$',
 		}
 
 		return false;
-	}
-
-	private function contains_unsupported_mysql_date_format_function_query( string $query ): bool {
-		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_date_format_function' ) );
 	}
 
 	/**
