@@ -2308,7 +2308,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					$this->catalog_column_queries[] = array(
 						'sql'    => $sql,
 						'params' => $params,
@@ -2331,7 +2331,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						'params' => $params,
 					);
 
-					if ( array( 'plugin_schema', 'catalog_current_schema_replace', 'catalog_current_schema_replace', 'catalog_current_schema_replace' ) !== $params ) {
+					if ( array( 'plugin_schema', 'catalog_current_schema_replace' ) !== $params ) {
 						throw new RuntimeException( 'REPLACE unique-index metadata should resolve against the selected PostgreSQL schema: ' . json_encode( $params ) );
 					}
 
@@ -4129,7 +4129,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query( 'SELECT ? AS column_type', array( 'text' ) );
 				}
 
@@ -4259,8 +4259,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
-						return parent::query( 'SELECT ? AS column_type', array( 'text' ) );
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
+					return parent::query( 'SELECT ? AS column_type', array( 'text' ) );
 				}
 
 				if ( 'CREATE INDEX "plugin_table__value_idx" ON "plugin_schema"."plugin_table" ("value")' === $sql ) {
@@ -10951,7 +10951,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					$this->catalog_queries[] = array(
 						'sql'    => $sql,
 						'params' => $params,
@@ -11353,7 +11353,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					$this->catalog_queries[] = array(
 						'sql'    => $sql,
 						'params' => $params,
@@ -23179,7 +23179,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query( "SELECT 'value' AS column_name" );
 				}
 
@@ -28721,7 +28721,7 @@ $wp_mysql_on_update$',
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE ) ) {
+				if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, '/' ) . '"?/i', $sql ) ) {
 					throw new RuntimeException( 'Hidden table metadata table access was not expected for catalog-backed ALTER TABLE COMMENT.' );
 				}
 
@@ -28738,9 +28738,11 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
-						"SELECT '__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=\nPrevious table note' AS table_comment"
+						"SELECT
+								'Previous table note' AS table_comment,
+								'latin1_swedish_ci' AS table_collation"
 					);
 				}
 
@@ -30235,7 +30237,7 @@ $wp_mysql_on_update$',
 	 * Tests SHOW CREATE TABLE uses PostgreSQL catalogs directly for pgsql connections.
 	 */
 	public function test_show_create_table_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
-		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
 			/**
 			 * Execute fixture-backed SHOW CREATE TABLE catalog queries.
 			 *
@@ -30244,7 +30246,7 @@ $wp_mysql_on_update$',
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
 						"SELECT
 							'id' AS column_name,
@@ -30276,8 +30278,8 @@ $wp_mysql_on_update$',
 							NULL AS collation_name,
 							'NO' AS is_nullable,
 							'CURRENT_TIMESTAMP' AS column_default,
-							'' AS extra,
-							'Title note' AS column_comment"
+								'' AS extra,
+								'Title note' AS column_comment"
 					);
 				}
 
@@ -30333,8 +30335,12 @@ $wp_mysql_on_update$',
 					);
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
-					return parent::query( "SELECT 'Native table note' AS table_comment" );
+				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
+					return parent::query(
+						"SELECT
+							'Native table note' AS table_comment,
+							'utf8mb4_unicode_ci' AS table_collation"
+					);
 				}
 
 				return parent::query( $sql, $params );
@@ -30346,11 +30352,11 @@ $wp_mysql_on_update$',
 				$this->collation = 'latin1_swedish_ci';
 				$schema          = 'public';
 				$table           = 'wptests_show_create';
-				$columns         = $this->get_show_create_table_column_catalog_rows( $schema, $table );
+				$columns         = $this->get_show_create_table_column_metadata_rows( $schema, $table );
 				$indexes         = $this->get_show_create_table_index_catalog_rows( $schema, $table );
 				$foreign_keys    = $this->get_show_create_table_foreign_key_catalog_rows( $schema, $table );
 				$checks          = $this->get_show_create_table_check_constraint_catalog_rows( $schema, $table );
-				$table_metadata  = $this->get_show_create_table_table_catalog_metadata( $schema, $table );
+				$table_metadata  = $this->get_show_create_table_table_metadata( $schema, $table );
 
 				return $this->get_mysql_create_table_statement_from_metadata(
 					$table,
@@ -30392,14 +30398,20 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $queries[3]['sql'] );
 		$this->assertStringContainsString( '__wp_mysql_check_clause:', $queries[3]['sql'] );
-		$this->assertStringContainsString( 'pg_catalog.obj_description(t.oid, \'pg_class\')', $queries[4]['sql'] );
+		$this->assertStringContainsString( 'AS "TABLE_COMMENT"', $queries[4]['sql'] );
 
 		foreach ( $queries as $query ) {
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $query['sql'] );
+			foreach (
+				array(
+					WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+					WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+					WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+					WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+				) as $metadata_table
+			) {
+				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $query['sql'] ) );
+			}
 		}
 	}
 
@@ -30443,7 +30455,7 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
 						"SELECT
 							'id' AS column_name,
@@ -30521,7 +30533,7 @@ $wp_mysql_on_update$',
 					);
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query( "SELECT 'Native table note' AS table_comment, 'utf8mb4_unicode_ci' AS table_collation" );
 				}
 
@@ -30565,7 +30577,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $queries[1]['sql'] );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
-		$this->assertStringContainsString( 'pg_catalog.obj_description(t.oid, \'pg_class\')', $queries[4]['sql'] );
+		$this->assertStringContainsString( 'AS "TABLE_COMMENT"', $queries[4]['sql'] );
 
 		foreach ( $queries as $query ) {
 			foreach ( $metadata_tables as $metadata_table ) {
@@ -30606,7 +30618,7 @@ $wp_mysql_on_update$',
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
 						"SELECT
 							'id' AS column_name,
@@ -30674,8 +30686,8 @@ $wp_mysql_on_update$',
 					);
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
-					return parent::query( "SELECT 'Plugin table note' AS table_comment" );
+				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
+					return parent::query( "SELECT 'Plugin table note' AS table_comment, 'utf8mb4_unicode_ci' AS table_collation" );
 				}
 
 				return parent::query( $sql, $params );
@@ -30698,11 +30710,17 @@ $wp_mysql_on_update$',
 		foreach ( $queries as $query ) {
 			$this->assertContains( 'plugin_schema', $query['params'] );
 			$this->assertContains( 'plugin_options', $query['params'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $query['sql'] );
-			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $query['sql'] );
+			foreach (
+				array(
+					WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+					WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+					WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+					WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+				) as $metadata_table
+			) {
+				$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $query['sql'] ) );
+			}
 		}
 
 		try {
@@ -40421,7 +40439,7 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
 					) as $metadata_table
 				) {
-					if ( false !== strpos( $sql, $metadata_table ) ) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
 						throw new RuntimeException( 'Hidden metadata fallback was not expected for catalog-backed upsert target discovery.' );
 					}
 				}
@@ -40498,8 +40516,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'i.indisunique', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.pg_get_indexdef(i.indexrelid', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'COALESCE(column_name, NULLIF(REPLACE(COALESCE(', $catalog_queries[0]['sql'] );
-		$this->assertStringContainsString( 'SUBSTRING(expression FROM \', 1, ([0-9]+)[)]$\') END AS sub_part', $catalog_queries[0]['sql'] );
-		$this->assertSame( array( 'public', 'wptests_plugin_lookup', 'wptests_plugin_lookup', 'wptests_plugin_lookup' ), $catalog_queries[0]['params'] );
+		$this->assertStringContainsString( 'AS "SUB_PART"', $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wptests_plugin_lookup' ), $catalog_queries[0]['params'] );
 	}
 
 	/**
@@ -42125,10 +42143,7 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
-					if (
-						false !== strpos( $sql, $metadata_table )
-						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
-					) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
 						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed table collation.' );
 					}
 				}
@@ -42137,9 +42152,11 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
-						"SELECT '__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=\nVisible note' AS table_comment"
+						"SELECT
+								'Visible note' AS table_comment,
+								'latin1_swedish_ci' AS table_collation"
 					);
 				}
 
@@ -45455,10 +45472,7 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
-					if (
-						false !== strpos( $sql, $metadata_table )
-						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
-					) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
 						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE LIKE.' );
 					}
 				}
@@ -45476,29 +45490,29 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
 						"SELECT
-							'id' AS column_name,
-							1 AS ordinal_position,
-							'int' AS column_type,
-							NULL AS character_set_name,
-							NULL AS collation_name,
-							'NO' AS is_nullable,
-							NULL AS column_default,
-							'' AS extra,
-							'' AS column_comment
-						UNION ALL
-						SELECT
-							'title' AS column_name,
-							2 AS ordinal_position,
-							'varchar(191)' AS column_type,
-							'utf8mb4' AS character_set_name,
-							'utf8mb4_unicode_ci' AS collation_name,
-							'NO' AS is_nullable,
-							'' AS column_default,
-							'' AS extra,
-							'Title note' AS column_comment"
+								'id' AS column_name,
+								1 AS ordinal_position,
+								'int' AS column_type,
+								NULL AS character_set_name,
+								NULL AS collation_name,
+								'NO' AS is_nullable,
+								NULL AS column_default,
+								'' AS extra,
+								'' AS column_comment
+							UNION ALL
+							SELECT
+								'title' AS column_name,
+								2 AS ordinal_position,
+								'varchar(191)' AS column_type,
+								'utf8mb4' AS character_set_name,
+								'utf8mb4_unicode_ci' AS collation_name,
+								'NO' AS is_nullable,
+								'' AS column_default,
+								'' AS extra,
+								'Title note' AS column_comment"
 					);
 				}
 
@@ -45532,9 +45546,11 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
+				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
-						"SELECT '__wp_mysql_table_collation:bGF0aW4xX3N3ZWRpc2hfY2k=\nTemplate note' AS table_comment"
+						"SELECT
+								'Template note' AS table_comment,
+								'latin1_swedish_ci' AS table_collation"
 					);
 				}
 
@@ -45633,10 +45649,7 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
-					if (
-						false !== strpos( $sql, $metadata_table )
-						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
-					) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
 						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed temporary CREATE LIKE.' );
 					}
 				}
@@ -45663,7 +45676,7 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS relname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
 						"SELECT
 							'id' AS column_name,
@@ -45719,8 +45732,8 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
-					return parent::query( "SELECT '' AS table_comment" );
+				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
+					return parent::query( "SELECT '' AS table_comment, 'utf8mb4_unicode_ci' AS table_collation" );
 				}
 
 				if ( 0 === strpos( $sql, 'COMMENT ON ' ) ) {
@@ -45808,10 +45821,7 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
 					) as $metadata_table
 				) {
-					if (
-						false !== strpos( $sql, $metadata_table )
-						&& false === strpos( $sql, 'pg_catalog.pg_class c' )
-					) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
 						throw new RuntimeException( 'Hidden metadata table mutation was not expected for catalog-backed CREATE LIKE.' );
 					}
 				}
@@ -45837,7 +45847,7 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
 						"SELECT
 							'id' AS column_name,
@@ -45893,8 +45903,8 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.obj_description(t.oid, \'pg_class\')' ) ) {
-					return parent::query( "SELECT 'Template note' AS table_comment" );
+				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
+					return parent::query( "SELECT 'Template note' AS table_comment, 'utf8mb4_unicode_ci' AS table_collation" );
 				}
 
 				if (
@@ -48566,7 +48576,7 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
 					) as $metadata_table
 				) {
-					if ( false !== strpos( $sql, $metadata_table ) ) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
 						throw new RuntimeException( 'Hidden MySQL metadata table access was not expected for catalog-backed unique indexes.' );
 					}
 				}
@@ -48671,7 +48681,7 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
 					) as $metadata_table
 				) {
-					if ( false !== strpos( $sql, $metadata_table ) ) {
+					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
 						throw new RuntimeException( 'Hidden MySQL metadata table access was not expected for catalog-backed identity upserts.' );
 					}
 				}

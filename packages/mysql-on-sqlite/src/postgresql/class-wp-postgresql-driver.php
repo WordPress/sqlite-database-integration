@@ -5335,7 +5335,7 @@ $wp_mysql_on_update$',
 			$logged_queries  = $this->last_postgresql_queries;
 			$table_collation = '';
 			try {
-				$table_metadata  = $this->get_show_create_table_table_catalog_metadata( $table_schema, $table_name );
+				$table_metadata  = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
 				$table_collation = (string) ( $table_metadata['collation'] ?? '' );
 			} catch ( PDOException $e ) {
 				$table_collation = '';
@@ -6381,34 +6381,29 @@ $wp_mysql_primary_index_comment$',
 	private function postgresql_catalog_index_metadata_exists( string $table_schema, string $table_name, string $index_name, bool $unique_only ): bool {
 		try {
 			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT 1
-					FROM pg_catalog.pg_class t
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					INNER JOIN pg_catalog.pg_index i
-						ON i.indrelid = t.oid
-					INNER JOIN pg_catalog.pg_class idx
-						ON idx.oid = i.indexrelid
-					WHERE n.nspname = ?
-						AND t.relname = ?
-						AND t.relkind IN (\'r\', \'p\')
-						AND i.indisvalid
-						AND i.indislive
-						%1$s
+				'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
+					'',
+					'',
+					array_merge(
+						array(
+							'n.nspname = ?',
+							't.relname = ?',
+							't.relkind IN (\'r\', \'p\')',
+						),
+						$unique_only ? array( 'i.indisunique' ) : array()
+					)
+				) . '
+				SELECT 1
+				FROM index_columns
+				WHERE (indisprimary AND LOWER(?) = \'primary\')
+					OR (
+						NOT indisprimary
 						AND (
-							(i.indisprimary AND LOWER(?) = \'primary\')
-							OR (
-								NOT i.indisprimary
-								AND (
-									LOWER(idx.relname) = LOWER(?)
-									OR LOWER(idx.relname) = LOWER(t.relname || \'__\' || ?)
-								)
-							)
+							LOWER(postgresql_index_name) = LOWER(?)
+							OR LOWER(postgresql_index_name) = LOWER(table_name || \'__\' || ?)
 						)
-					LIMIT 1',
-					$unique_only ? 'AND i.indisunique' : ''
-				),
+					)
+				LIMIT 1',
 				array( $table_schema, $table_name, $index_name, $index_name, $index_name )
 			);
 
@@ -6429,18 +6424,16 @@ $wp_mysql_primary_index_comment$',
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			try {
 				$stmt = $this->connection->query(
-					'SELECT 1
-					FROM pg_catalog.pg_class t
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					INNER JOIN pg_catalog.pg_index i
-						ON i.indrelid = t.oid
-					WHERE n.nspname = ?
-						AND t.relname = ?
-						AND t.relkind IN (\'r\', \'p\')
-						AND i.indisvalid
-						AND i.indislive
-					LIMIT 1',
+					'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
+						'',
+						'',
+						array(
+							'n.nspname = ?',
+							't.relname = ?',
+							't.relkind IN (\'r\', \'p\')',
+						)
+					) . '
+					SELECT 1 FROM index_columns LIMIT 1',
 					array( $table_schema, $table_name )
 				);
 
@@ -18047,7 +18040,32 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_column_metadata_rows( string $schema_name, string $table_name ): array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_show_create_table_column_catalog_rows( $schema_name, $table_name );
+			$sql    = sprintf(
+				'SELECT
+					"COLUMN_NAME" AS column_name,
+					"ORDINAL_POSITION" AS ordinal_position,
+					"COLUMN_TYPE" AS column_type,
+					"CHARACTER_SET_NAME" AS character_set_name,
+					"COLLATION_NAME" AS collation_name,
+					"IS_NULLABLE" AS is_nullable,
+					"COLUMN_DEFAULT" AS column_default,
+					"EXTRA" AS extra,
+					"COLUMN_COMMENT" AS column_comment
+				FROM (%s) columns
+				WHERE "TABLE_SCHEMA" = ?
+					AND "TABLE_NAME" = ?
+				ORDER BY "ORDINAL_POSITION"',
+				$this->get_direct_information_schema_relation_sql( 'columns' )
+			);
+			$params = array( $schema_name, $table_name );
+			$stmt   = $this->connection->query( $sql, $params );
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => $params,
+			);
+
+			return $stmt->fetchAll( PDO::FETCH_ASSOC );
 		}
 
 		$sql    = sprintf(
@@ -18056,74 +18074,6 @@ ORDER BY table_name';
 			WHERE table_schema = ? AND table_name = ?
 			ORDER BY ordinal_position',
 			$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-		);
-		$params = array( $schema_name, $table_name );
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
-	}
-
-	/**
-	 * Get column catalog rows for SHOW CREATE TABLE.
-	 *
-	 * @param string $schema_name Backend schema.
-	 * @param string $table_name  Table name.
-	 * @return array[] Column metadata-shaped rows.
-	 */
-	private function get_show_create_table_column_catalog_rows( string $schema_name, string $table_name ): array {
-		$comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-		$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
-			'c',
-			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-			$comment_sql
-		);
-
-		$sql    = sprintf(
-			'SELECT
-				c.column_name,
-				c.ordinal_position,
-				%1$s AS column_type,
-				%2$s AS character_set_name,
-				%3$s AS collation_name,
-				c.is_nullable,
-				%4$s AS column_default,
-				%5$s AS extra,
-				%6$s AS column_comment
-			FROM information_schema.columns c
-			LEFT JOIN pg_catalog.pg_namespace pn
-				ON pn.nspname = c.table_schema
-			LEFT JOIN pg_catalog.pg_class pc
-				ON pc.relnamespace = pn.oid
-				AND pc.relname = c.table_name
-				AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-			LEFT JOIN pg_catalog.pg_attribute pa
-				ON pa.attrelid = pc.oid
-				AND pa.attname = c.column_name
-				AND pa.attnum > 0
-				WHERE c.table_schema = ?
-					AND c.table_name = ?
-				ORDER BY c.ordinal_position',
-			$column_type,
-			$this->get_direct_information_schema_character_set_expression(
-				$column_type,
-				'NULL',
-				$comment_sql,
-				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET )
-			),
-			$this->get_direct_information_schema_collation_expression(
-				$column_type,
-				'c.collation_name',
-				$comment_sql,
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-			),
-			$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-			$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-			$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
 		);
 		$params = array( $schema_name, $table_name );
 		$stmt   = $this->connection->query( $sql, $params );
@@ -18187,50 +18137,22 @@ ORDER BY table_name';
 			$this->get_postgresql_catalog_index_type_comment_sql( 'index_comment' )
 		);
 		$sub_part_sql    = $this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' );
-		$sql             = 'WITH index_columns AS (
-				SELECT
-					t.relname AS table_name,
-					CAST(idx.oid AS bigint) AS index_ordinal,
-					idx.relname AS postgresql_index_name,
-					i.indisunique,
-					i.indisprimary,
-					am.amname AS access_method,
-					COALESCE(pg_catalog.obj_description(idx.oid, \'pg_class\'), \'\') AS index_comment,
-					k.ordinality AS seq_in_index,
-					k.attnum,
-					a.attname AS column_name,
-					CASE
-						WHEN 0 = k.attnum THEN pg_catalog.pg_get_indexdef(i.indexrelid, CAST(k.ordinality AS integer), true)
-						ELSE NULL
-					END AS expression,
-					pg_catalog.pg_index_column_has_property(i.indexrelid, CAST(k.ordinality AS integer), \'desc\') AS is_desc
-				FROM pg_catalog.pg_class t
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				INNER JOIN pg_catalog.pg_index i
-					ON i.indrelid = t.oid
-				INNER JOIN pg_catalog.pg_class idx
-					ON idx.oid = i.indexrelid
-				INNER JOIN pg_catalog.pg_am am
-					ON am.oid = idx.relam
-				CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-				LEFT JOIN pg_catalog.pg_attribute a
-					ON a.attrelid = t.oid
-					AND a.attnum = k.attnum
-				WHERE n.nspname = ?
-					AND t.relname = ?
-					AND t.relkind IN (\'r\', \'p\')
-					AND k.ordinality <= i.indnkeyatts
-					AND i.indisvalid
-					AND i.indislive
+		$sql             = 'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
+			'',
+			'',
+			array(
+				'n.nspname = ?',
+				't.relname = ?',
+				't.relkind IN (\'r\', \'p\')',
 			)
+		) . '
 			SELECT
 				CASE
 					WHEN indisprimary THEN \'PRIMARY\'
 					WHEN postgresql_index_name LIKE table_name || \'__%%\' THEN SUBSTRING(postgresql_index_name FROM CHAR_LENGTH(table_name || \'__\') + 1)
 					ELSE postgresql_index_name
 				END AS key_name,
-				index_ordinal,
+				postgresql_index_oid AS index_ordinal,
 				CAST(seq_in_index AS integer) AS seq_in_index,
 				COALESCE(column_name, %1$s) AS column_name,
 				CASE WHEN indisunique THEN \'0\' ELSE \'1\' END AS non_unique,
@@ -18521,7 +18443,30 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_table_metadata( string $schema_name, string $table_name ): array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_show_create_table_table_catalog_metadata( $schema_name, $table_name );
+			$sql    = sprintf(
+				'SELECT
+					"TABLE_COMMENT" AS table_comment,
+					"TABLE_COLLATION" AS table_collation
+				FROM (%s) tables
+				WHERE "TABLE_SCHEMA" = ?
+					AND "TABLE_NAME" = ?
+				LIMIT 1',
+				$this->get_direct_information_schema_relation_sql( 'tables' )
+			);
+			$params = array( $schema_name, $table_name );
+			$stmt   = $this->connection->query( $sql, $params );
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => $params,
+			);
+
+			$row = $stmt->fetch( PDO::FETCH_ASSOC );
+
+			return array(
+				'comment'   => false === $row ? '' : (string) ( $row['table_comment'] ?? $row['TABLE_COMMENT'] ?? '' ),
+				'collation' => false === $row ? self::DEFAULT_MYSQL_COLLATION : (string) ( $row['table_collation'] ?? $row['TABLE_COLLATION'] ?? self::DEFAULT_MYSQL_COLLATION ),
+			);
 		}
 
 		$sql    = sprintf(
@@ -18544,51 +18489,6 @@ ORDER BY table_name';
 		return array(
 			'comment'   => false === $comment ? '' : (string) $comment,
 			'collation' => null,
-		);
-	}
-
-	/**
-	 * Get table metadata from PostgreSQL catalogs for SHOW CREATE TABLE.
-	 *
-	 * @param string $schema_name Backend schema.
-	 * @param string $table_name  Table name.
-	 * @return array{comment: string, collation: string|null} Table metadata.
-	 */
-	private function get_show_create_table_table_catalog_metadata( string $schema_name, string $table_name ): array {
-		$sql    = 'SELECT COALESCE(pg_catalog.obj_description(t.oid, \'pg_class\'), \'\') AS table_comment
-			FROM pg_catalog.pg_class t
-			INNER JOIN pg_catalog.pg_namespace n
-				ON n.oid = t.relnamespace
-			WHERE n.nspname = ?
-				AND t.relname = ?
-				AND t.relkind IN (\'r\', \'p\', \'v\', \'m\')
-			LIMIT 1';
-		$params = array( $schema_name, $table_name );
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		$comment   = $stmt->fetchColumn();
-		$comment   = false === $comment ? '' : (string) $comment;
-		$collation = self::DEFAULT_MYSQL_COLLATION;
-		if ( 0 === strpos( $comment, self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) ) {
-			$line    = explode( "\n", $comment, 2 )[0];
-			$payload = substr( $line, strlen( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) );
-			$decoded = '' === $payload ? false : base64_decode( $payload, true );
-			if ( false !== $decoded && '' !== $decoded ) {
-				$collation = (string) $decoded;
-			}
-
-			$newline_position = strpos( $comment, "\n" );
-			$comment          = false === $newline_position ? '' : substr( $comment, $newline_position + 1 );
-		}
-
-		return array(
-			'comment'   => $comment,
-			'collation' => $collation,
 		);
 	}
 
@@ -23977,7 +23877,30 @@ WHERE option_name IN (
 	 */
 	private function get_mysql_unique_index_metadata_rows( string $table_schema, string $table_name ): array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_postgresql_catalog_unique_index_metadata_rows( $table_schema, $table_name );
+			$stmt = $this->connection->query(
+				sprintf(
+					'SELECT
+						"INDEX_NAME" AS key_name,
+						"COLUMN_NAME" AS column_name,
+						"INDEX_TYPE" AS index_type,
+						"SUB_PART" AS sub_part
+					FROM (%s) statistics
+					WHERE "TABLE_SCHEMA" = ?
+						AND "TABLE_NAME" = ?
+						AND "NON_UNIQUE" = 0
+					ORDER BY
+						CASE WHEN UPPER("INDEX_NAME") = \'PRIMARY\' THEN 0 ELSE 1 END,
+						"POSTGRESQL_INDEX_OID",
+						"SEQ_IN_INDEX"',
+					$this->get_direct_information_schema_relation_sql(
+						'statistics',
+						array( 'include_internal_sort_column' => true )
+					)
+				),
+				array( $table_schema, $table_name )
+			);
+
+			return $stmt->fetchAll( PDO::FETCH_ASSOC );
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -23994,73 +23917,6 @@ WHERE option_name IN (
 				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 			),
 			array( $table_schema, $table_name )
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
-	}
-
-	/**
-	 * Get native PostgreSQL unique indexes as MySQL-shaped metadata rows.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @return array[] MySQL-shaped unique index metadata rows.
-	 */
-	private function get_postgresql_catalog_unique_index_metadata_rows( string $table_schema, string $table_name ): array {
-		$sql  = sprintf(
-			'WITH index_columns AS (
-				SELECT
-					idx.relname AS postgresql_index_name,
-					i.indisprimary,
-					idx.oid AS index_oid,
-					k.ordinality AS seq_in_index,
-					k.attnum,
-					a.attname AS column_name,
-					CASE
-						WHEN 0 = k.attnum THEN pg_catalog.pg_get_indexdef(i.indexrelid, CAST(k.ordinality AS integer), true)
-						ELSE NULL
-					END AS expression
-				FROM pg_catalog.pg_class t
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				INNER JOIN pg_catalog.pg_index i
-					ON i.indrelid = t.oid
-				INNER JOIN pg_catalog.pg_class idx
-					ON idx.oid = i.indexrelid
-				CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-				LEFT JOIN pg_catalog.pg_attribute a
-					ON a.attrelid = t.oid
-					AND a.attnum = k.attnum
-				WHERE n.nspname = ?
-					AND t.relname = ?
-					AND t.relkind IN (\'r\', \'p\')
-					AND i.indisunique
-					AND i.indisvalid
-					AND i.indislive
-					AND i.indpred IS NULL
-					AND k.ordinality <= i.indnkeyatts
-			)
-			SELECT
-				CASE
-					WHEN indisprimary THEN \'PRIMARY\'
-					WHEN postgresql_index_name LIKE ? || \'__%%\' THEN SUBSTRING(postgresql_index_name FROM CHAR_LENGTH(? || \'__\') + 1)
-					ELSE postgresql_index_name
-				END AS key_name,
-				COALESCE(column_name, %1$s) AS column_name,
-				\'BTREE\' AS index_type,
-				%2$s AS sub_part
-			FROM index_columns
-			WHERE COALESCE(column_name, %1$s) IS NOT NULL
-			ORDER BY
-				indisprimary DESC,
-				index_oid,
-				seq_in_index',
-			$this->get_postgresql_prefix_index_expression_column_name_sql( 'expression' ),
-			$this->get_postgresql_prefix_index_expression_sub_part_sql( 'expression' )
-		);
-		$stmt = $this->connection->query(
-			$sql,
-			array( $table_schema, $table_name, $table_name, $table_name )
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
