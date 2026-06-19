@@ -38336,7 +38336,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_views_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'views' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -38363,15 +38363,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function ( string $relation ): string {
-				if ( 'triggers' === $relation ) {
-					return $this->get_direct_information_schema_triggers_relation_sql();
-				}
-
-				if ( 'routines' === $relation ) {
-					return $this->get_direct_information_schema_routines_relation_sql();
-				}
-
-				return $this->get_direct_information_schema_parameters_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( $relation );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

@@ -38382,6 +38382,142 @@ WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 			);
 		}
 
+		if ( 'views' === $view ) {
+			return sprintf(
+				'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	v.table_name AS "TABLE_NAME",
+	v.view_definition AS "VIEW_DEFINITION",
+	COALESCE(v.check_option, \'NONE\') AS "CHECK_OPTION",
+	COALESCE(v.is_updatable, \'NO\') AS "IS_UPDATABLE",
+	\'\' AS "DEFINER",
+	\'DEFINER\' AS "SECURITY_TYPE",
+	%2$s AS "CHARACTER_SET_CLIENT",
+	%3$s AS "COLLATION_CONNECTION"
+FROM information_schema.views v
+WHERE v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(v.table_schema, 3) <> \'pg_\'
+	AND v.table_name NOT IN (%4$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'v.table_schema' ),
+				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
+		if ( 'triggers' === $view ) {
+			return sprintf(
+				'SELECT
+	\'def\' AS "TRIGGER_CATALOG",
+	%1$s AS "TRIGGER_SCHEMA",
+	t.trigger_name AS "TRIGGER_NAME",
+	t.event_manipulation AS "EVENT_MANIPULATION",
+	\'def\' AS "EVENT_OBJECT_CATALOG",
+	%2$s AS "EVENT_OBJECT_SCHEMA",
+	t.event_object_table AS "EVENT_OBJECT_TABLE",
+	t.action_order AS "ACTION_ORDER",
+	t.action_condition AS "ACTION_CONDITION",
+	t.action_statement AS "ACTION_STATEMENT",
+	t.action_orientation AS "ACTION_ORIENTATION",
+	t.action_timing AS "ACTION_TIMING",
+	t.action_reference_old_table AS "ACTION_REFERENCE_OLD_TABLE",
+	t.action_reference_new_table AS "ACTION_REFERENCE_NEW_TABLE",
+	t.action_reference_old_row AS "ACTION_REFERENCE_OLD_ROW",
+	t.action_reference_new_row AS "ACTION_REFERENCE_NEW_ROW",
+	TO_CHAR(t.created, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATED",
+	%3$s AS "SQL_MODE",
+	\'\' AS "DEFINER",
+	%4$s AS "CHARACTER_SET_CLIENT",
+	%5$s AS "COLLATION_CONNECTION",
+	%5$s AS "DATABASE_COLLATION"
+FROM information_schema.triggers t
+WHERE t.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(t.trigger_schema, 3) <> \'pg_\'
+	AND t.event_object_table NOT IN (%6$s)',
+				$this->get_direct_information_schema_display_schema_sql( 't.trigger_schema' ),
+				$this->get_direct_information_schema_display_schema_sql( 't.event_object_schema' ),
+				$this->connection->quote( $this->get_sql_mode() ),
+				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
+		if ( 'routines' === $view ) {
+			return sprintf(
+				'SELECT
+	r.specific_name AS "SPECIFIC_NAME",
+	\'def\' AS "ROUTINE_CATALOG",
+	%1$s AS "ROUTINE_SCHEMA",
+	r.routine_name AS "ROUTINE_NAME",
+	r.routine_type AS "ROUTINE_TYPE",
+	r.data_type AS "DATA_TYPE",
+	r.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
+	r.character_octet_length AS "CHARACTER_OCTET_LENGTH",
+	r.numeric_precision AS "NUMERIC_PRECISION",
+	r.numeric_scale AS "NUMERIC_SCALE",
+	r.datetime_precision AS "DATETIME_PRECISION",
+	r.character_set_name AS "CHARACTER_SET_NAME",
+	r.collation_name AS "COLLATION_NAME",
+	r.dtd_identifier AS "DTD_IDENTIFIER",
+	r.routine_body AS "ROUTINE_BODY",
+	r.routine_definition AS "ROUTINE_DEFINITION",
+	r.external_name AS "EXTERNAL_NAME",
+	r.external_language AS "EXTERNAL_LANGUAGE",
+	r.parameter_style AS "PARAMETER_STYLE",
+	r.is_deterministic AS "IS_DETERMINISTIC",
+	r.sql_data_access AS "SQL_DATA_ACCESS",
+	r.sql_path AS "SQL_PATH",
+	r.security_type AS "SECURITY_TYPE",
+	TO_CHAR(r.created, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATED",
+	TO_CHAR(r.last_altered, \'YYYY-MM-DD HH24:MI:SS\') AS "LAST_ALTERED",
+	%2$s AS "SQL_MODE",
+	\'\' AS "ROUTINE_COMMENT",
+	\'\' AS "DEFINER",
+	%3$s AS "CHARACTER_SET_CLIENT",
+	%4$s AS "COLLATION_CONNECTION",
+	%4$s AS "DATABASE_COLLATION"
+FROM information_schema.routines r
+WHERE r.routine_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(r.routine_schema, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'r.routine_schema' ),
+				$this->connection->quote( $this->get_sql_mode() ),
+				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+			);
+		}
+
+		if ( 'parameters' === $view ) {
+			return sprintf(
+				'SELECT
+	\'def\' AS "SPECIFIC_CATALOG",
+	%1$s AS "SPECIFIC_SCHEMA",
+	p.specific_name AS "SPECIFIC_NAME",
+	p.ordinal_position AS "ORDINAL_POSITION",
+	p.parameter_mode AS "PARAMETER_MODE",
+	p.parameter_name AS "PARAMETER_NAME",
+	p.data_type AS "DATA_TYPE",
+	p.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
+	p.character_octet_length AS "CHARACTER_OCTET_LENGTH",
+	p.numeric_precision AS "NUMERIC_PRECISION",
+	p.numeric_scale AS "NUMERIC_SCALE",
+	p.datetime_precision AS "DATETIME_PRECISION",
+	p.character_set_name AS "CHARACTER_SET_NAME",
+	p.collation_name AS "COLLATION_NAME",
+	p.dtd_identifier AS "DTD_IDENTIFIER",
+	COALESCE(r.routine_type, \'FUNCTION\') AS "ROUTINE_TYPE"
+FROM information_schema.parameters p
+LEFT JOIN information_schema.routines r
+	ON r.specific_catalog = p.specific_catalog
+	AND r.specific_schema = p.specific_schema
+	AND r.specific_name = p.specific_name
+WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(p.specific_schema, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'p.specific_schema' )
+			);
+		}
+
 		if ( 'st_geometry_columns' === $view ) {
 			$geometry_types     = array( 'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geomcollection', 'geometrycollection' );
 			$geometry_domains   = array();
@@ -39677,162 +39813,6 @@ FROM information_schema.applicable_roles ar';
 	\'NO\' AS "IS_DEFAULT",
 	\'NO\' AS "IS_MANDATORY"
 FROM information_schema.enabled_roles er';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.VIEWS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_views_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	v.table_name AS "TABLE_NAME",
-	v.view_definition AS "VIEW_DEFINITION",
-	COALESCE(v.check_option, \'NONE\') AS "CHECK_OPTION",
-	COALESCE(v.is_updatable, \'NO\') AS "IS_UPDATABLE",
-	\'\' AS "DEFINER",
-	\'DEFINER\' AS "SECURITY_TYPE",
-	%2$s AS "CHARACTER_SET_CLIENT",
-	%3$s AS "COLLATION_CONNECTION"
-FROM information_schema.views v
-WHERE v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(v.table_schema, 3) <> \'pg_\'
-	AND v.table_name NOT IN (%4$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'v.table_schema' ),
-			$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.TRIGGERS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_triggers_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "TRIGGER_CATALOG",
-	%1$s AS "TRIGGER_SCHEMA",
-	t.trigger_name AS "TRIGGER_NAME",
-	t.event_manipulation AS "EVENT_MANIPULATION",
-	\'def\' AS "EVENT_OBJECT_CATALOG",
-	%2$s AS "EVENT_OBJECT_SCHEMA",
-	t.event_object_table AS "EVENT_OBJECT_TABLE",
-	t.action_order AS "ACTION_ORDER",
-	t.action_condition AS "ACTION_CONDITION",
-	t.action_statement AS "ACTION_STATEMENT",
-	t.action_orientation AS "ACTION_ORIENTATION",
-	t.action_timing AS "ACTION_TIMING",
-	t.action_reference_old_table AS "ACTION_REFERENCE_OLD_TABLE",
-	t.action_reference_new_table AS "ACTION_REFERENCE_NEW_TABLE",
-	t.action_reference_old_row AS "ACTION_REFERENCE_OLD_ROW",
-	t.action_reference_new_row AS "ACTION_REFERENCE_NEW_ROW",
-	TO_CHAR(t.created, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATED",
-	%3$s AS "SQL_MODE",
-	\'\' AS "DEFINER",
-	%4$s AS "CHARACTER_SET_CLIENT",
-	%5$s AS "COLLATION_CONNECTION",
-	%5$s AS "DATABASE_COLLATION"
-FROM information_schema.triggers t
-WHERE t.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(t.trigger_schema, 3) <> \'pg_\'
-	AND t.event_object_table NOT IN (%6$s)',
-			$this->get_direct_information_schema_display_schema_sql( 't.trigger_schema' ),
-			$this->get_direct_information_schema_display_schema_sql( 't.event_object_schema' ),
-			$this->connection->quote( $this->get_sql_mode() ),
-			$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.ROUTINES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_routines_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	r.specific_name AS "SPECIFIC_NAME",
-	\'def\' AS "ROUTINE_CATALOG",
-	%1$s AS "ROUTINE_SCHEMA",
-	r.routine_name AS "ROUTINE_NAME",
-	r.routine_type AS "ROUTINE_TYPE",
-	r.data_type AS "DATA_TYPE",
-	r.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
-	r.character_octet_length AS "CHARACTER_OCTET_LENGTH",
-	r.numeric_precision AS "NUMERIC_PRECISION",
-	r.numeric_scale AS "NUMERIC_SCALE",
-	r.datetime_precision AS "DATETIME_PRECISION",
-	r.character_set_name AS "CHARACTER_SET_NAME",
-	r.collation_name AS "COLLATION_NAME",
-	r.dtd_identifier AS "DTD_IDENTIFIER",
-	r.routine_body AS "ROUTINE_BODY",
-	r.routine_definition AS "ROUTINE_DEFINITION",
-	r.external_name AS "EXTERNAL_NAME",
-	r.external_language AS "EXTERNAL_LANGUAGE",
-	r.parameter_style AS "PARAMETER_STYLE",
-	r.is_deterministic AS "IS_DETERMINISTIC",
-	r.sql_data_access AS "SQL_DATA_ACCESS",
-	r.sql_path AS "SQL_PATH",
-	r.security_type AS "SECURITY_TYPE",
-	TO_CHAR(r.created, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATED",
-	TO_CHAR(r.last_altered, \'YYYY-MM-DD HH24:MI:SS\') AS "LAST_ALTERED",
-	%2$s AS "SQL_MODE",
-	\'\' AS "ROUTINE_COMMENT",
-	\'\' AS "DEFINER",
-	%3$s AS "CHARACTER_SET_CLIENT",
-	%4$s AS "COLLATION_CONNECTION",
-	%4$s AS "DATABASE_COLLATION"
-FROM information_schema.routines r
-WHERE r.routine_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(r.routine_schema, 3) <> \'pg_\'',
-			$this->get_direct_information_schema_display_schema_sql( 'r.routine_schema' ),
-			$this->connection->quote( $this->get_sql_mode() ),
-			$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.PARAMETERS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_parameters_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "SPECIFIC_CATALOG",
-	%1$s AS "SPECIFIC_SCHEMA",
-	p.specific_name AS "SPECIFIC_NAME",
-	p.ordinal_position AS "ORDINAL_POSITION",
-	p.parameter_mode AS "PARAMETER_MODE",
-	p.parameter_name AS "PARAMETER_NAME",
-	p.data_type AS "DATA_TYPE",
-	p.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
-	p.character_octet_length AS "CHARACTER_OCTET_LENGTH",
-	p.numeric_precision AS "NUMERIC_PRECISION",
-	p.numeric_scale AS "NUMERIC_SCALE",
-	p.datetime_precision AS "DATETIME_PRECISION",
-	p.character_set_name AS "CHARACTER_SET_NAME",
-	p.collation_name AS "COLLATION_NAME",
-	p.dtd_identifier AS "DTD_IDENTIFIER",
-	COALESCE(r.routine_type, \'FUNCTION\') AS "ROUTINE_TYPE"
-FROM information_schema.parameters p
-LEFT JOIN information_schema.routines r
-	ON r.specific_catalog = p.specific_catalog
-	AND r.specific_schema = p.specific_schema
-	AND r.specific_name = p.specific_name
-WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(p.specific_schema, 3) <> \'pg_\'',
-			$this->get_direct_information_schema_display_schema_sql( 'p.specific_schema' )
-		);
 	}
 
 	/**
