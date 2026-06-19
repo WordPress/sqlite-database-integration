@@ -1103,9 +1103,12 @@ class WP_PostgreSQL_Driver {
 
 		$describe_table_reference = $this->get_describe_table_reference( $query );
 		if ( null !== $describe_table_reference ) {
-			return $this->execute_describe_query(
+			return $this->execute_show_columns_query(
 				$describe_table_reference['schema'],
 				$describe_table_reference['table'],
+				false,
+				null,
+				null,
 				$fetch_mode,
 				...$fetch_mode_args
 			);
@@ -6659,7 +6662,7 @@ $wp_mysql_primary_index_comment$',
 		$logged_queries = $this->last_postgresql_queries;
 		try {
 			$columns        = $this->get_show_create_table_column_metadata_rows( $source_schema, $source_reference['table'] );
-			$indexes        = $this->get_show_create_table_index_metadata_rows( $source_schema, $source_reference['table'] );
+			$indexes        = $this->get_show_create_table_index_catalog_rows( $source_schema, $source_reference['table'] );
 			$checks         = $this->get_show_create_table_check_constraint_metadata_rows( $source_schema, $source_reference['table'] );
 			$table_metadata = $this->get_show_create_table_table_metadata( $source_schema, $source_reference['table'] );
 		} finally {
@@ -14541,18 +14544,9 @@ $wp_mysql_primary_index_comment$',
 				throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
 			}
 
-			$allowed_columns = array(
-				'field'   => 'Field',
-				'type'    => 'Type',
-				'null'    => 'Null',
-				'key'     => 'Key',
-				'default' => 'Default',
-				'extra'   => 'Extra',
-			);
-			if ( $is_full ) {
-				$allowed_columns['collation']  = 'Collation';
-				$allowed_columns['privileges'] = 'Privileges';
-				$allowed_columns['comment']    = 'Comment';
+			$allowed_columns = array();
+			foreach ( $this->get_show_columns_output_columns( $is_full ) as $column ) {
+				$allowed_columns[ strtolower( $column ) ] = $column;
 			}
 
 			$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
@@ -14654,23 +14648,10 @@ $wp_mysql_primary_index_comment$',
 
 		$where = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
-			$allowed_columns = array(
-				'table'         => 'Table',
-				'non_unique'    => 'Non_unique',
-				'key_name'      => 'Key_name',
-				'seq_in_index'  => 'Seq_in_index',
-				'column_name'   => 'Column_name',
-				'collation'     => 'Collation',
-				'cardinality'   => 'Cardinality',
-				'sub_part'      => 'Sub_part',
-				'packed'        => 'Packed',
-				'null'          => 'Null',
-				'index_type'    => 'Index_type',
-				'comment'       => 'Comment',
-				'index_comment' => 'Index_comment',
-				'visible'       => 'Visible',
-				'expression'    => 'Expression',
-			);
+			$allowed_columns = array();
+			foreach ( $this->get_show_index_output_columns() as $column ) {
+				$allowed_columns[ strtolower( $column ) ] = $column;
+			}
 			$numeric_columns = array(
 				'Non_unique',
 				'Seq_in_index',
@@ -15462,68 +15443,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Execute a MySQL DESCRIBE/DESC statement through PostgreSQL catalogs.
-	 *
-	 * @param string $schema_name         Schema name.
-	 * @param string $table_name          Table name.
-	 * @param int    $fetch_mode          PDO fetch mode.
-	 * @param array  ...$fetch_mode_args  Additional fetch mode arguments.
-	 * @return mixed DESCRIBE result rows.
-	 */
-	private function execute_describe_query( string $schema_name, string $table_name, $fetch_mode, ...$fetch_mode_args ) {
-		if ( 0 === strcasecmp( $schema_name, 'information_schema' ) ) {
-			return $this->execute_direct_information_schema_show_columns_query(
-				$table_name,
-				false,
-				null,
-				null,
-				$fetch_mode,
-				...$fetch_mode_args
-			);
-		}
-
-		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
-		$cache_key       = $this->get_mysql_introspection_result_cache_key(
-			'describe',
-			$fetch_mode,
-			array( $resolved_schema, $table_name, $fetch_mode, $fetch_mode_args )
-		);
-		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
-			return $this->last_result;
-		}
-
-		$sql    = sprintf(
-			'SELECT
-	%1$s
-FROM (%2$s) information_schema_columns
-WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
-	AND "TABLE_NAME" = ?
-ORDER BY "ORDINAL_POSITION"',
-			$this->get_show_columns_relation_select_sql( false ),
-			$this->get_direct_information_schema_relation_sql( 'columns' ),
-			$this->connection->quote( 'public' ),
-			$this->connection->quote( $this->main_db_name )
-		);
-		$params = array(
-			$resolved_schema,
-			$table_name,
-		);
-		$stmt   = $this->connection->query( $sql, $params );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
-			);
-			$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-			$this->last_result               = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
-			$this->last_found_rows           = count( $this->last_result );
-
-			$this->store_mysql_introspection_result_in_cache( $cache_key );
-
-			return $this->last_result;
-	}
-
-	/**
 	 * Execute a MySQL SHOW COLUMNS/SHOW FULL COLUMNS statement through PostgreSQL catalogs.
 	 *
 	 * @param string      $schema_name         Schema name.
@@ -15548,14 +15467,22 @@ ORDER BY "ORDINAL_POSITION"',
 			);
 		}
 
-		$cache_key = $this->get_mysql_introspection_result_cache_key(
+		$cache_key          = $this->get_mysql_introspection_result_cache_key(
 			'show_columns',
 			$fetch_mode,
 			array( $resolved_schema, $table_name, $is_full, $like, $where_filter, $fetch_mode, $fetch_mode_args )
 		);
-		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
-			return $this->last_result;
-		}
+		$column_expressions = array(
+			'Field'      => '"COLUMN_NAME"',
+			'Type'       => '"COLUMN_TYPE"',
+			'Collation'  => '"COLLATION_NAME"',
+			'Null'       => '"IS_NULLABLE"',
+			'Key'        => '"COLUMN_KEY"',
+			'Default'    => '"COLUMN_DEFAULT"',
+			'Extra'      => '"EXTRA"',
+			'Privileges' => '"PRIVILEGES"',
+			'Comment'    => '"COLUMN_COMMENT"',
+		);
 
 		$sql    = sprintf(
 			'SELECT
@@ -15563,7 +15490,7 @@ ORDER BY "ORDINAL_POSITION"',
 FROM (%2$s) information_schema_columns
 WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 	AND "TABLE_NAME" = ?',
-			$this->get_show_columns_relation_select_sql( $is_full ),
+			$this->get_mysql_show_projection_sql( $this->get_show_columns_output_columns( $is_full ), $column_expressions, "\t" ),
 			$this->get_direct_information_schema_relation_sql( 'columns' ),
 			$this->connection->quote( 'public' ),
 			$this->connection->quote( $this->main_db_name )
@@ -15578,57 +15505,18 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 			$params[] = $like;
 		}
 
-		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
-		if ( null !== $where_filter && null === $where_expression_filter ) {
-			$filter_columns = array(
-				'Field'      => '"COLUMN_NAME"',
-				'Type'       => '"COLUMN_TYPE"',
-				'Collation'  => '"COLLATION_NAME"',
-				'Null'       => '"IS_NULLABLE"',
-				'Key'        => '"COLUMN_KEY"',
-				'Default'    => '"COLUMN_DEFAULT"',
-				'Extra'      => '"EXTRA"',
-				'Privileges' => '"PRIVILEGES"',
-				'Comment'    => '"COLUMN_COMMENT"',
-			);
-			foreach ( $where_filter as $filter ) {
-				if ( ! isset( $filter_columns[ $filter['column'] ] ) ) {
-					throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
-				}
-
-				$sql     .= sprintf(
-					' AND %s',
-					$this->get_mysql_show_where_filter_condition_sql(
-						$filter_columns[ $filter['column'] ],
-						$filter
-					)
-				);
-				$params[] = $filter['value'];
-			}
-		}
-
-		$sql .= '
-ORDER BY ordinal_position';
-
-		$stmt = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
+		return $this->execute_mysql_catalog_show_result(
+			$sql,
+			$params,
+			$where_filter,
+			$column_expressions,
+			'AND ',
+			'ORDER BY ordinal_position',
+			$cache_key,
+			'Unsupported SHOW COLUMNS statement.',
+			$fetch_mode,
+			...$fetch_mode_args
 		);
-		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		if ( null !== $where_expression_filter ) {
-			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
-			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
-		} else {
-			$this->last_result     = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
-			$this->last_found_rows = count( $this->last_result );
-		}
-
-		$this->store_mysql_introspection_result_in_cache( $cache_key );
-
-		return $this->last_result;
 	}
 
 	/**
@@ -15724,26 +15612,69 @@ ORDER BY ordinal_position';
 	 * @return string[] Output column names.
 	 */
 	private function get_show_columns_output_columns( bool $is_full ): array {
-		if ( $is_full ) {
-			return array( 'Field', 'Type', 'Collation', 'Null', 'Key', 'Default', 'Extra', 'Privileges', 'Comment' );
-		}
-
-		return array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' );
+		return $is_full
+			? array( 'Field', 'Type', 'Collation', 'Null', 'Key', 'Default', 'Extra', 'Privileges', 'Comment' )
+			: array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' );
 	}
 
 	/**
-	 * Get SQL for a parsed simple SHOW WHERE filter.
+	 * Execute a catalog-backed MySQL SHOW result query.
 	 *
-	 * @param string $expression   SQL expression for the SHOW output column.
-	 * @param array  $where_filter Parsed SHOW WHERE filter.
-	 * @return string SQL condition.
+	 * @param string      $sql                 SQL query before simple WHERE filters and ORDER BY.
+	 * @param array       $params              SQL parameters.
+	 * @param array|null  $where_filter        Optional parsed SHOW WHERE filters.
+	 * @param array       $filter_columns      Output columns mapped to SQL expressions.
+	 * @param string      $filter_prefix       SQL prefix for the first simple filter.
+	 * @param string      $order_by_sql        SQL ORDER BY clause.
+	 * @param string|null $cache_key           Optional introspection result cache key.
+	 * @param string      $unsupported_message Exception message for unsupported filters.
+	 * @param int         $fetch_mode          PDO fetch mode.
+	 * @param array       ...$fetch_mode_args  Additional fetch mode arguments.
+	 * @return mixed SHOW result rows.
 	 */
-	private function get_mysql_show_where_filter_condition_sql( string $expression, array $where_filter ): string {
-		if ( 'like' === ( $where_filter['operator'] ?? '=' ) ) {
-			return sprintf( "%s LIKE ? ESCAPE '\\'", $expression );
+	private function execute_mysql_catalog_show_result( string $sql, array $params, ?array $where_filter, array $filter_columns, string $filter_prefix, string $order_by_sql, ?string $cache_key, string $unsupported_message, $fetch_mode, ...$fetch_mode_args ) {
+		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
+			return $this->last_result;
 		}
 
-		return sprintf( '%s = ?', $expression );
+		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
+		if ( null !== $where_filter && null === $where_expression_filter ) {
+			$conditions = array();
+			foreach ( $where_filter as $filter ) {
+				if ( ! isset( $filter_columns[ $filter['column'] ] ) ) {
+					throw new InvalidArgumentException( $unsupported_message );
+				}
+
+				$conditions[] = sprintf(
+					'like' === ( $filter['operator'] ?? '=' ) ? "%s LIKE ? ESCAPE '\\'" : '%s = ?',
+					$filter_columns[ $filter['column'] ]
+				);
+				$params[]     = $filter['value'];
+			}
+
+			$sql .= "\n" . $filter_prefix . implode( ' AND ', $conditions );
+		}
+
+		$sql .= "\n" . $order_by_sql;
+		$stmt = $this->connection->query( $sql, $params );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
+		if ( null !== $where_expression_filter ) {
+			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
+			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
+		} else {
+			$this->last_result     = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
+			$this->last_found_rows = count( $this->last_result );
+		}
+
+		$this->store_mysql_introspection_result_in_cache( $cache_key );
+
+		return $this->last_result;
 	}
 
 	/**
@@ -15849,7 +15780,8 @@ ORDER BY ordinal_position';
 			);
 		}
 
-		$table_column = $this->connection->quote_identifier( 'Tables_in_' . $database_name );
+		$table_column     = 'Tables_in_' . $database_name;
+		$table_column_sql = $this->connection->quote_identifier( $table_column );
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			$table_name_sql        = '"TABLE_NAME"';
 			$table_type_sql        = '"TABLE_TYPE"';
@@ -15859,9 +15791,9 @@ ORDER BY ordinal_position';
 		FROM (%4$s) information_schema_tables
 		WHERE "TABLE_SCHEMA" = ?
 				AND %5$s IN (\'BASE TABLE\', \'VIEW\')
-				AND "TABLE_NAME" NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE \'\\\'',
+					AND "TABLE_NAME" NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE \'\\\'',
 				$table_name_sql,
-				$table_column,
+				$table_column_sql,
 				$is_full ? ', ' . $table_type_sql . ' AS "Table_type"' : '',
 				$this->get_direct_information_schema_relation_sql( 'tables' ),
 				$table_type_sql
@@ -15876,9 +15808,9 @@ ORDER BY ordinal_position';
 		FROM information_schema.tables
 		WHERE table_schema = ?
 				AND %4$s IN (\'BASE TABLE\', \'VIEW\')
-				AND table_name NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE \'\\\'',
+					AND table_name NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE \'\\\'',
 				$table_name_sql,
-				$table_column,
+				$table_column_sql,
 				$is_full ? ', CASE WHEN ' . $table_type_sql . ' = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "Table_type"' : '',
 				$table_type_sql
 			);
@@ -15890,48 +15822,21 @@ ORDER BY ordinal_position';
 			$params[] = $like;
 		}
 
-		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
-		if ( null !== $where_filter && null === $where_expression_filter ) {
-			foreach ( $where_filter as $filter ) {
-				if ( $table_column === $this->connection->quote_identifier( $filter['column'] ) ) {
-					$filter_column = $table_name_sql;
-				} elseif ( 'Table_type' === $filter['column'] ) {
-					$filter_column = $table_type_filter_sql;
-				} else {
-					throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
-				}
-
-				$sql     .= sprintf(
-					' AND %s',
-					$this->get_mysql_show_where_filter_condition_sql(
-						$filter_column,
-						$filter
-					)
-				);
-				$params[] = $filter['value'];
-			}
-		}
-
-		$sql .= '
-ORDER BY ' . $table_name_sql;
-
-		$stmt = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
+		return $this->execute_mysql_catalog_show_result(
+			$sql,
+			$params,
+			$where_filter,
+			array(
+				$table_column => $table_name_sql,
+				'Table_type'  => $table_type_filter_sql,
+			),
+			'AND ',
+			'ORDER BY ' . $table_name_sql,
+			null,
+			'Unsupported SHOW TABLES statement.',
+			$fetch_mode,
+			...$fetch_mode_args
 		);
-		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		if ( null !== $where_expression_filter ) {
-			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
-			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
-		} else {
-			$this->last_result     = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
-			$this->last_found_rows = count( $this->last_result );
-		}
-
-		return $this->last_result;
 	}
 
 	/**
@@ -16099,7 +16004,7 @@ ORDER BY ' . $table_name_sql;
 			);
 		}
 
-		$indexes                         = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
+		$indexes                         = $this->get_show_create_table_index_catalog_rows( $resolved_schema, $table_name );
 		$sql                             = sprintf(
 			'SELECT
 				kcu."CONSTRAINT_NAME" AS constraint_name,
@@ -16195,17 +16100,6 @@ ORDER BY ' . $table_name_sql;
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
-	}
-
-	/**
-	 * Get index metadata rows for SHOW CREATE TABLE.
-	 *
-	 * @param string $schema_name Backend metadata schema.
-	 * @param string $table_name  Table name.
-	 * @return array[] Index metadata rows.
-	 */
-	private function get_show_create_table_index_metadata_rows( string $schema_name, string $table_name ): array {
-		return $this->get_show_create_table_index_catalog_rows( $schema_name, $table_name );
 	}
 
 	/**
@@ -18572,15 +18466,33 @@ ORDER BY ' . $table_name_sql;
 			);
 		}
 
-		$cache_key = $this->get_mysql_introspection_result_cache_key(
+		$cache_key         = $this->get_mysql_introspection_result_cache_key(
 			'show_index',
 			$fetch_mode,
 			array( $resolved_schema, $table_name, $where_filter, $fetch_mode, $fetch_mode_args )
 		);
-		if ( $this->load_mysql_introspection_result_from_cache( $cache_key ) ) {
-			return $this->last_result;
+		$index_columns     = $this->get_show_index_output_columns();
+		$index_expressions = array(
+			'Table'         => '"TABLE_NAME"',
+			'Non_unique'    => 'CAST("NON_UNIQUE" AS text)',
+			'Key_name'      => '"INDEX_NAME"',
+			'Seq_in_index'  => 'CAST("SEQ_IN_INDEX" AS text)',
+			'Column_name'   => '"COLUMN_NAME"',
+			'Collation'     => '"COLLATION"',
+			'Cardinality'   => 'CAST("CARDINALITY" AS text)',
+			'Sub_part'      => 'CAST("SUB_PART" AS text)',
+			'Packed'        => '"PACKED"',
+			'Null'          => '"NULLABLE"',
+			'Index_type'    => '"INDEX_TYPE"',
+			'Comment'       => '"COMMENT"',
+			'Index_comment' => '"INDEX_COMMENT"',
+			'Visible'       => '"IS_VISIBLE"',
+			'Expression'    => '"EXPRESSION"',
+		);
+		$filter_columns    = array();
+		foreach ( $index_columns as $column ) {
+			$filter_columns[ $column ] = $this->connection->quote_identifier( $column );
 		}
-
 		$sql    = sprintf(
 			'SELECT
 	%1$s
@@ -18592,8 +18504,8 @@ FROM (
 	WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %4$s), %5$s)
 		AND "TABLE_NAME" = ?
 ) AS show_index_rows',
-			'"' . implode( '",' . "\n\t" . '"', $this->get_show_index_output_columns() ) . '"',
-			$this->get_show_index_relation_select_sql(),
+			$this->get_mysql_show_projection_sql( $index_columns, $filter_columns, "\t" ),
+			$this->get_mysql_show_projection_sql( $index_columns, $index_expressions, "\t\t" ),
 			$this->get_direct_information_schema_relation_sql(
 				'statistics',
 				array(
@@ -18608,49 +18520,25 @@ FROM (
 			$table_name,
 		);
 
-		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
-		if ( null !== $where_filter && null === $where_expression_filter ) {
-			$where_conditions = array();
-			foreach ( $where_filter as $filter ) {
-				$where_conditions[] = $this->get_mysql_show_where_filter_condition_sql(
-					$this->connection->quote_identifier( $filter['column'] ),
-					$filter
-				);
-				$params[]           = $filter['value'];
-			}
-
-			$sql .= '
-	WHERE ' . implode( ' AND ', $where_conditions );
-		}
-
-		$sql .= '
-ORDER BY
+		return $this->execute_mysql_catalog_show_result(
+			$sql,
+			$params,
+			$where_filter,
+			$filter_columns,
+			'WHERE ',
+			'ORDER BY
 	"Key_name" = \'PRIMARY\' DESC,
 	"Non_unique" = \'0\' DESC,
 	"Index_type" = \'SPATIAL\' DESC,
 	"Index_type" = \'BTREE\' DESC,
 	"Index_type" = \'FULLTEXT\' DESC,
 	postgresql_index_oid,
-	CAST("Seq_in_index" AS integer)';
-
-		$stmt = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
+	CAST("Seq_in_index" AS integer)',
+			$cache_key,
+			'Unsupported SHOW INDEX statement.',
+			$fetch_mode,
+			...$fetch_mode_args
 		);
-		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
-		if ( null !== $where_expression_filter ) {
-			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
-			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
-		} else {
-			$this->last_result = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
-		}
-
-		$this->store_mysql_introspection_result_in_cache( $cache_key );
-
-		return $this->last_result;
 	}
 
 	/**
@@ -18902,62 +18790,20 @@ ORDER BY
 	}
 
 	/**
-	 * Get the projected output columns for DESCRIBE and SHOW COLUMNS SQL.
+	 * Get a MySQL SHOW projection list from output columns and SQL expressions.
 	 *
-	 * @param bool $is_full Whether to emit SHOW FULL COLUMNS fields.
-	 * @return string SQL column list.
+	 * @param string[] $columns     Output columns.
+	 * @param array    $expressions Output columns mapped to SQL expressions.
+	 * @param string   $indent      Indentation after each comma.
+	 * @return string SQL projection list.
 	 */
-	private function get_show_columns_relation_select_sql( bool $is_full ): string {
-		$expressions = array(
-			'Field'      => '"COLUMN_NAME"',
-			'Type'       => '"COLUMN_TYPE"',
-			'Collation'  => '"COLLATION_NAME"',
-			'Null'       => '"IS_NULLABLE"',
-			'Key'        => '"COLUMN_KEY"',
-			'Default'    => '"COLUMN_DEFAULT"',
-			'Extra'      => '"EXTRA"',
-			'Privileges' => '"PRIVILEGES"',
-			'Comment'    => '"COLUMN_COMMENT"',
-		);
-		$fields      = array();
-
-		foreach ( $this->get_show_columns_output_columns( $is_full ) as $column ) {
-			$fields[] = $expressions[ $column ] . ' AS "' . $column . '"';
+	private function get_mysql_show_projection_sql( array $columns, array $expressions, string $indent ): string {
+		$fields = array();
+		foreach ( $columns as $column ) {
+			$fields[] = $expressions[ $column ] . ' AS ' . $this->connection->quote_identifier( $column );
 		}
 
-		return implode( ',' . "\n\t", $fields );
-	}
-
-	/**
-	 * Get the projected source columns for SHOW INDEX-family SQL.
-	 *
-	 * @return string SQL column list.
-	 */
-	private function get_show_index_relation_select_sql(): string {
-		$expressions = array(
-			'Table'         => '"TABLE_NAME"',
-			'Non_unique'    => 'CAST("NON_UNIQUE" AS text)',
-			'Key_name'      => '"INDEX_NAME"',
-			'Seq_in_index'  => 'CAST("SEQ_IN_INDEX" AS text)',
-			'Column_name'   => '"COLUMN_NAME"',
-			'Collation'     => '"COLLATION"',
-			'Cardinality'   => 'CAST("CARDINALITY" AS text)',
-			'Sub_part'      => 'CAST("SUB_PART" AS text)',
-			'Packed'        => '"PACKED"',
-			'Null'          => '"NULLABLE"',
-			'Index_type'    => '"INDEX_TYPE"',
-			'Comment'       => '"COMMENT"',
-			'Index_comment' => '"INDEX_COMMENT"',
-			'Visible'       => '"IS_VISIBLE"',
-			'Expression'    => '"EXPRESSION"',
-		);
-		$fields      = array();
-
-		foreach ( $this->get_show_index_output_columns() as $column ) {
-			$fields[] = $expressions[ $column ] . ' AS "' . $column . '"';
-		}
-
-		return implode( ',' . "\n\t\t", $fields );
+		return implode( ',' . "\n" . $indent, $fields );
 	}
 
 	/**
