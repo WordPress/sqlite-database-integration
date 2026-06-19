@@ -6082,37 +6082,20 @@ $wp_mysql_primary_index_comment$',
 	private function mysql_index_metadata_exists( string $table_schema, string $table_name, string $index_name, bool $unique_only = false ): bool {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			try {
-				$stmt = $this->connection->query(
-					'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
-						'',
-						'',
-						array_merge(
-							array(
-								'n.nspname = ?',
-								't.relname = ?',
-								't.relkind IN (\'r\', \'p\')',
-							),
-							$unique_only ? array( 'i.indisunique' ) : array()
-						)
-					) . '
-					SELECT 1
-					FROM index_columns
-					WHERE (indisprimary AND LOWER(?) = \'primary\')
-						OR (
-							NOT indisprimary
-							AND (
-								LOWER(postgresql_index_name) = LOWER(?)
-								OR LOWER(postgresql_index_name) = LOWER(table_name || \'__\' || ?)
-							)
-						)
-					LIMIT 1',
-					array( $table_schema, $table_name, $index_name, $index_name, $index_name )
-				);
+				foreach ( $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name, false ) as $row ) {
+					if ( $unique_only && '0' !== (string) ( $row['non_unique'] ?? '' ) ) {
+						continue;
+					}
 
-				return false !== $stmt->fetchColumn();
+					if ( 0 === strcasecmp( (string) ( $row['key_name'] ?? '' ), $index_name ) ) {
+						return true;
+					}
+				}
 			} catch ( PDOException $e ) {
 				return false;
 			}
+
+			return false;
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -6123,48 +6106,6 @@ $wp_mysql_primary_index_comment$',
 				$unique_only ? ' AND non_unique = \'0\'' : ''
 			),
 			array( $table_schema, $table_name, $index_name )
-		);
-
-		return false !== $stmt->fetchColumn();
-	}
-
-	/**
-	 * Check whether stored MySQL metadata has any indexes for the given table.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @return bool Whether index metadata exists.
-	 */
-	private function mysql_index_metadata_has_rows( string $table_schema, string $table_name ): bool {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			try {
-				$stmt = $this->connection->query(
-					'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
-						'',
-						'',
-						array(
-							'n.nspname = ?',
-							't.relname = ?',
-							't.relkind IN (\'r\', \'p\')',
-						)
-					) . '
-					SELECT 1 FROM index_columns LIMIT 1',
-					array( $table_schema, $table_name )
-				);
-
-				return false !== $stmt->fetchColumn();
-			} catch ( PDOException $e ) {
-				return false;
-			}
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
 		);
 
 		return false !== $stmt->fetchColumn();
@@ -9906,10 +9847,29 @@ $wp_mysql_primary_index_comment$',
 		);
 		$table_schema    = $this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
 
-		if ( $this->mysql_index_metadata_has_rows( $table_schema, $table_name ) ) {
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			if (
 				! $this->mysql_index_metadata_exists( $table_schema, $table_name, $old_index_name )
 				|| $this->mysql_index_metadata_exists( $table_schema, $table_name, $new_index_name )
+			) {
+				return null;
+			}
+		} else {
+			$this->ensure_mysql_schema_metadata_tables();
+			$stmt = $this->connection->query(
+				sprintf(
+					'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? LIMIT 1',
+					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+				),
+				array( $table_schema, $table_name )
+			);
+
+			if (
+				false !== $stmt->fetchColumn()
+				&& (
+					! $this->mysql_index_metadata_exists( $table_schema, $table_name, $old_index_name )
+					|| $this->mysql_index_metadata_exists( $table_schema, $table_name, $new_index_name )
+				)
 			) {
 				return null;
 			}
@@ -12777,65 +12737,58 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_stored_mysql_index_type( string $table_schema, string $table_name, string $index_name ): ?string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$index_type_sql = sprintf(
-				'COALESCE(%s, UPPER(access_method.amname))',
-				$this->get_postgresql_catalog_index_type_comment_sql( 'pg_catalog.obj_description(index_class.oid, \'pg_class\')' )
-			);
-
+			$catalog_index_type = null;
 			try {
-				$stmt = $this->connection->query(
-					sprintf(
-						'SELECT %1$s AS index_type
-						FROM pg_catalog.pg_class table_class
-						INNER JOIN pg_catalog.pg_namespace table_namespace
-							ON table_namespace.oid = table_class.relnamespace
-						INNER JOIN pg_catalog.pg_index catalog_index
-							ON catalog_index.indrelid = table_class.oid
-						INNER JOIN pg_catalog.pg_class index_class
-							ON index_class.oid = catalog_index.indexrelid
-						INNER JOIN pg_catalog.pg_am access_method
-							ON access_method.oid = index_class.relam
-						WHERE table_namespace.nspname = ?
-							AND table_class.relname = ?
-							AND table_class.relkind IN (\'r\', \'p\')
-							AND catalog_index.indisvalid
-							AND catalog_index.indislive
-							AND (
-								(catalog_index.indisprimary AND LOWER(?) = \'primary\')
-								OR (
-									NOT catalog_index.indisprimary
-									AND (
-										LOWER(index_class.relname) = LOWER(?)
-										OR LOWER(index_class.relname) = LOWER(table_class.relname || \'__\' || ?)
-									)
-								)
-							)
-						LIMIT 1',
-						$index_type_sql
-					),
-					array( $table_schema, $table_name, $index_name, $index_name, $index_name )
-				);
+				foreach ( $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name, false ) as $row ) {
+					if ( 0 === strcasecmp( (string) ( $row['key_name'] ?? '' ), $index_name ) ) {
+						$index_type         = (string) ( $row['index_type'] ?? '' );
+						$catalog_index_type = '' === $index_type ? null : strtoupper( $index_type );
+						break;
+					}
+				}
 			} catch ( PDOException $e ) {
-				return null;
+				// Fall through to the legacy type-only side-table fallback below.
 			}
 
-			$index_type = $stmt->fetchColumn();
-			return false === $index_type || null === $index_type || '' === (string) $index_type
-				? null
-				: strtoupper( (string) $index_type );
+			if ( null !== $catalog_index_type ) {
+				return $catalog_index_type;
+			}
+
+			$index_type = $this->get_stored_mysql_index_type_from_side_table( $table_schema, $table_name, $index_name, false );
+			return in_array( $index_type, array( 'FULLTEXT', 'SPATIAL', 'HASH' ), true ) ? $index_type : $catalog_index_type;
 		}
 
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT index_type FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?) ORDER BY seq_in_index LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $index_name )
-		);
+		return $this->get_stored_mysql_index_type_from_side_table( $table_schema, $table_name, $index_name, true );
+	}
+
+	/**
+	 * Get a stored MySQL index type from the legacy side metadata table.
+	 *
+	 * @param string $table_schema Metadata schema.
+	 * @param string $table_name   Table name.
+	 * @param string $index_name   Index name.
+	 * @param bool   $ensure_table Whether to create side metadata tables first.
+	 * @return string|null Stored index type, or null when unavailable.
+	 */
+	private function get_stored_mysql_index_type_from_side_table( string $table_schema, string $table_name, string $index_name, bool $ensure_table ): ?string {
+		if ( $ensure_table ) {
+			$this->ensure_mysql_schema_metadata_tables();
+		}
+
+		try {
+			$stmt = $this->connection->query(
+				sprintf(
+					'SELECT index_type FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?) ORDER BY seq_in_index LIMIT 1',
+					$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+				),
+				array( $table_schema, $table_name, $index_name )
+			);
+		} catch ( PDOException $e ) {
+			return null;
+		}
 
 		$index_type = $stmt->fetchColumn();
-		return false === $index_type ? null : (string) $index_type;
+		return false === $index_type ? null : strtoupper( (string) $index_type );
 	}
 
 	/**

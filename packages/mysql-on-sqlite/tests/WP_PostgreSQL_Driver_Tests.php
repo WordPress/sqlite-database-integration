@@ -4566,6 +4566,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
+				if ( false !== strpos( $sql, 'WITH index_columns AS' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT 'idx_value' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'value' AS column_name, '1' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment
+						UNION ALL SELECT 'idx_value_two', 2, 1, 'value_two', '1', 'BTREE', 'A', NULL, ''"
+					);
+				}
+
 				if ( 0 === strpos( $sql, 'DROP INDEX ' ) ) {
 					return parent::query( 'SELECT 1' );
 				}
@@ -4670,7 +4677,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.pg_index catalog_index' ) ) {
+				if ( false !== strpos( $sql, 'WITH index_columns AS' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
 					$this->catalog_index_type_queries[] = array(
 						'sql'    => $sql,
 						'params' => $params,
@@ -4680,15 +4687,14 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						array(
 							'public',
 							'catalog_pg_drop_metadata_only_index',
-							'body_fulltext',
-							'body_fulltext',
-							'body_fulltext',
 						) !== $params
 					) {
 						throw new RuntimeException( 'Metadata-only DROP INDEX catalog lookup used unexpected parameters: ' . json_encode( $params ) );
 					}
 
-					return parent::query( "SELECT 'FULLTEXT' AS index_type" );
+					return parent::query(
+						"SELECT 'body_fulltext' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'body' AS column_name, '1' AS non_unique, 'FULLTEXT' AS index_type, NULL AS \"collation\", NULL AS sub_part, '' AS index_comment"
+					);
 				}
 
 				if ( 0 === strpos( $sql, 'DROP INDEX ' ) ) {
@@ -4724,9 +4730,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array(
 				'public',
 				'catalog_pg_drop_metadata_only_index',
-				'body_fulltext',
-				'body_fulltext',
-				'body_fulltext',
 			),
 			$catalog_queries[0]['params']
 		);
@@ -4795,6 +4798,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'WITH index_columns AS' ) && false !== strpos( $sql, 'pg_catalog.pg_index i' ) ) {
+					return parent::query(
+						"SELECT 'value_idx' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'value' AS column_name, '1' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment
+						UNION ALL SELECT 'explicit_idx', 2, 1, 'value', '1', 'BTREE', 'A', NULL, ''"
+					);
 				}
 
 				if ( 0 === strpos( $sql, 'DROP INDEX ' ) ) {
@@ -25063,14 +25073,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						'params' => $params,
 					);
 
-					if ( ! isset( $params[2] ) ) {
-						return parent::query( 'SELECT 1' );
-					}
-
 					return parent::query(
-						'slug_idx' === strtolower( (string) $params[2] )
-							? 'SELECT 1'
-							: 'SELECT 1 WHERE 0 = 1'
+						"SELECT 'slug_idx' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'slug' AS column_name, '1' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment"
 					);
 				}
 
@@ -25112,8 +25116,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$catalog_queries = $connection->get_catalog_queries();
 		$this->assertCount( 3, $catalog_queries );
 		$this->assertSame( array( 'public', 'catalog_rename_index' ), $catalog_queries[0]['params'] );
-		$this->assertSame( array( 'public', 'catalog_rename_index', 'slug_idx', 'slug_idx', 'slug_idx' ), $catalog_queries[1]['params'] );
-		$this->assertSame( array( 'public', 'catalog_rename_index', 'slug_lookup', 'slug_lookup', 'slug_lookup' ), $catalog_queries[2]['params'] );
+		$this->assertSame( array( 'public', 'catalog_rename_index' ), $catalog_queries[1]['params'] );
+		$this->assertSame( array( 'public', 'catalog_rename_index' ), $catalog_queries[2]['params'] );
 		$this->assertSame(
 			array(),
 			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
@@ -35137,7 +35141,10 @@ $wp_mysql_on_update$',
 					);
 
 					if ( ! isset( $params[2] ) ) {
-						return parent::query( 'SELECT 1' );
+						return parent::query(
+							"SELECT 'post_title' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'post_title' AS column_name, '1' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment
+							UNION ALL SELECT 'slug_unique', 2, 1, 'post_name', '0', 'BTREE', 'A', NULL, ''"
+						);
 					}
 
 					$index_name = strtolower( (string) $params[2] );
@@ -35191,7 +35198,6 @@ $wp_mysql_on_update$',
 				return array(
 					'index'       => $this->mysql_index_metadata_exists( 'public', 'wptests_posts', 'post_title' ),
 					'unique'      => $this->mysql_index_metadata_exists( 'public', 'wptests_posts', 'slug_unique', true ),
-					'index_rows'  => $this->mysql_index_metadata_has_rows( 'public', 'wptests_posts' ),
 					'foreign_key' => $this->mysql_foreign_key_metadata_exists( 'public', 'wptests_posts', 'fk_post_parent' ),
 					'check'       => $this->get_mysql_check_metadata( 'public', 'wptests_posts', 'positive_id' ),
 				);
@@ -35204,7 +35210,6 @@ $wp_mysql_on_update$',
 
 		$this->assertTrue( $results['index'] );
 		$this->assertTrue( $results['unique'] );
-		$this->assertTrue( $results['index_rows'] );
 		$this->assertTrue( $results['foreign_key'] );
 		$this->assertSame(
 			array(
@@ -35216,12 +35221,11 @@ $wp_mysql_on_update$',
 		);
 
 		$catalog_queries = $connection->get_catalog_queries();
-		$this->assertCount( 5, $catalog_queries );
+		$this->assertCount( 4, $catalog_queries );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $catalog_queries[1]['sql'] );
-		$this->assertStringContainsString( 'pg_catalog.pg_index i', $catalog_queries[2]['sql'] );
-		$this->assertStringContainsString( "con.contype = 'f'", $catalog_queries[3]['sql'] );
-		$this->assertStringContainsString( "con.contype = 'c'", $catalog_queries[4]['sql'] );
+		$this->assertStringContainsString( "con.contype = 'f'", $catalog_queries[2]['sql'] );
+		$this->assertStringContainsString( "con.contype = 'c'", $catalog_queries[3]['sql'] );
 		foreach ( $catalog_queries as $query ) {
 			$this->assertSame( 'public', $query['params'][0] );
 			$this->assertSame( 'wptests_posts', $query['params'][1] );
