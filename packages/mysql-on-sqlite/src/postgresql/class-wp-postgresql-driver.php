@@ -57472,11 +57472,26 @@ $wp_mysql_%1$s_domain$',
 			'0.%i%s'  => array( "'0.' || SUBSTRING(%1\$s FROM 15 FOR 2) || SUBSTRING(%1\$s FROM 18 FOR 2)", "'0.' || TO_CHAR(%1\$s, %2\$s)", 'MISS' ),
 		);
 		if ( isset( $numeric_formats[ $format ] ) ) {
-			return $this->get_postgresql_mysql_numeric_date_format_sql(
-				$expression_sql,
-				$numeric_formats[ $format ][0],
-				$numeric_formats[ $format ][1],
-				$numeric_formats[ $format ][2]
+			$numeric_format       = $numeric_formats[ $format ];
+			$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
+			$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
+			$date_time_pattern    = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
+			$zero_date_format_sql = sprintf(
+				'CASE WHEN %1$s ~ %2$s THEN CAST(%3$s AS double precision) ELSE 0 END',
+				$expression_text_sql,
+				$date_time_pattern,
+				sprintf( $numeric_format[0], $expression_text_sql )
+			);
+
+			return sprintf(
+				'CASE WHEN %1$s THEN %2$s ELSE CAST(%3$s AS double precision) END',
+				$zero_date_condition,
+				$zero_date_format_sql,
+				sprintf(
+					$numeric_format[1],
+					$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+					$this->connection->quote( $numeric_format[2] )
+				)
 			);
 		}
 
@@ -58264,38 +58279,6 @@ $wp_mysql_%1$s_domain$',
 		return sprintf(
 			'CAST(%1$s AS text) || CASE WHEN %1$s %% 100 BETWEEN 11 AND 13 THEN \'th\' WHEN %1$s %% 10 = 1 THEN \'st\' WHEN %1$s %% 10 = 2 THEN \'nd\' WHEN %1$s %% 10 = 3 THEN \'rd\' ELSE \'th\' END',
 			$day_sql
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for numeric DATE_FORMAT() special cases.
-	 *
-	 * @param string $expression_sql           PostgreSQL expression SQL.
-	 * @param string $zero_date_value_template Template receiving the expression text SQL.
-	 * @param string $timestamp_value_template Template receiving timestamp SQL and quoted TO_CHAR format.
-	 * @param string $to_char_format           PostgreSQL TO_CHAR format.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_numeric_date_format_sql( string $expression_sql, string $zero_date_value_template, string $timestamp_value_template, string $to_char_format ): string {
-		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
-		$date_time_pattern    = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
-		$zero_date_format_sql = sprintf(
-			'CASE WHEN %1$s ~ %2$s THEN CAST(%3$s AS double precision) ELSE 0 END',
-			$expression_text_sql,
-			$date_time_pattern,
-			sprintf( $zero_date_value_template, $expression_text_sql )
-		);
-
-		return sprintf(
-			'CASE WHEN %1$s THEN %2$s ELSE CAST(%3$s AS double precision) END',
-			$zero_date_condition,
-			$zero_date_format_sql,
-			sprintf(
-				$timestamp_value_template,
-				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-				$this->connection->quote( $to_char_format )
-			)
 		);
 	}
 
