@@ -17504,7 +17504,7 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 	AND "TABLE_NAME" = ?
 ORDER BY "ORDINAL_POSITION"',
 			$this->get_show_columns_relation_select_sql( false ),
-			$this->get_direct_information_schema_columns_relation_sql( true ),
+			$this->get_direct_information_schema_relation_sql( 'columns', array( 'include_temporary_metadata' => true ) ),
 			$this->connection->quote( 'public' ),
 			$this->connection->quote( $this->main_db_name )
 		);
@@ -17573,7 +17573,7 @@ FROM (%2$s) information_schema_columns
 WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 	AND "TABLE_NAME" = ?',
 			$this->get_show_columns_relation_select_sql( $is_full ),
-			$this->get_direct_information_schema_columns_relation_sql( true ),
+			$this->get_direct_information_schema_relation_sql( 'columns', array( 'include_temporary_metadata' => true ) ),
 			$this->connection->quote( 'public' ),
 			$this->connection->quote( $this->main_db_name )
 		);
@@ -37900,10 +37900,11 @@ WHERE option_name IN (
 	/**
 	 * Get relation SQL for a supported direct information_schema view.
 	 *
-	 * @param string $view Information schema view name.
+	 * @param string $view    Information schema view name.
+	 * @param array  $options Relation options.
 	 * @return string|null Relation SQL, or null.
 	 */
-	private function get_direct_information_schema_relation_sql( string $view ): ?string {
+	private function get_direct_information_schema_relation_sql( string $view, array $options = array() ): ?string {
 		$view = strtolower( $view );
 		if ( null === $this->get_direct_information_schema_relation_columns( $view ) ) {
 			return null;
@@ -38027,6 +38028,201 @@ WHERE s.schema_name = \'information_schema\'
 						'DEFAULT_ENCRYPTION'         => 'NO',
 					),
 				)
+			);
+		}
+
+		if ( 'columns' === $view ) {
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				$comment_sql     = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+				$type_expression = $this->get_direct_information_schema_catalog_data_type_expression( 'c', true, $comment_sql );
+				$column_type     = $this->get_direct_information_schema_catalog_column_type_expression(
+					'c',
+					$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+					$comment_sql
+				);
+				$charset         = $this->get_direct_information_schema_character_set_expression(
+					$column_type,
+					'NULL',
+					$comment_sql,
+					$this->connection->quote( self::DEFAULT_MYSQL_CHARSET )
+				);
+				$collation       = $this->get_direct_information_schema_collation_expression(
+					$column_type,
+					'c.collation_name',
+					$comment_sql,
+					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+				);
+				$column_key      = $this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
+
+				return sprintf(
+					'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	c.table_name AS "TABLE_NAME",
+	c.column_name AS "COLUMN_NAME",
+	c.ordinal_position AS "ORDINAL_POSITION",
+	%8$s AS "COLUMN_DEFAULT",
+	c.is_nullable AS "IS_NULLABLE",
+	%2$s AS "DATA_TYPE",
+	c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
+	CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH",
+	c.numeric_precision AS "NUMERIC_PRECISION",
+	c.numeric_scale AS "NUMERIC_SCALE",
+	c.datetime_precision AS "DATETIME_PRECISION",
+	%3$s AS "CHARACTER_SET_NAME",
+	%4$s AS "COLLATION_NAME",
+	%5$s AS "COLUMN_TYPE",
+	%6$s AS "COLUMN_KEY",
+	%7$s AS "EXTRA",
+	\'select,insert,update,references\' AS "PRIVILEGES",
+	%10$s AS "COLUMN_COMMENT",
+	\'\' AS "GENERATION_EXPRESSION",
+	NULL AS "SRS_ID"
+FROM information_schema.columns c
+LEFT JOIN pg_catalog.pg_namespace pn
+	ON pn.nspname = c.table_schema
+LEFT JOIN pg_catalog.pg_class pc
+	ON pc.relnamespace = pn.oid
+	AND pc.relname = c.table_name
+	AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+LEFT JOIN pg_catalog.pg_attribute pa
+	ON pa.attrelid = pc.oid
+	AND pa.attname = c.column_name
+	AND pa.attnum > 0
+WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND c.table_name NOT IN (%9$s)',
+					$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
+					$type_expression,
+					$charset,
+					$collation,
+					$column_type,
+					$column_key,
+					$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
+					$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
+					$this->get_direct_information_schema_hidden_table_list_sql(),
+					$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
+				);
+			}
+
+			$this->ensure_mysql_schema_metadata_tables();
+
+			$include_temporary_metadata = ! empty( $options['include_temporary_metadata'] );
+			$column_metadata_table      = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
+			$type_expression            = $this->get_direct_information_schema_catalog_data_type_expression( 'c', false );
+			$column_type                = 'COALESCE(cm.column_type, CASE
+		WHEN c.data_type = \'character varying\' THEN
+			\'varchar\' || CASE WHEN c.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\' END
+		WHEN c.data_type = \'character\' THEN
+			\'char\' || CASE WHEN c.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\' END
+		WHEN c.data_type = \'integer\' THEN \'int\'
+		WHEN c.data_type = \'numeric\' AND c.numeric_precision IS NULL THEN \'numeric\'
+		WHEN c.data_type = \'numeric\' THEN
+			\'decimal\' || CASE
+				WHEN c.numeric_scale IS NULL THEN \'(\' || CAST(c.numeric_precision AS text) || \')\'
+				ELSE \'(\' || CAST(c.numeric_precision AS text) || \',\' || CAST(c.numeric_scale AS text) || \')\'
+			END
+		WHEN c.data_type = \'double precision\' THEN \'double\'
+		WHEN c.data_type = \'real\' THEN \'float\'
+		WHEN c.data_type = \'timestamp without time zone\' THEN \'datetime\'
+		ELSE c.data_type
+	END)';
+			$data_type                  = $this->get_direct_information_schema_metadata_data_type_expression( 'cm.column_type', $type_expression );
+			$charset                    = $this->get_direct_information_schema_character_set_expression( $column_type, 'cm.character_set_name' );
+			$collation                  = $this->get_direct_information_schema_collation_expression( $column_type, 'COALESCE(cm.collation_name, c.collation_name)' );
+			$column_key                 = $this->get_direct_information_schema_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
+			$metadata_type              = $this->get_direct_information_schema_metadata_data_type_expression( 'cm.column_type', 'cm.column_type' );
+			$metadata_charset           = $this->get_direct_information_schema_character_set_expression( 'cm.column_type', 'cm.character_set_name' );
+			$metadata_collation         = $this->get_direct_information_schema_collation_expression( 'cm.column_type', 'cm.collation_name' );
+			$metadata_key               = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name' );
+			$metadata_schema_where      = $include_temporary_metadata
+				? '1 = 1'
+				: 'NOT ' . $this->get_mysql_temporary_schema_sql_condition( 'cm.table_schema' );
+
+			return sprintf(
+				'WITH catalog_columns AS (
+	SELECT
+		\'def\' AS "TABLE_CATALOG",
+		%1$s AS "TABLE_SCHEMA",
+		c.table_name AS "TABLE_NAME",
+		c.column_name AS "COLUMN_NAME",
+		c.ordinal_position AS "ORDINAL_POSITION",
+		CASE WHEN cm.column_name IS NOT NULL THEN cm.column_default ELSE c.column_default END AS "COLUMN_DEFAULT",
+		COALESCE(cm.is_nullable, c.is_nullable) AS "IS_NULLABLE",
+		%2$s AS "DATA_TYPE",
+		c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
+		CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH",
+		c.numeric_precision AS "NUMERIC_PRECISION",
+		c.numeric_scale AS "NUMERIC_SCALE",
+		c.datetime_precision AS "DATETIME_PRECISION",
+		%3$s AS "CHARACTER_SET_NAME",
+			%4$s AS "COLLATION_NAME",
+			%5$s AS "COLUMN_TYPE",
+			%6$s AS "COLUMN_KEY",
+			COALESCE(cm.extra, %7$s) AS "EXTRA",
+			\'select,insert,update,references\' AS "PRIVILEGES",
+			COALESCE(cm.column_comment, \'\') AS "COLUMN_COMMENT",
+			\'\' AS "GENERATION_EXPRESSION",
+		NULL AS "SRS_ID"
+	FROM information_schema.columns c
+	LEFT JOIN %8$s cm
+		ON cm.table_schema = c.table_schema
+		AND cm.table_name = c.table_name
+		AND cm.column_name = c.column_name
+	WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+		AND c.table_name NOT IN (%9$s)
+),
+metadata_columns AS (
+	SELECT
+		\'def\' AS "TABLE_CATALOG",
+		%10$s AS "TABLE_SCHEMA",
+		cm.table_name AS "TABLE_NAME",
+		cm.column_name AS "COLUMN_NAME",
+		cm.ordinal_position AS "ORDINAL_POSITION",
+		cm.column_default AS "COLUMN_DEFAULT",
+		cm.is_nullable AS "IS_NULLABLE",
+		%11$s AS "DATA_TYPE",
+		NULL AS "CHARACTER_MAXIMUM_LENGTH",
+		NULL AS "CHARACTER_OCTET_LENGTH",
+		NULL AS "NUMERIC_PRECISION",
+		NULL AS "NUMERIC_SCALE",
+		NULL AS "DATETIME_PRECISION",
+		%12$s AS "CHARACTER_SET_NAME",
+			%13$s AS "COLLATION_NAME",
+			cm.column_type AS "COLUMN_TYPE",
+			%14$s AS "COLUMN_KEY",
+			cm.extra AS "EXTRA",
+			\'select,insert,update,references\' AS "PRIVILEGES",
+			cm.column_comment AS "COLUMN_COMMENT",
+			\'\' AS "GENERATION_EXPRESSION",
+		NULL AS "SRS_ID"
+	FROM %8$s cm
+	WHERE %15$s
+		AND NOT EXISTS (
+		SELECT 1
+		FROM information_schema.columns c
+		WHERE c.table_schema = cm.table_schema
+			AND c.table_name = cm.table_name
+			AND c.column_name = cm.column_name
+	)
+)
+SELECT * FROM catalog_columns
+UNION ALL
+SELECT * FROM metadata_columns',
+				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
+				$data_type,
+				$charset,
+				$collation,
+				$column_type,
+				$column_key,
+				$this->get_direct_information_schema_column_extra_expression( 'c' ),
+				$column_metadata_table,
+				$this->get_direct_information_schema_hidden_table_list_sql(),
+				$this->get_direct_information_schema_display_schema_sql( 'cm.table_schema' ),
+				$metadata_type,
+				$metadata_charset,
+				$metadata_collation,
+				$metadata_key,
+				$metadata_schema_where
 			);
 		}
 
@@ -40490,205 +40686,6 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 		}
 
 		return $rows;
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.COLUMNS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_columns_relation_sql( bool $include_temporary_metadata = false ): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$comment_sql     = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-			$type_expression = $this->get_direct_information_schema_catalog_data_type_expression( 'c', true, $comment_sql );
-			$column_type     = $this->get_direct_information_schema_catalog_column_type_expression(
-				'c',
-				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-				$comment_sql
-			);
-			$charset         = $this->get_direct_information_schema_character_set_expression(
-				$column_type,
-				'NULL',
-				$comment_sql,
-				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET )
-			);
-			$collation       = $this->get_direct_information_schema_collation_expression(
-				$column_type,
-				'c.collation_name',
-				$comment_sql,
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-			);
-			$column_key      = $this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
-
-			return sprintf(
-				'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	c.table_name AS "TABLE_NAME",
-	c.column_name AS "COLUMN_NAME",
-	c.ordinal_position AS "ORDINAL_POSITION",
-	%8$s AS "COLUMN_DEFAULT",
-	c.is_nullable AS "IS_NULLABLE",
-	%2$s AS "DATA_TYPE",
-	c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
-	CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH",
-	c.numeric_precision AS "NUMERIC_PRECISION",
-	c.numeric_scale AS "NUMERIC_SCALE",
-	c.datetime_precision AS "DATETIME_PRECISION",
-	%3$s AS "CHARACTER_SET_NAME",
-	%4$s AS "COLLATION_NAME",
-	%5$s AS "COLUMN_TYPE",
-	%6$s AS "COLUMN_KEY",
-	%7$s AS "EXTRA",
-	\'select,insert,update,references\' AS "PRIVILEGES",
-	%10$s AS "COLUMN_COMMENT",
-	\'\' AS "GENERATION_EXPRESSION",
-	NULL AS "SRS_ID"
-FROM information_schema.columns c
-LEFT JOIN pg_catalog.pg_namespace pn
-	ON pn.nspname = c.table_schema
-LEFT JOIN pg_catalog.pg_class pc
-	ON pc.relnamespace = pn.oid
-	AND pc.relname = c.table_name
-	AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-LEFT JOIN pg_catalog.pg_attribute pa
-	ON pa.attrelid = pc.oid
-	AND pa.attname = c.column_name
-	AND pa.attnum > 0
-WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND c.table_name NOT IN (%9$s)',
-				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-				$type_expression,
-				$charset,
-				$collation,
-				$column_type,
-				$column_key,
-				$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-				$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-				$this->get_direct_information_schema_hidden_table_list_sql(),
-				$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
-			);
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$column_metadata_table = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
-		$type_expression       = $this->get_direct_information_schema_catalog_data_type_expression( 'c', false );
-		$column_type           = 'COALESCE(cm.column_type, CASE
-		WHEN c.data_type = \'character varying\' THEN
-			\'varchar\' || CASE WHEN c.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\' END
-		WHEN c.data_type = \'character\' THEN
-			\'char\' || CASE WHEN c.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\' END
-		WHEN c.data_type = \'integer\' THEN \'int\'
-		WHEN c.data_type = \'numeric\' AND c.numeric_precision IS NULL THEN \'numeric\'
-		WHEN c.data_type = \'numeric\' THEN
-			\'decimal\' || CASE
-				WHEN c.numeric_scale IS NULL THEN \'(\' || CAST(c.numeric_precision AS text) || \')\'
-				ELSE \'(\' || CAST(c.numeric_precision AS text) || \',\' || CAST(c.numeric_scale AS text) || \')\'
-			END
-		WHEN c.data_type = \'double precision\' THEN \'double\'
-		WHEN c.data_type = \'real\' THEN \'float\'
-		WHEN c.data_type = \'timestamp without time zone\' THEN \'datetime\'
-		ELSE c.data_type
-	END)';
-		$data_type             = $this->get_direct_information_schema_metadata_data_type_expression( 'cm.column_type', $type_expression );
-		$charset               = $this->get_direct_information_schema_character_set_expression( $column_type, 'cm.character_set_name' );
-		$collation             = $this->get_direct_information_schema_collation_expression( $column_type, 'COALESCE(cm.collation_name, c.collation_name)' );
-		$column_key            = $this->get_direct_information_schema_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
-		$metadata_type         = $this->get_direct_information_schema_metadata_data_type_expression( 'cm.column_type', 'cm.column_type' );
-		$metadata_charset      = $this->get_direct_information_schema_character_set_expression( 'cm.column_type', 'cm.character_set_name' );
-		$metadata_collation    = $this->get_direct_information_schema_collation_expression( 'cm.column_type', 'cm.collation_name' );
-		$metadata_key          = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name' );
-		$metadata_schema_where = $include_temporary_metadata
-			? '1 = 1'
-			: 'NOT ' . $this->get_mysql_temporary_schema_sql_condition( 'cm.table_schema' );
-
-		return sprintf(
-			'WITH catalog_columns AS (
-	SELECT
-		\'def\' AS "TABLE_CATALOG",
-		%1$s AS "TABLE_SCHEMA",
-		c.table_name AS "TABLE_NAME",
-		c.column_name AS "COLUMN_NAME",
-		c.ordinal_position AS "ORDINAL_POSITION",
-		CASE WHEN cm.column_name IS NOT NULL THEN cm.column_default ELSE c.column_default END AS "COLUMN_DEFAULT",
-		COALESCE(cm.is_nullable, c.is_nullable) AS "IS_NULLABLE",
-		%2$s AS "DATA_TYPE",
-		c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
-		CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH",
-		c.numeric_precision AS "NUMERIC_PRECISION",
-		c.numeric_scale AS "NUMERIC_SCALE",
-		c.datetime_precision AS "DATETIME_PRECISION",
-		%3$s AS "CHARACTER_SET_NAME",
-			%4$s AS "COLLATION_NAME",
-			%5$s AS "COLUMN_TYPE",
-			%6$s AS "COLUMN_KEY",
-			COALESCE(cm.extra, %7$s) AS "EXTRA",
-			\'select,insert,update,references\' AS "PRIVILEGES",
-			COALESCE(cm.column_comment, \'\') AS "COLUMN_COMMENT",
-			\'\' AS "GENERATION_EXPRESSION",
-		NULL AS "SRS_ID"
-	FROM information_schema.columns c
-	LEFT JOIN %8$s cm
-		ON cm.table_schema = c.table_schema
-		AND cm.table_name = c.table_name
-		AND cm.column_name = c.column_name
-	WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND c.table_name NOT IN (%9$s)
-),
-metadata_columns AS (
-	SELECT
-		\'def\' AS "TABLE_CATALOG",
-		%10$s AS "TABLE_SCHEMA",
-		cm.table_name AS "TABLE_NAME",
-		cm.column_name AS "COLUMN_NAME",
-		cm.ordinal_position AS "ORDINAL_POSITION",
-		cm.column_default AS "COLUMN_DEFAULT",
-		cm.is_nullable AS "IS_NULLABLE",
-		%11$s AS "DATA_TYPE",
-		NULL AS "CHARACTER_MAXIMUM_LENGTH",
-		NULL AS "CHARACTER_OCTET_LENGTH",
-		NULL AS "NUMERIC_PRECISION",
-		NULL AS "NUMERIC_SCALE",
-		NULL AS "DATETIME_PRECISION",
-		%12$s AS "CHARACTER_SET_NAME",
-			%13$s AS "COLLATION_NAME",
-			cm.column_type AS "COLUMN_TYPE",
-			%14$s AS "COLUMN_KEY",
-			cm.extra AS "EXTRA",
-			\'select,insert,update,references\' AS "PRIVILEGES",
-			cm.column_comment AS "COLUMN_COMMENT",
-			\'\' AS "GENERATION_EXPRESSION",
-		NULL AS "SRS_ID"
-	FROM %8$s cm
-	WHERE %15$s
-		AND NOT EXISTS (
-		SELECT 1
-		FROM information_schema.columns c
-		WHERE c.table_schema = cm.table_schema
-			AND c.table_name = cm.table_name
-			AND c.column_name = cm.column_name
-	)
-)
-SELECT * FROM catalog_columns
-UNION ALL
-SELECT * FROM metadata_columns',
-			$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-			$data_type,
-			$charset,
-			$collation,
-			$column_type,
-			$column_key,
-			$this->get_direct_information_schema_column_extra_expression( 'c' ),
-			$column_metadata_table,
-			$this->get_direct_information_schema_hidden_table_list_sql(),
-			$this->get_direct_information_schema_display_schema_sql( 'cm.table_schema' ),
-			$metadata_type,
-			$metadata_charset,
-			$metadata_collation,
-			$metadata_key,
-			$metadata_schema_where
-		);
 	}
 
 	/**
