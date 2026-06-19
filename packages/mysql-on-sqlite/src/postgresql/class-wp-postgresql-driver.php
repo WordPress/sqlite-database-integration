@@ -18209,22 +18209,6 @@ ORDER BY table_name';
 	}
 
 	/**
-	 * Get SQL that extracts a MySQL prefix-index length from PostgreSQL expression text.
-	 *
-	 * @param string $expression_sql SQL expression yielding PostgreSQL index expression text.
-	 * @return string SQL expression yielding a prefix length, or NULL.
-	 */
-	private function get_postgresql_prefix_index_expression_sub_part_sql( string $expression_sql ): string {
-		$column_name = $this->get_postgresql_prefix_index_expression_column_name_sql( $expression_sql );
-
-		return sprintf(
-			'CASE WHEN %1$s IS NULL THEN NULL ELSE SUBSTRING(%2$s FROM \', 1, ([0-9]+)[)]$\') END',
-			$column_name,
-			$expression_sql
-		);
-	}
-
-	/**
 	 * Get SQL that preserves functional-index expressions while hiding recovered prefix indexes.
 	 *
 	 * @param string $expression_sql SQL expression yielding PostgreSQL index expression text.
@@ -18247,7 +18231,38 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_foreign_key_metadata_rows( string $schema_name, string $table_name ): array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_show_create_table_foreign_key_catalog_rows( $schema_name, $table_name );
+			$sql    = sprintf(
+				'SELECT
+					kcu."CONSTRAINT_NAME" AS constraint_name,
+					DENSE_RANK() OVER (ORDER BY kcu."CONSTRAINT_NAME") AS constraint_ordinal,
+					kcu."ORDINAL_POSITION" AS seq_in_index,
+					kcu."COLUMN_NAME" AS column_name,
+					kcu."REFERENCED_TABLE_SCHEMA" AS referenced_table_schema,
+					kcu."REFERENCED_TABLE_NAME" AS referenced_table_name,
+					kcu."REFERENCED_COLUMN_NAME" AS referenced_column_name,
+					rc."UPDATE_RULE" AS update_rule,
+					rc."DELETE_RULE" AS delete_rule
+				FROM (%1$s) kcu
+				INNER JOIN (%2$s) rc
+					ON rc."CONSTRAINT_SCHEMA" = kcu."CONSTRAINT_SCHEMA"
+					AND rc."CONSTRAINT_NAME" = kcu."CONSTRAINT_NAME"
+					AND rc."TABLE_NAME" = kcu."TABLE_NAME"
+				WHERE kcu."TABLE_SCHEMA" = ?
+					AND kcu."TABLE_NAME" = ?
+					AND kcu."REFERENCED_TABLE_NAME" IS NOT NULL
+				ORDER BY constraint_ordinal, seq_in_index',
+				$this->get_direct_information_schema_relation_sql( 'key_column_usage' ),
+				$this->get_direct_information_schema_relation_sql( 'referential_constraints' )
+			);
+			$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
+			$stmt   = $this->connection->query( $sql, $params );
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => $params,
+			);
+
+			return $stmt->fetchAll( PDO::FETCH_ASSOC );
 		}
 
 		$sql    = sprintf(
@@ -18257,67 +18272,6 @@ ORDER BY table_name';
 			ORDER BY constraint_name, seq_in_index',
 			$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
 		);
-		$params = array( $schema_name, $table_name );
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
-	}
-
-	/**
-	 * Get foreign key catalog rows for SHOW CREATE TABLE.
-	 *
-	 * @param string $schema_name Backend schema.
-	 * @param string $table_name  Table name.
-	 * @return array[] Foreign key metadata-shaped rows.
-	 */
-	private function get_show_create_table_foreign_key_catalog_rows( string $schema_name, string $table_name ): array {
-		$sql    = 'SELECT
-				con.conname AS constraint_name,
-				CAST(con.oid AS bigint) AS constraint_ordinal,
-				keys.ordinality AS seq_in_index,
-				src.attname AS column_name,
-				ref_ns.nspname AS referenced_table_schema,
-				ref.relname AS referenced_table_name,
-				ref_att.attname AS referenced_column_name,
-				CASE con.confupdtype
-					WHEN \'r\' THEN \'RESTRICT\'
-					WHEN \'c\' THEN \'CASCADE\'
-					WHEN \'n\' THEN \'SET NULL\'
-					WHEN \'d\' THEN \'SET DEFAULT\'
-					ELSE \'NO ACTION\'
-				END AS update_rule,
-				CASE con.confdeltype
-					WHEN \'r\' THEN \'RESTRICT\'
-					WHEN \'c\' THEN \'CASCADE\'
-					WHEN \'n\' THEN \'SET NULL\'
-					WHEN \'d\' THEN \'SET DEFAULT\'
-					ELSE \'NO ACTION\'
-				END AS delete_rule
-			FROM pg_catalog.pg_constraint con
-			INNER JOIN pg_catalog.pg_class src_rel
-				ON src_rel.oid = con.conrelid
-			INNER JOIN pg_catalog.pg_namespace src_ns
-				ON src_ns.oid = src_rel.relnamespace
-			INNER JOIN pg_catalog.pg_class ref
-				ON ref.oid = con.confrelid
-			INNER JOIN pg_catalog.pg_namespace ref_ns
-				ON ref_ns.oid = ref.relnamespace
-			CROSS JOIN LATERAL pg_catalog.unnest(con.conkey, con.confkey) WITH ORDINALITY AS keys(attnum, ref_attnum, ordinality)
-			INNER JOIN pg_catalog.pg_attribute src
-				ON src.attrelid = src_rel.oid
-				AND src.attnum = keys.attnum
-			INNER JOIN pg_catalog.pg_attribute ref_att
-				ON ref_att.attrelid = ref.oid
-				AND ref_att.attnum = keys.ref_attnum
-			WHERE src_ns.nspname = ?
-				AND src_rel.relname = ?
-				AND con.contype = \'f\'
-			ORDER BY con.conname, keys.ordinality';
 		$params = array( $schema_name, $table_name );
 		$stmt   = $this->connection->query( $sql, $params );
 
@@ -38817,30 +38771,42 @@ FROM (
 					'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE kcu.constraint_name END AS "CONSTRAINT_NAME",
+	CASE WHEN con.contype = \'p\' THEN \'PRIMARY\' ELSE con.conname END AS "CONSTRAINT_NAME",
 	\'def\' AS "TABLE_CATALOG",
 	%2$s AS "TABLE_SCHEMA",
-	kcu.table_name AS "TABLE_NAME",
-	kcu.column_name AS "COLUMN_NAME",
-	kcu.ordinal_position AS "ORDINAL_POSITION",
-	kcu.position_in_unique_constraint AS "POSITION_IN_UNIQUE_CONSTRAINT",
-	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN %3$s ELSE NULL END AS "REFERENCED_TABLE_SCHEMA",
-	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN ccu.table_name ELSE NULL END AS "REFERENCED_TABLE_NAME",
-	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN ccu.column_name ELSE NULL END AS "REFERENCED_COLUMN_NAME"
-FROM information_schema.key_column_usage kcu
-LEFT JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = kcu.constraint_schema
-	AND tc.constraint_name = kcu.constraint_name
-	AND tc.table_schema = kcu.table_schema
-	AND tc.table_name = kcu.table_name
-LEFT JOIN information_schema.constraint_column_usage ccu
-	ON ccu.constraint_schema = kcu.constraint_schema
-	AND ccu.constraint_name = kcu.constraint_name
-WHERE kcu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND kcu.table_name NOT IN (%4$s)',
-					$this->get_direct_information_schema_display_schema_sql( 'kcu.constraint_schema' ),
-					$this->get_direct_information_schema_display_schema_sql( 'kcu.table_schema' ),
-					$this->get_direct_information_schema_display_schema_sql( 'ccu.table_schema' ),
+	table_class.relname AS "TABLE_NAME",
+	table_att.attname AS "COLUMN_NAME",
+	CAST(key_positions.position AS bigint) AS "ORDINAL_POSITION",
+	CASE WHEN con.contype = \'f\' THEN CAST(key_positions.position AS bigint) ELSE NULL END AS "POSITION_IN_UNIQUE_CONSTRAINT",
+	CASE WHEN con.contype = \'f\' THEN %3$s ELSE NULL END AS "REFERENCED_TABLE_SCHEMA",
+	CASE WHEN con.contype = \'f\' THEN ref_class.relname ELSE NULL END AS "REFERENCED_TABLE_NAME",
+	CASE WHEN con.contype = \'f\' THEN ref_att.attname ELSE NULL END AS "REFERENCED_COLUMN_NAME"
+FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class table_class
+	ON table_class.oid = con.conrelid
+JOIN pg_catalog.pg_namespace table_ns
+	ON table_ns.oid = table_class.relnamespace
+CROSS JOIN LATERAL pg_catalog.generate_subscripts(con.conkey, 1) AS key_positions(position)
+JOIN pg_catalog.pg_attribute table_att
+	ON table_att.attrelid = table_class.oid
+	AND table_att.attnum = con.conkey[key_positions.position]
+LEFT JOIN pg_catalog.pg_class ref_class
+	ON ref_class.oid = con.confrelid
+	AND con.contype = \'f\'
+LEFT JOIN pg_catalog.pg_namespace ref_ns
+	ON ref_ns.oid = ref_class.relnamespace
+LEFT JOIN pg_catalog.pg_attribute ref_att
+	ON ref_att.attrelid = ref_class.oid
+	AND ref_att.attnum = con.confkey[key_positions.position]
+	AND con.contype = \'f\'
+WHERE con.contype IN (\'p\', \'u\', \'f\')
+	AND table_class.relkind IN (\'r\', \'p\')
+	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
+	AND table_class.relname NOT IN (%4$s)',
+					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
+					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
+					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' ),
 					$this->get_direct_information_schema_hidden_table_list_sql()
 				);
 			}
@@ -38944,25 +38910,52 @@ WHERE kcu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 					'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
-	rc.constraint_name AS "CONSTRAINT_NAME",
+	con.conname AS "CONSTRAINT_NAME",
 	\'def\' AS "UNIQUE_CONSTRAINT_CATALOG",
 	%2$s AS "UNIQUE_CONSTRAINT_SCHEMA",
-	\'PRIMARY\' AS "UNIQUE_CONSTRAINT_NAME",
-	\'NONE\' AS "MATCH_OPTION",
-	rc.update_rule AS "UPDATE_RULE",
-	rc.delete_rule AS "DELETE_RULE",
-	tc.table_name AS "TABLE_NAME",
-	ccu.table_name AS "REFERENCED_TABLE_NAME"
-FROM information_schema.referential_constraints rc
-LEFT JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = rc.constraint_schema
-	AND tc.constraint_name = rc.constraint_name
-LEFT JOIN information_schema.constraint_column_usage ccu
-	ON ccu.constraint_schema = rc.unique_constraint_schema
-	AND ccu.constraint_name = rc.unique_constraint_name
-WHERE rc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
-					$this->get_direct_information_schema_display_schema_sql( 'rc.constraint_schema' ),
-					$this->get_direct_information_schema_display_schema_sql( 'rc.unique_constraint_schema' )
+	CASE WHEN ref_con.contype = \'p\' THEN \'PRIMARY\' ELSE COALESCE(ref_con.conname, \'PRIMARY\') END AS "UNIQUE_CONSTRAINT_NAME",
+	CASE con.confmatchtype
+		WHEN \'f\' THEN \'FULL\'
+		WHEN \'p\' THEN \'PARTIAL\'
+		ELSE \'NONE\'
+	END AS "MATCH_OPTION",
+	CASE con.confupdtype
+		WHEN \'r\' THEN \'RESTRICT\'
+		WHEN \'c\' THEN \'CASCADE\'
+		WHEN \'n\' THEN \'SET NULL\'
+		WHEN \'d\' THEN \'SET DEFAULT\'
+		ELSE \'NO ACTION\'
+	END AS "UPDATE_RULE",
+	CASE con.confdeltype
+		WHEN \'r\' THEN \'RESTRICT\'
+		WHEN \'c\' THEN \'CASCADE\'
+		WHEN \'n\' THEN \'SET NULL\'
+		WHEN \'d\' THEN \'SET DEFAULT\'
+		ELSE \'NO ACTION\'
+	END AS "DELETE_RULE",
+	table_class.relname AS "TABLE_NAME",
+	ref_class.relname AS "REFERENCED_TABLE_NAME"
+FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class table_class
+	ON table_class.oid = con.conrelid
+JOIN pg_catalog.pg_namespace table_ns
+	ON table_ns.oid = table_class.relnamespace
+JOIN pg_catalog.pg_class ref_class
+	ON ref_class.oid = con.confrelid
+JOIN pg_catalog.pg_namespace ref_ns
+	ON ref_ns.oid = ref_class.relnamespace
+LEFT JOIN pg_catalog.pg_constraint ref_con
+	ON ref_con.conrelid = con.confrelid
+	AND ref_con.contype IN (\'p\', \'u\')
+	AND ref_con.conkey = con.confkey
+WHERE con.contype = \'f\'
+	AND table_class.relkind IN (\'r\', \'p\')
+	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
+	AND table_class.relname NOT IN (%3$s)',
+					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
+					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' ),
+					$this->get_direct_information_schema_hidden_table_list_sql()
 				);
 			}
 
@@ -41025,15 +41018,20 @@ END',
 	 * @return string SQL expression returning a MySQL Sub_part value, or NULL.
 	 */
 	private function get_postgresql_catalog_display_index_sub_part_sql( string $expression_sql, string $index_comment_sql, string $seq_in_index_sql ): string {
-		$prefix_sql  = $this->connection->quote( self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX );
-		$comment_sql = sprintf( 'COALESCE(%s, \'\')', $index_comment_sql );
+		$prefix_sql              = $this->connection->quote( self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX );
+		$comment_sql             = sprintf( 'COALESCE(%s, \'\')', $index_comment_sql );
+		$expression_sub_part_sql = sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL ELSE SUBSTRING(%2$s FROM \', 1, ([0-9]+)[)]$\') END',
+			$this->get_postgresql_prefix_index_expression_column_name_sql( $expression_sql ),
+			$expression_sql
+		);
 
 		return sprintf(
 			'COALESCE(%1$s, (pg_catalog.regexp_match(
 	%2$s,
 	\'(^|\' || CHR(10) || \')\' || %3$s || CAST(%4$s AS text) || \':([0-9]+)($|\' || CHR(10) || \')\'
 ))[2])',
-			$this->get_postgresql_prefix_index_expression_sub_part_sql( $expression_sql ),
+			$expression_sub_part_sql,
 			$comment_sql,
 			$prefix_sql,
 			$seq_in_index_sql
