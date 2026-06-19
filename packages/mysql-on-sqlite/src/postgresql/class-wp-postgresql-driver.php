@@ -59295,10 +59295,43 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return 1 === $count ? $this->get_postgresql_mysql_date_sql( $argument_sql[0] ) : null;
 
 			case 'dayname':
-				return 1 === $count ? $this->get_postgresql_mysql_dayname_sql( $argument_sql[0] ) : null;
+				return 1 === $count
+					? $this->get_postgresql_mysql_temporal_name_sql(
+						'DOW',
+						$argument_sql[0],
+						array(
+							0 => 'Sunday',
+							1 => 'Monday',
+							2 => 'Tuesday',
+							3 => 'Wednesday',
+							4 => 'Thursday',
+							5 => 'Friday',
+							6 => 'Saturday',
+						)
+					)
+					: null;
 
 			case 'monthname':
-				return 1 === $count ? $this->get_postgresql_mysql_monthname_sql( $argument_sql[0] ) : null;
+				return 1 === $count
+					? $this->get_postgresql_mysql_temporal_name_sql(
+						'MONTH',
+						$argument_sql[0],
+						array(
+							1  => 'January',
+							2  => 'February',
+							3  => 'March',
+							4  => 'April',
+							5  => 'May',
+							6  => 'June',
+							7  => 'July',
+							8  => 'August',
+							9  => 'September',
+							10 => 'October',
+							11 => 'November',
+							12 => 'December',
+						)
+					)
+					: null;
 
 			case 'regexp':
 				return 2 === $count ? $this->get_postgresql_mysql_regexp_function_sql( $argument_sql[0], $argument_sql[1] ) : null;
@@ -59364,55 +59397,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 */
 	private function get_postgresql_mysql_uuid_sql(): string {
 		return "LOWER(REGEXP_REPLACE(MD5(CAST(CLOCK_TIMESTAMP() AS text) || CAST(RANDOM() AS text) || CAST(PG_BACKEND_PID() AS text)), '^(.{8})(.{4}).(.{3}).(.{3})(.{12})$', '\\1-\\2-4\\3-8\\4-\\5'))";
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL DAYNAME().
-	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_dayname_sql( string $expression_sql ): string {
-		return $this->get_postgresql_mysql_temporal_name_sql(
-			'DOW',
-			$expression_sql,
-			array(
-				0 => 'Sunday',
-				1 => 'Monday',
-				2 => 'Tuesday',
-				3 => 'Wednesday',
-				4 => 'Thursday',
-				5 => 'Friday',
-				6 => 'Saturday',
-			)
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL MONTHNAME().
-	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_monthname_sql( string $expression_sql ): string {
-		return $this->get_postgresql_mysql_temporal_name_sql(
-			'MONTH',
-			$expression_sql,
-			array(
-				1  => 'January',
-				2  => 'February',
-				3  => 'March',
-				4  => 'April',
-				5  => 'May',
-				6  => 'June',
-				7  => 'July',
-				8  => 'August',
-				9  => 'September',
-				10 => 'October',
-				11 => 'November',
-				12 => 'December',
-			)
-		);
 	}
 
 	/**
