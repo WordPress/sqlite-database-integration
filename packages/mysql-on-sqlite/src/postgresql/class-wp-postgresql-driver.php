@@ -13,8 +13,14 @@
  * emulation layer is extracted in later work.
  */
 class WP_PostgreSQL_Driver {
-	const DEFAULT_MYSQL_CHARSET   = 'utf8mb4';
-	const DEFAULT_MYSQL_COLLATION = 'utf8mb4_unicode_ci';
+	const MYSQL_COLUMN_METADATA_TABLE      = '__wp_postgresql_mysql_column_metadata';
+	const MYSQL_INDEX_METADATA_TABLE       = '__wp_postgresql_mysql_index_metadata';
+	const MYSQL_FOREIGN_KEY_METADATA_TABLE = '__wp_postgresql_mysql_foreign_key_metadata';
+	const MYSQL_CHECK_METADATA_TABLE       = '__wp_postgresql_mysql_check_metadata';
+	const MYSQL_CHARSET_METADATA_TABLE     = '__wp_postgresql_mysql_charset_metadata';
+	const MYSQL_TABLE_METADATA_TABLE       = '__wp_postgresql_mysql_table_metadata';
+	const DEFAULT_MYSQL_CHARSET            = 'utf8mb4';
+	const DEFAULT_MYSQL_COLLATION          = 'utf8mb4_unicode_ci';
 
 	private const DEFAULT_MYSQL_SQL_MODES = array(
 		'ERROR_FOR_DIVISION_BY_ZERO',
@@ -3640,118 +3646,108 @@ $wp_mysql_on_update$',
 		$table_name   = $metadata['table'];
 		$operation    = $metadata['operation'];
 
-		if ( 'operations' === $operation ) {
-			foreach ( $metadata['operations'] as $operation_metadata ) {
-				$operation_metadata['schema'] = $table_schema;
-				$operation_metadata['table']  = $table_name;
-				$this->apply_mysql_dbdelta_alter_metadata( $operation_metadata );
-			}
-			return;
-		}
+		switch ( $operation ) {
+			case 'operations':
+				foreach ( $metadata['operations'] as $operation_metadata ) {
+					$operation_metadata['schema'] = $table_schema;
+					$operation_metadata['table']  = $table_name;
+					$this->apply_mysql_dbdelta_alter_metadata( $operation_metadata );
+				}
+				return;
 
-		if ( 'noop' === $operation || 'set_auto_increment' === $operation ) {
-			return;
-		}
+			case 'noop':
+			case 'set_auto_increment':
+				return;
 
-		if ( 'rename_table' === $operation ) {
-			if ( $table_name !== $metadata['new_table'] ) {
+			case 'rename_table':
+				if ( $table_name !== $metadata['new_table'] ) {
+					$this->clear_mysql_metadata_caches();
+				}
+				return;
+
+			case 'rename_index':
+				if ( $metadata['old_index'] !== $metadata['new_index'] ) {
+					$this->clear_mysql_metadata_caches();
+				}
+				return;
+
+			case 'drop_index':
+			case 'add_foreign_key':
+			case 'drop_foreign_key':
+			case 'drop_check':
 				$this->clear_mysql_metadata_caches();
-			}
-			return;
-		}
+				return;
 
-		if ( 'rename_index' === $operation ) {
-			if ( $metadata['old_index'] !== $metadata['new_index'] ) {
+			case 'add_index':
+				$index = $metadata['index'];
+				$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $index );
 				$this->clear_mysql_metadata_caches();
-			}
-			return;
-		}
+				$this->sync_postgresql_catalog_index_comment( $table_schema, $table_name, $index, true );
+				return;
 
-		if ( in_array( $operation, array( 'drop_index', 'add_foreign_key', 'drop_foreign_key', 'drop_check' ), true ) ) {
-			$this->clear_mysql_metadata_caches();
-			return;
-		}
-
-		if ( 'add_index' === $operation ) {
-			$index = $metadata['index'];
-			$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $index );
-			$this->clear_mysql_metadata_caches();
-			$this->sync_postgresql_catalog_index_comment( $table_schema, $table_name, $index, true );
-			return;
-		}
-
-		if ( 'set_table_comment' === $operation ) {
-			$table_comment   = (string) ( $metadata['comment'] ?? '' );
-			$logged_queries  = $this->last_postgresql_queries;
-			$table_collation = '';
-			try {
-				$table_metadata  = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
-				$table_collation = (string) ( $table_metadata['collation'] ?? '' );
-			} catch ( PDOException $e ) {
+			case 'set_table_comment':
+				$table_comment   = (string) ( $metadata['comment'] ?? '' );
+				$logged_queries  = $this->last_postgresql_queries;
 				$table_collation = '';
-			}
-			$this->last_postgresql_queries = $logged_queries;
+				try {
+					$table_metadata  = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
+					$table_collation = (string) ( $table_metadata['collation'] ?? '' );
+				} catch ( PDOException $e ) {
+					$table_collation = '';
+				}
+				$this->last_postgresql_queries = $logged_queries;
+				$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment, $table_collation );
+				$this->clear_mysql_metadata_caches();
+				return;
 
-			$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment, $table_collation );
-			$this->clear_mysql_metadata_caches();
-			return;
-		}
+			case 'add_check':
+				$check = $metadata['check'];
+				if ( ! $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check ) ) {
+					throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
+				}
+				$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
+				$this->clear_mysql_metadata_caches();
+				return;
 
-		if ( 'add_check' === $operation ) {
-			$check = $metadata['check'];
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check ) ) {
-				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
-			}
+			case 'add_column':
+				$this->sync_mysql_column_catalog_side_effects( $table_schema, $table_name, $metadata );
+				return;
 
-			$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-			$this->clear_mysql_metadata_caches();
-			return;
-		}
+			case 'rename_column':
+				if ( $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] ) ) {
+					$this->execute_postgresql_side_effect_statements(
+						array_merge(
+							$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] ),
+							$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $metadata['new_column'] )
+						)
+					);
+				}
+				$this->clear_mysql_metadata_caches();
+				return;
 
-		if ( 'add_column' === $operation ) {
-			$this->sync_mysql_column_catalog_side_effects( $table_schema, $table_name, $metadata );
-			return;
-		}
-
-		if ( 'rename_column' === $operation ) {
-			if ( $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] ) ) {
+			case 'drop_column':
 				$this->execute_postgresql_side_effect_statements(
-					array_merge(
-						$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] ),
-						$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $metadata['new_column'] )
-					)
+					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
 				);
-			}
-			$this->clear_mysql_metadata_caches();
-			return;
-		}
+				$this->clear_mysql_metadata_caches();
+				return;
 
-		if ( 'drop_column' === $operation ) {
-			$this->execute_postgresql_side_effect_statements(
-				$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
-			);
-			$this->clear_mysql_metadata_caches();
-			return;
-		}
+			case 'set_default':
+			case 'drop_default':
+				$this->apply_mysql_column_default_metadata( $table_schema, $table_name, $metadata['column'] );
+				return;
 
-		if ( 'set_default' === $operation || 'drop_default' === $operation ) {
-			$this->apply_mysql_column_default_metadata( $table_schema, $table_name, $metadata['column'] );
-			return;
-		}
+			case 'change_column':
+				$this->sync_mysql_column_catalog_side_effects( $table_schema, $table_name, $metadata, $metadata['old_column'] );
+				return;
 
-		if ( 'change_column' === $operation ) {
-			$this->sync_mysql_column_catalog_side_effects( $table_schema, $table_name, $metadata, $metadata['old_column'] );
-			return;
-		}
-
-		if ( 'change_columns' === $operation ) {
-			foreach ( $metadata['columns'] as $column_metadata ) {
-				$column_metadata['operation'] = 'change_column';
-				$column_metadata['schema']    = $table_schema;
-				$column_metadata['table']     = $table_name;
-				$this->apply_mysql_dbdelta_alter_metadata( $column_metadata );
-			}
-			return;
+			case 'change_columns':
+				foreach ( $metadata['columns'] as $column_metadata ) {
+					$column_metadata['operation'] = 'change_column';
+					$column_metadata['schema']    = $table_schema;
+					$column_metadata['table']     = $table_name;
+					$this->apply_mysql_dbdelta_alter_metadata( $column_metadata );
+				}
 		}
 	}
 	private function sync_mysql_column_catalog_side_effects( string $table_schema, string $table_name, array $metadata, ?string $old_column = null ): void {
@@ -4263,7 +4259,14 @@ $wp_mysql_primary_index_comment$',
 			$reserved,
 			$this->get_postgresql_catalog_foreign_key_constraint_names( $table_schema, $table_name )
 		);
-		return $this->get_next_mysql_foreign_key_constraint_name_from_names( $table_name, $constraint_names );
+		$max_suffix       = 0;
+		$pattern          = '/^' . preg_quote( $table_name, '/' ) . '_ibfk_(\d+)$/i';
+		foreach ( $constraint_names as $constraint_name ) {
+			if ( 1 === preg_match( $pattern, (string) $constraint_name, $matches ) ) {
+				$max_suffix = max( $max_suffix, (int) $matches[1] );
+			}
+		}
+		return sprintf( '%s_ibfk_%d', $table_name, $max_suffix + 1 );
 	}
 	private function get_postgresql_catalog_foreign_key_constraint_names( string $table_schema, string $table_name ): array {
 		$constraint_name_sql = $this->get_postgresql_catalog_foreign_key_constraint_name_sql( 'con.conname', 't.relname' );
@@ -4301,16 +4304,6 @@ $wp_mysql_primary_index_comment$',
 			$table_name_sql
 		);
 	}
-	private function get_next_mysql_foreign_key_constraint_name_from_names( string $table_name, array $constraint_names ): string {
-		$max_suffix = 0;
-		$pattern    = '/^' . preg_quote( $table_name, '/' ) . '_ibfk_(\d+)$/i';
-		foreach ( $constraint_names as $constraint_name ) {
-			if ( 1 === preg_match( $pattern, (string) $constraint_name, $matches ) ) {
-				$max_suffix = max( $max_suffix, (int) $matches[1] );
-			}
-		}
-		return sprintf( '%s_ibfk_%d', $table_name, $max_suffix + 1 );
-	}
 	private function mysql_foreign_key_metadata_exists( string $table_schema, string $table_name, string $constraint_name ): bool {
 		$constraint_name_sql = $this->get_postgresql_catalog_foreign_key_constraint_name_sql( 'con.conname', 't.relname' );
 
@@ -4343,7 +4336,15 @@ $wp_mysql_primary_index_comment$',
 			$reserved,
 			$this->get_postgresql_catalog_check_constraint_names( $table_schema, $table_name )
 		);
-		return $this->get_next_mysql_check_constraint_name_from_names( $table_name, $constraint_names );
+		$prefix           = $table_name . '_chk_';
+		$max              = 0;
+
+		foreach ( $constraint_names as $constraint_name ) {
+			if ( 1 === preg_match( '/^' . preg_quote( $prefix, '/' ) . '([1-9][0-9]*)$/', (string) $constraint_name, $matches ) ) {
+				$max = max( $max, (int) $matches[1] );
+			}
+		}
+		return $prefix . ( $max + 1 );
 	}
 	private function get_postgresql_catalog_check_constraint_names( string $table_schema, string $table_name ): array {
 		try {
@@ -4365,27 +4366,21 @@ $wp_mysql_primary_index_comment$',
 			return array();
 		}
 	}
-	private function get_next_mysql_check_constraint_name_from_names( string $table_name, array $constraint_names ): string {
-		$prefix = $table_name . '_chk_';
-		$max    = 0;
-
-		foreach ( $constraint_names as $constraint_name ) {
-			if ( 1 === preg_match( '/^' . preg_quote( $prefix, '/' ) . '([1-9][0-9]*)$/', (string) $constraint_name, $matches ) ) {
-				$max = max( $max, (int) $matches[1] );
-			}
-		}
-		return $prefix . ( $max + 1 );
-	}
 	private function get_postgresql_primary_key_constraint_name( string $table_schema, string $table_name ): string {
 		try {
 			$stmt = $this->connection->query(
-				"SELECT constraint_name
-				FROM information_schema.table_constraints
-				WHERE table_schema = ?
-					AND table_name = ?
-					AND constraint_type = 'PRIMARY KEY'
-				ORDER BY constraint_name
-				LIMIT 1",
+				'SELECT con.conname
+				FROM pg_catalog.pg_constraint con
+				INNER JOIN pg_catalog.pg_class t
+					ON t.oid = con.conrelid
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = t.relnamespace
+				WHERE n.nspname = ?
+					AND t.relname = ?
+					AND t.relkind IN (\'r\', \'p\')
+					AND con.contype = \'p\'
+				ORDER BY con.conname
+				LIMIT 1',
 				array( $table_schema, $table_name )
 			);
 
@@ -5919,7 +5914,20 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$ranges = $this->merge_mysql_dbdelta_order_by_alter_ranges( $tokens, $ranges );
+		$normalized_ranges = array();
+		$range_count       = count( $ranges );
+		for ( $i = 0; $i < $range_count; ++$i ) {
+			$range = $ranges[ $i ];
+			if ( isset( $tokens[ $range['start'] ] ) && WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $range['start'] ]->id ) {
+				for ( $j = $i + 1; $j < $range_count; ++$j ) {
+					$range['end'] = $ranges[ $j ]['end'];
+				}
+				$normalized_ranges[] = $range;
+				break;
+			}
+			$normalized_ranges[] = $range;
+		}
+		$ranges = $normalized_ranges;
 
 		foreach ( $ranges as $range ) {
 			if ( $this->contains_unsupported_mysql_column_attribute_alter_action( $tokens, $range['start'], $range['end'] ) ) {
@@ -5963,9 +5971,17 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$this->preflight_mysql_dbdelta_alter_table_metadata_operations( $table_schema, $table_name, $metadata_operations );
+		$metadata_count = count( $metadata_operations );
+		if ( 1 === $metadata_count ) {
+			$metadata = array_merge( $metadata_operations[0], $this->get_mysql_key_value_array( 'schema', $table_schema, 'table', $table_name ) );
+		} elseif ( 0 === $metadata_count ) {
+			$metadata = $this->get_mysql_metadata( 'noop', 'schema', $table_schema, 'table', $table_name );
+		} else {
+			$metadata = $this->get_mysql_metadata( 'operations', 'schema', $table_schema, 'table', $table_name, 'operations', $metadata_operations );
+		}
 		return $this->get_mysql_ddl_translation(
 			$statements,
-			$this->get_mysql_dbdelta_alter_table_metadata( $table_schema, $table_name, $metadata_operations )
+			$metadata
 		);
 	}
 	private function get_mysql_ddl_translation( array $statements = array(), array $metadata = array() ): array {
@@ -5991,17 +6007,6 @@ $wp_mysql_primary_index_comment$',
 			$metadata['option'] = $option;
 		}
 		return $this->get_mysql_ddl_translation( array(), $metadata );
-	}
-	private function get_mysql_dbdelta_alter_table_metadata( string $table_schema, string $table_name, array $metadata_operations ): array {
-		$count = count( $metadata_operations );
-		if ( 1 === $count ) {
-			return array_merge( $metadata_operations[0], $this->get_mysql_key_value_array( 'schema', $table_schema, 'table', $table_name ) );
-		}
-
-		if ( 0 === $count ) {
-			return $this->get_mysql_metadata( 'noop', 'schema', $table_schema, 'table', $table_name );
-		}
-		return $this->get_mysql_metadata( 'operations', 'schema', $table_schema, 'table', $table_name, 'operations', $metadata_operations );
 	}
 	private function preflight_mysql_dbdelta_alter_table_metadata_operations( string $table_schema, string $table_name, array $metadata_operations ): void {
 		$metadata_operations = $this->flatten_mysql_dbdelta_alter_table_metadata_operations( $metadata_operations );
@@ -6250,8 +6255,8 @@ $wp_mysql_primary_index_comment$',
 
 		if ( WP_MySQL_Lexer::ADD_SYMBOL === $tokens[ $start ]->id ) {
 			if (
-				$this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end )
-				|| $this->is_mysql_dbdelta_add_constraint_action( $tokens, $start, $end )
+				$this->is_mysql_dbdelta_add_index_definition_action( $tokens, $start + 1, $end )
+				|| $this->is_mysql_dbdelta_add_constraint_definition_action( $tokens, $start + 1, $end )
 			) {
 				return false;
 			}
@@ -6365,7 +6370,7 @@ $wp_mysql_primary_index_comment$',
 				return $this->translate_mysql_dbdelta_column_change_alter_action( $table_schema, $table_name, $clause, $tokens, $position, $end, null );
 
 			case WP_MySQL_Lexer::ADD_SYMBOL:
-				if ( $this->is_mysql_dbdelta_add_constraint_action( $tokens, $start, $end ) ) {
+				if ( $this->is_mysql_dbdelta_add_constraint_definition_action( $tokens, $start + 1, $end ) ) {
 					return $this->translate_mysql_dbdelta_add_constraint_definition_alter_action(
 						$table_schema,
 						$table_name,
@@ -6377,7 +6382,7 @@ $wp_mysql_primary_index_comment$',
 						$foreign_key_names
 					);
 				}
-				if ( $this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end ) ) {
+				if ( $this->is_mysql_dbdelta_add_index_definition_action( $tokens, $start + 1, $end ) ) {
 					return $this->translate_mysql_dbdelta_add_index_definition_alter_action( $table_schema, $table_name, $clause, $tokens, $start + 1, $end );
 				}
 				return $this->translate_mysql_dbdelta_add_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $check_names, $foreign_key_names );
@@ -6413,7 +6418,12 @@ $wp_mysql_primary_index_comment$',
 				) {
 					return $this->translate_mysql_dbdelta_drop_check_alter_action( $table_schema, $table_name, $tokens, $start, $end );
 				}
-				if ( $this->is_mysql_dbdelta_drop_foreign_key_action( $tokens, $start, $end ) ) {
+				if (
+					$start + 4 === $end
+					&& isset( $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+					&& WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[ $start + 1 ]->id
+					&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $start + 2 ]->id
+				) {
 					return $this->translate_mysql_dbdelta_drop_foreign_key_alter_action( $table_schema, $table_name, $tokens, $start, $end );
 				}
 				if ( isset( $tokens[ $start + 1 ] ) && in_array( $tokens[ $start + 1 ]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::KEY_SYMBOL ), true ) ) {
@@ -6444,25 +6454,87 @@ $wp_mysql_primary_index_comment$',
 				return null;
 		}
 
-		$auto_increment_value = $this->get_mysql_dbdelta_auto_increment_alter_value( $tokens, $start, $end );
-		if ( null !== $auto_increment_value ) {
-			return $this->translate_mysql_dbdelta_auto_increment_alter_action( $table_name, $auto_increment_value );
+		if ( isset( $tokens[ $start ] ) && WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL === $tokens[ $start ]->id ) {
+			$position = $start + 1;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+				++$position;
+			}
+
+			if (
+				$position + 1 !== $end
+				|| ! isset( $tokens[ $position ] )
+				|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::INT_NUMBER, WP_MySQL_Lexer::LONG_NUMBER, WP_MySQL_Lexer::ULONGLONG_NUMBER ), true )
+				|| ! preg_match( '/^[0-9]+$/', $tokens[ $position ]->get_value() )
+			) {
+				return null;
+			}
+
+			$auto_increment_value = (int) $tokens[ $position ]->get_value();
+			if ( $auto_increment_value <= 0 ) {
+				return null;
+			}
+
+			$metadata_lookup       = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+			$auto_increment_column = $this->get_mysql_auto_increment_column_from_metadata( $metadata_lookup );
+			if ( null === $auto_increment_column ) {
+				return $this->get_mysql_dbdelta_noop_translation();
+			}
+
+			$minimum_sequence_value = max( 0, $auto_increment_value - 1 );
+			$table_schema           = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+			$statements             = $this->get_postgresql_auto_increment_alter_statements( $table_name, $auto_increment_column, $minimum_sequence_value );
+			if ( empty( $statements ) && 'sqlite' === $this->connection->get_driver_name() ) {
+				$statements = $this->get_sqlite_auto_increment_alter_statements( $table_schema, $table_name, $auto_increment_column, $minimum_sequence_value );
+			}
+			return $this->get_mysql_ddl_translation( $statements, $this->get_mysql_metadata( 'set_auto_increment' ) );
 		}
 
-		if ( $this->is_supported_mysql_dbdelta_keys_alter_action( $tokens, $start, $end ) ) {
+		if (
+			$start + 2 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ] )
+			&& in_array( $tokens[ $start ]->id, array( WP_MySQL_Lexer::DISABLE_SYMBOL, WP_MySQL_Lexer::ENABLE_SYMBOL ), true )
+			&& WP_MySQL_Lexer::KEYS_SYMBOL === $tokens[ $start + 1 ]->id
+		) {
 			return $this->get_mysql_dbdelta_noop_translation();
 		}
 
-		if ( $this->is_supported_mysql_dbdelta_online_ddl_option_alter_action( $tokens, $start, $end ) ) {
+		$online_ddl_option_end = $start;
+		if (
+			$this->consume_mysql_supported_index_lock_and_algorithm_options( $tokens, $online_ddl_option_end, $end )
+			&& $online_ddl_option_end === $end
+		) {
 			return $this->get_mysql_dbdelta_noop_translation( 'online_ddl_option' );
 		}
 
-		$table_comment = $this->get_mysql_dbdelta_table_comment_alter_value( $tokens, $start, $end );
-		if ( null !== $table_comment ) {
-			return $this->get_mysql_ddl_translation( array(), $this->get_mysql_metadata( 'set_table_comment', 'comment', $table_comment ) );
+		if ( isset( $tokens[ $start ] ) && WP_MySQL_Lexer::COMMENT_SYMBOL === $tokens[ $start ]->id ) {
+			$position = $start + 1;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+				++$position;
+			}
+
+			if (
+				$position + 1 !== $end
+				|| ! isset( $tokens[ $position ] )
+				|| ! in_array(
+					$tokens[ $position ]->id,
+					array( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT, WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT, WP_MySQL_Lexer::NCHAR_TEXT ),
+					true
+				)
+			) {
+				return null;
+			}
+			return $this->get_mysql_ddl_translation( array(), $this->get_mysql_metadata( 'set_table_comment', 'comment', $tokens[ $position ]->get_value() ) );
 		}
 
-		if ( $this->is_supported_mysql_dbdelta_table_option_alter_action( $clause, $tokens, $start, $end ) ) {
+		$table_option               = strtoupper( preg_replace( '/\s+/', ' ', trim( $this->get_mysql_token_range_bytes( $clause, $tokens, $start, $end ) ) ) );
+		$optional_assignment_option = '(?:ENGINE|ROW_FORMAT|KEY_BLOCK_SIZE|MAX_ROWS|MIN_ROWS|AVG_ROW_LENGTH|CHECKSUM|DELAY_KEY_WRITE|PACK_KEYS|STATS_PERSISTENT|STATS_AUTO_RECALC|STATS_SAMPLE_PAGES|COMPRESSION|ENCRYPTION|CONNECTION|PASSWORD|INSERT_METHOD|SECONDARY_ENGINE|AUTOEXTEND_SIZE|ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)(?:\s*=\s*|\s+)\S';
+		$character_set_option       = '(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHAR\s+SET|CHARSET|COLLATE)(?:\s*=\s*|\s+)\S';
+		if (
+			1 === preg_match(
+				'/^(?:' . $optional_assignment_option . '|' . $character_set_option . '|CONVERT\s+TO\s+(?:CHARACTER\s+SET|CHAR\s+SET|CHARSET)\b|(?:DATA|INDEX)\s+DIRECTORY\b|TABLESPACE\b|UNION\s*=)/',
+				$table_option
+			)
+		) {
 			return $this->get_mysql_dbdelta_noop_translation();
 		}
 		return null;
@@ -6569,49 +6641,6 @@ $wp_mysql_primary_index_comment$',
 			$statements,
 			$this->get_mysql_metadata( 'rename_index', 'old_index', $old_index_name, 'new_index', $new_index_name )
 		);
-	}
-	private function get_mysql_dbdelta_auto_increment_alter_value( array $tokens, int $start, int $end ): ?int {
-		if ( ! isset( $tokens[ $start ] ) || WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL !== $tokens[ $start ]->id ) {
-			return null;
-		}
-
-		$position = $start + 1;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		if (
-			$position + 1 !== $end
-			|| ! isset( $tokens[ $position ] )
-			|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::INT_NUMBER, WP_MySQL_Lexer::LONG_NUMBER, WP_MySQL_Lexer::ULONGLONG_NUMBER ), true )
-		) {
-			return null;
-		}
-
-		$value = $tokens[ $position ]->get_value();
-		if ( ! preg_match( '/^[0-9]+$/', $value ) ) {
-			return null;
-		}
-
-		$value = (int) $value;
-		return $value > 0 ? $value : null;
-	}
-	private function translate_mysql_dbdelta_auto_increment_alter_action( string $table_name, int $value ): array {
-		$metadata_lookup       = $this->get_mysql_dml_column_metadata_lookup( $table_name );
-		$auto_increment_column = $this->get_mysql_auto_increment_column_from_metadata( $metadata_lookup );
-		if ( null === $auto_increment_column ) {
-			return $this->get_mysql_dbdelta_noop_translation();
-		}
-
-		$minimum_sequence_value = max( 0, $value - 1 );
-		$statements             = array();
-		$table_schema           = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
-
-		$statements = $this->get_postgresql_auto_increment_alter_statements( $table_name, $auto_increment_column, $minimum_sequence_value );
-		if ( empty( $statements ) && 'sqlite' === $this->connection->get_driver_name() ) {
-			$statements = $this->get_sqlite_auto_increment_alter_statements( $table_schema, $table_name, $auto_increment_column, $minimum_sequence_value );
-		}
-		return $this->get_mysql_ddl_translation( $statements, $this->get_mysql_metadata( 'set_auto_increment' ) );
 	}
 	private function translate_mysql_dbdelta_column_change_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $position, int $end, ?string $old_column ): ?array {
 		$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $position, $end );
@@ -7181,53 +7210,34 @@ $wp_mysql_primary_index_comment$',
 			}
 
 			$position += 2;
-			$rule      = $this->parse_mysql_foreign_key_reference_option( $tokens, $position, $end );
-			if ( null === $rule ) {
+			if ( $position >= $end || ! isset( $tokens[ $position ] ) ) {
 				return null;
 			}
 
+			if ( in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::CASCADE_SYMBOL, WP_MySQL_Lexer::RESTRICT_SYMBOL ), true ) ) {
+				$rule = strtoupper( $tokens[ $position ]->get_value() );
+				++$position;
+			} elseif (
+				isset( $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id
+				&& in_array( $tokens[ $position + 1 ]->id, array( WP_MySQL_Lexer::NULL_SYMBOL, WP_MySQL_Lexer::DEFAULT_SYMBOL ), true )
+			) {
+				$rule      = WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $position + 1 ]->id ? 'SET NULL' : 'SET DEFAULT';
+				$position += 2;
+			} elseif (
+				isset( $tokens[ $position + 1 ] )
+				&& WP_MySQL_Lexer::NO_SYMBOL === $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::ACTION_SYMBOL === $tokens[ $position + 1 ]->id
+			) {
+				$rule      = 'NO ACTION';
+				$position += 2;
+			} else {
+				return null;
+			}
 			$rules[ $rule_key ] = $rule;
 			$seen[ $rule_key ]  = true;
 		}
 		return $rules;
-	}
-	private function parse_mysql_foreign_key_reference_option( array $tokens, int &$position, int $end ): ?string {
-		if ( $position >= $end || ! isset( $tokens[ $position ] ) ) {
-			return null;
-		}
-
-		if ( in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::CASCADE_SYMBOL, WP_MySQL_Lexer::RESTRICT_SYMBOL ), true ) ) {
-			$rule = strtoupper( $tokens[ $position ]->get_value() );
-			++$position;
-			return $rule;
-		}
-
-		if ( WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
-			if ( ! isset( $tokens[ $position + 1 ] ) ) {
-				return null;
-			}
-
-			if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $position + 1 ]->id ) {
-				$position += 2;
-				return 'SET NULL';
-			}
-
-			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $position + 1 ]->id ) {
-				$position += 2;
-				return 'SET DEFAULT';
-			}
-			return null;
-		}
-
-		if (
-			isset( $tokens[ $position + 1 ] )
-			&& WP_MySQL_Lexer::NO_SYMBOL === $tokens[ $position ]->id
-			&& WP_MySQL_Lexer::ACTION_SYMBOL === $tokens[ $position + 1 ]->id
-		) {
-			$position += 2;
-			return 'NO ACTION';
-		}
-		return null;
 	}
 	private function translate_mysql_dbdelta_drop_index_alter_action( string $table_schema, string $table_name, array $tokens, int $start, int $end ): ?array {
 		if ( $start + 3 !== $end ) {
@@ -7468,14 +7478,20 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 
+		$column_metadata            = $column['metadata'];
 		$column_type                = $this->get_translated_column_type_from_definition_line( $column['sql'] );
-		$preserve_existing_identity = $this->should_preserve_existing_identity_integer_column_change(
-			$table_schema,
-			$table_name,
-			$old_column,
-			$column['metadata']
-		);
-		if ( $this->should_drop_identity_for_non_auto_increment_column_change( $table_schema, $table_name, $old_column, $column['metadata'] ) ) {
+		$is_auto_increment          = 'auto_increment' === strtolower( (string) ( $column_metadata['extra'] ?? '' ) );
+		$is_auto_increment_integer  = $is_auto_increment && $this->is_mysql_integer_family_column_type( (string) ( $column_metadata['type'] ?? '' ) );
+		$existing_identity          = $this->get_existing_dbdelta_column_identity_metadata( $table_schema, $table_name, $old_column );
+		$has_backend_identity       = null !== $existing_identity && $this->is_existing_dbdelta_column_backend_identity( $existing_identity );
+		$preserve_existing_identity = false;
+		if ( $is_auto_increment_integer && $has_backend_identity ) {
+			$existing_mysql_type        = (string) ( $existing_identity['mysql_column_type'] ?? '' );
+			$preserve_existing_identity = '' !== $existing_mysql_type
+				? $this->is_mysql_integer_family_column_type( $existing_mysql_type )
+				: in_array( strtolower( trim( (string) ( $existing_identity['data_type'] ?? '' ) ) ), array( 'bigint', 'integer', 'smallint' ), true );
+		}
+		if ( ! $is_auto_increment && $has_backend_identity ) {
 			$statements[] = sprintf(
 				'ALTER TABLE %s ALTER COLUMN %s DROP IDENTITY IF EXISTS',
 				$this->connection->quote_identifier( $table_name ),
@@ -7516,49 +7532,22 @@ $wp_mysql_primary_index_comment$',
 			}
 		}
 
-		if ( $this->should_add_identity_for_auto_increment_column_change( $table_schema, $table_name, $old_column, $column['metadata'] ) ) {
+		if ( $is_auto_increment_integer && null !== $existing_identity && ! $has_backend_identity ) {
 			$statements[] = sprintf(
 				'ALTER TABLE %s ALTER COLUMN %s ADD GENERATED BY DEFAULT AS IDENTITY',
 				$this->connection->quote_identifier( $table_name ),
 				$this->connection->quote_identifier( $new_column )
 			);
 		}
-		return array_merge(
-			$statements,
-			$this->get_mysql_dbdelta_inline_index_statements( $table_name, $column['indexes'] ?? array() ),
-			$this->get_mysql_dbdelta_inline_check_statements( $table_name, $column['checks'] ?? array() )
-		);
-	}
-	private function get_mysql_dbdelta_inline_check_statements( string $table_name, array $checks ): array {
-		$statements = array();
-		foreach ( $checks as $check ) {
-			$statements[] = sprintf(
-				'ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
-				$this->connection->quote_identifier( $table_name ),
-				$this->connection->quote_identifier( (string) $check['name'] ),
-				'NO' === strtoupper( (string) ( $check['enforced'] ?? 'YES' ) )
-					? 'true'
-					: (string) ( $check['postgresql_check_clause'] ?? $check['check_clause'] )
-			);
-		}
-		return $statements;
-	}
-	private function prepend_mysql_column_helper_type_statements( array $statements, array $column ): array {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $statements;
-		}
-		return array_merge( $column['helper_type_statements'] ?? array(), $statements );
-	}
-	private function get_mysql_dbdelta_inline_index_statements( string $table_name, array $indexes ): array {
-		$statements = array();
-		foreach ( $indexes as $index ) {
+
+		foreach ( $column['indexes'] ?? array() as $index ) {
 			$columns = array();
-			foreach ( $index['columns'] as $column ) {
+			foreach ( $index['columns'] as $index_column ) {
 				$column_sql = $this->get_mysql_index_key_part_sql(
-					(string) $column['column_name'],
-					'0' === (string) $index['non_unique'] ? $column['sub_part'] : null
+					(string) $index_column['column_name'],
+					'0' === (string) $index['non_unique'] ? $index_column['sub_part'] : null
 				);
-				if ( 'D' === strtoupper( (string) ( $column['collation'] ?? '' ) ) ) {
+				if ( 'D' === strtoupper( (string) ( $index_column['collation'] ?? '' ) ) ) {
 					$column_sql .= ' DESC';
 				}
 
@@ -7586,13 +7575,24 @@ $wp_mysql_primary_index_comment$',
 				implode( ', ', $columns )
 			);
 		}
+
+		foreach ( $column['checks'] ?? array() as $check ) {
+			$statements[] = sprintf(
+				'ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)',
+				$this->connection->quote_identifier( $table_name ),
+				$this->connection->quote_identifier( (string) $check['name'] ),
+				'NO' === strtoupper( (string) ( $check['enforced'] ?? 'YES' ) )
+					? 'true'
+					: (string) ( $check['postgresql_check_clause'] ?? $check['check_clause'] )
+			);
+		}
 		return $statements;
 	}
-	private function is_mysql_dbdelta_add_index_action( array $tokens, int $start, int $end ): bool {
-		if ( $start + 1 >= $end || ! isset( $tokens[ $start + 1 ] ) ) {
-			return false;
+	private function prepend_mysql_column_helper_type_statements( array $statements, array $column ): array {
+		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
+			return $statements;
 		}
-		return $this->is_mysql_dbdelta_add_index_definition_action( $tokens, $start + 1, $end );
+		return array_merge( $column['helper_type_statements'] ?? array(), $statements );
 	}
 	private function is_mysql_dbdelta_add_index_definition_action( array $tokens, int $start, int $end ): bool {
 		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
@@ -7604,12 +7604,6 @@ $wp_mysql_primary_index_comment$',
 			true
 		);
 	}
-	private function is_mysql_dbdelta_add_constraint_action( array $tokens, int $start, int $end ): bool {
-		if ( $start + 1 >= $end || ! isset( $tokens[ $start + 1 ] ) ) {
-			return false;
-		}
-		return $this->is_mysql_dbdelta_add_constraint_definition_action( $tokens, $start + 1, $end );
-	}
 	private function is_mysql_dbdelta_add_constraint_definition_action( array $tokens, int $start, int $end ): bool {
 		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
 			return false;
@@ -7619,12 +7613,6 @@ $wp_mysql_primary_index_comment$',
 			array( WP_MySQL_Lexer::CHECK_SYMBOL, WP_MySQL_Lexer::CONSTRAINT_SYMBOL, WP_MySQL_Lexer::FOREIGN_SYMBOL ),
 			true
 		);
-	}
-	private function is_mysql_dbdelta_drop_foreign_key_action( array $tokens, int $start, int $end ): bool {
-		return $start + 4 === $end
-			&& isset( $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
-			&& WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[ $start + 1 ]->id
-			&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $start + 2 ]->id;
 	}
 	private function get_mysql_alter_column_definition_end_without_placement( array $tokens, int $start, int $end ): ?int {
 		if ( $start >= $end ) {
@@ -7659,72 +7647,6 @@ $wp_mysql_primary_index_comment$',
 	private function resolve_mysql_existing_alter_column_name( string $table_schema, string $table_name, string $column_name ): string {
 		return $this->get_mysql_table_column_name( $table_schema, $table_name, $column_name ) ?? $column_name;
 	}
-	private function is_supported_mysql_dbdelta_table_option_alter_action( string $clause, array $tokens, int $start, int $end ): bool {
-		$fragment = strtoupper( preg_replace( '/\s+/', ' ', trim( $this->get_mysql_token_range_bytes( $clause, $tokens, $start, $end ) ) ) );
-
-		$optional_assignment_option = '(?:ENGINE|ROW_FORMAT|KEY_BLOCK_SIZE|MAX_ROWS|MIN_ROWS|AVG_ROW_LENGTH|CHECKSUM|DELAY_KEY_WRITE|PACK_KEYS|STATS_PERSISTENT|STATS_AUTO_RECALC|STATS_SAMPLE_PAGES|COMPRESSION|ENCRYPTION|CONNECTION|PASSWORD|INSERT_METHOD|SECONDARY_ENGINE|AUTOEXTEND_SIZE|ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)(?:\s*=\s*|\s+)\S';
-		$character_set_option       = '(?:DEFAULT\s+)?(?:CHARACTER\s+SET|CHAR\s+SET|CHARSET|COLLATE)(?:\s*=\s*|\s+)\S';
-		return 1 === preg_match(
-			'/^(?:' . $optional_assignment_option . '|' . $character_set_option . '|CONVERT\s+TO\s+(?:CHARACTER\s+SET|CHAR\s+SET|CHARSET)\b|(?:DATA|INDEX)\s+DIRECTORY\b|TABLESPACE\b|UNION\s*=)/',
-			$fragment
-		);
-	}
-	private function get_mysql_dbdelta_table_comment_alter_value( array $tokens, int $start, int $end ): ?string {
-		if ( ! isset( $tokens[ $start ] ) || WP_MySQL_Lexer::COMMENT_SYMBOL !== $tokens[ $start ]->id ) {
-			return null;
-		}
-
-		$position = $start + 1;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		if ( $position + 1 !== $end || ! isset( $tokens[ $position ] ) ) {
-			return null;
-		}
-
-		if (
-				! in_array(
-					$tokens[ $position ]->id,
-					array( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT, WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT, WP_MySQL_Lexer::NCHAR_TEXT ),
-					true
-				)
-		) {
-			return null;
-		}
-		return $tokens[ $position ]->get_value();
-	}
-	private function is_supported_mysql_dbdelta_online_ddl_option_alter_action( array $tokens, int $start, int $end ): bool {
-		$position = $start;
-		return $this->consume_mysql_supported_index_lock_and_algorithm_options( $tokens, $position, $end )
-			&& $position === $end;
-	}
-	private function is_supported_mysql_dbdelta_keys_alter_action( array $tokens, int $start, int $end ): bool {
-		return $start + 2 === $end
-			&& isset( $tokens[ $start ], $tokens[ $start + 1 ] )
-			&& in_array( $tokens[ $start ]->id, array( WP_MySQL_Lexer::DISABLE_SYMBOL, WP_MySQL_Lexer::ENABLE_SYMBOL ), true )
-			&& WP_MySQL_Lexer::KEYS_SYMBOL === $tokens[ $start + 1 ]->id;
-	}
-	private function merge_mysql_dbdelta_order_by_alter_ranges( array $tokens, array $ranges ): array {
-		$normalized_ranges = array();
-		$range_count       = count( $ranges );
-
-		for ( $i = 0; $i < $range_count; ++$i ) {
-			$range = $ranges[ $i ];
-			if ( ! isset( $tokens[ $range['start'] ] ) || WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $range['start'] ]->id ) {
-				$normalized_ranges[] = $range;
-				continue;
-			}
-
-			for ( $j = $i + 1; $j < $range_count; ++$j ) {
-				$range['end'] = $ranges[ $j ]['end'];
-			}
-
-			$normalized_ranges[] = $range;
-			return $normalized_ranges;
-		}
-		return $normalized_ranges;
-	}
 	private function is_supported_mysql_dbdelta_order_by_alter_action( string $table_name, array $tokens, int $start, int $end ): bool {
 		if (
 			! isset( $tokens[ $start ], $tokens[ $start + 1 ] )
@@ -7740,8 +7662,26 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		while ( $position < $end ) {
-			if ( ! $this->consume_mysql_dbdelta_order_by_alter_key_part( $table_name, $tokens, $position, $end ) ) {
+			$identifier = $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $identifier ) {
 				return false;
+			}
+
+			++$position;
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id ) {
+				$column_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+				if ( null === $column_name || 0 !== strcasecmp( $identifier, $table_name ) ) {
+					return false;
+				}
+				$position += 2;
+			}
+
+			if (
+				$position < $end
+				&& isset( $tokens[ $position ] )
+				&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::ASC_SYMBOL, WP_MySQL_Lexer::DESC_SYMBOL ), true )
+			) {
+				++$position;
 			}
 
 			if ( $position === $end ) {
@@ -7758,89 +7698,6 @@ $wp_mysql_primary_index_comment$',
 			}
 		}
 		return false;
-	}
-	private function consume_mysql_dbdelta_order_by_alter_key_part( string $table_name, array $tokens, int &$position, int $end ): bool {
-		$identifier = $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null );
-		if ( null === $identifier ) {
-			return false;
-		}
-
-		++$position;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id ) {
-			$column_name = $this->get_mysql_alter_identifier_token_value( $tokens[ $position + 1 ] ?? null );
-			if ( null === $column_name || 0 !== strcasecmp( $identifier, $table_name ) ) {
-				return false;
-			}
-
-			$position += 2;
-		}
-
-		if (
-			$position < $end
-			&& isset( $tokens[ $position ] )
-			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::ASC_SYMBOL, WP_MySQL_Lexer::DESC_SYMBOL ), true )
-		) {
-			++$position;
-		}
-		return true;
-	}
-	private function should_preserve_existing_identity_integer_column_change(
-		string $table_schema,
-		string $table_name,
-		string $old_column,
-		array $column
-	): bool {
-		if ( 'auto_increment' !== strtolower( (string) ( $column['extra'] ?? '' ) ) ) {
-			return false;
-		}
-
-		if ( ! $this->is_mysql_integer_family_column_type( (string) ( $column['type'] ?? '' ) ) ) {
-			return false;
-		}
-
-		$existing = $this->get_existing_dbdelta_column_identity_metadata( $table_schema, $table_name, $old_column );
-		if ( null === $existing || ! $this->is_existing_dbdelta_column_backend_identity( $existing ) ) {
-			return false;
-		}
-
-		$existing_mysql_type = (string) ( $existing['mysql_column_type'] ?? '' );
-		if ( '' !== $existing_mysql_type ) {
-			return $this->is_mysql_integer_family_column_type( $existing_mysql_type );
-		}
-		return in_array( strtolower( trim( (string) ( $existing['data_type'] ?? '' ) ) ), array( 'bigint', 'integer', 'smallint' ), true );
-	}
-	private function should_add_identity_for_auto_increment_column_change(
-		string $table_schema,
-		string $table_name,
-		string $old_column,
-		array $column
-	): bool {
-		if ( 'auto_increment' !== strtolower( (string) ( $column['extra'] ?? '' ) ) ) {
-			return false;
-		}
-
-		if ( ! $this->is_mysql_integer_family_column_type( (string) ( $column['type'] ?? '' ) ) ) {
-			return false;
-		}
-
-		$existing = $this->get_existing_dbdelta_column_identity_metadata( $table_schema, $table_name, $old_column );
-		if ( null === $existing ) {
-			return false;
-		}
-		return ! $this->is_existing_dbdelta_column_backend_identity( $existing );
-	}
-	private function should_drop_identity_for_non_auto_increment_column_change(
-		string $table_schema,
-		string $table_name,
-		string $old_column,
-		array $column
-	): bool {
-		if ( 'auto_increment' === strtolower( (string) ( $column['extra'] ?? '' ) ) ) {
-			return false;
-		}
-
-		$existing = $this->get_existing_dbdelta_column_identity_metadata( $table_schema, $table_name, $old_column );
-		return null !== $existing && $this->is_existing_dbdelta_column_backend_identity( $existing );
 	}
 	private function get_existing_dbdelta_column_identity_metadata( string $table_schema, string $table_name, string $column_name ): ?array {
 		$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
@@ -8833,22 +8690,8 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		++$position;
-		$database_name = $this->db_name;
-		if (
-			isset( $tokens[ $position ] )
-			&& (
-				WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $position ]->id
-				|| WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id
-			)
-		) {
-			$database_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
-			if ( null === $database_name ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
-			}
-
-			$position += 2;
-		}
-		$schema_name = $this->get_mysql_show_database_backend_schema( $database_name, 'SHOW TABLES' );
+		$database_name = $this->get_mysql_show_database_name( $tokens, $position, 'Unsupported SHOW TABLES statement.' );
+		$schema_name   = $this->get_mysql_show_database_backend_schema( $database_name, 'SHOW TABLES' );
 
 		$like = null;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id ) {
@@ -8879,18 +8722,7 @@ $wp_mysql_primary_index_comment$',
 				$allowed_columns['table_type'] = 'Table_type';
 			}
 
-			$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
-			if ( null === $where ) {
-				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
-			}
-			if ( null === $where ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
-			}
-
-			$position = $this->get_mysql_statement_end_position( $tokens, $position );
-			if ( null === $position ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
-			}
+			$where = $this->get_mysql_show_where_filter_clause( $tokens, $position, $allowed_columns, 'Unsupported SHOW TABLES statement.' );
 		}
 
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
@@ -8916,6 +8748,23 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$position      = 3;
+		$database_name = $this->get_mysql_show_database_name( $tokens, $position, 'Unsupported SHOW TABLE STATUS statement.' );
+		$schema_name   = $this->get_mysql_show_database_backend_schema( $database_name, 'SHOW TABLE STATUS' );
+		$filter        = $this->get_mysql_show_result_filter(
+			$tokens,
+			$position,
+			'Name',
+			$this->get_mysql_show_output_columns( 'table_status' ),
+			'Unsupported SHOW TABLE STATUS statement.',
+			$this->get_mysql_show_table_status_numeric_columns()
+		);
+		return array(
+			'database' => $database_name,
+			'schema'   => $schema_name,
+			'filter'   => $filter,
+		);
+	}
+	private function get_mysql_show_database_name( array $tokens, int &$position, string $unsupported_message ): string {
 		$database_name = $this->db_name;
 		if (
 			isset( $tokens[ $position ] )
@@ -8926,53 +8775,12 @@ $wp_mysql_primary_index_comment$',
 		) {
 			$database_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
 			if ( null === $database_name ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW TABLE STATUS statement.' );
+				throw new InvalidArgumentException( $unsupported_message );
 			}
 
 			$position += 2;
 		}
-
-		$schema_name = $this->get_mysql_show_database_backend_schema( $database_name, 'SHOW TABLE STATUS' );
-
-		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
-			return array(
-				'database'         => $database_name,
-				'schema'           => $schema_name,
-				'filter_type'      => 'all',
-				'filter_column'    => null,
-				'filter_pattern'   => null,
-				'filter_threshold' => null,
-			);
-		}
-
-		if (
-			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id
-			&& $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
-			&& $this->is_at_mysql_query_end( $tokens, $position + 2 )
-		) {
-			return array(
-				'database'         => $database_name,
-				'schema'           => $schema_name,
-				'filter_type'      => 'like',
-				'filter_column'    => 'Name',
-				'filter_pattern'   => $tokens[ $position + 1 ]->get_value(),
-				'filter_threshold' => null,
-			);
-		}
-
-		if (
-			isset( $tokens[ $position ] )
-			&& WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id
-		) {
-			$filter = $this->get_show_table_status_where_filter( $tokens, $position );
-			if ( null !== $filter ) {
-				$filter['database'] = $database_name;
-				$filter['schema']   = $schema_name;
-				return $filter;
-			}
-		}
-		throw new InvalidArgumentException( 'Unsupported SHOW TABLE STATUS statement.' );
+		return $database_name;
 	}
 	private function get_mysql_show_database_backend_schema( string $database_name, string $statement_type ): string {
 		if ( 0 === strcasecmp( $database_name, 'information_schema' ) ) {
@@ -8997,82 +8805,6 @@ $wp_mysql_primary_index_comment$',
 	private function is_postgresql_internal_schema( string $schema_name ): bool {
 		return 0 === strcasecmp( $schema_name, 'pg_catalog' )
 			|| 0 === strncasecmp( $schema_name, 'pg_', 3 );
-	}
-	private function get_show_table_status_where_filter( array $tokens, int $position ): ?array {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		$predicate_position = $position + 1;
-		if ( ! isset( $tokens[ $predicate_position ] ) ) {
-			return null;
-		}
-
-		$column = $this->get_mysql_show_output_column_name(
-			$tokens[ $predicate_position ],
-			array( 'auto_increment' => 'Auto_increment' )
-		);
-		if (
-			'Auto_increment' === $column
-			&& isset( $tokens[ $predicate_position + 1 ] )
-			&& WP_MySQL_Lexer::GREATER_THAN_OPERATOR === $tokens[ $predicate_position + 1 ]->id
-			&& isset( $tokens[ $predicate_position + 2 ] )
-			&& $this->is_mysql_unsigned_integer_token( $tokens[ $predicate_position + 2 ] )
-			&& $this->is_at_mysql_query_end( $tokens, $predicate_position + 3 )
-		) {
-			return array(
-				'filter_type'      => 'auto_increment_gt',
-				'filter_column'    => 'Auto_increment',
-				'filter_pattern'   => null,
-				'filter_threshold' => $tokens[ $predicate_position + 2 ]->get_value(),
-			);
-		}
-
-		if (
-			'Auto_increment' === $column
-			&& isset( $tokens[ $predicate_position + 1 ] )
-			&& WP_MySQL_Lexer::IS_SYMBOL === $tokens[ $predicate_position + 1 ]->id
-			&& isset( $tokens[ $predicate_position + 2 ] )
-			&& WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $predicate_position + 2 ]->id
-			&& $this->is_at_mysql_query_end( $tokens, $predicate_position + 3 )
-		) {
-			return array(
-				'filter_type'      => 'auto_increment_is_null',
-				'filter_column'    => 'Auto_increment',
-				'filter_pattern'   => null,
-				'filter_threshold' => null,
-			);
-		}
-
-		$allowed_columns  = $this->get_mysql_show_column_map( explode( ' ', 'Name Engine Version Row_format Rows Avg_row_length Data_length Max_data_length Index_length Data_free Auto_increment Create_time Update_time Check_time Collation Checksum Create_options Comment' ) );
-		$numeric_columns  = explode( ' ', 'Version Rows Avg_row_length Data_length Max_data_length Index_length Data_free Auto_increment Checksum' );
-		$where_expression = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
-		if ( null !== $where_expression ) {
-			return array(
-				'filter_type'      => 'where_expression',
-				'filter_column'    => null,
-				'filter_pattern'   => null,
-				'filter_threshold' => null,
-				'predicate'        => $where_expression['predicate'],
-			);
-		}
-
-		$where_filter = $this->get_mysql_show_where_filters(
-			$tokens,
-			$position,
-			$allowed_columns,
-			$numeric_columns
-		);
-		if ( null === $where_filter ) {
-			return null;
-		}
-		return array(
-			'filter_type'      => 'where',
-			'filter_column'    => null,
-			'filter_pattern'   => null,
-			'filter_threshold' => null,
-			'conditions'       => $where_filter,
-		);
 	}
 	private function get_show_create_table_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -9139,48 +8871,16 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		++$position;
-		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
-			return array(
-				'type'    => 'all',
-				'scope'   => $scope,
-				'column'  => null,
-				'pattern' => null,
-			);
-		}
-
-		if (
-			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id
-			&& $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
-			&& $this->is_at_mysql_query_end( $tokens, $position + 2 )
-		) {
-			return array(
-				'type'    => 'like',
-				'scope'   => $scope,
-				'column'  => 'Variable_name',
-				'pattern' => strtolower( $tokens[ $position + 1 ]->get_value() ),
-			);
-		}
-
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ' ', 'Variable_name Value' ) );
-		$numeric_columns = array( 'Value' );
-		$where_filters   = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns, $numeric_columns );
-		if ( null !== $where_filters ) {
-			return array(
-				'type'       => 'where',
-				'scope'      => $scope,
-				'column'     => null,
-				'pattern'    => null,
-				'conditions' => $where_filters,
-			);
-		}
-
-		$where_expression = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
-		if ( null !== $where_expression ) {
-			$where_expression['scope'] = $scope;
-			return $where_expression;
-		}
-		throw new InvalidArgumentException( 'Unsupported SHOW VARIABLES statement.' );
+		$filter          = $this->get_mysql_show_result_filter(
+			$tokens,
+			$position,
+			'Variable_name',
+			$this->get_mysql_show_output_columns( 'name_value' ),
+			'Unsupported SHOW VARIABLES statement.',
+			array( 'Value' )
+		);
+		$filter['scope'] = $scope;
+		return $filter;
 	}
 	private function get_show_character_set_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -9201,12 +8901,14 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ',', 'Charset,Description,Default collation,Maxlen' ) );
-		$filter          = $this->get_show_static_result_filter( $tokens, $position, 'Charset', $allowed_columns );
-		if ( null === $filter ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW CHARACTER SET statement.' );
-		}
-		return $filter;
+		return $this->get_mysql_show_result_filter(
+			$tokens,
+			$position,
+			'Charset',
+			$this->get_mysql_show_output_columns( 'character_set' ),
+			'Unsupported SHOW CHARACTER SET statement.',
+			array( 'Maxlen' )
+		);
 	}
 	private function get_show_collation_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -9218,12 +8920,14 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ' ', 'Collation Charset Id Default Compiled Sortlen Pad_attribute' ) );
-		$filter          = $this->get_show_static_result_filter( $tokens, 2, 'Collation', $allowed_columns );
-		if ( null === $filter ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW COLLATION statement.' );
-		}
-		return $filter;
+		return $this->get_mysql_show_result_filter(
+			$tokens,
+			2,
+			'Collation',
+			$this->get_mysql_show_output_columns( 'collation' ),
+			'Unsupported SHOW COLLATION statement.',
+			array( 'Id', 'Sortlen' )
+		);
 	}
 	private function get_show_databases_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -9238,16 +8942,13 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$filter = $this->get_show_static_result_filter(
+		return $this->get_mysql_show_result_filter(
 			$tokens,
 			2,
 			'Database',
-			array( 'database' => 'Database' )
+			$this->get_mysql_show_output_columns( 'databases' ),
+			'Unsupported SHOW DATABASES statement.'
 		);
-		if ( null === $filter ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW DATABASES statement.' );
-		}
-		return $filter;
 	}
 	private function get_show_create_database_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -9303,12 +9004,13 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ' ', 'Engine Support Comment Transactions XA Savepoints' ) );
-		$filter          = $this->get_show_static_result_filter( $tokens, $position, 'Engine', $allowed_columns );
-		if ( null === $filter ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW ENGINES statement.' );
-		}
-		return $filter;
+		return $this->get_mysql_show_result_filter(
+			$tokens,
+			$position,
+			'Engine',
+			$this->get_mysql_show_output_columns( 'engines' ),
+			'Unsupported SHOW ENGINES statement.'
+		);
 	}
 	private function get_show_plugins_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -9320,12 +9022,13 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ' ', 'Name Status Type Library License' ) );
-		$filter          = $this->get_show_static_result_filter( $tokens, 2, 'Name', $allowed_columns );
-		if ( null === $filter ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW PLUGINS statement.' );
-		}
-		return $filter;
+		return $this->get_mysql_show_result_filter(
+			$tokens,
+			2,
+			'Name',
+			$this->get_mysql_show_output_columns( 'plugins' ),
+			'Unsupported SHOW PLUGINS statement.'
+		);
 	}
 	private function get_show_routine_status_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -9347,14 +9050,15 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ',', 'Db,Name,Type,Definer,Modified,Created,Security_type,Comment,character_set_client,collation_connection,Database Collation' ) );
-		$filter          = $this->get_show_static_result_filter( $tokens, 3, 'Name', $allowed_columns );
-		if ( null === $filter ) {
-			throw new InvalidArgumentException( sprintf( 'Unsupported SHOW %s STATUS statement.', $statement_subject ) );
-		}
 		return array(
 			'routine_type' => $routine_type,
-			'filter'       => $filter,
+			'filter'       => $this->get_mysql_show_result_filter(
+				$tokens,
+				3,
+				'Name',
+				$this->get_mysql_show_output_columns( 'routine_status' ),
+				sprintf( 'Unsupported SHOW %s STATUS statement.', $statement_subject )
+			),
 		);
 	}
 	private function get_show_events_query( string $query ): ?array {
@@ -9368,31 +9072,20 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$position    = 2;
-		$schema_name = null;
-		if (
-			isset( $tokens[ $position ] )
-			&& (
-				WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $position ]->id
-				|| WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id
-			)
-		) {
-			$schema_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null, true );
-			if ( null === $schema_name ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW EVENTS statement.' );
-			}
-
-			$position += 2;
-		}
+		$schema_name = $this->get_mysql_show_optional_schema_name( $tokens, $position, 'Unsupported SHOW EVENTS statement.' );
 
 		$backend_schema = $this->get_mysql_read_table_backend_schema( $schema_name );
 		if ( $this->is_postgresql_internal_schema( $backend_schema ) ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW EVENTS statement.' );
 		}
 
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ',', 'Db,Name,Definer,Time zone,Type,Execute at,Interval value,Interval field,Starts,Ends,Status,Originator,character_set_client,collation_connection,Database Collation' ) );
-		if ( null === $this->get_show_static_result_filter( $tokens, $position, 'Name', $allowed_columns ) ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW EVENTS statement.' );
-		}
+		$this->get_mysql_show_result_filter(
+			$tokens,
+			$position,
+			'Name',
+			self::MYSQL_EMPTY_SHOW_EVENTS_COLUMNS,
+			'Unsupported SHOW EVENTS statement.'
+		);
 		return array();
 	}
 	private function get_show_grants_query( string $query ): ?array {
@@ -9510,43 +9203,14 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		++$position;
-		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
-			return array(
-				'type'    => 'all',
-				'column'  => null,
-				'pattern' => null,
-			);
-		}
-
-		if (
-			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id
-			&& $this->is_mysql_quoted_text_token( $tokens[ $position + 1 ] )
-			&& $this->is_at_mysql_query_end( $tokens, $position + 2 )
-		) {
-			return array(
-				'type'    => 'like',
-				'column'  => 'Variable_name',
-				'pattern' => $tokens[ $position + 1 ]->get_value(),
-			);
-		}
-
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ' ', 'Variable_name Value' ) );
-		$where_filters   = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
-		if ( null !== $where_filters ) {
-			return array(
-				'type'       => 'where',
-				'column'     => null,
-				'pattern'    => null,
-				'conditions' => $where_filters,
-			);
-		}
-
-		$where_expression = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
-		if ( null !== $where_expression ) {
-			return $where_expression;
-		}
-		throw new InvalidArgumentException( 'Unsupported SHOW STATUS statement.' );
+		return $this->get_mysql_show_result_filter(
+			$tokens,
+			$position,
+			'Variable_name',
+			$this->get_mysql_show_output_columns( 'name_value' ),
+			'Unsupported SHOW STATUS statement.',
+			array( 'Value' )
+		);
 	}
 	private function get_show_diagnostics_query( string $query, int $diagnostic_token, string $diagnostic_name ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -9755,32 +9419,19 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$position      = 3;
-		$database_name = $this->db_name;
-		if (
-			isset( $tokens[ $position ] )
-			&& (
-				WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $position ]->id
-				|| WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id
-			)
-		) {
-			$database_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
-			if ( null === $database_name ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW OPEN TABLES statement.' );
-			}
-
-			$position += 2;
-		}
+		$database_name = $this->get_mysql_show_database_name( $tokens, $position, 'Unsupported SHOW OPEN TABLES statement.' );
 
 		$schema_name = $this->get_mysql_show_database_backend_schema( $database_name, 'SHOW OPEN TABLES' );
-
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ' ', 'Database Table In_use Name_locked' ) );
-		$filter          = $this->get_show_static_result_filter( $tokens, $position, 'Table', $allowed_columns );
-		if ( null === $filter ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW OPEN TABLES statement.' );
-		}
 		return array(
 			'schema' => $schema_name,
-			'filter' => $filter,
+			'filter' => $this->get_mysql_show_result_filter(
+				$tokens,
+				$position,
+				'Table',
+				$this->get_mysql_show_output_columns( 'open_tables' ),
+				'Unsupported SHOW OPEN TABLES statement.',
+				array( 'In_use', 'Name_locked' )
+			),
 		);
 	}
 	private function get_show_triggers_query( string $query ): ?array {
@@ -9794,42 +9445,69 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$position    = 2;
-		$schema_name = null;
-		if (
-			isset( $tokens[ $position ] )
-			&& (
-				WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $position ]->id
-				|| WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id
-			)
-		) {
-			$schema_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null, true );
-			if ( null === $schema_name ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW TRIGGERS statement.' );
-			}
-
-			$position += 2;
-		}
+		$schema_name = $this->get_mysql_show_optional_schema_name( $tokens, $position, 'Unsupported SHOW TRIGGERS statement.' );
 
 		$backend_schema = $this->get_mysql_read_table_backend_schema( $schema_name );
 		if ( $this->is_postgresql_internal_schema( $backend_schema ) ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW TRIGGERS statement.' );
 		}
 
-		$allowed_columns = $this->get_mysql_show_column_map( explode( ',', 'Trigger,Event,Table,Statement,Timing,Created,sql_mode,Definer,character_set_client,collation_connection,Database Collation' ) );
-		$filter          = $this->get_show_static_result_filter( $tokens, $position, 'Trigger', $allowed_columns );
-		if ( null === $filter ) {
-			throw new InvalidArgumentException( 'Unsupported SHOW TRIGGERS statement.' );
-		}
 		return array(
 			'schema' => $this->get_direct_information_schema_display_schema( $backend_schema ),
-			'filter' => $filter,
+			'filter' => $this->get_mysql_show_result_filter(
+				$tokens,
+				$position,
+				'Trigger',
+				$this->get_mysql_show_output_columns( 'triggers' ),
+				'Unsupported SHOW TRIGGERS statement.'
+			),
 		);
+	}
+	private function get_mysql_show_optional_schema_name( array $tokens, int &$position, string $unsupported_message ): ?string {
+		if (
+			! isset( $tokens[ $position ] )
+			|| (
+				WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $position ]->id
+				&& WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $position ]->id
+			)
+		) {
+			return null;
+		}
+
+		$schema_name = $this->get_mysql_identifier_token_value( $tokens[ $position + 1 ] ?? null, true );
+		if ( null === $schema_name ) {
+			throw new InvalidArgumentException( $unsupported_message );
+		}
+
+		$position += 2;
+		return $schema_name;
+	}
+	private function get_mysql_show_result_filter(
+		array $tokens,
+		int $position,
+		string $like_column,
+		array $columns,
+		string $unsupported_message,
+		array $numeric_columns = array()
+	): array {
+		$filter = $this->get_show_static_result_filter(
+			$tokens,
+			$position,
+			$like_column,
+			$this->get_mysql_show_column_map( $columns ),
+			$numeric_columns
+		);
+		if ( null === $filter ) {
+			throw new InvalidArgumentException( $unsupported_message );
+		}
+		return $filter;
 	}
 	private function get_show_static_result_filter(
 		array $tokens,
 		int $position,
 		string $like_column,
-		array $allowed_columns
+		array $allowed_columns,
+		array $numeric_columns = array()
 	): ?array {
 		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return array(
@@ -9853,9 +9531,66 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
-			return $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
+			$where_filter = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns, $numeric_columns );
+			if ( null !== $where_filter ) {
+				return array(
+					'type'       => 'where',
+					'column'     => null,
+					'pattern'    => null,
+					'conditions' => $where_filter,
+				);
+			}
+			return $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
 		}
 		return null;
+	}
+	private function get_mysql_show_where_filter_clause(
+		array $tokens,
+		int &$position,
+		array $allowed_columns,
+		string $unsupported_message,
+		array $numeric_columns = array()
+	): ?array {
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns, $numeric_columns );
+		if ( null === $where ) {
+			$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
+		}
+		if ( null === $where ) {
+			throw new InvalidArgumentException( $unsupported_message );
+		}
+
+		$position = $this->get_mysql_statement_end_position( $tokens, $position );
+		if ( null === $position ) {
+			throw new InvalidArgumentException( $unsupported_message );
+		}
+		return $where;
+	}
+	private function get_mysql_show_output_columns( string $result_type ): array {
+		$columns = array(
+			'character_set'  => 'Charset,Description,Default collation,Maxlen',
+			'collation'      => 'Collation,Charset,Id,Default,Compiled,Sortlen,Pad_attribute',
+			'databases'      => 'Database',
+			'engines'        => 'Engine,Support,Comment,Transactions,XA,Savepoints',
+			'name_value'     => 'Variable_name,Value',
+			'open_tables'    => 'Database,Table,In_use,Name_locked',
+			'plugins'        => 'Name,Status,Type,Library,License',
+			'processlist'    => 'Id,User,Host,db,Command,Time,State,Info',
+			'routine_status' => 'Db,Name,Type,Definer,Modified,Created,Security_type,Comment,' .
+				'character_set_client,collation_connection,Database Collation',
+			'table_status'   => 'Name,Engine,Version,Row_format,Rows,Avg_row_length,Data_length,' .
+				'Max_data_length,Index_length,Data_free,Auto_increment,Create_time,Update_time,' .
+				'Check_time,Collation,Checksum,Create_options,Comment',
+			'triggers'       => 'Trigger,Event,Table,Statement,Timing,Created,sql_mode,Definer,' .
+				'character_set_client,collation_connection,Database Collation',
+		);
+		return explode( ',', $columns[ $result_type ] );
+	}
+	private function get_mysql_show_table_status_numeric_columns(): array {
+		return explode( ',', 'Version,Rows,Avg_row_length,Data_length,Max_data_length,Index_length,Data_free,Auto_increment,Checksum' );
 	}
 	private function get_mysql_show_column_map( array $columns ): array {
 		$map = array();
@@ -10648,18 +10383,7 @@ $wp_mysql_primary_index_comment$',
 
 			$allowed_columns = $this->get_mysql_show_column_map( $this->get_show_columns_output_columns( $is_full ) );
 
-			$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns );
-			if ( null === $where ) {
-				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns );
-			}
-			if ( null === $where ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
-			}
-
-			$position = $this->get_mysql_statement_end_position( $tokens, $position );
-			if ( null === $position ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
-			}
+			$where = $this->get_mysql_show_where_filter_clause( $tokens, $position, $allowed_columns, 'Unsupported SHOW COLUMNS statement.' );
 		}
 
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
@@ -10738,23 +10462,13 @@ $wp_mysql_primary_index_comment$',
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
 			$allowed_columns = $this->get_mysql_show_column_map( $this->get_show_index_output_columns() );
 			$numeric_columns = explode( ' ', 'Non_unique Seq_in_index Cardinality Sub_part' );
-			$where           = $this->get_mysql_show_where_filters(
+			$where           = $this->get_mysql_show_where_filter_clause(
 				$tokens,
 				$position,
 				$allowed_columns,
+				'Unsupported SHOW INDEX statement.',
 				$numeric_columns
 			);
-			if ( null === $where ) {
-				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
-			}
-			if ( null === $where ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
-			}
-
-			$position = $this->get_mysql_statement_end_position( $tokens, $position );
-			if ( null === $position ) {
-				throw new InvalidArgumentException( 'Unsupported SHOW INDEX statement.' );
-			}
 		}
 
 		if ( ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
@@ -11634,66 +11348,81 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 		);
 	}
 	private function execute_show_table_status_query( array $show_table_status_query, $fetch_mode, ...$fetch_mode_args ) {
-		$columns = explode( ' ', 'Name Engine Version Row_format Rows Avg_row_length Data_length Max_data_length Index_length Data_free Auto_increment Create_time Update_time Check_time Collation Checksum Create_options Comment' );
+		$columns = $this->get_mysql_show_output_columns( 'table_status' );
 		if ( 0 === strcasecmp( $show_table_status_query['database'], 'information_schema' ) ) {
-				$rows = $this->filter_show_table_status_rows(
-					array_map(
-						static function ( string $relation ) use ( $columns ): array {
-							return array_combine(
-								$columns,
-								array( strtoupper( $relation ), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, '', 'SYSTEM VIEW' )
-							);
-						},
-						$this->get_direct_information_schema_relation_names()
-					),
-					$show_table_status_query
-				);
-			return $this->set_mysql_static_show_result( $columns, $rows, $fetch_mode, ...$fetch_mode_args );
+			$rows = array_map(
+				static function ( string $relation ) use ( $columns ): array {
+					return array_combine(
+						$columns,
+						array(
+							strtoupper( $relation ),
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							null,
+							'',
+							'SYSTEM VIEW',
+						)
+					);
+				},
+				$this->get_direct_information_schema_relation_names()
+			);
+			return $this->execute_mysql_filtered_static_show_result(
+				$columns,
+				$rows,
+				$show_table_status_query['filter'],
+				$fetch_mode,
+				...$fetch_mode_args
+			);
 		}
 
-		$sql    = sprintf(
-			'SELECT
-				"TABLE_NAME" AS "Name",
-				"ENGINE" AS "Engine",
-				CAST("VERSION" AS text) AS "Version",
-				"ROW_FORMAT" AS "Row_format",
-				CAST("TABLE_ROWS" AS text) AS "Rows",
-				CAST("AVG_ROW_LENGTH" AS text) AS "Avg_row_length",
-				CAST("DATA_LENGTH" AS text) AS "Data_length",
-				CAST("MAX_DATA_LENGTH" AS text) AS "Max_data_length",
-				CAST("INDEX_LENGTH" AS text) AS "Index_length",
-				CAST("DATA_FREE" AS text) AS "Data_free",
-				CASE WHEN "AUTO_INCREMENT" IS NULL THEN NULL ELSE CAST("AUTO_INCREMENT" AS text) END AS "Auto_increment",
-				"CREATE_TIME" AS "Create_time",
-				"UPDATE_TIME" AS "Update_time",
-				"CHECK_TIME" AS "Check_time",
-				"TABLE_COLLATION" AS "Collation",
-				"CHECKSUM" AS "Checksum",
-				"CREATE_OPTIONS" AS "Create_options",
-				"TABLE_COMMENT" AS "Comment"
-			FROM (%s) information_schema_tables
-			WHERE "TABLE_SCHEMA" = ?
-				AND "TABLE_TYPE" = ?
-			ORDER BY "TABLE_NAME"',
-			$this->get_direct_information_schema_relation_sql( 'tables' )
+		$rows = $this->get_mysql_show_query_rows(
+			sprintf(
+				'SELECT
+					"TABLE_NAME" AS "Name",
+					"ENGINE" AS "Engine",
+					CAST("VERSION" AS text) AS "Version",
+					"ROW_FORMAT" AS "Row_format",
+					CAST("TABLE_ROWS" AS text) AS "Rows",
+					CAST("AVG_ROW_LENGTH" AS text) AS "Avg_row_length",
+					CAST("DATA_LENGTH" AS text) AS "Data_length",
+					CAST("MAX_DATA_LENGTH" AS text) AS "Max_data_length",
+					CAST("INDEX_LENGTH" AS text) AS "Index_length",
+					CAST("DATA_FREE" AS text) AS "Data_free",
+					CASE WHEN "AUTO_INCREMENT" IS NULL THEN NULL ELSE CAST("AUTO_INCREMENT" AS text) END AS "Auto_increment",
+					"CREATE_TIME" AS "Create_time",
+					"UPDATE_TIME" AS "Update_time",
+					"CHECK_TIME" AS "Check_time",
+					"TABLE_COLLATION" AS "Collation",
+					"CHECKSUM" AS "Checksum",
+					"CREATE_OPTIONS" AS "Create_options",
+					"TABLE_COMMENT" AS "Comment"
+				FROM (%s) information_schema_tables
+				WHERE "TABLE_SCHEMA" = ?
+					AND "TABLE_TYPE" = ?
+				ORDER BY "TABLE_NAME"',
+				$this->get_direct_information_schema_relation_sql( 'tables' )
+			),
+			array(
+				$this->get_direct_information_schema_display_schema( $show_table_status_query['schema'] ),
+				'BASE TABLE',
+			)
 		);
-		$params = array(
-			$this->get_direct_information_schema_display_schema( $show_table_status_query['schema'] ),
-			'BASE TABLE',
-		);
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-
-		$rows = $this->filter_show_table_status_rows( $rows, $show_table_status_query );
-		return $this->set_mysql_static_show_result(
+		return $this->execute_mysql_filtered_static_show_result(
 			$columns,
 			$rows,
+			$show_table_status_query['filter'],
 			$fetch_mode,
 			...$fetch_mode_args
 		);
@@ -12166,98 +11895,43 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 		);
 		return "'" . strtr( $literal, $replacements ) . "'";
 	}
-	private function filter_show_table_status_rows( array $rows, array $show_table_status_query ): array {
-		if ( 'all' === $show_table_status_query['filter_type'] ) {
-			return $rows;
-		}
+	private function get_mysql_show_query_rows( string $sql, array $params = array() ): array {
+		$stmt = $this->connection->query( $sql, $params );
 
-		if ( 'where' === $show_table_status_query['filter_type'] ) {
-			return $this->filter_mysql_static_show_rows(
-				$rows,
-				array(
-					'type'       => 'where',
-					'conditions' => $show_table_status_query['conditions'] ?? array(),
-				)
-			);
-		}
-
-		if ( 'where_expression' === $show_table_status_query['filter_type'] ) {
-			return $this->filter_mysql_static_show_rows(
-				$rows,
-				array(
-					'type'      => 'where_expression',
-					'predicate' => $show_table_status_query['predicate'] ?? null,
-				)
-			);
-		}
-		return array_values(
-			array_filter(
-				$rows,
-				function ( array $row ) use ( $show_table_status_query ): bool {
-					if ( 'like' === $show_table_status_query['filter_type'] ) {
-						$column = $show_table_status_query['filter_column'] ?? 'Name';
-						return null !== $show_table_status_query['filter_pattern']
-							&& array_key_exists( $column, $row )
-							&& null !== $row[ $column ]
-							&& $this->matches_mysql_like_pattern( (string) $row[ $column ], $show_table_status_query['filter_pattern'] );
-					}
-
-					if ( 'exact' === $show_table_status_query['filter_type'] ) {
-						$column  = $show_table_status_query['filter_column'];
-						$pattern = $show_table_status_query['filter_pattern'];
-						return null !== $column
-						&& null !== $pattern
-						&& array_key_exists( $column, $row )
-						&& null !== $row[ $column ]
-						&& 0 === strcasecmp( (string) $row[ $column ], $pattern );
-					}
-
-					if ( 'auto_increment_gt' === $show_table_status_query['filter_type'] ) {
-						return null !== $row['Auto_increment']
-						&& null !== $show_table_status_query['filter_threshold']
-						&& $this->is_unsigned_integer_string_greater_than(
-							(string) $row['Auto_increment'],
-							$show_table_status_query['filter_threshold']
-						);
-					}
-					return 'auto_increment_is_null' === $show_table_status_query['filter_type']
-					&& null === $row['Auto_increment'];
-				}
-			)
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
 		);
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
-	private function is_unsigned_integer_string_greater_than( string $left, string $right ): bool {
-		$left  = ltrim( $left, '0' );
-		$right = ltrim( $right, '0' );
-		$left  = '' === $left ? '0' : $left;
-		$right = '' === $right ? '0' : $right;
-
-		if ( strlen( $left ) !== strlen( $right ) ) {
-			return strlen( $left ) > strlen( $right );
+	private function execute_mysql_filtered_static_show_result( array $columns, array $rows, ?array $show_filter, $fetch_mode, ...$fetch_mode_args ) {
+		if ( null !== $show_filter ) {
+			$rows = $this->filter_mysql_static_show_rows( $rows, $show_filter );
 		}
-		return strcmp( $left, $right ) > 0;
+		return $this->set_mysql_static_show_result( $columns, $rows, $fetch_mode, ...$fetch_mode_args );
+	}
+	private function get_mysql_show_name_value_rows( array $values ): array {
+		$rows = array();
+		foreach ( $values as $name => $value ) {
+			$rows[] = array(
+				'Variable_name' => $name,
+				'Value'         => $value,
+			);
+		}
+		return $rows;
 	}
 	private function execute_show_variables_query( array $show_variables_query, $fetch_mode, ...$fetch_mode_args ) {
 		$variables = 'global' === ( $show_variables_query['scope'] ?? 'session' )
 			? $this->get_mysql_global_variables()
 			: $this->get_mysql_session_variables();
-		$rows      = array();
 
-		foreach ( $variables as $variable_name => $value ) {
-			$rows[] = array(
-				'Variable_name' => $variable_name,
-				'Value'         => $value,
-			);
-		}
-
-		$rows = $this->filter_mysql_static_show_rows( $rows, $show_variables_query );
-
-		$result = $this->set_mysql_static_show_result(
+		$result = $this->execute_mysql_filtered_static_show_result(
 			array(
 				array( 'Variable_name', 64 ),
 				'Value',
 			),
-			$rows,
+			$this->get_mysql_show_name_value_rows( $variables ),
+			$show_variables_query,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
@@ -12308,7 +11982,8 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 		);
 	}
 	private function execute_show_character_set_query( array $show_character_set_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->filter_mysql_static_show_rows(
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'character_set' ),
 			array_map(
 				static function ( array $row ): array {
 					return array(
@@ -12320,17 +11995,14 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 				},
 				$this->get_mysql_static_character_set_rows()
 			),
-			$show_character_set_query
-		);
-		return $this->set_mysql_static_show_result(
-			array( 'Charset', 'Description', 'Default collation', 'Maxlen' ),
-			$rows,
+			$show_character_set_query,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
 	}
 	private function execute_show_collation_query( array $show_collation_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->filter_mysql_static_show_rows(
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'collation' ),
 			array_map(
 				static function ( array $row ): array {
 					return array(
@@ -12345,28 +12017,18 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 				},
 				$this->get_mysql_static_collation_rows()
 			),
-			$show_collation_query
-		);
-		return $this->set_mysql_static_show_result(
-			array( 'Collation', 'Charset', 'Id', 'Default', 'Compiled', 'Sortlen', 'Pad_attribute' ),
-			$rows,
+			$show_collation_query,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
 	}
 	private function execute_show_databases_query( array $show_databases_query, $fetch_mode, ...$fetch_mode_args ) {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$sql    = 'SELECT s."SCHEMA_NAME" AS "Database"
+			$rows = $this->get_mysql_show_query_rows(
+				'SELECT s."SCHEMA_NAME" AS "Database"
 				FROM (' . $this->get_direct_information_schema_relation_sql( 'schemata' ) . ') s
-				ORDER BY "Database"';
-			$params = array();
-			$stmt   = $this->connection->query( $sql, $params );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
+				ORDER BY "Database"'
 			);
-			$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
 		} else {
 			$rows = array(
 				array( 'Database' => 'information_schema' ),
@@ -12374,13 +12036,10 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 			);
 		}
 
-		$rows = $this->filter_mysql_static_show_rows(
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'databases' ),
 			$rows,
-			$show_databases_query
-		);
-		return $this->set_mysql_static_show_result(
-			array( 'Database' ),
-			$rows,
+			$show_databases_query,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
@@ -12400,13 +12059,10 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 		return false !== $stmt->fetchColumn();
 	}
 	private function execute_show_engines_query( array $show_engines_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->filter_mysql_static_show_rows(
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'engines' ),
 			$this->get_mysql_static_show_engine_rows(),
-			$show_engines_query
-		);
-		return $this->set_mysql_static_show_result(
-			array( 'Engine', 'Support', 'Comment', 'Transactions', 'XA', 'Savepoints' ),
-			$rows,
+			$show_engines_query,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
@@ -12424,24 +12080,18 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 ' . $this->get_direct_information_schema_relation_sql( 'plugins' ) . '
 	) p
 	ORDER BY p."PLUGIN_NAME"';
-			$stmt = $this->connection->query( $sql );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => array(),
-			);
-			$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			$rows = $this->get_mysql_show_query_rows( $sql );
 		}
-		$rows = $this->filter_mysql_static_show_rows( $rows, $show_plugins_query );
-		return $this->set_mysql_static_show_result(
-			array( 'Name', 'Status', 'Type', 'Library', 'License' ),
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'plugins' ),
 			$rows,
+			$show_plugins_query,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
 	}
 	private function execute_show_routine_status_query( array $show_routine_status_query, $fetch_mode, ...$fetch_mode_args ) {
-		$sql  = 'SELECT
+		$sql = 'SELECT
 			r."ROUTINE_SCHEMA" AS "Db",
 			r."ROUTINE_NAME" AS "Name",
 			r."ROUTINE_TYPE" AS "Type",
@@ -12458,29 +12108,10 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 		) r
 		WHERE r."ROUTINE_TYPE" = ?
 		ORDER BY r."ROUTINE_SCHEMA", r."ROUTINE_NAME"';
-		$stmt = $this->connection->query( $sql, array( $show_routine_status_query['routine_type'] ) );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => array( $show_routine_status_query['routine_type'] ),
-		);
-		$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
-		$rows                            = $this->filter_mysql_static_show_rows( $rows, $show_routine_status_query['filter'] );
-		return $this->set_mysql_static_show_result(
-			array(
-				'Db',
-				'Name',
-				'Type',
-				'Definer',
-				'Modified',
-				'Created',
-				'Security_type',
-				'Comment',
-				'character_set_client',
-				'collation_connection',
-				'Database Collation',
-			),
-			$rows,
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'routine_status' ),
+			$this->get_mysql_show_query_rows( $sql, array( $show_routine_status_query['routine_type'] ) ),
+			$show_routine_status_query['filter'],
 			$fetch_mode,
 			...$fetch_mode_args
 		);
@@ -12505,77 +12136,63 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 			ORDER BY c.relname',
 				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
 			);
-			$stmt = $this->connection->query( $sql, array( $show_open_tables_query['schema'] ) );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => array( $show_open_tables_query['schema'] ),
-			);
-			$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			$rows = $this->get_mysql_show_query_rows( $sql, array( $show_open_tables_query['schema'] ) );
 		}
-		$rows = $this->filter_mysql_static_show_rows( $rows, $show_open_tables_query['filter'] );
-		return $this->set_mysql_static_show_result(
-			array( 'Database', 'Table', 'In_use', 'Name_locked' ),
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'open_tables' ),
 			$rows,
+			$show_open_tables_query['filter'],
 			$fetch_mode,
 			...$fetch_mode_args
 		);
 	}
 	private function execute_show_grants_query( array $show_grants_query, $fetch_mode, ...$fetch_mode_args ) {
-		return $this->set_mysql_static_show_result(
+		return $this->execute_mysql_filtered_static_show_result(
 			array( array( self::MYSQL_SHOW_GRANTS_COLUMN, 4096 ) ),
 			array(
 				array(
 					self::MYSQL_SHOW_GRANTS_COLUMN => self::MYSQL_SHOW_GRANTS_VALUE,
 				),
 			),
+			null,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
 	}
 	private function execute_show_status_query( array $show_status_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = array();
-		foreach ( $this->get_mysql_status_variables() as $variable_name => $value ) {
-			$rows[] = array(
-				'Variable_name' => $variable_name,
-				'Value'         => $value,
-			);
-		}
-
-		$rows = $this->filter_mysql_static_show_rows( $rows, $show_status_query );
-
-		$this->last_found_rows = count( $rows );
-		return $this->set_mysql_static_show_result(
-			array( 'Variable_name', 'Value' ),
-			$rows,
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'name_value' ),
+			$this->get_mysql_show_name_value_rows( $this->get_mysql_status_variables() ),
+			$show_status_query,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
 	}
 	private function execute_show_diagnostics_query( array $show_diagnostics_query, $fetch_mode, ...$fetch_mode_args ) {
 		if ( 'count' === $show_diagnostics_query['type'] ) {
-			$this->last_found_rows = 1;
-			return $this->set_mysql_static_show_result(
+			return $this->execute_mysql_filtered_static_show_result(
 				array( $show_diagnostics_query['count_column'] ),
 				array(
 					array(
 						$show_diagnostics_query['count_column'] => '0',
 					),
 				),
+				null,
 				$fetch_mode,
 				...$fetch_mode_args
 			);
 		}
 
-		$this->last_found_rows = 0;
-		return $this->set_mysql_static_show_result(
+		return $this->execute_mysql_filtered_static_show_result(
 			array( 'Level', 'Code', 'Message' ),
 			array(),
+			null,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
 	}
 	private function execute_show_processlist_query( array $show_processlist_query, $fetch_mode, ...$fetch_mode_args ) {
+		$columns = $this->get_mysql_show_output_columns( 'processlist' );
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			$sql  = 'SELECT
 		p."ID" AS "Id",
@@ -12590,24 +12207,18 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 ' . $this->get_direct_information_schema_relation_sql( 'processlist' ) . '
 	) p
 	ORDER BY p."ID"';
-			$stmt = $this->connection->query( $sql );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => array(),
-			);
-			$rows                            = array_map(
-				static function ( array $row ) use ( $show_processlist_query ): array {
+			$rows = array_map(
+				static function ( array $row ) use ( $columns, $show_processlist_query ): array {
 					$info = (string) ( $row['Info'] ?? '' );
 					if ( ! $show_processlist_query['full'] && strlen( $info ) > 100 ) {
 						$info = substr( $info, 0, 100 );
 					}
 					return array_combine(
-						explode( ' ', 'Id User Host db Command Time State Info' ),
+						$columns,
 						array( (string) ( $row['Id'] ?? '' ), (string) ( $row['User'] ?? '' ), (string) ( $row['Host'] ?? '' ), (string) ( $row['db'] ?? '' ), (string) ( $row['Command'] ?? '' ), (string) ( $row['Time'] ?? '0' ), (string) ( $row['State'] ?? '' ), $info )
 					);
 				},
-				$stmt->fetchAll( PDO::FETCH_ASSOC )
+				$this->get_mysql_show_query_rows( $sql )
 			);
 		} else {
 			$info = (string) $this->last_mysql_query;
@@ -12617,7 +12228,7 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 
 			$rows = array(
 				array_combine(
-					explode( ' ', 'Id User Host db Command Time State Info' ),
+					$columns,
 					array( '1', 'root', 'localhost', $this->db_name, 'Query', '0', '', $info )
 				),
 			);
@@ -12634,15 +12245,16 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 				$show_processlist_query['limit']['count']
 			);
 		}
-		return $this->set_mysql_static_show_result(
-			array( 'Id', 'User', 'Host', 'db', 'Command', 'Time', 'State', 'Info' ),
+		return $this->execute_mysql_filtered_static_show_result(
+			$columns,
 			$rows,
+			null,
 			$fetch_mode,
 			...$fetch_mode_args
 		);
 	}
 	private function execute_show_triggers_query( array $show_triggers_query, $fetch_mode, ...$fetch_mode_args ) {
-		$sql  = 'SELECT
+		$sql = 'SELECT
 		t."TRIGGER_NAME" AS "Trigger",
 		t."EVENT_MANIPULATION" AS "Event",
 		t."EVENT_OBJECT_TABLE" AS "Table",
@@ -12659,29 +12271,10 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 	) t
 	WHERE t."TRIGGER_SCHEMA" = ?
 	ORDER BY t."TRIGGER_NAME"';
-		$stmt = $this->connection->query( $sql, array( $show_triggers_query['schema'] ) );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => array( $show_triggers_query['schema'] ),
-		);
-		$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
-		$rows                            = $this->filter_mysql_static_show_rows( $rows, $show_triggers_query['filter'] );
-		return $this->set_mysql_static_show_result(
-			array(
-				'Trigger',
-				'Event',
-				'Table',
-				'Statement',
-				'Timing',
-				'Created',
-				'sql_mode',
-				'Definer',
-				'character_set_client',
-				'collation_connection',
-				'Database Collation',
-			),
-			$rows,
+		return $this->execute_mysql_filtered_static_show_result(
+			$this->get_mysql_show_output_columns( 'triggers' ),
+			$this->get_mysql_show_query_rows( $sql, array( $show_triggers_query['schema'] ) ),
+			$show_triggers_query['filter'],
 			$fetch_mode,
 			...$fetch_mode_args
 		);
@@ -14665,63 +14258,31 @@ WHERE option_name IN (
 		$table_reference_start = $header['start'];
 		$table_reference_end   = $header['end'];
 
-		$column_metadata             = null;
-		$infer_columns_from_metadata = false;
-		$insert_select_column_list   = false;
-		$value_rows                  = null;
-		$value_range_rows            = array();
-		$probe_safe_rows             = array();
-		$upsert_source_aliases       = array();
-		$on_duplicate                = $this->find_on_duplicate_key_update_clause( $tokens, $position );
+		$column_metadata = null;
+		$on_duplicate    = $this->find_on_duplicate_key_update_clause( $tokens, $position );
 		if ( null === $on_duplicate ) {
 			return null;
 		}
 
-		if ( $this->is_mysql_parenthesized_select_source( $tokens, $position ) ) {
-			$columns                     = array();
-			$infer_columns_from_metadata = true;
-			$insert_select_column_list   = true;
-		} elseif ( WP_MySQL_Lexer::SELECT_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
-			$columns                     = array();
-			$infer_columns_from_metadata = true;
-			$insert_select_column_list   = true;
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-			$columns = $this->parse_mysql_identifier_list( $tokens, $position );
-			if ( null === $columns ) {
-				return null;
-			}
-		} elseif ( $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
-			$columns                     = array();
-			$infer_columns_from_metadata = true;
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
-			++$position;
-			$set_end         = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::AS_SYMBOL, $position, $on_duplicate ) ?? $on_duplicate;
-			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $set_end );
-			if ( null === $set_assignments ) {
-				return null;
-			}
-
-			$columns          = $set_assignments['columns'];
-			$value_rows       = array( $set_assignments['values'] );
-			$value_range_rows = array( $set_assignments['ranges'] );
-			$probe_safe_rows  = array( $set_assignments['probe_safe_values'] );
-			$position         = $set_end;
-			if ( $position < $on_duplicate ) {
-				$upsert_source_aliases = $this->parse_mysql_upsert_values_alias_clause( $tokens, $position, $on_duplicate, $columns );
-				if ( null === $upsert_source_aliases ) {
-					return null;
-				}
-			}
-		} else {
+		$source = $this->parse_mysql_insert_like_dml_source(
+			$table_name,
+			$tokens,
+			$position,
+			$on_duplicate,
+			$column_metadata,
+			array(
+				'allow_values_alias' => true,
+			)
+		);
+		if ( null === $source ) {
 			return null;
 		}
-
-		if ( $infer_columns_from_metadata ) {
-			$columns = $this->get_mysql_dml_all_columns( $table_name, $column_metadata );
-			if ( null === $columns ) {
-				return null;
-			}
-		}
+		$columns                   = $source['columns'];
+		$value_rows                = $source['value_rows'];
+		$value_range_rows          = $source['value_range_rows'];
+		$probe_safe_rows           = $source['probe_safe_rows'];
+		$upsert_source_aliases     = $source['source_aliases'];
+		$insert_select_column_list = $source['insert_column_list'];
 
 		if ( $this->is_mysql_dml_select_source_token( $tokens[ $position ] ?? null ) ) {
 			return $this->translate_mysql_insert_select_on_duplicate_key_update_query(
@@ -14737,18 +14298,6 @@ WHERE option_name IN (
 			);
 		}
 
-		if ( null === $value_rows ) {
-			$value_rows = $this->parse_mysql_dml_values_after_keyword( $tokens, $position, $on_duplicate, $columns, $probe_safe_rows, $value_range_rows, false );
-			if ( null === $value_rows ) {
-				return null;
-			}
-
-			$upsert_source_aliases = $this->parse_mysql_upsert_values_alias_clause( $tokens, $position, $on_duplicate, $columns );
-			if ( null === $upsert_source_aliases ) {
-				return null;
-			}
-		}
-
 		$column_metadata = $this->normalize_mysql_dml_value_rows_for_columns(
 			$table_name,
 			$columns,
@@ -14758,29 +14307,25 @@ WHERE option_name IN (
 			$column_metadata
 		);
 
-		$table_column_lookup          = $this->get_mysql_dml_column_metadata_lookup_from_rows( $column_metadata );
-		$conflict_target              = $this->get_mysql_upsert_conflict_target(
+		$table_column_lookup = $this->get_mysql_dml_column_metadata_lookup_from_rows( $column_metadata );
+		$upsert_plan         = $this->get_mysql_upsert_write_plan(
 			$table_name,
 			$columns,
 			$value_rows,
-			$probe_safe_rows
+			$probe_safe_rows,
+			array(
+				'allow_omitted_conflict_target'    => true,
+				'allow_unresolved_conflict_target' => true,
+				'table_column_lookup'              => $table_column_lookup,
+			)
 		);
-		$uses_omitted_conflict_target = false;
-		if (
-			null === $conflict_target
-			&& 1 === count( $value_rows )
-			&& null === $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup )
-		) {
-			$conflict_target              = $this->get_mysql_upsert_omitted_column_conflict_target( $table_name, $columns );
-			$uses_omitted_conflict_target = null !== $conflict_target;
+		if ( null === $upsert_plan ) {
+			return null;
 		}
-		$conflict_columns = null === $conflict_target ? array() : $conflict_target['columns'];
-		$conflict_indexes = null === $conflict_target ? null : $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] );
-		if ( null !== $conflict_target && null === $conflict_indexes ) {
-			if ( ! $uses_omitted_conflict_target ) {
-				return null;
-			}
-		}
+		$conflict_target              = $upsert_plan['conflict_target'];
+		$conflict_columns             = $upsert_plan['conflict_columns'];
+		$conflict_indexes             = $upsert_plan['conflict_indexes'];
+		$uses_omitted_conflict_target = $upsert_plan['uses_omitted_conflict_target'];
 
 		$column_lookup = $this->get_mysql_dml_column_lookup( $columns );
 
@@ -14841,22 +14386,17 @@ WHERE option_name IN (
 			}
 		}
 
-			$last_insert_id_on_duplicate_key_update = null;
-		if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
-			$last_insert_id_row = $this->get_mysql_upsert_last_insert_id_row_for_value_rows(
-				$table_name,
-				(string) $assignment_effects['last_insert_id_column'],
-				$value_rows,
-				$probe_safe_rows,
-				$conflict_indexes,
-				count( $inserted_value_rows ) > 0
-			);
-			if ( null === $last_insert_id_row ) {
-				return null;
-			}
-			if ( $last_insert_id_row['found'] ) {
-				$last_insert_id_on_duplicate_key_update = $last_insert_id_row['value'];
-			}
+		$last_insert_id_fields = $this->get_mysql_upsert_last_insert_id_query_fields(
+			$table_name,
+			$assignment_effects,
+			null,
+			$value_rows,
+			$probe_safe_rows,
+			$conflict_indexes,
+			count( $inserted_value_rows ) > 0
+		);
+		if ( false === $last_insert_id_fields ) {
+			return null;
 		}
 
 		$conflict_sql = $this->get_postgresql_dml_conflict_update_sql( $conflict_target, $assignments );
@@ -14877,21 +14417,10 @@ WHERE option_name IN (
 			'conflict_indexes'     => $conflict_indexes,
 			'inserted_new_row'     => count( $inserted_value_rows ) > 0,
 		);
-		if ( null !== $last_insert_id_on_duplicate_key_update ) {
-			$upsert_query['last_insert_id_on_duplicate_key_update'] = $last_insert_id_on_duplicate_key_update;
-		}
+		$upsert_query = array_merge( $upsert_query, $last_insert_id_fields );
 
 		if ( null !== $conflict_indexes && $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
-			$statements = array();
-			foreach ( $value_rows as $values ) {
-				$statements[] = $this->get_postgresql_dml_insert_values_sql(
-					$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
-					$columns,
-					array( $values ),
-					$conflict_sql
-				);
-			}
-			$upsert_query['statements'] = $statements;
+			$upsert_query['statements'] = $this->get_postgresql_dml_insert_value_row_statements( $table_name, $columns, $value_rows, $conflict_sql );
 		}
 		return $upsert_query;
 	}
@@ -14939,42 +14468,34 @@ WHERE option_name IN (
 			$closing_replacement[] = $select_bounds['closing_replacement'];
 		}
 
-		$table_column_lookup           = $this->get_mysql_dml_column_metadata_lookup( $table_name );
-		$auto_increment_column         = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
-		$literal_value_row             = $this->get_mysql_insert_select_upsert_literal_value_row(
+		$table_column_lookup       = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+		$auto_increment_column     = $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup );
+		$literal_value_row         = $this->get_mysql_insert_select_upsert_literal_value_row(
 			$table_name,
 			$columns,
 			$tokens,
 			$select_start,
 			$select_end
 		);
-		$explicit_identity_columns     = array();
-		$ambiguous_conflict_candidates = array();
-
-		$conflict_target = $this->get_mysql_upsert_conflict_target( $table_name, $columns );
-		if ( null === $conflict_target ) {
-			if ( null !== $literal_value_row ) {
-				$conflict_target = $this->get_mysql_upsert_conflict_target(
-					$table_name,
-					$columns,
-					array( $literal_value_row['values'] ),
-					array( $literal_value_row['probe_safe_values'] )
-				);
-			}
-			if ( null === $conflict_target ) {
-				if ( null !== $literal_value_row ) {
-					return null;
-				}
-
-				$ambiguous_conflict_candidates = $this->get_mysql_upsert_conflict_target_candidates( $table_name, $columns );
-				if ( count( $ambiguous_conflict_candidates ) < 2 ) {
-					return null;
-				}
-			}
+		$literal_value_rows        = null === $literal_value_row ? null : array( $literal_value_row['values'] );
+		$literal_probe_safe_rows   = null === $literal_value_row ? null : array( $literal_value_row['probe_safe_values'] );
+		$explicit_identity_columns = array();
+		$upsert_plan               = $this->get_mysql_upsert_write_plan(
+			$table_name,
+			$columns,
+			$literal_value_rows,
+			$literal_probe_safe_rows,
+			array(
+				'allow_ambiguous_conflict_candidates' => null === $literal_value_row,
+			)
+		);
+		if ( null === $upsert_plan ) {
+			return null;
 		}
-		$conflict_columns = null === $conflict_target
-			? $this->get_mysql_upsert_conflict_candidate_columns( $ambiguous_conflict_candidates )
-			: $conflict_target['columns'];
+		$conflict_target               = $upsert_plan['conflict_target'];
+		$conflict_columns              = $upsert_plan['conflict_columns'];
+		$conflict_indexes              = $upsert_plan['conflict_indexes'];
+		$ambiguous_conflict_candidates = $upsert_plan['ambiguous_conflict_candidates'];
 
 		$column_lookup = $this->get_mysql_dml_column_lookup( $columns );
 
@@ -15061,31 +14582,17 @@ WHERE option_name IN (
 			);
 		}
 
-		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
-		if ( null === $conflict_indexes ) {
+		$last_insert_id_fields = $this->get_mysql_upsert_last_insert_id_query_fields(
+			$table_name,
+			$assignment_effects,
+			$literal_value_row,
+			null,
+			null,
+			$conflict_indexes,
+			false
+		);
+		if ( false === $last_insert_id_fields ) {
 			return null;
-		}
-
-			$last_insert_id_on_duplicate_key_update        = null;
-			$last_insert_id_column_on_duplicate_key_update = null;
-		if ( isset( $assignment_effects['last_insert_id_column'] ) ) {
-			if ( null === $literal_value_row ) {
-				$last_insert_id_column_on_duplicate_key_update = (string) $assignment_effects['last_insert_id_column'];
-			} else {
-				$last_insert_id_row = $this->get_mysql_upsert_conflicting_row_column_value(
-					$table_name,
-					(string) $assignment_effects['last_insert_id_column'],
-					$literal_value_row['values'],
-					$literal_value_row['probe_safe_values'],
-					$conflict_indexes
-				);
-				if ( null === $last_insert_id_row ) {
-					return null;
-				}
-				if ( $last_insert_id_row['found'] ) {
-					$last_insert_id_on_duplicate_key_update = $last_insert_id_row['value'];
-				}
-			}
 		}
 		$conflict_sql = $this->get_postgresql_dml_conflict_update_sql( $conflict_target, $assignments );
 
@@ -15155,12 +14662,7 @@ WHERE option_name IN (
 			'insert_id_unknown'         => ! empty( $explicit_identity_columns ),
 			'explicit_identity_columns' => $explicit_identity_columns,
 		);
-		if ( null !== $last_insert_id_on_duplicate_key_update ) {
-			$upsert_query['last_insert_id_on_duplicate_key_update'] = $last_insert_id_on_duplicate_key_update;
-		}
-		if ( null !== $last_insert_id_column_on_duplicate_key_update ) {
-			$upsert_query['last_insert_id_column_on_duplicate_key_update'] = $last_insert_id_column_on_duplicate_key_update;
-		}
+		$upsert_query = array_merge( $upsert_query, $last_insert_id_fields );
 
 		if ( null === $literal_value_row ) {
 			$materialized_flow = $this->get_mysql_insert_select_upsert_materialized_flow(
@@ -15633,6 +15135,65 @@ WHERE option_name IN (
 
 		$this->mysql_upsert_conflict_target_cache[ $cache_key ] = $conflict_target;
 		return $conflict_target;
+	}
+	private function get_mysql_upsert_write_plan( string $table_name, array $columns, ?array $value_rows = null, ?array $probe_safe_rows = null, array $options = array() ): ?array {
+		$conflict_target              = $this->get_mysql_upsert_conflict_target( $table_name, $columns, $value_rows, $probe_safe_rows );
+		$uses_omitted_conflict_target = false;
+
+		if (
+			null === $conflict_target
+			&& ! empty( $options['allow_omitted_conflict_target'] )
+			&& null !== $value_rows
+			&& 1 === count( $value_rows )
+		) {
+			$table_column_lookup = isset( $options['table_column_lookup'] ) && is_array( $options['table_column_lookup'] )
+				? $options['table_column_lookup']
+				: $this->get_mysql_dml_column_metadata_lookup( $table_name );
+			if ( null === $this->get_mysql_auto_increment_column_from_metadata( $table_column_lookup ) ) {
+				$conflict_target              = $this->get_mysql_upsert_omitted_column_conflict_target( $table_name, $columns );
+				$uses_omitted_conflict_target = null !== $conflict_target;
+			}
+		}
+
+		if ( null === $conflict_target ) {
+			if ( ! empty( $options['allow_ambiguous_conflict_candidates'] ) ) {
+				$candidates = $this->get_mysql_upsert_conflict_target_candidates( $table_name, $columns );
+				if ( count( $candidates ) < 2 ) {
+					return null;
+				}
+
+				return array(
+					'conflict_target'               => null,
+					'conflict_columns'              => $this->get_mysql_upsert_conflict_candidate_columns( $candidates ),
+					'conflict_indexes'              => null,
+					'uses_omitted_conflict_target'  => false,
+					'ambiguous_conflict_candidates' => $candidates,
+				);
+			}
+
+			return ! empty( $options['allow_unresolved_conflict_target'] )
+				? array(
+					'conflict_target'               => null,
+					'conflict_columns'              => array(),
+					'conflict_indexes'              => null,
+					'uses_omitted_conflict_target'  => false,
+					'ambiguous_conflict_candidates' => array(),
+				)
+				: null;
+		}
+
+		$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] );
+		if ( null === $conflict_indexes && ! $uses_omitted_conflict_target ) {
+			return null;
+		}
+
+		return array(
+			'conflict_target'               => $conflict_target,
+			'conflict_columns'              => $conflict_target['columns'],
+			'conflict_indexes'              => $conflict_indexes,
+			'uses_omitted_conflict_target'  => $uses_omitted_conflict_target,
+			'ambiguous_conflict_candidates' => array(),
+		);
 	}
 	private function get_mysql_upsert_omitted_column_conflict_target( string $table_name, array $columns ): ?array {
 		$insert_column_lookup = array();
@@ -16118,6 +15679,51 @@ WHERE option_name IN (
 		);
 		return false !== $stmt->fetchColumn();
 	}
+	private function get_mysql_upsert_last_insert_id_query_fields( string $table_name, array $assignment_effects, ?array $literal_value_row, ?array $value_rows, ?array $probe_safe_rows, ?array $conflict_indexes, bool $has_inserted_rows ) {
+		if ( ! isset( $assignment_effects['last_insert_id_column'] ) ) {
+			return array();
+		}
+
+		if ( null === $conflict_indexes ) {
+			return false;
+		}
+
+		$column_name = (string) $assignment_effects['last_insert_id_column'];
+		if ( null !== $literal_value_row ) {
+			$row = $this->get_mysql_upsert_conflicting_row_column_value(
+				$table_name,
+				$column_name,
+				$literal_value_row['values'],
+				$literal_value_row['probe_safe_values'],
+				$conflict_indexes
+			);
+			if ( null === $row ) {
+				return false;
+			}
+			return $row['found']
+				? array( 'last_insert_id_on_duplicate_key_update' => $row['value'] )
+				: array();
+		}
+
+		if ( null === $value_rows || null === $probe_safe_rows ) {
+			return array( 'last_insert_id_column_on_duplicate_key_update' => $column_name );
+		}
+
+		$row = $this->get_mysql_upsert_last_insert_id_row_for_value_rows(
+			$table_name,
+			$column_name,
+			$value_rows,
+			$probe_safe_rows,
+			$conflict_indexes,
+			$has_inserted_rows
+		);
+		if ( null === $row ) {
+			return false;
+		}
+		return $row['found']
+			? array( 'last_insert_id_on_duplicate_key_update' => $row['value'] )
+			: array();
+	}
 	private function get_mysql_upsert_last_insert_id_row_for_value_rows( string $table_name, string $column_name, array $value_rows, array $probe_safe_rows, array $conflict_indexes, bool $has_inserted_rows ): ?array {
 		$found = false;
 		$value = null;
@@ -16200,58 +15806,21 @@ WHERE option_name IN (
 		$table_reference_start = $header['start'];
 		$table_reference_end   = $header['end'];
 
-		$column_metadata    = null;
-		$insert_column_list = false;
-		$value_rows         = null;
-		$value_range_rows   = array();
-		$probe_safe_rows    = array();
-		$statement_end      = null;
-		if (
-			isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id
-			&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position + 1 ]->id
-		) {
-			$columns            = $this->get_mysql_dml_all_columns( $table_name, $column_metadata );
-			$insert_column_list = true;
-			if ( null === $columns ) {
-				return null;
-			}
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-			$columns = $this->parse_mysql_identifier_list( $tokens, $position );
-			if ( null === $columns ) {
-				return null;
-			}
-		} elseif ( $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
-			$columns = $this->get_mysql_dml_all_columns( $table_name, $column_metadata );
-			if ( null === $columns ) {
-				return null;
-			}
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
-			$columns            = $this->get_mysql_dml_all_columns( $table_name, $column_metadata );
-			$insert_column_list = true;
-			if ( null === $columns ) {
-				return null;
-			}
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
-			$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
-			if ( null === $statement_end ) {
-				return null;
-			}
-
-			++$position;
-			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $statement_end );
-			if ( null === $set_assignments ) {
-				return null;
-			}
-
-			$columns          = $set_assignments['columns'];
-			$value_rows       = array( $set_assignments['values'] );
-			$value_range_rows = array( $set_assignments['ranges'] );
-			$probe_safe_rows  = array( $set_assignments['probe_safe_values'] );
-			$position         = $statement_end;
-		} else {
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
+		if ( null === $statement_end ) {
 			return null;
 		}
+
+		$column_metadata = null;
+		$source          = $this->parse_mysql_insert_like_dml_source( $table_name, $tokens, $position, $statement_end, $column_metadata );
+		if ( null === $source ) {
+			return null;
+		}
+		$columns            = $source['columns'];
+		$value_rows         = $source['value_rows'];
+		$value_range_rows   = $source['value_range_rows'];
+		$probe_safe_rows    = $source['probe_safe_rows'];
+		$insert_column_list = $source['insert_column_list'];
 
 		if ( $this->is_mysql_dml_select_source_token( $tokens[ $position ] ?? null ) ) {
 			return $this->translate_simple_mysql_replace_select_query(
@@ -16264,18 +15833,6 @@ WHERE option_name IN (
 				$table_reference_end,
 				$insert_column_list
 			);
-		}
-
-		if ( null === $value_rows ) {
-			$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
-			if ( null === $statement_end ) {
-				return null;
-			}
-
-			$value_rows = $this->parse_mysql_dml_values_after_keyword( $tokens, $position, $statement_end, $columns, $probe_safe_rows, $value_range_rows );
-			if ( null === $value_rows ) {
-				return null;
-			}
 		}
 
 		$column_metadata = $this->normalize_mysql_dml_value_rows_for_columns(
@@ -16320,15 +15877,15 @@ WHERE option_name IN (
 			);
 			if ( null !== $materialized_values_flow ) {
 				return array_merge(
-					array(
-						'action'                   => 'replace',
-						'table_name'               => $table_name,
-						'columns'                  => $columns,
-						'value_rows'               => $value_rows,
-						'conflict_column'          => $conflict_target['columns'][0] ?? null,
-						'conflict_target'          => $conflict_target,
-						'conflict_probe_safe_rows' => $probe_safe_rows,
-						'inserted_new_row'         => true,
+					$this->get_mysql_replace_values_query(
+						$table_name,
+						$columns,
+						$value_rows,
+						null,
+						$conflict_target,
+						array(
+							'conflict_probe_safe_rows' => $probe_safe_rows,
+						)
 					),
 					$materialized_values_flow
 				);
@@ -16345,29 +15902,29 @@ WHERE option_name IN (
 					$this->has_duplicate_mysql_replace_conflict_value_rows_in_groups( $value_rows, $probe_safe_rows, $delete_conflict_index_groups )
 				);
 				if ( null !== $delete_insert_statements ) {
-					return array(
-						'action'                   => 'replace',
-						'sql'                      => $sql,
-						'statements'               => $delete_insert_statements,
-						'table_name'               => $table_name,
-						'columns'                  => $columns,
-						'value_rows'               => $value_rows,
-						'conflict_column'          => null,
-						'conflict_probe_safe_rows' => $probe_safe_rows,
-						'delete_then_insert'       => true,
-						'inserted_new_row'         => true,
+					return $this->get_mysql_replace_values_query(
+						$table_name,
+						$columns,
+						$value_rows,
+						$sql,
+						null,
+						array(
+							'statements'               => $delete_insert_statements,
+							'conflict_probe_safe_rows' => $probe_safe_rows,
+							'delete_then_insert'       => true,
+						)
 					);
 				}
 			}
-			return array(
-				'action'           => 'replace',
-				'sql'              => $sql,
-				'table_name'       => $table_name,
-				'columns'          => $columns,
-				'value_rows'       => $value_rows,
-				'conflict_column'  => null,
-				'conflict_value'   => null,
-				'inserted_new_row' => true,
+			return $this->get_mysql_replace_values_query(
+				$table_name,
+				$columns,
+				$value_rows,
+				$sql,
+				null,
+				array(
+					'conflict_value' => null,
+				)
 			);
 		}
 
@@ -16379,19 +15936,17 @@ WHERE option_name IN (
 			$delete_conflict_index_groups = array( $conflict_indexes );
 		}
 
-		$conflict_sql    = $this->get_postgresql_dml_conflict_update_sql( $conflict_target, $this->get_postgresql_dml_excluded_assignments( $columns ) );
-		$conflict_column = $conflict_target['columns'][0] ?? null;
-		$replace_query   = array(
-			'action'                   => 'replace',
-			'sql'                      => $sql . ' ' . $conflict_sql,
-			'table_name'               => $table_name,
-			'columns'                  => $columns,
-			'value_rows'               => $value_rows,
-			'conflict_column'          => $conflict_column,
-			'conflict_target'          => $conflict_target,
-			'conflict_indexes'         => $conflict_indexes,
-			'conflict_probe_safe_rows' => $probe_safe_rows,
-			'inserted_new_row'         => true,
+		$conflict_sql  = $this->get_postgresql_dml_conflict_update_sql( $conflict_target, $this->get_postgresql_dml_excluded_assignments( $columns ) );
+		$replace_query = $this->get_mysql_replace_values_query(
+			$table_name,
+			$columns,
+			$value_rows,
+			$sql . ' ' . $conflict_sql,
+			$conflict_target,
+			array(
+				'conflict_indexes'         => $conflict_indexes,
+				'conflict_probe_safe_rows' => $probe_safe_rows,
+			)
 		);
 
 		$has_duplicate_conflict_rows = $this->has_duplicate_mysql_replace_conflict_value_rows_in_groups( $value_rows, $probe_safe_rows, $delete_conflict_index_groups );
@@ -16408,18 +15963,26 @@ WHERE option_name IN (
 			$replace_query['delete_then_insert'] = true;
 			$replace_query['inserted_new_row']   = true;
 		} elseif ( $has_duplicate_conflict_rows ) {
-			$statements = array();
-			foreach ( $value_rows as $values ) {
-				$statements[] = $this->get_postgresql_dml_insert_values_sql(
-					$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
-					$columns,
-					array( $values ),
-					$conflict_sql
-				);
-			}
-			$replace_query['statements'] = $statements;
+			$replace_query['statements'] = $this->get_postgresql_dml_insert_value_row_statements( $table_name, $columns, $value_rows, $conflict_sql );
 		}
 		return $replace_query;
+	}
+	private function get_mysql_replace_values_query( string $table_name, array $columns, array $value_rows, ?string $sql, ?array $conflict_target, array $extra = array() ): array {
+		$query = array(
+			'action'           => 'replace',
+			'table_name'       => $table_name,
+			'columns'          => $columns,
+			'value_rows'       => $value_rows,
+			'conflict_column'  => null === $conflict_target ? null : ( $conflict_target['columns'][0] ?? null ),
+			'inserted_new_row' => true,
+		);
+		if ( null !== $sql ) {
+			$query['sql'] = $sql;
+		}
+		if ( null !== $conflict_target ) {
+			$query['conflict_target'] = $conflict_target;
+		}
+		return array_merge( $query, $extra );
 	}
 	private function get_mysql_replace_delete_then_insert_statements( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_index_groups, bool $sequential_statements ): ?array {
 		$quoted_table = $this->get_postgresql_unqualified_dml_table_reference_sql( $table_name );
@@ -16491,6 +16054,14 @@ WHERE option_name IN (
 			$this->get_postgresql_dml_values_rows_sql( $value_rows )
 		);
 		return '' === $suffix ? $sql : $sql . ' ' . $suffix;
+	}
+	private function get_postgresql_dml_insert_value_row_statements( string $table_name, array $columns, array $value_rows, string $suffix = '' ): array {
+		$statements = array();
+		$table_sql  = $this->get_postgresql_unqualified_dml_table_reference_sql( $table_name );
+		foreach ( $value_rows as $values ) {
+			$statements[] = $this->get_postgresql_dml_insert_values_sql( $table_sql, $columns, array( $values ), $suffix );
+		}
+		return $statements;
 	}
 
 	/** Render a PostgreSQL DML column list. */
@@ -17448,40 +17019,23 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$column_metadata  = null;
-		$value_rows       = null;
-		$value_range_rows = array();
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $position ]->id ) {
-			++$position;
-			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $statement_end );
-			if ( null === $set_assignments ) {
-				return null;
-			}
-
-			$columns          = $set_assignments['columns'];
-			$value_rows       = array( $set_assignments['values'] );
-			$value_range_rows = array( $set_assignments['ranges'] );
-		} elseif ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-			$columns = $this->parse_mysql_identifier_list( $tokens, $position );
-			if ( null === $columns ) {
-				return null;
-			}
-		} elseif ( $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
-			$columns = $this->get_mysql_dml_all_columns( $table_name, $column_metadata );
-			if ( null === $columns ) {
-				return null;
-			}
-		} else {
+		$column_metadata = null;
+		$source          = $this->parse_mysql_insert_like_dml_source(
+			$table_name,
+			$tokens,
+			$position,
+			$statement_end,
+			$column_metadata,
+			array(
+				'allow_select_source' => false,
+			)
+		);
+		if ( null === $source ) {
 			return null;
 		}
-
-		if ( null === $value_rows ) {
-			$probe_safe_rows = array();
-			$value_rows      = $this->parse_mysql_dml_values_after_keyword( $tokens, $position, $statement_end, $columns, $probe_safe_rows, $value_range_rows );
-			if ( null === $value_rows ) {
-				return null;
-			}
-		}
+		$columns          = $source['columns'];
+		$value_rows       = $source['value_rows'];
+		$value_range_rows = $source['value_range_rows'];
 
 		$column_metadata = $this->normalize_mysql_dml_value_rows_for_columns(
 			$table_name,
@@ -17588,6 +17142,96 @@ WHERE option_name IN (
 			return null;
 		}
 		return $value_rows;
+	}
+	private function parse_mysql_insert_like_dml_source( string $table_name, array $tokens, int &$position, int $source_end, ?array &$column_metadata, array $options = array() ): ?array {
+		$allow_select_source = $options['allow_select_source'] ?? true;
+		$allow_values_alias  = ! empty( $options['allow_values_alias'] );
+		$value_rows          = null;
+		$value_range_rows    = array();
+		$probe_safe_rows     = array();
+		$insert_column_list  = false;
+		$source_aliases      = array();
+
+		if (
+			WP_MySQL_Lexer::SELECT_SYMBOL === ( $tokens[ $position ]->id ?? null )
+			|| $this->is_mysql_parenthesized_select_source( $tokens, $position )
+		) {
+			if ( ! $allow_select_source ) {
+				return null;
+			}
+
+			$columns            = $this->get_mysql_dml_all_columns( $table_name, $column_metadata );
+			$insert_column_list = true;
+		} elseif ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			$columns = $this->parse_mysql_identifier_list( $tokens, $position );
+		} elseif ( $this->is_mysql_values_row_list_keyword_token( $tokens[ $position ] ?? null ) ) {
+			$columns = $this->get_mysql_dml_all_columns( $table_name, $column_metadata );
+		} elseif ( WP_MySQL_Lexer::SET_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			++$position;
+			$set_end         = $allow_values_alias
+				? $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::AS_SYMBOL, $position, $source_end ) ?? $source_end
+				: $source_end;
+			$set_assignments = $this->parse_simple_mysql_insert_set_assignments( $table_name, $tokens, $position, $set_end );
+			if ( null === $set_assignments ) {
+				return null;
+			}
+
+			$columns          = $set_assignments['columns'];
+			$value_rows       = array( $set_assignments['values'] );
+			$value_range_rows = array( $set_assignments['ranges'] );
+			$probe_safe_rows  = array( $set_assignments['probe_safe_values'] );
+			$position         = $set_end;
+		} else {
+			return null;
+		}
+
+		if ( null === $columns ) {
+			return null;
+		}
+
+		if ( $this->is_mysql_dml_select_source_token( $tokens[ $position ] ?? null ) ) {
+			return $allow_select_source
+				? array(
+					'columns'            => $columns,
+					'value_rows'         => null,
+					'value_range_rows'   => array(),
+					'probe_safe_rows'    => array(),
+					'source_aliases'     => array(),
+					'insert_column_list' => $insert_column_list,
+				)
+				: null;
+		}
+
+		if ( null === $value_rows ) {
+			$value_rows = $this->parse_mysql_dml_values_after_keyword(
+				$tokens,
+				$position,
+				$source_end,
+				$columns,
+				$probe_safe_rows,
+				$value_range_rows,
+				! $allow_values_alias
+			);
+			if ( null === $value_rows ) {
+				return null;
+			}
+		}
+
+		if ( $allow_values_alias ) {
+			$source_aliases = $this->parse_mysql_upsert_values_alias_clause( $tokens, $position, $source_end, $columns );
+			if ( null === $source_aliases ) {
+				return null;
+			}
+		}
+
+		return array(
+			'columns'            => $columns,
+			'value_rows'         => $value_rows,
+			'value_range_rows'   => $value_range_rows,
+			'probe_safe_rows'    => $probe_safe_rows,
+			'source_aliases'     => $source_aliases,
+			'insert_column_list' => $insert_column_list,
+		);
 	}
 	private function is_unsupported_mysql_insert_set_query( string $query ): bool {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -23184,7 +22828,33 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$unsupported_tokens = array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::JOIN_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL );
+		$context = $this->get_simple_mysql_single_table_select_context( $tokens, $statement_end );
+		if ( null === $context ) {
+			return null;
+		}
+		return $this->build_simple_mysql_single_table_select_sql( $tokens, $context );
+	}
+	private function get_simple_mysql_single_table_select_context(
+		array $tokens,
+		int $statement_end,
+		bool $skip_where_validation = false,
+		bool $reject_direct_information_schema_source = false
+	): ?array {
+		$unsupported_tokens = array(
+			WP_MySQL_Lexer::DISTINCT_SYMBOL,
+			WP_MySQL_Lexer::FOR_SYMBOL,
+			WP_MySQL_Lexer::GROUP_SYMBOL,
+			WP_MySQL_Lexer::HAVING_SYMBOL,
+			WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+			WP_MySQL_Lexer::INTO_SYMBOL,
+			WP_MySQL_Lexer::JOIN_SYMBOL,
+			WP_MySQL_Lexer::LOCK_SYMBOL,
+			WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+			WP_MySQL_Lexer::SELECT_SYMBOL,
+			WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
+			WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+			WP_MySQL_Lexer::UNION_SYMBOL,
+		);
 		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, $unsupported_tokens ) ) {
 			return null;
 		}
@@ -23200,11 +22870,11 @@ WHERE option_name IN (
 		}
 
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $select_end );
-		if ( null === $from_position || 1 === $from_position ) {
-			return null;
-		}
-
-		if ( ! $this->is_supported_simple_select_projection( $tokens, 1, $from_position ) ) {
+		if (
+			null === $from_position
+			|| 1 === $from_position
+			|| ! $this->is_supported_simple_select_projection( $tokens, 1, $from_position )
+		) {
 			return null;
 		}
 
@@ -23214,6 +22884,12 @@ WHERE option_name IN (
 			$from_position + 1,
 			$select_end
 		) ?? $select_end;
+		if (
+			$reject_direct_information_schema_source
+			&& $this->direct_information_schema_source_range_references_information_schema( $tokens, $from_position + 1, $source_end )
+		) {
+			return null;
+		}
 
 		$table_reference_start = $from_position + 1;
 		$table_name_end        = $table_reference_start;
@@ -23228,29 +22904,20 @@ WHERE option_name IN (
 		) {
 			return null;
 		}
-		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
-			$tokens,
-			$table_reference_start,
-			$table_name_end
-		);
-		if ( null !== $table_reference['alias'] ) {
-			$table_reference_sql .= ' AS ' . $this->connection->quote_identifier( $table_reference['alias'] );
-		}
-		$table_name  = $table_reference['table'];
-		$table_alias = $table_reference['alias'];
 
 		$where_position = null;
 		$where_end      = null;
 		$order_position = null;
-
 		if ( $position < $select_end && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
 			$where_position = $position;
 			$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $position + 1, $select_end );
 			$where_end      = $order_position ?? $select_end;
-
 			if (
-				$where_position + 1 >= $where_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+				! $skip_where_validation
+				&& (
+					$where_position + 1 >= $where_end
+					|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+				)
 			) {
 				return null;
 			}
@@ -23271,60 +22938,103 @@ WHERE option_name IN (
 			return null;
 		}
 
+		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
+			$tokens,
+			$table_reference_start,
+			$table_name_end
+		);
+		if ( null !== $table_reference['alias'] ) {
+			$table_reference_sql .= ' AS ' . $this->connection->quote_identifier( $table_reference['alias'] );
+		}
+
+		return array(
+			'from_position'       => $from_position,
+			'limit_position'      => $limit_position,
+			'order_position'      => $order_position,
+			'select_end'          => $select_end,
+			'statement_end'       => $statement_end,
+			'table_alias'         => $table_reference['alias'],
+			'table_name'          => $table_reference['table'],
+			'table_reference_sql' => $table_reference_sql,
+			'where_end'           => $where_end,
+			'where_position'      => $where_position,
+		);
+	}
+	private function build_simple_mysql_single_table_select_sql(
+		array $tokens,
+		array $context,
+		array $where_replacements = array(),
+		bool $include_wordpress_order_tiebreakers = true
+	): string {
 		$sql = sprintf(
 			'SELECT %s FROM %s',
-			$this->translate_simple_select_projection_to_postgresql( $tokens, 1, $from_position ),
-			$table_reference_sql
+			$this->translate_simple_select_projection_to_postgresql( $tokens, 1, $context['from_position'] ),
+			$context['table_reference_sql']
 		);
 
-		$scope = $this->get_mysql_single_table_scope( $table_name, $table_alias );
-		if ( null !== $where_position ) {
+		$scope = $this->get_mysql_single_table_scope( $context['table_name'], $context['table_alias'] );
+		if ( null !== $context['where_position'] ) {
 			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
-				$where_position + 1,
-				$where_end,
-				$scope
+				$context['where_position'] + 1,
+				$context['where_end'],
+				$scope,
+				$where_replacements
 			);
 			$sql      .= ' WHERE ' . $where_sql['sql'];
 		}
 
-		if ( null !== $order_position ) {
+		if ( null !== $context['order_position'] ) {
 			$order_sql = $this->translate_mysql_order_by_token_sequence_to_postgresql(
 				$tokens,
-				$order_position + 2,
-				$select_end,
+				$context['order_position'] + 2,
+				$context['select_end'],
 				$scope,
 				false
 			);
 			$sql      .= ' ORDER BY ' . $order_sql['sql'];
 
-			$tiebreaker_sql = $this->get_simple_wordpress_posts_post_date_desc_order_id_tiebreaker_sql(
-				$tokens,
-				$table_name,
-				$order_position,
-				$select_end
-			);
-			if ( null !== $tiebreaker_sql ) {
-				$sql .= ', ' . $tiebreaker_sql;
-			}
-
-			$tiebreaker_sql = $this->get_simple_wordpress_approved_comments_order_tiebreaker_sql(
-				$tokens,
-				$table_name,
-				$where_position,
-				$where_end,
-				$order_position,
-				$select_end
-			);
-			if ( null !== $tiebreaker_sql ) {
-				$sql .= ', ' . $tiebreaker_sql;
+			if ( $include_wordpress_order_tiebreakers ) {
+				$tiebreakers = $this->get_simple_wordpress_select_order_tiebreaker_sql( $tokens, $context );
+				if ( ! empty( $tiebreakers ) ) {
+					$sql .= ', ' . implode( ', ', $tiebreakers );
+				}
 			}
 		}
 
-		if ( null !== $limit_position ) {
-			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+		if ( null !== $context['limit_position'] ) {
+			$sql .= $this->translate_simple_select_limit_clause_to_postgresql(
+				$tokens,
+				$context['limit_position'],
+				$context['statement_end']
+			);
 		}
 		return $sql;
+	}
+	private function get_simple_wordpress_select_order_tiebreaker_sql( array $tokens, array $context ): array {
+		$tiebreakers    = array();
+		$tiebreaker_sql = $this->get_simple_wordpress_posts_post_date_desc_order_id_tiebreaker_sql(
+			$tokens,
+			$context['table_name'],
+			$context['order_position'],
+			$context['select_end']
+		);
+		if ( null !== $tiebreaker_sql ) {
+			$tiebreakers[] = $tiebreaker_sql;
+		}
+
+		$tiebreaker_sql = $this->get_simple_wordpress_approved_comments_order_tiebreaker_sql(
+			$tokens,
+			$context['table_name'],
+			$context['where_position'],
+			$context['where_end'],
+			$context['order_position'],
+			$context['select_end']
+		);
+		if ( null !== $tiebreaker_sql ) {
+			$tiebreakers[] = $tiebreaker_sql;
+		}
+		return $tiebreakers;
 	}
 	private function translate_direct_information_schema_cte_select_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -23887,181 +23597,58 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$unsupported_tokens = array(
-			WP_MySQL_Lexer::DISTINCT_SYMBOL,
-			WP_MySQL_Lexer::FOR_SYMBOL,
-			WP_MySQL_Lexer::GROUP_SYMBOL,
-			WP_MySQL_Lexer::HAVING_SYMBOL,
-			WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
-			WP_MySQL_Lexer::INTO_SYMBOL,
-			WP_MySQL_Lexer::JOIN_SYMBOL,
-			WP_MySQL_Lexer::LOCK_SYMBOL,
-			WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-			WP_MySQL_Lexer::SELECT_SYMBOL,
-			WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
-			WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-			WP_MySQL_Lexer::UNION_SYMBOL,
+		$context = $this->get_simple_mysql_single_table_select_context(
+			$tokens,
+			$statement_end,
+			true,
+			true
 		);
-		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, $unsupported_tokens ) ) {
+		if ( null === $context || null === $context['where_position'] ) {
 			return null;
 		}
 
-		$select_end     = $statement_end;
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 1, $statement_end );
-		if ( null !== $limit_position ) {
-			if ( ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
-				return null;
-			}
-
-			$select_end = $limit_position;
-		}
-
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $select_end );
-		if ( null === $from_position || 1 === $from_position ) {
-			return null;
-		}
-
-		if ( ! $this->is_supported_simple_select_projection( $tokens, 1, $from_position ) ) {
-			return null;
-		}
-
-		$source_end = $this->find_first_top_level_mysql_token(
+		$replacements = $this->get_direct_information_schema_nested_select_replacements(
+			$query,
 			$tokens,
 			array(
-				WP_MySQL_Lexer::ORDER_SYMBOL,
-				WP_MySQL_Lexer::WHERE_SYMBOL,
-			),
-			$from_position + 1,
-			$select_end
-		) ?? $select_end;
-
-		if ( $this->direct_information_schema_source_range_references_information_schema( $tokens, $from_position + 1, $source_end ) ) {
-			return null;
-		}
-
-		$table_reference_start = $from_position + 1;
-		$table_name_end        = $table_reference_start;
-		$table_name_for_sql    = $this->parse_mysql_main_database_table_name( $tokens, $table_name_end );
-		$position              = $table_reference_start;
-		$table_reference       = $this->parse_mysql_main_database_table_reference( $tokens, $position, $source_end );
+				array(
+					'start' => $context['where_position'] + 1,
+					'end'   => $context['where_end'],
+				),
+			)
+		);
 		if (
-			null === $table_name_for_sql
-			|| null === $table_reference
-			|| $table_name_for_sql !== $table_reference['table']
-			|| $position !== $source_end
+			null === $replacements
+			|| array() === $replacements
+			|| ! $this->direct_information_schema_nested_selects_are_covered( $tokens, 1, $statement_end, $replacements )
+			|| ! $this->is_supported_simple_mysql_expression_fragment_with_replacements(
+				$tokens,
+				$context['where_position'] + 1,
+				$context['where_end'],
+				$replacements
+			)
 		) {
 			return null;
 		}
 
-		$where_position = null;
-		$where_end      = null;
-		$order_position = null;
-		$replacements   = array();
-
-		if ( $position < $select_end && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $position ]->id ) {
-			$where_position = $position;
-			$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $position + 1, $select_end );
-			$where_end      = $order_position ?? $select_end;
-
-			$replacements = $this->get_direct_information_schema_nested_select_replacements(
-				$query,
-				$tokens,
-				array(
-					array(
-						'start' => $where_position + 1,
-						'end'   => $where_end,
-					),
-				)
-			);
+		for ( $reference_position = 1; $reference_position + 2 < $statement_end; $reference_position++ ) {
 			if (
-				null === $replacements
-				|| array() === $replacements
-				|| ! $this->direct_information_schema_nested_selects_are_covered( $tokens, 1, $statement_end, $replacements )
-				|| ! $this->is_supported_simple_mysql_expression_fragment_with_replacements( $tokens, $where_position + 1, $where_end, $replacements )
+				WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $reference_position + 1 ]->id ?? null )
+				|| 0 !== strcasecmp(
+					(string) $this->get_direct_information_schema_identifier_token_value( $tokens[ $reference_position ] ?? null ),
+					'information_schema'
+				)
+				|| null === $this->get_direct_information_schema_identifier_token_value( $tokens[ $reference_position + 2 ] ?? null )
 			) {
+				continue;
+			}
+
+			$replacement_end = $this->get_covering_mysql_replacement_range_end( $reference_position, $replacements );
+			if ( null === $replacement_end || $reference_position + 2 >= $replacement_end ) {
 				return null;
 			}
-
-			for ( $reference_position = 1; $reference_position + 2 < $statement_end; $reference_position++ ) {
-				if (
-					WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $reference_position + 1 ]->id ?? null )
-					|| 0 !== strcasecmp(
-						(string) $this->get_direct_information_schema_identifier_token_value( $tokens[ $reference_position ] ?? null ),
-						'information_schema'
-					)
-					|| null === $this->get_direct_information_schema_identifier_token_value( $tokens[ $reference_position + 2 ] ?? null )
-				) {
-					continue;
-				}
-
-				$replacement_end = $this->get_covering_mysql_replacement_range_end( $reference_position, $replacements );
-				if ( null === $replacement_end || $reference_position + 2 >= $replacement_end ) {
-					return null;
-				}
-			}
-
-			$position = $where_end;
 		}
-
-		if ( $position < $select_end && WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $position ]->id ) {
-			$order_position = $position;
-			if ( ! $this->is_supported_simple_select_order_by_clause( $tokens, $order_position, $select_end ) ) {
-				return null;
-			}
-
-			$position = $select_end;
-		}
-
-		if ( $position !== $select_end ) {
-			return null;
-		}
-
-		if ( array() === $replacements ) {
-			return null;
-		}
-
-		$table_reference_sql = $this->get_mysql_main_database_table_reference_sql(
-			$tokens,
-			$table_reference_start,
-			$table_name_end
-		);
-		if ( null !== $table_reference['alias'] ) {
-			$table_reference_sql .= ' AS ' . $this->connection->quote_identifier( $table_reference['alias'] );
-		}
-
-		$sql = sprintf(
-			'SELECT %s FROM %s',
-			$this->translate_simple_select_projection_to_postgresql( $tokens, 1, $from_position ),
-			$table_reference_sql
-		);
-
-		$scope = $this->get_mysql_single_table_scope( $table_reference['table'], $table_reference['alias'] );
-		if ( null !== $where_position ) {
-			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
-				$tokens,
-				$where_position + 1,
-				$where_end,
-				$scope,
-				$replacements
-			);
-			$sql      .= ' WHERE ' . $where_sql['sql'];
-		}
-
-		if ( null !== $order_position ) {
-			$order_sql = $this->translate_mysql_order_by_token_sequence_to_postgresql(
-				$tokens,
-				$order_position + 2,
-				$select_end,
-				$scope,
-				false
-			);
-			$sql      .= ' ORDER BY ' . $order_sql['sql'];
-		}
-
-		if ( null !== $limit_position ) {
-			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-		}
-		return $sql;
+		return $this->build_simple_mysql_single_table_select_sql( $tokens, $context, $replacements, false );
 	}
 	private function translate_direct_information_schema_union_select_query( string $query, array $tokens, int $statement_end ): ?string {
 		$segments   = array();
@@ -25364,6 +24951,48 @@ RELATIONS;
 			return $this->get_direct_information_schema_view_literal_relation_sql( 'collation_character_set_applicability', $rows );
 		}
 
+		if ( ! $this->should_use_postgresql_catalog_metadata() && 'processlist' === $view ) {
+			return $this->get_direct_information_schema_view_literal_relation_sql(
+				'processlist',
+				array(
+					array(
+						'ID'      => '1',
+						'USER'    => 'root',
+						'HOST'    => 'localhost',
+						'DB'      => $this->db_name,
+						'COMMAND' => 'Query',
+						'TIME'    => '0',
+						'STATE'   => '',
+						'INFO'    => (string) $this->last_mysql_query,
+					),
+				)
+			);
+		}
+
+		if ( ! $this->should_use_postgresql_catalog_metadata() && 'keywords' === $view ) {
+			return $this->get_direct_information_schema_view_literal_relation_sql(
+				'keywords',
+				array(
+					array(
+						'WORD'     => 'SELECT',
+						'RESERVED' => 1,
+					),
+					array(
+						'WORD'     => 'FROM',
+						'RESERVED' => 1,
+					),
+					array(
+						'WORD'     => 'WHERE',
+						'RESERVED' => 1,
+					),
+					array(
+						'WORD'     => 'VALUE',
+						'RESERVED' => 0,
+					),
+				)
+			);
+		}
+
 		if ( 'schemata' !== $view || $this->should_use_postgresql_catalog_metadata() ) {
 			return null;
 		}
@@ -25396,6 +25025,9 @@ RELATIONS;
 			$this->get_direct_information_schema_relation_columns( $view ),
 			$rows
 		);
+	}
+	private function get_direct_information_schema_empty_relation_sql( string $view ): string {
+		return $this->get_direct_information_schema_view_literal_relation_sql( $view, array() );
 	}
 	private function get_direct_information_schema_relation_sql( string $view, array $options = array() ): ?string {
 		$view = strtolower( $view );
@@ -25485,18 +25117,12 @@ RELATIONS;
 					$column_comment
 				);
 			}
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'columns' ),
-				array()
-			);
+			return $this->get_direct_information_schema_empty_relation_sql( 'columns' );
 		}
 
 		if ( 'tables' === $view ) {
 			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-				return $this->get_direct_information_schema_literal_relation_sql(
-					$this->get_direct_information_schema_relation_columns( 'tables' ),
-					array()
-				);
+				return $this->get_direct_information_schema_empty_relation_sql( 'tables' );
 			}
 
 				$postgresql_table_comment_sql       = "pg_catalog.obj_description(pc.oid, 'pg_class')";
@@ -25564,84 +25190,16 @@ RELATIONS;
 		}
 
 		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) ) {
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( $view ),
-				array()
-			);
+			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
 
-		if (
-			! $this->should_use_postgresql_catalog_metadata()
-			&& ! in_array( $view, explode( ' ', 'processlist keywords' ), true )
-		) {
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( $view ),
-				array()
-			);
+		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
+			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
 
 		$native_relation_sql = $this->get_direct_information_schema_simple_native_relation_sql( $view );
 		if ( null !== $native_relation_sql ) {
 			return $native_relation_sql;
-		}
-
-		if ( 'processlist' === $view ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				return 'SELECT a.pid AS "ID", COALESCE(a.usename, CURRENT_USER) AS "USER", CASE WHEN a.client_addr IS NULL THEN \'localhost\' WHEN a.client_port IS NULL THEN CAST(a.client_addr AS text) ELSE CAST(a.client_addr AS text) || \':\' || CAST(a.client_port AS text) END AS "HOST", COALESCE(a.datname, \'\') AS "DB", CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END AS "COMMAND", GREATEST(CAST(FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(a.query_start, a.state_change, a.backend_start, CURRENT_TIMESTAMP)))) AS bigint), 0) AS "TIME", COALESCE(a.wait_event_type || CASE WHEN a.wait_event IS NULL THEN \'\' ELSE \':\' || a.wait_event END, a.state, \'\') AS "STATE", COALESCE(a.query, \'\') AS "INFO" FROM pg_catalog.pg_stat_activity a WHERE a.datname IS NULL OR a.datname = current_database()';
-			}
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'processlist' ),
-				array(
-					array(
-						'ID'      => '1',
-						'USER'    => 'root',
-						'HOST'    => 'localhost',
-						'DB'      => $this->db_name,
-						'COMMAND' => 'Query',
-						'TIME'    => '0',
-						'STATE'   => '',
-						'INFO'    => (string) $this->last_mysql_query,
-					),
-				)
-			);
-		}
-
-		if ( 'keywords' === $view ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				return 'SELECT UPPER(k.word) AS "WORD", CASE WHEN k.catcode = \'R\' THEN 1 ELSE 0 END AS "RESERVED" FROM pg_catalog.pg_get_keywords() k';
-			}
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'keywords' ),
-				array(
-					array(
-						'WORD'     => 'SELECT',
-						'RESERVED' => 1,
-					),
-					array(
-						'WORD'     => 'FROM',
-						'RESERVED' => 1,
-					),
-					array(
-						'WORD'     => 'WHERE',
-						'RESERVED' => 1,
-					),
-					array(
-						'WORD'     => 'VALUE',
-						'RESERVED' => 0,
-					),
-				)
-			);
-		}
-
-		if ( 'innodb_lock_waits' === $view ) {
-			return 'SELECT CAST(waiting.pid AS text) AS "REQUESTING_TRX_ID", pg_catalog.concat_ws(\':\', waiting.locktype, waiting.mode, CAST(waiting.database AS text), CAST(waiting.relation AS text), CAST(waiting.page AS text), CAST(waiting.tuple AS text), CAST(waiting.virtualxid AS text), CAST(waiting.transactionid AS text), CAST(waiting.classid AS text), CAST(waiting.objid AS text), CAST(waiting.objsubid AS text)) AS "REQUESTED_LOCK_ID", CAST(blocking.pid AS text) AS "BLOCKING_TRX_ID", pg_catalog.concat_ws(\':\', blocking.locktype, blocking.mode, CAST(blocking.database AS text), CAST(blocking.relation AS text), CAST(blocking.page AS text), CAST(blocking.tuple AS text), CAST(blocking.virtualxid AS text), CAST(blocking.transactionid AS text), CAST(blocking.classid AS text), CAST(blocking.objid AS text), CAST(blocking.objsubid AS text)) AS "BLOCKING_LOCK_ID" FROM pg_catalog.pg_locks waiting JOIN pg_catalog.pg_locks blocking ON blocking.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid)) AND blocking.granted AND waiting.locktype = blocking.locktype AND waiting.database IS NOT DISTINCT FROM blocking.database AND waiting.relation IS NOT DISTINCT FROM blocking.relation AND waiting.page IS NOT DISTINCT FROM blocking.page AND waiting.tuple IS NOT DISTINCT FROM blocking.tuple AND waiting.virtualxid IS NOT DISTINCT FROM blocking.virtualxid AND waiting.transactionid IS NOT DISTINCT FROM blocking.transactionid AND waiting.classid IS NOT DISTINCT FROM blocking.classid AND waiting.objid IS NOT DISTINCT FROM blocking.objid AND waiting.objsubid IS NOT DISTINCT FROM blocking.objsubid WHERE NOT waiting.granted';
-		}
-
-		if ( 'innodb_tables' === $view ) {
-			return sprintf(
-				'SELECT CAST(c.oid AS bigint) AS "TABLE_ID", %1$s || \'/\' || c.relname AS "NAME", 0 AS "FLAG", CAST(COALESCE(column_counts.n_cols, 0) + 3 AS bigint) AS "N_COLS", CAST(COALESCE(NULLIF(c.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint) AS "SPACE", \'Dynamic\' AS "ROW_FORMAT", 0 AS "ZIP_PAGE_SIZE", \'Single\' AS "SPACE_TYPE", NULL AS "INSTANT_COLS", 0 AS "TOTAL_ROW_VERSIONS" FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_catalog.pg_database db ON db.datname = current_database() LEFT JOIN LATERAL (SELECT COUNT(*) AS n_cols FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) column_counts ON TRUE WHERE c.relkind IN (\'r\', \'p\') AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
-			);
 		}
 
 		if ( 'partitions' === $view ) {
@@ -25650,18 +25208,6 @@ RELATIONS;
 				$this->get_direct_information_schema_display_schema_sql( 'parent_ns.nspname' ),
 				$this->get_direct_information_schema_display_schema_sql( 't.table_schema' )
 			);
-		}
-
-		if ( 'innodb_indexes' === $view ) {
-			return 'SELECT CAST(idx_class.oid AS bigint) AS "INDEX_ID", CASE WHEN idx.indisprimary THEN \'PRIMARY\' ELSE idx_class.relname END AS "NAME", CAST(table_class.oid AS bigint) AS "TABLE_ID", CASE WHEN idx.indisprimary THEN 3 WHEN idx.indisunique THEN 2 ELSE 0 END AS "TYPE", CAST(idx.indnkeyatts AS bigint) AS "N_FIELDS", 0 AS "PAGE_NO", CAST(COALESCE(NULLIF(table_class.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint) AS "SPACE", 50 AS "MERGE_THRESHOLD" FROM pg_catalog.pg_index idx JOIN pg_catalog.pg_class idx_class ON idx_class.oid = idx.indexrelid JOIN pg_catalog.pg_class table_class ON table_class.oid = idx.indrelid JOIN pg_catalog.pg_namespace table_ns ON table_ns.oid = table_class.relnamespace LEFT JOIN pg_catalog.pg_database db ON db.datname = current_database() WHERE table_class.relkind IN (\'r\', \'p\') AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'';
-		}
-
-		if ( 'innodb_fields' === $view ) {
-			return 'SELECT CAST(idx_class.oid AS bigint) AS "INDEX_ID", att.attname AS "NAME", CAST(key_positions.position AS bigint) AS "POS" FROM pg_catalog.pg_index idx JOIN pg_catalog.pg_class idx_class ON idx_class.oid = idx.indexrelid JOIN pg_catalog.pg_class table_class ON table_class.oid = idx.indrelid JOIN pg_catalog.pg_namespace table_ns ON table_ns.oid = table_class.relnamespace JOIN pg_catalog.generate_series(0, idx.indnkeyatts - 1) AS key_positions(position) ON TRUE JOIN pg_catalog.pg_attribute att ON att.attrelid = table_class.oid AND att.attnum = idx.indkey[key_positions.position] WHERE table_class.relkind IN (\'r\', \'p\') AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'';
-		}
-
-		if ( 'innodb_columns' === $view ) {
-			return 'SELECT CAST(c.oid AS bigint) AS "TABLE_ID", a.attname AS "NAME", CAST(a.attnum - 1 AS bigint) AS "POS", CASE WHEN typ.typcategory = \'N\' THEN 6 WHEN typ.typcategory = \'S\' THEN 1 WHEN typ.typcategory = \'B\' THEN 6 WHEN typ.typcategory = \'U\' THEN 14 ELSE 12 END AS "MTYPE", 0 AS "PRTYPE", CAST(CASE WHEN a.atttypmod > 0 THEN GREATEST(a.atttypmod - 4, 0) WHEN typ.typlen > 0 THEN typ.typlen ELSE 0 END AS bigint) AS "LEN", CASE WHEN def.adbin IS NULL THEN 0 ELSE 1 END AS "HAS_DEFAULT", CASE WHEN def.adbin IS NULL THEN NULL ELSE pg_catalog.pg_get_expr(def.adbin, def.adrelid) END AS "DEFAULT_VALUE" FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid JOIN pg_catalog.pg_type typ ON typ.oid = a.atttypid LEFT JOIN pg_catalog.pg_attrdef def ON def.adrelid = a.attrelid AND def.adnum = a.attnum WHERE c.relkind IN (\'r\', \'p\') AND a.attnum > 0 AND NOT a.attisdropped AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'';
 		}
 
 		if ( 'st_geometry_columns' === $view ) {
@@ -25731,45 +25277,92 @@ RELATIONS;
 				$internal_sort_column_sql
 			);
 		}
-
-		if ( 'column_statistics' === $view ) {
-			return sprintf(
-				'SELECT %1$s AS "SCHEMA_NAME", stats.tablename AS "TABLE_NAME", stats.attname AS "COLUMN_NAME", CAST(pg_catalog.json_build_object(\'buckets\', COALESCE(pg_catalog.to_json(stats.histogram_bounds), \'[]\'::json), \'null-values\', stats.null_frac, \'last-updated\', NULL) AS text) AS "HISTOGRAM" FROM pg_catalog.pg_stats stats WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' )
-			);
-		}
 		return null;
 	}
 	private function get_direct_information_schema_simple_native_relation_sql( string $view ): ?string {
-		$empty_sql           = $this->connection->quote( '' );
-		$function_sql        = $this->connection->quote( 'FUNCTION' );
-		$information_schema  = $this->connection->quote( 'information_schema' );
-		$none_sql            = $this->connection->quote( 'NONE' );
-		$no_sql              = $this->connection->quote( 'NO' );
-		$user_host_sql       = $this->connection->quote( '@\'%\'' );
-		$datetime_format_sql = $this->connection->quote( 'YYYY-MM-DD HH24:MI:SS' );
-		$schema_filter       = '!~ ' . $this->connection->quote( '^(pg_|information_schema$|pg_catalog$)' );
-		$pg_schema_filter    = '!~ ' . $this->connection->quote( '^pg_' );
-		$charset_sql         = $this->connection->quote( self::DEFAULT_MYSQL_CHARSET );
-		$collation_sql       = $this->connection->quote( self::DEFAULT_MYSQL_COLLATION );
-		$check_comment_sql   = 'pg_catalog.obj_description(con.oid, \'pg_constraint\')';
-		$check_clause_sql    = $this->get_postgresql_mysql_check_clause_comment_sql( $check_comment_sql, 'cc.check_clause' );
-		$check_enforced_sql  = $this->get_postgresql_mysql_check_enforced_comment_sql( $check_comment_sql );
-		$acl_grantee_sql     = 'pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || ' . $user_host_sql;
-		$tablespace_path_sql = 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\')';
-		$tablespace_relation = array(
+		$empty_sql            = $this->connection->quote( '' );
+		$function_sql         = $this->connection->quote( 'FUNCTION' );
+		$information_schema   = $this->connection->quote( 'information_schema' );
+		$none_sql             = $this->connection->quote( 'NONE' );
+		$no_sql               = $this->connection->quote( 'NO' );
+		$user_host_sql        = $this->connection->quote( '@\'%\'' );
+		$datetime_format_sql  = $this->connection->quote( 'YYYY-MM-DD HH24:MI:SS' );
+		$schema_filter        = '!~ ' . $this->connection->quote( '^(pg_|information_schema$|pg_catalog$)' );
+		$pg_schema_filter     = '!~ ' . $this->connection->quote( '^pg_' );
+		$charset_sql          = $this->connection->quote( self::DEFAULT_MYSQL_CHARSET );
+		$collation_sql        = $this->connection->quote( self::DEFAULT_MYSQL_COLLATION );
+		$check_comment_sql    = 'pg_catalog.obj_description(con.oid, \'pg_constraint\')';
+		$check_clause_sql     = $this->get_postgresql_mysql_check_clause_comment_sql( $check_comment_sql, 'cc.check_clause' );
+		$check_enforced_sql   = $this->get_postgresql_mysql_check_enforced_comment_sql( $check_comment_sql );
+		$acl_grantee_sql      = 'pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || ' . $user_host_sql;
+		$tablespace_path_sql  = 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\')';
+		$tablespace_relation  = array(
 			'alias'   => 'ts',
 			'from'    => 'pg_catalog.pg_tablespace ts',
 			'default' => 'NULL',
 		);
+		$waiting_lock_id_sql  = 'pg_catalog.concat_ws(\':\', waiting.locktype, waiting.mode, CAST(waiting.database AS text), CAST(waiting.relation AS text), CAST(waiting.page AS text), CAST(waiting.tuple AS text), CAST(waiting.virtualxid AS text), CAST(waiting.transactionid AS text), CAST(waiting.classid AS text), CAST(waiting.objid AS text), CAST(waiting.objsubid AS text))';
+		$blocking_lock_id_sql = str_replace( 'waiting.', 'blocking.', $waiting_lock_id_sql );
 
 		$definitions = array(
+			'column_statistics'            => array(
+				'alias'       => 'stats',
+				'from'        => 'pg_catalog.pg_stats stats',
+				'where'       => 'stats.schemaname ' . $schema_filter,
+				'expressions' => 'SCHEMA_NAME=' . $this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' ) . '; TABLE_NAME=stats.tablename; COLUMN_NAME=stats.attname; HISTOGRAM=CAST(pg_catalog.json_build_object(\'buckets\', COALESCE(pg_catalog.to_json(stats.histogram_bounds), \'[]\'::json), \'null-values\', stats.null_frac, \'last-updated\', NULL) AS text)',
+			),
 			'files'                        => $tablespace_relation + array( 'expressions' => 'FILE_ID=CAST(ts.oid AS bigint); FILE_NAME=' . $tablespace_path_sql . '; FILE_TYPE=' . $this->connection->quote( 'TABLESPACE' ) . '; TABLESPACE_NAME=ts.spcname; TABLE_CATALOG=' . $empty_sql . '; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; STATUS=' . $this->connection->quote( 'NORMAL' ) ),
+			'innodb_columns'               => array(
+				'alias'       => 'c',
+				'from'        => 'pg_catalog.pg_class c',
+				'join'        => 'JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid JOIN pg_catalog.pg_type typ ON typ.oid = a.atttypid LEFT JOIN pg_catalog.pg_attrdef def ON def.adrelid = a.attrelid AND def.adnum = a.attnum',
+				'where'       => 'c.relkind IN (\'r\', \'p\') AND a.attnum > 0 AND NOT a.attisdropped AND n.nspname ' . $schema_filter,
+				'expressions' => 'TABLE_ID=CAST(c.oid AS bigint); NAME=a.attname; POS=CAST(a.attnum - 1 AS bigint); MTYPE=CASE WHEN typ.typcategory = \'N\' THEN 6 WHEN typ.typcategory = \'S\' THEN 1 WHEN typ.typcategory = \'B\' THEN 6 WHEN typ.typcategory = \'U\' THEN 14 ELSE 12 END; PRTYPE=0; LEN=CAST(CASE WHEN a.atttypmod > 0 THEN GREATEST(a.atttypmod - 4, 0) WHEN typ.typlen > 0 THEN typ.typlen ELSE 0 END AS bigint); HAS_DEFAULT=CASE WHEN def.adbin IS NULL THEN 0 ELSE 1 END; DEFAULT_VALUE=CASE WHEN def.adbin IS NULL THEN NULL ELSE pg_catalog.pg_get_expr(def.adbin, def.adrelid) END',
+			),
+			'innodb_fields'                => array(
+				'alias'       => 'idx',
+				'from'        => 'pg_catalog.pg_index idx',
+				'join'        => 'JOIN pg_catalog.pg_class idx_class ON idx_class.oid = idx.indexrelid JOIN pg_catalog.pg_class table_class ON table_class.oid = idx.indrelid JOIN pg_catalog.pg_namespace table_ns ON table_ns.oid = table_class.relnamespace JOIN pg_catalog.generate_series(0, idx.indnkeyatts - 1) AS key_positions(position) ON TRUE JOIN pg_catalog.pg_attribute att ON att.attrelid = table_class.oid AND att.attnum = idx.indkey[key_positions.position]',
+				'where'       => 'table_class.relkind IN (\'r\', \'p\') AND table_ns.nspname ' . $schema_filter,
+				'expressions' => 'INDEX_ID=CAST(idx_class.oid AS bigint); NAME=att.attname; POS=CAST(key_positions.position AS bigint)',
+			),
+			'innodb_indexes'               => array(
+				'alias'       => 'idx',
+				'from'        => 'pg_catalog.pg_index idx',
+				'join'        => 'JOIN pg_catalog.pg_class idx_class ON idx_class.oid = idx.indexrelid JOIN pg_catalog.pg_class table_class ON table_class.oid = idx.indrelid JOIN pg_catalog.pg_namespace table_ns ON table_ns.oid = table_class.relnamespace LEFT JOIN pg_catalog.pg_database db ON db.datname = current_database()',
+				'where'       => 'table_class.relkind IN (\'r\', \'p\') AND table_ns.nspname ' . $schema_filter,
+				'expressions' => 'INDEX_ID=CAST(idx_class.oid AS bigint); NAME=CASE WHEN idx.indisprimary THEN \'PRIMARY\' ELSE idx_class.relname END; TABLE_ID=CAST(table_class.oid AS bigint); TYPE=CASE WHEN idx.indisprimary THEN 3 WHEN idx.indisunique THEN 2 ELSE 0 END; N_FIELDS=CAST(idx.indnkeyatts AS bigint); PAGE_NO=0; SPACE=CAST(COALESCE(NULLIF(table_class.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint); MERGE_THRESHOLD=50',
+			),
+			'innodb_lock_waits'            => array(
+				'alias'       => 'waiting',
+				'from'        => 'pg_catalog.pg_locks waiting',
+				'join'        => 'JOIN pg_catalog.pg_locks blocking ON blocking.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid)) AND blocking.granted AND waiting.locktype = blocking.locktype AND waiting.database IS NOT DISTINCT FROM blocking.database AND waiting.relation IS NOT DISTINCT FROM blocking.relation AND waiting.page IS NOT DISTINCT FROM blocking.page AND waiting.tuple IS NOT DISTINCT FROM blocking.tuple AND waiting.virtualxid IS NOT DISTINCT FROM blocking.virtualxid AND waiting.transactionid IS NOT DISTINCT FROM blocking.transactionid AND waiting.classid IS NOT DISTINCT FROM blocking.classid AND waiting.objid IS NOT DISTINCT FROM blocking.objid AND waiting.objsubid IS NOT DISTINCT FROM blocking.objsubid',
+				'where'       => 'NOT waiting.granted',
+				'expressions' => 'REQUESTING_TRX_ID=CAST(waiting.pid AS text); REQUESTED_LOCK_ID=' . $waiting_lock_id_sql . '; BLOCKING_TRX_ID=CAST(blocking.pid AS text); BLOCKING_LOCK_ID=' . $blocking_lock_id_sql,
+			),
+			'innodb_tables'                => array(
+				'alias'       => 'c',
+				'from'        => 'pg_catalog.pg_class c',
+				'join'        => 'JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_catalog.pg_database db ON db.datname = current_database() LEFT JOIN LATERAL (SELECT COUNT(*) AS n_cols FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) column_counts ON TRUE',
+				'where'       => 'c.relkind IN (\'r\', \'p\') AND n.nspname ' . $schema_filter,
+				'expressions' => 'TABLE_ID=CAST(c.oid AS bigint); NAME=' . $this->get_direct_information_schema_display_schema_sql( 'n.nspname' ) . ' || \'/\' || c.relname; FLAG=0; N_COLS=CAST(COALESCE(column_counts.n_cols, 0) + 3 AS bigint); SPACE=CAST(COALESCE(NULLIF(c.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint); ROW_FORMAT=' . $this->connection->quote( 'Dynamic' ) . '; ZIP_PAGE_SIZE=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ) . '; INSTANT_COLS=NULL; TOTAL_ROW_VERSIONS=0',
+			),
+			'keywords'                     => array(
+				'alias'       => 'k',
+				'from'        => 'pg_catalog.pg_get_keywords() k',
+				'expressions' => 'WORD=UPPER(k.word); RESERVED=CASE WHEN k.catcode = \'R\' THEN 1 ELSE 0 END',
+			),
 			'plugins'                      => array(
 				'alias'       => 'ae',
 				'from'        => 'pg_catalog.pg_available_extensions ae',
 				'default'     => 'NULL',
 				'expressions' => 'PLUGIN_NAME=ae.name; PLUGIN_VERSION=COALESCE(ae.installed_version, ae.default_version, \'\'); PLUGIN_STATUS=CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END; PLUGIN_TYPE=' . $this->connection->quote( 'EXTENSION' ) . '; PLUGIN_TYPE_VERSION=COALESCE(ae.default_version, \'\'); PLUGIN_AUTHOR=' . $empty_sql . '; PLUGIN_DESCRIPTION=COALESCE(ae.comment, \'\'); PLUGIN_LICENSE=' . $empty_sql . '; LOAD_OPTION=CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END',
+			),
+			'processlist'                  => array(
+				'alias'       => 'a',
+				'from'        => 'pg_catalog.pg_stat_activity a',
+				'where'       => 'a.datname IS NULL OR a.datname = current_database()',
+				'expressions' => 'ID=a.pid; USER=COALESCE(a.usename, CURRENT_USER); HOST=CASE WHEN a.client_addr IS NULL THEN \'localhost\' WHEN a.client_port IS NULL THEN CAST(a.client_addr AS text) ELSE CAST(a.client_addr AS text) || \':\' || CAST(a.client_port AS text) END; DB=COALESCE(a.datname, \'\'); COMMAND=CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END; TIME=GREATEST(CAST(FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(a.query_start, a.state_change, a.backend_start, CURRENT_TIMESTAMP)))) AS bigint), 0); STATE=COALESCE(a.wait_event_type || CASE WHEN a.wait_event IS NULL THEN \'\' ELSE \':\' || a.wait_event END, a.state, \'\'); INFO=COALESCE(a.query, \'\')',
 			),
 			'schemata'                     => array(
 				'alias'       => 's',
@@ -27115,47 +26708,28 @@ END',
 			return null;
 		}
 
-		$limit_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::LIMIT_SYMBOL,
-			$projection_start,
-			$statement_end
-		);
-		$select_end     = $limit_position ?? $statement_end;
-		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+		$clauses = $this->get_mysql_select_clause_positions( $tokens, $projection_start, $statement_end );
+		if ( null === $clauses ) {
 			return null;
 		}
 
-		$order_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::ORDER_SYMBOL,
-			$projection_start,
-			$select_end
-		);
+		$limit_position = $clauses['limit_position'];
+		$order_position = $clauses['order_position'];
+		$select_end     = $clauses['select_end'];
 		if ( null === $order_position ) {
 			if ( ! $has_sql_calc_found_rows ) {
 				return null;
 			}
 
 			$sql = 'SELECT DISTINCT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $select_end );
-			if ( $include_limit && null !== $limit_position ) {
-				$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-			}
-			return $sql;
+			return $this->append_mysql_select_limit_sql( $sql, $tokens, $limit_position, $statement_end, $include_limit );
 		}
 
-		$from_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::FROM_SYMBOL,
-			$projection_start,
-			$order_position
-		);
+		$from_position = $clauses['from_position'];
 		if (
 			null === $from_position
-			|| null === $order_position
-			|| $order_position + 2 >= $statement_end
-			|| ! isset( $tokens[ $order_position + 1 ] )
-			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
+			|| $from_position >= $order_position
+			|| ! $this->is_valid_mysql_select_order_by_clause( $tokens, $order_position, $select_end )
 		) {
 			return null;
 		}
@@ -27187,12 +26761,9 @@ END',
 			return null;
 		}
 
-		$scope_end = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::WHERE_SYMBOL,
-			$from_position + 1,
-			$order_position
-		) ?? $order_position;
+		$scope_end = null !== $clauses['where_position'] && $clauses['where_position'] < $order_position
+			? $clauses['where_position']
+			: $order_position;
 		$scope     = $this->get_mysql_select_scope( $tokens, $from_position + 1, $scope_end );
 		if ( null === $scope ) {
 			return null;
@@ -27223,10 +26794,7 @@ END',
 			}
 
 			$sql = 'SELECT DISTINCT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $select_end );
-			if ( $include_limit && null !== $limit_position ) {
-				$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-			}
-			return $sql;
+			return $this->append_mysql_select_limit_sql( $sql, $tokens, $limit_position, $statement_end, $include_limit );
 		}
 		return $this->build_distinct_order_by_grouped_query(
 			$tokens,
@@ -27238,6 +26806,116 @@ END',
 			$statement_end,
 			$include_limit
 		);
+	}
+	private function get_mysql_select_clause_positions(
+		array $tokens,
+		int $projection_start,
+		int $statement_end,
+		bool $require_supported_limit = true
+	): ?array {
+		$limit_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::LIMIT_SYMBOL,
+			$projection_start,
+			$statement_end
+		);
+		if (
+			$require_supported_limit
+			&& null !== $limit_position
+			&& ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end )
+		) {
+			return null;
+		}
+
+		$select_end      = $limit_position ?? $statement_end;
+		$from_position   = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $projection_start, $select_end );
+		$where_position  = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $projection_start, $select_end );
+		$group_position  = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $projection_start, $select_end );
+		$having_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::HAVING_SYMBOL,
+			$projection_start,
+			$select_end
+		);
+		$order_position  = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $projection_start, $select_end );
+
+		return array(
+			'from_end'        => null === $from_position
+				? null
+				: (
+					$this->find_first_top_level_mysql_token(
+						$tokens,
+						array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL, WP_MySQL_Lexer::WHERE_SYMBOL ),
+						$from_position + 1,
+						$statement_end
+					) ?? $select_end
+				),
+			'from_position'   => $from_position,
+			'group_end'       => null === $group_position
+				? null
+				: (
+					$this->find_first_top_level_mysql_token(
+						$tokens,
+						array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
+						$group_position + 1,
+						$statement_end
+					) ?? $select_end
+				),
+			'group_position'  => $group_position,
+			'having_end'      => null === $having_position
+				? null
+				: (
+					$this->find_first_top_level_mysql_token(
+						$tokens,
+						array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
+						$having_position + 1,
+						$statement_end
+					) ?? $select_end
+				),
+			'having_position' => $having_position,
+			'limit_position'  => $limit_position,
+			'order_end'       => null === $order_position
+				? null
+				: (
+					$this->find_first_top_level_mysql_token(
+						$tokens,
+						array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
+						$order_position + 2,
+						$statement_end
+					) ?? $select_end
+				),
+			'order_position'  => $order_position,
+			'select_end'      => $select_end,
+			'where_end'       => null === $where_position
+				? null
+				: (
+					$this->find_first_top_level_mysql_token(
+						$tokens,
+						array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
+						$where_position + 1,
+						$statement_end
+					) ?? $select_end
+				),
+			'where_position'  => $where_position,
+		);
+	}
+	private function is_valid_mysql_select_order_by_clause( array $tokens, ?int $order_position, int $order_end ): bool {
+		return null !== $order_position
+			&& $order_position + 2 < $order_end
+			&& isset( $tokens[ $order_position + 1 ] )
+			&& WP_MySQL_Lexer::BY_SYMBOL === $tokens[ $order_position + 1 ]->id;
+	}
+	private function append_mysql_select_limit_sql(
+		string $sql,
+		array $tokens,
+		?int $limit_position,
+		int $statement_end,
+		bool $include_limit
+	): string {
+		if ( $include_limit && null !== $limit_position ) {
+			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
+		}
+		return $sql;
 	}
 	private function is_mysql_qualified_star_projection( array $tokens, int $start, int $end, string $alias ): bool {
 		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
@@ -27646,18 +27324,16 @@ END',
 			++$projection_start;
 		}
 
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $projection_start, $statement_end );
-		$select_end     = $limit_position ?? $statement_end;
-		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+		$clauses = $this->get_mysql_select_clause_positions( $tokens, $projection_start, $statement_end );
+		if ( null === $clauses ) {
 			return null;
 		}
 
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $projection_start, $select_end );
+		$limit_position = $clauses['limit_position'];
+		$order_position = $clauses['order_position'];
+		$select_end     = $clauses['select_end'];
 		if (
-			null === $order_position
-			|| ! isset( $tokens[ $order_position + 1 ] )
-			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
-			|| $order_position + 2 >= $select_end
+			! $this->is_valid_mysql_select_order_by_clause( $tokens, $order_position, $select_end )
 		) {
 			return null;
 		}
@@ -27680,7 +27356,9 @@ END',
 			return null;
 		}
 
-		$group_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $projection_start, $order_position );
+		$group_position = null !== $clauses['group_position'] && $clauses['group_position'] < $order_position
+			? $clauses['group_position']
+			: null;
 		if ( null === $group_position ) {
 			return $this->translate_strict_aggregate_only_order_by_query(
 				$tokens,
@@ -27728,10 +27406,7 @@ END',
 		}
 
 		$sql = 'SELECT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $order_position );
-		if ( $include_limit && null !== $limit_position ) {
-			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-		}
-		return $sql;
+		return $this->append_mysql_select_limit_sql( $sql, $tokens, $limit_position, $statement_end, $include_limit );
 	}
 	private function translate_strict_grouped_order_by_query(
 		array $tokens,
@@ -27894,10 +27569,7 @@ END',
 			$replacements
 		)
 			. ' ORDER BY ' . implode( ', ', $order_sql );
-		if ( $include_limit && null !== $limit_position ) {
-			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-		}
-		return $sql;
+		return $this->append_mysql_select_limit_sql( $sql, $tokens, $limit_position, $statement_end, $include_limit );
 	}
 	private function translate_distinct_strict_grouped_order_by_query(
 		array $tokens,
@@ -28205,33 +27877,34 @@ END',
 			return null;
 		}
 
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 1, $statement_end );
-		$select_end     = $limit_position ?? $statement_end;
-		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+		$clauses = $this->get_mysql_select_clause_positions( $tokens, 1, $statement_end );
+		if ( null === $clauses ) {
 			return null;
 		}
 
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 1, $select_end );
+		$order_position = $clauses['order_position'];
 		if (
 			null !== $order_position
-			&& (
-				! isset( $tokens[ $order_position + 1 ] )
-				|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
-				|| $order_position + 2 >= $select_end
-			)
+			&& ! $this->is_valid_mysql_select_order_by_clause( $tokens, $order_position, $clauses['select_end'] )
 		) {
 			return null;
 		}
 
-		$having_end      = $order_position ?? $select_end;
-		$having_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::HAVING_SYMBOL, 1, $having_end );
-		if ( null === $having_position || $having_position + 1 >= $having_end ) {
+		$having_position = $clauses['having_position'];
+		$having_end      = $clauses['having_end'];
+		if (
+			null === $having_position
+			|| null === $having_end
+			|| ( null !== $order_position && $having_position > $order_position )
+			|| $having_position + 1 >= $having_end
+		) {
 			return null;
 		}
 
-		$group_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, 1, $having_position );
+		$group_position = $clauses['group_position'];
 		if (
 			null === $group_position
+			|| $group_position > $having_position
 			|| ! isset( $tokens[ $group_position + 1 ] )
 			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_position + 1 ]->id
 			|| $group_position + 2 >= $having_position
@@ -28239,8 +27912,8 @@ END',
 			return null;
 		}
 
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $group_position );
-		if ( null === $from_position || 1 === $from_position ) {
+		$from_position = $clauses['from_position'];
+		if ( null === $from_position || 1 === $from_position || $from_position > $group_position ) {
 			return null;
 		}
 
@@ -29600,33 +29273,23 @@ END',
 			return null;
 		}
 
-		$select_end     = $statement_end;
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 2, $statement_end );
-		if ( null !== $limit_position ) {
-			if ( ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
-				return null;
-			}
-			$select_end = $limit_position;
+		$clauses = $this->get_mysql_select_clause_positions( $tokens, 2, $statement_end );
+		if ( null === $clauses ) {
+			return null;
 		}
 
 		$contextual_sql = $this->translate_mysql_select_statement_with_integer_string_coercion(
 			$tokens,
 			2,
-			$select_end,
+			$clauses['select_end'],
 			false
 		);
 		if ( null !== $contextual_sql ) {
-			if ( $include_limit && null !== $limit_position ) {
-				$contextual_sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-			}
-			return $contextual_sql;
+			return $this->append_mysql_select_limit_sql( $contextual_sql, $tokens, $clauses['limit_position'], $statement_end, $include_limit );
 		}
 
-		$sql = 'SELECT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, 2, $select_end );
-		if ( $include_limit && null !== $limit_position ) {
-			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-		}
-		return $sql;
+		$sql = 'SELECT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, 2, $clauses['select_end'] );
+		return $this->append_mysql_select_limit_sql( $sql, $tokens, $clauses['limit_position'], $statement_end, $include_limit );
 	}
 	private function translate_mysql_compatible_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -32229,57 +31892,22 @@ END',
 		int $projection_start,
 		int $statement_end
 	): ?array {
-		$where_position  = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::WHERE_SYMBOL,
-			$projection_start,
-			$statement_end
-		);
-		$having_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::HAVING_SYMBOL,
-			$projection_start,
-			$statement_end
-		);
-		$order_position  = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::ORDER_SYMBOL,
-			$projection_start,
-			$statement_end
-		);
+		$clauses         = $this->get_mysql_select_clause_positions( $tokens, $projection_start, $statement_end, false );
+		$where_position  = $clauses['where_position'];
+		$having_position = $clauses['having_position'];
+		$order_position  = $clauses['order_position'];
 		if ( null === $where_position && null === $having_position && null === $order_position ) {
 			return null;
 		}
 
 		$first_clause_position = min( array_filter( array( $where_position, $having_position, $order_position ), 'is_int' ) );
-		$from_position         = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::FROM_SYMBOL,
-			$projection_start,
-			$first_clause_position
-		);
-		if ( null === $from_position ) {
+		$from_position         = $clauses['from_position'];
+		if ( null === $from_position || $from_position >= $first_clause_position ) {
 			return null;
 		}
 
-		$from_end = $this->find_first_top_level_mysql_token(
-			$tokens,
-			array(
-				WP_MySQL_Lexer::FOR_SYMBOL,
-				WP_MySQL_Lexer::GROUP_SYMBOL,
-				WP_MySQL_Lexer::HAVING_SYMBOL,
-				WP_MySQL_Lexer::LIMIT_SYMBOL,
-				WP_MySQL_Lexer::LOCK_SYMBOL,
-				WP_MySQL_Lexer::ORDER_SYMBOL,
-				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-				WP_MySQL_Lexer::UNION_SYMBOL,
-				WP_MySQL_Lexer::WHERE_SYMBOL,
-			),
-			$from_position + 1,
-			$statement_end
-		) ?? $statement_end;
-
-		$scope = $this->get_mysql_select_scope( $tokens, $from_position + 1, $from_end );
+		$from_end = $clauses['from_end'] ?? $statement_end;
+		$scope    = $this->get_mysql_select_scope( $tokens, $from_position + 1, $from_end );
 		if ( null === $scope ) {
 			return null;
 		}
@@ -32294,18 +31922,12 @@ END',
 			return null;
 		}
 
-		$group_position_before_having = null === $having_position
+		$group_position_before_having = null === $having_position || null === $clauses['group_position'] || $clauses['group_position'] > $having_position
 			? null
-			: $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $projection_start, $having_position );
+			: $clauses['group_position'];
 
 		if ( null !== $where_position ) {
-			$where_end = $this->find_first_top_level_mysql_token(
-				$tokens,
-				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
-				$where_position + 1,
-				$statement_end
-			) ?? $statement_end;
-
+			$where_end = $clauses['where_end'] ?? $statement_end;
 			$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
 				$where_position + 1,
@@ -32322,13 +31944,7 @@ END',
 		}
 
 		if ( null !== $having_position && null === $group_position_before_having ) {
-			$having_end = $this->find_first_top_level_mysql_token(
-				$tokens,
-				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
-				$having_position + 1,
-				$statement_end
-			) ?? $statement_end;
-
+			$having_end          = $clauses['having_end'] ?? $statement_end;
 			$having_replacements = $this->get_mysql_having_without_group_by_contextual_replacements(
 				$tokens,
 				$projection_start,
@@ -32344,17 +31960,13 @@ END',
 		}
 
 		if (
-			null !== $order_position
-			&& isset( $tokens[ $order_position + 1 ] )
-			&& WP_MySQL_Lexer::BY_SYMBOL === $tokens[ $order_position + 1 ]->id
-		) {
-			$order_end = $this->find_first_top_level_mysql_token(
+			$this->is_valid_mysql_select_order_by_clause(
 				$tokens,
-				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
-				$order_position + 2,
-				$statement_end
-			) ?? $statement_end;
-
+				$order_position,
+				$clauses['order_end'] ?? $statement_end
+			)
+		) {
+			$order_end = $clauses['order_end'] ?? $statement_end;
 			$order_sql = $this->translate_mysql_order_by_token_sequence_to_postgresql(
 				$tokens,
 				$order_position + 2,
@@ -36110,7 +35722,7 @@ END',
 		}
 
 		if ( 'date' === $type ) {
-			return $this->get_postgresql_mysql_date_sql( $expression_sql );
+			return $this->get_postgresql_mysql_ymd_format_sql( $expression_sql );
 		}
 
 		if ( 'decimal' === $type ) {
@@ -37028,16 +36640,21 @@ END',
 			'character_length' => array( 1, 'CHAR_LENGTH(CAST(%s AS text))' ),
 			'hex'              => array( 1, "UPPER(ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'hex'))" ),
 			'ifnull'           => array( 2, 'COALESCE(%s, %s)' ),
+			'inet_aton'        => array( 1, 'CASE WHEN CAST(%1$s AS text) IS NULL THEN NULL ELSE ((CAST(SPLIT_PART(CAST(%1$s AS text), \'.\', 1) AS bigint) << 24) + (CAST(SPLIT_PART(CAST(%1$s AS text), \'.\', 2) AS bigint) << 16) + (CAST(SPLIT_PART(CAST(%1$s AS text), \'.\', 3) AS bigint) << 8) + CAST(SPLIT_PART(CAST(%1$s AS text), \'.\', 4) AS bigint)) END' ),
+			'inet_ntoa'        => array( 1, 'CASE WHEN CAST(%1$s AS bigint) IS NULL THEN NULL ELSE (((CAST(%1$s AS bigint) >> 24) & 255)::text || \'.\' || ((CAST(%1$s AS bigint) >> 16) & 255)::text || \'.\' || ((CAST(%1$s AS bigint) >> 8) & 255)::text || \'.\' || (CAST(%1$s AS bigint) & 255)::text) END' ),
 			'instr'            => array( 2, 'STRPOS(CAST(%s AS text), CAST(%s AS text))' ),
 			'isnull'           => array( 1, 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END' ),
+			'is_uuid'          => array( 1, 'CASE WHEN CAST(%1$s AS text) IS NULL THEN NULL WHEN CAST(%1$s AS text) ~* ' . $this->connection->quote( '^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})$' ) . ' THEN 1 ELSE 0 END' ),
 			'lcase'            => array( 1, 'LOWER(CAST(%s AS text))' ),
 			'left'             => array( 2, 'LEFT(CAST(%s AS text), CAST(%s AS integer))' ),
+			'locate'           => array( 2, 'STRPOS(CAST(%2$s AS text), CAST(%1$s AS text))' ),
 			'lower'            => array( 1, 'LOWER(CAST(%s AS text))' ),
 			'ltrim'            => array( 1, "LTRIM(CAST(%s AS text), ' ')" ),
 			'md5'              => array( 1, 'MD5(CAST(%s AS text))' ),
 			'nullif'           => array( 2, 'NULLIF(%s, %s)' ),
 			'repeat'           => array( 2, 'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL ELSE REPEAT(CAST(%1$s AS text), GREATEST(CAST(%2$s AS integer), 0)) END' ),
 			'replace'          => array( 3, 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))' ),
+			'regexp'           => array( 2, 'CASE WHEN CAST(%1$s AS text) IS NULL OR CAST(%2$s AS text) IS NULL THEN NULL WHEN CAST(%2$s AS text) ~* CAST(%1$s AS text) THEN 1 ELSE 0 END' ),
 			'reverse'          => array( 1, 'REVERSE(CAST(%s AS text))' ),
 			'right'            => array( 2, 'RIGHT(CAST(%s AS text), CAST(%s AS integer))' ),
 			'rtrim'            => array( 1, "RTRIM(CAST(%s AS text), ' ')" ),
@@ -37048,8 +36665,8 @@ END',
 			'unhex'            => array( 1, "CONVERT_FROM(DECODE(CAST(%s AS text), 'hex'), 'UTF8')" ),
 			'upper'            => array( 1, 'UPPER(CAST(%s AS text))' ),
 		);
-		if ( isset( $template_specs[ $function_name ] ) ) {
-			return $count === $template_specs[ $function_name ][0] ? vsprintf( $template_specs[ $function_name ][1], $argument_sql ) : null;
+		if ( isset( $template_specs[ $function_name ] ) && $count === $template_specs[ $function_name ][0] ) {
+			return vsprintf( $template_specs[ $function_name ][1], $argument_sql );
 		}
 		$method_specs = array(
 			'concat_ws' => array( 2, null, 'get_postgresql_mysql_concat_ws_sql' ),
@@ -37063,21 +36680,25 @@ END',
 			list( $min_args, $max_args, $method ) = $method_specs[ $function_name ];
 			return $count >= $min_args && ( null === $max_args || $count <= $max_args ) ? $this->$method( $argument_sql ) : null;
 		}
-		$single_arg_methods = array(
-			'date'       => 'get_postgresql_mysql_date_sql',
-			'json_valid' => 'get_postgresql_mysql_json_valid_sql',
-			'length'     => 'get_postgresql_mysql_text_byte_length_sql',
+		$argument_method_specs = array(
+			'date'        => array( 1, 'get_postgresql_mysql_ymd_format_sql' ),
+			'find_in_set' => array( 2, 'get_postgresql_mysql_find_in_set_sql' ),
+			'json_valid'  => array( 1, 'get_postgresql_mysql_json_valid_sql' ),
+			'length'      => array( 1, 'get_postgresql_mysql_text_byte_length_sql' ),
+			'locate'      => array( 3, 'get_postgresql_mysql_locate_with_position_sql' ),
 		);
-		if ( isset( $single_arg_methods[ $function_name ] ) ) {
-			$method = $single_arg_methods[ $function_name ];
-			return 1 === $count ? $this->$method( $argument_sql[0] ) : null;
+		if ( isset( $argument_method_specs[ $function_name ] ) && $count === $argument_method_specs[ $function_name ][0] ) {
+			$method = $argument_method_specs[ $function_name ][1];
+			return $this->{$method}( ...$argument_sql );
 		}
 		$zero_arg_sql = array(
 			'connection_id' => (string) self::MYSQL_CONNECTION_ID,
+			'curdate'       => "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD')",
 			'database'      => $this->connection->quote( $this->db_name ),
 			'found_rows'    => (string) $this->last_found_rows,
 			'row_count'     => (string) $this->last_row_count,
 			'schema'        => $this->connection->quote( $this->db_name ),
+			'utc_date'      => "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD')",
 			'uuid'          => "LOWER(REGEXP_REPLACE(MD5(CAST(CLOCK_TIMESTAMP() AS text) || CAST(RANDOM() AS text) || CAST(PG_BACKEND_PID() AS text)), '^(.{8})(.{4}).(.{3}).(.{3})(.{12})$', '\\1-\\2-4\\3-8\\4-\\5'))",
 			'version'       => $this->connection->quote( $this->get_mysql_version_string() ),
 		);
@@ -37089,6 +36710,17 @@ END',
 		}
 		if ( 'get_lock' === $function_name || 'release_lock' === $function_name ) {
 			return ( 'get_lock' === $function_name ? 2 : 1 ) === $count ? '1' : null;
+		}
+		$temporal_name_specs = array(
+			'dayname'   => array( 'DOW', explode( ' ', 'Sunday Monday Tuesday Wednesday Thursday Friday Saturday' ) ),
+			'monthname' => array( 'MONTH', array_combine( range( 1, 12 ), explode( ' ', 'January February March April May June July August September October November December' ) ) ),
+		);
+		if ( isset( $temporal_name_specs[ $function_name ] ) && 1 === $count ) {
+			return $this->get_postgresql_mysql_temporal_name_sql(
+				$temporal_name_specs[ $function_name ][0],
+				$argument_sql[0],
+				$temporal_name_specs[ $function_name ][1]
+			);
 		}
 		switch ( $function_name ) {
 			case 'ascii':
@@ -37137,11 +36769,6 @@ END',
 						$argument_sql
 					)
 				) . ')';
-			case 'find_in_set':
-				return 2 === $count ? $this->get_postgresql_mysql_find_in_set_sql( $argument_sql[0], $argument_sql[1] ) : null;
-			case 'curdate':
-			case 'utc_date':
-				return 0 === $count ? "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD')" : null;
 			case 'utc_time':
 				$fsp = $this->get_mysql_temporal_function_fractional_seconds_precision( $argument_sql );
 				if ( null === $fsp ) {
@@ -37165,16 +36792,6 @@ END',
 			case 'lpad':
 			case 'rpad':
 				return 3 === $count ? $this->get_postgresql_mysql_pad_sql( $function_name, $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
-			case 'is_uuid':
-				if ( 1 !== $count ) {
-					return null;
-				}
-				$argument_text_sql = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
-				return sprintf(
-					'CASE WHEN %1$s IS NULL THEN NULL WHEN %1$s ~* %2$s THEN 1 ELSE 0 END',
-					$argument_text_sql,
-					$this->connection->quote( '^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})$' )
-				);
 			case 'last_insert_id':
 				if ( 0 !== $count ) {
 					return null;
@@ -37214,24 +36831,6 @@ END',
 						$argument_sql[0]
 					)
 					: null;
-			case 'inet_aton':
-				if ( 1 !== $count ) {
-					return null;
-				}
-				$ip = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
-				return sprintf(
-					'CASE WHEN %1$s IS NULL THEN NULL ELSE ((CAST(SPLIT_PART(%1$s, \'.\', 1) AS bigint) << 24) + (CAST(SPLIT_PART(%1$s, \'.\', 2) AS bigint) << 16) + (CAST(SPLIT_PART(%1$s, \'.\', 3) AS bigint) << 8) + CAST(SPLIT_PART(%1$s, \'.\', 4) AS bigint)) END',
-					$ip
-				);
-			case 'inet_ntoa':
-				if ( 1 !== $count ) {
-					return null;
-				}
-				$number = sprintf( 'CAST(%s AS bigint)', $argument_sql[0] );
-				return sprintf(
-					'CASE WHEN %1$s IS NULL THEN NULL ELSE (((%1$s >> 24) & 255)::text || \'.\' || ((%1$s >> 16) & 255)::text || \'.\' || ((%1$s >> 8) & 255)::text || \'.\' || (%1$s & 255)::text) END',
-					$number
-				);
 			case 'datediff':
 				if ( 2 !== $count ) {
 					return null;
@@ -37240,41 +36839,6 @@ END',
 					'CAST((CAST(%1$s AS date) - CAST(%2$s AS date)) AS integer)',
 					$this->get_postgresql_zero_date_safe_timestamp_sql( $argument_sql[0] ),
 					$this->get_postgresql_zero_date_safe_timestamp_sql( $argument_sql[1] )
-				);
-			case 'locate':
-				if ( 2 === $count ) {
-					return sprintf( 'STRPOS(CAST(%2$s AS text), CAST(%1$s AS text))', $argument_sql[0], $argument_sql[1] );
-				}
-				if ( 3 === $count ) {
-					return $this->get_postgresql_mysql_locate_with_position_sql( $argument_sql[0], $argument_sql[1], $argument_sql[2] );
-				}
-				return null;
-			case 'dayname':
-				return 1 === $count
-					? $this->get_postgresql_mysql_temporal_name_sql(
-						'DOW',
-						$argument_sql[0],
-						explode( ' ', 'Sunday Monday Tuesday Wednesday Thursday Friday Saturday' )
-					)
-					: null;
-			case 'monthname':
-				return 1 === $count
-					? $this->get_postgresql_mysql_temporal_name_sql(
-						'MONTH',
-						$argument_sql[0],
-						array_combine( range( 1, 12 ), explode( ' ', 'January February March April May June July August September October November December' ) )
-					)
-					: null;
-			case 'regexp':
-				if ( 2 !== $count ) {
-					return null;
-				}
-				$pattern = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
-				$value   = sprintf( 'CAST(%s AS text)', $argument_sql[1] );
-				return sprintf(
-					'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s ~* %1$s THEN 1 ELSE 0 END',
-					$pattern,
-					$value
 				);
 			case 'from_unixtime':
 				if ( 1 === $count ) {
@@ -37514,9 +37078,6 @@ $wp_mysql_%1$s_domain$',
 			$fsp,
 			20 + $fsp
 		);
-	}
-	private function get_postgresql_mysql_date_sql( string $expression_sql ): string {
-		return $this->get_postgresql_mysql_ymd_format_sql( $expression_sql );
 	}
 	private function get_postgresql_mysql_ymd_format_sql( string $expression_sql ): string {
 		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
@@ -39053,20 +38614,21 @@ $wp_mysql_%1$s_domain$',
 			|| isset( $this->get_postgresql_mysql_date_format_to_char_formats()[ $specifier ] );
 	}
 	private function get_postgresql_mysql_zero_date_format_specifier_sql( string $specifier, string $expression_text_sql ): ?string {
-		foreach ( array_chunk( array( 'Y', 1, 4, 'y', 3, 2, 'm', 6, 2, 'd', 9, 2 ), 3 ) as $range ) {
-			if ( $range[0] === $specifier ) {
-				return sprintf( 'SUBSTRING(%s FROM %d FOR %d)', $expression_text_sql, $range[1], $range[2] );
-			}
+		$date_part_specs = array(
+			'Y' => array( 1, 4, false ),
+			'y' => array( 3, 2, false ),
+			'm' => array( 6, 2, false ),
+			'd' => array( 9, 2, false ),
+			'c' => array( 6, 2, true ),
+			'e' => array( 9, 2, true ),
+		);
+		if ( isset( $date_part_specs[ $specifier ] ) ) {
+			$part_sql = sprintf( 'SUBSTRING(%s FROM %d FOR %d)', $expression_text_sql, $date_part_specs[ $specifier ][0], $date_part_specs[ $specifier ][1] );
+			return $date_part_specs[ $specifier ][2] ? sprintf( 'CAST(CAST(%s AS integer) AS text)', $part_sql ) : $part_sql;
 		}
-		foreach ( array_chunk( array( 'c', 6, 2, 'e', 9, 2 ), 3 ) as $range ) {
-			if ( $range[0] === $specifier ) {
-				return sprintf( 'CAST(CAST(SUBSTRING(%s FROM %d FOR %d) AS integer) AS text)', $expression_text_sql, $range[1], $range[2] );
-			}
-		}
-		foreach ( array_chunk( array( 'H', 12, 'i', 15, 'S', 18, 's', 18 ), 2 ) as $range ) {
-			if ( $range[0] === $specifier ) {
-				return $this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, $range[1], 2 );
-			}
+		$time_part_starts = array_combine( str_split( 'HiSs' ), array( 12, 15, 18, 18 ) );
+		if ( isset( $time_part_starts[ $specifier ] ) ) {
+			return $this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, $time_part_starts[ $specifier ], 2 );
 		}
 		if ( '%' === $specifier ) {
 			return $this->connection->quote( '%' );
@@ -39075,14 +38637,16 @@ $wp_mysql_%1$s_domain$',
 			return $this->get_postgresql_mysql_day_with_suffix_sql( sprintf( 'CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer)', $expression_text_sql ) );
 		}
 		$hour_12_sql = $this->get_postgresql_mysql_zero_date_hour_12_sql( $expression_text_sql );
-		if ( 'h' === $specifier || 'I' === $specifier ) {
-			return sprintf( "LPAD(CAST(%s AS text), 2, '0')", $hour_12_sql );
-		}
 		if ( 'k' === $specifier ) {
 			return sprintf( 'CAST(CAST(%s AS integer) AS text)', $this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 12, 2 ) );
 		}
-		if ( 'l' === $specifier ) {
-			return sprintf( 'CAST(%s AS text)', $hour_12_sql );
+		$hour_12_formats = array(
+			'h' => "LPAD(CAST(%s AS text), 2, '0')",
+			'I' => "LPAD(CAST(%s AS text), 2, '0')",
+			'l' => 'CAST(%s AS text)',
+		);
+		if ( isset( $hour_12_formats[ $specifier ] ) ) {
+			return sprintf( $hour_12_formats[ $specifier ], $hour_12_sql );
 		}
 		if ( 'T' === $specifier || 'r' === $specifier ) {
 			$time_sql = sprintf(
@@ -39184,7 +38748,7 @@ $wp_mysql_%1$s_domain$',
 	}
 	private function get_postgresql_mysql_dynamic_zero_date_format_specifier_case_sql( string $specifier_sql, string $expression_text_sql ): string {
 		$cases                     = array();
-		$zero_date_part_specifiers = array( '%', 'Y', 'y', 'm', 'c', 'd', 'e', 'D', 'H', 'k', 'h', 'I', 'l', 'i', 'S', 's', 'T', 'r', 'p', 'f' );
+		$zero_date_part_specifiers = str_split( '%YymcdeDHkhIliSsTrpf' );
 		foreach ( $zero_date_part_specifiers as $specifier ) {
 			$cases[] = sprintf(
 				'WHEN %s THEN %s',
@@ -39192,16 +38756,16 @@ $wp_mysql_%1$s_domain$',
 				$this->get_postgresql_mysql_zero_date_format_specifier_sql( $specifier, $expression_text_sql )
 			);
 		}
-		$null_specifiers = array_unique(
-			array_merge(
-				array_keys( $this->get_postgresql_mysql_date_format_to_char_formats() ),
-				array( 'w', 'U', 'u', 'V', 'v', 'X', 'x' )
-			)
+		$null_specifiers = array_diff(
+			array_unique(
+				array_merge(
+					array_keys( $this->get_postgresql_mysql_date_format_to_char_formats() ),
+					str_split( 'wUuVvXx' )
+				)
+			),
+			$zero_date_part_specifiers
 		);
 		foreach ( $null_specifiers as $specifier ) {
-			if ( null !== $this->get_postgresql_mysql_zero_date_format_specifier_sql( $specifier, $expression_text_sql ) ) {
-				continue;
-			}
 			$cases[] = sprintf(
 				'WHEN %s THEN NULL',
 				$this->connection->quote( $specifier )
@@ -39219,7 +38783,7 @@ $wp_mysql_%1$s_domain$',
 				$this->connection->quote( $format )
 			);
 		}
-		foreach ( array( '%', 'D', 'w', 'U', 'u', 'V', 'v', 'X', 'x' ) as $specifier ) {
+		foreach ( str_split( '%DwUuVvXx' ) as $specifier ) {
 			$cases[] = sprintf(
 				'WHEN %s THEN %s',
 				$this->connection->quote( $specifier ),
@@ -39233,16 +38797,13 @@ $wp_mysql_%1$s_domain$',
 	}
 	private function get_postgresql_mysql_date_format_specifier_sql( string $specifier, string $timestamp_sql ): ?string {
 		$to_char_formats = $this->get_postgresql_mysql_date_format_to_char_formats();
-		if ( '%' === $specifier ) {
-			return $this->connection->quote( '%' );
-		}
-		if ( 'D' === $specifier ) {
-			return $this->get_postgresql_mysql_day_with_suffix_sql(
-				sprintf( 'CAST(EXTRACT(DAY FROM %s) AS integer)', $timestamp_sql )
-			);
-		}
-		if ( 'w' === $specifier ) {
-			return sprintf( 'CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)', $timestamp_sql );
+		$special_formats = array(
+			'%' => $this->connection->quote( '%' ),
+			'D' => $this->get_postgresql_mysql_day_with_suffix_sql( sprintf( 'CAST(EXTRACT(DAY FROM %s) AS integer)', $timestamp_sql ) ),
+			'w' => sprintf( 'CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)', $timestamp_sql ),
+		);
+		if ( isset( $special_formats[ $specifier ] ) ) {
+			return $special_formats[ $specifier ];
 		}
 		$week_sql = $this->get_postgresql_mysql_date_format_week_specifier_sql( $specifier, $timestamp_sql );
 		if ( null !== $week_sql ) {
