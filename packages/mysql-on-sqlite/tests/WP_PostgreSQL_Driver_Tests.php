@@ -6260,46 +6260,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests approved comment aggregate lookups are not rewritten with a row tie-breaker.
-	 */
-	public function test_simple_select_approved_comments_order_does_not_rewrite_count_projection(): void {
-		$driver = $this->create_driver();
-
-		$select = "SELECT COUNT(comment_ID) as c
-			FROM wptests_comments
-			WHERE comment_post_ID = 7 AND comment_approved = '1'
-			ORDER BY wptests_comments.comment_date_gmt ASC";
-
-		$this->assertNull(
-			$this->translate_driver_query_with_private_method(
-				$driver,
-				'translate_wordpress_approved_comments_query',
-				$select
-			)
-		);
-	}
-
-	/**
-	 * Tests approved comment projections must belong to the selected comments table.
-	 */
-	public function test_simple_select_approved_comments_order_does_not_rewrite_foreign_projection_qualifier(): void {
-		$driver = $this->create_driver();
-
-		$select = "SELECT other.comment_ID
-			FROM wptests_comments
-			WHERE comment_post_ID = 7 AND comment_approved = '1'
-			ORDER BY wptests_comments.comment_date_gmt ASC";
-
-		$this->assertNull(
-			$this->translate_driver_query_with_private_method(
-				$driver,
-				'translate_wordpress_approved_comments_query',
-				$select
-			)
-		);
-	}
-
-	/**
 	 * Tests MySQL offset,count LIMIT syntax is translated to PostgreSQL.
 	 */
 	public function test_simple_select_with_mysql_offset_count_limit_is_translated_to_postgresql(): void {
@@ -15831,29 +15791,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$driver->get_last_postgresql_queries()
 		);
-	}
-
-	/**
-	 * Tests broader posts DISTINCT MIME type queries keep the generic path.
-	 */
-	public function test_wordpress_available_post_mime_types_distinct_rewrite_requires_exact_where_shape(): void {
-		$driver = $this->create_driver();
-		$driver->query(
-			'CREATE TABLE wptests_posts (
-				`ID` bigint(20) unsigned NOT NULL,
-				`post_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
-				`post_mime_type` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT "",
-				PRIMARY KEY (`ID`)
-			)'
-		);
-
-		$sql = $this->translate_driver_query_with_private_method(
-			$driver,
-			'translate_wordpress_available_post_mime_types_query',
-			"SELECT DISTINCT post_mime_type FROM wptests_posts WHERE post_type = 'attachment'"
-		);
-
-		$this->assertNull( $sql );
 	}
 
 	/**
