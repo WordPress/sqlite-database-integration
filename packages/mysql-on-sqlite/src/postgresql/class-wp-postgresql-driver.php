@@ -58420,7 +58420,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 							$arguments[0]['end']
 						)
 					);
-					$sql           = $this->get_postgresql_mysql_date_format_string_sql( $format['value'], $timestamp_sql );
+					$sql           = $this->get_postgresql_mysql_generic_date_format_sql( $format['value'], $timestamp_sql, false );
 					if ( null === $sql ) {
 						return null;
 					}
@@ -59290,9 +59290,10 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					$timestamp_sql = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $argument_sql[0] );
 					$format        = $this->get_mysql_sql_string_literal_value( $argument_sql[1] );
 					if ( null !== $format ) {
-						return $this->get_postgresql_mysql_date_format_string_sql(
+						return $this->get_postgresql_mysql_generic_date_format_sql(
 							$format,
-							$timestamp_sql
+							$timestamp_sql,
+							false
 						);
 					}
 
@@ -62345,7 +62346,7 @@ $wp_mysql_%1$s_domain$',
 		}
 
 		return $force_string
-			? $this->get_postgresql_mysql_date_format_string_sql( $format['value'], $expression_sql )
+			? $this->get_postgresql_mysql_generic_date_format_sql( $format['value'], $expression_sql, false )
 			: $this->get_postgresql_mysql_date_format_sql( $format['value'], $expression_sql );
 	}
 
@@ -62500,21 +62501,6 @@ $wp_mysql_%1$s_domain$',
 		}
 
 		return $this->get_postgresql_mysql_generic_date_format_sql( $format, $expression_sql );
-	}
-
-	/**
-	 * Get PostgreSQL SQL for a MySQL formatted date/time string.
-	 *
-	 * DATE_FORMAT() has numeric special cases for WordPress date comparisons.
-	 * FROM_UNIXTIME(expr, format) always returns a formatted string, so it must
-	 * bypass those numeric helpers.
-	 *
-	 * @param string $format         MySQL DATE_FORMAT/FROM_UNIXTIME format.
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string|null PostgreSQL expression SQL, or null when unsupported.
-	 */
-	private function get_postgresql_mysql_date_format_string_sql( string $format, string $expression_sql ): ?string {
-		return $this->get_postgresql_mysql_generic_date_format_sql( $format, $expression_sql, false );
 	}
 
 	/**
