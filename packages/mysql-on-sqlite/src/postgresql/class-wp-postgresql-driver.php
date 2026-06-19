@@ -2853,11 +2853,14 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$total_rows = $this->get_materialized_mysql_upsert_select_source_row_count( $upsert_query['source_table_sql'] );
-		if ( null === $total_rows ) {
+		$stmt       = $this->connection->query( sprintf( 'SELECT COUNT(*) FROM %s', $upsert_query['source_table_sql'] ) );
+		$total_rows = $stmt->fetchColumn();
+		$stmt->closeCursor();
+		if ( ! is_numeric( $total_rows ) ) {
 			return null;
 		}
 
+		$total_rows = (int) $total_rows;
 		if ( 0 === $total_rows ) {
 			return array(
 				'found' => false,
@@ -2907,20 +2910,6 @@ class WP_PostgreSQL_Driver {
 			'found' => true,
 			'value' => $values[ count( $values ) - 1 ],
 		);
-	}
-
-	/**
-	 * Count materialized SELECT source rows.
-	 *
-	 * @param string $source_table_sql Quoted materialized source table SQL.
-	 * @return int|null Row count, or null when unavailable.
-	 */
-	private function get_materialized_mysql_upsert_select_source_row_count( string $source_table_sql ): ?int {
-		$stmt  = $this->connection->query( sprintf( 'SELECT COUNT(*) FROM %s', $source_table_sql ) );
-		$count = $stmt->fetchColumn();
-		$stmt->closeCursor();
-
-		return is_numeric( $count ) ? (int) $count : null;
 	}
 
 	/**
