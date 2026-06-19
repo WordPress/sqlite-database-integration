@@ -41453,7 +41453,23 @@ WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 
 		$column_metadata_table = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
 		$type_expression       = $this->get_direct_information_schema_catalog_data_type_expression( 'c', false );
-		$column_type           = $this->get_direct_information_schema_column_type_expression( 'c', 'cm' );
+		$column_type           = 'COALESCE(cm.column_type, CASE
+		WHEN c.data_type = \'character varying\' THEN
+			\'varchar\' || CASE WHEN c.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\' END
+		WHEN c.data_type = \'character\' THEN
+			\'char\' || CASE WHEN c.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\' END
+		WHEN c.data_type = \'integer\' THEN \'int\'
+		WHEN c.data_type = \'numeric\' AND c.numeric_precision IS NULL THEN \'numeric\'
+		WHEN c.data_type = \'numeric\' THEN
+			\'decimal\' || CASE
+				WHEN c.numeric_scale IS NULL THEN \'(\' || CAST(c.numeric_precision AS text) || \')\'
+				ELSE \'(\' || CAST(c.numeric_precision AS text) || \',\' || CAST(c.numeric_scale AS text) || \')\'
+			END
+		WHEN c.data_type = \'double precision\' THEN \'double\'
+		WHEN c.data_type = \'real\' THEN \'float\'
+		WHEN c.data_type = \'timestamp without time zone\' THEN \'datetime\'
+		ELSE c.data_type
+	END)';
 		$data_type             = $this->get_direct_information_schema_metadata_data_type_expression( 'cm.column_type', $type_expression );
 		$charset               = $this->get_direct_information_schema_character_set_expression( $column_type, 'cm.character_set_name' );
 		$collation             = $this->get_direct_information_schema_collation_expression( $column_type, 'COALESCE(cm.collation_name, c.collation_name)' );
@@ -41691,37 +41707,6 @@ END',
 			$enum_data_type_case,
 			$set_data_type_case,
 			$include_domain_cases ? $this->get_postgresql_mysql_domain_data_type_cases( $alias ) : ''
-		);
-	}
-
-	/**
-	 * Get a MySQL column type expression.
-	 *
-	 * @param string $catalog_alias  Catalog column table alias.
-	 * @param string $metadata_alias MySQL metadata table alias.
-	 * @return string SQL expression.
-	 */
-	private function get_direct_information_schema_column_type_expression( string $catalog_alias, string $metadata_alias ): string {
-		return sprintf(
-			'COALESCE(%2$s.column_type, CASE
-	WHEN %1$s.data_type = \'character varying\' THEN
-		\'varchar\' || CASE WHEN %1$s.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(%1$s.character_maximum_length AS text) || \')\' END
-	WHEN %1$s.data_type = \'character\' THEN
-		\'char\' || CASE WHEN %1$s.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(%1$s.character_maximum_length AS text) || \')\' END
-	WHEN %1$s.data_type = \'integer\' THEN \'int\'
-	WHEN %1$s.data_type = \'numeric\' AND %1$s.numeric_precision IS NULL THEN \'numeric\'
-	WHEN %1$s.data_type = \'numeric\' THEN
-		\'decimal\' || CASE
-			WHEN %1$s.numeric_scale IS NULL THEN \'(\' || CAST(%1$s.numeric_precision AS text) || \')\'
-			ELSE \'(\' || CAST(%1$s.numeric_precision AS text) || \',\' || CAST(%1$s.numeric_scale AS text) || \')\'
-		END
-	WHEN %1$s.data_type = \'double precision\' THEN \'double\'
-	WHEN %1$s.data_type = \'real\' THEN \'float\'
-	WHEN %1$s.data_type = \'timestamp without time zone\' THEN \'datetime\'
-	ELSE %1$s.data_type
-END)',
-			$catalog_alias,
-			$metadata_alias
 		);
 	}
 
