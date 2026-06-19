@@ -17548,11 +17548,26 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 
 		$where_expression_filter = $this->is_mysql_show_where_expression_filter( $where_filter ) ? $where_filter : null;
 		if ( null !== $where_filter && null === $where_expression_filter ) {
+			$filter_columns = array(
+				'Field'      => '"COLUMN_NAME"',
+				'Type'       => '"COLUMN_TYPE"',
+				'Collation'  => '"COLLATION_NAME"',
+				'Null'       => '"IS_NULLABLE"',
+				'Key'        => '"COLUMN_KEY"',
+				'Default'    => '"COLUMN_DEFAULT"',
+				'Extra'      => '"EXTRA"',
+				'Privileges' => '"PRIVILEGES"',
+				'Comment'    => '"COLUMN_COMMENT"',
+			);
 			foreach ( $where_filter as $filter ) {
+				if ( ! isset( $filter_columns[ $filter['column'] ] ) ) {
+					throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
+				}
+
 				$sql     .= sprintf(
 					' AND %s',
 					$this->get_mysql_show_where_filter_condition_sql(
-						$this->get_show_columns_filter_column_expression( $filter['column'] ),
+						$filter_columns[ $filter['column'] ],
 						$filter
 					)
 				);
@@ -17608,9 +17623,14 @@ ORDER BY ordinal_position';
 
 		$rows = array();
 		foreach ( $columns as $column ) {
-			$row = array(
+			$type = preg_replace(
+				'/\s+DEFAULT\s+NULL\z/i',
+				'',
+				$this->get_direct_information_schema_create_column_type( $column )
+			);
+			$row  = array(
 				'Field'   => $column,
-				'Type'    => $this->get_direct_information_schema_show_column_type( $column ),
+				'Type'    => null === $type ? 'varchar(512)' : $type,
 				'Null'    => 'YES',
 				'Key'     => '',
 				'Default' => null,
@@ -17677,53 +17697,6 @@ ORDER BY ordinal_position';
 		}
 
 		return array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' );
-	}
-
-	/**
-	 * Get a SHOW COLUMNS type for an information_schema output column.
-	 *
-	 * @param string $column Uppercase information_schema column name.
-	 * @return string MySQL type.
-	 */
-	private function get_direct_information_schema_show_column_type( string $column ): string {
-		$type = preg_replace(
-			'/\s+DEFAULT\s+NULL\z/i',
-			'',
-			$this->get_direct_information_schema_create_column_type( $column )
-		);
-
-		return null === $type ? 'varchar(512)' : $type;
-	}
-
-	/**
-	 * Get the SQL expression that backs a MySQL SHOW COLUMNS output column.
-	 *
-	 * @param string $column MySQL output column name.
-	 * @return string SQL expression.
-	 */
-	private function get_show_columns_filter_column_expression( string $column ): string {
-		switch ( $column ) {
-			case 'Field':
-				return '"COLUMN_NAME"';
-			case 'Type':
-				return '"COLUMN_TYPE"';
-			case 'Collation':
-				return '"COLLATION_NAME"';
-			case 'Null':
-				return '"IS_NULLABLE"';
-			case 'Key':
-				return '"COLUMN_KEY"';
-			case 'Default':
-				return '"COLUMN_DEFAULT"';
-			case 'Extra':
-				return '"EXTRA"';
-			case 'Privileges':
-				return '"PRIVILEGES"';
-			case 'Comment':
-				return '"COLUMN_COMMENT"';
-		}
-
-		throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
 	}
 
 	/**
