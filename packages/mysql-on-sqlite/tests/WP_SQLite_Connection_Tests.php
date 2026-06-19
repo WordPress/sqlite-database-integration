@@ -104,17 +104,34 @@ class WP_SQLite_Connection_Tests extends TestCase {
 		$this->assertSame( '3', $this->get_synchronous( $connection ) );
 	}
 
-	public function testInvalidJournalModeAndSynchronousAreIgnored(): void {
-		$connection = new WP_SQLite_Connection(
+	public function testInvalidJournalModeThrows(): void {
+		$this->expectException( InvalidArgumentException::class );
+		new WP_SQLite_Connection(
 			array(
 				'path'         => $this->db_path,
 				'journal_mode' => 'INVALID',
-				'synchronous'  => 'INVALID',
 			)
 		);
+	}
 
-		$this->assertSame( 'delete', $this->get_journal_mode( $connection ) );
-		$this->assertSame( '2', $this->get_synchronous( $connection ) );
+	public function testInvalidSynchronousThrows(): void {
+		$this->expectException( InvalidArgumentException::class );
+		new WP_SQLite_Connection(
+			array(
+				'path'        => $this->db_path,
+				'synchronous' => 'INVALID',
+			)
+		);
+	}
+
+	public function testOutOfRangeIntegerSynchronousThrows(): void {
+		$this->expectException( InvalidArgumentException::class );
+		new WP_SQLite_Connection(
+			array(
+				'path'        => $this->db_path,
+				'synchronous' => 5,
+			)
+		);
 	}
 
 	public function testSynchronousAcceptsIntegerValues(): void {

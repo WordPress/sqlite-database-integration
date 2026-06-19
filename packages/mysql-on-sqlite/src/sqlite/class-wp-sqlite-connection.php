@@ -113,18 +113,21 @@ class WP_SQLite_Connection {
 		if ( is_string( $journal_mode ) ) {
 			$journal_mode = strtoupper( $journal_mode );
 		}
-		if ( $journal_mode && in_array( $journal_mode, self::SQLITE_JOURNAL_MODES, true ) ) {
-			try {
-				$effective_journal_mode = strtoupper(
-					(string) $this->query( 'PRAGMA journal_mode = ' . $journal_mode )->fetchColumn()
-				);
-			} catch ( PDOException $e ) {
-				// WAL may be unavailable in some environments, such as on network
-				// filesystems. When it is explicitly configured, surface the error.
-				// Otherwise, fall back to the default SQLite behavior.
-				if ( isset( $options['journal_mode'] ) ) {
-					throw $e;
-				}
+		if ( ! in_array( $journal_mode, self::SQLITE_JOURNAL_MODES, true ) ) {
+			throw new InvalidArgumentException(
+				sprintf( 'Invalid SQLite journal mode: %s.', $options['journal_mode'] )
+			);
+		}
+		try {
+			$effective_journal_mode = strtoupper(
+				(string) $this->query( 'PRAGMA journal_mode = ' . $journal_mode )->fetchColumn()
+			);
+		} catch ( PDOException $e ) {
+			// WAL may be unavailable in some environments, such as on network
+			// filesystems. When it is explicitly configured, surface the error.
+			// Otherwise, fall back to the default SQLite behavior.
+			if ( isset( $options['journal_mode'] ) ) {
+				throw $e;
 			}
 		}
 
@@ -154,6 +157,11 @@ class WP_SQLite_Connection {
 				$synchronous = self::SQLITE_SYNCHRONOUS_SETTINGS[ $synchronous ];
 			} elseif ( is_string( $synchronous ) ) {
 				$synchronous = strtoupper( $synchronous );
+			}
+			if ( ! in_array( $synchronous, self::SQLITE_SYNCHRONOUS_SETTINGS, true ) ) {
+				throw new InvalidArgumentException(
+					sprintf( 'Invalid SQLite synchronous setting: %s.', $options['synchronous'] )
+				);
 			}
 		} elseif ( 'WAL' === $effective_journal_mode ) {
 			// Default to NORMAL for WAL mode.
