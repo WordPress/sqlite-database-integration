@@ -18444,15 +18444,109 @@ ORDER BY table_name';
 	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes, array $foreign_keys, array $checks, string $table_comment = '', bool $temporary = false, ?string $table_collation = null ): string {
 		$definitions = array();
 		foreach ( $columns as $column ) {
-			$definitions[] = $this->get_mysql_create_table_column_definition_from_metadata( $column );
+			$extra = (string) ( $column['extra'] ?? '' );
+			$sql   = sprintf(
+				'  %s %s',
+				$this->quote_mysql_identifier( (string) $column['column_name'] ),
+				(string) $column['column_type']
+			);
+
+			if ( 'NO' === strtoupper( (string) $column['is_nullable'] ) ) {
+				$sql .= ' NOT NULL';
+			}
+
+			if ( false !== stripos( $extra, 'auto_increment' ) ) {
+				$sql .= ' AUTO_INCREMENT';
+			}
+
+			if ( null !== $column['column_default'] ) {
+				$default = (string) $column['column_default'];
+				if ( $this->is_mysql_current_timestamp_default_metadata( $default ) ) {
+					$sql .= ' DEFAULT ' . $default;
+				} elseif ( $this->mysql_column_extra_has_default_generated( $extra ) ) {
+					$sql .= ' DEFAULT (' . $default . ')';
+				} else {
+					$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( $default );
+				}
+			} elseif ( 'NO' !== strtoupper( (string) $column['is_nullable'] ) ) {
+				$sql .= ' DEFAULT NULL';
+			}
+
+			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $extra ) ) {
+				$sql .= ' ON UPDATE CURRENT_TIMESTAMP';
+			}
+
+			if ( '' !== (string) ( $column['column_comment'] ?? '' ) ) {
+				$sql .= ' COMMENT ' . $this->quote_mysql_utf8_string_literal( (string) $column['column_comment'] );
+			}
+
+			$definitions[] = $sql;
 		}
 
 		foreach ( $this->group_show_create_table_metadata_rows( $indexes, 'key_name' ) as $index ) {
-			$definitions[] = $this->get_mysql_create_table_index_definition_from_metadata( $index );
+			$first                = $index[0];
+			$key_part_definitions = array();
+			foreach ( $index as $column ) {
+				$definition = $this->quote_mysql_identifier( (string) $column['column_name'] );
+				if ( null !== $column['sub_part'] ) {
+					$definition .= sprintf( '(%d)', (int) $column['sub_part'] );
+				}
+				if ( 'D' === strtoupper( (string) ( $column['collation'] ?? '' ) ) ) {
+					$definition .= ' DESC';
+				}
+
+				$key_part_definitions[] = $definition;
+			}
+
+			if ( 'PRIMARY' === strtoupper( (string) $first['key_name'] ) ) {
+				$sql = sprintf(
+					'  PRIMARY KEY (%s)',
+					implode( ', ', $key_part_definitions )
+				);
+			} else {
+				$sql = sprintf(
+					'  %s%sKEY %s (%s)',
+					'0' === (string) $first['non_unique'] ? 'UNIQUE ' : '',
+					'BTREE' !== strtoupper( (string) $first['index_type'] ) ? strtoupper( (string) $first['index_type'] ) . ' ' : '',
+					$this->quote_mysql_identifier( (string) $first['key_name'] ),
+					implode( ', ', $key_part_definitions )
+				);
+			}
+
+			if ( '' !== (string) ( $first['index_comment'] ?? '' ) ) {
+				$sql .= ' COMMENT ' . $this->quote_mysql_utf8_string_literal( (string) $first['index_comment'] );
+			}
+
+			$definitions[] = $sql;
 		}
 
 		foreach ( $this->group_show_create_table_metadata_rows( $foreign_keys, 'constraint_name' ) as $foreign_key ) {
-			$definitions[] = $this->get_mysql_create_table_foreign_key_definition_from_metadata( $foreign_key );
+			$first              = $foreign_key[0];
+			$columns            = array();
+			$referenced_columns = array();
+
+			foreach ( $foreign_key as $column ) {
+				$columns[]            = $this->quote_mysql_identifier( (string) $column['column_name'] );
+				$referenced_columns[] = $this->quote_mysql_identifier( (string) $column['referenced_column_name'] );
+			}
+
+			$sql = sprintf(
+				'  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)',
+				$this->quote_mysql_identifier( (string) $first['constraint_name'] ),
+				implode( ', ', $columns ),
+				$this->quote_mysql_identifier( (string) $first['referenced_table_name'] ),
+				implode( ', ', $referenced_columns )
+			);
+
+			if ( 'NO ACTION' !== strtoupper( (string) $first['delete_rule'] ) ) {
+				$sql .= ' ON DELETE ' . strtoupper( (string) $first['delete_rule'] );
+			}
+
+			if ( 'NO ACTION' !== strtoupper( (string) $first['update_rule'] ) ) {
+				$sql .= ' ON UPDATE ' . strtoupper( (string) $first['update_rule'] );
+			}
+
+			$definitions[] = $sql;
 		}
 
 		foreach ( $checks as $check ) {
@@ -18509,52 +18603,6 @@ ORDER BY table_name';
 	}
 
 	/**
-	 * Build one MySQL column definition from stored metadata.
-	 *
-	 * @param array $column Column metadata row.
-	 * @return string Column definition SQL.
-	 */
-	private function get_mysql_create_table_column_definition_from_metadata( array $column ): string {
-		$extra = (string) ( $column['extra'] ?? '' );
-		$sql   = sprintf(
-			'  %s %s',
-			$this->quote_mysql_identifier( (string) $column['column_name'] ),
-			(string) $column['column_type']
-		);
-
-		if ( 'NO' === strtoupper( (string) $column['is_nullable'] ) ) {
-			$sql .= ' NOT NULL';
-		}
-
-		if ( false !== stripos( $extra, 'auto_increment' ) ) {
-			$sql .= ' AUTO_INCREMENT';
-		}
-
-		if ( null !== $column['column_default'] ) {
-			$default = (string) $column['column_default'];
-			if ( $this->is_mysql_current_timestamp_default_metadata( $default ) ) {
-				$sql .= ' DEFAULT ' . $default;
-			} elseif ( $this->mysql_column_extra_has_default_generated( $extra ) ) {
-				$sql .= ' DEFAULT (' . $default . ')';
-			} else {
-				$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( $default );
-			}
-		} elseif ( 'NO' !== strtoupper( (string) $column['is_nullable'] ) ) {
-			$sql .= ' DEFAULT NULL';
-		}
-
-		if ( $this->mysql_column_extra_has_on_update_current_timestamp( $extra ) ) {
-			$sql .= ' ON UPDATE CURRENT_TIMESTAMP';
-		}
-
-		if ( '' !== (string) ( $column['column_comment'] ?? '' ) ) {
-			$sql .= ' COMMENT ' . $this->quote_mysql_utf8_string_literal( (string) $column['column_comment'] );
-		}
-
-		return $sql;
-	}
-
-	/**
 	 * Check whether stored default metadata is a MySQL current timestamp expression.
 	 *
 	 * @param string $default_value Default metadata.
@@ -18583,94 +18631,6 @@ ORDER BY table_name';
 		}
 
 		return array_values( $grouped );
-	}
-
-	/**
-	 * Build one MySQL key definition from grouped stored metadata.
-	 *
-	 * @param array[] $index Grouped index metadata rows.
-	 * @return string Key definition SQL.
-	 */
-	private function get_mysql_create_table_index_definition_from_metadata( array $index ): string {
-		$first = $index[0];
-		if ( 'PRIMARY' === strtoupper( (string) $first['key_name'] ) ) {
-			$sql = sprintf(
-				'  PRIMARY KEY (%s)',
-				implode( ', ', $this->get_mysql_create_table_index_column_definitions( $index ) )
-			);
-		} else {
-			$sql = sprintf(
-				'  %s%sKEY %s (%s)',
-				'0' === (string) $first['non_unique'] ? 'UNIQUE ' : '',
-				'BTREE' !== strtoupper( (string) $first['index_type'] ) ? strtoupper( (string) $first['index_type'] ) . ' ' : '',
-				$this->quote_mysql_identifier( (string) $first['key_name'] ),
-				implode( ', ', $this->get_mysql_create_table_index_column_definitions( $index ) )
-			);
-		}
-
-		if ( '' !== (string) ( $first['index_comment'] ?? '' ) ) {
-			$sql .= ' COMMENT ' . $this->quote_mysql_utf8_string_literal( (string) $first['index_comment'] );
-		}
-
-		return $sql;
-	}
-
-	/**
-	 * Build quoted MySQL key part definitions from grouped index metadata rows.
-	 *
-	 * @param array[] $index Grouped index metadata rows.
-	 * @return string[] Key part definitions.
-	 */
-	private function get_mysql_create_table_index_column_definitions( array $index ): array {
-		$columns = array();
-		foreach ( $index as $column ) {
-			$definition = $this->quote_mysql_identifier( (string) $column['column_name'] );
-			if ( null !== $column['sub_part'] ) {
-				$definition .= sprintf( '(%d)', (int) $column['sub_part'] );
-			}
-			if ( 'D' === strtoupper( (string) ( $column['collation'] ?? '' ) ) ) {
-				$definition .= ' DESC';
-			}
-
-			$columns[] = $definition;
-		}
-
-		return $columns;
-	}
-
-	/**
-	 * Build one MySQL foreign key definition from grouped stored metadata.
-	 *
-	 * @param array[] $foreign_key Grouped foreign key metadata rows.
-	 * @return string Foreign key definition SQL.
-	 */
-	private function get_mysql_create_table_foreign_key_definition_from_metadata( array $foreign_key ): string {
-		$first              = $foreign_key[0];
-		$columns            = array();
-		$referenced_columns = array();
-
-		foreach ( $foreign_key as $column ) {
-			$columns[]            = $this->quote_mysql_identifier( (string) $column['column_name'] );
-			$referenced_columns[] = $this->quote_mysql_identifier( (string) $column['referenced_column_name'] );
-		}
-
-		$sql = sprintf(
-			'  CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)',
-			$this->quote_mysql_identifier( (string) $first['constraint_name'] ),
-			implode( ', ', $columns ),
-			$this->quote_mysql_identifier( (string) $first['referenced_table_name'] ),
-			implode( ', ', $referenced_columns )
-		);
-
-		if ( 'NO ACTION' !== strtoupper( (string) $first['delete_rule'] ) ) {
-			$sql .= ' ON DELETE ' . strtoupper( (string) $first['delete_rule'] );
-		}
-
-		if ( 'NO ACTION' !== strtoupper( (string) $first['update_rule'] ) ) {
-			$sql .= ' ON UPDATE ' . strtoupper( (string) $first['update_rule'] );
-		}
-
-		return $sql;
 	}
 
 	/**
