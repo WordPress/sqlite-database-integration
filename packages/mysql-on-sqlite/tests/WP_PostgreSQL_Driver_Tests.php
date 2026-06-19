@@ -33635,7 +33635,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_table_privileges_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'table_privileges' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33697,7 +33697,7 @@ $wp_mysql_on_update$',
 
 		$get_applicable_roles_sql = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_applicable_roles_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'applicable_roles' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33759,7 +33759,7 @@ $wp_mysql_on_update$',
 
 		$get_table_sql = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_role_table_grants_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'role_table_grants' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

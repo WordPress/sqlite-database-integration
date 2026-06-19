@@ -38129,6 +38129,24 @@ WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
 			);
 		}
 
+		if ( 'table_privileges' === $view ) {
+			return sprintf(
+				'SELECT
+	pg_catalog.quote_literal(tp.grantee) || \'@\'\'%%\'\'\' AS "GRANTEE",
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	tp.table_name AS "TABLE_NAME",
+	tp.privilege_type AS "PRIVILEGE_TYPE",
+	tp.is_grantable AS "IS_GRANTABLE"
+FROM information_schema.table_privileges tp
+WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(tp.table_schema, 3) <> \'pg_\'
+			AND tp.table_name NOT IN (%2$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'tp.table_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
 		if ( 'column_privileges' === $view ) {
 			return str_replace(
 				array(
@@ -38142,7 +38160,28 @@ WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
 					'information_schema.column_privileges cp',
 					'cp.',
 				),
-				$this->get_direct_information_schema_table_privileges_relation_sql()
+				$this->get_direct_information_schema_relation_sql( 'table_privileges' )
+			);
+		}
+
+		if ( 'role_table_grants' === $view ) {
+			return sprintf(
+				'SELECT
+	rtg.grantor AS "GRANTOR",
+	\'%%\' AS "GRANTOR_HOST",
+	rtg.grantee AS "GRANTEE",
+	\'%%\' AS "GRANTEE_HOST",
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	rtg.table_name AS "TABLE_NAME",
+	rtg.privilege_type AS "PRIVILEGE_TYPE",
+	rtg.is_grantable AS "IS_GRANTABLE"
+FROM information_schema.role_table_grants rtg
+WHERE rtg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(rtg.table_schema, 3) <> \'pg_\'
+	AND rtg.table_name NOT IN (%2$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'rtg.table_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
 			);
 		}
 
@@ -38159,7 +38198,7 @@ WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
 					'information_schema.role_column_grants rcg',
 					'rcg.',
 				),
-				$this->get_direct_information_schema_role_table_grants_relation_sql()
+				$this->get_direct_information_schema_relation_sql( 'role_table_grants' )
 			);
 		}
 
@@ -38186,11 +38225,25 @@ WHERE rrg.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 			);
 		}
 
+		if ( 'applicable_roles' === $view ) {
+			return 'SELECT
+	ar.grantee AS "USER",
+	\'%\' AS "HOST",
+	ar.grantee AS "GRANTEE",
+	\'%\' AS "GRANTEE_HOST",
+	ar.role_name AS "ROLE_NAME",
+	\'%\' AS "ROLE_HOST",
+	ar.is_grantable AS "IS_GRANTABLE",
+	\'NO\' AS "IS_DEFAULT",
+	\'NO\' AS "IS_MANDATORY"
+FROM information_schema.applicable_roles ar';
+		}
+
 		if ( 'administrable_role_authorizations' === $view ) {
 			return str_replace(
 				array( 'applicable_roles ar', 'ar.' ),
 				array( 'administrable_role_authorizations ara', 'ara.' ),
-				$this->get_direct_information_schema_applicable_roles_relation_sql()
+				$this->get_direct_information_schema_relation_sql( 'applicable_roles' )
 			);
 		}
 
@@ -39800,74 +39853,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 			$this->get_direct_information_schema_hidden_table_list_sql(),
 			$this->get_direct_information_schema_display_schema_sql( 't.table_schema' )
 		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.TABLE_PRIVILEGES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_table_privileges_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	pg_catalog.quote_literal(tp.grantee) || \'@\'\'%%\'\'\' AS "GRANTEE",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	tp.table_name AS "TABLE_NAME",
-	tp.privilege_type AS "PRIVILEGE_TYPE",
-	tp.is_grantable AS "IS_GRANTABLE"
-FROM information_schema.table_privileges tp
-WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(tp.table_schema, 3) <> \'pg_\'
-			AND tp.table_name NOT IN (%2$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'tp.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.ROLE_TABLE_GRANTS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_role_table_grants_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	rtg.grantor AS "GRANTOR",
-	\'%%\' AS "GRANTOR_HOST",
-	rtg.grantee AS "GRANTEE",
-	\'%%\' AS "GRANTEE_HOST",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	rtg.table_name AS "TABLE_NAME",
-	rtg.privilege_type AS "PRIVILEGE_TYPE",
-	rtg.is_grantable AS "IS_GRANTABLE"
-FROM information_schema.role_table_grants rtg
-WHERE rtg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(rtg.table_schema, 3) <> \'pg_\'
-	AND rtg.table_name NOT IN (%2$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'rtg.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.APPLICABLE_ROLES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_applicable_roles_relation_sql(): string {
-		return 'SELECT
-	ar.grantee AS "USER",
-	\'%\' AS "HOST",
-	ar.grantee AS "GRANTEE",
-	\'%\' AS "GRANTEE_HOST",
-	ar.role_name AS "ROLE_NAME",
-	\'%\' AS "ROLE_HOST",
-	ar.is_grantable AS "IS_GRANTABLE",
-	\'NO\' AS "IS_DEFAULT",
-	\'NO\' AS "IS_MANDATORY"
-FROM information_schema.applicable_roles ar';
 	}
 
 	/**
