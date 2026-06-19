@@ -712,7 +712,15 @@ class WP_PostgreSQL_Driver {
 
 		$savepoint_query = $this->get_mysql_savepoint_query( $query );
 		if ( null !== $savepoint_query ) {
-			return $this->execute_mysql_savepoint_query( $savepoint_query );
+			$this->connection->query( $savepoint_query );
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $savepoint_query,
+				'params' => array(),
+			);
+			$this->last_result               = 0;
+			$this->clear_last_column_meta();
+
+			return $this->last_result;
 		}
 
 		$procedure_result = $this->handle_mysql_procedure_query( $query, $fetch_mode, ...$fetch_mode_args );
@@ -3477,24 +3485,6 @@ class WP_PostgreSQL_Driver {
 		);
 		$this->last_result               = 0;
 		$this->last_column_meta          = array();
-		return $this->last_result;
-	}
-
-	/**
-	 * Execute a public MySQL savepoint statement.
-	 *
-	 * @param string $statement Canonical PostgreSQL savepoint statement.
-	 * @return int Number of affected rows.
-	 */
-	private function execute_mysql_savepoint_query( string $statement ): int {
-		$this->connection->query( $statement );
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $statement,
-			'params' => array(),
-		);
-		$this->last_result               = 0;
-		$this->clear_last_column_meta();
-
 		return $this->last_result;
 	}
 
