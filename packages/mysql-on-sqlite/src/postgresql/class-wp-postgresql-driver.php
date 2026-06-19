@@ -35687,7 +35687,15 @@ WHERE "TABLE_SCHEMA" = %3$s
 			return null;
 		}
 
-		if ( ! $this->direct_information_schema_sources_include_information_schema_relation( $sources ) ) {
+		$has_information_schema_source = false;
+		foreach ( $sources as $source ) {
+			if ( isset( $source['view'] ) || isset( $source['relation_sql'] ) ) {
+				$has_information_schema_source = true;
+				break;
+			}
+		}
+
+		if ( ! $has_information_schema_source ) {
 			return null;
 		}
 
@@ -36671,22 +36679,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 	}
 
 	/**
-	 * Check whether parsed sources include at least one information_schema relation.
-	 *
-	 * @param array[] $sources Parsed direct information_schema sources.
-	 * @return bool Whether at least one source is a catalog source.
-	 */
-	private function direct_information_schema_sources_include_information_schema_relation( array $sources ): bool {
-		foreach ( $sources as $source ) {
-			if ( isset( $source['view'] ) || isset( $source['relation_sql'] ) ) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	/**
 	 * Check whether a FROM source range directly names information_schema.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -36718,11 +36710,16 @@ WHERE "TABLE_SCHEMA" = %3$s
 	private function direct_information_schema_sources_are_joinable( array $sources ): bool {
 		$has_information_schema_source = false;
 		$main_table_count              = 0;
+		$non_join_relations            = explode( ' ', 'collation_character_set_applicability column_statistics columns_extensions files innodb_datafiles innodb_lock_waits innodb_tablespaces innodb_tablespaces_brief keywords optimizer_trace partitions profiling resource_groups schemata_extensions st_geometry_columns table_constraints_extensions tablespaces_extensions user_attributes view_routine_usage view_table_usage' );
 
 		foreach ( $sources as $source ) {
 			if (
 				isset( $source['relation_sql'] )
-				|| ( isset( $source['view'] ) && $this->is_direct_information_schema_join_relation( $source['view'] ) )
+				|| (
+					isset( $source['view'] )
+					&& null !== $this->get_direct_information_schema_relation_columns( strtolower( $source['view'] ) )
+					&& ! in_array( strtolower( $source['view'] ), $non_join_relations, true )
+				)
 			) {
 				$has_information_schema_source = true;
 				continue;
@@ -36744,18 +36741,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 		}
 
 		return $has_information_schema_source;
-	}
-
-	/**
-	 * Check whether a relation is allowed in multi-source direct information_schema rewrites.
-	 *
-	 * @param string $view Information schema view name.
-	 * @return bool Whether the view may be used in a JOIN rewrite.
-	 */
-	private function is_direct_information_schema_join_relation( string $view ): bool {
-		$view               = strtolower( $view );
-		$non_join_relations = explode( ' ', 'collation_character_set_applicability column_statistics columns_extensions files innodb_datafiles innodb_lock_waits innodb_tablespaces innodb_tablespaces_brief keywords optimizer_trace partitions profiling resource_groups schemata_extensions st_geometry_columns table_constraints_extensions tablespaces_extensions user_attributes view_routine_usage view_table_usage' );
-		return null !== $this->get_direct_information_schema_relation_columns( $view ) && ! in_array( $view, $non_join_relations, true );
 	}
 
 	/**
