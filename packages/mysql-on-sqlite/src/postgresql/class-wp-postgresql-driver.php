@@ -40767,7 +40767,7 @@ END',
 			$column_comment_type_case,
 			$enum_data_type_case,
 			$set_data_type_case,
-			$include_domain_cases ? $this->get_postgresql_mysql_domain_data_type_cases( $alias ) : ''
+			$include_domain_cases ? $this->get_postgresql_mysql_domain_type_cases( $alias, false ) : ''
 		);
 	}
 
@@ -40861,7 +40861,7 @@ END',
 			$column_comment_type_case,
 			$enum_column_type_case,
 			$set_column_type_case,
-			$include_helper_type_cases ? $this->get_postgresql_mysql_domain_column_type_cases( $catalog_alias ) : ''
+			$include_helper_type_cases ? $this->get_postgresql_mysql_domain_type_cases( $catalog_alias, true ) : ''
 		);
 	}
 
@@ -40879,104 +40879,20 @@ END',
 	}
 
 	/**
-	 * Get CASE branches mapping PostgreSQL domains back to MySQL data types.
-	 *
-	 * @param string $catalog_alias Catalog column table alias.
-	 * @return string SQL CASE branches.
-	 */
-	private function get_postgresql_mysql_domain_data_type_cases( string $catalog_alias ): string {
-		$cases = array();
-		foreach ( self::MYSQL_TEXT_DOMAIN_TYPES as $domain_name => $mysql_type ) {
-			$cases[] = sprintf(
-				'WHEN %s.domain_name = %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name ),
-				$this->connection->quote( $this->get_base_mysql_dml_column_type( $mysql_type ) )
-			);
-		}
-		foreach ( array_keys( self::MYSQL_INTEGER_DOMAIN_BASE_TYPES ) as $type ) {
-			$domain_name = '__wp_mysql_' . $type;
-			$cases[]     = sprintf(
-				'WHEN %s.domain_name = %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name ),
-				$this->connection->quote( $type )
-			);
-			$cases[]     = sprintf(
-				'WHEN %s.domain_name = %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name . '_unsigned' ),
-				$this->connection->quote( $type )
-			);
-			$cases[]     = sprintf(
-				'WHEN %s.domain_name LIKE %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name . '_%_unsigned' ),
-				$this->connection->quote( $type )
-			);
-			$cases[]     = sprintf(
-				'WHEN %s.domain_name LIKE %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name . '_%' ),
-				$this->connection->quote( $type )
-			);
-		}
-		foreach ( self::MYSQL_BINARY_DOMAIN_TYPES as $domain_name => $mysql_type ) {
-			$cases[] = sprintf(
-				'WHEN %s.domain_name = %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name ),
-				$this->connection->quote( $mysql_type )
-			);
-		}
-		foreach ( array( 'binary', 'varbinary' ) as $type ) {
-			$domain_name = '__wp_mysql_' . $type;
-			$cases[]     = sprintf(
-				'WHEN %s.domain_name = %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name ),
-				$this->connection->quote( $type )
-			);
-			$cases[]     = sprintf(
-				'WHEN %s.domain_name LIKE %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name . '_%' ),
-				$this->connection->quote( $type )
-			);
-		}
-		foreach ( array( 'dec', 'fixed', 'float', 'double', 'real', 'numeric' ) as $type ) {
-			$domain_name = '__wp_mysql_' . $type;
-			$cases[]     = sprintf(
-				'WHEN %s.domain_name = %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name ),
-				$this->connection->quote( $type )
-			);
-			$cases[]     = sprintf(
-				'WHEN %s.domain_name LIKE %s THEN %s',
-				$catalog_alias,
-				$this->connection->quote( $domain_name . '_%' ),
-				$this->connection->quote( $type )
-			);
-		}
-
-		return implode( "\n\t", $cases );
-	}
-
-	/**
 	 * Get CASE branches mapping PostgreSQL domains back to MySQL types.
 	 *
-	 * @param string $catalog_alias Catalog column table alias.
+	 * @param string $catalog_alias       Catalog column table alias.
+	 * @param bool   $include_type_length Whether COLUMN_TYPE should preserve encoded length/unsigned metadata.
 	 * @return string SQL CASE branches.
 	 */
-	private function get_postgresql_mysql_domain_column_type_cases( string $catalog_alias ): string {
+	private function get_postgresql_mysql_domain_type_cases( string $catalog_alias, bool $include_type_length ): string {
 		$cases = array();
 		foreach ( self::MYSQL_TEXT_DOMAIN_TYPES as $domain_name => $mysql_type ) {
 			$cases[] = sprintf(
 				'WHEN %s.domain_name = %s THEN %s',
 				$catalog_alias,
 				$this->connection->quote( $domain_name ),
-				$this->connection->quote( $mysql_type )
+				$this->connection->quote( $include_type_length ? $mysql_type : $this->get_base_mysql_dml_column_type( $mysql_type ) )
 			);
 		}
 		foreach ( self::MYSQL_BINARY_DOMAIN_TYPES as $domain_name => $mysql_type ) {
@@ -40996,7 +40912,9 @@ END',
 				$this->connection->quote( $type )
 			);
 			$cases[]     = sprintf(
-				'WHEN %1$s.domain_name LIKE %2$s THEN %3$s || \'(\' || SUBSTR(%1$s.domain_name, %4$d) || \')\'',
+				$include_type_length
+					? 'WHEN %1$s.domain_name LIKE %2$s THEN %3$s || \'(\' || SUBSTR(%1$s.domain_name, %4$d) || \')\''
+					: 'WHEN %1$s.domain_name LIKE %2$s THEN %3$s',
 				$catalog_alias,
 				$this->connection->quote( $domain_name . '_%' ),
 				$this->connection->quote( $type ),
@@ -41015,10 +40933,12 @@ END',
 				'WHEN %s.domain_name = %s THEN %s',
 				$catalog_alias,
 				$this->connection->quote( $domain_name . '_unsigned' ),
-				$this->connection->quote( $type . ' unsigned' )
+				$this->connection->quote( $include_type_length ? $type . ' unsigned' : $type )
 			);
 			$cases[]     = sprintf(
-				'WHEN %1$s.domain_name LIKE %2$s THEN %3$s || \'(\' || SUBSTR(%1$s.domain_name, %4$d, LENGTH(%1$s.domain_name) - %5$d) || \') unsigned\'',
+				$include_type_length
+					? 'WHEN %1$s.domain_name LIKE %2$s THEN %3$s || \'(\' || SUBSTR(%1$s.domain_name, %4$d, LENGTH(%1$s.domain_name) - %5$d) || \') unsigned\''
+					: 'WHEN %1$s.domain_name LIKE %2$s THEN %3$s',
 				$catalog_alias,
 				$this->connection->quote( $domain_name . '_%_unsigned' ),
 				$this->connection->quote( $type ),
@@ -41026,7 +40946,9 @@ END',
 				strlen( $domain_name ) + 10
 			);
 			$cases[]     = sprintf(
-				'WHEN %1$s.domain_name LIKE %2$s THEN %3$s || \'(\' || SUBSTR(%1$s.domain_name, %4$d) || \')\'',
+				$include_type_length
+					? 'WHEN %1$s.domain_name LIKE %2$s THEN %3$s || \'(\' || SUBSTR(%1$s.domain_name, %4$d) || \')\''
+					: 'WHEN %1$s.domain_name LIKE %2$s THEN %3$s',
 				$catalog_alias,
 				$this->connection->quote( $domain_name . '_%' ),
 				$this->connection->quote( $type ),
@@ -41042,7 +40964,9 @@ END',
 				$this->connection->quote( $type )
 			);
 			$cases[]     = sprintf(
-				'WHEN %1$s.domain_name LIKE %2$s THEN %3$s || \'(\' || REPLACE(SUBSTR(%1$s.domain_name, %4$d), \'_\', \',\') || \')\'',
+				$include_type_length
+					? 'WHEN %1$s.domain_name LIKE %2$s THEN %3$s || \'(\' || REPLACE(SUBSTR(%1$s.domain_name, %4$d), \'_\', \',\') || \')\''
+					: 'WHEN %1$s.domain_name LIKE %2$s THEN %3$s',
 				$catalog_alias,
 				$this->connection->quote( $domain_name . '_%' ),
 				$this->connection->quote( $type ),
