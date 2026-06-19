@@ -5306,17 +5306,10 @@ $wp_mysql_on_update$',
 
 			$this->ensure_mysql_schema_metadata_tables();
 
-			$old_extra    = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
-			$ordinal_stmt = $this->connection->query(
-				sprintf(
-					'SELECT ordinal_position FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-				),
-				array( $table_schema, $table_name, $metadata['old_column'] )
-			);
-			$ordinal      = $ordinal_stmt->fetchColumn();
+			$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
+			$ordinal   = $this->get_mysql_column_ordinal_metadata( $table_schema, $table_name, $metadata['old_column'] );
 
-			$column['ordinal'] = false === $ordinal
+			$column['ordinal'] = null === $ordinal
 				? $this->get_next_mysql_column_ordinal( $table_schema, $table_name )
 				: (int) $ordinal;
 
@@ -6438,13 +6431,14 @@ $wp_mysql_primary_index_comment$',
 				FROM pg_catalog.pg_constraint con
 				INNER JOIN pg_catalog.pg_class t
 					ON t.oid = con.conrelid
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				WHERE n.nspname = ?
-					AND t.relname = ?
-					AND con.contype = \'c\'
-					AND LOWER(con.conname) = LOWER(?)
-				LIMIT 1',
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					WHERE n.nspname = ?
+						AND t.relname = ?
+						AND t.relkind IN (\'r\', \'p\')
+						AND con.contype = \'c\'
+						AND LOWER(con.conname) = LOWER(?)
+					LIMIT 1',
 						$check_clause_sql,
 						$enforced_sql
 					),
@@ -6814,41 +6808,20 @@ $wp_mysql_primary_index_comment$',
 	 * @return string Generated CHECK constraint name.
 	 */
 	private function get_next_mysql_check_constraint_name( string $table_schema, string $table_name, array $reserved = array() ): string {
-		$prefix = $table_name . '_chk_';
-		$max    = 0;
-
-		try {
-			$stmt = $this->connection->query(
-				"SELECT constraint_name
-				FROM information_schema.table_constraints
-				WHERE table_schema = ?
-					AND table_name = ?
-					AND constraint_type = 'CHECK'",
-				array( $table_schema, $table_name )
-			);
-
-			foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $constraint_name ) {
-				if ( 1 === preg_match( '/^' . preg_quote( $prefix, '/' ) . '([1-9][0-9]*)$/', (string) $constraint_name, $matches ) ) {
-					$max = max( $max, (int) $matches[1] );
-				}
-			}
-		} catch ( PDOException $e ) {
-			// Test fixtures and SQLite-backed connections may not expose PostgreSQL catalogs.
-		}
+		$constraint_names = $reserved;
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			foreach ( $reserved as $constraint_name ) {
-				if ( 1 === preg_match( '/^' . preg_quote( $prefix, '/' ) . '([1-9][0-9]*)$/', (string) $constraint_name, $matches ) ) {
-					$max = max( $max, (int) $matches[1] );
-				}
-			}
+			$constraint_names = array_merge(
+				$constraint_names,
+				$this->get_postgresql_catalog_check_constraint_names( $table_schema, $table_name )
+			);
 
-			return $prefix . ( $max + 1 );
+			return $this->get_next_mysql_check_constraint_name_from_names( $table_name, $constraint_names );
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
 		try {
-			$stmt = $this->connection->query(
+			$stmt             = $this->connection->query(
 				sprintf(
 					'SELECT constraint_name
 						FROM %s
@@ -6858,17 +6831,55 @@ $wp_mysql_primary_index_comment$',
 				),
 				array( $table_schema, $table_name )
 			);
-
-			foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $constraint_name ) {
-				if ( 1 === preg_match( '/^' . preg_quote( $prefix, '/' ) . '([1-9][0-9]*)$/', (string) $constraint_name, $matches ) ) {
-					$max = max( $max, (int) $matches[1] );
-				}
-			}
+			$constraint_names = array_merge( $constraint_names, $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
 		} catch ( PDOException $e ) {
 			// Test fixtures and SQLite-backed connections may not expose metadata side tables yet.
 		}
 
-		foreach ( $reserved as $constraint_name ) {
+		return $this->get_next_mysql_check_constraint_name_from_names( $table_name, $constraint_names );
+	}
+
+	/**
+	 * Get PostgreSQL catalog CHECK constraint names for a table.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return string[] CHECK constraint names.
+	 */
+	private function get_postgresql_catalog_check_constraint_names( string $table_schema, string $table_name ): array {
+		try {
+			$stmt = $this->connection->query(
+				'SELECT con.conname
+					FROM pg_catalog.pg_constraint con
+					INNER JOIN pg_catalog.pg_class t
+						ON t.oid = con.conrelid
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					WHERE n.nspname = ?
+						AND t.relname = ?
+						AND t.relkind IN (\'r\', \'p\')
+						AND con.contype = \'c\'',
+				array( $table_schema, $table_name )
+			);
+
+			return array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
+		} catch ( PDOException $e ) {
+			return array();
+		}
+	}
+
+	/**
+	 * Generate the next MySQL-compatible CHECK constraint name from existing names.
+	 *
+	 * @param string   $table_name       Table name.
+	 * @param string[] $constraint_names Existing/reserved constraint names.
+	 * @return string Generated CHECK constraint name.
+	 */
+	private function get_next_mysql_check_constraint_name_from_names( string $table_name, array $constraint_names ): string {
+		$prefix = $table_name . '_chk_';
+		$max    = 0;
+
+		foreach ( $constraint_names as $constraint_name ) {
 			if ( 1 === preg_match( '/^' . preg_quote( $prefix, '/' ) . '([1-9][0-9]*)$/', (string) $constraint_name, $matches ) ) {
 				$max = max( $max, (int) $matches[1] );
 			}
@@ -6915,7 +6926,17 @@ $wp_mysql_primary_index_comment$',
 	 * @return int Next ordinal.
 	 */
 	private function get_next_mysql_column_ordinal( string $table_schema, string $table_name ): int {
-		$this->assert_mysql_schema_side_metadata_allowed();
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$stmt = $this->connection->query(
+				'SELECT COALESCE(MAX(c.ordinal_position), 0) + 1
+				FROM information_schema.columns c
+				WHERE c.table_schema = ?
+					AND c.table_name = ?',
+				array( $table_schema, $table_name )
+			);
+
+			return (int) $stmt->fetchColumn();
+		}
 
 		$stmt = $this->connection->query(
 			sprintf(
@@ -6926,6 +6947,43 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		return (int) $stmt->fetchColumn();
+	}
+
+	/**
+	 * Get stored MySQL ordinal metadata for a table column.
+	 *
+	 * @param string $table_schema Table schema.
+	 * @param string $table_name   Table name.
+	 * @param string $column_name  Column name.
+	 * @return int|null Column ordinal, or null when unavailable.
+	 */
+	private function get_mysql_column_ordinal_metadata( string $table_schema, string $table_name, string $column_name ): ?int {
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$stmt = $this->connection->query(
+				'SELECT c.ordinal_position
+				FROM information_schema.columns c
+				WHERE c.table_schema = ?
+					AND c.table_name = ?
+					AND LOWER(c.column_name) = LOWER(?)
+				ORDER BY c.ordinal_position
+				LIMIT 2',
+				array( $table_schema, $table_name, $column_name )
+			);
+
+			$ordinals = $stmt->fetchAll( PDO::FETCH_COLUMN );
+			return 1 === count( $ordinals ) ? (int) $ordinals[0] : null;
+		}
+
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT ordinal_position FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $column_name )
+		);
+
+		$ordinal = $stmt->fetchColumn();
+		return false === $ordinal ? null : (int) $ordinal;
 	}
 
 	/**
@@ -11965,25 +12023,27 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_existing_dbdelta_column_identity_metadata( string $table_schema, string $table_name, string $column_name ): ?array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
+			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+			$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
 				'c',
-				$this->get_postgresql_identity_sequence_comment_sql( 'c' )
+				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+				$column_comment_sql
 			);
+			$extra              = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );
 
 			try {
 				$stmt = $this->connection->query(
-					sprintf(
-						'SELECT
-							c.data_type,
+					$this->get_postgresql_catalog_column_metadata_sql(
+						sprintf(
+							'c.data_type,
 							c.is_identity,
 							c.column_default,
-							%s AS mysql_column_type,
-							NULL AS mysql_extra
-						FROM information_schema.columns c
-						WHERE c.table_schema = ?
-							AND c.table_name = ?
-							AND c.column_name = ?',
-						$column_type
+							%1$s AS mysql_column_type,
+							%2$s AS mysql_extra',
+							$column_type,
+							$extra
+						),
+						true
 					),
 					array( $table_schema, $table_name, $column_name )
 				);
@@ -11991,8 +12051,8 @@ $wp_mysql_primary_index_comment$',
 				return null;
 			}
 
-			$row = $stmt->fetch( PDO::FETCH_ASSOC );
-			return false === $row ? null : $row;
+			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			return 1 === count( $rows ) ? $rows[0] : null;
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();

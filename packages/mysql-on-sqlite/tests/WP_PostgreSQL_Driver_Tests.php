@@ -5342,14 +5342,27 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						'params' => $params,
 					);
 
-					return parent::query(
-						'positive_score' === (string) ( $params[2] ?? '' )
-							? "SELECT 'positive_score' AS constraint_name, 'score > 0' AS check_clause, 'YES' AS enforced"
-							: 'SELECT NULL AS constraint_name WHERE 0 = 1'
-					);
+					$constraint_name = (string) ( $params[2] ?? '' );
+					if ( in_array( $constraint_name, array( 'positive_score', 'bounded_score' ), true ) ) {
+						return parent::query(
+							'SELECT ? AS constraint_name, ? AS check_clause, ? AS enforced',
+							array( $constraint_name, 'score > 0', 'YES' )
+						);
+					}
+
+					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
 				}
 
-				if ( 'ALTER TABLE "catalog_drop_check" DROP CONSTRAINT "positive_score"' === $sql ) {
+				if (
+					in_array(
+						$sql,
+						array(
+							'ALTER TABLE "catalog_drop_check" DROP CONSTRAINT "positive_score"',
+							'ALTER TABLE "catalog_drop_constraint" DROP CONSTRAINT "bounded_score"',
+						),
+						true
+					)
+				) {
 					return parent::query( 'SELECT 1' );
 				}
 
@@ -5377,6 +5390,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 
 		$pdo->exec( 'CREATE TABLE catalog_drop_check (score INTEGER)' );
+		$pdo->exec( 'CREATE TABLE catalog_drop_constraint (score INTEGER)' );
 
 		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_drop_check DROP CHECK positive_score' ) );
 		$this->assertSame(
@@ -5388,9 +5402,25 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			),
 			$driver->get_last_postgresql_queries()
 		);
+		$this->assertCount( 1, $connection->get_check_catalog_queries() );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $connection->get_check_catalog_queries()[0]['sql'] );
+		$this->assertStringContainsString( "con.contype = 'c'", $connection->get_check_catalog_queries()[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)', $connection->get_check_catalog_queries()[0]['sql'] );
+		$this->assertStringContainsString( "pg_catalog.obj_description(con.oid, 'pg_constraint')", $connection->get_check_catalog_queries()[0]['sql'] );
 
-			$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
-			$this->assertNotEmpty( $connection->get_check_catalog_queries() );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE catalog_drop_constraint DROP CONSTRAINT bounded_score' ) );
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_drop_constraint" DROP CONSTRAINT "bounded_score"',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
+		$this->assertCount( 2, $connection->get_check_catalog_queries() );
 		$this->assertSame(
 			array(),
 			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
@@ -5445,12 +5475,16 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				}
 
 				if ( false !== strpos( $sql, 'information_schema.table_constraints' ) && false !== strpos( $sql, "constraint_type = 'CHECK'" ) ) {
+					throw new RuntimeException( 'information_schema CHECK constraint reads were not expected for catalog-backed ADD CHECK.' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_constraint con' ) && false !== strpos( $sql, "con.contype = 'c'" ) ) {
 					$this->check_name_catalog_queries[] = array(
 						'sql'    => $sql,
 						'params' => $params,
 					);
 
-					return parent::query( "SELECT 'catalog_add_check_chk_2' AS constraint_name" );
+					return parent::query( "SELECT 'catalog_add_check_chk_2' AS conname" );
 				}
 
 				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
@@ -5507,6 +5541,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		);
 
 		$this->assertCount( 1, $connection->get_check_name_catalog_queries() );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $connection->get_check_name_catalog_queries()[0]['sql'] );
+		$this->assertStringContainsString( "con.contype = 'c'", $connection->get_check_name_catalog_queries()[0]['sql'] );
+		$this->assertStringContainsString( "t.relkind IN ('r', 'p')", $connection->get_check_name_catalog_queries()[0]['sql'] );
 		$this->assertCount( 0, $connection->get_metadata_table_catalog_checks() );
 		$this->assertSame(
 			array(),
@@ -21159,7 +21196,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 							\'YES\' AS is_identity,
 							NULL AS column_default,
 							\'bigint unsigned\' AS mysql_column_type,
-							NULL AS mysql_extra'
+							\'auto_increment\' AS mysql_extra'
 					);
 				}
 
@@ -21193,10 +21230,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'bigint', $row['data_type'] );
 		$this->assertSame( 'YES', $row['is_identity'] );
 		$this->assertSame( 'bigint unsigned', $row['mysql_column_type'] );
+		$this->assertSame( 'auto_increment', $row['mysql_extra'] );
 		$catalog_queries = $connection->get_catalog_queries();
 		$this->assertCount( 1, $catalog_queries );
 		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(pg_catalog.pg_get_serial_sequence', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'AS mysql_extra', $catalog_queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'catalog_identity', 'legacy_id' ), $catalog_queries[0]['params'] );
 	}
 
@@ -21277,6 +21317,101 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(pg_catalog.pg_get_serial_sequence', $catalog_queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'catalog_identity', 'missing_id' ), $catalog_queries[0]['params'] );
+	}
+
+	/**
+	 * Tests column ordinal helpers use PostgreSQL catalogs without hidden metadata tables.
+	 */
+	public function test_column_ordinal_helpers_use_postgresql_catalog_for_pgsql_connections(): void {
+		$pdo         = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection  = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog ordinal queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed column ordinal catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden column metadata table access was not expected for catalog-backed column ordinals.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( false !== strpos( $sql, 'MAX(c.ordinal_position)' ) ) {
+						return parent::query( 'SELECT 4 AS next_ordinal' );
+					}
+
+					if ( false !== strpos( $sql, 'SELECT c.ordinal_position' ) ) {
+						return parent::query( 'SELECT 2 AS ordinal_position' );
+					}
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog ordinal queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver      = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_results = Closure::bind(
+			function (): array {
+				return array(
+					'next'     => $this->get_next_mysql_column_ordinal( 'public', 'catalog_ordinals' ),
+					'existing' => $this->get_mysql_column_ordinal_metadata( 'public', 'catalog_ordinals', 'slug' ),
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$this->assertSame(
+			array(
+				'next'     => 4,
+				'existing' => 2,
+			),
+			$get_results()
+		);
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 2, $catalog_queries );
+		$this->assertStringContainsString( 'MAX(c.ordinal_position)', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'SELECT c.ordinal_position', $catalog_queries[1]['sql'] );
+		$this->assertSame( array( 'public', 'catalog_ordinals' ), $catalog_queries[0]['params'] );
+		$this->assertSame( array( 'public', 'catalog_ordinals', 'slug' ), $catalog_queries[1]['params'] );
 	}
 
 	/**
@@ -21501,9 +21636,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			},
 			'rename_mysql_index_column_metadata'           => function (): void {
 				$this->rename_mysql_index_column_metadata( 'public', 'catalog_side_table', 'old_id', 'id' );
-			},
-			'get_next_mysql_column_ordinal'                => function (): void {
-				$this->get_next_mysql_column_ordinal( 'public', 'catalog_side_table' );
 			},
 			'get_next_mysql_index_ordinal'                 => function (): void {
 				$this->get_next_mysql_index_ordinal( 'public', 'catalog_side_table' );
@@ -22520,7 +22652,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				}
 
 				if ( false !== strpos( $sql, 'FROM information_schema.table_constraints' ) && false !== strpos( $sql, "constraint_type = 'CHECK'" ) ) {
-					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+					throw new RuntimeException( 'information_schema CHECK constraint reads were not expected for catalog-backed ADD COLUMN inline CHECK.' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_constraint con' ) && false !== strpos( $sql, "con.contype = 'c'" ) ) {
+					return parent::query( 'SELECT NULL AS conname WHERE 0 = 1' );
 				}
 
 				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
