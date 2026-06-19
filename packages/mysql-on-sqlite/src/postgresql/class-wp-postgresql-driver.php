@@ -24816,40 +24816,14 @@ WHERE option_name IN (
 			}
 		}
 
-		if ( null === $column_metadata ) {
-			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
-		}
-		foreach ( $value_rows as $row_index => &$values ) {
-			$value_ranges = $value_range_rows[ $row_index ] ?? array();
-			$this->validate_strict_mysql_dml_values_for_columns(
-				$columns,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_mysql_auto_increment_zero_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_strict_mysql_dml_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_non_strict_mysql_dml_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-		}
-		unset( $values );
+		$column_metadata = $this->normalize_mysql_dml_value_rows_for_columns(
+			$table_name,
+			$columns,
+			$value_rows,
+			$value_range_rows,
+			$tokens,
+			$column_metadata
+		);
 
 			$table_column_lookup          = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 			$conflict_target              = $this->get_mysql_upsert_conflict_target(
@@ -26773,40 +26747,14 @@ WHERE option_name IN (
 			}
 		}
 
-		if ( null === $column_metadata ) {
-			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
-		}
-		foreach ( $value_rows as $row_index => &$values ) {
-			$value_ranges = $value_range_rows[ $row_index ] ?? array();
-			$this->validate_strict_mysql_dml_values_for_columns(
-				$columns,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_mysql_auto_increment_zero_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_strict_mysql_dml_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_non_strict_mysql_dml_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-		}
-		unset( $values );
+		$column_metadata = $this->normalize_mysql_dml_value_rows_for_columns(
+			$table_name,
+			$columns,
+			$value_rows,
+			$value_range_rows,
+			$tokens,
+			$column_metadata
+		);
 		$this->append_non_strict_dml_defaults_for_omitted_value_rows( $table_name, $columns, $value_rows, $column_metadata );
 
 		$value_sql_rows = array();
@@ -28606,40 +28554,14 @@ WHERE option_name IN (
 			}
 		}
 
-		if ( null === $column_metadata ) {
-			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
-		}
-		foreach ( $value_rows as $row_index => &$values ) {
-			$value_ranges = $value_range_rows[ $row_index ] ?? array();
-			$this->validate_strict_mysql_dml_values_for_columns(
-				$columns,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_mysql_auto_increment_zero_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_strict_mysql_dml_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-			$this->normalize_non_strict_mysql_dml_values_for_columns(
-				$columns,
-				$values,
-				$value_ranges,
-				$tokens,
-				$column_metadata
-			);
-		}
-		unset( $values );
+		$column_metadata = $this->normalize_mysql_dml_value_rows_for_columns(
+			$table_name,
+			$columns,
+			$value_rows,
+			$value_range_rows,
+			$tokens,
+			$column_metadata
+		);
 		$this->append_non_strict_dml_defaults_for_omitted_value_rows( $table_name, $columns, $value_rows, $column_metadata );
 
 		$sql_value_rows = array();
@@ -32694,6 +32616,57 @@ WHERE option_name IN (
 			'column' => $first_identifier,
 			'end'    => $position + 1,
 		);
+	}
+
+	/**
+	 * Normalize translated DML VALUES rows against MySQL column metadata.
+	 *
+	 * @param string            $table_name       Target table name.
+	 * @param string[]          $columns          DML columns.
+	 * @param array<int,array>  $value_rows       Translated DML value rows, mutated when needed.
+	 * @param array<int,array>  $value_range_rows Original token ranges for each row.
+	 * @param WP_MySQL_Token[]  $tokens           MySQL lexer token stream.
+	 * @param array[]|null      $column_metadata  Ordered column metadata rows, or null to load them.
+	 * @return array[] Ordered column metadata rows.
+	 */
+	private function normalize_mysql_dml_value_rows_for_columns( string $table_name, array $columns, array &$value_rows, array $value_range_rows, array $tokens, ?array $column_metadata ): array {
+		if ( null === $column_metadata ) {
+			$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
+		}
+
+		foreach ( $value_rows as $row_index => &$values ) {
+			$value_ranges = $value_range_rows[ $row_index ] ?? array();
+			$this->validate_strict_mysql_dml_values_for_columns(
+				$columns,
+				$value_ranges,
+				$tokens,
+				$column_metadata
+			);
+			$this->normalize_mysql_auto_increment_zero_values_for_columns(
+				$columns,
+				$values,
+				$value_ranges,
+				$tokens,
+				$column_metadata
+			);
+			$this->normalize_strict_mysql_dml_values_for_columns(
+				$columns,
+				$values,
+				$value_ranges,
+				$tokens,
+				$column_metadata
+			);
+			$this->normalize_non_strict_mysql_dml_values_for_columns(
+				$columns,
+				$values,
+				$value_ranges,
+				$tokens,
+				$column_metadata
+			);
+		}
+		unset( $values );
+
+		return $column_metadata;
 	}
 
 	/**
