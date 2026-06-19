@@ -35283,12 +35283,17 @@ END',
 		array $tokens,
 		int $start,
 		int $end,
-		array $replacements
+		array $replacements,
+		bool $only_range_replacements = false
 	): string {
 		$chunks   = array();
 		$position = $start;
 
 		foreach ( $replacements as $replacement ) {
+			if ( $only_range_replacements && ( $replacement['start'] < $start || $replacement['end'] > $end ) ) {
+				continue;
+			}
+
 			if ( $position < $replacement['start'] ) {
 				$chunks[] = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $position, $replacement['start'] );
 			}
@@ -35302,31 +35307,6 @@ END',
 		}
 
 		return implode( ' ', array_filter( $chunks, 'strlen' ) );
-	}
-
-	private function translate_mysql_token_sequence_with_optional_replacements_to_postgresql(
-		array $tokens,
-		int $start,
-		int $end,
-		array $replacements
-	): string {
-		$range_replacements = $this->get_mysql_replacements_for_token_range( $replacements, $start, $end );
-		if ( empty( $range_replacements ) ) {
-			return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end );
-		}
-
-		return $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $start, $end, $range_replacements );
-	}
-
-	private function get_mysql_replacements_for_token_range( array $replacements, int $start, int $end ): array {
-		$range_replacements = array();
-		foreach ( $replacements as $replacement ) {
-			if ( $replacement['start'] >= $start && $replacement['end'] <= $end ) {
-				$range_replacements[] = $replacement;
-			}
-		}
-
-		return $range_replacements;
 	}
 
 	private function get_mysql_token_range_sql( string $query, array $tokens, int $start, int $end ): ?string {
@@ -35558,7 +35538,18 @@ END',
 			return null;
 		}
 
-		$literal = $this->get_simple_wordpress_comments_literal_value( $tokens, $literal_start, $literal_end );
+		$literal_bounds = $this->normalize_mysql_expression_bounds( $tokens, $literal_start, $literal_end );
+		$literal_start  = $literal_bounds['start'];
+		$literal_end    = $literal_bounds['end'];
+		$literal        = null;
+		if ( $this->is_mysql_string_literal_range( $tokens, $literal_start, $literal_end ) ) {
+			$literal = $tokens[ $literal_start ]->get_value();
+		} else {
+			$numeric_literal = $this->parse_mysql_numeric_literal( $tokens, $literal_start, $literal_end );
+			if ( null !== $numeric_literal && $numeric_literal['end'] === $literal_end ) {
+				$literal = 'literal';
+			}
+		}
 		if ( null === $literal ) {
 			return null;
 		}
@@ -35567,23 +35558,6 @@ END',
 			'column' => strtolower( $reference['column'] ),
 			'value'  => $literal,
 		);
-	}
-
-	private function get_simple_wordpress_comments_literal_value( array $tokens, int $start, int $end ): ?string {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
-		$start  = $bounds['start'];
-		$end    = $bounds['end'];
-
-		if ( $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
-			return $tokens[ $start ]->get_value();
-		}
-
-		$literal = $this->parse_mysql_numeric_literal( $tokens, $start, $end );
-		if ( null !== $literal && $literal['end'] === $end ) {
-			return 'literal';
-		}
-
-		return null;
 	}
 
 	private function get_wordpress_posts_post_date_desc_order_id_tiebreaker_sql( array $tokens, array $order_items, array $scope ): ?string {
@@ -35800,7 +35774,23 @@ END',
 		int $end,
 		array $scope
 	): ?array {
-		if ( ! $this->is_mysql_expression_predicate_start_context( $tokens, $position, $start ) ) {
+		$left_boundaries   = array(
+			WP_MySQL_Lexer::AND_SYMBOL,
+			WP_MySQL_Lexer::OR_SYMBOL,
+			WP_MySQL_Lexer::WHEN_SYMBOL,
+			WP_MySQL_Lexer::XOR_SYMBOL,
+		);
+		$previous_token_id = $tokens[ $position - 1 ]->id ?? null;
+		$has_left_boundary = $position > $start
+			&& (
+				in_array( $previous_token_id, $left_boundaries, true )
+				|| (
+					WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $previous_token_id
+					&& $position - 1 > $start
+					&& in_array( $tokens[ $position - 2 ]->id ?? null, $left_boundaries, true )
+				)
+			);
+		if ( ! $has_left_boundary ) {
 			return null;
 		}
 
@@ -35817,34 +35807,6 @@ END',
 			$reference,
 			$reference['end'],
 			$end
-		);
-	}
-
-	private function is_mysql_expression_predicate_start_context( array $tokens, int $position, int $start ): bool {
-		if ( $position <= $start ) {
-			return false;
-		}
-
-		$previous_token_id = $tokens[ $position - 1 ]->id ?? null;
-		if ( $this->is_mysql_expression_predicate_left_boundary_token_id( $previous_token_id ) ) {
-			return true;
-		}
-
-		return WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $previous_token_id
-			&& $position - 1 > $start
-			&& $this->is_mysql_expression_predicate_left_boundary_token_id( $tokens[ $position - 2 ]->id ?? null );
-	}
-
-	private function is_mysql_expression_predicate_left_boundary_token_id( ?int $token_id ): bool {
-		return in_array(
-			$token_id,
-			array(
-				WP_MySQL_Lexer::AND_SYMBOL,
-				WP_MySQL_Lexer::OR_SYMBOL,
-				WP_MySQL_Lexer::WHEN_SYMBOL,
-				WP_MySQL_Lexer::XOR_SYMBOL,
-			),
-			true
 		);
 	}
 
@@ -35879,7 +35841,7 @@ END',
 					);
 					if ( null !== $translated_subquery ) {
 						if ( $segment_start < $position ) {
-							$chunks[] = $this->translate_mysql_token_sequence_with_optional_replacements_to_postgresql( $tokens, $segment_start, $position, $replacements );
+							$chunks[] = $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $segment_start, $position, $replacements, true );
 						}
 
 						$chunks[]      = $translated_subquery['sql'];
@@ -35905,7 +35867,7 @@ END',
 			}
 
 			if ( $segment_start < $position ) {
-				$chunks[] = $this->translate_mysql_token_sequence_with_optional_replacements_to_postgresql( $tokens, $segment_start, $position, $replacements );
+				$chunks[] = $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $segment_start, $position, $replacements, true );
 			}
 
 			$chunks[]      = $translated_predicate['sql'];
@@ -35916,13 +35878,13 @@ END',
 
 		if ( ! $changed ) {
 			return array(
-				'sql'     => $this->translate_mysql_token_sequence_with_optional_replacements_to_postgresql( $tokens, $start, $end, $replacements ),
+				'sql'     => $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $start, $end, $replacements, true ),
 				'changed' => ! empty( $replacements ),
 			);
 		}
 
 		if ( $segment_start < $end ) {
-			$chunks[] = $this->translate_mysql_token_sequence_with_optional_replacements_to_postgresql( $tokens, $segment_start, $end, $replacements );
+			$chunks[] = $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $segment_start, $end, $replacements, true );
 		}
 
 		return array(
@@ -35937,72 +35899,31 @@ END',
 		int $end,
 		array $scope
 	): ?array {
-		$truthiness = $this->translate_mysql_numeric_literal_truthiness_predicate_to_postgresql(
-			$tokens,
-			$position,
-			$end
-		);
-		if ( null !== $truthiness ) {
-			return $truthiness;
+		foreach (
+			array(
+				'translate_mysql_numeric_literal_truthiness_predicate_to_postgresql',
+				'translate_mysql_decimal_cast_like_predicate_to_postgresql',
+			) as $translator
+		) {
+			$translated = $this->$translator( $tokens, $position, $end );
+			if ( null !== $translated ) {
+				return $translated;
+			}
 		}
 
-		$decimal_like = $this->translate_mysql_decimal_cast_like_predicate_to_postgresql(
-			$tokens,
-			$position,
-			$end
-		);
-		if ( null !== $decimal_like ) {
-			return $decimal_like;
-		}
-
-		$temporal_comparison = $this->translate_mysql_temporal_expression_column_comparison_to_postgresql(
-			$tokens,
-			$position,
-			$end,
-			$scope
-		);
-		if ( null !== $temporal_comparison ) {
-			return $temporal_comparison;
-		}
-
-		$wordpress_text_predicate = $this->translate_mysql_wordpress_text_predicate_to_postgresql(
-			$tokens,
-			$position,
-			$end,
-			$scope
-		);
-		if ( null !== $wordpress_text_predicate ) {
-			return $wordpress_text_predicate;
-		}
-
-		$in_predicate = $this->translate_mysql_integer_column_string_in_predicate_to_postgresql(
-			$tokens,
-			$position,
-			$end,
-			$scope
-		);
-		if ( null !== $in_predicate ) {
-			return $in_predicate;
-		}
-
-		$comparison = $this->translate_mysql_integer_column_string_comparison_to_postgresql(
-			$tokens,
-			$position,
-			$end,
-			$scope
-		);
-		if ( null !== $comparison ) {
-			return $comparison;
-		}
-
-		$numeric_comparison = $this->translate_mysql_text_column_numeric_comparison_to_postgresql(
-			$tokens,
-			$position,
-			$end,
-			$scope
-		);
-		if ( null !== $numeric_comparison ) {
-			return $numeric_comparison;
+		foreach (
+			array(
+				'translate_mysql_temporal_expression_column_comparison_to_postgresql',
+				'translate_mysql_wordpress_text_predicate_to_postgresql',
+				'translate_mysql_integer_column_string_in_predicate_to_postgresql',
+				'translate_mysql_integer_column_string_comparison_to_postgresql',
+				'translate_mysql_text_column_numeric_comparison_to_postgresql',
+			) as $translator
+		) {
+			$translated = $this->$translator( $tokens, $position, $end, $scope );
+			if ( null !== $translated ) {
+				return $translated;
+			}
 		}
 
 		return $this->translate_mysql_metadata_column_reference_to_postgresql(
@@ -36263,34 +36184,17 @@ END',
 			null !== $reference
 			&& $this->is_mysql_case_insensitive_wordpress_text_column_reference( $reference, $scope )
 		) {
-			$like = $this->translate_mysql_wordpress_text_like_predicate_to_postgresql(
-				$tokens,
-				$reference,
-				$reference['end'],
-				$end
-			);
-			if ( null !== $like ) {
-				return $like;
-			}
-
-			$in = $this->translate_mysql_wordpress_text_in_predicate_to_postgresql(
-				$tokens,
-				$reference,
-				$reference['end'],
-				$end
-			);
-			if ( null !== $in ) {
-				return $in;
-			}
-
-			$comparison = $this->translate_mysql_wordpress_text_comparison_to_postgresql(
-				$tokens,
-				$reference,
-				$reference['end'],
-				$end
-			);
-			if ( null !== $comparison ) {
-				return $comparison;
+			foreach (
+				array(
+					'translate_mysql_wordpress_text_like_predicate_to_postgresql',
+					'translate_mysql_wordpress_text_in_predicate_to_postgresql',
+					'translate_mysql_wordpress_text_comparison_to_postgresql',
+				) as $translator
+			) {
+				$translated = $this->$translator( $tokens, $reference, $reference['end'], $end );
+				if ( null !== $translated ) {
+					return $translated;
+				}
 			}
 		}
 
@@ -36481,8 +36385,57 @@ END',
 	}
 
 	private function is_mysql_case_insensitive_wordpress_text_column_reference( array $reference, array $scope ): bool {
-		$table = $this->get_mysql_table_for_column_reference( $reference, $scope );
-		if ( null === $table || ! $this->is_mysql_wordpress_case_insensitive_text_column( $table['table'], $reference['column'] ) ) {
+		if ( null !== $reference['qualifier'] ) {
+			$alias = strtolower( $reference['qualifier'] );
+			$table = $scope['aliases'][ $alias ] ?? null;
+			if ( null === $table || ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
+				return false;
+			}
+		} else {
+			if ( ! empty( $scope['unknown'] ) ) {
+				return false;
+			}
+
+			$table = null;
+			foreach ( $scope['tables'] as $scope_table ) {
+				if (
+					count( $scope['tables'] ) > 1
+					&& ! $this->mysql_table_has_column_metadata( $scope_table['schema'], $scope_table['table'] )
+				) {
+					return false;
+				}
+
+				if ( null === $this->get_mysql_table_column_type( $scope_table['schema'], $scope_table['table'], $reference['column'] ) ) {
+					continue;
+				}
+
+				if ( null !== $table ) {
+					return false;
+				}
+
+				$table = $scope_table;
+			}
+		}
+		if ( null === $table ) {
+			return false;
+		}
+
+		$column_name              = strtolower( $reference['column'] );
+		$case_insensitive_columns = array(
+			'posts'         => array( 'post_content', 'post_excerpt', 'post_title' ),
+			'terms'         => array( 'name', 'slug' ),
+			'term_taxonomy' => array( 'description', 'taxonomy' ),
+			'postmeta'      => array( 'meta_value' ),
+			'users'         => array( 'display_name', 'user_email', 'user_login', 'user_nicename', 'user_url' ),
+		);
+		$column_matches           = false;
+		foreach ( $case_insensitive_columns as $table_base => $columns ) {
+			if ( $this->is_mysql_wordpress_table_name( $table['table'], $table_base ) ) {
+				$column_matches = in_array( $column_name, $columns, true );
+				break;
+			}
+		}
+		if ( ! $column_matches ) {
 			return false;
 		}
 
@@ -36502,44 +36455,6 @@ END',
 		return null !== $collation && 1 === preg_match( '/(^|_)ci($|_)/', strtolower( trim( $collation ) ) );
 	}
 
-	private function get_mysql_table_for_column_reference( array $reference, array $scope ): ?array {
-		if ( null !== $reference['qualifier'] ) {
-			$alias = strtolower( $reference['qualifier'] );
-			$table = $scope['aliases'][ $alias ] ?? null;
-			if ( null === $table || ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
-				return null;
-			}
-
-			return $table;
-		}
-
-		if ( ! empty( $scope['unknown'] ) ) {
-			return null;
-		}
-
-		$matched_table = null;
-		foreach ( $scope['tables'] as $table ) {
-			if (
-				count( $scope['tables'] ) > 1
-				&& ! $this->mysql_table_has_column_metadata( $table['schema'], $table['table'] )
-			) {
-				return null;
-			}
-
-			if ( null === $this->get_mysql_table_column_type( $table['schema'], $table['table'], $reference['column'] ) ) {
-				continue;
-			}
-
-			if ( null !== $matched_table ) {
-				return null;
-			}
-
-			$matched_table = $table;
-		}
-
-		return $matched_table;
-	}
-
 	private function get_mysql_single_scope_table_for_column_reference( array $reference, array $scope ): ?array {
 		if ( null !== $reference['qualifier'] ) {
 			$alias = strtolower( $reference['qualifier'] );
@@ -36556,42 +36471,6 @@ END',
 		}
 
 		return $scope['tables'][0];
-	}
-
-	private function is_mysql_wordpress_case_insensitive_text_column( string $table_name, string $column_name ): bool {
-		$column_name = strtolower( $column_name );
-
-		if ( $this->is_mysql_wordpress_table_name( $table_name, 'posts' ) ) {
-			return in_array( $column_name, array( 'post_content', 'post_excerpt', 'post_title' ), true );
-		}
-
-		if ( $this->is_mysql_wordpress_table_name( $table_name, 'terms' ) ) {
-			return in_array( $column_name, array( 'name', 'slug' ), true );
-		}
-
-		if ( $this->is_mysql_wordpress_table_name( $table_name, 'term_taxonomy' ) ) {
-			return in_array( $column_name, array( 'description', 'taxonomy' ), true );
-		}
-
-		if ( $this->is_mysql_wordpress_table_name( $table_name, 'postmeta' ) ) {
-			return 'meta_value' === $column_name;
-		}
-
-		if ( $this->is_mysql_wordpress_table_name( $table_name, 'users' ) ) {
-			return in_array(
-				$column_name,
-				array(
-					'display_name',
-					'user_email',
-					'user_login',
-					'user_nicename',
-					'user_url',
-				),
-				true
-			);
-		}
-
-		return false;
 	}
 
 	private function is_mysql_case_insensitive_equality_operator_token( WP_MySQL_Token $token ): bool {
@@ -36877,13 +36756,16 @@ END',
 			return null;
 		}
 
-		$pattern_end = $this->get_mysql_like_pattern_end( $tokens, $operator_position + 1, $end );
-		if ( null === $pattern_end ) {
+		$pattern_end = $operator_position + 2;
+		if ( ! isset( $tokens[ $operator_position + 1 ] ) || $operator_position + 1 >= $end ) {
 			return null;
 		}
 
 		$has_explicit_escape = isset( $tokens[ $operator_position + 2 ] )
 			&& WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $operator_position + 2 ]->id;
+		if ( $has_explicit_escape && isset( $tokens[ $operator_position + 3 ] ) && $operator_position + 3 < $end ) {
+			$pattern_end += 2;
+		}
 
 		return array(
 			'sql'      => sprintf(
@@ -36897,23 +36779,6 @@ END',
 		);
 	}
 
-	private function get_mysql_like_pattern_end( array $tokens, int $position, int $end ): ?int {
-		if ( ! isset( $tokens[ $position ] ) || $position >= $end ) {
-			return null;
-		}
-
-		$pattern_end = $position + 1;
-		if (
-			isset( $tokens[ $pattern_end ], $tokens[ $pattern_end + 1 ] )
-			&& WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $pattern_end ]->id
-			&& $pattern_end + 1 < $end
-		) {
-			$pattern_end += 2;
-		}
-
-		return $pattern_end;
-	}
-
 	private function translate_mysql_metadata_column_reference_to_postgresql(
 		array $tokens,
 		int $position,
@@ -36922,26 +36787,6 @@ END',
 	): ?array {
 		$reference = $this->parse_mysql_column_reference( $tokens, $position, $end );
 		if ( null === $reference || null === $reference['qualifier'] ) {
-			return null;
-		}
-
-		$resolved_column = $this->get_mysql_column_name_for_reference( $reference, $scope );
-		if ( null === $resolved_column || $resolved_column === $reference['column'] ) {
-			return null;
-		}
-
-		return array(
-			'sql'      => sprintf(
-				'%s.%s',
-				$this->translate_mysql_token_to_postgresql( $tokens[ $reference['start'] ], $tokens[ $reference['start'] + 1 ] ?? null ),
-				$this->translate_mysql_identifier_value_to_postgresql( $resolved_column )
-			),
-			'position' => $reference['end'] - 1,
-		);
-	}
-
-	private function get_mysql_column_name_for_reference( array $reference, array $scope ): ?string {
-		if ( null === $reference['qualifier'] ) {
 			return null;
 		}
 
@@ -36955,7 +36800,19 @@ END',
 			return null;
 		}
 
-		return $this->get_mysql_table_column_name( $table['schema'], $table['table'], $reference['column'] );
+		$resolved_column = $this->get_mysql_table_column_name( $table['schema'], $table['table'], $reference['column'] );
+		if ( null === $resolved_column || $resolved_column === $reference['column'] ) {
+			return null;
+		}
+
+		return array(
+			'sql'      => sprintf(
+				'%s.%s',
+				$this->translate_mysql_token_to_postgresql( $tokens[ $reference['start'] ], $tokens[ $reference['start'] + 1 ] ?? null ),
+				$this->translate_mysql_identifier_value_to_postgresql( $resolved_column )
+			),
+			'position' => $reference['end'] - 1,
+		);
 	}
 
 	private function get_mysql_table_column_name(
@@ -36983,30 +36840,6 @@ END',
 		return $this->should_quote_bare_mysql_identifier( $identifier )
 			? $this->connection->quote_identifier( $identifier )
 			: $identifier;
-	}
-
-	private function is_mysql_decimal_cast_type( array $tokens, int $start, int $end ): bool {
-		if (
-			! isset( $tokens[ $start ] )
-			|| ! in_array(
-				$tokens[ $start ]->id,
-				array(
-					WP_MySQL_Lexer::DECIMAL_SYMBOL,
-					WP_MySQL_Lexer::NUMERIC_SYMBOL,
-				),
-				true
-			)
-		) {
-			return false;
-		}
-
-		if ( $start + 1 === $end ) {
-			return true;
-		}
-
-		return isset( $tokens[ $start + 1 ] )
-			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start + 1 ]->id
-			&& $this->get_mysql_parenthesized_sequence_end( $tokens, $start + 1, $end ) === $end;
 	}
 
 	private function translate_mysql_integer_column_string_in_predicate_to_postgresql(
@@ -37669,53 +37502,14 @@ END',
 	}
 
 	private function get_mysql_column_type_for_reference( array $reference, array $scope ): ?string {
-		if ( null !== $reference['qualifier'] ) {
-			$alias = strtolower( $reference['qualifier'] );
-			if ( ! isset( $scope['aliases'][ $alias ] ) ) {
-				return null;
-			}
-
-			$table = $scope['aliases'][ $alias ];
-			if ( ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
-				return null;
-			}
-
-			return $this->get_mysql_table_column_type( $table['schema'], $table['table'], $reference['column'] );
-		}
-
-		if ( ! empty( $scope['unknown'] ) ) {
-			return null;
-		}
-
-		$matched_type = null;
-		foreach ( $scope['tables'] as $table ) {
-			if ( ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
-				return null;
-			}
-
-			if (
-				count( $scope['tables'] ) > 1
-				&& ! $this->mysql_table_has_column_metadata( $table['schema'], $table['table'] )
-			) {
-				return null;
-			}
-
-			$column_type = $this->get_mysql_table_column_type( $table['schema'], $table['table'], $reference['column'] );
-			if ( null === $column_type ) {
-				continue;
-			}
-
-			if ( null !== $matched_type ) {
-				return null;
-			}
-
-			$matched_type = $column_type;
-		}
-
-		return $matched_type;
+		return $this->get_mysql_column_metadata_for_reference( $reference, $scope, 'get_mysql_table_column_type' );
 	}
 
 	private function get_mysql_column_collation_for_reference( array $reference, array $scope ): ?string {
+		return $this->get_mysql_column_metadata_for_reference( $reference, $scope, 'get_mysql_table_column_collation' );
+	}
+
+	private function get_mysql_column_metadata_for_reference( array $reference, array $scope, string $metadata_method ): ?string {
 		if ( null !== $reference['qualifier'] ) {
 			$alias = strtolower( $reference['qualifier'] );
 			if ( ! isset( $scope['aliases'][ $alias ] ) ) {
@@ -37727,14 +37521,14 @@ END',
 				return null;
 			}
 
-			return $this->get_mysql_table_column_collation( $table['schema'], $table['table'], $reference['column'] );
+			return $this->$metadata_method( $table['schema'], $table['table'], $reference['column'] );
 		}
 
 		if ( ! empty( $scope['unknown'] ) ) {
 			return null;
 		}
 
-		$matched_collation = null;
+		$matched_value = null;
 		foreach ( $scope['tables'] as $table ) {
 			if ( ! empty( $table['derived'] ) || null === ( $table['table'] ?? null ) ) {
 				return null;
@@ -37747,19 +37541,19 @@ END',
 				return null;
 			}
 
-			$collation = $this->get_mysql_table_column_collation( $table['schema'], $table['table'], $reference['column'] );
-			if ( null === $collation ) {
+			$value = $this->$metadata_method( $table['schema'], $table['table'], $reference['column'] );
+			if ( null === $value ) {
 				continue;
 			}
 
-			if ( null !== $matched_collation ) {
+			if ( null !== $matched_value ) {
 				return null;
 			}
 
-			$matched_collation = $collation;
+			$matched_value = $value;
 		}
 
-		return $matched_collation;
+		return $matched_value;
 	}
 
 	private function is_mysql_string_literal_range( array $tokens, int $start, int $end ): bool {
@@ -38342,9 +38136,16 @@ END',
 
 		$position = $start + 2;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OF_SYMBOL === $tokens[ $position ]->id ) {
-			$position = $this->parse_mysql_select_locking_table_reference_list( $tokens, $position + 1, $end );
+			$position = $this->parse_mysql_select_locking_table_reference( $tokens, $position + 1, $end );
 			if ( null === $position ) {
 				return null;
+			}
+
+			while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+				$position = $this->parse_mysql_select_locking_table_reference( $tokens, $position + 1, $end );
+				if ( null === $position ) {
+					return null;
+				}
 			}
 		}
 
@@ -38358,22 +38159,6 @@ END',
 			&& WP_MySQL_Lexer::LOCKED_SYMBOL === $tokens[ $position + 1 ]->id
 		) {
 			return $position + 2;
-		}
-
-		return $position;
-	}
-
-	private function parse_mysql_select_locking_table_reference_list( array $tokens, int $start, int $end ): ?int {
-		$position = $this->parse_mysql_select_locking_table_reference( $tokens, $start, $end );
-		if ( null === $position ) {
-			return null;
-		}
-
-		while ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
-			$position = $this->parse_mysql_select_locking_table_reference( $tokens, $position + 1, $end );
-			if ( null === $position ) {
-				return null;
-			}
 		}
 
 		return $position;
@@ -39405,7 +39190,18 @@ END',
 			return 'binary';
 		}
 
-		if ( $this->is_mysql_decimal_cast_type( $tokens, $start, $end ) ) {
+		if (
+			isset( $tokens[ $start ] )
+			&& in_array( $tokens[ $start ]->id, array( WP_MySQL_Lexer::DECIMAL_SYMBOL, WP_MySQL_Lexer::NUMERIC_SYMBOL ), true )
+			&& (
+				$start + 1 === $end
+				|| (
+					isset( $tokens[ $start + 1 ] )
+					&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start + 1 ]->id
+					&& $this->get_mysql_parenthesized_sequence_end( $tokens, $start + 1, $end ) === $end
+				)
+			)
+		) {
 			return 'decimal';
 		}
 
