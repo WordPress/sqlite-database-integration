@@ -4332,15 +4332,6 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Assert the hidden MySQL metadata side tables are allowed for this connection.
-	 */
-	private function assert_mysql_schema_side_metadata_allowed(): void {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			throw new LogicException( 'PostgreSQL catalog metadata must not access hidden MySQL metadata tables.' );
-		}
-	}
-
-	/**
 	 * Clear all cached MySQL metadata derived from side tables.
 	 */
 	private function clear_mysql_metadata_caches(): void {
@@ -4513,7 +4504,6 @@ class WP_PostgreSQL_Driver {
 	 * @param string|callable $table_schema Metadata schema, or resolver receiving the table name.
 	 */
 	private function store_mysql_schema_metadata_for_schema( string $query, $table_schema ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
@@ -4946,7 +4936,6 @@ $wp_mysql_on_update$',
 			return;
 		}
 
-		$this->assert_mysql_schema_side_metadata_allowed();
 		$this->ensure_mysql_schema_metadata_tables();
 
 		foreach ( $table_names as $table_name ) {
@@ -5365,12 +5354,6 @@ $wp_mysql_on_update$',
 			}
 			return;
 		}
-
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
 	}
 
 	/**
@@ -5513,8 +5496,6 @@ $wp_mysql_on_update$',
 	 * @param array  $metadata     Table metadata.
 	 */
 	private function insert_mysql_table_metadata( string $table_schema, string $table_name, array $metadata ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->connection->query(
 			sprintf(
 				'INSERT INTO %s
@@ -5687,8 +5668,6 @@ $wp_mysql_on_update$',
 	 * @param array  $column       Column metadata.
 	 */
 	private function insert_mysql_column_metadata( string $table_schema, string $table_name, array $column ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->delete_mysql_column_metadata( $table_schema, $table_name, $column['name'] );
 		$this->connection->query(
 			sprintf(
@@ -5986,8 +5965,6 @@ END',
 	 * @param string $column_name  Column name.
 	 */
 	private function delete_mysql_column_metadata( string $table_schema, string $table_name, string $column_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->connection->query(
 			sprintf(
 				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
@@ -6012,8 +5989,6 @@ END',
 		array $index,
 		?array $column_nullable = null
 	): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$column_nullable = $column_nullable ?? array();
 
 		foreach ( $index['columns'] as $column ) {
@@ -6169,8 +6144,6 @@ $wp_mysql_primary_index_comment$',
 	 * @param string $index_name   Index name.
 	 */
 	private function delete_mysql_index_metadata( string $table_schema, string $table_name, string $index_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->connection->query(
 			sprintf(
 				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?)',
@@ -6289,8 +6262,6 @@ $wp_mysql_primary_index_comment$',
 	 * @param array  $foreign_key  Foreign key metadata.
 	 */
 	private function insert_mysql_foreign_key_metadata( string $table_schema, string $table_name, array $foreign_key ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, $foreign_key['name'] );
 
 		$stmt    = $this->connection->query(
@@ -6336,8 +6307,6 @@ $wp_mysql_primary_index_comment$',
 	 * @param array  $check        CHECK constraint metadata.
 	 */
 	private function insert_mysql_check_metadata( string $table_schema, string $table_name, array $check ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->delete_mysql_check_metadata( $table_schema, $table_name, $check['name'] );
 		$stmt = $this->connection->query(
 			sprintf(
@@ -6390,8 +6359,6 @@ $wp_mysql_primary_index_comment$',
 	 * @param string $constraint_name Constraint name.
 	 */
 	private function delete_mysql_check_metadata( string $table_schema, string $table_name, string $constraint_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->connection->query(
 			sprintf(
 				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(constraint_name) = LOWER(?)',
@@ -6476,8 +6443,6 @@ $wp_mysql_primary_index_comment$',
 	 * @param string $constraint_name Constraint name.
 	 */
 	private function delete_mysql_foreign_key_metadata( string $table_schema, string $table_name, string $constraint_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$this->connection->query(
 			sprintf(
 				'DELETE FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(constraint_name) = LOWER(?)',
@@ -6497,8 +6462,6 @@ $wp_mysql_primary_index_comment$',
 	 * @param string $column_name  Dropped column name.
 	 */
 	private function delete_mysql_foreign_key_metadata_for_column( string $table_schema, string $table_name, string $column_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT DISTINCT constraint_name FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(column_name) = LOWER(?)',
@@ -6528,8 +6491,6 @@ $wp_mysql_primary_index_comment$',
 		string $old_column_name,
 		string $new_column_name
 	): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		if ( $old_column_name === $new_column_name ) {
 			return;
 		}
@@ -6559,8 +6520,6 @@ $wp_mysql_primary_index_comment$',
 		string $old_column_name,
 		string $new_column_name
 	): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		if ( $old_column_name === $new_column_name ) {
 			return;
 		}
@@ -6708,8 +6667,6 @@ $wp_mysql_primary_index_comment$',
 	 * @param string $column_name  Dropped column name.
 	 */
 	private function delete_mysql_index_metadata_for_column( string $table_schema, string $table_name, string $column_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$index_metadata_table = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
 
 		$this->connection->query(
@@ -6902,8 +6859,6 @@ $wp_mysql_primary_index_comment$',
 		string $old_column_name,
 		string $new_column_name
 	): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		if ( $old_column_name === $new_column_name ) {
 			return;
 		}
@@ -6994,8 +6949,6 @@ $wp_mysql_primary_index_comment$',
 	 * @return int Next ordinal.
 	 */
 	private function get_next_mysql_index_ordinal( string $table_schema, string $table_name ): int {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
 		$stmt = $this->connection->query(
 			sprintf(
 				'SELECT COALESCE(MAX(index_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
