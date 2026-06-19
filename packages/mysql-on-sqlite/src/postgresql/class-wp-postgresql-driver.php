@@ -781,7 +781,7 @@ class WP_PostgreSQL_Driver {
 
 		$show_events_query = $this->get_show_events_query( $query );
 		if ( null !== $show_events_query ) {
-			return $this->execute_show_events_query( $show_events_query, $fetch_mode, ...$fetch_mode_args );
+			return $this->execute_show_events_query( $fetch_mode, ...$fetch_mode_args );
 		}
 
 		$show_grants_query = $this->get_show_grants_query( $query );
@@ -15016,7 +15016,7 @@ $wp_mysql_primary_index_comment$',
 	 * Parse a supported MySQL SHOW EVENTS statement.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{schema: string, filter: array{type: string, column: string|null, pattern: string|null, predicate?: array}}|null SHOW EVENTS options, or null when this is not SHOW EVENTS.
+	 * @return array{}|null Empty options array, or null when this is not SHOW EVENTS.
 	 */
 	private function get_show_events_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -15067,15 +15067,11 @@ $wp_mysql_primary_index_comment$',
 			'collation_connection' => 'collation_connection',
 			'database collation'   => 'Database Collation',
 		);
-		$filter          = $this->get_show_static_result_filter( $tokens, $position, 'Name', $allowed_columns );
-		if ( null === $filter ) {
+		if ( null === $this->get_show_static_result_filter( $tokens, $position, 'Name', $allowed_columns ) ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW EVENTS statement.' );
 		}
 
-		return array(
-			'schema' => $this->get_direct_information_schema_display_schema( $backend_schema ),
-			'filter' => $filter,
-		);
+		return array();
 	}
 
 	/**
@@ -20295,15 +20291,11 @@ ORDER BY table_name';
 	/**
 	 * Execute a MySQL SHOW EVENTS statement from information_schema.EVENTS.
 	 *
-	 * @param array $show_events_query SHOW EVENTS options.
 	 * @param int   $fetch_mode        PDO fetch mode.
 	 * @param array ...$fetch_mode_args Additional fetch mode arguments.
 	 * @return mixed SHOW EVENTS result rows.
 	 */
-	private function execute_show_events_query( array $show_events_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = array();
-		$rows = $this->filter_mysql_static_show_rows( $rows, $show_events_query['filter'] );
-
+	private function execute_show_events_query( $fetch_mode, ...$fetch_mode_args ) {
 		return $this->set_mysql_static_show_result(
 			array(
 				'Db',
@@ -20322,7 +20314,7 @@ ORDER BY table_name';
 				'collation_connection',
 				'Database Collation',
 			),
-			$rows,
+			array(),
 			$fetch_mode,
 			...$fetch_mode_args
 		);
