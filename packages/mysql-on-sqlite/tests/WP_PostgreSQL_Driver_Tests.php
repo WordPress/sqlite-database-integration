@@ -22376,9 +22376,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'get_next_mysql_column_ordinal'                => function (): void {
 				$this->get_next_mysql_column_ordinal( 'public', 'catalog_side_table' );
 			},
-			'get_existing_mysql_column_ordinal'            => function (): void {
-				$this->get_existing_mysql_column_ordinal( 'public', 'catalog_side_table', 'id' );
-			},
 			'get_next_mysql_index_ordinal'                 => function (): void {
 				$this->get_next_mysql_index_ordinal( 'public', 'catalog_side_table' );
 			},

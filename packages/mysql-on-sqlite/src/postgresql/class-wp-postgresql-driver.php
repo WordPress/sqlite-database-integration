@@ -5532,12 +5532,19 @@ $wp_mysql_on_update$',
 
 		$this->ensure_mysql_schema_metadata_tables();
 
-		$old_extra         = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
-		$column['ordinal'] = $this->get_existing_mysql_column_ordinal(
-			$table_schema,
-			$table_name,
-			$metadata['old_column']
-		) ?? $this->get_next_mysql_column_ordinal( $table_schema, $table_name );
+		$old_extra    = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
+		$ordinal_stmt = $this->connection->query(
+			sprintf(
+				'SELECT ordinal_position FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name, $metadata['old_column'] )
+		);
+		$ordinal      = $ordinal_stmt->fetchColumn();
+
+		$column['ordinal'] = false === $ordinal
+			? $this->get_next_mysql_column_ordinal( $table_schema, $table_name )
+			: (int) $ordinal;
 
 		$this->delete_mysql_column_metadata( $table_schema, $table_name, $metadata['old_column'] );
 		$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
@@ -7032,29 +7039,6 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		return (int) $stmt->fetchColumn();
-	}
-
-	/**
-	 * Get an existing stored column ordinal.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 * @return int|null Existing ordinal, or null.
-	 */
-	private function get_existing_mysql_column_ordinal( string $table_schema, string $table_name, string $column_name ): ?int {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT ordinal_position FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$ordinal = $stmt->fetchColumn();
-		return false === $ordinal ? null : (int) $ordinal;
 	}
 
 	/**
@@ -12495,11 +12479,16 @@ $wp_mysql_primary_index_comment$',
 
 		$statements = array();
 		foreach ( $drop_targets as $drop_target ) {
-			if ( null !== $drop_target['schema'] ) {
-				$statements = array_merge(
-					$statements,
-					$this->get_postgresql_catalog_on_update_current_timestamp_drop_statements( $drop_target['schema'], $drop_target['table'] )
-				);
+			if ( null !== $drop_target['schema'] && $this->should_use_postgresql_catalog_metadata() ) {
+				$on_update_columns = $this->get_postgresql_catalog_on_update_current_timestamp_column_names( $drop_target['schema'], $drop_target['table'] );
+				if ( null !== $on_update_columns && ! empty( $on_update_columns ) ) {
+					foreach ( $on_update_columns as $column_name ) {
+						$statements = array_merge(
+							$statements,
+							$this->get_postgresql_on_update_current_timestamp_drop_statements( $drop_target['schema'], $drop_target['table'], $column_name )
+						);
+					}
+				}
 			}
 
 			$statements[] = sprintf(
@@ -12967,9 +12956,21 @@ $wp_mysql_primary_index_comment$',
 
 		$statements = array();
 		foreach ( $columns as $column_name ) {
-			$statements = array_merge(
+			$trigger_name  = $this->get_postgresql_on_update_current_timestamp_trigger_name( $table_schema, $old_table_name, $column_name );
+			$function_name = $this->get_postgresql_on_update_current_timestamp_function_name( $table_schema, $old_table_name, $column_name );
+			$statements    = array_merge(
 				$statements,
-				$this->get_postgresql_on_update_current_timestamp_drop_statements_for_renamed_table( $table_schema, $old_table_name, $new_table_name, $column_name ),
+				array(
+					sprintf(
+						'DROP TRIGGER IF EXISTS %s ON %s',
+						$this->connection->quote_identifier( $trigger_name ),
+						$this->get_postgresql_schema_identifier( $table_schema, $new_table_name )
+					),
+					sprintf(
+						'DROP FUNCTION IF EXISTS %s()',
+						$this->get_postgresql_schema_identifier( $table_schema, $function_name )
+					),
+				),
 				$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $new_table_name, $column_name )
 			);
 		}
@@ -13010,64 +13011,6 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		return array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
-	}
-
-	/**
-	 * Build deterministic ON UPDATE CURRENT_TIMESTAMP trigger/function cleanup from PostgreSQL catalogs.
-	 *
-	 * @param string $table_schema Backend schema name.
-	 * @param string $table_name   Table name.
-	 * @return string[] PostgreSQL statements.
-	 */
-	private function get_postgresql_catalog_on_update_current_timestamp_drop_statements( string $table_schema, string $table_name ): array {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return array();
-		}
-
-		$columns = $this->get_postgresql_catalog_on_update_current_timestamp_column_names( $table_schema, $table_name );
-		if ( null === $columns || empty( $columns ) ) {
-			return array();
-		}
-
-		$statements = array();
-		foreach ( $columns as $column_name ) {
-			$statements = array_merge(
-				$statements,
-				$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $column_name )
-			);
-		}
-
-		return $statements;
-	}
-
-	/**
-	 * Get drop trigger/function statements for an ON UPDATE column after a table rename.
-	 *
-	 * @param string $table_schema       Backend schema.
-	 * @param string $trigger_table_name Table name encoded into the existing trigger/function names.
-	 * @param string $actual_table_name  Current table name that owns the trigger.
-	 * @param string $column_name        Column name.
-	 * @return string[] PostgreSQL statements.
-	 */
-	private function get_postgresql_on_update_current_timestamp_drop_statements_for_renamed_table( string $table_schema, string $trigger_table_name, string $actual_table_name, string $column_name ): array {
-		if ( 'pgsql' !== $this->connection->get_driver_name() ) {
-			return array();
-		}
-
-		$trigger_name  = $this->get_postgresql_on_update_current_timestamp_trigger_name( $table_schema, $trigger_table_name, $column_name );
-		$function_name = $this->get_postgresql_on_update_current_timestamp_function_name( $table_schema, $trigger_table_name, $column_name );
-
-		return array(
-			sprintf(
-				'DROP TRIGGER IF EXISTS %s ON %s',
-				$this->connection->quote_identifier( $trigger_name ),
-				$this->get_postgresql_schema_identifier( $table_schema, $actual_table_name )
-			),
-			sprintf(
-				'DROP FUNCTION IF EXISTS %s()',
-				$this->get_postgresql_schema_identifier( $table_schema, $function_name )
-			),
-		);
 	}
 
 	/**
