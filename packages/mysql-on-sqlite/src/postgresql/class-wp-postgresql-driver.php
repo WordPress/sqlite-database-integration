@@ -41461,68 +41461,29 @@ END',
 	 */
 	private function get_direct_information_schema_catalog_column_key_expression( string $schema_sql, string $table_sql, string $column_sql ): string {
 		return sprintf(
-			'CASE
-	WHEN EXISTS (
-		SELECT 1
-		FROM pg_catalog.pg_class t
-		INNER JOIN pg_catalog.pg_namespace n
-			ON n.oid = t.relnamespace
-		INNER JOIN pg_catalog.pg_index i
-			ON i.indrelid = t.oid
-		CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-		INNER JOIN pg_catalog.pg_attribute a
-			ON a.attrelid = t.oid
-			AND a.attnum = k.attnum
-		WHERE n.nspname = %1$s
-			AND t.relname = %2$s
-			AND a.attname = %3$s
-			AND k.ordinality <= i.indnkeyatts
-			AND k.attnum > 0
-			AND i.indisvalid
-			AND i.indislive
-			AND i.indisprimary
-	) THEN \'PRI\'
-	WHEN EXISTS (
-		SELECT 1
-		FROM pg_catalog.pg_class t
-		INNER JOIN pg_catalog.pg_namespace n
-			ON n.oid = t.relnamespace
-		INNER JOIN pg_catalog.pg_index i
-			ON i.indrelid = t.oid
-		CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-		INNER JOIN pg_catalog.pg_attribute a
-			ON a.attrelid = t.oid
-			AND a.attnum = k.attnum
-		WHERE n.nspname = %1$s
-			AND t.relname = %2$s
-			AND a.attname = %3$s
-			AND k.ordinality <= i.indnkeyatts
-			AND k.attnum > 0
-			AND i.indisvalid
-			AND i.indislive
-			AND i.indisunique
-	) THEN \'UNI\'
-	WHEN EXISTS (
-		SELECT 1
-		FROM pg_catalog.pg_class t
-		INNER JOIN pg_catalog.pg_namespace n
-			ON n.oid = t.relnamespace
-		INNER JOIN pg_catalog.pg_index i
-			ON i.indrelid = t.oid
-		CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-		INNER JOIN pg_catalog.pg_attribute a
-			ON a.attrelid = t.oid
-			AND a.attnum = k.attnum
-		WHERE n.nspname = %1$s
-			AND t.relname = %2$s
-			AND a.attname = %3$s
-			AND k.ordinality <= i.indnkeyatts
-			AND k.attnum > 0
-			AND i.indisvalid
-			AND i.indislive
-	) THEN \'MUL\'
-	ELSE \'\'
-END',
+			'COALESCE((
+	SELECT CASE
+		WHEN BOOL_OR(i.indisprimary) THEN \'PRI\'
+		WHEN BOOL_OR(i.indisunique) THEN \'UNI\'
+		ELSE \'MUL\'
+	END
+	FROM pg_catalog.pg_class t
+	INNER JOIN pg_catalog.pg_namespace n
+		ON n.oid = t.relnamespace
+	INNER JOIN pg_catalog.pg_index i
+		ON i.indrelid = t.oid
+	CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
+	INNER JOIN pg_catalog.pg_attribute a
+		ON a.attrelid = t.oid
+		AND a.attnum = k.attnum
+	WHERE n.nspname = %1$s
+		AND t.relname = %2$s
+		AND a.attname = %3$s
+		AND k.ordinality <= i.indnkeyatts
+		AND k.attnum > 0
+		AND i.indisvalid
+		AND i.indislive
+), \'\')',
 			$schema_sql,
 			$table_sql,
 			$column_sql
