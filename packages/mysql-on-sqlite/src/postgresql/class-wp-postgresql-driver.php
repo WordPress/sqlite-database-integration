@@ -9022,39 +9022,9 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$columns = $this->get_postgresql_catalog_metadata_only_index_key_part_sqls(
-			$index['columns'] ?? array(),
-			(string) $index['index_type']
-		);
-		if ( array() === $columns ) {
-			return null;
-		}
-
-		$postgresql_table = null === $table_schema
-			? $this->connection->quote_identifier( $table_name )
-			: $this->get_postgresql_schema_identifier( $table_schema, $table_name );
-
-		return sprintf(
-			'CREATE INDEX %s%s ON %s (%s)',
-			$if_not_exists ? 'IF NOT EXISTS ' : '',
-			$this->connection->quote_identifier( $table_name . '__' . $index['name'] ),
-			$postgresql_table,
-			implode( ', ', $columns )
-		);
-	}
-
-	/**
-	 * Build PostgreSQL key-part SQL for a MySQL metadata-only placeholder index.
-	 *
-	 * @param array[] $columns    MySQL-facing key-part metadata.
-	 * @param string  $index_type MySQL-facing index type.
-	 * @return string[] PostgreSQL key-part SQL fragments.
-	 */
-	private function get_postgresql_catalog_metadata_only_index_key_part_sqls( array $columns, string $index_type ): array {
-		$index_type = strtoupper( $index_type );
-		$sql_parts  = array();
-
-		foreach ( $columns as $column ) {
+		$index_type = strtoupper( (string) $index['index_type'] );
+		$columns    = array();
+		foreach ( $index['columns'] ?? array() as $column ) {
 			$sub_part = $column['sub_part'] ?? null;
 			if ( 'FULLTEXT' === $index_type ) {
 				$sub_part = 191;
@@ -9070,10 +9040,23 @@ $wp_mysql_primary_index_comment$',
 				$column_sql .= ' DESC';
 			}
 
-			$sql_parts[] = $column_sql;
+			$columns[] = $column_sql;
+		}
+		if ( array() === $columns ) {
+			return null;
 		}
 
-		return $sql_parts;
+		$postgresql_table = null === $table_schema
+			? $this->connection->quote_identifier( $table_name )
+			: $this->get_postgresql_schema_identifier( $table_schema, $table_name );
+
+		return sprintf(
+			'CREATE INDEX %s%s ON %s (%s)',
+			$if_not_exists ? 'IF NOT EXISTS ' : '',
+			$this->connection->quote_identifier( $table_name . '__' . $index['name'] ),
+			$postgresql_table,
+			implode( ', ', $columns )
+		);
 	}
 
 	/**
