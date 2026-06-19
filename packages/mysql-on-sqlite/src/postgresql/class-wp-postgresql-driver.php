@@ -12501,60 +12501,32 @@ $wp_mysql_primary_index_comment$',
 			++$position;
 		}
 
-		switch ( $tokens[ $position ]->id ?? null ) {
-			case WP_MySQL_Lexer::TABLE_SYMBOL:
-			case WP_MySQL_Lexer::INDEX_SYMBOL:
-				return null;
-
-			case WP_MySQL_Lexer::DATABASE_SYMBOL:
-			case WP_MySQL_Lexer::SCHEMA_SYMBOL:
-				return 'Unsupported DROP DATABASE statement.';
-
-			case WP_MySQL_Lexer::VIEW_SYMBOL:
-				return 'Unsupported DROP VIEW statement.';
-
-			case WP_MySQL_Lexer::PROCEDURE_SYMBOL:
-				return 'Unsupported DROP PROCEDURE statement.';
-
-			case WP_MySQL_Lexer::FUNCTION_SYMBOL:
-				return 'Unsupported DROP FUNCTION statement.';
-
-			case WP_MySQL_Lexer::TRIGGER_SYMBOL:
-				return 'Unsupported DROP TRIGGER statement.';
-
-			case WP_MySQL_Lexer::EVENT_SYMBOL:
-				return 'Unsupported DROP EVENT statement.';
-
-			case WP_MySQL_Lexer::USER_SYMBOL:
-				return 'Unsupported DROP USER statement.';
-
-			case WP_MySQL_Lexer::ROLE_SYMBOL:
-				return 'Unsupported DROP ROLE statement.';
-
-			case WP_MySQL_Lexer::SPATIAL_SYMBOL:
-				if (
-					isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
-					&& WP_MySQL_Lexer::REFERENCE_SYMBOL === $tokens[ $position + 1 ]->id
-					&& WP_MySQL_Lexer::SYSTEM_SYMBOL === $tokens[ $position + 2 ]->id
-				) {
-					return 'Unsupported DROP SPATIAL REFERENCE SYSTEM statement.';
-				}
-				return null;
-
-			case WP_MySQL_Lexer::TABLESPACE_SYMBOL:
-				return 'Unsupported DROP TABLESPACE statement.';
-
-			case WP_MySQL_Lexer::UNDO_SYMBOL:
-				return 'Unsupported DROP UNDO TABLESPACE statement.';
-
-			case WP_MySQL_Lexer::SERVER_SYMBOL:
-				return 'Unsupported DROP SERVER statement.';
-
-			case WP_MySQL_Lexer::LOGFILE_SYMBOL:
-				return 'Unsupported DROP LOGFILE statement.';
+		if (
+			WP_MySQL_Lexer::SPATIAL_SYMBOL === ( $tokens[ $position ]->id ?? null )
+			&& isset( $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::REFERENCE_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::SYSTEM_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			return 'Unsupported DROP SPATIAL REFERENCE SYSTEM statement.';
 		}
 
-		return null;
+		$messages = array(
+			WP_MySQL_Lexer::DATABASE_SYMBOL   => 'Unsupported DROP DATABASE statement.',
+			WP_MySQL_Lexer::SCHEMA_SYMBOL     => 'Unsupported DROP DATABASE statement.',
+			WP_MySQL_Lexer::VIEW_SYMBOL       => 'Unsupported DROP VIEW statement.',
+			WP_MySQL_Lexer::PROCEDURE_SYMBOL  => 'Unsupported DROP PROCEDURE statement.',
+			WP_MySQL_Lexer::FUNCTION_SYMBOL   => 'Unsupported DROP FUNCTION statement.',
+			WP_MySQL_Lexer::TRIGGER_SYMBOL    => 'Unsupported DROP TRIGGER statement.',
+			WP_MySQL_Lexer::EVENT_SYMBOL      => 'Unsupported DROP EVENT statement.',
+			WP_MySQL_Lexer::USER_SYMBOL       => 'Unsupported DROP USER statement.',
+			WP_MySQL_Lexer::ROLE_SYMBOL       => 'Unsupported DROP ROLE statement.',
+			WP_MySQL_Lexer::TABLESPACE_SYMBOL => 'Unsupported DROP TABLESPACE statement.',
+			WP_MySQL_Lexer::UNDO_SYMBOL       => 'Unsupported DROP UNDO TABLESPACE statement.',
+			WP_MySQL_Lexer::SERVER_SYMBOL     => 'Unsupported DROP SERVER statement.',
+			WP_MySQL_Lexer::LOGFILE_SYMBOL    => 'Unsupported DROP LOGFILE statement.',
+		);
+
+		return $messages[ $tokens[ $position ]->id ?? null ] ?? null;
 	}
 
 	/**
