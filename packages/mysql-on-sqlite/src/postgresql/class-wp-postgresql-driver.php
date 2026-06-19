@@ -41726,17 +41726,11 @@ FROM information_schema.applicable_roles ar';
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_administrable_role_authorizations_relation_sql(): string {
-		return 'SELECT
-	ara.grantee AS "USER",
-	\'%\' AS "HOST",
-	ara.grantee AS "GRANTEE",
-	\'%\' AS "GRANTEE_HOST",
-	ara.role_name AS "ROLE_NAME",
-	\'%\' AS "ROLE_HOST",
-	ara.is_grantable AS "IS_GRANTABLE",
-	\'NO\' AS "IS_DEFAULT",
-	\'NO\' AS "IS_MANDATORY"
-FROM information_schema.administrable_role_authorizations ara';
+		return str_replace(
+			array( 'applicable_roles ar', 'ar.' ),
+			array( 'administrable_role_authorizations ara', 'ara.' ),
+			$this->get_direct_information_schema_applicable_roles_relation_sql()
+		);
 	}
 
 	/**
