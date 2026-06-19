@@ -17931,8 +17931,8 @@ ORDER BY table_name';
 		);
 
 		if ( 0 === strcasecmp( $resolved_schema, 'information_schema' ) ) {
-			$create_statement = $this->get_direct_information_schema_create_table_statement( $table_name );
-			if ( null === $create_statement ) {
+			$columns = $this->get_direct_information_schema_relation_columns( $table_name );
+			if ( null === $columns ) {
 				return $this->set_mysql_static_show_result(
 					array( 'Table', 'Create Table' ),
 					array(),
@@ -17941,12 +17941,27 @@ ORDER BY table_name';
 				);
 			}
 
+			$definitions = array();
+			foreach ( $columns as $column ) {
+				$definitions[] = sprintf(
+					'  %s %s',
+					$this->quote_mysql_identifier( $column ),
+					$this->get_direct_information_schema_create_column_type( $column )
+				);
+			}
+
 			return $this->set_mysql_static_show_result(
 				array( 'Table', 'Create Table' ),
 				array(
 					array(
 						'Table'        => $table_name,
-						'Create Table' => $create_statement,
+						'Create Table' => sprintf(
+							"CREATE TEMPORARY TABLE %s (\n%s\n) ENGINE=MEMORY DEFAULT CHARSET=%s COLLATE=%s",
+							$this->quote_mysql_identifier( strtolower( $table_name ) ),
+							implode( ",\n", $definitions ),
+							self::DEFAULT_MYSQL_CHARSET,
+							self::DEFAULT_MYSQL_COLLATION
+						),
 					),
 				),
 				$fetch_mode,
@@ -18441,12 +18456,27 @@ ORDER BY table_name';
 		}
 
 		foreach ( $checks as $check ) {
-			$definitions[] = $this->get_mysql_create_table_check_constraint_definition_from_metadata( $check );
+			$sql = sprintf(
+				'  CONSTRAINT %s CHECK (%s)',
+				$this->quote_mysql_identifier( (string) $check['constraint_name'] ),
+				(string) $check['check_clause']
+			);
+			if ( 'NO' === strtoupper( (string) ( $check['enforced'] ?? 'YES' ) ) ) {
+				$sql .= ' /*!80016 NOT ENFORCED */';
+			}
+			$definitions[] = $sql;
 		}
 
-		$collation           = null !== $table_collation && '' !== $table_collation
-			? $table_collation
-			: $this->get_mysql_create_table_collation_from_metadata( $columns );
+		$collation = null !== $table_collation && '' !== $table_collation ? $table_collation : $this->collation;
+		if ( null === $table_collation || '' === $table_collation ) {
+			foreach ( $columns as $column ) {
+				if ( ! empty( $column['collation_name'] ) ) {
+					$collation = (string) $column['collation_name'];
+					break;
+				}
+			}
+		}
+
 		$underscore_position = strpos( $collation, '_' );
 		$charset             = false === $underscore_position ? $collation : substr( $collation, 0, $underscore_position );
 
@@ -18476,26 +18506,6 @@ ORDER BY table_name';
 		return 0 === strcasecmp( $schema_name, 'temp' )
 			|| 0 === strcasecmp( $schema_name, 'pg_temp' )
 			|| 1 === preg_match( '/^pg_temp_[0-9]+$/i', $schema_name );
-	}
-
-	/**
-	 * Build one MySQL CHECK constraint definition from stored metadata.
-	 *
-	 * @param array $check CHECK constraint metadata row.
-	 * @return string CHECK constraint definition SQL.
-	 */
-	private function get_mysql_create_table_check_constraint_definition_from_metadata( array $check ): string {
-		$sql = sprintf(
-			'  CONSTRAINT %s CHECK (%s)',
-			$this->quote_mysql_identifier( (string) $check['constraint_name'] ),
-			(string) $check['check_clause']
-		);
-
-		if ( 'NO' === strtoupper( (string) ( $check['enforced'] ?? 'YES' ) ) ) {
-			$sql .= ' /*!80016 NOT ENFORCED */';
-		}
-
-		return $sql;
 	}
 
 	/**
@@ -18661,22 +18671,6 @@ ORDER BY table_name';
 		}
 
 		return $sql;
-	}
-
-	/**
-	 * Get a table collation for SHOW CREATE TABLE from column metadata.
-	 *
-	 * @param array[] $columns Column metadata rows.
-	 * @return string MySQL collation.
-	 */
-	private function get_mysql_create_table_collation_from_metadata( array $columns ): string {
-		foreach ( $columns as $column ) {
-			if ( ! empty( $column['collation_name'] ) ) {
-				return (string) $column['collation_name'];
-			}
-		}
-
-		return $this->collation;
 	}
 
 	/**
@@ -37392,36 +37386,6 @@ WHERE option_name IN (
 		$view = strtolower( $view );
 		return isset( $columns[ $view ] ) ? explode( ' ', $columns[ $view ] ) : null;
 	}
-	/**
-	 * Build a MySQL-shaped SHOW CREATE TABLE statement for a supported information_schema view.
-	 *
-	 * @param string $view Information schema view name.
-	 * @return string|null CREATE TABLE statement, or null when unsupported.
-	 */
-	private function get_direct_information_schema_create_table_statement( string $view ): ?string {
-		$columns = $this->get_direct_information_schema_relation_columns( $view );
-		if ( null === $columns ) {
-			return null;
-		}
-
-		$definitions = array();
-		foreach ( $columns as $column ) {
-			$definitions[] = sprintf(
-				'  %s %s',
-				$this->quote_mysql_identifier( $column ),
-				$this->get_direct_information_schema_create_column_type( $column )
-			);
-		}
-
-		return sprintf(
-			"CREATE TEMPORARY TABLE %s (\n%s\n) ENGINE=MEMORY DEFAULT CHARSET=%s COLLATE=%s",
-			$this->quote_mysql_identifier( strtolower( $view ) ),
-			implode( ",\n", $definitions ),
-			self::DEFAULT_MYSQL_CHARSET,
-			self::DEFAULT_MYSQL_COLLATION
-		);
-	}
-
 	/**
 	 * Get a MySQL column definition type for an information_schema output column.
 	 *
