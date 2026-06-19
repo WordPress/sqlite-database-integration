@@ -26990,6 +26990,22 @@ $wp_mysql_on_update$',
 					);
 				}
 
+				if ( false !== strpos( $sql, 'FROM information_schema.key_column_usage kcu' ) && false !== strpos( $sql, 'FROM information_schema.referential_constraints rc' ) ) {
+					return parent::query(
+						'SELECT
+									NULL AS constraint_name,
+									NULL AS constraint_ordinal,
+									NULL AS seq_in_index,
+									NULL AS column_name,
+									NULL AS referenced_table_schema,
+									NULL AS referenced_table_name,
+									NULL AS referenced_column_name,
+									NULL AS update_rule,
+									NULL AS delete_rule
+								WHERE 1 = 0'
+					);
+				}
+
 				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
 					if ( false !== strpos( $sql, "con.contype = 'f'" ) ) {
 						return parent::query(
@@ -27062,8 +27078,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $queries[1]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(idx.oid, \'pg_class\')', $queries[1]['sql'] );
 		$this->assertStringContainsString( '__wp_mysql_index_sub_part:', $queries[1]['sql'] );
-		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
-		$this->assertStringContainsString( 'pg_catalog.generate_subscripts(con.conkey, 1)', $queries[2]['sql'] );
+		$this->assertStringContainsString( 'FROM information_schema.key_column_usage kcu', $queries[2]['sql'] );
+		$this->assertStringContainsString( 'FROM information_schema.referential_constraints rc', $queries[2]['sql'] );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
 		$this->assertStringContainsString( "con.contype = 'c'", $queries[3]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $queries[3]['sql'] );
@@ -27176,6 +27192,22 @@ $wp_mysql_on_update$',
 					);
 				}
 
+				if ( false !== strpos( $sql, 'FROM information_schema.key_column_usage kcu' ) && false !== strpos( $sql, 'FROM information_schema.referential_constraints rc' ) ) {
+					return parent::query(
+						'SELECT
+									NULL AS constraint_name,
+								NULL AS constraint_ordinal,
+								NULL AS seq_in_index,
+								NULL AS column_name,
+								NULL AS referenced_table_schema,
+								NULL AS referenced_table_name,
+								NULL AS referenced_column_name,
+								NULL AS update_rule,
+								NULL AS delete_rule
+								WHERE 1 = 0'
+					);
+				}
+
 				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
 					if ( false !== strpos( $sql, "con.contype = 'f'" ) ) {
 						return parent::query(
@@ -27245,8 +27277,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'FROM information_schema.columns c', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $queries[1]['sql'] );
-		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
-		$this->assertStringContainsString( 'pg_catalog.generate_subscripts(con.conkey, 1)', $queries[2]['sql'] );
+		$this->assertStringContainsString( 'FROM information_schema.key_column_usage kcu', $queries[2]['sql'] );
+		$this->assertStringContainsString( 'FROM information_schema.referential_constraints rc', $queries[2]['sql'] );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
 		$this->assertStringContainsString( "con.contype = 'c'", $queries[3]['sql'] );
 		$this->assertStringContainsString( 'AS "TABLE_COMMENT"', $queries[4]['sql'] );
@@ -27328,6 +27360,22 @@ $wp_mysql_on_update$',
 							'A' AS collation,
 							NULL AS sub_part,
 							'' AS index_comment"
+					);
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.key_column_usage kcu' ) && false !== strpos( $sql, 'FROM information_schema.referential_constraints rc' ) ) {
+					return parent::query(
+						'SELECT
+									NULL AS constraint_name,
+									NULL AS constraint_ordinal,
+									NULL AS seq_in_index,
+									NULL AS column_name,
+									NULL AS referenced_table_schema,
+									NULL AS referenced_table_name,
+									NULL AS referenced_column_name,
+									NULL AS update_rule,
+									NULL AS delete_rule
+								WHERE 1 = 0'
 					);
 				}
 
@@ -30547,8 +30595,8 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( 'FROM (', $columns_extensions_sql );
 
 		$table_constraints_extensions_sql = $get_sql( 'table_constraints_extensions' );
-		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $table_constraints_extensions_sql );
-		$this->assertStringContainsString( 'table_class.relname AS "TABLE_NAME"', $table_constraints_extensions_sql );
+		$this->assertStringContainsString( 'FROM information_schema.table_constraints tc', $table_constraints_extensions_sql );
+		$this->assertStringContainsString( 'tc.table_name AS "TABLE_NAME"', $table_constraints_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $table_constraints_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "SECONDARY_ENGINE_ATTRIBUTE"', $table_constraints_extensions_sql );
 		$this->assertStringNotContainsString( 'FROM (', $table_constraints_extensions_sql );
@@ -34613,17 +34661,17 @@ $wp_mysql_on_update$',
 			"SELECT constraint_name, constraint_type
 			FROM information_schema.table_constraints
 			WHERE table_schema = DATABASE()
-				AND table_name = 'wptests_posts'" => array( 'FROM pg_catalog.pg_constraint con', "con.contype IN ('p', 'u', 'f', 'c')" ),
+				AND table_name = 'wptests_posts'" => array( 'FROM information_schema.table_constraints tc', 'LEFT JOIN pg_catalog.pg_constraint con', 'tc.constraint_type = \'CHECK\'' ),
 			"SELECT constraint_name, column_name, referenced_table_name
 			FROM information_schema.key_column_usage
 			WHERE table_schema = DATABASE()
-				AND table_name = 'wptests_posts'" => array( 'FROM pg_catalog.pg_constraint con', 'pg_catalog.generate_subscripts(con.conkey, 1)', 'ref_att.attnum = con.confkey[key_positions.position]' ),
+				AND table_name = 'wptests_posts'" => array( 'FROM information_schema.key_column_usage kcu', 'LEFT JOIN information_schema.referential_constraints rc', 'ref_kcu.column_name AS "REFERENCED_COLUMN_NAME"' ),
 			'SELECT constraint_name, delete_rule, referenced_table_name
 			FROM information_schema.referential_constraints
-			WHERE constraint_schema = DATABASE()' => array( 'FROM pg_catalog.pg_constraint con', "con.contype = 'f'", 'ref_con.conkey = con.confkey' ),
+			WHERE constraint_schema = DATABASE()' => array( 'FROM information_schema.referential_constraints rc', 'JOIN information_schema.table_constraints tc', 'ref_tc.table_name AS "REFERENCED_TABLE_NAME"' ),
 			'SELECT constraint_name, check_clause
 			FROM information_schema.check_constraints
-			WHERE constraint_schema = DATABASE()' => array( 'FROM pg_catalog.pg_constraint con', "con.contype = 'c'", 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)' ),
+			WHERE constraint_schema = DATABASE()' => array( 'FROM information_schema.check_constraints cc', 'JOIN information_schema.table_constraints tc', 'cc.check_clause' ),
 		);
 
 		foreach ( $cases as $query => $expected_fragments ) {
@@ -34694,7 +34742,7 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT 1' );
 				}
 
-				if ( false !== strpos( $sql, "con.contype IN ('p', 'u', 'f', 'c')" ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.table_constraints tc' ) && false !== strpos( $sql, 'AS "ENFORCED"' ) ) {
 					return parent::query(
 						"SELECT
 							'wptests_posts_status_chk' AS \"CONSTRAINT_NAME\",
@@ -34702,7 +34750,7 @@ $wp_mysql_on_update$',
 					);
 				}
 
-				if ( false !== strpos( $sql, 'pg_catalog.generate_subscripts(con.conkey, 1)' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.key_column_usage kcu' ) ) {
 					return parent::query(
 						"SELECT
 							'wptests_posts_author_fk' AS \"CONSTRAINT_NAME\",
@@ -34711,7 +34759,7 @@ $wp_mysql_on_update$',
 					);
 				}
 
-				if ( false !== strpos( $sql, "con.contype = 'f'" ) && false !== strpos( $sql, 'ref_con.conkey = con.confkey' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.referential_constraints rc' ) ) {
 					return parent::query(
 						"SELECT
 							'wptests_posts_author_fk' AS \"CONSTRAINT_NAME\",
@@ -34720,7 +34768,7 @@ $wp_mysql_on_update$',
 					);
 				}
 
-				if ( false !== strpos( $sql, "con.contype = 'c'" ) && false !== strpos( $sql, 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)' ) ) {
+				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
 					return parent::query(
 						"SELECT
 							'wptests_posts_status_chk' AS \"CONSTRAINT_NAME\",
@@ -34793,22 +34841,22 @@ $wp_mysql_on_update$',
 			array_filter(
 				$connection->get_queries(),
 				static function ( string $sql ): bool {
-					return false !== strpos( $sql, "con.contype IN ('p', 'u', 'f', 'c')" )
-						|| false !== strpos( $sql, 'pg_catalog.generate_subscripts(con.conkey, 1)' )
-						|| ( false !== strpos( $sql, "con.contype = 'f'" ) && false !== strpos( $sql, 'ref_con.conkey = con.confkey' ) )
-						|| ( false !== strpos( $sql, "con.contype = 'c'" ) && false !== strpos( $sql, 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)' ) );
+					return ( false !== strpos( $sql, 'FROM information_schema.table_constraints tc' ) && false !== strpos( $sql, 'AS "ENFORCED"' ) )
+						|| false !== strpos( $sql, 'FROM information_schema.key_column_usage kcu' )
+						|| false !== strpos( $sql, 'FROM information_schema.referential_constraints rc' )
+						|| false !== strpos( $sql, 'FROM information_schema.check_constraints cc' );
 				}
 			)
 		);
 		$this->assertCount( 4, $queries );
-		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[0] );
-		$this->assertStringContainsString( "con.contype IN ('p', 'u', 'f', 'c')", $queries[0] );
-		$this->assertStringContainsString( 'pg_catalog.generate_subscripts(con.conkey, 1)', $queries[1] );
-		$this->assertStringContainsString( 'ref_att.attnum = con.confkey[key_positions.position]', $queries[1] );
-		$this->assertStringContainsString( "con.contype = 'f'", $queries[2] );
-		$this->assertStringContainsString( 'ref_con.conkey = con.confkey', $queries[2] );
-		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3] );
-		$this->assertStringContainsString( "con.contype = 'c'", $queries[3] );
+		$this->assertStringContainsString( 'FROM information_schema.table_constraints tc', $queries[0] );
+		$this->assertStringContainsString( 'tc.constraint_type = \'CHECK\'', $queries[0] );
+		$this->assertStringContainsString( 'FROM information_schema.key_column_usage kcu', $queries[1] );
+		$this->assertStringContainsString( 'ref_kcu.column_name AS "REFERENCED_COLUMN_NAME"', $queries[1] );
+		$this->assertStringContainsString( 'FROM information_schema.referential_constraints rc', $queries[2] );
+		$this->assertStringContainsString( 'ref_tc.table_name AS "REFERENCED_TABLE_NAME"', $queries[2] );
+		$this->assertStringContainsString( 'FROM information_schema.check_constraints cc', $queries[3] );
+		$this->assertStringContainsString( 'cc.check_clause', $queries[3] );
 		foreach ( $queries as $index => $sql ) {
 			if ( in_array( $index, array( 0, 3 ), true ) ) {
 				$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $sql );

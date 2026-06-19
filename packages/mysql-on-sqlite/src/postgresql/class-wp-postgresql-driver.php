@@ -35589,174 +35589,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 	AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'';
 		}
 
-		if ( 'table_constraints' === $view ) {
-			$enforced_sql = $this->get_postgresql_mysql_check_enforced_comment_sql(
-				'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
-			);
-			return sprintf(
-				'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN con.contype = \'p\' THEN \'PRIMARY\' ELSE con.conname END AS "CONSTRAINT_NAME",
-	%1$s AS "TABLE_SCHEMA",
-	table_class.relname AS "TABLE_NAME",
-	CASE con.contype
-		WHEN \'p\' THEN \'PRIMARY KEY\'
-		WHEN \'u\' THEN \'UNIQUE\'
-		WHEN \'f\' THEN \'FOREIGN KEY\'
-		ELSE \'CHECK\'
-	END AS "CONSTRAINT_TYPE",
-	CASE WHEN con.contype = \'c\' THEN %2$s ELSE \'YES\' END AS "ENFORCED"
-FROM pg_catalog.pg_constraint con
-JOIN pg_catalog.pg_class table_class
-	ON table_class.oid = con.conrelid
-JOIN pg_catalog.pg_namespace table_ns
-	ON table_ns.oid = table_class.relnamespace
-WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
-	AND table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-				$enforced_sql
-			);
-		}
-
-		if ( 'key_column_usage' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN con.contype = \'p\' THEN \'PRIMARY\' ELSE con.conname END AS "CONSTRAINT_NAME",
-	\'def\' AS "TABLE_CATALOG",
-	%2$s AS "TABLE_SCHEMA",
-	table_class.relname AS "TABLE_NAME",
-	table_att.attname AS "COLUMN_NAME",
-	CAST(key_positions.position AS bigint) AS "ORDINAL_POSITION",
-	CASE WHEN con.contype = \'f\' THEN CAST(key_positions.position AS bigint) ELSE NULL END AS "POSITION_IN_UNIQUE_CONSTRAINT",
-	CASE WHEN con.contype = \'f\' THEN %3$s ELSE NULL END AS "REFERENCED_TABLE_SCHEMA",
-	CASE WHEN con.contype = \'f\' THEN ref_class.relname ELSE NULL END AS "REFERENCED_TABLE_NAME",
-	CASE WHEN con.contype = \'f\' THEN ref_att.attname ELSE NULL END AS "REFERENCED_COLUMN_NAME"
-FROM pg_catalog.pg_constraint con
-JOIN pg_catalog.pg_class table_class
-	ON table_class.oid = con.conrelid
-JOIN pg_catalog.pg_namespace table_ns
-	ON table_ns.oid = table_class.relnamespace
-CROSS JOIN LATERAL pg_catalog.generate_subscripts(con.conkey, 1) AS key_positions(position)
-JOIN pg_catalog.pg_attribute table_att
-	ON table_att.attrelid = table_class.oid
-	AND table_att.attnum = con.conkey[key_positions.position]
-LEFT JOIN pg_catalog.pg_class ref_class
-	ON ref_class.oid = con.confrelid
-	AND con.contype = \'f\'
-LEFT JOIN pg_catalog.pg_namespace ref_ns
-	ON ref_ns.oid = ref_class.relnamespace
-LEFT JOIN pg_catalog.pg_attribute ref_att
-	ON ref_att.attrelid = ref_class.oid
-	AND ref_att.attnum = con.confkey[key_positions.position]
-	AND con.contype = \'f\'
-WHERE con.contype IN (\'p\', \'u\', \'f\')
-	AND table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-				$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
-			);
-		}
-
-		if ( 'referential_constraints' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	con.conname AS "CONSTRAINT_NAME",
-	\'def\' AS "UNIQUE_CONSTRAINT_CATALOG",
-	%2$s AS "UNIQUE_CONSTRAINT_SCHEMA",
-	CASE WHEN ref_con.contype = \'p\' THEN \'PRIMARY\' ELSE COALESCE(ref_con.conname, \'PRIMARY\') END AS "UNIQUE_CONSTRAINT_NAME",
-	CASE con.confmatchtype
-		WHEN \'f\' THEN \'FULL\'
-		WHEN \'p\' THEN \'PARTIAL\'
-		ELSE \'NONE\'
-	END AS "MATCH_OPTION",
-	CASE con.confupdtype
-		WHEN \'r\' THEN \'RESTRICT\'
-		WHEN \'c\' THEN \'CASCADE\'
-		WHEN \'n\' THEN \'SET NULL\'
-		WHEN \'d\' THEN \'SET DEFAULT\'
-		ELSE \'NO ACTION\'
-	END AS "UPDATE_RULE",
-	CASE con.confdeltype
-		WHEN \'r\' THEN \'RESTRICT\'
-		WHEN \'c\' THEN \'CASCADE\'
-		WHEN \'n\' THEN \'SET NULL\'
-		WHEN \'d\' THEN \'SET DEFAULT\'
-		ELSE \'NO ACTION\'
-	END AS "DELETE_RULE",
-	table_class.relname AS "TABLE_NAME",
-	ref_class.relname AS "REFERENCED_TABLE_NAME"
-FROM pg_catalog.pg_constraint con
-JOIN pg_catalog.pg_class table_class
-	ON table_class.oid = con.conrelid
-JOIN pg_catalog.pg_namespace table_ns
-	ON table_ns.oid = table_class.relnamespace
-JOIN pg_catalog.pg_class ref_class
-	ON ref_class.oid = con.confrelid
-JOIN pg_catalog.pg_namespace ref_ns
-	ON ref_ns.oid = ref_class.relnamespace
-LEFT JOIN pg_catalog.pg_constraint ref_con
-	ON ref_con.conrelid = con.confrelid
-	AND ref_con.contype IN (\'p\', \'u\')
-	AND ref_con.conkey = con.confkey
-WHERE con.contype = \'f\'
-	AND table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-				$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
-			);
-		}
-
-		if ( 'check_constraints' === $view ) {
-			$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
-				'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
-				'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
-			);
-			return sprintf(
-				'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	con.conname AS "CONSTRAINT_NAME",
-	%2$s AS "CHECK_CLAUSE"
-FROM pg_catalog.pg_constraint con
-JOIN pg_catalog.pg_class t ON t.oid = con.conrelid
-JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
-WHERE con.contype = \'c\'
-	AND t.relkind IN (\'r\', \'p\')
-	AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
-				$check_clause_sql
-			);
-		}
-
-		if ( 'table_constraints_extensions' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN con.contype = \'p\' THEN \'PRIMARY\' ELSE con.conname END AS "CONSTRAINT_NAME",
-	%1$s AS "TABLE_SCHEMA",
-	table_class.relname AS "TABLE_NAME",
-	NULL AS "ENGINE_ATTRIBUTE",
-	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
-FROM pg_catalog.pg_constraint con
-JOIN pg_catalog.pg_class table_class
-	ON table_class.oid = con.conrelid
-JOIN pg_catalog.pg_namespace table_ns
-	ON table_ns.oid = table_class.relnamespace
-WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
-	AND table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' )
-			);
-		}
-
 		if ( 'st_geometry_columns' === $view ) {
 			$geometry_types     = array( 'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geomcollection', 'geometrycollection' );
 			$geometry_domains   = array();
@@ -35911,9 +35743,12 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 		$charset_sql         = $this->connection->quote( self::DEFAULT_MYSQL_CHARSET );
 		$collation_sql       = $this->connection->quote( self::DEFAULT_MYSQL_COLLATION );
 		$sql_mode_sql        = $this->connection->quote( $this->get_sql_mode() );
+		$check_comment_sql   = 'pg_catalog.obj_description(con.oid, \'pg_constraint\')';
+		$check_clause_sql    = $this->get_postgresql_mysql_check_clause_comment_sql( $check_comment_sql, 'cc.check_clause' );
+		$check_enforced_sql  = $this->get_postgresql_mysql_check_enforced_comment_sql( $check_comment_sql );
 
 		$definitions = array(
-			'schemata'            => array(
+			'schemata'                     => array(
 				'alias'       => 's',
 				'from'        => 'information_schema.schemata s',
 				'where'       => 's.schema_name = ' . $information_schema . ' OR s.schema_name ' . $pg_schema_filter,
@@ -35926,7 +35761,113 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'DEFAULT_ENCRYPTION'         => $no_sql,
 				),
 			),
-			'columns_extensions'  => array(
+			'table_constraints'            => array(
+				'alias'       => 'tc',
+				'from'        => 'information_schema.table_constraints tc',
+				'join'        => 'LEFT JOIN pg_catalog.pg_namespace table_ns
+	ON table_ns.nspname = tc.table_schema
+LEFT JOIN pg_catalog.pg_class table_class
+	ON table_class.relnamespace = table_ns.oid
+	AND table_class.relname = tc.table_name
+	AND table_class.relkind IN (\'r\', \'p\')
+LEFT JOIN pg_catalog.pg_constraint con
+	ON con.conrelid = table_class.oid
+	AND con.conname = tc.constraint_name
+	AND con.contype = \'c\'',
+				'where'       => 'tc.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'CONSTRAINT_CATALOG' => $def_sql,
+					'CONSTRAINT_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'tc.constraint_schema' ),
+					'CONSTRAINT_NAME'    => 'CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END',
+					'TABLE_SCHEMA'       => $this->get_direct_information_schema_display_schema_sql( 'tc.table_schema' ),
+					'ENFORCED'           => 'CASE WHEN tc.constraint_type = \'CHECK\' THEN ' . $check_enforced_sql . ' ELSE \'YES\' END',
+				),
+			),
+			'table_constraints_extensions' => array(
+				'alias'       => 'tc',
+				'from'        => 'information_schema.table_constraints tc',
+				'where'       => 'tc.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'CONSTRAINT_CATALOG'         => $def_sql,
+					'CONSTRAINT_SCHEMA'          => $this->get_direct_information_schema_display_schema_sql( 'tc.constraint_schema' ),
+					'CONSTRAINT_NAME'            => 'CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END',
+					'TABLE_SCHEMA'               => $this->get_direct_information_schema_display_schema_sql( 'tc.table_schema' ),
+					'ENGINE_ATTRIBUTE'           => 'NULL',
+					'SECONDARY_ENGINE_ATTRIBUTE' => 'NULL',
+				),
+			),
+			'key_column_usage'             => array(
+				'alias'       => 'kcu',
+				'from'        => 'information_schema.key_column_usage kcu',
+				'join'        => 'LEFT JOIN information_schema.table_constraints tc
+	ON tc.constraint_schema = kcu.constraint_schema
+	AND tc.constraint_name = kcu.constraint_name
+	AND tc.table_schema = kcu.table_schema
+	AND tc.table_name = kcu.table_name
+LEFT JOIN information_schema.referential_constraints rc
+	ON rc.constraint_schema = kcu.constraint_schema
+	AND rc.constraint_name = kcu.constraint_name
+LEFT JOIN information_schema.key_column_usage ref_kcu
+	ON ref_kcu.constraint_schema = rc.unique_constraint_schema
+	AND ref_kcu.constraint_name = rc.unique_constraint_name
+	AND ref_kcu.ordinal_position = kcu.position_in_unique_constraint',
+				'where'       => 'kcu.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'CONSTRAINT_CATALOG'      => $def_sql,
+					'CONSTRAINT_SCHEMA'       => $this->get_direct_information_schema_display_schema_sql( 'kcu.constraint_schema' ),
+					'CONSTRAINT_NAME'         => 'CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE kcu.constraint_name END',
+					'TABLE_CATALOG'           => $def_sql,
+					'TABLE_SCHEMA'            => $this->get_direct_information_schema_display_schema_sql( 'kcu.table_schema' ),
+					'REFERENCED_TABLE_SCHEMA' => $this->get_direct_information_schema_display_schema_sql( 'ref_kcu.table_schema' ),
+					'REFERENCED_TABLE_NAME'   => 'ref_kcu.table_name',
+					'REFERENCED_COLUMN_NAME'  => 'ref_kcu.column_name',
+				),
+			),
+			'referential_constraints'      => array(
+				'alias'       => 'rc',
+				'from'        => 'information_schema.referential_constraints rc',
+				'join'        => 'JOIN information_schema.table_constraints tc
+	ON tc.constraint_schema = rc.constraint_schema
+	AND tc.constraint_name = rc.constraint_name
+LEFT JOIN information_schema.table_constraints ref_tc
+	ON ref_tc.constraint_schema = rc.unique_constraint_schema
+	AND ref_tc.constraint_name = rc.unique_constraint_name',
+				'where'       => 'tc.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'CONSTRAINT_CATALOG'        => $def_sql,
+					'CONSTRAINT_SCHEMA'         => $this->get_direct_information_schema_display_schema_sql( 'rc.constraint_schema' ),
+					'UNIQUE_CONSTRAINT_CATALOG' => $def_sql,
+					'UNIQUE_CONSTRAINT_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'rc.unique_constraint_schema' ),
+					'UNIQUE_CONSTRAINT_NAME'    => 'CASE WHEN ref_tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE rc.unique_constraint_name END',
+					'TABLE_NAME'                => 'tc.table_name',
+					'REFERENCED_TABLE_NAME'     => 'ref_tc.table_name',
+				),
+			),
+			'check_constraints'            => array(
+				'alias'       => 'cc',
+				'from'        => 'information_schema.check_constraints cc',
+				'join'        => 'JOIN information_schema.table_constraints tc
+	ON tc.constraint_schema = cc.constraint_schema
+	AND tc.constraint_name = cc.constraint_name
+	AND tc.constraint_type = \'CHECK\'
+LEFT JOIN pg_catalog.pg_namespace table_ns
+	ON table_ns.nspname = tc.table_schema
+LEFT JOIN pg_catalog.pg_class table_class
+	ON table_class.relnamespace = table_ns.oid
+	AND table_class.relname = tc.table_name
+	AND table_class.relkind IN (\'r\', \'p\')
+LEFT JOIN pg_catalog.pg_constraint con
+	ON con.conrelid = table_class.oid
+	AND con.conname = tc.constraint_name
+	AND con.contype = \'c\'',
+				'where'       => 'tc.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'CONSTRAINT_CATALOG' => $def_sql,
+					'CONSTRAINT_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'cc.constraint_schema' ),
+					'CHECK_CLAUSE'       => $check_clause_sql,
+				),
+			),
+			'columns_extensions'           => array(
 				'alias'       => 'c',
 				'from'        => 'information_schema.columns c',
 				'where'       => 'c.table_schema ' . $schema_filter,
@@ -35937,7 +35878,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'SECONDARY_ENGINE_ATTRIBUTE' => 'NULL',
 				),
 			),
-			'table_privileges'    => array(
+			'table_privileges'             => array(
 				'alias'       => 'tp',
 				'from'        => 'information_schema.table_privileges tp',
 				'where'       => 'tp.table_schema ' . $schema_filter,
@@ -35947,7 +35888,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'TABLE_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'tp.table_schema' ),
 				),
 			),
-			'role_table_grants'   => array(
+			'role_table_grants'            => array(
 				'alias'       => 'rtg',
 				'from'        => 'information_schema.role_table_grants rtg',
 				'where'       => 'rtg.table_schema ' . $schema_filter,
@@ -35958,7 +35899,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'TABLE_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'rtg.table_schema' ),
 				),
 			),
-			'role_routine_grants' => array(
+			'role_routine_grants'          => array(
 				'alias'       => 'rrg',
 				'from'        => 'information_schema.role_routine_grants rrg',
 				'where'       => 'rrg.specific_schema ' . $schema_filter,
@@ -35971,7 +35912,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'ROUTINE_SCHEMA'   => $this->get_direct_information_schema_display_schema_sql( 'rrg.routine_schema' ),
 				),
 			),
-			'applicable_roles'    => array(
+			'applicable_roles'             => array(
 				'alias'       => 'ar',
 				'from'        => 'information_schema.applicable_roles ar',
 				'expressions' => array(
@@ -35984,7 +35925,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'IS_MANDATORY' => $no_sql,
 				),
 			),
-			'enabled_roles'       => array(
+			'enabled_roles'                => array(
 				'alias'       => 'er',
 				'from'        => 'information_schema.enabled_roles er',
 				'expressions' => array(
@@ -35993,7 +35934,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'IS_MANDATORY' => $no_sql,
 				),
 			),
-			'schemata_extensions' => array(
+			'schemata_extensions'          => array(
 				'alias'       => 's',
 				'from'        => 'information_schema.schemata s',
 				'where'       => 's.schema_name = ' . $information_schema . ' OR s.schema_name ' . $pg_schema_filter,
@@ -36003,7 +35944,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'OPTIONS'      => 'NULL',
 				),
 			),
-			'view_table_usage'    => array(
+			'view_table_usage'             => array(
 				'alias'       => 'vtu',
 				'from'        => 'information_schema.view_table_usage vtu',
 				'where'       => 'vtu.view_schema ' . $schema_filter . "\n\tAND vtu.table_schema " . $schema_filter,
@@ -36014,7 +35955,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'TABLE_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'vtu.table_schema' ),
 				),
 			),
-			'view_routine_usage'  => array(
+			'view_routine_usage'           => array(
 				'alias'       => 'vru',
 				'from'        => 'information_schema.view_routine_usage vru',
 				'where'       => 'vru.table_schema ' . $schema_filter . "\n\tAND vru.specific_schema " . $schema_filter,
@@ -36025,7 +35966,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'SPECIFIC_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'vru.specific_schema' ),
 				),
 			),
-			'views'               => array(
+			'views'                        => array(
 				'alias'       => 'v',
 				'from'        => 'information_schema.views v',
 				'where'       => 'v.table_schema ' . $schema_filter,
@@ -36040,7 +35981,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'COLLATION_CONNECTION' => $collation_sql,
 				),
 			),
-			'triggers'            => array(
+			'triggers'                     => array(
 				'alias'       => 't',
 				'from'        => 'information_schema.triggers t',
 				'where'       => 't.trigger_schema ' . $schema_filter,
@@ -36057,7 +35998,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'DATABASE_COLLATION'   => $collation_sql,
 				),
 			),
-			'routines'            => array(
+			'routines'                     => array(
 				'alias'       => 'r',
 				'from'        => 'information_schema.routines r',
 				'where'       => 'r.routine_schema ' . $schema_filter,
@@ -36074,7 +36015,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'DATABASE_COLLATION'   => $collation_sql,
 				),
 			),
-			'parameters'          => array(
+			'parameters'                   => array(
 				'alias'       => 'p',
 				'from'        => 'information_schema.parameters p',
 				'join'        => 'LEFT JOIN information_schema.routines r
@@ -50344,47 +50285,34 @@ END',
 			return null;
 		}
 
-		if (
-			WP_MySQL_Lexer::REGEXP_SYMBOL === $tokens[ $position ]->id
-		) {
+		$regexp_position = $position;
+		$negated         = false;
+		if ( WP_MySQL_Lexer::REGEXP_SYMBOL !== $tokens[ $position ]->id ) {
 			if (
-				isset( $tokens[ $position + 1 ] )
-				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 1 ]->id
+				! isset( $tokens[ $position + 1 ] )
+				|| WP_MySQL_Lexer::NOT_SYMBOL !== $tokens[ $position ]->id
+				|| WP_MySQL_Lexer::REGEXP_SYMBOL !== $tokens[ $position + 1 ]->id
 			) {
 				return null;
 			}
 
-			$is_binary = $this->is_mysql_regexp_binary_predicate( $tokens, $position + 1, $end );
-
-			return array(
-				'sql'      => $is_binary ? '~' : '~*',
-				'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
-				'position' => $is_binary ? $position + 1 : $position,
-			);
+			$regexp_position = $position + 1;
+			$negated         = true;
 		}
 
 		if (
-			isset( $tokens[ $position + 1 ] )
-			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position ]->id
-			&& WP_MySQL_Lexer::REGEXP_SYMBOL === $tokens[ $position + 1 ]->id
+			isset( $tokens[ $regexp_position + 1 ] )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $regexp_position + 1 ]->id
 		) {
-			if (
-				isset( $tokens[ $position + 2 ] )
-				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position + 2 ]->id
-			) {
-				return null;
-			}
-
-			$is_binary = $this->is_mysql_regexp_binary_predicate( $tokens, $position + 2, $end );
-
-			return array(
-				'sql'      => $is_binary ? '!~' : '!~*',
-				'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
-				'position' => $is_binary ? $position + 2 : $position + 1,
-			);
+			return null;
 		}
 
-		return null;
+		$is_binary = $this->is_mysql_regexp_binary_predicate( $tokens, $regexp_position + 1, $end );
+		return array(
+			'sql'      => $negated ? ( $is_binary ? '!~' : '!~*' ) : ( $is_binary ? '~' : '~*' ),
+			'token_id' => WP_MySQL_Lexer::REGEXP_SYMBOL,
+			'position' => $is_binary ? $regexp_position + 1 : $regexp_position,
+		);
 	}
 
 	/**
@@ -52555,28 +52483,7 @@ $wp_mysql_%1$s_domain$',
 			return null;
 		}
 
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-		$value_sql      = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['interval_value_start'],
-			$bounds['interval_value_end']
-		);
-		$interval_sql   = $bounds['interval_sql'] ?? $this->get_postgresql_mysql_interval_sql( $value_sql, $bounds['interval_unit'] );
-
-		return array(
-			'sql'      => sprintf(
-				'(%1$s %2$s %3$s)',
-				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-				$bounds['operator'],
-				$interval_sql
-			),
-			'token_id' => $tokens[ $position ]->id,
-			'position' => $bounds['close'],
-		);
+		return $this->get_postgresql_mysql_date_arithmetic_translation( $tokens, $bounds, $tokens[ $position ]->id );
 	}
 
 	/**
@@ -52593,6 +52500,18 @@ $wp_mysql_%1$s_domain$',
 			return null;
 		}
 
+		return $this->get_postgresql_mysql_date_arithmetic_translation( $tokens, $bounds, $tokens[ $position ]->id );
+	}
+
+	/**
+	 * Render PostgreSQL SQL for parsed MySQL date arithmetic bounds.
+	 *
+	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
+	 * @param array            $bounds   Date arithmetic bounds.
+	 * @param int              $token_id Replacement token ID.
+	 * @return array{sql: string, token_id: int, position: int} Translation data.
+	 */
+	private function get_postgresql_mysql_date_arithmetic_translation( array $tokens, array $bounds, int $token_id ): array {
 		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$bounds['expression_start'],
@@ -52612,7 +52531,7 @@ $wp_mysql_%1$s_domain$',
 				$bounds['operator'],
 				$interval_sql
 			),
-			'token_id' => $tokens[ $position ]->id,
+			'token_id' => $token_id,
 			'position' => $bounds['close'],
 		);
 	}
@@ -53802,12 +53721,7 @@ $wp_mysql_%1$s_domain$',
 
 		$searched_case = $this->get_mysql_searched_case_expression_branches( $tokens, $start, $end );
 		if ( null !== $searched_case ) {
-			return $this->get_postgresql_mysql_finite_date_format_searched_case_choice_sql(
-				$tokens,
-				$searched_case,
-				$expression_sql,
-				$force_string
-			);
+			return $this->get_postgresql_mysql_finite_date_format_case_choice_sql( $tokens, $searched_case, $expression_sql, $force_string );
 		}
 
 		$simple_case = $this->get_mysql_simple_case_expression_branches( $tokens, $start, $end );
@@ -53815,12 +53729,7 @@ $wp_mysql_%1$s_domain$',
 			return null;
 		}
 
-		return $this->get_postgresql_mysql_finite_date_format_simple_case_choice_sql(
-			$tokens,
-			$simple_case,
-			$expression_sql,
-			$force_string
-		);
+		return $this->get_postgresql_mysql_finite_date_format_case_choice_sql( $tokens, $simple_case, $expression_sql, $force_string );
 	}
 
 	/**
@@ -53879,79 +53788,18 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	/**
-	 * Get PostgreSQL SQL for searched CASE choices between finite DATE_FORMAT() masks.
+	 * Get PostgreSQL SQL for CASE choices between finite DATE_FORMAT() masks.
 	 *
 	 * @param WP_MySQL_Token[]                                                                                     $tokens          MySQL lexer token stream.
-	 * @param array{branches:array<int,array{condition_start:int,condition_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null} $case_ranges Searched CASE branch ranges.
+	 * @param array{value_start?:int,value_end?:int,branches:array<int,array<string,int>>,else:array{start:int,end:int}|null} $case_ranges CASE branch ranges.
 	 * @param string                                                                                               $expression_sql  PostgreSQL timestamp/date expression SQL.
 	 * @param bool                                                                                                 $force_string    Whether to force formatted string semantics.
 	 * @return string|null PostgreSQL SQL, or null when a result branch is not a fixed mask or NULL.
 	 */
-	private function get_postgresql_mysql_finite_date_format_searched_case_choice_sql( array $tokens, array $case_ranges, string $expression_sql, bool $force_string ): ?string {
-		$parts = array( 'CASE' );
-		foreach ( $case_ranges['branches'] as $branch ) {
-			$branch_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
-				$tokens,
-				$branch['result_start'],
-				$branch['result_end'],
-				$expression_sql,
-				$force_string
-			);
-			if ( null === $branch_sql ) {
-				return null;
-			}
-
-			$condition_argument_sql = $this->translate_mysql_token_sequence_to_postgresql(
-				$tokens,
-				$branch['condition_start'],
-				$branch['condition_end']
-			);
-			$condition_sql          = $this->is_mysql_boolean_condition_expression(
-				$tokens,
-				$branch['condition_start'],
-				$branch['condition_end']
-			)
-				? '(' . $condition_argument_sql . ')'
-				: $this->get_postgresql_mysql_truthy_expression_sql( $condition_argument_sql );
-
-			$parts[] = sprintf( 'WHEN %s THEN %s', $condition_sql, $branch_sql );
-		}
-
-		$else_sql = 'NULL';
-		if ( null !== $case_ranges['else'] ) {
-			$else_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
-				$tokens,
-				$case_ranges['else']['start'],
-				$case_ranges['else']['end'],
-				$expression_sql,
-				$force_string
-			);
-			if ( null === $else_sql ) {
-				return null;
-			}
-		}
-
-		$parts[] = 'ELSE ' . $else_sql;
-		$parts[] = 'END';
-
-		return implode( ' ', $parts );
-	}
-
-	/**
-	 * Get PostgreSQL SQL for simple CASE choices between finite DATE_FORMAT() masks.
-	 *
-	 * @param WP_MySQL_Token[]                                                                               $tokens          MySQL lexer token stream.
-	 * @param array{value_start:int,value_end:int,branches:array<int,array{compare_start:int,compare_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null} $case_ranges Simple CASE branch ranges.
-	 * @param string                                                                                         $expression_sql  PostgreSQL timestamp/date expression SQL.
-	 * @param bool                                                                                           $force_string    Whether to force formatted string semantics.
-	 * @return string|null PostgreSQL SQL, or null when a result branch is not a fixed mask or NULL.
-	 */
-	private function get_postgresql_mysql_finite_date_format_simple_case_choice_sql( array $tokens, array $case_ranges, string $expression_sql, bool $force_string ): ?string {
-		$value_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$case_ranges['value_start'],
-			$case_ranges['value_end']
-		);
+	private function get_postgresql_mysql_finite_date_format_case_choice_sql( array $tokens, array $case_ranges, string $expression_sql, bool $force_string ): ?string {
+		$value_sql = isset( $case_ranges['value_start'], $case_ranges['value_end'] )
+			? $this->translate_mysql_token_sequence_to_postgresql( $tokens, $case_ranges['value_start'], $case_ranges['value_end'] )
+			: null;
 		$parts     = array( 'CASE' );
 		foreach ( $case_ranges['branches'] as $branch ) {
 			$branch_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
@@ -53965,12 +53813,20 @@ $wp_mysql_%1$s_domain$',
 				return null;
 			}
 
-			$compare_sql = $this->translate_mysql_token_sequence_to_postgresql(
-				$tokens,
-				$branch['compare_start'],
-				$branch['compare_end']
-			);
-			$parts[]     = sprintf( 'WHEN (%s = %s) THEN %s', $value_sql, $compare_sql, $branch_sql );
+			if ( null === $value_sql ) {
+				$condition_argument_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $branch['condition_start'], $branch['condition_end'] );
+				$condition_sql          = $this->is_mysql_boolean_condition_expression( $tokens, $branch['condition_start'], $branch['condition_end'] )
+					? '(' . $condition_argument_sql . ')'
+					: $this->get_postgresql_mysql_truthy_expression_sql( $condition_argument_sql );
+			} else {
+				$condition_sql = sprintf(
+					'(%s = %s)',
+					$value_sql,
+					$this->translate_mysql_token_sequence_to_postgresql( $tokens, $branch['compare_start'], $branch['compare_end'] )
+				);
+			}
+
+			$parts[] = sprintf( 'WHEN %s THEN %s', $condition_sql, $branch_sql );
 		}
 
 		$else_sql = 'NULL';
@@ -54002,153 +53858,7 @@ $wp_mysql_%1$s_domain$',
 	 * @return array{branches:array<int,array{condition_start:int,condition_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null}|null Branch ranges, or null when unsupported.
 	 */
 	private function get_mysql_searched_case_expression_branches( array $tokens, int $start, int $end ): ?array {
-		if (
-			$start + 3 >= $end
-			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $end - 1 ] )
-			|| WP_MySQL_Lexer::CASE_SYMBOL !== $tokens[ $start ]->id
-			|| WP_MySQL_Lexer::WHEN_SYMBOL !== $tokens[ $start + 1 ]->id
-			|| WP_MySQL_Lexer::END_SYMBOL !== $tokens[ $end - 1 ]->id
-			|| $this->get_mysql_case_expression_end( $tokens, $start, $end ) !== $end
-		) {
-			return null;
-		}
-
-		$branches                = array();
-		$case_depth              = 0;
-		$paren_depth             = 0;
-		$condition_start         = null;
-		$condition_end           = null;
-		$result_start            = null;
-		$else_start              = null;
-		$finalize_current_branch = function ( int $position ) use ( &$branches, &$condition_start, &$condition_end, &$result_start ): bool {
-			if (
-				null === $condition_start
-				|| null === $condition_end
-				|| null === $result_start
-				|| $condition_start >= $condition_end
-				|| $result_start >= $position
-			) {
-				return false;
-			}
-
-			$branches[]      = array(
-				'condition_start' => $condition_start,
-				'condition_end'   => $condition_end,
-				'result_start'    => $result_start,
-				'result_end'      => $position,
-			);
-			$condition_start = null;
-			$condition_end   = null;
-			$result_start    = null;
-
-			return true;
-		};
-
-		for ( $i = $start + 1; $i < $end; $i++ ) {
-			$token_id = $tokens[ $i ]->id;
-
-			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token_id ) {
-				++$paren_depth;
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token_id ) {
-				--$paren_depth;
-				if ( $paren_depth < 0 ) {
-					return null;
-				}
-				continue;
-			}
-
-			if ( 0 !== $paren_depth ) {
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::CASE_SYMBOL === $token_id ) {
-				++$case_depth;
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id && $case_depth > 0 ) {
-				--$case_depth;
-				continue;
-			}
-
-			if ( 0 !== $case_depth ) {
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::WHEN_SYMBOL === $token_id ) {
-				if ( null !== $else_start ) {
-					return null;
-				}
-				if ( null !== $result_start && ! $finalize_current_branch( $i ) ) {
-					return null;
-				}
-				if ( null !== $condition_start || null !== $condition_end ) {
-					return null;
-				}
-
-				$condition_start = $i + 1;
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::THEN_SYMBOL === $token_id ) {
-				if (
-					null === $condition_start
-					|| null !== $condition_end
-					|| null !== $result_start
-					|| null !== $else_start
-					|| $condition_start >= $i
-				) {
-					return null;
-				}
-
-				$condition_end = $i;
-				$result_start  = $i + 1;
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::ELSE_SYMBOL === $token_id ) {
-				if ( null !== $else_start || null === $result_start || ! $finalize_current_branch( $i ) ) {
-					return null;
-				}
-
-				$else_start = $i + 1;
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id ) {
-				if ( $i !== $end - 1 ) {
-					return null;
-				}
-				if ( null !== $result_start && ! $finalize_current_branch( $i ) ) {
-					return null;
-				}
-				if ( null !== $condition_start || null !== $condition_end || empty( $branches ) ) {
-					return null;
-				}
-				if ( null === $else_start ) {
-					return array(
-						'branches' => $branches,
-						'else'     => null,
-					);
-				}
-				if ( $else_start >= $i ) {
-					return null;
-				}
-
-				return array(
-					'branches' => $branches,
-					'else'     => array(
-						'start' => $else_start,
-						'end'   => $i,
-					),
-				);
-			}
-		}
-
-		return null;
+		return $this->get_mysql_case_expression_branches( $tokens, $start, $end, false );
 	}
 
 	/**
@@ -54160,11 +53870,25 @@ $wp_mysql_%1$s_domain$',
 	 * @return array{value_start:int,value_end:int,branches:array<int,array{compare_start:int,compare_end:int,result_start:int,result_end:int}>,else:array{start:int,end:int}|null}|null Branch ranges, or null when unsupported.
 	 */
 	private function get_mysql_simple_case_expression_branches( array $tokens, int $start, int $end ): ?array {
+		return $this->get_mysql_case_expression_branches( $tokens, $start, $end, true );
+	}
+
+	/**
+	 * Get CASE branch ranges.
+	 *
+	 * @param WP_MySQL_Token[] $tokens      MySQL lexer token stream.
+	 * @param int              $start       CASE token position.
+	 * @param int              $end         Final CASE expression token position, exclusive.
+	 * @param bool             $simple_case Whether to parse a simple CASE expression.
+	 * @return array{value_start?:int,value_end?:int,branches:array<int,array<string,int>>,else:array{start:int,end:int}|null}|null Branch ranges, or null when unsupported.
+	 */
+	private function get_mysql_case_expression_branches( array $tokens, int $start, int $end, bool $simple_case ): ?array {
 		if (
-			$start + 4 >= $end
+			$start + ( $simple_case ? 4 : 3 ) >= $end
 			|| ! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $end - 1 ] )
 			|| WP_MySQL_Lexer::CASE_SYMBOL !== $tokens[ $start ]->id
-			|| WP_MySQL_Lexer::WHEN_SYMBOL === $tokens[ $start + 1 ]->id
+			|| ( $simple_case && WP_MySQL_Lexer::WHEN_SYMBOL === $tokens[ $start + 1 ]->id )
+			|| ( ! $simple_case && WP_MySQL_Lexer::WHEN_SYMBOL !== $tokens[ $start + 1 ]->id )
 			|| WP_MySQL_Lexer::END_SYMBOL !== $tokens[ $end - 1 ]->id
 			|| $this->get_mysql_case_expression_end( $tokens, $start, $end ) !== $end
 		) {
@@ -54176,30 +53900,30 @@ $wp_mysql_%1$s_domain$',
 		$paren_depth             = 0;
 		$value_start             = $start + 1;
 		$value_end               = null;
-		$compare_start           = null;
-		$compare_end             = null;
+		$test_start              = null;
+		$test_end                = null;
 		$result_start            = null;
 		$else_start              = null;
-		$finalize_current_branch = function ( int $position ) use ( &$branches, &$compare_start, &$compare_end, &$result_start ): bool {
+		$finalize_current_branch = function ( int $position ) use ( &$branches, &$test_start, &$test_end, &$result_start, $simple_case ): bool {
 			if (
-				null === $compare_start
-				|| null === $compare_end
+				null === $test_start
+				|| null === $test_end
 				|| null === $result_start
-				|| $compare_start >= $compare_end
+				|| $test_start >= $test_end
 				|| $result_start >= $position
 			) {
 				return false;
 			}
 
-			$branches[]    = array(
-				'compare_start' => $compare_start,
-				'compare_end'   => $compare_end,
-				'result_start'  => $result_start,
-				'result_end'    => $position,
+			$branches[]   = array(
+				( $simple_case ? 'compare_start' : 'condition_start' ) => $test_start,
+				( $simple_case ? 'compare_end' : 'condition_end' ) => $test_end,
+				'result_start' => $result_start,
+				'result_end'   => $position,
 			);
-			$compare_start = null;
-			$compare_end   = null;
-			$result_start  = null;
+			$test_start   = null;
+			$test_end     = null;
+			$result_start = null;
 
 			return true;
 		};
@@ -54242,7 +53966,7 @@ $wp_mysql_%1$s_domain$',
 				if ( null !== $else_start ) {
 					return null;
 				}
-				if ( null === $value_end ) {
+				if ( $simple_case && null === $value_end ) {
 					if ( $value_start >= $i ) {
 						return null;
 					}
@@ -54250,27 +53974,27 @@ $wp_mysql_%1$s_domain$',
 				} elseif ( null !== $result_start && ! $finalize_current_branch( $i ) ) {
 					return null;
 				}
-				if ( null !== $compare_start || null !== $compare_end ) {
+				if ( null !== $test_start || null !== $test_end ) {
 					return null;
 				}
 
-				$compare_start = $i + 1;
+				$test_start = $i + 1;
 				continue;
 			}
 
 			if ( WP_MySQL_Lexer::THEN_SYMBOL === $token_id ) {
 				if (
-					null === $value_end
-					|| null === $compare_start
-					|| null !== $compare_end
+					( $simple_case && null === $value_end )
+					|| null === $test_start
+					|| null !== $test_end
 					|| null !== $result_start
 					|| null !== $else_start
-					|| $compare_start >= $i
+					|| $test_start >= $i
 				) {
 					return null;
 				}
 
-				$compare_end  = $i;
+				$test_end     = $i;
 				$result_start = $i + 1;
 				continue;
 			}
@@ -54285,36 +54009,32 @@ $wp_mysql_%1$s_domain$',
 			}
 
 			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id ) {
-				if ( $i !== $end - 1 || null === $value_end ) {
+				if ( $i !== $end - 1 || ( $simple_case && null === $value_end ) ) {
 					return null;
 				}
 				if ( null !== $result_start && ! $finalize_current_branch( $i ) ) {
 					return null;
 				}
-				if ( null !== $compare_start || null !== $compare_end || empty( $branches ) ) {
+				if ( null !== $test_start || null !== $test_end || empty( $branches ) ) {
 					return null;
 				}
-				if ( null === $else_start ) {
-					return array(
-						'value_start' => $value_start,
-						'value_end'   => $value_end,
-						'branches'    => $branches,
-						'else'        => null,
-					);
-				}
-				if ( $else_start >= $i ) {
+				if ( null !== $else_start && $else_start >= $i ) {
 					return null;
 				}
 
-				return array(
-					'value_start' => $value_start,
-					'value_end'   => $value_end,
-					'branches'    => $branches,
-					'else'        => array(
+				$case_ranges = array(
+					'branches' => $branches,
+					'else'     => null === $else_start ? null : array(
 						'start' => $else_start,
 						'end'   => $i,
 					),
 				);
+				if ( $simple_case ) {
+					$case_ranges['value_start'] = $value_start;
+					$case_ranges['value_end']   = $value_end;
+				}
+
+				return $case_ranges;
 			}
 		}
 
