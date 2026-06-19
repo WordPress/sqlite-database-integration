@@ -761,7 +761,35 @@ class WP_PostgreSQL_Driver {
 
 		$show_create_database_query = $this->get_show_create_database_query( $query );
 		if ( null !== $show_create_database_query ) {
-			return $this->execute_show_create_database_query( $show_create_database_query, $fetch_mode, ...$fetch_mode_args );
+			$database      = (string) $show_create_database_query['database'];
+			$if_not_exists = ! empty( $show_create_database_query['if_not_exists'] );
+			if (
+				$this->should_use_postgresql_catalog_metadata()
+				? ! $this->mysql_database_exists_in_postgresql_catalog( $database )
+				: ( 0 !== strcasecmp( $database, $this->main_db_name ) && 0 !== strcasecmp( $database, 'information_schema' ) )
+			) {
+				$rows = array();
+			} else {
+				$rows = array(
+					array(
+						'Database'        => $database,
+						'Create Database' => sprintf(
+							'CREATE DATABASE %s%s DEFAULT CHARACTER SET %s COLLATE %s',
+							$if_not_exists ? 'IF NOT EXISTS ' : '',
+							$this->quote_mysql_identifier( $database ),
+							$this->charset,
+							$this->collation
+						),
+					),
+				);
+			}
+
+			return $this->set_mysql_static_show_result(
+				array( 'Database', 'Create Database' ),
+				$rows,
+				$fetch_mode,
+				...$fetch_mode_args
+			);
 		}
 
 		$show_engines_query = $this->get_show_engines_query( $query );
@@ -19161,46 +19189,6 @@ ORDER BY table_name';
 
 		return $this->set_mysql_static_show_result(
 			array( 'Database' ),
-			$rows,
-			$fetch_mode,
-			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Execute a MySQL SHOW CREATE DATABASE/SCHEMA statement from emulated metadata.
-	 *
-	 * @param array $show_create_database_query SHOW CREATE DATABASE options.
-	 * @param int   $fetch_mode                 PDO fetch mode.
-	 * @param array ...$fetch_mode_args         Additional fetch mode arguments.
-	 * @return mixed SHOW CREATE DATABASE result rows.
-	 */
-	private function execute_show_create_database_query( array $show_create_database_query, $fetch_mode, ...$fetch_mode_args ) {
-		$database      = (string) $show_create_database_query['database'];
-		$if_not_exists = ! empty( $show_create_database_query['if_not_exists'] );
-		if (
-			$this->should_use_postgresql_catalog_metadata()
-			? ! $this->mysql_database_exists_in_postgresql_catalog( $database )
-			: ( 0 !== strcasecmp( $database, $this->main_db_name ) && 0 !== strcasecmp( $database, 'information_schema' ) )
-		) {
-			$rows = array();
-		} else {
-			$rows = array(
-				array(
-					'Database'        => $database,
-					'Create Database' => sprintf(
-						'CREATE DATABASE %s%s DEFAULT CHARACTER SET %s COLLATE %s',
-						$if_not_exists ? 'IF NOT EXISTS ' : '',
-						$this->quote_mysql_identifier( $database ),
-						$this->charset,
-						$this->collation
-					),
-				),
-			);
-		}
-
-		return $this->set_mysql_static_show_result(
-			array( 'Database', 'Create Database' ),
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
