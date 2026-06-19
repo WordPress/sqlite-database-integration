@@ -35047,7 +35047,11 @@ WHERE "TABLE_SCHEMA" = %3$s
 			if ( null !== $star_sources ) {
 				$select_lists = array();
 				foreach ( $star_sources as $source ) {
-					$select_lists[] = $this->get_direct_information_schema_column_select_list( $source['columns'], $source['alias'] );
+					$select = array();
+					foreach ( $source['columns'] as $column ) {
+						$select[] = $this->connection->quote_identifier( $source['alias'] ) . '.' . $this->connection->quote_identifier( $column ) . ' AS ' . $this->connection->quote_identifier( $column );
+					}
+					$select_lists[] = implode( ', ', $select );
 				}
 				$replacements[] = array(
 					'start' => $expression_bounds['start'],
@@ -39797,21 +39801,6 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 		}
 
 		return $column_map[ strtolower( $value ) ] ?? null;
-	}
-
-	/**
-	 * Build an explicit SELECT list for information_schema star expansion.
-	 *
-	 * @param string[] $columns Uppercase column names.
-	 * @param string   $alias   Relation alias.
-	 * @return string SELECT list SQL.
-	 */
-	private function get_direct_information_schema_column_select_list( array $columns, string $alias ): string {
-		$select = array();
-		foreach ( $columns as $column ) {
-			$select[] = $this->connection->quote_identifier( $alias ) . '.' . $this->connection->quote_identifier( $column ) . ' AS ' . $this->connection->quote_identifier( $column );
-		}
-		return implode( ', ', $select );
 	}
 
 	/**
