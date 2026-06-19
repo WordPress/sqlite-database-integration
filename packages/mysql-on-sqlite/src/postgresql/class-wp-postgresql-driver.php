@@ -40315,7 +40315,22 @@ END',
 			++$position;
 		}
 
-		if ( isset( $tokens[ $position ] ) && $this->is_unsupported_distinct_select_modifier( $tokens[ $position ] ) ) {
+		if (
+			isset( $tokens[ $position ] )
+			&& in_array(
+				$tokens[ $position ]->id,
+				array(
+					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+					WP_MySQL_Lexer::SQL_BIG_RESULT_SYMBOL,
+					WP_MySQL_Lexer::SQL_BUFFER_RESULT_SYMBOL,
+					WP_MySQL_Lexer::SQL_CACHE_SYMBOL,
+					WP_MySQL_Lexer::SQL_NO_CACHE_SYMBOL,
+					WP_MySQL_Lexer::SQL_SMALL_RESULT_SYMBOL,
+					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+				),
+				true
+			)
+		) {
 			return null;
 		}
 
@@ -40826,28 +40841,6 @@ END',
 		}
 
 		return true;
-	}
-
-	/**
-	 * Check whether a token is an unsupported SELECT modifier for this rewrite.
-	 *
-	 * @param WP_MySQL_Token $token MySQL token.
-	 * @return bool Whether the token is an unsupported modifier.
-	 */
-	private function is_unsupported_distinct_select_modifier( WP_MySQL_Token $token ): bool {
-		return in_array(
-			$token->id,
-			array(
-				WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
-				WP_MySQL_Lexer::SQL_BIG_RESULT_SYMBOL,
-				WP_MySQL_Lexer::SQL_BUFFER_RESULT_SYMBOL,
-				WP_MySQL_Lexer::SQL_CACHE_SYMBOL,
-				WP_MySQL_Lexer::SQL_NO_CACHE_SYMBOL,
-				WP_MySQL_Lexer::SQL_SMALL_RESULT_SYMBOL,
-				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-			),
-			true
-		);
 	}
 
 	/**
