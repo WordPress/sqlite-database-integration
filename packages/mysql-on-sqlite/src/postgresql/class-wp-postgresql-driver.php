@@ -20070,8 +20070,48 @@ ORDER BY table_name';
 	 * @return mixed SHOW routine status result rows.
 	 */
 	private function execute_show_routine_status_query( array $show_routine_status_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->get_show_routine_status_relation_rows( $show_routine_status_query['routine_type'] );
-		$rows = $this->filter_mysql_static_show_rows( $rows, $show_routine_status_query['filter'] );
+		$sql  = 'SELECT
+			r."ROUTINE_SCHEMA" AS "Db",
+			r."ROUTINE_NAME" AS "Name",
+			r."ROUTINE_TYPE" AS "Type",
+			r."DEFINER" AS "Definer",
+			r."LAST_ALTERED" AS "Modified",
+			r."CREATED" AS "Created",
+			r."SECURITY_TYPE" AS "Security_type",
+			r."ROUTINE_COMMENT" AS "Comment",
+			r."CHARACTER_SET_CLIENT" AS "character_set_client",
+			r."COLLATION_CONNECTION" AS "collation_connection",
+			r."DATABASE_COLLATION" AS "Database Collation"
+		FROM (
+' . $this->get_direct_information_schema_relation_sql( 'routines' ) . '
+		) r
+		WHERE r."ROUTINE_TYPE" = ?
+		ORDER BY r."ROUTINE_SCHEMA", r."ROUTINE_NAME"';
+		$stmt = $this->connection->query( $sql, array( $show_routine_status_query['routine_type'] ) );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => array( $show_routine_status_query['routine_type'] ),
+		);
+		$rows                            = array_map(
+			static function ( array $row ): array {
+				return array(
+					'Db'                   => (string) ( $row['Db'] ?? '' ),
+					'Name'                 => (string) ( $row['Name'] ?? '' ),
+					'Type'                 => (string) ( $row['Type'] ?? '' ),
+					'Definer'              => (string) ( $row['Definer'] ?? '' ),
+					'Modified'             => isset( $row['Modified'] ) ? (string) $row['Modified'] : null,
+					'Created'              => isset( $row['Created'] ) ? (string) $row['Created'] : null,
+					'Security_type'        => (string) ( $row['Security_type'] ?? '' ),
+					'Comment'              => (string) ( $row['Comment'] ?? '' ),
+					'character_set_client' => (string) ( $row['character_set_client'] ?? '' ),
+					'collation_connection' => (string) ( $row['collation_connection'] ?? '' ),
+					'Database Collation'   => (string) ( $row['Database Collation'] ?? '' ),
+				);
+			},
+			$stmt->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$rows                            = $this->filter_mysql_static_show_rows( $rows, $show_routine_status_query['filter'] );
 
 		return $this->set_mysql_static_show_result(
 			array(
@@ -20090,57 +20130,6 @@ ORDER BY table_name';
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Get MySQL-shaped SHOW FUNCTION/PROCEDURE STATUS rows from the direct information_schema relation.
-	 *
-	 * @param string $routine_type FUNCTION or PROCEDURE.
-	 * @return array[] Rows keyed by SHOW routine status column names.
-	 */
-	private function get_show_routine_status_relation_rows( string $routine_type ): array {
-		$sql  = 'SELECT
-		r."ROUTINE_SCHEMA" AS "Db",
-		r."ROUTINE_NAME" AS "Name",
-		r."ROUTINE_TYPE" AS "Type",
-		r."DEFINER" AS "Definer",
-		r."LAST_ALTERED" AS "Modified",
-		r."CREATED" AS "Created",
-		r."SECURITY_TYPE" AS "Security_type",
-		r."ROUTINE_COMMENT" AS "Comment",
-		r."CHARACTER_SET_CLIENT" AS "character_set_client",
-		r."COLLATION_CONNECTION" AS "collation_connection",
-		r."DATABASE_COLLATION" AS "Database Collation"
-	FROM (
-' . $this->get_direct_information_schema_relation_sql( 'routines' ) . '
-	) r
-	WHERE r."ROUTINE_TYPE" = ?
-	ORDER BY r."ROUTINE_SCHEMA", r."ROUTINE_NAME"';
-		$stmt = $this->connection->query( $sql, array( $routine_type ) );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => array( $routine_type ),
-		);
-
-		return array_map(
-			static function ( array $row ): array {
-				return array(
-					'Db'                   => (string) ( $row['Db'] ?? '' ),
-					'Name'                 => (string) ( $row['Name'] ?? '' ),
-					'Type'                 => (string) ( $row['Type'] ?? '' ),
-					'Definer'              => (string) ( $row['Definer'] ?? '' ),
-					'Modified'             => isset( $row['Modified'] ) ? (string) $row['Modified'] : null,
-					'Created'              => isset( $row['Created'] ) ? (string) $row['Created'] : null,
-					'Security_type'        => (string) ( $row['Security_type'] ?? '' ),
-					'Comment'              => (string) ( $row['Comment'] ?? '' ),
-					'character_set_client' => (string) ( $row['character_set_client'] ?? '' ),
-					'collation_connection' => (string) ( $row['collation_connection'] ?? '' ),
-					'Database Collation'   => (string) ( $row['Database Collation'] ?? '' ),
-				);
-			},
-			$stmt->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
@@ -20418,8 +20407,48 @@ ORDER BY table_name';
 	 * @return mixed SHOW TRIGGERS result rows.
 	 */
 	private function execute_show_triggers_query( array $show_triggers_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->get_show_triggers_relation_rows( $show_triggers_query['schema'] );
-		$rows = $this->filter_mysql_static_show_rows( $rows, $show_triggers_query['filter'] );
+		$sql  = 'SELECT
+		t."TRIGGER_NAME" AS "Trigger",
+		t."EVENT_MANIPULATION" AS "Event",
+		t."EVENT_OBJECT_TABLE" AS "Table",
+		t."ACTION_STATEMENT" AS "Statement",
+		t."ACTION_TIMING" AS "Timing",
+		t."CREATED" AS "Created",
+		t."SQL_MODE" AS "sql_mode",
+		t."DEFINER" AS "Definer",
+		t."CHARACTER_SET_CLIENT" AS "character_set_client",
+		t."COLLATION_CONNECTION" AS "collation_connection",
+		t."DATABASE_COLLATION" AS "Database Collation"
+	FROM (
+' . $this->get_direct_information_schema_relation_sql( 'triggers' ) . '
+	) t
+	WHERE t."TRIGGER_SCHEMA" = ?
+	ORDER BY t."TRIGGER_NAME"';
+		$stmt = $this->connection->query( $sql, array( $show_triggers_query['schema'] ) );
+
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => array( $show_triggers_query['schema'] ),
+		);
+		$rows                            = array_map(
+			static function ( array $row ): array {
+				return array(
+					'Trigger'              => (string) ( $row['Trigger'] ?? '' ),
+					'Event'                => (string) ( $row['Event'] ?? '' ),
+					'Table'                => (string) ( $row['Table'] ?? '' ),
+					'Statement'            => (string) ( $row['Statement'] ?? '' ),
+					'Timing'               => (string) ( $row['Timing'] ?? '' ),
+					'Created'              => isset( $row['Created'] ) ? (string) $row['Created'] : null,
+					'sql_mode'             => (string) ( $row['sql_mode'] ?? '' ),
+					'Definer'              => (string) ( $row['Definer'] ?? '' ),
+					'character_set_client' => (string) ( $row['character_set_client'] ?? '' ),
+					'collation_connection' => (string) ( $row['collation_connection'] ?? '' ),
+					'Database Collation'   => (string) ( $row['Database Collation'] ?? '' ),
+				);
+			},
+			$stmt->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$rows                            = $this->filter_mysql_static_show_rows( $rows, $show_triggers_query['filter'] );
 
 		return $this->set_mysql_static_show_result(
 			array(
@@ -20438,57 +20467,6 @@ ORDER BY table_name';
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Get MySQL-shaped SHOW TRIGGERS rows from the direct information_schema relation.
-	 *
-	 * @param string $schema_name MySQL-facing schema name.
-	 * @return array[] Rows keyed by SHOW TRIGGERS column names.
-	 */
-	private function get_show_triggers_relation_rows( string $schema_name ): array {
-		$sql  = 'SELECT
-	t."TRIGGER_NAME" AS "Trigger",
-	t."EVENT_MANIPULATION" AS "Event",
-	t."EVENT_OBJECT_TABLE" AS "Table",
-	t."ACTION_STATEMENT" AS "Statement",
-	t."ACTION_TIMING" AS "Timing",
-	t."CREATED" AS "Created",
-	t."SQL_MODE" AS "sql_mode",
-	t."DEFINER" AS "Definer",
-	t."CHARACTER_SET_CLIENT" AS "character_set_client",
-	t."COLLATION_CONNECTION" AS "collation_connection",
-	t."DATABASE_COLLATION" AS "Database Collation"
-FROM (
-' . $this->get_direct_information_schema_relation_sql( 'triggers' ) . '
-) t
-WHERE t."TRIGGER_SCHEMA" = ?
-ORDER BY t."TRIGGER_NAME"';
-		$stmt = $this->connection->query( $sql, array( $schema_name ) );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => array( $schema_name ),
-		);
-
-		return array_map(
-			static function ( array $row ): array {
-				return array(
-					'Trigger'              => (string) ( $row['Trigger'] ?? '' ),
-					'Event'                => (string) ( $row['Event'] ?? '' ),
-					'Table'                => (string) ( $row['Table'] ?? '' ),
-					'Statement'            => (string) ( $row['Statement'] ?? '' ),
-					'Timing'               => (string) ( $row['Timing'] ?? '' ),
-					'Created'              => isset( $row['Created'] ) ? (string) $row['Created'] : null,
-					'sql_mode'             => (string) ( $row['sql_mode'] ?? '' ),
-					'Definer'              => (string) ( $row['Definer'] ?? '' ),
-					'character_set_client' => (string) ( $row['character_set_client'] ?? '' ),
-					'collation_connection' => (string) ( $row['collation_connection'] ?? '' ),
-					'Database Collation'   => (string) ( $row['Database Collation'] ?? '' ),
-				);
-			},
-			$stmt->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
