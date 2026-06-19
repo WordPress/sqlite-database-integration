@@ -58348,7 +58348,18 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 
 			case 'utc_time':
 				$fsp = $this->get_mysql_temporal_function_fractional_seconds_precision( $argument_sql );
-				return null === $fsp ? null : $this->get_postgresql_mysql_current_time_sql( $fsp );
+				if ( null === $fsp ) {
+					return null;
+				}
+				if ( 0 === $fsp ) {
+					return "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS')";
+				}
+
+				return sprintf(
+					"LEFT(TO_CHAR(CURRENT_TIMESTAMP(%1\$d) AT TIME ZONE 'UTC', 'HH24:MI:SS.US'), %2\$d)",
+					$fsp,
+					9 + $fsp
+				);
 
 			case 'current_timestamp':
 			case 'localtime':
@@ -58370,13 +58381,29 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return 3 === $count ? $this->get_postgresql_mysql_pad_sql( $function_name, $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
 
 			case 'is_uuid':
-				return 1 === $count ? $this->get_postgresql_mysql_is_uuid_sql( $argument_sql[0] ) : null;
+				if ( 1 !== $count ) {
+					return null;
+				}
+
+				$argument_text_sql = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
+				return sprintf(
+					'CASE WHEN %1$s IS NULL THEN NULL WHEN %1$s ~* %2$s THEN 1 ELSE 0 END',
+					$argument_text_sql,
+					$this->connection->quote( '^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})$' )
+				);
 
 			case 'json_valid':
 				return 1 === $count ? $this->get_postgresql_mysql_json_valid_sql( $argument_sql[0] ) : null;
 
 			case 'last_insert_id':
-				return 0 === $count ? $this->get_postgresql_mysql_last_insert_id_sql() : null;
+				if ( 0 !== $count ) {
+					return null;
+				}
+
+				$last_insert_id = null !== $this->mysql_last_insert_id_assignment_value
+					? $this->mysql_last_insert_id_assignment_value
+					: $this->get_insert_id();
+				return is_numeric( $last_insert_id ) ? (string) (int) $last_insert_id : '0';
 
 			case 'found_rows':
 				return 0 === $count ? (string) $this->last_found_rows : null;
@@ -58418,13 +58445,37 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return 1 === $count ? $this->get_postgresql_mysql_from_base64_sql( $argument_sql[0] ) : null;
 
 			case 'inet_aton':
-				return 1 === $count ? $this->get_postgresql_mysql_inet_aton_sql( $argument_sql[0] ) : null;
+				if ( 1 !== $count ) {
+					return null;
+				}
+
+				$ip = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
+				return sprintf(
+					'CASE WHEN %1$s IS NULL THEN NULL ELSE ((CAST(SPLIT_PART(%1$s, \'.\', 1) AS bigint) << 24) + (CAST(SPLIT_PART(%1$s, \'.\', 2) AS bigint) << 16) + (CAST(SPLIT_PART(%1$s, \'.\', 3) AS bigint) << 8) + CAST(SPLIT_PART(%1$s, \'.\', 4) AS bigint)) END',
+					$ip
+				);
 
 			case 'inet_ntoa':
-				return 1 === $count ? $this->get_postgresql_mysql_inet_ntoa_sql( $argument_sql[0] ) : null;
+				if ( 1 !== $count ) {
+					return null;
+				}
+
+				$number = sprintf( 'CAST(%s AS bigint)', $argument_sql[0] );
+				return sprintf(
+					'CASE WHEN %1$s IS NULL THEN NULL ELSE (((%1$s >> 24) & 255)::text || \'.\' || ((%1$s >> 16) & 255)::text || \'.\' || ((%1$s >> 8) & 255)::text || \'.\' || (%1$s & 255)::text) END',
+					$number
+				);
 
 			case 'datediff':
-				return 2 === $count ? $this->get_postgresql_mysql_datediff_sql( $argument_sql[0], $argument_sql[1] ) : null;
+				if ( 2 !== $count ) {
+					return null;
+				}
+
+				return sprintf(
+					'CAST((CAST(%1$s AS date) - CAST(%2$s AS date)) AS integer)',
+					$this->get_postgresql_zero_date_safe_timestamp_sql( $argument_sql[0] ),
+					$this->get_postgresql_zero_date_safe_timestamp_sql( $argument_sql[1] )
+				);
 
 			case 'locate':
 				if ( 2 === $count ) {
@@ -58478,7 +58529,17 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 					: null;
 
 			case 'regexp':
-				return 2 === $count ? $this->get_postgresql_mysql_regexp_function_sql( $argument_sql[0], $argument_sql[1] ) : null;
+				if ( 2 !== $count ) {
+					return null;
+				}
+
+				$pattern = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
+				$value   = sprintf( 'CAST(%s AS text)', $argument_sql[1] );
+				return sprintf(
+					'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s ~* %1$s THEN 1 ELSE 0 END',
+					$pattern,
+					$value
+				);
 
 			case 'substring':
 			case 'substr':
@@ -58525,23 +58586,12 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return 1 === $count ? '1' : null;
 
 			case 'uuid':
-				return 0 === $count ? $this->get_postgresql_mysql_uuid_sql() : null;
+				return 0 === $count
+					? "LOWER(REGEXP_REPLACE(MD5(CAST(CLOCK_TIMESTAMP() AS text) || CAST(RANDOM() AS text) || CAST(PG_BACKEND_PID() AS text)), '^(.{8})(.{4}).(.{3}).(.{3})(.{12})$', '\\1-\\2-4\\3-8\\4-\\5'))"
+					: null;
 		}
 
 		return null;
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL UUID().
-	 *
-	 * PostgreSQL installations may not have UUID extensions enabled. Build a
-	 * UUID-shaped random string from core volatile functions instead of relying
-	 * on extension-provided helpers.
-	 *
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_uuid_sql(): string {
-		return "LOWER(REGEXP_REPLACE(MD5(CAST(CLOCK_TIMESTAMP() AS text) || CAST(RANDOM() AS text) || CAST(PG_BACKEND_PID() AS text)), '^(.{8})(.{4}).(.{3}).(.{3})(.{12})$', '\\1-\\2-4\\3-8\\4-\\5'))";
 	}
 
 	/**
@@ -58572,25 +58622,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			$unit,
 			$timestamp_sql,
 			implode( ' ', $branches )
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL IS_UUID().
-	 *
-	 * MySQL accepts canonical dashed UUIDs, canonical UUIDs wrapped in braces,
-	 * and compact 32-hex-character UUID strings.
-	 *
-	 * @param string $argument_sql PostgreSQL argument SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_is_uuid_sql( string $argument_sql ): string {
-		$argument_text_sql = sprintf( 'CAST(%s AS text)', $argument_sql );
-
-		return sprintf(
-			'CASE WHEN %1$s IS NULL THEN NULL WHEN %1$s ~* %2$s THEN 1 ELSE 0 END',
-			$argument_text_sql,
-			$this->connection->quote( '^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})$' )
 		);
 	}
 
@@ -58994,24 +59025,6 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	/**
-	 * Format the emulated MySQL current time value with optional fractional seconds.
-	 *
-	 * @param int $fsp Fractional seconds precision, 0 through 6.
-	 * @return string PostgreSQL SQL.
-	 */
-	private function get_postgresql_mysql_current_time_sql( int $fsp ): string {
-		if ( 0 === $fsp ) {
-			return "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS')";
-		}
-
-		return sprintf(
-			"LEFT(TO_CHAR(CURRENT_TIMESTAMP(%1\$d) AT TIME ZONE 'UTC', 'HH24:MI:SS.US'), %2\$d)",
-			$fsp,
-			9 + $fsp
-		);
-	}
-
-	/**
 	 * Format the emulated MySQL current timestamp value with optional fractional seconds.
 	 *
 	 * @param int $fsp Fractional seconds precision, 0 through 6.
@@ -59030,18 +59043,6 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	/**
-	 * Get PostgreSQL SQL for MySQL LAST_INSERT_ID().
-	 *
-	 * @return string PostgreSQL SQL literal.
-	 */
-	private function get_postgresql_mysql_last_insert_id_sql(): string {
-		$last_insert_id = null !== $this->mysql_last_insert_id_assignment_value
-			? $this->mysql_last_insert_id_assignment_value
-			: $this->get_insert_id();
-		return is_numeric( $last_insert_id ) ? (string) (int) $last_insert_id : '0';
-	}
-
-	/**
 	 * Get PostgreSQL SQL for MySQL DATE(expr), preserving zero-date text values.
 	 *
 	 * @param string $expression_sql Translated expression SQL.
@@ -59056,39 +59057,6 @@ $wp_mysql_%1$s_domain$',
 			$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
 			$expression_text_sql,
 			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql )
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL DATEDIFF(expr1, expr2), guarding zero-date casts.
-	 *
-	 * @param string $start_sql Translated start expression SQL.
-	 * @param string $end_sql   Translated end expression SQL.
-	 * @return string PostgreSQL SQL.
-	 */
-	private function get_postgresql_mysql_datediff_sql( string $start_sql, string $end_sql ): string {
-		return sprintf(
-			'CAST((CAST(%1$s AS date) - CAST(%2$s AS date)) AS integer)',
-			$this->get_postgresql_zero_date_safe_timestamp_sql( $start_sql ),
-			$this->get_postgresql_zero_date_safe_timestamp_sql( $end_sql )
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL REGEXP(pattern, value) function calls.
-	 *
-	 * @param string $pattern_sql Regular expression pattern SQL.
-	 * @param string $value_sql   Value SQL.
-	 * @return string PostgreSQL SQL.
-	 */
-	private function get_postgresql_mysql_regexp_function_sql( string $pattern_sql, string $value_sql ): string {
-		$pattern = sprintf( 'CAST(%s AS text)', $pattern_sql );
-		$value   = sprintf( 'CAST(%s AS text)', $value_sql );
-
-		return sprintf(
-			'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s ~* %1$s THEN 1 ELSE 0 END',
-			$pattern,
-			$value
 		);
 	}
 
@@ -59480,36 +59448,6 @@ $wp_mysql_%1$s_domain$',
 		}
 
 		return false;
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL INET_ATON(expr).
-	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL SQL.
-	 */
-	private function get_postgresql_mysql_inet_aton_sql( string $expression_sql ): string {
-		$ip = sprintf( 'CAST(%s AS text)', $expression_sql );
-
-		return sprintf(
-			'CASE WHEN %1$s IS NULL THEN NULL ELSE ((CAST(SPLIT_PART(%1$s, \'.\', 1) AS bigint) << 24) + (CAST(SPLIT_PART(%1$s, \'.\', 2) AS bigint) << 16) + (CAST(SPLIT_PART(%1$s, \'.\', 3) AS bigint) << 8) + CAST(SPLIT_PART(%1$s, \'.\', 4) AS bigint)) END',
-			$ip
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL INET_NTOA(expr).
-	 *
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL SQL.
-	 */
-	private function get_postgresql_mysql_inet_ntoa_sql( string $expression_sql ): string {
-		$number = sprintf( 'CAST(%s AS bigint)', $expression_sql );
-
-		return sprintf(
-			'CASE WHEN %1$s IS NULL THEN NULL ELSE (((%1$s >> 24) & 255)::text || \'.\' || ((%1$s >> 16) & 255)::text || \'.\' || ((%1$s >> 8) & 255)::text || \'.\' || (%1$s & 255)::text) END',
-			$number
-		);
 	}
 
 	/**
