@@ -41592,7 +41592,35 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 	 */
 	private function get_direct_information_schema_table_constraints_relation_sql(): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_table_constraints_catalog_relation_sql();
+			$enforced_sql = $this->get_postgresql_mysql_check_enforced_comment_sql(
+				'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
+			);
+			return sprintf(
+				'SELECT
+	\'def\' AS "CONSTRAINT_CATALOG",
+	%1$s AS "CONSTRAINT_SCHEMA",
+	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END AS "CONSTRAINT_NAME",
+	%1$s AS "TABLE_SCHEMA",
+	tc.table_name AS "TABLE_NAME",
+	tc.constraint_type AS "CONSTRAINT_TYPE",
+	CASE WHEN tc.constraint_type = \'CHECK\' THEN %3$s ELSE \'YES\' END AS "ENFORCED"
+FROM information_schema.table_constraints tc
+LEFT JOIN pg_catalog.pg_namespace n
+	ON n.nspname = tc.table_schema
+LEFT JOIN pg_catalog.pg_class t
+	ON t.relnamespace = n.oid
+	AND t.relname = tc.table_name
+LEFT JOIN pg_catalog.pg_constraint con
+	ON con.conrelid = t.oid
+	AND con.conname = tc.constraint_name
+	AND con.contype = \'c\'
+WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND tc.table_name NOT IN (%2$s)
+	AND tc.constraint_type IN (\'PRIMARY KEY\', \'UNIQUE\', \'FOREIGN KEY\', \'CHECK\')',
+				$this->get_direct_information_schema_display_schema_sql( 'tc.table_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql(),
+				$enforced_sql
+			);
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -41687,50 +41715,42 @@ FROM (
 	}
 
 	/**
-	 * Build information_schema.TABLE_CONSTRAINTS rows from PostgreSQL catalogs.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_table_constraints_catalog_relation_sql(): string {
-		$enforced_sql = $this->get_postgresql_mysql_check_enforced_comment_sql(
-			'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
-		);
-		return sprintf(
-			'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END AS "CONSTRAINT_NAME",
-	%1$s AS "TABLE_SCHEMA",
-	tc.table_name AS "TABLE_NAME",
-	tc.constraint_type AS "CONSTRAINT_TYPE",
-	CASE WHEN tc.constraint_type = \'CHECK\' THEN %3$s ELSE \'YES\' END AS "ENFORCED"
-FROM information_schema.table_constraints tc
-LEFT JOIN pg_catalog.pg_namespace n
-	ON n.nspname = tc.table_schema
-LEFT JOIN pg_catalog.pg_class t
-	ON t.relnamespace = n.oid
-	AND t.relname = tc.table_name
-LEFT JOIN pg_catalog.pg_constraint con
-	ON con.conrelid = t.oid
-	AND con.conname = tc.constraint_name
-	AND con.contype = \'c\'
-WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND tc.table_name NOT IN (%2$s)
-	AND tc.constraint_type IN (\'PRIMARY KEY\', \'UNIQUE\', \'FOREIGN KEY\', \'CHECK\')',
-			$this->get_direct_information_schema_display_schema_sql( 'tc.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql(),
-			$enforced_sql
-		);
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.KEY_COLUMN_USAGE relation.
 	 *
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_key_column_usage_relation_sql(): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_key_column_usage_catalog_relation_sql();
+			return sprintf(
+				'SELECT
+	\'def\' AS "CONSTRAINT_CATALOG",
+	%1$s AS "CONSTRAINT_SCHEMA",
+	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE kcu.constraint_name END AS "CONSTRAINT_NAME",
+	\'def\' AS "TABLE_CATALOG",
+	%2$s AS "TABLE_SCHEMA",
+	kcu.table_name AS "TABLE_NAME",
+	kcu.column_name AS "COLUMN_NAME",
+	kcu.ordinal_position AS "ORDINAL_POSITION",
+	kcu.position_in_unique_constraint AS "POSITION_IN_UNIQUE_CONSTRAINT",
+	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN %3$s ELSE NULL END AS "REFERENCED_TABLE_SCHEMA",
+	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN ccu.table_name ELSE NULL END AS "REFERENCED_TABLE_NAME",
+	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN ccu.column_name ELSE NULL END AS "REFERENCED_COLUMN_NAME"
+FROM information_schema.key_column_usage kcu
+LEFT JOIN information_schema.table_constraints tc
+	ON tc.constraint_schema = kcu.constraint_schema
+	AND tc.constraint_name = kcu.constraint_name
+	AND tc.table_schema = kcu.table_schema
+	AND tc.table_name = kcu.table_name
+LEFT JOIN information_schema.constraint_column_usage ccu
+	ON ccu.constraint_schema = kcu.constraint_schema
+	AND ccu.constraint_name = kcu.constraint_name
+WHERE kcu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND kcu.table_name NOT IN (%4$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'kcu.constraint_schema' ),
+				$this->get_direct_information_schema_display_schema_sql( 'kcu.table_schema' ),
+				$this->get_direct_information_schema_display_schema_sql( 'ccu.table_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -41827,51 +41847,36 @@ WHERE kcu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	}
 
 	/**
-	 * Build information_schema.KEY_COLUMN_USAGE rows from PostgreSQL catalogs.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_key_column_usage_catalog_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE kcu.constraint_name END AS "CONSTRAINT_NAME",
-	\'def\' AS "TABLE_CATALOG",
-	%2$s AS "TABLE_SCHEMA",
-	kcu.table_name AS "TABLE_NAME",
-	kcu.column_name AS "COLUMN_NAME",
-	kcu.ordinal_position AS "ORDINAL_POSITION",
-	kcu.position_in_unique_constraint AS "POSITION_IN_UNIQUE_CONSTRAINT",
-	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN %3$s ELSE NULL END AS "REFERENCED_TABLE_SCHEMA",
-	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN ccu.table_name ELSE NULL END AS "REFERENCED_TABLE_NAME",
-	CASE WHEN tc.constraint_type = \'FOREIGN KEY\' THEN ccu.column_name ELSE NULL END AS "REFERENCED_COLUMN_NAME"
-FROM information_schema.key_column_usage kcu
-LEFT JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = kcu.constraint_schema
-	AND tc.constraint_name = kcu.constraint_name
-	AND tc.table_schema = kcu.table_schema
-	AND tc.table_name = kcu.table_name
-LEFT JOIN information_schema.constraint_column_usage ccu
-	ON ccu.constraint_schema = kcu.constraint_schema
-	AND ccu.constraint_name = kcu.constraint_name
-WHERE kcu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND kcu.table_name NOT IN (%4$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'kcu.constraint_schema' ),
-			$this->get_direct_information_schema_display_schema_sql( 'kcu.table_schema' ),
-			$this->get_direct_information_schema_display_schema_sql( 'ccu.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.REFERENTIAL_CONSTRAINTS relation.
 	 *
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_referential_constraints_relation_sql(): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_referential_constraints_catalog_relation_sql();
+			return sprintf(
+				'SELECT
+	\'def\' AS "CONSTRAINT_CATALOG",
+	%1$s AS "CONSTRAINT_SCHEMA",
+	rc.constraint_name AS "CONSTRAINT_NAME",
+	\'def\' AS "UNIQUE_CONSTRAINT_CATALOG",
+	%2$s AS "UNIQUE_CONSTRAINT_SCHEMA",
+	\'PRIMARY\' AS "UNIQUE_CONSTRAINT_NAME",
+	\'NONE\' AS "MATCH_OPTION",
+	rc.update_rule AS "UPDATE_RULE",
+	rc.delete_rule AS "DELETE_RULE",
+	tc.table_name AS "TABLE_NAME",
+	ccu.table_name AS "REFERENCED_TABLE_NAME"
+FROM information_schema.referential_constraints rc
+LEFT JOIN information_schema.table_constraints tc
+	ON tc.constraint_schema = rc.constraint_schema
+	AND tc.constraint_name = rc.constraint_name
+LEFT JOIN information_schema.constraint_column_usage ccu
+	ON ccu.constraint_schema = rc.unique_constraint_schema
+	AND ccu.constraint_name = rc.unique_constraint_name
+WHERE rc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
+				$this->get_direct_information_schema_display_schema_sql( 'rc.constraint_schema' ),
+				$this->get_direct_information_schema_display_schema_sql( 'rc.unique_constraint_schema' )
+			);
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -41941,45 +41946,40 @@ FROM (
 	}
 
 	/**
-	 * Build information_schema.REFERENTIAL_CONSTRAINTS rows from PostgreSQL catalogs.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_referential_constraints_catalog_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	rc.constraint_name AS "CONSTRAINT_NAME",
-	\'def\' AS "UNIQUE_CONSTRAINT_CATALOG",
-	%2$s AS "UNIQUE_CONSTRAINT_SCHEMA",
-	\'PRIMARY\' AS "UNIQUE_CONSTRAINT_NAME",
-	\'NONE\' AS "MATCH_OPTION",
-	rc.update_rule AS "UPDATE_RULE",
-	rc.delete_rule AS "DELETE_RULE",
-	tc.table_name AS "TABLE_NAME",
-	ccu.table_name AS "REFERENCED_TABLE_NAME"
-FROM information_schema.referential_constraints rc
-LEFT JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = rc.constraint_schema
-	AND tc.constraint_name = rc.constraint_name
-LEFT JOIN information_schema.constraint_column_usage ccu
-	ON ccu.constraint_schema = rc.unique_constraint_schema
-	AND ccu.constraint_name = rc.unique_constraint_name
-WHERE rc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
-			$this->get_direct_information_schema_display_schema_sql( 'rc.constraint_schema' ),
-			$this->get_direct_information_schema_display_schema_sql( 'rc.unique_constraint_schema' )
-		);
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.CHECK_CONSTRAINTS relation.
 	 *
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_check_constraints_relation_sql(): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_check_constraints_catalog_relation_sql();
+			$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
+				'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
+				'cc.check_clause'
+			);
+			return sprintf(
+				'SELECT
+	\'def\' AS "CONSTRAINT_CATALOG",
+	%1$s AS "CONSTRAINT_SCHEMA",
+	cc.constraint_name AS "CONSTRAINT_NAME",
+	%2$s AS "CHECK_CLAUSE"
+FROM information_schema.check_constraints cc
+LEFT JOIN information_schema.table_constraints tc
+	ON tc.constraint_schema = cc.constraint_schema
+	AND tc.constraint_name = cc.constraint_name
+	AND tc.constraint_type = \'CHECK\'
+LEFT JOIN pg_catalog.pg_namespace n
+	ON n.nspname = tc.table_schema
+LEFT JOIN pg_catalog.pg_class t
+	ON t.relnamespace = n.oid
+	AND t.relname = tc.table_name
+LEFT JOIN pg_catalog.pg_constraint con
+	ON con.conrelid = t.oid
+	AND con.conname = cc.constraint_name
+	AND con.contype = \'c\'
+WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
+				$this->get_direct_information_schema_display_schema_sql( 'cc.constraint_schema' ),
+				$check_clause_sql
+			);
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -42020,42 +42020,6 @@ FROM (
 ) checks',
 			$this->get_direct_information_schema_display_schema_sql( 'constraint_schema' ),
 			$check_metadata_table
-		);
-	}
-
-	/**
-	 * Build information_schema.CHECK_CONSTRAINTS rows from PostgreSQL catalogs.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_check_constraints_catalog_relation_sql(): string {
-		$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
-			'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
-			'cc.check_clause'
-		);
-		return sprintf(
-			'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	cc.constraint_name AS "CONSTRAINT_NAME",
-	%2$s AS "CHECK_CLAUSE"
-FROM information_schema.check_constraints cc
-LEFT JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = cc.constraint_schema
-	AND tc.constraint_name = cc.constraint_name
-	AND tc.constraint_type = \'CHECK\'
-LEFT JOIN pg_catalog.pg_namespace n
-	ON n.nspname = tc.table_schema
-LEFT JOIN pg_catalog.pg_class t
-	ON t.relnamespace = n.oid
-	AND t.relname = tc.table_name
-LEFT JOIN pg_catalog.pg_constraint con
-	ON con.conrelid = t.oid
-	AND con.conname = cc.constraint_name
-	AND con.contype = \'c\'
-WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
-			$this->get_direct_information_schema_display_schema_sql( 'cc.constraint_schema' ),
-			$check_clause_sql
 		);
 	}
 
