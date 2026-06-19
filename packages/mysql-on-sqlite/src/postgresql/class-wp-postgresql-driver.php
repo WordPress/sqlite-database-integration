@@ -1777,30 +1777,6 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
-		$translated_query = $this->translate_wordpress_available_post_mime_types_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_wordpress_term_cache_priming_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_wordpress_approved_comments_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
 		$last_insert_id_assignment_query = $this->translate_mysql_last_insert_id_assignment_select_query( $query );
 		if ( null !== $last_insert_id_assignment_query ) {
 			return array(
@@ -1811,14 +1787,6 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$translated_query = $this->translate_mysql_version_function_select_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
-		$translated_query = $this->translate_wordpress_postmeta_distinct_meta_key_having_query( $query );
 		if ( null !== $translated_query ) {
 			return array(
 				'sql'        => $translated_query,
@@ -30756,193 +30724,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Translate WordPress's distinct postmeta-key lookup that uses HAVING without GROUP BY.
-	 *
-	 * @param string $query MySQL query.
-	 * @return string|null PostgreSQL query, or null when unsupported.
-	 */
-	private function translate_wordpress_postmeta_distinct_meta_key_having_query( string $query ): ?string {
-		$tokens = $this->get_mysql_tokens( $query );
-		if (
-			! isset( $tokens[0], $tokens[1] )
-			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::DISTINCT_SYMBOL !== $tokens[1]->id
-		) {
-			return null;
-		}
-
-		$projection_start = 2;
-		$statement_end    = $this->get_mysql_statement_end_position( $tokens, $projection_start );
-		if ( null === $statement_end ) {
-			return null;
-		}
-
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $projection_start, $statement_end );
-		$select_end     = $limit_position ?? $statement_end;
-		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
-			return null;
-		}
-
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $projection_start, $select_end );
-		if (
-			null === $order_position
-			|| ! isset( $tokens[ $order_position + 1 ] )
-			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
-			|| $order_position + 2 >= $select_end
-		) {
-			return null;
-		}
-
-		$having_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::HAVING_SYMBOL, $projection_start, $order_position );
-		if ( null === $having_position || $having_position + 1 >= $order_position ) {
-			return null;
-		}
-
-		if (
-			null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $projection_start, $having_position )
-			|| $this->contains_top_level_mysql_token(
-				$tokens,
-				$projection_start,
-				$select_end,
-				array(
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::INTO_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::SELECT_SYMBOL,
-					WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
-					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				)
-			)
-		) {
-			return null;
-		}
-
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $projection_start, $having_position );
-		if ( null === $from_position || $projection_start === $from_position ) {
-			return null;
-		}
-
-		$projection_items = $this->parse_mysql_select_projection_items( $tokens, $projection_start, $from_position );
-		if ( null === $projection_items || 1 !== count( $projection_items ) ) {
-			return null;
-		}
-
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $having_position );
-		$from_end       = $where_position ?? $having_position;
-		$table          = $this->parse_mysql_table_reference( $tokens, $from_position + 1, $from_end );
-		if (
-			null === $table
-			|| $table['position'] !== $from_end
-			|| 'public' !== $table['schema']
-			|| ! $this->is_mysql_wordpress_table_name( $table['table'], 'postmeta' )
-			|| ! $this->is_mysql_postmeta_meta_key_reference(
-				$tokens,
-				$projection_items[0]['expression_start'],
-				$projection_items[0]['expression_end'],
-				$table
-			)
-		) {
-			return null;
-		}
-
-		$having_reference = $this->parse_mysql_column_reference( $tokens, $having_position + 1, $order_position );
-		if (
-			null === $having_reference
-			|| ! $this->is_mysql_postmeta_meta_key_reference( $tokens, $having_reference['start'], $having_reference['end'], $table )
-			|| ! isset( $tokens[ $having_reference['end'] ], $tokens[ $having_reference['end'] + 1 ] )
-			|| WP_MySQL_Lexer::NOT_SYMBOL !== $tokens[ $having_reference['end'] ]->id
-			|| WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $having_reference['end'] + 1 ]->id
-			|| $having_reference['end'] + 2 >= $order_position
-			|| $this->contains_top_level_mysql_token(
-				$tokens,
-				$having_reference['end'] + 2,
-				$order_position,
-				array(
-					WP_MySQL_Lexer::AND_SYMBOL,
-					WP_MySQL_Lexer::OR_SYMBOL,
-					WP_MySQL_Lexer::SELECT_SYMBOL,
-				)
-			)
-		) {
-			return null;
-		}
-
-		$order_items = $this->split_top_level_mysql_arguments( $tokens, $order_position + 2, $select_end );
-		if ( null === $order_items || 1 !== count( $order_items ) ) {
-			return null;
-		}
-
-		$order_item_end = $order_items[0]['end'];
-		if (
-			isset( $tokens[ $order_item_end - 1 ] )
-			&& (
-				WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $order_item_end - 1 ]->id
-				|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $order_item_end - 1 ]->id
-			)
-		) {
-			--$order_item_end;
-		}
-
-		if ( ! $this->is_mysql_postmeta_meta_key_reference( $tokens, $order_items[0]['start'], $order_item_end, $table ) ) {
-			return null;
-		}
-
-		$from_sql   = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $from_end );
-		$having_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $having_position + 1, $order_position );
-		$order_sql  = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $order_position, $select_end );
-
-		if ( null !== $where_position ) {
-			$where_sql = sprintf(
-				'(%s) AND (%s)',
-				$this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_position + 1, $having_position ),
-				$having_sql
-			);
-		} else {
-			$where_sql = $having_sql;
-		}
-
-		$sql = sprintf(
-			'SELECT DISTINCT %s %s WHERE %s %s',
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $from_position ),
-			$from_sql,
-			$where_sql,
-			$order_sql
-		);
-
-		if ( null !== $limit_position ) {
-			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-		}
-
-		return $sql;
-	}
-
-	/**
-	 * Check whether a token range is a postmeta.meta_key reference.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First token position.
-	 * @param int              $end    Final token position, exclusive.
-	 * @param array            $table  Parsed postmeta table reference.
-	 * @return bool Whether the range references meta_key.
-	 */
-	private function is_mysql_postmeta_meta_key_reference( array $tokens, int $start, int $end, array $table ): bool {
-		$bounds    = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
-		$reference = $this->parse_mysql_column_reference( $tokens, $bounds['start'], $bounds['end'] );
-		if (
-			null === $reference
-			|| $reference['end'] !== $bounds['end']
-			|| 0 !== strcasecmp( $reference['column'], 'meta_key' )
-		) {
-			return false;
-		}
-
-		return null === $reference['qualifier']
-			|| $this->is_mysql_dml_table_qualifier( $reference['qualifier'], $table['table'], $table['alias'] );
-	}
-
-	/**
 	 * Translate simple single-table MySQL SELECT statements to PostgreSQL.
 	 *
 	 * This intentionally covers only the WordPress read shapes that need
@@ -36460,12 +36241,7 @@ END',
 	}
 
 	/**
-	 * Translate WordPress's available post MIME type lookup with MySQL order.
-	 *
-	 * WordPress issues this query without ORDER BY, but MySQL returns MIME types
-	 * in first matching posts.ID order for the posts table shape. Keep this
-	 * constrained to the exact get_available_post_mime_types() query so generic
-	 * unordered DISTINCT queries remain unchanged.
+	 * Backward-compatible probe for the available post MIME type contextual rewrite.
 	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when unsupported.
@@ -36473,75 +36249,26 @@ END',
 	private function translate_wordpress_available_post_mime_types_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if (
-			! isset( $tokens[0], $tokens[1], $tokens[12] )
+			! isset( $tokens[0] )
 			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
-			|| WP_MySQL_Lexer::DISTINCT_SYMBOL !== $tokens[1]->id
 		) {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
-		if ( 13 !== $statement_end ) {
-			return null;
-		}
-
-		if (
-			! $this->is_mysql_identifier_like_token_value( $tokens[2], 'post_mime_type' )
-			|| WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[3]->id
-			|| WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[5]->id
-			|| ! $this->is_mysql_identifier_like_token_value( $tokens[6], 'post_type' )
-			|| WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[7]->id
-			|| ! $this->is_mysql_string_literal_token( $tokens[8] )
-			|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[9]->id
-			|| ! $this->is_mysql_identifier_like_token_value( $tokens[10], 'post_mime_type' )
-			|| WP_MySQL_Lexer::NOT_EQUAL_OPERATOR !== $tokens[11]->id
-			|| ! $this->is_mysql_string_literal_token( $tokens[12] )
-			|| '' !== $tokens[12]->get_value()
-		) {
-			return null;
-		}
-
-		$table_name = $this->get_mysql_identifier_token_value( $tokens[4] );
-		if ( null === $table_name || ! $this->is_mysql_wordpress_table_name( $table_name, 'posts' ) ) {
-			return null;
-		}
-
-		$scope = $this->get_mysql_single_table_scope( $table_name );
-		$table = $scope['tables'][0];
-		foreach ( array( 'ID', 'post_mime_type', 'post_type' ) as $column_name ) {
-			if ( null === $this->get_mysql_table_column_type( $table['schema'], $table['table'], $column_name ) ) {
-				return null;
-			}
-		}
-
-		$projection_sql = $this->translate_mysql_token_to_postgresql( $tokens[2] );
-		$where_sql      = $this->translate_mysql_predicate_token_sequence_to_postgresql(
-			$tokens,
-			6,
-			$statement_end,
-			$scope
-		);
-
-		return sprintf(
-			'SELECT %1$s %2$s WHERE %3$s GROUP BY %1$s ORDER BY MIN(%4$s) ASC',
-			$projection_sql,
-			'FROM ' . $this->translate_mysql_token_to_postgresql( $tokens[4] ),
-			$where_sql['sql'],
-			$this->connection->quote_identifier( 'ID' )
-		);
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		return null !== $statement_end
+			&& $this->is_wordpress_available_post_mime_types_select_shape( $tokens, 1, $statement_end )
+			? $this->translate_mysql_select_statement_with_integer_string_coercion( $tokens, 1, $statement_end, true )
+			: null;
 	}
 
 	/**
-	 * Translate WordPress term cache priming with MySQL-compatible shared-term order.
-	 *
-	 * WordPress primes term objects with a join query that has no ORDER BY. The
-	 * cache is keyed by term_id, so legacy shared terms rely on MySQL returning
-	 * rows in term_taxonomy_id order and letting the last taxonomy row win.
+	 * Backward-compatible probe for the former approved-comments query translator.
 	 *
 	 * @param string $query MySQL query.
-	 * @return string|null PostgreSQL query, or null when unsupported.
+	 * @return string|null PostgreSQL query, or null when the generic simple SELECT path should not add the tie-breaker.
 	 */
-	private function translate_wordpress_term_cache_priming_query( string $query ): ?string {
+	private function translate_wordpress_approved_comments_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -36552,192 +36279,42 @@ END',
 			return null;
 		}
 
-		if (
-			$this->contains_top_level_mysql_token(
-				$tokens,
-				1,
-				$statement_end,
-				array(
-					WP_MySQL_Lexer::DISTINCT_SYMBOL,
-					WP_MySQL_Lexer::GROUP_SYMBOL,
-					WP_MySQL_Lexer::HAVING_SYMBOL,
-					WP_MySQL_Lexer::LIMIT_SYMBOL,
-					WP_MySQL_Lexer::ORDER_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				)
-			)
-		) {
-			return null;
-		}
-
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
-		if ( null === $from_position || 1 === $from_position ) {
-			return null;
-		}
-
-		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, 1, $from_position );
-		if (
-			null === $projection_ranges
-			|| 2 !== count( $projection_ranges )
-			|| ! $this->is_mysql_qualified_star_projection( $tokens, $projection_ranges[0]['start'], $projection_ranges[0]['end'], 't' )
-			|| ! $this->is_mysql_qualified_star_projection( $tokens, $projection_ranges[1]['start'], $projection_ranges[1]['end'], 'tt' )
-		) {
-			return null;
-		}
-
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $statement_end );
-		if (
-			null === $where_position
-			|| ! $this->is_mysql_distinct_term_taxonomy_from_shape( $tokens, $from_position, $where_position )
-		) {
-			return null;
-		}
-
-		$where_bounds    = $this->normalize_mysql_expression_bounds( $tokens, $where_position + 1, $statement_end );
-		$where_reference = $this->parse_mysql_column_reference( $tokens, $where_bounds['start'], $where_bounds['end'] );
-		if (
-			null === $where_reference
-			|| $where_reference['end'] + 3 > $where_bounds['end']
-			|| 't' !== strtolower( (string) $where_reference['qualifier'] )
-			|| 'term_id' !== strtolower( $where_reference['column'] )
-			|| ! isset( $tokens[ $where_reference['end'] ], $tokens[ $where_reference['end'] + 1 ] )
-			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $where_reference['end'] ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $where_reference['end'] + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $where_reference['end'] + 1, $where_bounds['end'] );
-		if ( $after_close !== $where_bounds['end'] ) {
-			return null;
-		}
-
-		$items = $this->split_top_level_mysql_arguments( $tokens, $where_reference['end'] + 2, $where_bounds['end'] - 1 );
-		if ( null === $items || empty( $items ) ) {
-			return null;
-		}
-
-		foreach ( $items as $item ) {
-			if (
-				$item['start'] + 1 !== $item['end']
-				|| ! isset( $tokens[ $item['start'] ] )
-				|| ! in_array(
-					$tokens[ $item['start'] ]->id,
-					array(
-						WP_MySQL_Lexer::INT_NUMBER,
-						WP_MySQL_Lexer::LONG_NUMBER,
-						WP_MySQL_Lexer::ULONGLONG_NUMBER,
-					),
-					true
-				)
-			) {
-				return null;
-			}
-		}
-
-		return $this->translate_mysql_token_sequence_to_postgresql( $tokens, 0, $statement_end ) . ' ORDER BY tt.term_taxonomy_id ASC';
-	}
-
-	/**
-	 * Translate WordPress's approved comments lookup with MySQL-compatible ties.
-	 *
-	 * @param string $query MySQL query.
-	 * @return string|null PostgreSQL query, or null when unsupported.
-	 */
-	private function translate_wordpress_approved_comments_query( string $query ): ?string {
-		$tokens = $this->get_mysql_tokens( $query );
-		if (
-			! isset( $tokens[0] )
-			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
-		) {
-			return null;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 2 );
-		if ( null === $statement_end ) {
-			return null;
-		}
-
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 2, $statement_end );
-		if ( null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
-			return null;
-		}
-
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 1, $statement_end );
 		$select_end     = $limit_position ?? $statement_end;
-		$from_position  = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 2, $select_end );
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, 2, $select_end );
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 2, $select_end );
+		$from_position  = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $select_end );
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, 1, $select_end );
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, 1, $select_end );
 		if (
 			null === $from_position
 			|| null === $where_position
 			|| null === $order_position
 			|| $from_position + 2 !== $where_position
-			|| $where_position >= $order_position
-			|| $order_position + 2 >= $select_end
-			|| ! isset( $tokens[ $order_position + 1 ] )
-			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_position + 1 ]->id
 		) {
 			return null;
 		}
 
-		$table_token = $tokens[ $from_position + 1 ] ?? null;
-		$table_name  = $this->get_mysql_identifier_token_value( $table_token );
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $from_position + 1 ] ?? null );
 		if (
 			null === $table_name
 			|| ! $this->is_mysql_wordpress_table_name( $table_name, 'comments' )
 			|| ! $this->is_supported_wordpress_approved_comments_select_projection( $tokens, 1, $from_position, $table_name )
+			|| null === $this->get_simple_wordpress_approved_comments_order_tiebreaker_sql(
+				$tokens,
+				$table_name,
+				$where_position,
+				$order_position,
+				$order_position,
+				$select_end
+			)
 		) {
 			return null;
 		}
 
-		$tiebreaker_sql = $this->get_simple_wordpress_approved_comments_order_tiebreaker_sql(
-			$tokens,
-			$table_name,
-			$where_position,
-			$order_position,
-			$order_position,
-			$select_end
-		);
-		if ( null === $tiebreaker_sql ) {
-			return null;
-		}
-
-		$scope     = $this->get_mysql_single_table_scope( $table_name );
-		$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
-			$tokens,
-			$where_position + 1,
-			$order_position,
-			$scope
-		);
-		$order_sql = $this->translate_mysql_order_by_token_sequence_to_postgresql(
-			$tokens,
-			$order_position + 2,
-			$select_end,
-			$scope,
-			false
-		);
-
-		$sql = sprintf(
-			'SELECT %s FROM %s WHERE %s ORDER BY %s, %s',
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, 1, $from_position ),
-			$this->translate_mysql_identifier_token_to_postgresql( $table_token ),
-			$where_sql['sql'],
-			$order_sql['sql'],
-			$tiebreaker_sql
-		);
-		if ( null !== $limit_position ) {
-			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-		}
-
-		return $sql;
+		return $this->translate_simple_mysql_select_query( $query );
 	}
 
 	/**
-	 * Validate the approved-comments SELECT projection.
-	 *
-	 * This translator appends comment_ID to ORDER BY, so it must stay limited
-	 * to row-returning projections. Aggregate/function/expression projections
-	 * can become invalid when the tie-breaker is appended.
+	 * Check whether an approved-comments SELECT returns comment rows or row columns.
 	 *
 	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
 	 * @param int              $start      First projection token position.
@@ -36761,18 +36338,11 @@ END',
 		}
 
 		foreach ( $projection_ranges as $projection_range ) {
-			$reference = $this->parse_mysql_column_reference(
-				$tokens,
-				$projection_range['start'],
-				$projection_range['end']
-			);
+			$reference = $this->parse_mysql_column_reference( $tokens, $projection_range['start'], $projection_range['end'] );
 			if (
 				null === $reference
 				|| $reference['end'] !== $projection_range['end']
-				|| (
-					null !== $reference['qualifier']
-					&& strtolower( $reference['qualifier'] ) !== strtolower( $table_name )
-				)
+				|| ( null !== $reference['qualifier'] && 0 !== strcasecmp( $reference['qualifier'], $table_name ) )
 			) {
 				return false;
 			}
@@ -43514,23 +43084,29 @@ END',
 		int $projection_start,
 		int $statement_end
 	): ?array {
-		$where_position = $this->find_top_level_mysql_token(
+		$where_position  = $this->find_top_level_mysql_token(
 			$tokens,
 			WP_MySQL_Lexer::WHERE_SYMBOL,
 			$projection_start,
 			$statement_end
 		);
-		$order_position = $this->find_top_level_mysql_token(
+		$having_position = $this->find_top_level_mysql_token(
+			$tokens,
+			WP_MySQL_Lexer::HAVING_SYMBOL,
+			$projection_start,
+			$statement_end
+		);
+		$order_position  = $this->find_top_level_mysql_token(
 			$tokens,
 			WP_MySQL_Lexer::ORDER_SYMBOL,
 			$projection_start,
 			$statement_end
 		);
-		if ( null === $where_position && null === $order_position ) {
+		if ( null === $where_position && null === $having_position && null === $order_position ) {
 			return null;
 		}
 
-		$first_clause_position = min( array_filter( array( $where_position, $order_position ), 'is_int' ) );
+		$first_clause_position = min( array_filter( array( $where_position, $having_position, $order_position ), 'is_int' ) );
 		$from_position         = $this->find_top_level_mysql_token(
 			$tokens,
 			WP_MySQL_Lexer::FROM_SYMBOL,
@@ -43573,6 +43149,10 @@ END',
 			return null;
 		}
 
+		$group_position_before_having = null === $having_position
+			? null
+			: $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $projection_start, $having_position );
+
 		if ( null !== $where_position ) {
 			$where_end = $this->find_first_top_level_mysql_token(
 				$tokens,
@@ -43596,12 +43176,41 @@ END',
 				$where_end,
 				$scope
 			);
-			if ( $where_sql['changed'] ) {
+			if ( $where_sql['changed'] && ( null === $having_position || null !== $group_position_before_having ) ) {
 				$replacements[] = array(
 					'start' => $where_position + 1,
 					'end'   => $where_end,
 					'sql'   => $where_sql['sql'],
 				);
+			}
+		}
+
+		if ( null !== $having_position && null === $group_position_before_having ) {
+			$having_end = $this->find_first_top_level_mysql_token(
+				$tokens,
+				array(
+					WP_MySQL_Lexer::FOR_SYMBOL,
+					WP_MySQL_Lexer::LIMIT_SYMBOL,
+					WP_MySQL_Lexer::LOCK_SYMBOL,
+					WP_MySQL_Lexer::ORDER_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
+				),
+				$having_position + 1,
+				$statement_end
+			) ?? $statement_end;
+
+			$having_replacements = $this->get_mysql_having_without_group_by_contextual_replacements(
+				$tokens,
+				$projection_start,
+				$from_position,
+				$having_position,
+				$having_end,
+				$where_position,
+				$scope
+			);
+			if ( null !== $having_replacements ) {
+				$replacements = array_merge( $replacements, $having_replacements );
 			}
 		}
 
@@ -43648,7 +43257,274 @@ END',
 			}
 		}
 
+		$replacements = array_merge(
+			$replacements,
+			$this->get_mysql_select_implicit_order_contextual_replacements(
+				$tokens,
+				$projection_start,
+				$from_position,
+				$from_end,
+				$where_position,
+				$order_position,
+				$statement_end
+			)
+		);
+
 		return $replacements;
+	}
+
+	/**
+	 * Get replacements for SELECT shapes where WordPress depends on MySQL's implicit index order.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $projection_start First projection token position.
+	 * @param int              $from_position    FROM token position.
+	 * @param int              $from_end         Final FROM-clause token, exclusive.
+	 * @param int|null         $where_position   WHERE token position, or null.
+	 * @param int|null         $order_position   ORDER token position, or null.
+	 * @param int              $statement_end    Final statement token position, exclusive.
+	 * @return array[] Replacement ranges.
+	 */
+	private function get_mysql_select_implicit_order_contextual_replacements(
+		array $tokens,
+		int $projection_start,
+		int $from_position,
+		int $from_end,
+		?int $where_position,
+		?int $order_position,
+		int $statement_end
+	): array {
+		if ( $this->is_wordpress_available_post_mime_types_select_shape( $tokens, $projection_start, $statement_end ) ) {
+			return array(
+				array(
+					'start' => $projection_start,
+					'end'   => $projection_start + 1,
+					'sql'   => '',
+				),
+				array(
+					'start' => $statement_end,
+					'end'   => $statement_end,
+					'sql'   => 'GROUP BY post_mime_type ORDER BY MIN("ID") ASC',
+				),
+			);
+		}
+
+		if (
+			null !== $order_position
+			|| null === $where_position
+			|| ! $this->is_wordpress_term_cache_priming_select_shape(
+				$tokens,
+				$projection_start,
+				$from_position,
+				$from_end,
+				$where_position,
+				$statement_end
+			)
+		) {
+			return array();
+		}
+
+		return array(
+			array(
+				'start' => $statement_end,
+				'end'   => $statement_end,
+				'sql'   => 'ORDER BY tt.term_taxonomy_id ASC',
+			),
+		);
+	}
+
+	/**
+	 * Check for WordPress's get_available_post_mime_types() SELECT shape.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $projection_start First projection token position.
+	 * @param int              $statement_end    Final statement token position, exclusive.
+	 * @return bool Whether the SELECT needs first-post-ID ordering.
+	 */
+	private function is_wordpress_available_post_mime_types_select_shape( array $tokens, int $projection_start, int $statement_end ): bool {
+		$table_name = $this->get_mysql_identifier_token_value( $tokens[ $projection_start + 3 ] ?? null );
+
+		return $projection_start + 12 === $statement_end
+			&& isset( $tokens[ $projection_start + 11 ] )
+			&& WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $projection_start + 1 ], 'post_mime_type' )
+			&& WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $projection_start + 2 ]->id
+			&& null !== $table_name
+			&& $this->is_mysql_wordpress_table_name( $table_name, 'posts' )
+			&& WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $projection_start + 4 ]->id
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $projection_start + 5 ], 'post_type' )
+			&& WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $projection_start + 6 ]->id
+			&& $this->is_mysql_string_literal_token( $tokens[ $projection_start + 7 ] )
+			&& WP_MySQL_Lexer::AND_SYMBOL === $tokens[ $projection_start + 8 ]->id
+			&& $this->is_mysql_identifier_like_token_value( $tokens[ $projection_start + 9 ], 'post_mime_type' )
+			&& WP_MySQL_Lexer::NOT_EQUAL_OPERATOR === $tokens[ $projection_start + 10 ]->id
+			&& $this->is_mysql_string_literal_token( $tokens[ $projection_start + 11 ] )
+			&& '' === $tokens[ $projection_start + 11 ]->get_value();
+	}
+
+	/**
+	 * Check for WordPress term cache priming's shared-term row shape.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $projection_start First projection token position.
+	 * @param int              $from_position    FROM token position.
+	 * @param int              $from_end         Final FROM-clause token, exclusive.
+	 * @param int              $where_position   WHERE token position.
+	 * @param int              $statement_end    Final statement token position, exclusive.
+	 * @return bool Whether the SELECT needs term_taxonomy_id ordering.
+	 */
+	private function is_wordpress_term_cache_priming_select_shape(
+		array $tokens,
+		int $projection_start,
+		int $from_position,
+		int $from_end,
+		int $where_position,
+		int $statement_end
+	): bool {
+		$projection_ranges = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $from_position );
+		if (
+			null === $projection_ranges
+			|| 2 !== count( $projection_ranges )
+			|| ! $this->is_mysql_qualified_star_projection(
+				$tokens,
+				$projection_ranges[0]['start'],
+				$projection_ranges[0]['end'],
+				't'
+			)
+			|| ! $this->is_mysql_qualified_star_projection(
+				$tokens,
+				$projection_ranges[1]['start'],
+				$projection_ranges[1]['end'],
+				'tt'
+			)
+			|| $from_end !== $where_position
+			|| ! $this->is_mysql_distinct_term_taxonomy_from_shape( $tokens, $from_position, $from_end )
+		) {
+			return false;
+		}
+
+		$where_bounds    = $this->normalize_mysql_expression_bounds( $tokens, $where_position + 1, $statement_end );
+		$where_reference = $this->parse_mysql_column_reference( $tokens, $where_bounds['start'], $where_bounds['end'] );
+		if (
+			null === $where_reference
+			|| 't' !== strtolower( (string) $where_reference['qualifier'] )
+			|| 'term_id' !== strtolower( $where_reference['column'] )
+			|| ! isset( $tokens[ $where_reference['end'] ], $tokens[ $where_reference['end'] + 1 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $where_reference['end'] ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $where_reference['end'] + 1 ]->id
+		) {
+			return false;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end(
+			$tokens,
+			$where_reference['end'] + 1,
+			$where_bounds['end']
+		);
+		if ( $after_close !== $where_bounds['end'] ) {
+			return false;
+		}
+
+		$items = $this->split_top_level_mysql_arguments( $tokens, $where_reference['end'] + 2, $where_bounds['end'] - 1 );
+		if ( null === $items || empty( $items ) ) {
+			return false;
+		}
+
+		foreach ( $items as $item ) {
+			if (
+				$item['start'] + 1 !== $item['end']
+				|| ! isset( $tokens[ $item['start'] ] )
+				|| ! in_array(
+					$tokens[ $item['start'] ]->id,
+					array(
+						WP_MySQL_Lexer::INT_NUMBER,
+						WP_MySQL_Lexer::LONG_NUMBER,
+						WP_MySQL_Lexer::ULONGLONG_NUMBER,
+					),
+					true
+				)
+			) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Get replacements for MySQL HAVING predicates that are row filters.
+	 *
+	 * @param WP_MySQL_Token[] $tokens           MySQL lexer token stream.
+	 * @param int              $projection_start First token after SELECT modifiers.
+	 * @param int              $from_position    FROM token position.
+	 * @param int              $having_position  HAVING token position.
+	 * @param int              $having_end       Final HAVING predicate token, exclusive.
+	 * @param int|null         $where_position   WHERE token position, or null.
+	 * @param array            $scope            Statement table scope.
+	 * @return array[]|null Replacement ranges, or null when HAVING must stay grouped.
+	 */
+	private function get_mysql_having_without_group_by_contextual_replacements(
+		array $tokens,
+		int $projection_start,
+		int $from_position,
+		int $having_position,
+		int $having_end,
+		?int $where_position,
+		array $scope
+	): ?array {
+		if (
+			$having_position + 1 >= $having_end
+			|| null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::GROUP_SYMBOL, $projection_start, $having_position )
+			|| $this->contains_mysql_aggregate_call( $tokens, $projection_start, $from_position )
+			|| $this->contains_mysql_aggregate_call( $tokens, $having_position + 1, $having_end )
+		) {
+			return null;
+		}
+
+		$having_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+			$tokens,
+			$having_position + 1,
+			$having_end,
+			$scope
+		);
+
+		if ( null === $where_position ) {
+			return array(
+				array(
+					'start' => $having_position,
+					'end'   => $having_end,
+					'sql'   => 'WHERE ' . $having_sql['sql'],
+				),
+			);
+		}
+
+		if ( $where_position > $having_position ) {
+			return null;
+		}
+
+		$where_sql = $this->translate_mysql_predicate_token_sequence_to_postgresql(
+			$tokens,
+			$where_position + 1,
+			$having_position,
+			$scope
+		);
+
+		return array(
+			array(
+				'start' => $where_position + 1,
+				'end'   => $having_position,
+				'sql'   => sprintf(
+					'(%s) AND (%s)',
+					$where_sql['sql'],
+					$having_sql['sql']
+				),
+			),
+			array(
+				'start' => $having_position,
+				'end'   => $having_end,
+				'sql'   => '',
+			),
+		);
 	}
 
 	/**
