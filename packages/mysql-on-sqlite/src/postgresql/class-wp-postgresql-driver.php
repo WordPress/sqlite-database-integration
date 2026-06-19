@@ -56141,36 +56141,19 @@ $wp_mysql_%1$s_domain$',
 	 * @return string|null PostgreSQL interval unit, or null when unsupported.
 	 */
 	private function get_postgresql_simple_interval_unit( WP_MySQL_Token $token ): ?string {
-		switch ( $token->id ) {
-			case WP_MySQL_Lexer::MICROSECOND_SYMBOL:
-				return 'microsecond';
+		$units = array(
+			WP_MySQL_Lexer::MICROSECOND_SYMBOL => 'microsecond',
+			WP_MySQL_Lexer::SECOND_SYMBOL      => 'second',
+			WP_MySQL_Lexer::MINUTE_SYMBOL      => 'minute',
+			WP_MySQL_Lexer::HOUR_SYMBOL        => 'hour',
+			WP_MySQL_Lexer::DAY_SYMBOL         => 'day',
+			WP_MySQL_Lexer::WEEK_SYMBOL        => 'week',
+			WP_MySQL_Lexer::MONTH_SYMBOL       => 'month',
+			WP_MySQL_Lexer::QUARTER_SYMBOL     => '3 months',
+			WP_MySQL_Lexer::YEAR_SYMBOL        => 'year',
+		);
 
-			case WP_MySQL_Lexer::SECOND_SYMBOL:
-				return 'second';
-
-			case WP_MySQL_Lexer::MINUTE_SYMBOL:
-				return 'minute';
-
-			case WP_MySQL_Lexer::HOUR_SYMBOL:
-				return 'hour';
-
-			case WP_MySQL_Lexer::DAY_SYMBOL:
-				return 'day';
-
-			case WP_MySQL_Lexer::WEEK_SYMBOL:
-				return 'week';
-
-			case WP_MySQL_Lexer::MONTH_SYMBOL:
-				return 'month';
-
-			case WP_MySQL_Lexer::QUARTER_SYMBOL:
-				return '3 months';
-
-			case WP_MySQL_Lexer::YEAR_SYMBOL:
-				return 'year';
-		}
-
-		return null;
+		return $units[ $token->id ] ?? null;
 	}
 
 	/**
@@ -56180,42 +56163,21 @@ $wp_mysql_%1$s_domain$',
 	 * @return string[]|null Ordered PostgreSQL component units, or null when unsupported.
 	 */
 	private function get_mysql_composite_interval_part_units( WP_MySQL_Token $token ): ?array {
-		switch ( $token->id ) {
-			case WP_MySQL_Lexer::SECOND_MICROSECOND_SYMBOL:
-				return array( 'second', 'microsecond' );
+		$units = array(
+			WP_MySQL_Lexer::SECOND_MICROSECOND_SYMBOL => array( 'second', 'microsecond' ),
+			WP_MySQL_Lexer::MINUTE_SECOND_SYMBOL      => array( 'minute', 'second' ),
+			WP_MySQL_Lexer::MINUTE_MICROSECOND_SYMBOL => array( 'minute', 'second', 'microsecond' ),
+			WP_MySQL_Lexer::HOUR_MINUTE_SYMBOL        => array( 'hour', 'minute' ),
+			WP_MySQL_Lexer::HOUR_SECOND_SYMBOL        => array( 'hour', 'minute', 'second' ),
+			WP_MySQL_Lexer::HOUR_MICROSECOND_SYMBOL   => array( 'hour', 'minute', 'second', 'microsecond' ),
+			WP_MySQL_Lexer::DAY_HOUR_SYMBOL           => array( 'day', 'hour' ),
+			WP_MySQL_Lexer::DAY_MINUTE_SYMBOL         => array( 'day', 'hour', 'minute' ),
+			WP_MySQL_Lexer::DAY_SECOND_SYMBOL         => array( 'day', 'hour', 'minute', 'second' ),
+			WP_MySQL_Lexer::DAY_MICROSECOND_SYMBOL    => array( 'day', 'hour', 'minute', 'second', 'microsecond' ),
+			WP_MySQL_Lexer::YEAR_MONTH_SYMBOL         => array( 'year', 'month' ),
+		);
 
-			case WP_MySQL_Lexer::MINUTE_SECOND_SYMBOL:
-				return array( 'minute', 'second' );
-
-			case WP_MySQL_Lexer::MINUTE_MICROSECOND_SYMBOL:
-				return array( 'minute', 'second', 'microsecond' );
-
-			case WP_MySQL_Lexer::HOUR_MINUTE_SYMBOL:
-				return array( 'hour', 'minute' );
-
-			case WP_MySQL_Lexer::HOUR_SECOND_SYMBOL:
-				return array( 'hour', 'minute', 'second' );
-
-			case WP_MySQL_Lexer::HOUR_MICROSECOND_SYMBOL:
-				return array( 'hour', 'minute', 'second', 'microsecond' );
-
-			case WP_MySQL_Lexer::DAY_HOUR_SYMBOL:
-				return array( 'day', 'hour' );
-
-			case WP_MySQL_Lexer::DAY_MINUTE_SYMBOL:
-				return array( 'day', 'hour', 'minute' );
-
-			case WP_MySQL_Lexer::DAY_SECOND_SYMBOL:
-				return array( 'day', 'hour', 'minute', 'second' );
-
-			case WP_MySQL_Lexer::DAY_MICROSECOND_SYMBOL:
-				return array( 'day', 'hour', 'minute', 'second', 'microsecond' );
-
-			case WP_MySQL_Lexer::YEAR_MONTH_SYMBOL:
-				return array( 'year', 'month' );
-		}
-
-		return null;
+		return $units[ $token->id ] ?? null;
 	}
 
 	/**
@@ -56512,36 +56474,19 @@ $wp_mysql_%1$s_domain$',
 			return null;
 		}
 
-		switch ( $tokens[ $unit_start ]->id ) {
-			case WP_MySQL_Lexer::MICROSECOND_SYMBOL:
-				return 'microsecond';
+		$units = array(
+			WP_MySQL_Lexer::MICROSECOND_SYMBOL => 'microsecond',
+			WP_MySQL_Lexer::SECOND_SYMBOL      => 'second',
+			WP_MySQL_Lexer::MINUTE_SYMBOL      => 'minute',
+			WP_MySQL_Lexer::HOUR_SYMBOL        => 'hour',
+			WP_MySQL_Lexer::DAY_SYMBOL         => 'day',
+			WP_MySQL_Lexer::WEEK_SYMBOL        => 'week',
+			WP_MySQL_Lexer::MONTH_SYMBOL       => 'month',
+			WP_MySQL_Lexer::QUARTER_SYMBOL     => 'quarter',
+			WP_MySQL_Lexer::YEAR_SYMBOL        => 'year',
+		);
 
-			case WP_MySQL_Lexer::SECOND_SYMBOL:
-				return 'second';
-
-			case WP_MySQL_Lexer::MINUTE_SYMBOL:
-				return 'minute';
-
-			case WP_MySQL_Lexer::HOUR_SYMBOL:
-				return 'hour';
-
-			case WP_MySQL_Lexer::DAY_SYMBOL:
-				return 'day';
-
-			case WP_MySQL_Lexer::WEEK_SYMBOL:
-				return 'week';
-
-			case WP_MySQL_Lexer::MONTH_SYMBOL:
-				return 'month';
-
-			case WP_MySQL_Lexer::QUARTER_SYMBOL:
-				return 'quarter';
-
-			case WP_MySQL_Lexer::YEAR_SYMBOL:
-				return 'year';
-		}
-
-		return null;
+		return $units[ $tokens[ $unit_start ]->id ] ?? null;
 	}
 
 	/**
@@ -58815,31 +58760,19 @@ $wp_mysql_%1$s_domain$',
 	 * @return string|null PostgreSQL EXTRACT unit, or null when unsupported.
 	 */
 	private function get_mysql_date_time_extract_unit( WP_MySQL_Token $token ): ?string {
-		switch ( $token->id ) {
-			case WP_MySQL_Lexer::YEAR_SYMBOL:
-				return 'YEAR';
-
-			case WP_MySQL_Lexer::MONTH_SYMBOL:
-				return 'MONTH';
-
-			case WP_MySQL_Lexer::QUARTER_SYMBOL:
-				return 'QUARTER';
-
-			case WP_MySQL_Lexer::DAY_SYMBOL:
-			case WP_MySQL_Lexer::DAYOFMONTH_SYMBOL:
-				return 'DAY';
-
-			case WP_MySQL_Lexer::HOUR_SYMBOL:
-				return 'HOUR';
-
-			case WP_MySQL_Lexer::MINUTE_SYMBOL:
-				return 'MINUTE';
-
-			case WP_MySQL_Lexer::SECOND_SYMBOL:
-				return 'SECOND';
-
-			case WP_MySQL_Lexer::MICROSECOND_SYMBOL:
-				return 'MICROSECOND';
+		$units = array(
+			WP_MySQL_Lexer::YEAR_SYMBOL        => 'YEAR',
+			WP_MySQL_Lexer::MONTH_SYMBOL       => 'MONTH',
+			WP_MySQL_Lexer::QUARTER_SYMBOL     => 'QUARTER',
+			WP_MySQL_Lexer::DAY_SYMBOL         => 'DAY',
+			WP_MySQL_Lexer::DAYOFMONTH_SYMBOL  => 'DAY',
+			WP_MySQL_Lexer::HOUR_SYMBOL        => 'HOUR',
+			WP_MySQL_Lexer::MINUTE_SYMBOL      => 'MINUTE',
+			WP_MySQL_Lexer::SECOND_SYMBOL      => 'SECOND',
+			WP_MySQL_Lexer::MICROSECOND_SYMBOL => 'MICROSECOND',
+		);
+		if ( isset( $units[ $token->id ] ) ) {
+			return $units[ $token->id ];
 		}
 
 		$name = $this->get_mysql_identifier_token_value( $token );
