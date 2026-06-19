@@ -8620,11 +8620,18 @@ $wp_mysql_primary_index_comment$',
 		if ( null === $key_parts ) {
 			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
 		}
-		if ( 'BTREE' === $index_type && $this->is_mysql_spatial_index_key_parts( $table_schema, $table_reference['table'], $key_parts['metadata'] ) ) {
-			$index_type = 'SPATIAL';
+		if ( 'BTREE' === $index_type && isset( $key_parts['metadata'][0]['column_name'] ) ) {
+			$column_type = $this->get_mysql_table_column_type( $table_schema, $table_reference['table'], (string) $key_parts['metadata'][0]['column_name'] );
+			if ( is_string( $column_type ) && $this->is_mysql_spatial_column_type( $column_type ) ) {
+				$index_type = 'SPATIAL';
+			}
 		}
 		if ( 'SPATIAL' === $index_type ) {
-			$key_parts['metadata'] = $this->apply_mysql_spatial_index_sub_parts( $key_parts['metadata'] );
+			foreach ( $key_parts['metadata'] as $part_position => $key_part ) {
+				if ( null === $key_part['sub_part'] ) {
+					$key_parts['metadata'][ $part_position ]['sub_part'] = 32;
+				}
+			}
 		}
 
 		$position      = $key_list_end;
@@ -9034,39 +9041,6 @@ $wp_mysql_primary_index_comment$',
 		) {
 			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
 		}
-	}
-
-	/**
-	 * Check whether parsed key parts should be exposed as a MySQL SPATIAL index.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $key_parts    Parsed key-part metadata.
-	 * @return bool Whether the first key part targets a spatial column.
-	 */
-	private function is_mysql_spatial_index_key_parts( string $table_schema, string $table_name, array $key_parts ): bool {
-		if ( ! isset( $key_parts[0]['column_name'] ) ) {
-			return false;
-		}
-
-		$column_type = $this->get_mysql_table_column_type( $table_schema, $table_name, (string) $key_parts[0]['column_name'] );
-		return is_string( $column_type ) && $this->is_mysql_spatial_column_type( $column_type );
-	}
-
-	/**
-	 * Apply MySQL's implicit SPATIAL key-part prefix length.
-	 *
-	 * @param array $key_parts Parsed key-part metadata.
-	 * @return array Key-part metadata with spatial sub-parts.
-	 */
-	private function apply_mysql_spatial_index_sub_parts( array $key_parts ): array {
-		foreach ( $key_parts as $position => $key_part ) {
-			if ( null === $key_part['sub_part'] ) {
-				$key_parts[ $position ]['sub_part'] = 32;
-			}
-		}
-
-		return $key_parts;
 	}
 
 	/**
