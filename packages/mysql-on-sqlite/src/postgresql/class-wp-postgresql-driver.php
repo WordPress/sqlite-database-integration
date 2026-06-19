@@ -34197,11 +34197,45 @@ WHERE option_name IN (
 		}
 
 		$existing_table_names = $this->get_information_schema_tables_site_health_existing_table_names( $where_clause['table_names'] );
+		if ( empty( $existing_table_names ) ) {
+			$table_rows_sql = sprintf(
+				'0 AS %s',
+				$this->connection->quote_identifier( 'TABLE_ROWS' )
+			);
+		} else {
+			$cases = array();
+			foreach ( $existing_table_names as $table_name ) {
+				$cases[] = sprintf(
+					'WHEN %s THEN (SELECT COUNT(*) FROM %s)',
+					$this->connection->quote( $table_name ),
+					$this->get_postgresql_qualified_identifier( 'public', $table_name )
+				);
+			}
+
+			$table_rows_sql = sprintf(
+				'CASE %s %s ELSE 0 END AS %s',
+				$this->connection->quote_identifier( 'TABLE_NAME' ),
+				implode( ' ', $cases ),
+				$this->connection->quote_identifier( 'TABLE_ROWS' )
+			);
+		}
+
+		$tables_relation_sql = sprintf(
+			'SELECT "TABLE_NAME" AS "table_name", "TABLE_SCHEMA" AS "table_schema", %1$s, "DATA_LENGTH" AS "data_length", "INDEX_LENGTH" AS "index_length"
+FROM (%2$s) AS information_schema_tables
+WHERE "TABLE_SCHEMA" = %3$s
+	AND "TABLE_TYPE" IN (%4$s, %5$s)',
+			$table_rows_sql,
+			$this->get_direct_information_schema_relation_sql( 'tables' ),
+			$this->connection->quote( $this->db_name ),
+			$this->connection->quote( 'BASE TABLE' ),
+			$this->connection->quote( 'VIEW' )
+		);
 
 		return sprintf(
 			'SELECT %s FROM (%s) AS %s WHERE %s GROUP BY %s',
 			implode( ', ', $projection_sql ),
-			$this->get_information_schema_tables_site_health_relation_sql( $existing_table_names ),
+			$tables_relation_sql,
 			$this->connection->quote_identifier( '__wp_pg_information_schema_tables' ),
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_position + 1, $group_position ),
 			$this->connection->quote_identifier( 'table_name' )
@@ -34535,57 +34569,6 @@ WHERE option_name IN (
 					return isset( $existing_table_names[ $table_name ] );
 				}
 			)
-		);
-	}
-
-	/**
-	 * Build the derived relation that emulates MySQL information_schema.TABLES columns.
-	 *
-	 * @param string[] $existing_table_names Table names validated against information_schema.tables.
-	 * @return string PostgreSQL relation SQL.
-	 */
-	private function get_information_schema_tables_site_health_relation_sql( array $existing_table_names ): string {
-		return sprintf(
-			'SELECT "TABLE_NAME" AS "table_name", "TABLE_SCHEMA" AS "table_schema", %1$s, "DATA_LENGTH" AS "data_length", "INDEX_LENGTH" AS "index_length"
-FROM (%2$s) AS information_schema_tables
-WHERE "TABLE_SCHEMA" = %3$s
-	AND "TABLE_TYPE" IN (%4$s, %5$s)',
-			$this->get_information_schema_tables_site_health_table_rows_sql( $existing_table_names ),
-			$this->get_direct_information_schema_relation_sql( 'tables' ),
-			$this->connection->quote( $this->db_name ),
-			$this->connection->quote( 'BASE TABLE' ),
-			$this->connection->quote( 'VIEW' )
-		);
-	}
-
-	/**
-	 * Build a Site Health TABLE_ROWS expression for existing catalog tables.
-	 *
-	 * @param string[] $existing_table_names Table names validated against information_schema.tables.
-	 * @return string PostgreSQL row-count expression SQL.
-	 */
-	private function get_information_schema_tables_site_health_table_rows_sql( array $existing_table_names ): string {
-		if ( empty( $existing_table_names ) ) {
-			return sprintf(
-				'0 AS %s',
-				$this->connection->quote_identifier( 'TABLE_ROWS' )
-			);
-		}
-
-		$cases = array();
-		foreach ( $existing_table_names as $table_name ) {
-			$cases[] = sprintf(
-				'WHEN %s THEN (SELECT COUNT(*) FROM %s)',
-				$this->connection->quote( $table_name ),
-				$this->get_postgresql_qualified_identifier( 'public', $table_name )
-			);
-		}
-
-		return sprintf(
-			'CASE %s %s ELSE 0 END AS %s',
-			$this->connection->quote_identifier( 'TABLE_NAME' ),
-			implode( ' ', $cases ),
-			$this->connection->quote_identifier( 'TABLE_ROWS' )
 		);
 	}
 
