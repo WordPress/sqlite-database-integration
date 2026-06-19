@@ -43022,7 +43022,7 @@ $wp_mysql_on_update$',
 		$prefix    = '__wp_mysql_column_default:';
 		$get_info  = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_columns_catalog_relation_sql();
+				return $this->get_direct_information_schema_columns_relation_sql();
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -43178,7 +43178,7 @@ $wp_mysql_on_update$',
 
 		$get_info     = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_columns_catalog_relation_sql();
+				return $this->get_direct_information_schema_columns_relation_sql();
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

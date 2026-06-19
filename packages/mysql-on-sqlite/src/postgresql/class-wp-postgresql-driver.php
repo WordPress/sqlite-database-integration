@@ -40499,7 +40499,75 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 	 */
 	private function get_direct_information_schema_columns_relation_sql( bool $include_temporary_metadata = false ): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_columns_catalog_relation_sql();
+			$comment_sql     = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+			$type_expression = $this->get_direct_information_schema_catalog_data_type_expression( 'c', true, $comment_sql );
+			$column_type     = $this->get_direct_information_schema_catalog_column_type_expression(
+				'c',
+				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+				$comment_sql
+			);
+			$charset         = $this->get_direct_information_schema_character_set_expression(
+				$column_type,
+				'NULL',
+				$comment_sql,
+				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET )
+			);
+			$collation       = $this->get_direct_information_schema_collation_expression(
+				$column_type,
+				'c.collation_name',
+				$comment_sql,
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+			);
+			$column_key      = $this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
+
+			return sprintf(
+				'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	c.table_name AS "TABLE_NAME",
+	c.column_name AS "COLUMN_NAME",
+	c.ordinal_position AS "ORDINAL_POSITION",
+	%8$s AS "COLUMN_DEFAULT",
+	c.is_nullable AS "IS_NULLABLE",
+	%2$s AS "DATA_TYPE",
+	c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
+	CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH",
+	c.numeric_precision AS "NUMERIC_PRECISION",
+	c.numeric_scale AS "NUMERIC_SCALE",
+	c.datetime_precision AS "DATETIME_PRECISION",
+	%3$s AS "CHARACTER_SET_NAME",
+	%4$s AS "COLLATION_NAME",
+	%5$s AS "COLUMN_TYPE",
+	%6$s AS "COLUMN_KEY",
+	%7$s AS "EXTRA",
+	\'select,insert,update,references\' AS "PRIVILEGES",
+	%10$s AS "COLUMN_COMMENT",
+	\'\' AS "GENERATION_EXPRESSION",
+	NULL AS "SRS_ID"
+FROM information_schema.columns c
+LEFT JOIN pg_catalog.pg_namespace pn
+	ON pn.nspname = c.table_schema
+LEFT JOIN pg_catalog.pg_class pc
+	ON pc.relnamespace = pn.oid
+	AND pc.relname = c.table_name
+	AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+LEFT JOIN pg_catalog.pg_attribute pa
+	ON pa.attrelid = pc.oid
+	AND pa.attname = c.column_name
+	AND pa.attnum > 0
+WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND c.table_name NOT IN (%9$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
+				$type_expression,
+				$charset,
+				$collation,
+				$column_type,
+				$column_key,
+				$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
+				$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
+				$this->get_direct_information_schema_hidden_table_list_sql(),
+				$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
+			);
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -40620,83 +40688,6 @@ SELECT * FROM metadata_columns',
 			$metadata_collation,
 			$metadata_key,
 			$metadata_schema_where
-		);
-	}
-
-	/**
-	 * Build information_schema.COLUMNS rows from PostgreSQL catalogs.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_columns_catalog_relation_sql(): string {
-		$comment_sql     = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-		$type_expression = $this->get_direct_information_schema_catalog_data_type_expression( 'c', true, $comment_sql );
-		$column_type     = $this->get_direct_information_schema_catalog_column_type_expression(
-			'c',
-			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-			$comment_sql
-		);
-		$charset         = $this->get_direct_information_schema_character_set_expression(
-			$column_type,
-			'NULL',
-			$comment_sql,
-			$this->connection->quote( self::DEFAULT_MYSQL_CHARSET )
-		);
-		$collation       = $this->get_direct_information_schema_collation_expression(
-			$column_type,
-			'c.collation_name',
-			$comment_sql,
-			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-		);
-		$column_key      = $this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
-
-		return sprintf(
-			'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	c.table_name AS "TABLE_NAME",
-	c.column_name AS "COLUMN_NAME",
-	c.ordinal_position AS "ORDINAL_POSITION",
-	%8$s AS "COLUMN_DEFAULT",
-	c.is_nullable AS "IS_NULLABLE",
-	%2$s AS "DATA_TYPE",
-	c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
-	CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH",
-	c.numeric_precision AS "NUMERIC_PRECISION",
-	c.numeric_scale AS "NUMERIC_SCALE",
-	c.datetime_precision AS "DATETIME_PRECISION",
-	%3$s AS "CHARACTER_SET_NAME",
-	%4$s AS "COLLATION_NAME",
-	%5$s AS "COLUMN_TYPE",
-	%6$s AS "COLUMN_KEY",
-	%7$s AS "EXTRA",
-	\'select,insert,update,references\' AS "PRIVILEGES",
-	%10$s AS "COLUMN_COMMENT",
-	\'\' AS "GENERATION_EXPRESSION",
-	NULL AS "SRS_ID"
-FROM information_schema.columns c
-LEFT JOIN pg_catalog.pg_namespace pn
-	ON pn.nspname = c.table_schema
-LEFT JOIN pg_catalog.pg_class pc
-	ON pc.relnamespace = pn.oid
-	AND pc.relname = c.table_name
-	AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-LEFT JOIN pg_catalog.pg_attribute pa
-	ON pa.attrelid = pc.oid
-	AND pa.attname = c.column_name
-	AND pa.attnum > 0
-WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND c.table_name NOT IN (%9$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-			$type_expression,
-			$charset,
-			$collation,
-			$column_type,
-			$column_key,
-			$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-			$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-			$this->get_direct_information_schema_hidden_table_list_sql(),
-			$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
 		);
 	}
 
