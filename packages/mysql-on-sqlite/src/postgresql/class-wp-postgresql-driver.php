@@ -59180,7 +59180,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 				return 0 === $count ? (string) $this->last_found_rows : null;
 
 			case 'row_count':
-				return 0 === $count ? $this->get_postgresql_mysql_row_count_sql() : null;
+				return 0 === $count ? (string) $this->last_row_count : null;
 
 			case 'coalesce':
 				return $count > 0 ? sprintf( 'COALESCE(%s)', implode( ', ', $argument_sql ) ) : null;
@@ -59858,15 +59858,6 @@ $wp_mysql_%1$s_domain$',
 			? $this->mysql_last_insert_id_assignment_value
 			: $this->get_insert_id();
 		return is_numeric( $last_insert_id ) ? (string) (int) $last_insert_id : '0';
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL ROW_COUNT().
-	 *
-	 * @return string PostgreSQL SQL literal.
-	 */
-	private function get_postgresql_mysql_row_count_sql(): string {
-		return (string) $this->last_row_count;
 	}
 
 	/**
