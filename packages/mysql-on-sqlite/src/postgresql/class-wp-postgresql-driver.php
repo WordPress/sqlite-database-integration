@@ -11108,9 +11108,13 @@ $wp_mysql_primary_index_comment$',
 	 * @return array{sql: string, position: int}|null Translation data, or null when not JSON_VALID().
 	 */
 	private function translate_mysql_json_valid_check_constraint_function( array $tokens, int $position, int $end ): ?array {
+		$function_name = isset( $tokens[ $position ] )
+			? $this->get_mysql_identifier_token_value( $tokens[ $position ] )
+			: null;
 		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| ! $this->is_mysql_json_valid_identifier_token( $tokens[ $position ] )
+			! isset( $tokens[ $position + 1 ] )
+			|| null === $function_name
+			|| 'json_valid' !== strtolower( $function_name )
 		) {
 			return null;
 		}
@@ -11139,17 +11143,6 @@ $wp_mysql_primary_index_comment$',
 			'sql'      => sprintf( '(CASE WHEN %1$s IS NULL THEN NULL ELSE (CAST(%1$s AS jsonb) IS NOT NULL) END)', $argument_sql ),
 			'position' => $after_close - 1,
 		);
-	}
-
-	/**
-	 * Check whether a token names JSON_VALID.
-	 *
-	 * @param WP_MySQL_Token $token MySQL token.
-	 * @return bool Whether this token is a JSON_VALID identifier.
-	 */
-	private function is_mysql_json_valid_identifier_token( WP_MySQL_Token $token ): bool {
-		$identifier = $this->get_mysql_identifier_token_value( $token );
-		return null !== $identifier && 'json_valid' === strtolower( $identifier );
 	}
 
 	/**
@@ -12533,17 +12526,6 @@ $wp_mysql_primary_index_comment$',
 		$column_type = trim( (string) $column_type );
 
 		return (bool) preg_match( '/^(?:bigint|int|int1|int2|int3|int4|int8|integer|mediumint|smallint|tinyint)(?:\(\d+\))?$/', $column_type );
-	}
-
-	/**
-	 * Check whether a MySQL column type is a non-integer numeric family type.
-	 *
-	 * @param string $column_type MySQL column type.
-	 * @return bool Whether the type is numeric-like but not integer-like.
-	 */
-	private function is_mysql_non_integer_numeric_family_column_type( string $column_type ): bool {
-		$base_type = $this->get_base_mysql_dml_column_type( $column_type );
-		return in_array( $base_type, array( 'decimal', 'double', 'float', 'numeric', 'real' ), true );
 	}
 
 	/**
@@ -32753,7 +32735,8 @@ WHERE option_name IN (
 	 * @return string|null PostgreSQL value SQL, or null when the literal does not need normalization.
 	 */
 	private function get_non_strict_mysql_dml_numeric_literal_sql_for_column( array $column_metadata, array $tokens, int $start, int $end ): ?string {
-		if ( ! $this->is_mysql_non_integer_numeric_family_column_type( (string) ( $column_metadata['column_type'] ?? '' ) ) ) {
+		$base_type = $this->get_base_mysql_dml_column_type( (string) ( $column_metadata['column_type'] ?? '' ) );
+		if ( ! in_array( $base_type, array( 'decimal', 'double', 'float', 'numeric', 'real' ), true ) ) {
 			return null;
 		}
 
@@ -42926,7 +42909,10 @@ END',
 
 			$extended = false;
 			foreach ( $grouped_columns as $grouped_column ) {
-				if ( ! $this->are_mysql_simple_columns_equivalent( $projection_column, $grouped_column, $equivalent_columns ) ) {
+				if (
+					$projection_column['key'] !== $grouped_column['key']
+					&& ! isset( $equivalent_columns[ $projection_column['key'] ][ $grouped_column['key'] ] )
+				) {
 					continue;
 				}
 
@@ -43412,19 +43398,6 @@ END',
 		}
 
 		return false;
-	}
-
-	/**
-	 * Check whether two simple columns are connected by a parsed equality.
-	 *
-	 * @param array $left_column        Left column data.
-	 * @param array $right_column       Right column data.
-	 * @param array $equivalent_columns Column equality adjacency map.
-	 * @return bool Whether the columns are equivalent.
-	 */
-	private function are_mysql_simple_columns_equivalent( array $left_column, array $right_column, array $equivalent_columns ): bool {
-		return $left_column['key'] === $right_column['key']
-			|| isset( $equivalent_columns[ $left_column['key'] ][ $right_column['key'] ] );
 	}
 
 	/**
@@ -49814,7 +49787,7 @@ END',
 		}
 
 		$collation = $this->get_mysql_column_collation_for_reference( $reference, $scope );
-		return null !== $collation && $this->is_mysql_case_insensitive_collation( $collation );
+		return null !== $collation && 1 === preg_match( '/(^|_)ci($|_)/', strtolower( trim( $collation ) ) );
 	}
 
 	/**
@@ -49928,17 +49901,6 @@ END',
 		}
 
 		return false;
-	}
-
-	/**
-	 * Check whether a MySQL collation is explicitly case-insensitive.
-	 *
-	 * @param string $collation MySQL collation name.
-	 * @return bool Whether the collation is case-insensitive.
-	 */
-	private function is_mysql_case_insensitive_collation( string $collation ): bool {
-		$collation = strtolower( trim( $collation ) );
-		return 1 === preg_match( '/(^|_)ci($|_)/', $collation );
 	}
 
 	/**
@@ -55007,7 +54969,8 @@ END',
 	 * @return string|null PostgreSQL byte-length SQL, or null when not binary.
 	 */
 	private function get_postgresql_mysql_binary_argument_byte_length_sql( array $tokens, int $start, int $end ): ?string {
-		$hex_literal_length_sql = $this->get_postgresql_mysql_hex_literal_byte_length_sql( $tokens, $start, $end );
+		$hex_literal            = $this->get_mysql_text_hex_literal_value( $tokens, $start, $end );
+		$hex_literal_length_sql = null === $hex_literal ? null : (string) strlen( $hex_literal );
 		if ( null !== $hex_literal_length_sql ) {
 			return $hex_literal_length_sql;
 		}
@@ -55059,19 +55022,6 @@ END',
 		}
 
 		return null;
-	}
-
-	/**
-	 * Get PostgreSQL SQL for LENGTH/CHAR_LENGTH of a raw MySQL hex literal.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First argument token.
-	 * @param int              $end    Final argument token, exclusive.
-	 * @return string|null Literal byte count SQL, or null when not a hex literal.
-	 */
-	private function get_postgresql_mysql_hex_literal_byte_length_sql( array $tokens, int $start, int $end ): ?string {
-		$value = $this->get_mysql_text_hex_literal_value( $tokens, $start, $end );
-		return null === $value ? null : (string) strlen( $value );
 	}
 
 	/**
