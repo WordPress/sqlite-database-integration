@@ -404,15 +404,83 @@ class WP_MySQL_Lexer {
 	/**
 	 * Read all remaining tokens as an array, draining the stream.
 	 *
+	 * From a fresh lexer this runs a tight scan-and-emit loop that bypasses the
+	 * pull iterator's per-token queue bookkeeping — the dominant cost when
+	 * tokenizing a whole statement. The common single-token lexemes are emitted
+	 * inline; only the multi-token ones (end markers, "WITH ROLLUP", "@") route
+	 * through the buffered producers. A lexer already advanced by next_token()
+	 * falls back to the iterator to stay correct.
+	 *
 	 * @return WP_MySQL_Token[] The remaining tokens — terminated by END_OF_INPUT
 	 *                          and the end marker, or a partial list with no
 	 *                          terminators on invalid input.
 	 */
 	public function remaining_tokens(): array {
-		$tokens = array();
-		while ( $this->next_token() ) {
-			$tokens[] = $this->current_token;
+		if ( $this->stream_ended || $this->queue_index > 0 || null !== $this->current_token ) {
+			$tokens = array();
+			while ( $this->next_token() ) {
+				$tokens[] = $this->current_token;
+			}
+			return $tokens;
 		}
+
+		$tokens = array();
+		$sql    = $this->sql;
+		$nbe    = $this->no_backslash_escapes;
+		while ( true ) {
+			if ( null !== $this->lookahead ) {
+				list( $type, $start, $length ) = $this->lookahead;
+				$this->lookahead               = null;
+			} else {
+				// Inlined scan_lexeme(): skip whitespace and comments, then scan.
+				$this->bytes_already_read += strspn( $sql, self::WHITESPACE_MASK, $this->bytes_already_read );
+				do {
+					$this->token_starts_at = $this->bytes_already_read;
+					$this->token_type      = $this->read_next_token();
+				} while (
+					self::WHITESPACE === $this->token_type
+					|| self::COMMENT === $this->token_type
+					|| self::MYSQL_COMMENT_START === $this->token_type
+					|| self::MYSQL_COMMENT_END === $this->token_type
+				);
+				$type = $this->token_type;
+				if ( null === $type ) {
+					// Invalid input: end the stream after the last valid token.
+					$this->stream_ended = true;
+					break;
+				}
+				$start  = $this->token_starts_at;
+				$length = $this->bytes_already_read - $start;
+			}
+
+			// Common single-token lexeme — the overwhelming majority.
+			if (
+				self::EOF !== $type
+				&& self::WITH_SYMBOL !== $type
+				&& self::AT_SIGN_SYMBOL !== $type
+			) {
+				$tokens[] = new WP_MySQL_Token( $type, $start, $length, $sql, $nbe );
+				continue;
+			}
+
+			// Multi-token lexemes: reuse the buffered producers, then drain.
+			$this->token_queue = array();
+			if ( self::EOF === $type ) {
+				$this->emit_end_markers();
+			} elseif ( self::WITH_SYMBOL === $type ) {
+				$this->produce_with_or_rollup( $start, $length );
+			} else {
+				$this->produce_at_variable( $start );
+			}
+			foreach ( $this->token_queue as $token ) {
+				$tokens[] = $token;
+			}
+			if ( $this->stream_ended ) {
+				break;
+			}
+		}
+
+		$this->token_queue = array();
 		return $tokens;
 	}
 
