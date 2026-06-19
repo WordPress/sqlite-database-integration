@@ -1309,7 +1309,10 @@ class WP_PostgreSQL_Driver {
 				$query                      = $translated_query;
 				$translated_for_postgresql  = true;
 				$sql_calc_found_rows_window = true;
-			} elseif ( $this->is_mysql_select_translation_cacheable_query( $query ) ) {
+			} elseif (
+				1 === preg_match( '/\A\s*SELECT\b/i', $query )
+				&& ! $this->contains_uncacheable_mysql_runtime_function_query( $query )
+			) {
 				$select_translation        = $this->get_mysql_select_query_translation( $query );
 				$query                     = $select_translation['sql'];
 				$translated_for_postgresql = $select_translation['translated'];
@@ -1746,21 +1749,6 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Check whether a query can use the exact SELECT translation cache.
-	 *
-	 * This intentionally uses a cheap prefix check. Queries with leading comments
-	 * or parenthesized SELECTs keep the uncached fallback path rather than paying
-	 * lexer cost just to decide cacheability.
-	 *
-	 * @param string $query MySQL query.
-	 * @return bool Whether the query is cacheable by exact SQL text.
-	 */
-	private function is_mysql_select_translation_cacheable_query( string $query ): bool {
-		return 1 === preg_match( '/\A\s*SELECT\b/i', $query )
-			&& ! $this->contains_uncacheable_mysql_runtime_function_query( $query );
-	}
-
-	/**
 	 * Check whether a SELECT contains session-state runtime functions.
 	 *
 	 * @param string $query MySQL query.
@@ -1805,16 +1793,24 @@ class WP_PostgreSQL_Driver {
 	 * @return array{sql: string, translated: bool, last_insert_id?: int} PostgreSQL SQL and translation flag.
 	 */
 	private function get_mysql_select_query_translation( string $query ): array {
-		$cached_translation = $this->get_mysql_select_translation_cache_entry( $query );
-		if ( null !== $cached_translation ) {
+		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
+		if (
+			isset( $this->mysql_select_translation_cache[ $cache_key ] )
+			&& $this->mysql_select_translation_cache[ $cache_key ]['query'] === $query
+		) {
 			return array(
-				'sql'        => $cached_translation['sql'],
-				'translated' => $cached_translation['translated'],
+				'sql'        => $this->mysql_select_translation_cache[ $cache_key ]['sql'],
+				'translated' => $this->mysql_select_translation_cache[ $cache_key ]['translated'],
 			);
 		}
 
-		$translation = $this->translate_mysql_select_query_for_postgresql( $query );
-		$this->set_mysql_select_translation_cache_entry( $query, $translation );
+		$translation                                        = $this->translate_mysql_select_query_for_postgresql( $query );
+		$this->mysql_select_translation_cache[ $cache_key ] = array(
+			'query'      => $query,
+			'sql'        => $translation['sql'],
+			'translated' => $translation['translated'],
+		);
+		$this->limit_mysql_query_translation_cache( $this->mysql_select_translation_cache );
 
 		return $translation;
 	}
@@ -1987,41 +1983,6 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Get a cached exact SELECT translation.
-	 *
-	 * @param string $query MySQL SELECT query.
-	 * @return array{query: string, sql: string, translated: bool}|null Cached translation.
-	 */
-	private function get_mysql_select_translation_cache_entry( string $query ): ?array {
-		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
-		if (
-			! isset( $this->mysql_select_translation_cache[ $cache_key ] )
-			|| $this->mysql_select_translation_cache[ $cache_key ]['query'] !== $query
-		) {
-			return null;
-		}
-
-		return $this->mysql_select_translation_cache[ $cache_key ];
-	}
-
-	/**
-	 * Store a cached exact SELECT translation.
-	 *
-	 * @param string                           $query       MySQL SELECT query.
-	 * @param array{sql: string, translated: bool, last_insert_id?: int} $translation PostgreSQL translation.
-	 */
-	private function set_mysql_select_translation_cache_entry( string $query, array $translation ): void {
-		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
-		$this->mysql_select_translation_cache[ $cache_key ] = array(
-			'query'      => $query,
-			'sql'        => $translation['sql'],
-			'translated' => $translation['translated'],
-		);
-
-		$this->limit_mysql_query_translation_cache( $this->mysql_select_translation_cache );
-	}
-
-	/**
 	 * Get the cache key for an exact MySQL query translation.
 	 *
 	 * @param string $query MySQL query.
@@ -2175,64 +2136,36 @@ class WP_PostgreSQL_Driver {
 	 * @return string|null PostgreSQL count query, or null when unsupported.
 	 */
 	private function get_sql_calc_found_rows_count_query( string $query ): ?string {
-		$cached_count_query = $this->get_mysql_sql_calc_found_rows_count_query_cache_entry( $query );
-		if ( null !== $cached_count_query ) {
-			return $cached_count_query;
+		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
+		if (
+			isset( $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ] )
+			&& $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ]['query'] === $query
+		) {
+			return $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ]['sql'];
 		}
 
 		$count_query = $this->get_sql_calc_found_rows_direct_count_query( $query );
-		if ( null !== $count_query ) {
-			$this->set_mysql_sql_calc_found_rows_count_query_cache_entry( $query, $count_query );
-			return $count_query;
+		if ( null === $count_query ) {
+			$select_query = $this->translate_sql_calc_found_rows_count_select_query( $query );
+			if ( null === $select_query ) {
+				return null;
+			}
+
+			$alias       = $this->connection->quote_identifier( '__wp_pg_found_rows' );
+			$count_query = sprintf(
+				'SELECT COUNT(*) AS %1$s FROM (%2$s) AS %1$s',
+				$alias,
+				$select_query
+			);
 		}
 
-		$select_query = $this->translate_sql_calc_found_rows_count_select_query( $query );
-		if ( null === $select_query ) {
-			return null;
-		}
-
-		$alias       = $this->connection->quote_identifier( '__wp_pg_found_rows' );
-		$count_query = sprintf(
-			'SELECT COUNT(*) AS %1$s FROM (%2$s) AS %1$s',
-			$alias,
-			$select_query
-		);
-		$this->set_mysql_sql_calc_found_rows_count_query_cache_entry( $query, $count_query );
-		return $count_query;
-	}
-
-	/**
-	 * Get cached PostgreSQL SQL for a SQL_CALC_FOUND_ROWS count query.
-	 *
-	 * @param string $query MySQL SQL_CALC_FOUND_ROWS query.
-	 * @return string|null Cached PostgreSQL count SQL.
-	 */
-	private function get_mysql_sql_calc_found_rows_count_query_cache_entry( string $query ): ?string {
-		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
-		if (
-			! isset( $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ] )
-			|| $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ]['query'] !== $query
-		) {
-			return null;
-		}
-
-		return $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ]['sql'];
-	}
-
-	/**
-	 * Store cached PostgreSQL SQL for a SQL_CALC_FOUND_ROWS count query.
-	 *
-	 * @param string $query       MySQL SQL_CALC_FOUND_ROWS query.
-	 * @param string $count_query PostgreSQL count SQL.
-	 */
-	private function set_mysql_sql_calc_found_rows_count_query_cache_entry( string $query, string $count_query ): void {
-		$cache_key = $this->get_mysql_query_translation_cache_key( $query );
 		$this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ] = array(
 			'query' => $query,
 			'sql'   => $count_query,
 		);
-
 		$this->limit_mysql_query_translation_cache( $this->mysql_sql_calc_found_rows_count_query_cache );
+
+		return $count_query;
 	}
 
 	/**
