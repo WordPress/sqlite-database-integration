@@ -4628,8 +4628,15 @@ class WP_PostgreSQL_Driver {
 		$statements = array_merge(
 			$statements,
 			array(
-				$this->get_postgresql_information_schema_compatibility_schema_statement(),
-				$this->get_postgresql_information_schema_compatibility_schema_comment_statement(),
+				sprintf(
+					'CREATE SCHEMA IF NOT EXISTS %s',
+					$this->connection->quote_identifier( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA )
+				),
+				sprintf(
+					'COMMENT ON SCHEMA %s IS %s',
+					$this->connection->quote_identifier( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA ),
+					$this->connection->quote( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA_COMMENT )
+				),
 			),
 			array_values( $definitions )
 		);
@@ -39872,31 +39879,6 @@ WHERE option_name IN (
 
 		$method = 'get_direct_information_schema_' . $view . '_relation_sql';
 		return method_exists( $this, $method ) ? $this->$method() : null;
-	}
-
-	/**
-	 * Get the PostgreSQL compatibility schema creation statement.
-	 *
-	 * @return string Schema creation statement.
-	 */
-	private function get_postgresql_information_schema_compatibility_schema_statement(): string {
-		return sprintf(
-			'CREATE SCHEMA IF NOT EXISTS %s',
-			$this->connection->quote_identifier( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA )
-		);
-	}
-
-	/**
-	 * Get the PostgreSQL compatibility schema comment statement.
-	 *
-	 * @return string Schema comment statement.
-	 */
-	private function get_postgresql_information_schema_compatibility_schema_comment_statement(): string {
-		return sprintf(
-			'COMMENT ON SCHEMA %s IS %s',
-			$this->connection->quote_identifier( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA ),
-			$this->connection->quote( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA_COMMENT )
-		);
 	}
 
 	/**
