@@ -57920,7 +57920,9 @@ $wp_mysql_%1$s_domain$',
 		$cases[] = sprintf(
 			'WHEN %s THEN %s',
 			$this->connection->quote( 'D' ),
-			$this->get_postgresql_mysql_date_format_day_with_suffix_sql( $timestamp_sql )
+			$this->get_postgresql_mysql_day_with_suffix_sql(
+				sprintf( 'CAST(EXTRACT(DAY FROM %s) AS integer)', $timestamp_sql )
+			)
 		);
 		$cases[] = sprintf(
 			'WHEN %s THEN CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)',
@@ -57957,7 +57959,9 @@ $wp_mysql_%1$s_domain$',
 		}
 
 		if ( 'D' === $specifier ) {
-			return $this->get_postgresql_mysql_date_format_day_with_suffix_sql( $timestamp_sql );
+			return $this->get_postgresql_mysql_day_with_suffix_sql(
+				sprintf( 'CAST(EXTRACT(DAY FROM %s) AS integer)', $timestamp_sql )
+			);
 		}
 
 		if ( 'w' === $specifier ) {
@@ -58027,7 +58031,8 @@ $wp_mysql_%1$s_domain$',
 			'V' => 'get_postgresql_mysql_sunday_week_mode_two_sql',
 		);
 		if ( isset( $zero_padded_week_methods[ $specifier ] ) ) {
-			return $this->get_postgresql_mysql_zero_padded_week_sql(
+			return sprintf(
+				"LPAD(CAST(%s AS text), 2, '0')",
 				$this->{$zero_padded_week_methods[ $specifier ]}( $timestamp_sql )
 			);
 		}
@@ -58045,20 +58050,20 @@ $wp_mysql_%1$s_domain$',
 		}
 
 		if ( 'X' === $specifier ) {
-			return $this->get_postgresql_mysql_sunday_week_mode_two_year_sql( $timestamp_sql );
+			$week_start_sql       = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
+			$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
+			$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
+
+			return sprintf(
+				"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s < %3\$s THEN TO_CHAR(%4\$s - INTERVAL '1 year', 'YYYY') ELSE TO_CHAR(%4\$s, 'YYYY') END",
+				$timestamp_sql,
+				$week_start_sql,
+				$first_week_start_sql,
+				$year_start_sql
+			);
 		}
 
 		return null;
-	}
-
-	/**
-	 * Get PostgreSQL SQL for zero-padded MySQL week numbers.
-	 *
-	 * @param string $week_sql PostgreSQL integer week expression.
-	 * @return string PostgreSQL text expression.
-	 */
-	private function get_postgresql_mysql_zero_padded_week_sql( string $week_sql ): string {
-		return sprintf( "LPAD(CAST(%s AS text), 2, '0')", $week_sql );
 	}
 
 	/**
@@ -58208,26 +58213,6 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	/**
-	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%X').
-	 *
-	 * @param string $timestamp_sql PostgreSQL timestamp expression.
-	 * @return string PostgreSQL text expression.
-	 */
-	private function get_postgresql_mysql_sunday_week_mode_two_year_sql( string $timestamp_sql ): string {
-		$week_start_sql       = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
-		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
-		$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
-
-		return sprintf(
-			"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s < %3\$s THEN TO_CHAR(%4\$s - INTERVAL '1 year', 'YYYY') ELSE TO_CHAR(%4\$s, 'YYYY') END",
-			$timestamp_sql,
-			$week_start_sql,
-			$first_week_start_sql,
-			$year_start_sql
-		);
-	}
-
-	/**
 	 * Get PostgreSQL SQL for the Sunday-start week containing a timestamp.
 	 *
 	 * @param string $timestamp_sql PostgreSQL timestamp expression.
@@ -58280,18 +58265,6 @@ $wp_mysql_%1$s_domain$',
 			"(%1\$s + (MOD(8 - CAST(EXTRACT(ISODOW FROM %1\$s) AS integer), 7) * INTERVAL '1 day'))",
 			$year_start_sql
 		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL DATE_FORMAT(expr, '%D').
-	 *
-	 * @param string $timestamp_sql PostgreSQL timestamp expression.
-	 * @return string PostgreSQL SQL fragment.
-	 */
-	private function get_postgresql_mysql_date_format_day_with_suffix_sql( string $timestamp_sql ): string {
-		$day_sql = sprintf( 'CAST(EXTRACT(DAY FROM %s) AS integer)', $timestamp_sql );
-
-		return $this->get_postgresql_mysql_day_with_suffix_sql( $day_sql );
 	}
 
 	/**
