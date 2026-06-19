@@ -4609,6 +4609,126 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests PostgreSQL-backed metadata-only DROP INDEX reads catalog index type without metadata tables.
+	 */
+	public function test_metadata_only_drop_index_reads_postgresql_catalog_type_without_metadata_tables(): void {
+		$pdo        = new class( 'sqlite::memory:' ) extends PDO {
+			/**
+			 * Report pgsql for catalog-branch selection while keeping SQLite execution.
+			 *
+			 * @param int $attribute PDO attribute.
+			 * @return mixed Attribute value.
+			 */
+			#[\ReturnTypeWillChange]
+			public function getAttribute( $attribute ) {
+				if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+					return 'pgsql';
+				}
+
+				return parent::getAttribute( $attribute );
+			}
+		};
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured catalog index-type queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_index_type_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/drop-index queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				foreach (
+					array(
+						WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
+					) as $metadata_table
+				) {
+					if ( false !== strpos( $sql, $metadata_table ) ) {
+						throw new RuntimeException( 'Hidden metadata table access was not expected for catalog-backed metadata-only DROP INDEX.' );
+					}
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'pg_catalog.pg_index catalog_index' ) ) {
+					$this->catalog_index_type_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if (
+						array(
+							'public',
+							'catalog_pg_drop_metadata_only_index',
+							'body_fulltext',
+							'body_fulltext',
+							'body_fulltext',
+						) !== $params
+					) {
+						throw new RuntimeException( 'Metadata-only DROP INDEX catalog lookup used unexpected parameters: ' . json_encode( $params ) );
+					}
+
+					return parent::query( "SELECT 'FULLTEXT' AS index_type" );
+				}
+
+				if ( 0 === strpos( $sql, 'DROP INDEX ' ) ) {
+					throw new RuntimeException( 'Metadata-only DROP INDEX should not emit a physical DROP INDEX statement.' );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured catalog index-type queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_index_type_queries(): array {
+				return $this->catalog_index_type_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
+		$pdo->exec( 'CREATE TABLE public.catalog_pg_drop_metadata_only_index (id INTEGER, body TEXT)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'DROP INDEX body_fulltext ON catalog_pg_drop_metadata_only_index' )
+		);
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+
+		$catalog_queries = $connection->get_catalog_index_type_queries();
+		$this->assertCount( 1, $catalog_queries );
+		$this->assertSame(
+			array(
+				'public',
+				'catalog_pg_drop_metadata_only_index',
+				'body_fulltext',
+				'body_fulltext',
+				'body_fulltext',
+			),
+			$catalog_queries[0]['params']
+		);
+		$this->assertSame(
+			array(),
+			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
 	 * Tests DROP INDEX uses the selected PostgreSQL catalog schema.
 	 */
 	public function test_drop_index_uses_current_postgresql_catalog_schema_after_use(): void {
@@ -13771,6 +13891,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	public function test_unsupported_convert_typed_forms_fail_closed_before_backend_execution(): void {
 		$queries = array(
 			"SELECT CONVERT('12:34:56', TIME) AS time_value",
+			"SELECT CONVERT('2025-10-05 14:05:28', DATETIME) AS datetime_value",
 		);
 
 		foreach ( $queries as $query ) {

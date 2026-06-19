@@ -12797,7 +12797,52 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_stored_mysql_index_type( string $table_schema, string $table_name, string $index_name ): ?string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return null;
+			$index_type_sql = sprintf(
+				'COALESCE(%s, UPPER(access_method.amname))',
+				$this->get_postgresql_catalog_index_type_comment_sql( 'pg_catalog.obj_description(index_class.oid, \'pg_class\')' )
+			);
+
+			try {
+				$stmt = $this->connection->query(
+					sprintf(
+						'SELECT %1$s AS index_type
+						FROM pg_catalog.pg_class table_class
+						INNER JOIN pg_catalog.pg_namespace table_namespace
+							ON table_namespace.oid = table_class.relnamespace
+						INNER JOIN pg_catalog.pg_index catalog_index
+							ON catalog_index.indrelid = table_class.oid
+						INNER JOIN pg_catalog.pg_class index_class
+							ON index_class.oid = catalog_index.indexrelid
+						INNER JOIN pg_catalog.pg_am access_method
+							ON access_method.oid = index_class.relam
+						WHERE table_namespace.nspname = ?
+							AND table_class.relname = ?
+							AND table_class.relkind IN (\'r\', \'p\')
+							AND catalog_index.indisvalid
+							AND catalog_index.indislive
+							AND (
+								(catalog_index.indisprimary AND LOWER(?) = \'primary\')
+								OR (
+									NOT catalog_index.indisprimary
+									AND (
+										LOWER(index_class.relname) = LOWER(?)
+										OR LOWER(index_class.relname) = LOWER(table_class.relname || \'__\' || ?)
+									)
+								)
+							)
+						LIMIT 1',
+						$index_type_sql
+					),
+					array( $table_schema, $table_name, $index_name, $index_name, $index_name )
+				);
+			} catch ( PDOException $e ) {
+				return null;
+			}
+
+			$index_type = $stmt->fetchColumn();
+			return false === $index_type || null === $index_type || '' === (string) $index_type
+				? null
+				: strtoupper( (string) $index_type );
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -29972,50 +30017,34 @@ WHERE option_name IN (
 	 * @return string|null Storage SQL, or null when the expression can produce an invalid temporal value.
 	 */
 	private function get_mysql_intrinsically_valid_temporal_cast_expression_sql_for_column( string $base_type, string $column_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
-		$date_time_cast = $this->get_mysql_date_time_cast_bounds( $tokens, $start, $end );
-		if ( null !== $date_time_cast && $date_time_cast['close'] + 1 === $end ) {
-			if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression(
-				$tokens,
-				$date_time_cast['expression_start'],
-				$date_time_cast['expression_end']
-			) ) {
-				return null;
-			}
+		$temporal_cast = $this->get_mysql_typed_cast_or_convert_bounds(
+			$tokens,
+			$start,
+			$end,
+			array(
+				'cast'    => array( 'date_time', 'date' ),
+				'convert' => array( 'date' ),
+			)
+		);
+		if ( null === $temporal_cast || $temporal_cast['close'] + 1 !== $end ) {
+			return null;
+		}
 
+		if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression(
+			$tokens,
+			$temporal_cast['expression_start'],
+			$temporal_cast['expression_end']
+		) ) {
+			return null;
+		}
+
+		if ( 'date_time' === $temporal_cast['type'] ) {
 			return $this->get_postgresql_mysql_temporal_storage_expression_sql( $base_type, $column_type, $value_sql );
 		}
 
-		$date_cast = $this->get_mysql_date_cast_bounds( $tokens, $start, $end );
-		if ( null !== $date_cast && $date_cast['close'] + 1 === $end ) {
-			if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression(
-				$tokens,
-				$date_cast['expression_start'],
-				$date_cast['expression_end']
-			) ) {
-				return null;
-			}
-
-			return 'date' === $base_type
-				? $value_sql
-				: $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
-		}
-
-		$date_convert = $this->get_mysql_date_convert_bounds( $tokens, $start, $end );
-		if ( null !== $date_convert && $date_convert['close'] + 1 === $end ) {
-			if ( ! $this->is_mysql_intrinsically_valid_temporal_source_expression(
-				$tokens,
-				$date_convert['expression_start'],
-				$date_convert['expression_end']
-			) ) {
-				return null;
-			}
-
-			return 'date' === $base_type
-				? $value_sql
-				: $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
-		}
-
-		return null;
+		return 'date' === $base_type
+			? $value_sql
+			: $this->get_postgresql_mysql_date_to_datetime_storage_expression_sql( $value_sql );
 	}
 
 	/**
@@ -30445,34 +30474,24 @@ WHERE option_name IN (
 	 * @return bool Whether the expression is known-valid.
 	 */
 	private function is_mysql_intrinsically_valid_temporal_cast_expression( array $tokens, int $start, int $end ): bool {
-		$date_time_cast = $this->get_mysql_date_time_cast_bounds( $tokens, $start, $end );
-		if ( null !== $date_time_cast && $date_time_cast['close'] + 1 === $end ) {
-			return $this->is_mysql_intrinsically_valid_temporal_source_expression(
-				$tokens,
-				$date_time_cast['expression_start'],
-				$date_time_cast['expression_end']
-			);
+		$temporal_cast = $this->get_mysql_typed_cast_or_convert_bounds(
+			$tokens,
+			$start,
+			$end,
+			array(
+				'cast'    => array( 'date_time', 'date' ),
+				'convert' => array( 'date' ),
+			)
+		);
+		if ( null === $temporal_cast || $temporal_cast['close'] + 1 !== $end ) {
+			return false;
 		}
 
-		$date_cast = $this->get_mysql_date_cast_bounds( $tokens, $start, $end );
-		if ( null !== $date_cast && $date_cast['close'] + 1 === $end ) {
-			return $this->is_mysql_intrinsically_valid_temporal_source_expression(
-				$tokens,
-				$date_cast['expression_start'],
-				$date_cast['expression_end']
-			);
-		}
-
-		$date_convert = $this->get_mysql_date_convert_bounds( $tokens, $start, $end );
-		if ( null !== $date_convert && $date_convert['close'] + 1 === $end ) {
-			return $this->is_mysql_intrinsically_valid_temporal_source_expression(
-				$tokens,
-				$date_convert['expression_start'],
-				$date_convert['expression_end']
-			);
-		}
-
-		return false;
+		return $this->is_mysql_intrinsically_valid_temporal_source_expression(
+			$tokens,
+			$temporal_cast['expression_start'],
+			$temporal_cast['expression_end']
+		);
 	}
 
 	/**
@@ -35969,20 +35988,7 @@ WHERE "TABLE_SCHEMA" = %3$s
 
 		if ( 'schemata' === $view ) {
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				return sprintf(
-					'SELECT
-	\'def\' AS "CATALOG_NAME",
-	%1$s AS "SCHEMA_NAME",
-	%2$s AS "DEFAULT_CHARACTER_SET_NAME",
-	%3$s AS "DEFAULT_COLLATION_NAME",
-	NULL AS "SQL_PATH",
-	\'NO\' AS "DEFAULT_ENCRYPTION"
-FROM information_schema.schemata s
-WHERE s.schema_name = \'information_schema\' OR s.schema_name !~ \'^pg_\'',
-					$this->get_direct_information_schema_display_schema_sql( 's.schema_name' ),
-					$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-				);
+				return $this->get_direct_information_schema_simple_native_relation_sql( 'schemata' );
 			}
 
 			return $this->get_direct_information_schema_literal_relation_sql(
@@ -36275,6 +36281,11 @@ WHERE t.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 			);
 		}
 
+		$native_relation_sql = $this->get_direct_information_schema_simple_native_relation_sql( $view );
+		if ( null !== $native_relation_sql ) {
+			return $native_relation_sql;
+		}
+
 		if ( 'processlist' === $view ) {
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
 				return 'SELECT
@@ -36404,21 +36415,6 @@ WHERE n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 			);
 		}
 
-		if ( 'table_privileges' === $view ) {
-			return sprintf(
-				'SELECT
-	pg_catalog.quote_literal(tp.grantee) || \'@\'\'%%\'\'\' AS "GRANTEE",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	tp.table_name AS "TABLE_NAME",
-	tp.privilege_type AS "PRIVILEGE_TYPE",
-	tp.is_grantable AS "IS_GRANTABLE"
-FROM information_schema.table_privileges tp
-WHERE tp.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'tp.table_schema' )
-			);
-		}
-
 		if ( 'column_privileges' === $view ) {
 			return str_replace(
 				array(
@@ -36433,24 +36429,6 @@ WHERE tp.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 					'cp.',
 				),
 				$this->get_direct_information_schema_relation_sql( 'table_privileges' )
-			);
-		}
-
-		if ( 'role_table_grants' === $view ) {
-			return sprintf(
-				'SELECT
-	rtg.grantor AS "GRANTOR",
-	\'%%\' AS "GRANTOR_HOST",
-	rtg.grantee AS "GRANTEE",
-	\'%%\' AS "GRANTEE_HOST",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	rtg.table_name AS "TABLE_NAME",
-	rtg.privilege_type AS "PRIVILEGE_TYPE",
-	rtg.is_grantable AS "IS_GRANTABLE"
-FROM information_schema.role_table_grants rtg
-WHERE rtg.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'rtg.table_schema' )
 			);
 		}
 
@@ -36471,57 +36449,12 @@ WHERE rtg.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 			);
 		}
 
-		if ( 'role_routine_grants' === $view ) {
-			return sprintf(
-				'SELECT
-	rrg.grantor AS "GRANTOR",
-	\'%%\' AS "GRANTOR_HOST",
-	rrg.grantee AS "GRANTEE",
-	\'%%\' AS "GRANTEE_HOST",
-	\'def\' AS "SPECIFIC_CATALOG",
-	%1$s AS "SPECIFIC_SCHEMA",
-	rrg.specific_name AS "SPECIFIC_NAME",
-	\'def\' AS "ROUTINE_CATALOG",
-	%2$s AS "ROUTINE_SCHEMA",
-	rrg.routine_name AS "ROUTINE_NAME",
-	rrg.privilege_type AS "PRIVILEGE_TYPE",
-	rrg.is_grantable AS "IS_GRANTABLE"
-FROM information_schema.role_routine_grants rrg
-WHERE rrg.specific_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'rrg.specific_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 'rrg.routine_schema' )
-			);
-		}
-
-		if ( 'applicable_roles' === $view ) {
-			return 'SELECT
-	ar.grantee AS "USER",
-	\'%\' AS "HOST",
-	ar.grantee AS "GRANTEE",
-	\'%\' AS "GRANTEE_HOST",
-	ar.role_name AS "ROLE_NAME",
-	\'%\' AS "ROLE_HOST",
-	ar.is_grantable AS "IS_GRANTABLE",
-	\'NO\' AS "IS_DEFAULT",
-	\'NO\' AS "IS_MANDATORY"
-FROM information_schema.applicable_roles ar';
-		}
-
 		if ( 'administrable_role_authorizations' === $view ) {
 			return str_replace(
 				array( 'applicable_roles ar', 'ar.' ),
 				array( 'administrable_role_authorizations ara', 'ara.' ),
 				$this->get_direct_information_schema_relation_sql( 'applicable_roles' )
 			);
-		}
-
-		if ( 'enabled_roles' === $view ) {
-			return 'SELECT
-	er.role_name AS "ROLE_NAME",
-	\'%\' AS "ROLE_HOST",
-	\'NO\' AS "IS_DEFAULT",
-	\'NO\' AS "IS_MANDATORY"
-FROM information_schema.enabled_roles er';
 		}
 
 		if ( 'keywords' === $view ) {
@@ -36878,21 +36811,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 	AND n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'';
 		}
 
-		if ( 'columns_extensions' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	c.table_name AS "TABLE_NAME",
-	c.column_name AS "COLUMN_NAME",
-	NULL AS "ENGINE_ATTRIBUTE",
-	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
-FROM information_schema.columns c
-WHERE c.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' )
-			);
-		}
-
 		if ( 'table_constraints' === $view ) {
 			$enforced_sql = $this->get_postgresql_mysql_check_enforced_comment_sql(
 				'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
@@ -37061,180 +36979,6 @@ WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
 			);
 		}
 
-		if ( 'schemata_extensions' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "CATALOG_NAME",
-	%1$s AS "SCHEMA_NAME",
-	NULL AS "OPTIONS"
-FROM information_schema.schemata s
-WHERE s.schema_name = \'information_schema\' OR s.schema_name !~ \'^pg_\'',
-				$this->get_direct_information_schema_display_schema_sql( 's.schema_name' )
-			);
-		}
-
-		if ( 'view_table_usage' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "VIEW_CATALOG",
-	%1$s AS "VIEW_SCHEMA",
-	vtu.view_name AS "VIEW_NAME",
-	\'def\' AS "TABLE_CATALOG",
-	%2$s AS "TABLE_SCHEMA",
-	vtu.table_name AS "TABLE_NAME"
-FROM information_schema.view_table_usage vtu
-WHERE vtu.view_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
-	AND vtu.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'vtu.view_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 'vtu.table_schema' )
-			);
-		}
-
-		if ( 'view_routine_usage' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	vru.table_name AS "TABLE_NAME",
-	\'def\' AS "SPECIFIC_CATALOG",
-	%2$s AS "SPECIFIC_SCHEMA",
-	vru.specific_name AS "SPECIFIC_NAME"
-FROM information_schema.view_routine_usage vru
-WHERE vru.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
-	AND vru.specific_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'vru.table_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 'vru.specific_schema' )
-			);
-		}
-
-		if ( 'views' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	v.table_name AS "TABLE_NAME",
-	v.view_definition AS "VIEW_DEFINITION",
-	COALESCE(v.check_option, \'NONE\') AS "CHECK_OPTION",
-	COALESCE(v.is_updatable, \'NO\') AS "IS_UPDATABLE",
-	\'\' AS "DEFINER",
-	\'DEFINER\' AS "SECURITY_TYPE",
-	%2$s AS "CHARACTER_SET_CLIENT",
-	%3$s AS "COLLATION_CONNECTION"
-FROM information_schema.views v
-WHERE v.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'v.table_schema' ),
-				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-			);
-		}
-
-		if ( 'triggers' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "TRIGGER_CATALOG",
-	%1$s AS "TRIGGER_SCHEMA",
-	t.trigger_name AS "TRIGGER_NAME",
-	t.event_manipulation AS "EVENT_MANIPULATION",
-	\'def\' AS "EVENT_OBJECT_CATALOG",
-	%2$s AS "EVENT_OBJECT_SCHEMA",
-	t.event_object_table AS "EVENT_OBJECT_TABLE",
-	t.action_order AS "ACTION_ORDER",
-	t.action_condition AS "ACTION_CONDITION",
-	t.action_statement AS "ACTION_STATEMENT",
-	t.action_orientation AS "ACTION_ORIENTATION",
-	t.action_timing AS "ACTION_TIMING",
-	t.action_reference_old_table AS "ACTION_REFERENCE_OLD_TABLE",
-	t.action_reference_new_table AS "ACTION_REFERENCE_NEW_TABLE",
-	t.action_reference_old_row AS "ACTION_REFERENCE_OLD_ROW",
-	t.action_reference_new_row AS "ACTION_REFERENCE_NEW_ROW",
-	TO_CHAR(t.created, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATED",
-	%3$s AS "SQL_MODE",
-	\'\' AS "DEFINER",
-	%4$s AS "CHARACTER_SET_CLIENT",
-	%5$s AS "COLLATION_CONNECTION",
-	%5$s AS "DATABASE_COLLATION"
-FROM information_schema.triggers t
-WHERE t.trigger_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 't.trigger_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 't.event_object_schema' ),
-				$this->connection->quote( $this->get_sql_mode() ),
-				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-			);
-		}
-
-		if ( 'routines' === $view ) {
-			return sprintf(
-				'SELECT
-	r.specific_name AS "SPECIFIC_NAME",
-	\'def\' AS "ROUTINE_CATALOG",
-	%1$s AS "ROUTINE_SCHEMA",
-	r.routine_name AS "ROUTINE_NAME",
-	r.routine_type AS "ROUTINE_TYPE",
-	r.data_type AS "DATA_TYPE",
-	r.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
-	r.character_octet_length AS "CHARACTER_OCTET_LENGTH",
-	r.numeric_precision AS "NUMERIC_PRECISION",
-	r.numeric_scale AS "NUMERIC_SCALE",
-	r.datetime_precision AS "DATETIME_PRECISION",
-	r.character_set_name AS "CHARACTER_SET_NAME",
-	r.collation_name AS "COLLATION_NAME",
-	r.dtd_identifier AS "DTD_IDENTIFIER",
-	r.routine_body AS "ROUTINE_BODY",
-	r.routine_definition AS "ROUTINE_DEFINITION",
-	r.external_name AS "EXTERNAL_NAME",
-	r.external_language AS "EXTERNAL_LANGUAGE",
-	r.parameter_style AS "PARAMETER_STYLE",
-	r.is_deterministic AS "IS_DETERMINISTIC",
-	r.sql_data_access AS "SQL_DATA_ACCESS",
-	r.sql_path AS "SQL_PATH",
-	r.security_type AS "SECURITY_TYPE",
-	TO_CHAR(r.created, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATED",
-	TO_CHAR(r.last_altered, \'YYYY-MM-DD HH24:MI:SS\') AS "LAST_ALTERED",
-	%2$s AS "SQL_MODE",
-	\'\' AS "ROUTINE_COMMENT",
-	\'\' AS "DEFINER",
-	%3$s AS "CHARACTER_SET_CLIENT",
-	%4$s AS "COLLATION_CONNECTION",
-	%4$s AS "DATABASE_COLLATION"
-FROM information_schema.routines r
-WHERE r.routine_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'r.routine_schema' ),
-				$this->connection->quote( $this->get_sql_mode() ),
-				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-			);
-		}
-
-		if ( 'parameters' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "SPECIFIC_CATALOG",
-	%1$s AS "SPECIFIC_SCHEMA",
-	p.specific_name AS "SPECIFIC_NAME",
-	p.ordinal_position AS "ORDINAL_POSITION",
-	p.parameter_mode AS "PARAMETER_MODE",
-	p.parameter_name AS "PARAMETER_NAME",
-	p.data_type AS "DATA_TYPE",
-	p.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
-	p.character_octet_length AS "CHARACTER_OCTET_LENGTH",
-	p.numeric_precision AS "NUMERIC_PRECISION",
-	p.numeric_scale AS "NUMERIC_SCALE",
-	p.datetime_precision AS "DATETIME_PRECISION",
-	p.character_set_name AS "CHARACTER_SET_NAME",
-	p.collation_name AS "COLLATION_NAME",
-	p.dtd_identifier AS "DTD_IDENTIFIER",
-	COALESCE(r.routine_type, \'FUNCTION\') AS "ROUTINE_TYPE"
-FROM information_schema.parameters p
-LEFT JOIN information_schema.routines r
-	ON r.specific_catalog = p.specific_catalog
-	AND r.specific_schema = p.specific_schema
-	AND r.specific_name = p.specific_name
-WHERE p.specific_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'p.specific_schema' )
-			);
-		}
-
 		if ( 'st_geometry_columns' === $view ) {
 			$geometry_types     = array( 'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geomcollection', 'geometrycollection' );
 			$geometry_domains   = array();
@@ -37363,6 +37107,256 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get SQL for a simple native PostgreSQL information_schema relation.
+	 *
+	 * These relations only need an ordered MySQL-shaped projection over a native
+	 * information_schema source. More complex catalog relations stay explicit.
+	 *
+	 * @param string $view Information schema view name.
+	 * @return string|null Relation SQL, or null when the relation is not simple-native.
+	 */
+	private function get_direct_information_schema_simple_native_relation_sql( string $view ): ?string {
+		$def_sql             = $this->connection->quote( 'def' );
+		$empty_sql           = $this->connection->quote( '' );
+		$function_sql        = $this->connection->quote( 'FUNCTION' );
+		$information_schema  = $this->connection->quote( 'information_schema' );
+		$none_sql            = $this->connection->quote( 'NONE' );
+		$no_sql              = $this->connection->quote( 'NO' );
+		$percent_sql         = $this->connection->quote( '%' );
+		$user_host_sql       = $this->connection->quote( '@\'%\'' );
+		$datetime_format_sql = $this->connection->quote( 'YYYY-MM-DD HH24:MI:SS' );
+		$schema_filter       = '!~ ' . $this->connection->quote( '^(pg_|information_schema$|pg_catalog$)' );
+		$pg_schema_filter    = '!~ ' . $this->connection->quote( '^pg_' );
+		$charset_sql         = $this->connection->quote( self::DEFAULT_MYSQL_CHARSET );
+		$collation_sql       = $this->connection->quote( self::DEFAULT_MYSQL_COLLATION );
+		$sql_mode_sql        = $this->connection->quote( $this->get_sql_mode() );
+
+		$definitions = array(
+			'schemata'            => array(
+				'alias'       => 's',
+				'from'        => 'information_schema.schemata s',
+				'where'       => 's.schema_name = ' . $information_schema . ' OR s.schema_name ' . $pg_schema_filter,
+				'expressions' => array(
+					'CATALOG_NAME'               => $def_sql,
+					'SCHEMA_NAME'                => $this->get_direct_information_schema_display_schema_sql( 's.schema_name' ),
+					'DEFAULT_CHARACTER_SET_NAME' => $charset_sql,
+					'DEFAULT_COLLATION_NAME'     => $collation_sql,
+					'SQL_PATH'                   => 'NULL',
+					'DEFAULT_ENCRYPTION'         => $no_sql,
+				),
+			),
+			'columns_extensions'  => array(
+				'alias'       => 'c',
+				'from'        => 'information_schema.columns c',
+				'where'       => 'c.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'TABLE_CATALOG'              => $def_sql,
+					'TABLE_SCHEMA'               => $this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
+					'ENGINE_ATTRIBUTE'           => 'NULL',
+					'SECONDARY_ENGINE_ATTRIBUTE' => 'NULL',
+				),
+			),
+			'table_privileges'    => array(
+				'alias'       => 'tp',
+				'from'        => 'information_schema.table_privileges tp',
+				'where'       => 'tp.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'GRANTEE'       => 'pg_catalog.quote_literal(tp.grantee) || ' . $user_host_sql,
+					'TABLE_CATALOG' => $def_sql,
+					'TABLE_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'tp.table_schema' ),
+				),
+			),
+			'role_table_grants'   => array(
+				'alias'       => 'rtg',
+				'from'        => 'information_schema.role_table_grants rtg',
+				'where'       => 'rtg.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'GRANTOR_HOST'  => $percent_sql,
+					'GRANTEE_HOST'  => $percent_sql,
+					'TABLE_CATALOG' => $def_sql,
+					'TABLE_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'rtg.table_schema' ),
+				),
+			),
+			'role_routine_grants' => array(
+				'alias'       => 'rrg',
+				'from'        => 'information_schema.role_routine_grants rrg',
+				'where'       => 'rrg.specific_schema ' . $schema_filter,
+				'expressions' => array(
+					'GRANTOR_HOST'     => $percent_sql,
+					'GRANTEE_HOST'     => $percent_sql,
+					'SPECIFIC_CATALOG' => $def_sql,
+					'SPECIFIC_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'rrg.specific_schema' ),
+					'ROUTINE_CATALOG'  => $def_sql,
+					'ROUTINE_SCHEMA'   => $this->get_direct_information_schema_display_schema_sql( 'rrg.routine_schema' ),
+				),
+			),
+			'applicable_roles'    => array(
+				'alias'       => 'ar',
+				'from'        => 'information_schema.applicable_roles ar',
+				'expressions' => array(
+					'USER'         => 'ar.grantee',
+					'HOST'         => $percent_sql,
+					'GRANTEE'      => 'ar.grantee',
+					'GRANTEE_HOST' => $percent_sql,
+					'ROLE_HOST'    => $percent_sql,
+					'IS_DEFAULT'   => $no_sql,
+					'IS_MANDATORY' => $no_sql,
+				),
+			),
+			'enabled_roles'       => array(
+				'alias'       => 'er',
+				'from'        => 'information_schema.enabled_roles er',
+				'expressions' => array(
+					'ROLE_HOST'    => $percent_sql,
+					'IS_DEFAULT'   => $no_sql,
+					'IS_MANDATORY' => $no_sql,
+				),
+			),
+			'schemata_extensions' => array(
+				'alias'       => 's',
+				'from'        => 'information_schema.schemata s',
+				'where'       => 's.schema_name = ' . $information_schema . ' OR s.schema_name ' . $pg_schema_filter,
+				'expressions' => array(
+					'CATALOG_NAME' => $def_sql,
+					'SCHEMA_NAME'  => $this->get_direct_information_schema_display_schema_sql( 's.schema_name' ),
+					'OPTIONS'      => 'NULL',
+				),
+			),
+			'view_table_usage'    => array(
+				'alias'       => 'vtu',
+				'from'        => 'information_schema.view_table_usage vtu',
+				'where'       => 'vtu.view_schema ' . $schema_filter . "\n\tAND vtu.table_schema " . $schema_filter,
+				'expressions' => array(
+					'VIEW_CATALOG'  => $def_sql,
+					'VIEW_SCHEMA'   => $this->get_direct_information_schema_display_schema_sql( 'vtu.view_schema' ),
+					'TABLE_CATALOG' => $def_sql,
+					'TABLE_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'vtu.table_schema' ),
+				),
+			),
+			'view_routine_usage'  => array(
+				'alias'       => 'vru',
+				'from'        => 'information_schema.view_routine_usage vru',
+				'where'       => 'vru.table_schema ' . $schema_filter . "\n\tAND vru.specific_schema " . $schema_filter,
+				'expressions' => array(
+					'TABLE_CATALOG'    => $def_sql,
+					'TABLE_SCHEMA'     => $this->get_direct_information_schema_display_schema_sql( 'vru.table_schema' ),
+					'SPECIFIC_CATALOG' => $def_sql,
+					'SPECIFIC_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'vru.specific_schema' ),
+				),
+			),
+			'views'               => array(
+				'alias'       => 'v',
+				'from'        => 'information_schema.views v',
+				'where'       => 'v.table_schema ' . $schema_filter,
+				'expressions' => array(
+					'TABLE_CATALOG'        => $def_sql,
+					'TABLE_SCHEMA'         => $this->get_direct_information_schema_display_schema_sql( 'v.table_schema' ),
+					'CHECK_OPTION'         => 'COALESCE(v.check_option, ' . $none_sql . ')',
+					'IS_UPDATABLE'         => 'COALESCE(v.is_updatable, ' . $no_sql . ')',
+					'DEFINER'              => $empty_sql,
+					'SECURITY_TYPE'        => $this->connection->quote( 'DEFINER' ),
+					'CHARACTER_SET_CLIENT' => $charset_sql,
+					'COLLATION_CONNECTION' => $collation_sql,
+				),
+			),
+			'triggers'            => array(
+				'alias'       => 't',
+				'from'        => 'information_schema.triggers t',
+				'where'       => 't.trigger_schema ' . $schema_filter,
+				'expressions' => array(
+					'TRIGGER_CATALOG'      => $def_sql,
+					'TRIGGER_SCHEMA'       => $this->get_direct_information_schema_display_schema_sql( 't.trigger_schema' ),
+					'EVENT_OBJECT_CATALOG' => $def_sql,
+					'EVENT_OBJECT_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 't.event_object_schema' ),
+					'CREATED'              => 'TO_CHAR(t.created, ' . $datetime_format_sql . ')',
+					'SQL_MODE'             => $sql_mode_sql,
+					'DEFINER'              => $empty_sql,
+					'CHARACTER_SET_CLIENT' => $charset_sql,
+					'COLLATION_CONNECTION' => $collation_sql,
+					'DATABASE_COLLATION'   => $collation_sql,
+				),
+			),
+			'routines'            => array(
+				'alias'       => 'r',
+				'from'        => 'information_schema.routines r',
+				'where'       => 'r.routine_schema ' . $schema_filter,
+				'expressions' => array(
+					'ROUTINE_CATALOG'      => $def_sql,
+					'ROUTINE_SCHEMA'       => $this->get_direct_information_schema_display_schema_sql( 'r.routine_schema' ),
+					'CREATED'              => 'TO_CHAR(r.created, ' . $datetime_format_sql . ')',
+					'LAST_ALTERED'         => 'TO_CHAR(r.last_altered, ' . $datetime_format_sql . ')',
+					'SQL_MODE'             => $sql_mode_sql,
+					'ROUTINE_COMMENT'      => $empty_sql,
+					'DEFINER'              => $empty_sql,
+					'CHARACTER_SET_CLIENT' => $charset_sql,
+					'COLLATION_CONNECTION' => $collation_sql,
+					'DATABASE_COLLATION'   => $collation_sql,
+				),
+			),
+			'parameters'          => array(
+				'alias'       => 'p',
+				'from'        => 'information_schema.parameters p',
+				'join'        => 'LEFT JOIN information_schema.routines r
+	ON r.specific_catalog = p.specific_catalog
+	AND r.specific_schema = p.specific_schema
+	AND r.specific_name = p.specific_name',
+				'where'       => 'p.specific_schema ' . $schema_filter,
+				'expressions' => array(
+					'SPECIFIC_CATALOG' => $def_sql,
+					'SPECIFIC_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'p.specific_schema' ),
+					'ROUTINE_TYPE'     => 'COALESCE(r.routine_type, ' . $function_sql . ')',
+				),
+			),
+		);
+
+		if ( ! isset( $definitions[ $view ] ) ) {
+			return null;
+		}
+
+		$definition = $definitions[ $view ];
+		$sql        = 'SELECT
+		' . $this->get_direct_information_schema_ordered_native_projection_sql( $view, $definition ) . '
+FROM ' . $definition['from'];
+
+		if ( ! empty( $definition['join'] ) ) {
+			$sql .= "\n" . $definition['join'];
+		}
+
+		if ( ! empty( $definition['where'] ) ) {
+			$sql .= "\nWHERE " . $definition['where'];
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Build a MySQL-ordered SELECT list for a native information_schema source.
+	 *
+	 * @param string $view       Information schema view name.
+	 * @param array  $definition Native relation definition.
+	 * @return string Ordered projection SQL.
+	 */
+	private function get_direct_information_schema_ordered_native_projection_sql( string $view, array $definition ): string {
+		$columns = $this->get_direct_information_schema_relation_columns( $view );
+		if ( null === $columns ) {
+			throw new LogicException( 'Unsupported direct information_schema relation projection.' );
+		}
+
+		$alias       = $definition['alias'];
+		$expressions = $definition['expressions'] ?? array();
+		$projection  = array();
+		foreach ( $columns as $column ) {
+			$expression = array_key_exists( $column, $expressions )
+				? $expressions[ $column ]
+				: $alias . '.' . strtolower( $column );
+
+			$projection[] = $expression . ' AS ' . $this->connection->quote_identifier( $column );
+		}
+
+		return implode( ",\n\t\t", $projection );
 	}
 
 	/**
@@ -42195,10 +42189,11 @@ END',
 			return true;
 		}
 
-		$cast_bounds = $this->get_mysql_character_cast_bounds(
+		$cast_bounds = $this->get_mysql_typed_cast_bounds(
 			$tokens,
 			$order_item['expression_start'],
-			$order_item['expression_end']
+			$order_item['expression_end'],
+			array( 'character' )
 		);
 		if ( null === $cast_bounds || $cast_bounds['close'] + 1 !== $order_item['expression_end'] ) {
 			return false;
@@ -42302,16 +42297,12 @@ END',
 	 * @return bool Whether the expression casts a qualified meta_value reference.
 	 */
 	private function is_mysql_meta_value_cast_expression( array $tokens, int $start, int $end ): bool {
-		$cast_bounds = $this->get_mysql_character_cast_bounds( $tokens, $start, $end );
-		if ( null === $cast_bounds ) {
-			$cast_bounds = $this->get_mysql_integer_cast_bounds( $tokens, $start, $end );
-		}
-		if ( null === $cast_bounds ) {
-			$cast_bounds = $this->get_mysql_decimal_cast_bounds( $tokens, $start, $end );
-		}
-		if ( null === $cast_bounds ) {
-			$cast_bounds = $this->get_mysql_date_time_cast_bounds( $tokens, $start, $end );
-		}
+		$cast_bounds = $this->get_mysql_typed_cast_bounds(
+			$tokens,
+			$start,
+			$end,
+			array( 'character', 'integer', 'decimal', 'date_time' )
+		);
 
 		return null !== $cast_bounds
 			&& $cast_bounds['close'] + 1 === $end
@@ -45738,21 +45729,9 @@ END',
 				continue;
 			}
 
-			$date_time_cast = $this->translate_mysql_date_time_cast_to_postgresql( $tokens, $position, $end );
-			if ( null !== $date_time_cast ) {
-				$position = $date_time_cast['position'];
-				continue;
-			}
-
-			$date_cast = $this->translate_mysql_date_cast_to_postgresql( $tokens, $position, $end );
-			if ( null !== $date_cast ) {
-				$position = $date_cast['position'];
-				continue;
-			}
-
-			$date_convert = $this->translate_mysql_date_convert_to_postgresql( $tokens, $position, $end );
-			if ( null !== $date_convert ) {
-				$position = $date_convert['position'];
+			$temporal_cast_end = $this->get_mysql_temporal_cast_or_convert_expression_end( $tokens, $position, $end );
+			if ( null !== $temporal_cast_end ) {
+				$position = $temporal_cast_end - 1;
 				continue;
 			}
 
@@ -48169,7 +48148,7 @@ END',
 		int $position,
 		int $end
 	): ?array {
-		$cast_bounds = $this->get_mysql_decimal_cast_bounds( $tokens, $position, $end );
+		$cast_bounds = $this->get_mysql_typed_cast_bounds( $tokens, $position, $end, array( 'decimal' ) );
 		if ( null === $cast_bounds ) {
 			return null;
 		}
@@ -48417,50 +48396,6 @@ END',
 		return $this->should_quote_bare_mysql_identifier( $identifier )
 			? $this->connection->quote_identifier( $identifier )
 			: $identifier;
-	}
-
-	/**
-	 * Get token bounds for a DECIMAL/NUMERIC CAST expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_decimal_cast_bounds( array $tokens, int $position, int $end ): ?array {
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$as_position    = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::AS_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $as_position
-			|| $as_position <= $position + 2
-			|| ! $this->is_mysql_decimal_cast_type( $tokens, $as_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $as_position,
-			'close'            => $close_position,
-		);
 	}
 
 	/**
@@ -49647,21 +49582,9 @@ END',
 				continue;
 			}
 
-			$date_time_cast = $this->translate_mysql_date_time_cast_to_postgresql( $tokens, $i, $end );
-			if ( null !== $date_time_cast ) {
-				$i = $date_time_cast['position'];
-				continue;
-			}
-
-			$date_cast = $this->translate_mysql_date_cast_to_postgresql( $tokens, $i, $end );
-			if ( null !== $date_cast ) {
-				$i = $date_cast['position'];
-				continue;
-			}
-
-			$date_convert = $this->translate_mysql_date_convert_to_postgresql( $tokens, $i, $end );
-			if ( null !== $date_convert ) {
-				$i = $date_convert['position'];
+			$temporal_cast_end = $this->get_mysql_temporal_cast_or_convert_expression_end( $tokens, $i, $end );
+			if ( null !== $temporal_cast_end ) {
+				$i = $temporal_cast_end - 1;
 				continue;
 			}
 
@@ -49765,22 +49688,17 @@ END',
 	 * @return int|null End position, exclusive, or null when not a supported temporal CAST/CONVERT expression.
 	 */
 	private function get_mysql_temporal_cast_or_convert_expression_end( array $tokens, int $position, int $end ): ?int {
-		$date_time_cast = $this->get_mysql_date_time_cast_bounds( $tokens, $position, $end );
-		if ( null !== $date_time_cast ) {
-			return $date_time_cast['close'] + 1;
-		}
+		$temporal_cast = $this->get_mysql_typed_cast_or_convert_bounds(
+			$tokens,
+			$position,
+			$end,
+			array(
+				'cast'    => array( 'date_time', 'date' ),
+				'convert' => array( 'date' ),
+			)
+		);
 
-		$date_cast = $this->get_mysql_date_cast_bounds( $tokens, $position, $end );
-		if ( null !== $date_cast ) {
-			return $date_cast['close'] + 1;
-		}
-
-		$date_convert = $this->get_mysql_date_convert_bounds( $tokens, $position, $end );
-		if ( null !== $date_convert ) {
-			return $date_convert['close'] + 1;
-		}
-
-		return null;
+		return null === $temporal_cast ? null : $temporal_cast['close'] + 1;
 	}
 
 	/**
@@ -50487,34 +50405,7 @@ END',
 				$translated_fragment = $this->translate_mysql_field_function_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_integer_cast_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_integer_convert_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_character_convert_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_character_cast_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_date_time_cast_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_date_cast_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_binary_cast_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_binary_convert_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_decimal_convert_to_postgresql( $tokens, $i, $end );
-			}
-			if ( null === $translated_fragment ) {
-				$translated_fragment = $this->translate_mysql_date_convert_to_postgresql( $tokens, $i, $end );
+				$translated_fragment = $this->translate_mysql_typed_cast_or_convert_to_postgresql( $tokens, $i, $end );
 			}
 			if ( null === $translated_fragment ) {
 				$translated_fragment = $this->translate_mysql_regexp_operator_to_postgresql( $tokens, $i, $end );
@@ -51385,18 +51276,27 @@ END',
 	}
 
 	/**
-	 * Translate MySQL CAST(expr AS SIGNED/UNSIGNED [INTEGER]) to PostgreSQL.
+	 * Translate supported typed MySQL CAST/CONVERT expressions to PostgreSQL.
 	 *
-	 * Both SIGNED and UNSIGNED map to bigint. This preserves WordPress meta
-	 * comparison/query execution but does not emulate MySQL UNSIGNED wraparound.
+	 * CONVERT intentionally supports only the previously accepted typed forms.
+	 * For example, CAST(... AS DATETIME) is supported, but CONVERT(..., DATETIME)
+	 * remains unsupported and fails closed before backend execution.
 	 *
 	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
+	 * @param int             $position CAST/CONVERT token position.
 	 * @param int             $end      Final token position, exclusive.
 	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
 	 */
-	private function translate_mysql_integer_cast_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_integer_cast_bounds( $tokens, $position, $end );
+	private function translate_mysql_typed_cast_or_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
+		$bounds = $this->get_mysql_typed_cast_or_convert_bounds(
+			$tokens,
+			$position,
+			$end,
+			array(
+				'cast'    => array( 'integer', 'character', 'date_time', 'date', 'binary' ),
+				'convert' => array( 'integer', 'character', 'binary', 'decimal', 'date' ),
+			)
+		);
 		if ( null === $bounds ) {
 			return null;
 		}
@@ -51408,64 +51308,41 @@ END',
 		);
 
 		return array(
-			'sql'      => $this->get_postgresql_mysql_integer_cast_sql( $expression_sql ),
+			'sql'      => $this->get_postgresql_mysql_typed_cast_or_convert_sql( $bounds['type'], $expression_sql ),
 			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
 			'position' => $bounds['close'],
 		);
 	}
 
 	/**
-	 * Translate MySQL CONVERT(expr, SIGNED/UNSIGNED [INTEGER]) to PostgreSQL.
+	 * Get PostgreSQL SQL for a supported typed MySQL CAST/CONVERT expression.
 	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
+	 * @param string $type           Normalized MySQL cast/convert type.
+	 * @param string $expression_sql PostgreSQL expression SQL.
+	 * @return string PostgreSQL expression SQL.
 	 */
-	private function translate_mysql_integer_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_integer_convert_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
+	private function get_postgresql_mysql_typed_cast_or_convert_sql( string $type, string $expression_sql ): string {
+		if ( 'integer' === $type ) {
+			return $this->get_postgresql_mysql_integer_cast_sql( $expression_sql );
 		}
 
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-
-		return array(
-			'sql'      => $this->get_postgresql_mysql_integer_cast_sql( $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
-	}
-
-	/**
-	 * Translate MySQL CONVERT(expr, CHAR) to PostgreSQL text.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
-	 */
-	private function translate_mysql_character_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_character_convert_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
+		if ( 'date_time' === $type ) {
+			return $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
 		}
 
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
+		if ( 'date' === $type ) {
+			return $this->get_postgresql_mysql_date_sql( $expression_sql );
+		}
 
-		return array(
-			'sql'      => sprintf( 'CAST(%s AS text)', $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
+		if ( 'decimal' === $type ) {
+			return $this->get_postgresql_mysql_numeric_cast_sql( $expression_sql );
+		}
+
+		if ( in_array( $type, array( 'character', 'binary' ), true ) ) {
+			return sprintf( 'CAST(%s AS text)', $expression_sql );
+		}
+
+		throw new InvalidArgumentException( 'Unsupported MySQL CAST/CONVERT type.' );
 	}
 
 	/**
@@ -51526,63 +51403,69 @@ END',
 	}
 
 	/**
-	 * Get token bounds for a supported MySQL integer CAST expression.
+	 * Get token bounds for a supported typed MySQL CAST expression.
 	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int             $position        CAST token position.
+	 * @param int             $end             Final token position, exclusive.
+	 * @param string[]        $supported_types Supported normalized type names.
+	 * @return array{expression_start: int, expression_end: int, close: int, type: string}|null Bounds, or null when unsupported.
 	 */
-	private function get_mysql_integer_cast_bounds( array $tokens, int $position, int $end ): ?array {
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$as_position    = $this->find_top_level_mysql_token(
+	private function get_mysql_typed_cast_bounds( array $tokens, int $position, int $end, array $supported_types ): ?array {
+		return $this->get_mysql_typed_cast_or_convert_bounds(
 			$tokens,
-			WP_MySQL_Lexer::AS_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $as_position
-			|| $as_position <= $position + 2
-			|| null === $this->get_postgresql_integer_cast_type( $tokens, $as_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $as_position,
-			'close'            => $close_position,
+			$position,
+			$end,
+			array(
+				'cast' => $supported_types,
+			)
 		);
 	}
 
 	/**
-	 * Get token bounds for a supported MySQL integer CONVERT expression.
+	 * Get token bounds for a supported typed MySQL CONVERT expression.
 	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int             $position        CONVERT token position.
+	 * @param int             $end             Final token position, exclusive.
+	 * @param string[]        $supported_types Supported normalized type names.
+	 * @return array{expression_start: int, expression_end: int, close: int, type: string}|null Bounds, or null when unsupported.
 	 */
-	private function get_mysql_integer_convert_bounds( array $tokens, int $position, int $end ): ?array {
+	private function get_mysql_typed_convert_bounds( array $tokens, int $position, int $end, array $supported_types ): ?array {
+		return $this->get_mysql_typed_cast_or_convert_bounds(
+			$tokens,
+			$position,
+			$end,
+			array(
+				'convert' => $supported_types,
+			)
+		);
+	}
+
+	/**
+	 * Get token bounds for a supported typed MySQL CAST/CONVERT expression.
+	 *
+	 * @param WP_MySQL_Token[] $tokens                  MySQL lexer token stream.
+	 * @param int             $position                CAST/CONVERT token position.
+	 * @param int             $end                     Final token position, exclusive.
+	 * @param array           $supported_types_by_form Supported normalized types keyed by cast/convert form.
+	 * @return array{expression_start: int, expression_end: int, close: int, type: string}|null Bounds, or null when unsupported.
+	 */
+	private function get_mysql_typed_cast_or_convert_bounds( array $tokens, int $position, int $end, array $supported_types_by_form ): ?array {
 		if (
 			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
 			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
 		) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::CAST_SYMBOL === $tokens[ $position ]->id && isset( $supported_types_by_form['cast'] ) ) {
+			$form               = 'cast';
+			$separator_token_id = WP_MySQL_Lexer::AS_SYMBOL;
+		} elseif ( WP_MySQL_Lexer::CONVERT_SYMBOL === $tokens[ $position ]->id && isset( $supported_types_by_form['convert'] ) ) {
+			$form               = 'convert';
+			$separator_token_id = WP_MySQL_Lexer::COMMA_SYMBOL;
+		} else {
 			return null;
 		}
 
@@ -51591,26 +51474,71 @@ END',
 			return null;
 		}
 
-		$close_position = $after_close - 1;
-		$comma_position = $this->find_top_level_mysql_token(
+		$close_position     = $after_close - 1;
+		$separator_position = $this->find_top_level_mysql_token(
 			$tokens,
-			WP_MySQL_Lexer::COMMA_SYMBOL,
+			$separator_token_id,
 			$position + 2,
 			$close_position
 		);
+		if ( null === $separator_position || $separator_position <= $position + 2 ) {
+			return null;
+		}
+
+		$type = $this->get_mysql_cast_or_convert_type(
+			$tokens,
+			$separator_position + 1,
+			$close_position
+		);
 		if (
-			null === $comma_position
-			|| $comma_position <= $position + 2
-			|| null === $this->get_postgresql_integer_cast_type( $tokens, $comma_position + 1, $close_position )
+			null === $type
+			|| ! in_array( $type, $supported_types_by_form[ $form ], true )
 		) {
 			return null;
 		}
 
 		return array(
 			'expression_start' => $position + 2,
-			'expression_end'   => $comma_position,
+			'expression_end'   => $separator_position,
 			'close'            => $close_position,
+			'type'             => $type,
 		);
+	}
+
+	/**
+	 * Get the normalized type for supported MySQL CAST/CONVERT type tokens.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @param int             $start  First cast/convert type token.
+	 * @param int             $end    Final cast/convert type token, exclusive.
+	 * @return string|null Normalized type name, or null when unsupported.
+	 */
+	private function get_mysql_cast_or_convert_type( array $tokens, int $start, int $end ): ?string {
+		if ( null !== $this->get_postgresql_integer_cast_type( $tokens, $start, $end ) ) {
+			return 'integer';
+		}
+
+		if ( $this->is_mysql_character_cast_type( $tokens, $start, $end ) ) {
+			return 'character';
+		}
+
+		if ( $this->is_mysql_date_time_cast_type( $tokens, $start, $end ) ) {
+			return 'date_time';
+		}
+
+		if ( $this->is_mysql_date_cast_type( $tokens, $start, $end ) ) {
+			return 'date';
+		}
+
+		if ( $this->is_mysql_binary_cast_type( $tokens, $start, $end ) ) {
+			return 'binary';
+		}
+
+		if ( $this->is_mysql_decimal_cast_type( $tokens, $start, $end ) ) {
+			return 'decimal';
+		}
+
+		return null;
 	}
 
 	/**
@@ -51659,86 +51587,7 @@ END',
 	}
 
 	/**
-	 * Translate MySQL CAST(expr AS CHAR) to PostgreSQL text.
-	 *
-	 * PostgreSQL's CHAR without length is character(1), while MySQL CHAR casts
-	 * are used by WordPress as text ordering expressions.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
-	 */
-	private function translate_mysql_character_cast_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_character_cast_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
-		}
-
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-
-		return array(
-			'sql'      => sprintf( 'CAST(%s AS text)', $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
-	}
-
-	/**
-	 * Get token bounds for a supported MySQL character CAST expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_character_cast_bounds( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
-		if ( $bounds['start'] !== $position ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$as_position    = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::AS_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $as_position
-			|| $as_position <= $position + 2
-			|| ! $this->is_mysql_character_cast_type( $tokens, $as_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $as_position,
-			'close'            => $close_position,
-		);
-	}
-
-	/**
-	 * Check whether a CAST type is MySQL CHAR.
+	 * Check whether a CAST/CONVERT type is MySQL CHAR.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First cast type token.
@@ -51752,132 +51601,7 @@ END',
 	}
 
 	/**
-	 * Get token bounds for a supported MySQL CONVERT(expr, CHAR) expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_character_convert_bounds( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
-		if ( $bounds['start'] !== $position ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$comma_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::COMMA_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $comma_position
-			|| $comma_position <= $position + 2
-			|| ! $this->is_mysql_character_cast_type( $tokens, $comma_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $comma_position,
-			'close'            => $close_position,
-		);
-	}
-
-	/**
-	 * Translate MySQL CAST(expr AS DATETIME/TIMESTAMP) to PostgreSQL timestamp.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
-	 */
-	private function translate_mysql_date_time_cast_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_date_time_cast_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
-		}
-
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-
-		return array(
-			'sql'      => $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
-	}
-
-	/**
-	 * Get token bounds for a supported MySQL date/time CAST expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_date_time_cast_bounds( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
-		if ( $bounds['start'] !== $position ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$as_position    = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::AS_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $as_position
-			|| $as_position <= $position + 2
-			|| ! $this->is_mysql_date_time_cast_type( $tokens, $as_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $as_position,
-			'close'            => $close_position,
-		);
-	}
-
-	/**
-	 * Check whether a CAST type is MySQL DATETIME/TIMESTAMP.
+	 * Check whether a CAST/CONVERT type is MySQL DATETIME/TIMESTAMP.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First cast type token.
@@ -51898,83 +51622,7 @@ END',
 	}
 
 	/**
-	 * Translate MySQL CAST(expr AS DATE) to PostgreSQL text.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
-	 */
-	private function translate_mysql_date_cast_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_date_cast_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
-		}
-
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-
-		return array(
-			'sql'      => $this->get_postgresql_mysql_date_sql( $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
-	}
-
-	/**
-	 * Get token bounds for a supported MySQL DATE CAST expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_date_cast_bounds( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
-		if ( $bounds['start'] !== $position ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$as_position    = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::AS_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $as_position
-			|| $as_position <= $position + 2
-			|| ! $this->is_mysql_date_cast_type( $tokens, $as_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $as_position,
-			'close'            => $close_position,
-		);
-	}
-
-	/**
-	 * Check whether a CAST type is MySQL DATE.
+	 * Check whether a CAST/CONVERT type is MySQL DATE.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First cast type token.
@@ -51988,216 +51636,7 @@ END',
 	}
 
 	/**
-	 * Translate MySQL CAST(expr AS BINARY) to PostgreSQL text.
-	 *
-	 * PostgreSQL regex operators work on text, so keep supported binary regex
-	 * predicates executable without broadening this lane to bytea emulation.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
-	 */
-	private function translate_mysql_binary_cast_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_binary_cast_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
-		}
-
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-
-		return array(
-			'sql'      => sprintf( 'CAST(%s AS text)', $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
-	}
-
-	/**
-	 * Translate MySQL CONVERT(expr, BINARY) to PostgreSQL text.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
-	 */
-	private function translate_mysql_binary_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_binary_convert_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
-		}
-
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-
-		return array(
-			'sql'      => sprintf( 'CAST(%s AS text)', $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
-	}
-
-	/**
-	 * Translate MySQL CONVERT(expr, DECIMAL) to PostgreSQL numeric.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
-	 */
-	private function translate_mysql_decimal_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_decimal_convert_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
-		}
-
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-
-		return array(
-			'sql'      => $this->get_postgresql_mysql_numeric_cast_sql( $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
-	}
-
-	/**
-	 * Translate MySQL CONVERT(expr, DATE) to PostgreSQL text.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{sql: string, token_id: int, position: int}|null Translation data, or null when unsupported.
-	 */
-	private function translate_mysql_date_convert_to_postgresql( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->get_mysql_date_convert_bounds( $tokens, $position, $end );
-		if ( null === $bounds ) {
-			return null;
-		}
-
-		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-			$tokens,
-			$bounds['expression_start'],
-			$bounds['expression_end']
-		);
-
-		return array(
-			'sql'      => $this->get_postgresql_mysql_date_sql( $expression_sql ),
-			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
-			'position' => $bounds['close'],
-		);
-	}
-
-	/**
-	 * Get token bounds for a supported MySQL binary CAST expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CAST token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_binary_cast_bounds( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
-		if ( $bounds['start'] !== $position ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$as_position    = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::AS_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $as_position
-			|| $as_position <= $position + 2
-			|| ! $this->is_mysql_binary_cast_type( $tokens, $as_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $as_position,
-			'close'            => $close_position,
-		);
-	}
-
-	/**
-	 * Get token bounds for a supported MySQL CONVERT(expr, BINARY) expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int              $position CONVERT token position.
-	 * @param int              $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_binary_convert_bounds( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
-		if ( $bounds['start'] !== $position ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$comma_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::COMMA_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $comma_position
-			|| $comma_position <= $position + 2
-			|| ! $this->is_mysql_binary_cast_type( $tokens, $comma_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $comma_position,
-			'close'            => $close_position,
-		);
-	}
-
-	/**
-	 * Check whether a CAST type is MySQL BINARY.
+	 * Check whether a CAST/CONVERT type is MySQL BINARY.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
 	 * @param int             $start  First cast type token.
@@ -52208,104 +51647,6 @@ END',
 		return $start + 1 === $end
 			&& isset( $tokens[ $start ] )
 			&& WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $start ]->id;
-	}
-
-	/**
-	 * Get token bounds for a supported MySQL CONVERT(expr, DECIMAL) expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_decimal_convert_bounds( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
-		if ( $bounds['start'] !== $position ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$comma_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::COMMA_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $comma_position
-			|| $comma_position <= $position + 2
-			|| ! $this->is_mysql_decimal_cast_type( $tokens, $comma_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $comma_position,
-			'close'            => $close_position,
-		);
-	}
-
-	/**
-	 * Get token bounds for a supported MySQL CONVERT(expr, DATE) expression.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position CONVERT token position.
-	 * @param int             $end      Final token position, exclusive.
-	 * @return array{expression_start: int, expression_end: int, close: int}|null Bounds, or null when unsupported.
-	 */
-	private function get_mysql_date_convert_bounds( array $tokens, int $position, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $position, $end );
-		if ( $bounds['start'] !== $position ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return null;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
-		$close_position = $after_close - 1;
-		$comma_position = $this->find_top_level_mysql_token(
-			$tokens,
-			WP_MySQL_Lexer::COMMA_SYMBOL,
-			$position + 2,
-			$close_position
-		);
-		if (
-			null === $comma_position
-			|| $comma_position <= $position + 2
-			|| ! $this->is_mysql_date_cast_type( $tokens, $comma_position + 1, $close_position )
-		) {
-			return null;
-		}
-
-		return array(
-			'expression_start' => $position + 2,
-			'expression_end'   => $comma_position,
-			'close'            => $close_position,
-		);
 	}
 
 	/**
@@ -52924,23 +52265,20 @@ END',
 			return $from_base64_length_sql;
 		}
 
-		$binary_cast = $this->get_mysql_binary_cast_bounds( $tokens, $start, $end );
+		$binary_cast = $this->get_mysql_typed_cast_or_convert_bounds(
+			$tokens,
+			$start,
+			$end,
+			array(
+				'cast'    => array( 'binary' ),
+				'convert' => array( 'binary' ),
+			)
+		);
 		if ( null !== $binary_cast && $binary_cast['close'] + 1 === $end ) {
 			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
 				$tokens,
 				$binary_cast['expression_start'],
 				$binary_cast['expression_end']
-			);
-
-			return $this->get_postgresql_mysql_text_byte_length_sql( $expression_sql );
-		}
-
-		$binary_convert = $this->get_mysql_binary_convert_bounds( $tokens, $start, $end );
-		if ( null !== $binary_convert && $binary_convert['close'] + 1 === $end ) {
-			$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
-				$tokens,
-				$binary_convert['expression_start'],
-				$binary_convert['expression_end']
 			);
 
 			return $this->get_postgresql_mysql_text_byte_length_sql( $expression_sql );
@@ -53137,11 +52475,12 @@ END',
 
 			if (
 				null !== $this->get_mysql_convert_using_bounds( $tokens, $i, $end )
-				|| null !== $this->get_mysql_integer_convert_bounds( $tokens, $i, $end )
-				|| null !== $this->get_mysql_character_convert_bounds( $tokens, $i, $end )
-				|| null !== $this->get_mysql_binary_convert_bounds( $tokens, $i, $end )
-				|| null !== $this->get_mysql_decimal_convert_bounds( $tokens, $i, $end )
-				|| null !== $this->get_mysql_date_convert_bounds( $tokens, $i, $end )
+				|| null !== $this->get_mysql_typed_convert_bounds(
+					$tokens,
+					$i,
+					$end,
+					array( 'integer', 'character', 'binary', 'decimal', 'date' )
+				)
 			) {
 				continue;
 			}
@@ -57884,39 +57223,17 @@ $wp_mysql_%1$s_domain$',
 				return true;
 			}
 
-			if ( null !== $this->get_mysql_integer_cast_bounds( $tokens, $i, $end ) ) {
-				return true;
-			}
-
-			if ( null !== $this->get_mysql_integer_convert_bounds( $tokens, $i, $end ) ) {
-				return true;
-			}
-
-			if ( null !== $this->get_mysql_character_convert_bounds( $tokens, $i, $end ) ) {
-				return true;
-			}
-
-			if ( null !== $this->get_mysql_date_time_cast_bounds( $tokens, $i, $end ) ) {
-				return true;
-			}
-
-			if ( null !== $this->get_mysql_date_cast_bounds( $tokens, $i, $end ) ) {
-				return true;
-			}
-
-			if ( null !== $this->get_mysql_binary_cast_bounds( $tokens, $i, $end ) ) {
-				return true;
-			}
-
-			if ( null !== $this->get_mysql_binary_convert_bounds( $tokens, $i, $end ) ) {
-				return true;
-			}
-
-			if ( null !== $this->get_mysql_decimal_convert_bounds( $tokens, $i, $end ) ) {
-				return true;
-			}
-
-			if ( null !== $this->get_mysql_date_convert_bounds( $tokens, $i, $end ) ) {
+			if (
+				null !== $this->get_mysql_typed_cast_or_convert_bounds(
+					$tokens,
+					$i,
+					$end,
+					array(
+						'cast'    => array( 'integer', 'date_time', 'date', 'binary' ),
+						'convert' => array( 'integer', 'character', 'binary', 'decimal', 'date' ),
+					)
+				)
+			) {
 				return true;
 			}
 
