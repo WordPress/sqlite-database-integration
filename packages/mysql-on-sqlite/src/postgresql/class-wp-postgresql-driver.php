@@ -34173,7 +34173,14 @@ WHERE option_name IN (
 			return null;
 		}
 
-		if ( ! $this->is_information_schema_tables_reference( $tokens, $from_position + 1, $where_position ) ) {
+		$table_reference_start = $from_position + 1;
+		if (
+			$table_reference_start + 3 !== $where_position
+			|| ! $this->is_mysql_identifier_like_token_value( $tokens[ $table_reference_start ] ?? null, 'information_schema' )
+			|| ! isset( $tokens[ $table_reference_start + 1 ] )
+			|| WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $table_reference_start + 1 ]->id
+			|| ! $this->is_mysql_identifier_like_token_value( $tokens[ $table_reference_start + 2 ] ?? null, 'tables' )
+		) {
 			return null;
 		}
 
@@ -34192,7 +34199,10 @@ WHERE option_name IN (
 			return null;
 		}
 
-		if ( ! $this->is_information_schema_tables_site_health_group_by_clause( $tokens, $group_position + 2, $statement_end ) ) {
+		if (
+			$group_position + 3 !== $statement_end
+			|| ! $this->is_mysql_identifier_like_token_value( $tokens[ $group_position + 2 ] ?? null, 'table_name' )
+		) {
 			return null;
 		}
 
@@ -34269,22 +34279,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $where_position + 1, $group_position ),
 			$this->connection->quote_identifier( 'table_name' )
 		);
-	}
-
-	/**
-	 * Check whether a token range is exactly information_schema.TABLES.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int             $start  First table-reference token position.
-	 * @param int             $end    Final table-reference token position, exclusive.
-	 * @return bool Whether the range references information_schema.TABLES.
-	 */
-	private function is_information_schema_tables_reference( array $tokens, int $start, int $end ): bool {
-		return $start + 3 === $end
-			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start ] ?? null, 'information_schema' )
-			&& isset( $tokens[ $start + 1 ] )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
-			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start + 2 ] ?? null, 'tables' );
 	}
 
 	/**
@@ -34543,19 +34537,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 			'position'    => $after_close,
 			'table_names' => $table_names,
 		);
-	}
-
-	/**
-	 * Check whether the GROUP BY clause is exactly GROUP BY TABLE_NAME.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int             $start  First GROUP BY expression token position.
-	 * @param int             $end    Final GROUP BY token position, exclusive.
-	 * @return bool Whether the grouping shape is supported.
-	 */
-	private function is_information_schema_tables_site_health_group_by_clause( array $tokens, int $start, int $end ): bool {
-		return $start + 1 === $end
-			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start ] ?? null, 'table_name' );
 	}
 
 	/**
