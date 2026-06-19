@@ -5039,192 +5039,145 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	private function consume_mysql_create_table_select_options( array $tokens, int &$position, int $statement_end, string &$table_comment = '' ): bool {
-		while ( $position < $statement_end && isset( $tokens[ $position ] ) ) {
-			if ( $this->is_mysql_create_table_select_boundary_token( $tokens[ $position ] ) ) {
+		$assignment_option_ids = array( WP_MySQL_Lexer::AUTOEXTEND_SIZE_SYMBOL, WP_MySQL_Lexer::AVG_ROW_LENGTH_SYMBOL, WP_MySQL_Lexer::CHECKSUM_SYMBOL, WP_MySQL_Lexer::COMPRESSION_SYMBOL, WP_MySQL_Lexer::CONNECTION_SYMBOL, WP_MySQL_Lexer::DELAY_KEY_WRITE_SYMBOL, WP_MySQL_Lexer::ENCRYPTION_SYMBOL, WP_MySQL_Lexer::ENGINE_SYMBOL, WP_MySQL_Lexer::ENGINE_ATTRIBUTE_SYMBOL, WP_MySQL_Lexer::INSERT_METHOD_SYMBOL, WP_MySQL_Lexer::KEY_BLOCK_SIZE_SYMBOL, WP_MySQL_Lexer::MAX_ROWS_SYMBOL, WP_MySQL_Lexer::MIN_ROWS_SYMBOL, WP_MySQL_Lexer::PACK_KEYS_SYMBOL, WP_MySQL_Lexer::PASSWORD_SYMBOL, WP_MySQL_Lexer::ROW_FORMAT_SYMBOL, WP_MySQL_Lexer::SECONDARY_ENGINE_SYMBOL, WP_MySQL_Lexer::SECONDARY_ENGINE_ATTRIBUTE_SYMBOL, WP_MySQL_Lexer::STATS_AUTO_RECALC_SYMBOL, WP_MySQL_Lexer::STATS_PERSISTENT_SYMBOL, WP_MySQL_Lexer::STATS_SAMPLE_PAGES_SYMBOL );
+		$value_boundary_ids    = array( WP_MySQL_Lexer::AS_SYMBOL, WP_MySQL_Lexer::CHARACTER_SYMBOL, WP_MySQL_Lexer::CHARSET_SYMBOL, WP_MySQL_Lexer::CHAR_SYMBOL, WP_MySQL_Lexer::COLLATE_SYMBOL, WP_MySQL_Lexer::COMMA_SYMBOL, WP_MySQL_Lexer::COMMENT_SYMBOL, WP_MySQL_Lexer::DATA_SYMBOL, WP_MySQL_Lexer::EOF, WP_MySQL_Lexer::EQUAL_OPERATOR, WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::LIKE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::SEMICOLON_SYMBOL, WP_MySQL_Lexer::TABLESPACE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL );
+		$consume_value         = function () use ( $tokens, $statement_end, $assignment_option_ids, $value_boundary_ids, &$position ): bool {
+			if ( ! isset( $tokens[ $position ] ) || $position >= $statement_end ) {
+				return false;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
+				$after_value = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+				if ( null === $after_value ) {
+					return false;
+				}
+				$position = $after_value;
 				return true;
 			}
 
-			if ( WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $position ]->id ) {
+			if (
+				in_array( $tokens[ $position ]->id, $value_boundary_ids, true )
+				|| in_array( $tokens[ $position ]->id, $assignment_option_ids, true )
+			) {
+				return false;
+			}
+
+			++$position;
+			return true;
+		};
+
+		while ( $position < $statement_end && isset( $tokens[ $position ] ) ) {
+			$token_id = $tokens[ $position ]->id;
+			if ( in_array( $token_id, array( WP_MySQL_Lexer::AS_SYMBOL, WP_MySQL_Lexer::LIKE_SYMBOL, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL ), true ) ) {
+				return true;
+			}
+
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL === $token_id ) {
 				++$position;
 				continue;
 			}
 
-			$before = $position;
-			if (
-				$this->consume_mysql_create_table_select_comment_option( $tokens, $position, $statement_end, $table_comment )
-				|| $this->consume_mysql_create_table_select_charset_option( $tokens, $position, $statement_end )
-				|| $this->consume_mysql_create_table_select_assignment_option( $tokens, $position, $statement_end )
-				|| $this->consume_mysql_create_table_select_directory_option( $tokens, $position, $statement_end )
-				|| $this->consume_mysql_create_table_select_tablespace_option( $tokens, $position, $statement_end )
-				|| $this->consume_mysql_create_table_select_union_option( $tokens, $position, $statement_end )
-			) {
+			if ( WP_MySQL_Lexer::COMMENT_SYMBOL === $token_id ) {
+				++$position;
+				if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+					++$position;
+				}
+				if ( ! isset( $tokens[ $position ] ) || $position >= $statement_end || ! $this->is_mysql_quoted_text_token( $tokens[ $position ] ) ) {
+					return false;
+				}
+				$table_comment = $tokens[ $position ]->get_value();
+				++$position;
 				continue;
 			}
 
-			return $position === $before;
-		}
-
-		return true;
-	}
-
-	private function is_mysql_create_table_select_boundary_token( WP_MySQL_Token $token ): bool {
-			return in_array(
-				$token->id,
-				array( WP_MySQL_Lexer::AS_SYMBOL, WP_MySQL_Lexer::LIKE_SYMBOL, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL ),
-				true
-			);
-	}
-
-	private function consume_mysql_create_table_select_comment_option( array $tokens, int &$position, int $statement_end, string &$table_comment ): bool {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::COMMENT_SYMBOL !== $tokens[ $position ]->id ) {
-			return false;
-		}
-
-		++$position;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		if ( ! isset( $tokens[ $position ] ) || $position >= $statement_end || ! $this->is_mysql_quoted_text_token( $tokens[ $position ] ) ) {
-			return false;
-		}
-
-		$table_comment = $tokens[ $position ]->get_value();
-		++$position;
-		return true;
-	}
-
-	private function consume_mysql_create_table_select_charset_option( array $tokens, int &$position, int $statement_end ): bool {
-		$next_position = $position;
-		if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[ $next_position ]->id ) {
-			++$next_position;
-		}
-
-		if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::CHARSET_SYMBOL === $tokens[ $next_position ]->id ) {
-			++$next_position;
-		} elseif ( $this->is_mysql_create_table_charset_set_marker( $tokens, $next_position ) ) {
-			$next_position += 2;
-		} elseif ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $next_position ]->id ) {
-			++$next_position;
-		} else {
-			return false;
-		}
-
-		if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $next_position ]->id ) {
-			++$next_position;
-		}
-
-		if ( ! isset( $tokens[ $next_position ] ) || $next_position >= $statement_end || ! $this->is_mysql_charset_token( $tokens[ $next_position ] ) ) {
-			$position = $next_position;
-			return false;
-		}
-
-		$position = $next_position + 1;
-		return true;
-	}
-
-	private function consume_mysql_create_table_select_assignment_option( array $tokens, int &$position, int $statement_end ): bool {
-		if ( ! isset( $tokens[ $position ] ) || ! $this->is_mysql_create_table_select_assignment_option_token( $tokens[ $position ] ) ) {
-			return false;
-		}
-
-		++$position;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		return $this->consume_mysql_create_table_select_option_value( $tokens, $position, $statement_end );
-	}
-
-	private function is_mysql_create_table_select_assignment_option_token( WP_MySQL_Token $token ): bool {
-		return in_array(
-			$token->id,
-			array( WP_MySQL_Lexer::AUTOEXTEND_SIZE_SYMBOL, WP_MySQL_Lexer::AVG_ROW_LENGTH_SYMBOL, WP_MySQL_Lexer::CHECKSUM_SYMBOL, WP_MySQL_Lexer::COMPRESSION_SYMBOL, WP_MySQL_Lexer::CONNECTION_SYMBOL, WP_MySQL_Lexer::DELAY_KEY_WRITE_SYMBOL, WP_MySQL_Lexer::ENCRYPTION_SYMBOL, WP_MySQL_Lexer::ENGINE_SYMBOL, WP_MySQL_Lexer::ENGINE_ATTRIBUTE_SYMBOL, WP_MySQL_Lexer::INSERT_METHOD_SYMBOL, WP_MySQL_Lexer::KEY_BLOCK_SIZE_SYMBOL, WP_MySQL_Lexer::MAX_ROWS_SYMBOL, WP_MySQL_Lexer::MIN_ROWS_SYMBOL, WP_MySQL_Lexer::PACK_KEYS_SYMBOL, WP_MySQL_Lexer::PASSWORD_SYMBOL, WP_MySQL_Lexer::ROW_FORMAT_SYMBOL, WP_MySQL_Lexer::SECONDARY_ENGINE_SYMBOL, WP_MySQL_Lexer::SECONDARY_ENGINE_ATTRIBUTE_SYMBOL, WP_MySQL_Lexer::STATS_AUTO_RECALC_SYMBOL, WP_MySQL_Lexer::STATS_PERSISTENT_SYMBOL, WP_MySQL_Lexer::STATS_SAMPLE_PAGES_SYMBOL ),
-			true
-		);
-	}
-
-	private function consume_mysql_create_table_select_directory_option( array $tokens, int &$position, int $statement_end ): bool {
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::DATA_SYMBOL, WP_MySQL_Lexer::INDEX_SYMBOL ), true )
-			|| WP_MySQL_Lexer::DIRECTORY_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return false;
-		}
-
-		$position += 2;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		return $this->consume_mysql_create_table_select_option_value( $tokens, $position, $statement_end );
-	}
-
-	private function consume_mysql_create_table_select_tablespace_option( array $tokens, int &$position, int $statement_end ): bool {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLESPACE_SYMBOL !== $tokens[ $position ]->id ) {
-			return false;
-		}
-
-		++$position;
-		if ( ! $this->consume_mysql_create_table_select_option_value( $tokens, $position, $statement_end ) ) {
-			return false;
-		}
-
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::STORAGE_SYMBOL === $tokens[ $position ]->id ) {
-			++$position;
-			return $this->consume_mysql_create_table_select_option_value( $tokens, $position, $statement_end );
-		}
-
-		return true;
-	}
-
-	private function consume_mysql_create_table_select_union_option( array $tokens, int &$position, int $statement_end ): bool {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::UNION_SYMBOL !== $tokens[ $position ]->id ) {
-			return false;
-		}
-
-		++$position;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		$after_union = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
-		if ( null === $after_union ) {
-			return false;
-		}
-
-		$position = $after_union;
-		return true;
-	}
-
-	private function consume_mysql_create_table_select_option_value( array $tokens, int &$position, int $statement_end ): bool {
-		if ( ! isset( $tokens[ $position ] ) || $position >= $statement_end ) {
-			return false;
-		}
-
-		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-			$after_value = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
-			if ( null === $after_value ) {
-				return false;
+			$next_position = $position;
+			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $token_id ) {
+				++$next_position;
+			}
+			$is_charset_set_marker  = isset( $tokens[ $next_position ], $tokens[ $next_position + 1 ] )
+				&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $next_position + 1 ]->id
+				&& (
+					WP_MySQL_Lexer::CHARACTER_SYMBOL === $tokens[ $next_position ]->id
+					|| (
+						WP_MySQL_Lexer::CHAR_SYMBOL === $tokens[ $next_position ]->id
+						&& in_array( strtolower( $tokens[ $next_position ]->get_bytes() ), array( 'char', 'character' ), true )
+					)
+				);
+			$matched_charset_option = false;
+			if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::CHARSET_SYMBOL === $tokens[ $next_position ]->id ) {
+				++$next_position;
+				$matched_charset_option = true;
+			} elseif ( $is_charset_set_marker ) {
+				$next_position         += 2;
+				$matched_charset_option = true;
+			} elseif ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $next_position ]->id ) {
+				++$next_position;
+				$matched_charset_option = true;
+			}
+			if ( $matched_charset_option ) {
+				if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $next_position ]->id ) {
+					++$next_position;
+				}
+				if ( ! isset( $tokens[ $next_position ] ) || $next_position >= $statement_end || ! $this->is_mysql_charset_token( $tokens[ $next_position ] ) ) {
+					$position = $next_position;
+					return false;
+				}
+				$position = $next_position + 1;
+				continue;
 			}
 
-			$position = $after_value;
+			if ( in_array( $token_id, $assignment_option_ids, true ) ) {
+				++$position;
+				if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+					++$position;
+				}
+				if ( ! $consume_value() ) {
+					return false;
+				}
+				continue;
+			}
+
+			if ( isset( $tokens[ $position + 1 ] ) && in_array( $token_id, array( WP_MySQL_Lexer::DATA_SYMBOL, WP_MySQL_Lexer::INDEX_SYMBOL ), true ) && WP_MySQL_Lexer::DIRECTORY_SYMBOL === $tokens[ $position + 1 ]->id ) {
+				$position += 2;
+				if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+					++$position;
+				}
+				if ( ! $consume_value() ) {
+					return false;
+				}
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::TABLESPACE_SYMBOL === $token_id ) {
+				++$position;
+				if ( ! $consume_value() ) {
+					return false;
+				}
+				if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::STORAGE_SYMBOL === $tokens[ $position ]->id ) {
+					++$position;
+					if ( ! $consume_value() ) {
+						return false;
+					}
+				}
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::UNION_SYMBOL === $token_id ) {
+				++$position;
+				if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
+					++$position;
+				}
+				$after_union = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
+				if ( null === $after_union ) {
+					return false;
+				}
+				$position = $after_union;
+				continue;
+			}
+
 			return true;
 		}
 
-		if (
-			in_array(
-				$tokens[ $position ]->id,
-				array( WP_MySQL_Lexer::AS_SYMBOL, WP_MySQL_Lexer::CHARACTER_SYMBOL, WP_MySQL_Lexer::CHARSET_SYMBOL, WP_MySQL_Lexer::CHAR_SYMBOL, WP_MySQL_Lexer::COLLATE_SYMBOL, WP_MySQL_Lexer::COMMA_SYMBOL, WP_MySQL_Lexer::COMMENT_SYMBOL, WP_MySQL_Lexer::DATA_SYMBOL, WP_MySQL_Lexer::EOF, WP_MySQL_Lexer::EQUAL_OPERATOR, WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::LIKE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::SEMICOLON_SYMBOL, WP_MySQL_Lexer::TABLESPACE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
-				true
-			)
-			|| $this->is_mysql_create_table_select_assignment_option_token( $tokens[ $position ] )
-		) {
-			return false;
-		}
-
-		++$position;
 		return true;
 	}
 
@@ -6088,7 +6041,15 @@ $wp_mysql_primary_index_comment$',
 				continue;
 			}
 
-			if ( $this->consume_mysql_supported_index_key_block_size_option( $tokens, $position, $statement_end ) ) {
+			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::KEY_BLOCK_SIZE_SYMBOL === $tokens[ $position ]->id ) {
+				$next_position = $position + 1;
+				if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $next_position ]->id ) {
+					++$next_position;
+				}
+				if ( $next_position >= $statement_end || ! isset( $tokens[ $next_position ] ) || ! $this->is_mysql_unsigned_integer_token( $tokens[ $next_position ] ) ) {
+					return false;
+				}
+				$position = $next_position + 1;
 				continue;
 			}
 
@@ -6102,51 +6063,19 @@ $wp_mysql_primary_index_comment$',
 		return true;
 	}
 
-	private function consume_mysql_supported_index_key_block_size_option( array $tokens, int &$position, int $statement_end ): bool {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::KEY_BLOCK_SIZE_SYMBOL !== $tokens[ $position ]->id ) {
-			return false;
-		}
-
-		$next_position = $position + 1;
-		if ( isset( $tokens[ $next_position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $next_position ]->id ) {
-			++$next_position;
-		}
-
-		if ( $next_position >= $statement_end || ! isset( $tokens[ $next_position ] ) || ! $this->is_mysql_unsigned_integer_token( $tokens[ $next_position ] ) ) {
-			return false;
-		}
-
-		$position = $next_position + 1;
-		return true;
-	}
-
 	private function consume_mysql_supported_index_lock_and_algorithm_options( array $tokens, int &$position, int $statement_end ): bool {
 		if ( ! isset( $tokens[ $position ] ) ) {
 			return false;
 		}
 
 		if ( WP_MySQL_Lexer::ALGORITHM_SYMBOL === $tokens[ $position ]->id ) {
-			return $this->consume_mysql_supported_index_option_value(
-				$tokens,
-				$position,
-				$statement_end,
-				array( 'default', 'inplace', 'copy' )
-			);
+			$supported_values = array( 'default', 'inplace', 'copy' );
+		} elseif ( WP_MySQL_Lexer::LOCK_SYMBOL === $tokens[ $position ]->id ) {
+			$supported_values = array( 'default', 'none', 'shared', 'exclusive' );
+		} else {
+			return false;
 		}
 
-		if ( WP_MySQL_Lexer::LOCK_SYMBOL === $tokens[ $position ]->id ) {
-			return $this->consume_mysql_supported_index_option_value(
-				$tokens,
-				$position,
-				$statement_end,
-				array( 'default', 'none', 'shared', 'exclusive' )
-			);
-		}
-
-		return false;
-	}
-
-	private function consume_mysql_supported_index_option_value( array $tokens, int &$position, int $statement_end, array $supported_values ): bool {
 		$value_position = $position + 1;
 		if ( isset( $tokens[ $value_position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $value_position ]->id ) {
 			++$value_position;
@@ -6317,8 +6246,10 @@ $wp_mysql_primary_index_comment$',
 
 		$ranges = $this->merge_mysql_dbdelta_order_by_alter_ranges( $tokens, $ranges );
 
-		if ( $this->contains_unsupported_mysql_column_attribute_alter_actions( $tokens, $ranges ) ) {
-			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+		foreach ( $ranges as $range ) {
+			if ( $this->contains_unsupported_mysql_column_attribute_alter_action( $tokens, $range['start'], $range['end'] ) ) {
+				throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+			}
 		}
 
 		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'ALTER TABLE' );
@@ -6523,15 +6454,11 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		try {
-			return $this->get_mysql_index_names_removed_by_dropped_column_rows(
-				$this->get_show_create_table_index_catalog_rows( $table_schema, $table_name ),
-				$dropped_column_keys
-			);
+			$rows = $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name );
 		} catch ( PDOException $e ) {
 			return array();
 		}
-	}
-	private function get_mysql_index_names_removed_by_dropped_column_rows( array $rows, array $dropped_column_keys ): array {
+
 		$dropped_column_lookup = array_fill_keys( $dropped_column_keys, true );
 		$indexes               = array();
 		foreach ( $rows as $row ) {
@@ -6660,16 +6587,6 @@ $wp_mysql_primary_index_comment$',
 		);
 	}
 
-	private function contains_unsupported_mysql_column_attribute_alter_actions( array $tokens, array $ranges ): bool {
-		foreach ( $ranges as $range ) {
-			if ( $this->contains_unsupported_mysql_column_attribute_alter_action( $tokens, $range['start'], $range['end'] ) ) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
 	private function contains_unsupported_mysql_column_attribute_alter_action( array $tokens, int $start, int $end ): bool {
 		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
 			return false;
@@ -6776,10 +6693,30 @@ $wp_mysql_primary_index_comment$',
 
 		switch ( $tokens[ $start ]->id ) {
 			case WP_MySQL_Lexer::CHANGE_SYMBOL:
-				return $this->translate_mysql_dbdelta_change_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
+				$position = $start + 1;
+				if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+					++$position;
+				}
+				$old_column = $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null );
+				if ( null === $old_column ) {
+					return null;
+				}
+				return $this->translate_mysql_dbdelta_column_change_alter_action(
+					$table_schema,
+					$table_name,
+					$clause,
+					$tokens,
+					$position + 1,
+					$end,
+					$this->resolve_mysql_existing_alter_column_name( $table_schema, $table_name, $old_column )
+				);
 
 			case WP_MySQL_Lexer::MODIFY_SYMBOL:
-				return $this->translate_mysql_dbdelta_modify_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
+				$position = $start + 1;
+				if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
+					++$position;
+				}
+				return $this->translate_mysql_dbdelta_column_change_alter_action( $table_schema, $table_name, $clause, $tokens, $position, $end, null );
 
 			case WP_MySQL_Lexer::ADD_SYMBOL:
 				if ( $this->is_mysql_dbdelta_add_constraint_action( $tokens, $start, $end ) ) {
@@ -6795,7 +6732,7 @@ $wp_mysql_primary_index_comment$',
 					);
 				}
 				if ( $this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end ) ) {
-					return $this->translate_mysql_dbdelta_add_index_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
+					return $this->translate_mysql_dbdelta_add_index_definition_alter_action( $table_schema, $table_name, $clause, $tokens, $start + 1, $end );
 				}
 				return $this->translate_mysql_dbdelta_add_column_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $check_names, $foreign_key_names );
 
@@ -7041,31 +6978,6 @@ $wp_mysql_primary_index_comment$',
 		return $this->get_mysql_ddl_translation( $statements, $this->get_mysql_metadata( 'set_auto_increment' ) );
 	}
 
-	private function translate_mysql_dbdelta_change_column_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
-		$position = $start + 1;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		$old_column = $this->get_mysql_alter_identifier_token_value( $tokens[ $position ] ?? null );
-		if ( null === $old_column ) {
-			return null;
-		}
-		$old_column = $this->resolve_mysql_existing_alter_column_name( $table_schema, $table_name, $old_column );
-
-		++$position;
-		return $this->translate_mysql_dbdelta_column_change_alter_action( $table_schema, $table_name, $clause, $tokens, $position, $end, $old_column );
-	}
-
-	private function translate_mysql_dbdelta_modify_column_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
-		$position = $start + 1;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		return $this->translate_mysql_dbdelta_column_change_alter_action( $table_schema, $table_name, $clause, $tokens, $position, $end, null );
-	}
-
 	private function translate_mysql_dbdelta_column_change_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $position, int $end, ?string $old_column ): ?array {
 		$definition_end = $this->get_mysql_alter_column_definition_end_without_placement( $tokens, $position, $end );
 		if ( null === $definition_end || $position >= $definition_end ) {
@@ -7233,22 +7145,6 @@ $wp_mysql_primary_index_comment$',
 		}
 	}
 
-	private function translate_mysql_dbdelta_add_index_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
-		$definition_start = $start + 1;
-		if ( $definition_start >= $end ) {
-			return null;
-		}
-
-		return $this->translate_mysql_dbdelta_add_index_definition_alter_action(
-			$table_schema,
-			$table_name,
-			$clause,
-			$tokens,
-			$definition_start,
-			$end
-		);
-	}
-
 	private function translate_mysql_dbdelta_add_index_definition_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $definition_start, int $end ): ?array {
 		$index = $this->translate_mysql_index_definition_fragment(
 			$table_name,
@@ -7259,10 +7155,6 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		return $this->get_mysql_dbdelta_add_index_translation( $index );
-	}
-
-	private function get_mysql_dbdelta_add_index_translation( array $index ): array {
 		return $this->get_mysql_ddl_translation(
 			$index['statements'],
 			$this->get_mysql_metadata( 'add_index', 'index', $index['metadata'] )
@@ -7321,7 +7213,10 @@ $wp_mysql_primary_index_comment$',
 				);
 			}
 
-			return $this->get_mysql_dbdelta_add_index_translation( $index );
+			return $this->get_mysql_ddl_translation(
+				$index['statements'],
+				$this->get_mysql_metadata( 'add_index', 'index', $index['metadata'] )
+			);
 		}
 
 		if ( WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[ $position ]->id ) {
@@ -7458,7 +7353,16 @@ $wp_mysql_primary_index_comment$',
 
 			if ( '' === $sql ) {
 				$sql = $fragment;
-			} elseif ( $this->should_join_mysql_check_constraint_metadata_tokens_without_space( $previous_token, $token ) ) {
+			} elseif (
+				null !== $previous_token
+				&& (
+					$this->should_join_mysql_tokens_without_space( $previous_token->id, $token->id )
+					|| (
+						WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id
+						&& null !== $this->get_mysql_identifier_token_value( $previous_token )
+					)
+				)
+			) {
 				$sql .= $fragment;
 			} else {
 				$sql .= ' ' . $fragment;
@@ -7472,19 +7376,6 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		return $sql;
-	}
-
-	private function should_join_mysql_check_constraint_metadata_tokens_without_space( ?WP_MySQL_Token $previous, WP_MySQL_Token $current ): bool {
-		if ( null === $previous ) {
-			return false;
-		}
-
-		if ( $this->should_join_mysql_tokens_without_space( $previous->id, $current->id ) ) {
-			return true;
-		}
-
-		return WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $current->id
-			&& null !== $this->get_mysql_identifier_token_value( $previous );
 	}
 
 	private function translate_mysql_json_valid_check_constraint_function( array $tokens, int $position, int $end ): ?array {
@@ -7811,15 +7702,16 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( 'foreign_key' === $matching_constraint_types[0] ) {
-			return $this->get_mysql_dbdelta_drop_foreign_key_translation( $table_name, $constraint_name );
+			return $this->get_mysql_dbdelta_drop_constraint_translation( $table_name, $constraint_name, 'drop_foreign_key' );
 		}
 
 		$drop_backend_constraint = 'catalog' === ( $check_metadata['metadata_source'] ?? '' )
 			|| 'NO' !== strtoupper( (string) $check_metadata['enforced'] );
 
-		return $this->get_mysql_dbdelta_drop_check_translation(
+		return $this->get_mysql_dbdelta_drop_constraint_translation(
 			$table_name,
 			$constraint_name,
+			'drop_check',
 			$drop_backend_constraint
 		);
 	}
@@ -7838,10 +7730,6 @@ $wp_mysql_primary_index_comment$',
 			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
 		}
 
-		return $this->get_mysql_dbdelta_drop_foreign_key_translation( $table_name, $constraint_name );
-	}
-
-	private function get_mysql_dbdelta_drop_foreign_key_translation( string $table_name, string $constraint_name ): array {
 		return $this->get_mysql_dbdelta_drop_constraint_translation( $table_name, $constraint_name, 'drop_foreign_key' );
 	}
 
@@ -7859,15 +7747,12 @@ $wp_mysql_primary_index_comment$',
 		$drop_backend_constraint = 'catalog' === ( $check_metadata['metadata_source'] ?? '' )
 			|| 'NO' !== strtoupper( (string) $check_metadata['enforced'] );
 
-		return $this->get_mysql_dbdelta_drop_check_translation(
+		return $this->get_mysql_dbdelta_drop_constraint_translation(
 			$table_name,
 			$constraint_name,
+			'drop_check',
 			$drop_backend_constraint
 		);
-	}
-
-	private function get_mysql_dbdelta_drop_check_translation( string $table_name, string $constraint_name, bool $drop_backend_constraint ): array {
-		return $this->get_mysql_dbdelta_drop_constraint_translation( $table_name, $constraint_name, 'drop_check', $drop_backend_constraint );
 	}
 
 	private function get_mysql_dbdelta_drop_constraint_translation( string $table_name, string $constraint_name, string $operation, bool $drop_backend_constraint = true ): array {
@@ -8710,7 +8595,26 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
-			return $this->get_mysql_drop_primary_key_index_translation( $table_reference, 'DROP INDEX' );
+			$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, 'DROP INDEX' );
+			$table_name   = $table_reference['table'];
+			return array(
+				'statements' => array(
+					sprintf(
+						'ALTER TABLE %s DROP CONSTRAINT %s',
+						null === $table_reference['schema']
+							? $this->connection->quote_identifier( $table_name )
+							: $this->get_postgresql_schema_identifier( $table_schema, $table_name ),
+						$this->connection->quote_identifier(
+							$this->get_postgresql_primary_key_constraint_name( $table_schema, $table_name )
+						)
+					),
+				),
+				'metadata'   => array(
+					'schema' => $table_schema,
+					'table'  => $table_name,
+					'index'  => 'PRIMARY',
+				),
+			);
 		}
 
 		return $this->get_mysql_drop_index_translation( $table_reference, $index_name, 'DROP INDEX' );
@@ -8753,30 +8657,6 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		return $messages[ $tokens[ $position ]->id ?? null ] ?? null;
-	}
-
-	private function get_mysql_drop_primary_key_index_translation( array $table_reference, string $statement_type ): array {
-		$table_schema = $this->get_mysql_writable_table_backend_schema( $table_reference, $statement_type );
-		$table_name   = $table_reference['table'];
-
-		return array(
-			'statements' => array(
-				sprintf(
-					'ALTER TABLE %s DROP CONSTRAINT %s',
-					null === $table_reference['schema']
-						? $this->connection->quote_identifier( $table_name )
-						: $this->get_postgresql_schema_identifier( $table_schema, $table_name ),
-					$this->connection->quote_identifier(
-						$this->get_postgresql_primary_key_constraint_name( $table_schema, $table_name )
-					)
-				),
-			),
-			'metadata'   => array(
-				'schema' => $table_schema,
-				'table'  => $table_name,
-				'index'  => 'PRIMARY',
-			),
-		);
 	}
 
 	private function get_mysql_drop_index_translation( array $table_reference, string $index_name, string $statement_type, ?string $table_schema = null ): array {
@@ -8993,14 +8873,6 @@ $wp_mysql_primary_index_comment$',
 			}
 		}
 
-		return $this->get_mysql_rename_table_index_statements_for_key_names(
-			$table_schema,
-			$old_table_name,
-			$new_table_name,
-			$key_names
-		);
-	}
-	private function get_mysql_rename_table_index_statements_for_key_names( string $table_schema, string $old_table_name, string $new_table_name, array $key_names ): array {
 		$statements = array();
 		foreach ( $key_names as $key_name ) {
 			$statements[] = sprintf(
@@ -43143,26 +43015,46 @@ $wp_mysql_%1$s_domain$',
 
 	private function has_mysql_create_table_marker( array $tokens ): bool {
 		foreach ( $tokens as $position => $token ) {
-			if ( $this->is_mysql_create_table_charset_set_marker( $tokens, $position ) ) {
-				return true;
-			}
-
-			if ( $this->is_mysql_create_table_secondary_index_marker( $tokens, $position ) ) {
-				return true;
-			}
-
-			if ( $this->is_mysql_create_table_foreign_key_marker( $tokens, $position ) ) {
-				return true;
-			}
-
-			if ( $this->is_mysql_create_table_primary_key_index_option_marker( $tokens, $position ) ) {
+			$previous_token = $tokens[ $position - 1 ] ?? null;
+			$next_token     = $tokens[ $position + 1 ] ?? null;
+			if (
+				null !== $next_token
+				&& WP_MySQL_Lexer::SET_SYMBOL === $next_token->id
+				&& (
+					WP_MySQL_Lexer::CHARACTER_SYMBOL === $token->id
+					|| (
+						WP_MySQL_Lexer::CHAR_SYMBOL === $token->id
+						&& in_array( strtolower( $token->get_bytes() ), array( 'char', 'character' ), true )
+					)
+				)
+			) {
 				return true;
 			}
 
 			if (
-				WP_MySQL_Lexer::ON_SYMBOL === $token->id
-				&& isset( $tokens[ $position + 1 ] )
-				&& WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $position + 1 ]->id
+				(
+					WP_MySQL_Lexer::FOREIGN_SYMBOL === $token->id
+					&& null !== $next_token
+					&& WP_MySQL_Lexer::KEY_SYMBOL === $next_token->id
+				)
+				|| (
+					in_array( $token->id, array( WP_MySQL_Lexer::KEY_SYMBOL, WP_MySQL_Lexer::INDEX_SYMBOL ), true )
+					&& (
+						null === $previous_token
+						|| ! in_array( $previous_token->id, array( WP_MySQL_Lexer::PRIMARY_SYMBOL, WP_MySQL_Lexer::FOREIGN_SYMBOL ), true )
+					)
+				)
+				|| (
+					isset( $tokens[ $position - 2 ] )
+					&& WP_MySQL_Lexer::USING_SYMBOL === $token->id
+					&& WP_MySQL_Lexer::KEY_SYMBOL === $previous_token->id
+					&& WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[ $position - 2 ]->id
+				)
+				|| (
+					WP_MySQL_Lexer::ON_SYMBOL === $token->id
+					&& null !== $next_token
+					&& WP_MySQL_Lexer::UPDATE_SYMBOL === $next_token->id
+				)
 			) {
 				return true;
 			}
@@ -43227,54 +43119,12 @@ $wp_mysql_%1$s_domain$',
 					),
 					true
 				)
-				) {
+			) {
 				return true;
 			}
 		}
 
 		return false;
-	}
-
-	private function is_mysql_create_table_foreign_key_marker( array $tokens, int $position ): bool {
-		return isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			&& WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[ $position ]->id
-			&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $position + 1 ]->id;
-	}
-
-	private function is_mysql_create_table_secondary_index_marker( array $tokens, int $position ): bool {
-		if (
-			! isset( $tokens[ $position ] )
-			|| ! in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::KEY_SYMBOL, WP_MySQL_Lexer::INDEX_SYMBOL ), true )
-		) {
-			return false;
-		}
-
-		$previous_token = $tokens[ $position - 1 ] ?? null;
-		return null === $previous_token
-			|| ! in_array( $previous_token->id, array( WP_MySQL_Lexer::PRIMARY_SYMBOL, WP_MySQL_Lexer::FOREIGN_SYMBOL ), true );
-	}
-
-	private function is_mysql_create_table_primary_key_index_option_marker( array $tokens, int $position ): bool {
-		return isset( $tokens[ $position ], $tokens[ $position - 1 ], $tokens[ $position - 2 ] )
-			&& WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $position ]->id
-			&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $position - 1 ]->id
-			&& WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[ $position - 2 ]->id;
-	}
-
-	private function is_mysql_create_table_charset_set_marker( array $tokens, int $position ): bool {
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ] )
-			|| WP_MySQL_Lexer::SET_SYMBOL !== $tokens[ $position + 1 ]->id
-		) {
-			return false;
-		}
-
-		if ( WP_MySQL_Lexer::CHARACTER_SYMBOL === $tokens[ $position ]->id ) {
-			return true;
-		}
-
-		return WP_MySQL_Lexer::CHAR_SYMBOL === $tokens[ $position ]->id
-			&& in_array( strtolower( $tokens[ $position ]->get_bytes() ), array( 'char', 'character' ), true );
 	}
 
 	private function get_mysql_variable_select_query( string $query ): ?array {
