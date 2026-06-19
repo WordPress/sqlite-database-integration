@@ -967,7 +967,6 @@ class WP_PostgreSQL_Driver {
 					$create_table_like_query['metadata_query'],
 					$create_table_like_query['schema']
 				);
-				$this->sync_mysql_on_update_current_timestamp_triggers_for_create_query( $create_table_like_query['metadata_query'] );
 			}
 			return $result;
 		}
@@ -1011,7 +1010,6 @@ class WP_PostgreSQL_Driver {
 				$this->sync_mysql_schema_catalog_side_effects_for_schema( $query, $create_table_target['schema'] );
 			} else {
 				$this->store_mysql_schema_metadata( $query );
-				$this->sync_mysql_on_update_current_timestamp_triggers_for_create_query( $query );
 			}
 			return $result;
 		}
@@ -4923,29 +4921,6 @@ class WP_PostgreSQL_Driver {
 
 			foreach ( $metadata['checks'] ?? array() as $check ) {
 				$this->sync_postgresql_catalog_check_comment( $schema_name, $table_name, $check );
-			}
-		}
-	}
-
-	/**
-	 * Create PostgreSQL trigger side effects for CREATE TABLE ON UPDATE columns.
-	 *
-	 * @param string $query MySQL CREATE TABLE query.
-	 */
-	private function sync_mysql_on_update_current_timestamp_triggers_for_create_query( string $query ): void {
-		if ( 'pgsql' !== $this->connection->get_driver_name() ) {
-			return;
-		}
-
-		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
-		foreach ( $metadata_tables as $metadata ) {
-			$table_name = (string) $metadata['table_name'];
-			foreach ( $metadata['columns'] as $column ) {
-				if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
-					$this->execute_postgresql_side_effect_statements(
-						$this->get_postgresql_on_update_current_timestamp_create_statements( 'public', $table_name, (string) $column['name'] )
-					);
-				}
 			}
 		}
 	}
