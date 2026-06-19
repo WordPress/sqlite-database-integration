@@ -1804,9 +1804,20 @@ class WP_PostgreSQL_Driver {
 			return $this->mysql_sql_calc_found_rows_count_query_cache[ $cache_key ]['sql'];
 		}
 
-		$count_query = $this->get_sql_calc_found_rows_direct_count_query( $query );
+		$count_source_query = $this->get_sql_calc_found_rows_count_source_query( $query );
+		if ( null === $count_source_query ) {
+			return null;
+		}
+
+		$count_query = $this->get_sql_calc_found_rows_direct_count_query( $count_source_query );
 		if ( null === $count_query ) {
-			$select_query = $this->translate_sql_calc_found_rows_count_select_query( $query );
+			$select_query = $this->translate_strict_aggregate_grouped_order_by_query( $count_source_query, false );
+			if ( null === $select_query ) {
+				$select_query = $this->translate_distinct_order_by_query( $count_source_query, false );
+			}
+			if ( null === $select_query ) {
+				$select_query = $this->translate_sql_calc_found_rows_select_query( $count_source_query, false );
+			}
 			if ( null === $select_query ) {
 				return null;
 			}
@@ -1864,19 +1875,7 @@ class WP_PostgreSQL_Driver {
 				$tokens,
 				$projection_start,
 				$select_end,
-				array(
-					WP_MySQL_Lexer::DISTINCT_SYMBOL,
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::GROUP_SYMBOL,
-					WP_MySQL_Lexer::HAVING_SYMBOL,
-					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
-					WP_MySQL_Lexer::INTO_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::SELECT_SYMBOL,
-					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				)
+				array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL )
 			)
 		) {
 			return null;
@@ -1970,11 +1969,6 @@ class WP_PostgreSQL_Driver {
 	}
 
 	private function get_sql_calc_found_rows_direct_count_query( string $query ): ?string {
-		$query = $this->get_sql_calc_found_rows_count_source_query( $query );
-		if ( null === $query ) {
-			return null;
-		}
-
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
@@ -1995,18 +1989,7 @@ class WP_PostgreSQL_Driver {
 				$tokens,
 				$projection_start,
 				$statement_end,
-				array(
-					WP_MySQL_Lexer::DISTINCT_SYMBOL,
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::GROUP_SYMBOL,
-					WP_MySQL_Lexer::HAVING_SYMBOL,
-					WP_MySQL_Lexer::INTO_SYMBOL,
-					WP_MySQL_Lexer::LIMIT_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::ORDER_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				)
+				array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL )
 			)
 		) {
 			return null;
@@ -2075,25 +2058,6 @@ class WP_PostgreSQL_Driver {
 				),
 			)
 		);
-	}
-
-	private function translate_sql_calc_found_rows_count_select_query( string $query ): ?string {
-		$query = $this->get_sql_calc_found_rows_count_source_query( $query );
-		if ( null === $query ) {
-			return null;
-		}
-
-		$translated_query = $this->translate_strict_aggregate_grouped_order_by_query( $query, false );
-		if ( null !== $translated_query ) {
-			return $translated_query;
-		}
-
-		$translated_query = $this->translate_distinct_order_by_query( $query, false );
-		if ( null !== $translated_query ) {
-			return $translated_query;
-		}
-
-		return $this->translate_sql_calc_found_rows_select_query( $query, false );
 	}
 
 	private function get_sql_calc_found_rows_count_source_query( string $query ): ?string {
@@ -24941,21 +24905,7 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$unsupported_tokens = array(
-			WP_MySQL_Lexer::DISTINCT_SYMBOL,
-			WP_MySQL_Lexer::FOR_SYMBOL,
-			WP_MySQL_Lexer::GROUP_SYMBOL,
-			WP_MySQL_Lexer::HAVING_SYMBOL,
-			WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
-			WP_MySQL_Lexer::INTO_SYMBOL,
-			WP_MySQL_Lexer::JOIN_SYMBOL,
-			WP_MySQL_Lexer::LOCK_SYMBOL,
-			WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-			WP_MySQL_Lexer::SELECT_SYMBOL,
-			WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
-			WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-			WP_MySQL_Lexer::UNION_SYMBOL,
-		);
+		$unsupported_tokens = array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::JOIN_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL );
 		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, $unsupported_tokens ) ) {
 			return null;
 		}
@@ -24981,10 +24931,7 @@ WHERE option_name IN (
 
 		$source_end = $this->find_first_top_level_mysql_token(
 			$tokens,
-			array(
-				WP_MySQL_Lexer::ORDER_SYMBOL,
-				WP_MySQL_Lexer::WHERE_SYMBOL,
-			),
+			array( WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::WHERE_SYMBOL ),
 			$from_position + 1,
 			$select_end
 		) ?? $select_end;
@@ -29042,19 +28989,7 @@ END',
 
 		if (
 			isset( $tokens[ $position ] )
-			&& in_array(
-				$tokens[ $position ]->id,
-				array(
-					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
-					WP_MySQL_Lexer::SQL_BIG_RESULT_SYMBOL,
-					WP_MySQL_Lexer::SQL_BUFFER_RESULT_SYMBOL,
-					WP_MySQL_Lexer::SQL_CACHE_SYMBOL,
-					WP_MySQL_Lexer::SQL_NO_CACHE_SYMBOL,
-					WP_MySQL_Lexer::SQL_SMALL_RESULT_SYMBOL,
-					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-				),
-				true
-			)
+			&& in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::SQL_BIG_RESULT_SYMBOL, WP_MySQL_Lexer::SQL_BUFFER_RESULT_SYMBOL, WP_MySQL_Lexer::SQL_CACHE_SYMBOL, WP_MySQL_Lexer::SQL_NO_CACHE_SYMBOL, WP_MySQL_Lexer::SQL_SMALL_RESULT_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL ), true )
 		) {
 			return null;
 		}
@@ -29116,15 +29051,7 @@ END',
 				$tokens,
 				$projection_start,
 				$select_end,
-				array(
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::GROUP_SYMBOL,
-					WP_MySQL_Lexer::HAVING_SYMBOL,
-					WP_MySQL_Lexer::INTO_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				)
+				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL )
 			)
 		) {
 			return null;
@@ -29135,15 +29062,7 @@ END',
 				$tokens,
 				$projection_start,
 				$select_end,
-				array(
-					WP_MySQL_Lexer::SELECT_SYMBOL,
-					WP_MySQL_Lexer::AVG_SYMBOL,
-					WP_MySQL_Lexer::COUNT_SYMBOL,
-					WP_MySQL_Lexer::GROUP_CONCAT_SYMBOL,
-					WP_MySQL_Lexer::MAX_SYMBOL,
-					WP_MySQL_Lexer::MIN_SYMBOL,
-					WP_MySQL_Lexer::SUM_SYMBOL,
-				)
+				array( WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::AVG_SYMBOL, WP_MySQL_Lexer::COUNT_SYMBOL, WP_MySQL_Lexer::GROUP_CONCAT_SYMBOL, WP_MySQL_Lexer::MAX_SYMBOL, WP_MySQL_Lexer::MIN_SYMBOL, WP_MySQL_Lexer::SUM_SYMBOL )
 			)
 		) {
 			return null;
@@ -29538,13 +29457,18 @@ END',
 		int $order_position,
 		?int $limit_position,
 		int $statement_end,
-		bool $include_limit = true
+		bool $include_limit = true,
+		?array $group_by_sql = null,
+		?int $source_end_position = null,
+		bool $inner_distinct = false
 	): string {
 		$derived_table_alias        = '__wp_pg_distinct';
 		$quoted_derived_table_alias = $this->connection->quote_identifier( $derived_table_alias );
 		$inner_projection_sql       = array();
 		$outer_projection_sql       = array();
-		$group_by_sql               = array();
+		$source_end_position        = $source_end_position ?? $order_position;
+		$derive_group_by_sql        = null === $group_by_sql;
+		$group_by_sql               = $group_by_sql ?? array();
 
 		foreach ( $projection_items as $projection_item ) {
 			$quoted_alias           = $this->connection->quote_identifier( $projection_item['alias'] );
@@ -29555,7 +29479,9 @@ END',
 				$quoted_alias,
 				$quoted_alias
 			);
-			$group_by_sql[]         = $projection_item['sql'];
+			if ( $derive_group_by_sql ) {
+				$group_by_sql[] = $projection_item['sql'];
+			}
 		}
 
 		foreach ( $order_items as $index => $order_item ) {
@@ -29574,10 +29500,11 @@ END',
 		}
 
 		$sql = sprintf(
-			'SELECT %s FROM (SELECT %s %s GROUP BY %s) AS %s ORDER BY %s',
+			'SELECT %s FROM (SELECT %s%s %s GROUP BY %s) AS %s ORDER BY %s',
 			implode( ', ', $outer_projection_sql ),
+			$inner_distinct ? 'DISTINCT ' : '',
 			implode( ', ', $inner_projection_sql ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $order_position ),
+			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $source_end_position ),
 			implode( ', ', $group_by_sql ),
 			$quoted_derived_table_alias,
 			$this->get_distinct_order_by_outer_order_sql( $projection_items, $order_items, $quoted_derived_table_alias )
@@ -29777,8 +29704,7 @@ END',
 		}
 
 		$archive_date_expression = $this->get_mysql_archive_grouped_date_expression_bounds( $tokens, $group_items );
-		$is_comment_id_group     = $this->is_mysql_comment_id_grouped_select_shape( $tokens, $projection_items, $group_items );
-		$is_post_id_group        = $this->is_mysql_post_id_grouped_select_shape( $tokens, $projection_items, $group_items );
+		$wordpress_id_group      = $this->get_mysql_wordpress_grouped_id_select_shape( $tokens, $projection_items, $group_items );
 
 		if (
 			$has_distinct
@@ -29807,7 +29733,7 @@ END',
 			);
 		}
 
-		if ( null === $archive_date_expression && ! $is_comment_id_group && ! $is_post_id_group ) {
+		if ( null === $archive_date_expression && null === $wordpress_id_group ) {
 			return null;
 		}
 
@@ -29831,16 +29757,7 @@ END',
 				continue;
 			}
 
-			if (
-				(
-					$is_comment_id_group
-					&& $this->is_mysql_comment_id_grouped_order_expression( $tokens, $order_item )
-				)
-				|| (
-					$is_post_id_group
-					&& $this->is_mysql_post_id_grouped_order_expression( $tokens, $order_item )
-				)
-			) {
+			if ( null !== $wordpress_id_group && $this->is_mysql_wordpress_grouped_id_order_expression( $tokens, $order_item, $wordpress_id_group ) ) {
 				$order_sql[] = $this->get_strict_grouped_aggregate_order_sql( $order_item );
 				$rewritten   = true;
 				continue;
@@ -29853,7 +29770,7 @@ END',
 			$tokens,
 			$order_items,
 			$group_items,
-			$is_post_id_group
+			'posts' === $wordpress_id_group
 		);
 		if ( null !== $tiebreaker_sql ) {
 			$order_sql[] = $tiebreaker_sql;
@@ -29921,16 +29838,7 @@ END',
 		bool $include_limit = true
 	): ?string {
 		$select_end = $limit_position ?? $statement_end;
-		if (
-			$this->contains_mysql_token(
-				$tokens,
-				$projection_start,
-				$select_end,
-				array(
-					WP_MySQL_Lexer::SELECT_SYMBOL,
-				)
-			)
-		) {
+		if ( $this->contains_mysql_token( $tokens, $projection_start, $select_end, array( WP_MySQL_Lexer::SELECT_SYMBOL ) ) ) {
 			return null;
 		}
 
@@ -29950,17 +29858,18 @@ END',
 			! $this->contains_mysql_aggregate_call( $tokens, $projection_start, $select_end )
 			&& $this->is_mysql_distinct_grouped_projection_shape( $tokens, $projection_items, $group_items )
 		) {
-			return $this->build_distinct_strict_grouped_order_by_query(
+			return $this->build_distinct_order_by_grouped_query(
 				$tokens,
 				$projection_items,
-				$this->get_mysql_group_by_item_sql( $tokens, $group_items ),
 				$order_items,
 				$from_position,
-				$group_position,
 				$order_position,
 				$limit_position,
 				$statement_end,
-				$include_limit
+				$include_limit,
+				$this->get_mysql_group_by_item_sql( $tokens, $group_items ),
+				$group_position,
+				true
 			);
 		}
 
@@ -29976,17 +29885,18 @@ END',
 			return null;
 		}
 
-		return $this->build_distinct_strict_grouped_order_by_query(
+		return $this->build_distinct_order_by_grouped_query(
 			$tokens,
 			$projection_items,
-			$group_by_sql,
 			$order_items,
 			$from_position,
-			$group_position,
 			$order_position,
 			$limit_position,
 			$statement_end,
-			$include_limit
+			$include_limit,
+			$group_by_sql,
+			$group_position,
+			true
 		);
 	}
 
@@ -30047,35 +29957,8 @@ END',
 		int $from_position,
 		int $group_position
 	): ?array {
-		if (
-			! $this->is_mysql_distinct_term_taxonomy_projection_shape( $tokens, $projection_items )
-			|| ! $this->is_mysql_distinct_term_taxonomy_group_shape( $tokens, $group_items )
-			|| ! $this->is_mysql_distinct_term_taxonomy_order_shape( $tokens, $order_items )
-		) {
+		if ( 6 !== count( $projection_items ) || 1 !== count( $group_items ) || 1 !== count( $order_items ) || null !== $order_items[0]['projection_index'] ) {
 			return null;
-		}
-
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $group_position );
-		if (
-			null === $where_position
-			|| ! $this->is_mysql_distinct_term_taxonomy_from_shape( $tokens, $from_position, $where_position )
-			|| ! $this->has_mysql_single_term_taxonomy_predicate( $tokens, $where_position + 1, $group_position )
-		) {
-			return null;
-		}
-
-		return array(
-			't.term_id',
-			'tt.term_taxonomy_id',
-			'tt.taxonomy',
-			'tt.description',
-			'tt.parent',
-		);
-	}
-
-	private function is_mysql_distinct_term_taxonomy_projection_shape( array $tokens, array $projection_items ): bool {
-		if ( 6 !== count( $projection_items ) ) {
-			return false;
 		}
 
 		$expected_columns = array(
@@ -30086,79 +29969,115 @@ END',
 			array( 'tt', 'parent', 'parent' ),
 		);
 		foreach ( $expected_columns as $index => $expected_column ) {
+			$column = $this->get_mysql_simple_qualified_column_expression(
+				$tokens,
+				$projection_items[ $index ]['expression_start'],
+				$projection_items[ $index ]['expression_end']
+			);
 			if (
-				! $this->is_mysql_projection_item_qualified_column(
-					$tokens,
-					$projection_items[ $index ],
-					$expected_column[0],
-					$expected_column[1],
-					$expected_column[2]
-				)
+				null === $column
+				|| strtolower( $projection_items[ $index ]['alias'] ) !== $expected_column[2]
+				|| $column['qualifier'] !== $expected_column[0]
+				|| $column['column'] !== $expected_column[1]
 			) {
-				return false;
+				return null;
 			}
 		}
 
-		return $this->is_mysql_count_post_type_projection_item( $tokens, $projection_items[5] );
-	}
-
-	private function is_mysql_projection_item_qualified_column( array $tokens, array $item, string $alias, string $column, string $name ): bool {
-		return strtolower( $item['alias'] ) === $name
-			&& $this->is_mysql_exact_qualified_column_expression(
-				$tokens,
-				$item['expression_start'],
-				$item['expression_end'],
-				$alias,
-				$column
-			);
-	}
-
-	private function is_mysql_count_post_type_projection_item( array $tokens, array $item ): bool {
-		if ( 'count' !== strtolower( $item['alias'] ) ) {
-			return false;
+		if ( 'count' !== strtolower( $projection_items[5]['alias'] ) ) {
+			return null;
 		}
-
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $item['expression_start'], $item['expression_end'] );
-		if (
-			! isset( $tokens[ $bounds['start'] ], $tokens[ $bounds['start'] + 1 ] )
-			|| ! $this->is_mysql_token_value( $tokens[ $bounds['start'] ], 'count' )
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $bounds['start'] + 1 ]->id
-			|| $this->get_mysql_parenthesized_sequence_end( $tokens, $bounds['start'] + 1, $bounds['end'] ) !== $bounds['end']
-		) {
-			return false;
-		}
-
-		return $this->is_mysql_exact_qualified_column_expression(
+		$count_bounds = $this->normalize_mysql_expression_bounds(
 			$tokens,
-			$bounds['start'] + 2,
-			$bounds['end'] - 1,
-			'p',
-			'post_type'
+			$projection_items[5]['expression_start'],
+			$projection_items[5]['expression_end']
 		);
-	}
-
-	private function is_mysql_distinct_term_taxonomy_group_shape( array $tokens, array $group_items ): bool {
-		return 1 === count( $group_items )
-			&& $this->is_mysql_exact_qualified_column_expression(
-				$tokens,
-				$group_items[0]['start'],
-				$group_items[0]['end'],
-				't',
-				'term_id'
-			);
-	}
-
-	private function is_mysql_distinct_term_taxonomy_order_shape( array $tokens, array $order_items ): bool {
-		if ( 1 !== count( $order_items ) || null !== $order_items[0]['projection_index'] ) {
-			return false;
+		$count_column = $this->get_mysql_simple_qualified_column_expression( $tokens, $count_bounds['start'] + 2, $count_bounds['end'] - 1 );
+		if (
+			! isset( $tokens[ $count_bounds['start'] ], $tokens[ $count_bounds['start'] + 1 ] )
+			|| ! $this->is_mysql_token_value( $tokens[ $count_bounds['start'] ], 'count' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $count_bounds['start'] + 1 ]->id
+			|| $this->get_mysql_parenthesized_sequence_end( $tokens, $count_bounds['start'] + 1, $count_bounds['end'] ) !== $count_bounds['end']
+			|| null === $count_column
+			|| 'p' !== $count_column['qualifier']
+			|| 'post_type' !== $count_column['column']
+		) {
+			return null;
 		}
 
-		return $this->is_mysql_exact_qualified_column_expression(
+		$group_column = $this->get_mysql_simple_qualified_column_expression( $tokens, $group_items[0]['start'], $group_items[0]['end'] );
+		$order_column = $this->get_mysql_simple_qualified_column_expression(
 			$tokens,
 			$order_items[0]['expression_start'],
-			$order_items[0]['expression_end'],
-			't',
-			'name'
+			$order_items[0]['expression_end']
+		);
+		if (
+			null === $group_column
+			|| 't' !== $group_column['qualifier']
+			|| 'term_id' !== $group_column['column']
+			|| null === $order_column
+			|| 't' !== $order_column['qualifier']
+			|| 'name' !== $order_column['column']
+		) {
+			return null;
+		}
+
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $group_position );
+		if (
+			null === $where_position
+			|| ! $this->is_mysql_distinct_term_taxonomy_from_shape( $tokens, $from_position, $where_position )
+		) {
+			return null;
+		}
+
+		$taxonomy_predicate_matched = false;
+		$conjuncts                  = $this->split_mysql_top_level_boolean_conjuncts( $tokens, $where_position + 1, $group_position );
+		if ( null === $conjuncts ) {
+			return null;
+		}
+		foreach ( $conjuncts as $conjunct ) {
+			$bounds    = $this->normalize_mysql_expression_bounds( $tokens, $conjunct['start'], $conjunct['end'] );
+			$reference = $this->parse_mysql_column_reference( $tokens, $bounds['start'], $bounds['end'] );
+			if (
+				null === $reference
+				|| $reference['end'] >= $bounds['end']
+				|| 'tt' !== strtolower( (string) $reference['qualifier'] )
+				|| 'taxonomy' !== strtolower( $reference['column'] )
+			) {
+				continue;
+			}
+
+			$matched = WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $reference['end'] ]->id
+				&& $this->is_mysql_string_literal_range( $tokens, $reference['end'] + 1, $bounds['end'] );
+			if ( ! $matched && WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $reference['end'] ]->id && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === ( $tokens[ $reference['end'] + 1 ]->id ?? null ) ) {
+				$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $reference['end'] + 1, $bounds['end'] );
+				$items       = $after_close === $bounds['end']
+					? $this->split_top_level_mysql_arguments( $tokens, $reference['end'] + 2, $bounds['end'] - 1 )
+					: null;
+				$matched     = null !== $items
+					&& 1 === count( $items )
+					&& $this->is_mysql_string_literal_range( $tokens, $items[0]['start'], $items[0]['end'] );
+			}
+
+			if ( ! $matched ) {
+				continue;
+			}
+
+			if ( $taxonomy_predicate_matched ) {
+				return null;
+			}
+			$taxonomy_predicate_matched = true;
+		}
+		if ( ! $taxonomy_predicate_matched ) {
+			return null;
+		}
+
+		return array(
+			't.term_id',
+			'tt.term_taxonomy_id',
+			'tt.taxonomy',
+			'tt.description',
+			'tt.parent',
 		);
 	}
 
@@ -30198,136 +30117,6 @@ END',
 		return null !== $pair && $this->is_mysql_wordpress_term_split_column_equality_pair( $pair );
 	}
 
-	private function has_mysql_single_term_taxonomy_predicate( array $tokens, int $start, int $end ): bool {
-		$conjuncts = $this->split_mysql_top_level_boolean_conjuncts( $tokens, $start, $end );
-		if ( null === $conjuncts ) {
-			return false;
-		}
-
-		$matched = false;
-		foreach ( $conjuncts as $conjunct ) {
-			if ( ! $this->is_mysql_single_term_taxonomy_predicate( $tokens, $conjunct['start'], $conjunct['end'] ) ) {
-				continue;
-			}
-
-			if ( $matched ) {
-				return false;
-			}
-
-			$matched = true;
-		}
-
-		return $matched;
-	}
-
-	private function is_mysql_single_term_taxonomy_predicate( array $tokens, int $start, int $end ): bool {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
-		$start  = $bounds['start'];
-		$end    = $bounds['end'];
-
-		$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
-		if (
-			null === $reference
-			|| $reference['end'] >= $end
-			|| 'tt' !== strtolower( (string) $reference['qualifier'] )
-			|| 'taxonomy' !== strtolower( $reference['column'] )
-		) {
-			return false;
-		}
-
-		if (
-			WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $reference['end'] ]->id
-			&& $this->is_mysql_string_literal_range( $tokens, $reference['end'] + 1, $end )
-		) {
-			return true;
-		}
-
-		if (
-			WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $reference['end'] ]->id
-			|| ! isset( $tokens[ $reference['end'] + 1 ] )
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $reference['end'] + 1 ]->id
-		) {
-			return false;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $reference['end'] + 1, $end );
-		if ( $after_close !== $end ) {
-			return false;
-		}
-
-		$items = $this->split_top_level_mysql_arguments( $tokens, $reference['end'] + 2, $end - 1 );
-		return null !== $items
-			&& 1 === count( $items )
-			&& $this->is_mysql_string_literal_range( $tokens, $items[0]['start'], $items[0]['end'] );
-	}
-
-	private function is_mysql_exact_qualified_column_expression( array $tokens, int $start, int $end, string $alias, string $column ): bool {
-		$column_expression = $this->get_mysql_simple_qualified_column_expression( $tokens, $start, $end );
-		return null !== $column_expression
-			&& strtolower( $alias ) === $column_expression['qualifier']
-			&& strtolower( $column ) === $column_expression['column'];
-	}
-
-	private function build_distinct_strict_grouped_order_by_query(
-		array $tokens,
-		array $projection_items,
-		array $group_by_sql,
-		array $order_items,
-		int $from_position,
-		int $group_position,
-		int $order_position,
-		?int $limit_position,
-		int $statement_end,
-		bool $include_limit = true
-	): string {
-		$derived_table_alias        = '__wp_pg_distinct';
-		$quoted_derived_table_alias = $this->connection->quote_identifier( $derived_table_alias );
-		$inner_projection_sql       = array();
-		$outer_projection_sql       = array();
-
-		foreach ( $projection_items as $projection_item ) {
-			$quoted_alias           = $this->connection->quote_identifier( $projection_item['alias'] );
-			$inner_projection_sql[] = $projection_item['sql'] . ' AS ' . $quoted_alias;
-			$outer_projection_sql[] = sprintf(
-				'%s.%s AS %s',
-				$quoted_derived_table_alias,
-				$quoted_alias,
-				$quoted_alias
-			);
-		}
-
-		foreach ( $order_items as $index => $order_item ) {
-			if ( null !== $order_item['projection_index'] ) {
-				continue;
-			}
-
-			$aggregate_function     = 'DESC' === $order_item['direction'] ? 'MAX' : 'MIN';
-			$quoted_order_alias     = $this->connection->quote_identifier( $this->get_distinct_order_by_hidden_alias( $index ) );
-			$inner_projection_sql[] = sprintf(
-				'%s(%s) AS %s',
-				$aggregate_function,
-				$order_item['sql'],
-				$quoted_order_alias
-			);
-		}
-
-		$sql = sprintf(
-			'SELECT %s FROM (SELECT DISTINCT %s %s GROUP BY %s) AS %s ORDER BY %s',
-			implode( ', ', $outer_projection_sql ),
-			implode( ', ', $inner_projection_sql ),
-			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $group_position ),
-			implode( ', ', $group_by_sql ),
-			$quoted_derived_table_alias,
-			$this->get_distinct_order_by_outer_order_sql( $projection_items, $order_items, $quoted_derived_table_alias )
-		);
-
-		if ( $include_limit && null !== $limit_position ) {
-			$sql .= $this->translate_simple_select_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end );
-		}
-
-		return $sql;
-	}
-
 	private function translate_grouped_having_alias_query( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
@@ -30344,18 +30133,7 @@ END',
 				$tokens,
 				1,
 				$statement_end,
-				array(
-					WP_MySQL_Lexer::DISTINCT_SYMBOL,
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
-					WP_MySQL_Lexer::INTO_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::SELECT_SYMBOL,
-					WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
-					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				)
+				array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL )
 			)
 		) {
 			return null;
@@ -30559,7 +30337,7 @@ END',
 		$extension_keys     = array();
 		$equivalent_columns = null;
 		foreach ( $projection_items as $projection_item ) {
-			$bounds = $this->get_mysql_projection_expression_bounds( $tokens, $projection_item['start'], $projection_item['end'] );
+			$bounds = $this->get_mysql_select_projection_expression_bounds( $tokens, $projection_item['start'], $projection_item['end'] );
 			if ( null === $bounds ) {
 				continue;
 			}
@@ -30611,31 +30389,6 @@ END',
 		}
 
 		return $extensions;
-	}
-
-	private function get_mysql_projection_expression_bounds( array $tokens, int $start, int $end ): ?array {
-		if ( $start >= $end ) {
-			return null;
-		}
-
-		$expression_end = $end;
-		$as_position    = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::AS_SYMBOL, $start, $end );
-		if ( null !== $as_position ) {
-			if ( $as_position <= $start || $as_position + 2 !== $end ) {
-				return null;
-			}
-
-			$expression_end = $as_position;
-		} elseif ( null !== $this->get_mysql_implicit_projection_alias( $tokens, $start, $end ) ) {
-			$expression_end = $end - 1;
-		}
-
-		return $start >= $expression_end
-			? null
-			: array(
-				'start' => $start,
-				'end'   => $expression_end,
-			);
 	}
 
 	private function get_mysql_simple_qualified_column_expression( array $tokens, int $start, int $end ): ?array {
@@ -31543,44 +31296,63 @@ END',
 		);
 	}
 
-	private function is_mysql_comment_id_grouped_select_shape( array $tokens, array $projection_items, array $group_items ): bool {
-		return 1 === count( $projection_items )
-			&& 1 === count( $group_items )
-			&& $this->is_mysql_comment_id_expression(
-				$tokens,
-				$projection_items[0]['expression_start'],
-				$projection_items[0]['expression_end']
-			)
-			&& $this->is_mysql_comment_id_expression(
-				$tokens,
-				$group_items[0]['start'],
-				$group_items[0]['end']
-			);
+	private function get_mysql_wordpress_grouped_id_select_shape( array $tokens, array $projection_items, array $group_items ): ?string {
+		if ( 1 !== count( $projection_items ) || 1 !== count( $group_items ) ) {
+			return null;
+		}
+
+		foreach (
+			array(
+				array( 'comments', 'comment_ID' ),
+				array( 'posts', 'ID' ),
+			) as $shape
+		) {
+			if (
+				$this->is_mysql_column_reference_expression(
+					$tokens,
+					$projection_items[0]['expression_start'],
+					$projection_items[0]['expression_end'],
+					$shape[1],
+					$shape[0],
+					true
+				)
+				&& $this->is_mysql_column_reference_expression(
+					$tokens,
+					$group_items[0]['start'],
+					$group_items[0]['end'],
+					$shape[1],
+					$shape[0],
+					true
+				)
+			) {
+				return $shape[0];
+			}
+		}
+
+		return null;
 	}
 
-	private function is_mysql_comment_id_expression( array $tokens, int $start, int $end ): bool {
-		return $this->is_mysql_column_reference_expression( $tokens, $start, $end, 'comment_ID', 'comments', true );
-	}
+	private function is_mysql_wordpress_grouped_id_order_expression( array $tokens, array $order_item, string $group ): bool {
+		$columns = 'comments' === $group
+			? array( 'comment_date', 'comment_date_gmt' )
+			: array( 'post_date', 'post_date_gmt' );
+		foreach ( $columns as $column ) {
+			if (
+				$this->is_mysql_column_reference_expression(
+					$tokens,
+					$order_item['expression_start'],
+					$order_item['expression_end'],
+					$column,
+					$group,
+					false
+				)
+			) {
+				return true;
+			}
+		}
 
-	private function is_mysql_comment_id_grouped_order_expression( array $tokens, array $order_item ): bool {
 		if (
-			$this->is_mysql_column_reference_expression(
-				$tokens,
-				$order_item['expression_start'],
-				$order_item['expression_end'],
-				'comment_date',
-				'comments',
-				false
-			)
-			|| $this->is_mysql_column_reference_expression(
-				$tokens,
-				$order_item['expression_start'],
-				$order_item['expression_end'],
-				'comment_date_gmt',
-				'comments',
-				false
-			)
-			|| $this->is_mysql_qualified_column_reference_expression(
+			$this->is_mysql_qualified_column_reference_expression(
 				$tokens,
 				$order_item['expression_start'],
 				$order_item['expression_end'],
@@ -31594,93 +31366,26 @@ END',
 			$tokens,
 			$order_item['expression_start'],
 			$order_item['expression_end'],
-			array( 'character' )
+			'comments' === $group ? array( 'character' ) : array( 'character', 'integer', 'decimal', 'date_time' )
 		);
-		if ( null === $cast_bounds || $cast_bounds['close'] + 1 !== $order_item['expression_end'] ) {
-			return false;
-		}
-
-		return $this->is_mysql_qualified_column_reference_expression(
-			$tokens,
-			$cast_bounds['expression_start'],
-			$cast_bounds['expression_end'],
-			'meta_value'
-		);
-	}
-
-	private function is_mysql_post_id_grouped_select_shape( array $tokens, array $projection_items, array $group_items ): bool {
-		return 1 === count( $projection_items )
-			&& 1 === count( $group_items )
-			&& $this->is_mysql_post_id_expression(
-				$tokens,
-				$projection_items[0]['expression_start'],
-				$projection_items[0]['expression_end']
-			)
-			&& $this->is_mysql_post_id_expression(
-				$tokens,
-				$group_items[0]['start'],
-				$group_items[0]['end']
-			);
-	}
-
-	private function is_mysql_post_id_expression( array $tokens, int $start, int $end ): bool {
-		return $this->is_mysql_column_reference_expression( $tokens, $start, $end, 'ID', 'posts', true );
-	}
-
-	private function is_mysql_post_id_grouped_order_expression( array $tokens, array $order_item ): bool {
 		if (
-			$this->is_mysql_column_reference_expression(
+			null !== $cast_bounds
+			&& $cast_bounds['close'] + 1 === $order_item['expression_end']
+			&& $this->is_mysql_qualified_column_reference_expression(
 				$tokens,
-				$order_item['expression_start'],
-				$order_item['expression_end'],
-				'post_date',
-				'posts',
-				false
-			)
-			|| $this->is_mysql_column_reference_expression(
-				$tokens,
-				$order_item['expression_start'],
-				$order_item['expression_end'],
-				'post_date_gmt',
-				'posts',
-				false
-			)
-			|| $this->is_mysql_qualified_column_reference_expression(
-				$tokens,
-				$order_item['expression_start'],
-				$order_item['expression_end'],
+				$cast_bounds['expression_start'],
+				$cast_bounds['expression_end'],
 				'meta_value'
 			)
 		) {
 			return true;
 		}
 
-		return $this->is_mysql_meta_value_cast_expression(
-			$tokens,
-			$order_item['expression_start'],
-			$order_item['expression_end']
-		) || $this->is_mysql_meta_value_plus_zero_expression(
-			$tokens,
-			$order_item['expression_start'],
-			$order_item['expression_end']
-		);
-	}
-
-	private function is_mysql_meta_value_cast_expression( array $tokens, int $start, int $end ): bool {
-		$cast_bounds = $this->get_mysql_typed_cast_bounds(
-			$tokens,
-			$start,
-			$end,
-			array( 'character', 'integer', 'decimal', 'date_time' )
-		);
-
-		return null !== $cast_bounds
-			&& $cast_bounds['close'] + 1 === $end
-			&& $this->is_mysql_qualified_column_reference_expression(
+		return 'posts' === $group
+			&& $this->is_mysql_meta_value_plus_zero_expression(
 				$tokens,
-				$cast_bounds['expression_start'],
-				$cast_bounds['expression_end'],
-				'meta_value'
+				$order_item['expression_start'],
+				$order_item['expression_end']
 			);
 	}
 
@@ -32559,17 +32264,7 @@ END',
 
 		$from_end = $this->find_first_top_level_mysql_token(
 			$tokens,
-			array(
-				WP_MySQL_Lexer::FOR_SYMBOL,
-				WP_MySQL_Lexer::GROUP_SYMBOL,
-				WP_MySQL_Lexer::HAVING_SYMBOL,
-				WP_MySQL_Lexer::LIMIT_SYMBOL,
-				WP_MySQL_Lexer::LOCK_SYMBOL,
-				WP_MySQL_Lexer::ORDER_SYMBOL,
-				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-				WP_MySQL_Lexer::UNION_SYMBOL,
-				WP_MySQL_Lexer::WHERE_SYMBOL,
-			),
+			array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL, WP_MySQL_Lexer::WHERE_SYMBOL ),
 			$from_position + 1,
 			$statement_end
 		) ?? $statement_end;
@@ -34755,16 +34450,7 @@ END',
 		if ( null !== $where_position ) {
 			$where_end = $this->find_first_top_level_mysql_token(
 				$tokens,
-				array(
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::GROUP_SYMBOL,
-					WP_MySQL_Lexer::HAVING_SYMBOL,
-					WP_MySQL_Lexer::LIMIT_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::ORDER_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				),
+				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
 				$where_position + 1,
 				$statement_end
 			) ?? $statement_end;
@@ -34787,14 +34473,7 @@ END',
 		if ( null !== $having_position && null === $group_position_before_having ) {
 			$having_end = $this->find_first_top_level_mysql_token(
 				$tokens,
-				array(
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::LIMIT_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::ORDER_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				),
+				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
 				$having_position + 1,
 				$statement_end
 			) ?? $statement_end;
@@ -34820,13 +34499,7 @@ END',
 		) {
 			$order_end = $this->find_first_top_level_mysql_token(
 				$tokens,
-				array(
-					WP_MySQL_Lexer::FOR_SYMBOL,
-					WP_MySQL_Lexer::LIMIT_SYMBOL,
-					WP_MySQL_Lexer::LOCK_SYMBOL,
-					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				),
+				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL ),
 				$order_position + 2,
 				$statement_end
 			) ?? $statement_end;
@@ -34836,16 +34509,7 @@ END',
 				$order_position + 2,
 				$order_end,
 				$scope,
-				! $this->contains_top_level_mysql_token(
-					$tokens,
-					$projection_start,
-					$statement_end,
-					array(
-						WP_MySQL_Lexer::DISTINCT_SYMBOL,
-						WP_MySQL_Lexer::GROUP_SYMBOL,
-						WP_MySQL_Lexer::HAVING_SYMBOL,
-					)
-				)
+				! $this->contains_top_level_mysql_token( $tokens, $projection_start, $statement_end, array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL ) )
 			);
 			if ( $order_sql['changed'] ) {
 				$replacements[] = array(
@@ -35287,8 +34951,67 @@ END',
 			! $this->is_mysql_wordpress_table_name( $table_name, 'comments' )
 			|| null === $where_position
 			|| null === $where_end
-			|| ! $this->is_simple_wordpress_approved_comments_where_clause( $tokens, $where_position + 1, $where_end )
 		) {
+			return null;
+		}
+
+		$conjuncts = $this->split_mysql_top_level_boolean_conjuncts( $tokens, $where_position + 1, $where_end );
+		if ( null === $conjuncts ) {
+			return null;
+		}
+
+		$has_post_id  = false;
+		$has_approved = false;
+		foreach ( $conjuncts as $conjunct ) {
+			$bounds         = $this->normalize_mysql_expression_bounds( $tokens, $conjunct['start'], $conjunct['end'] );
+			$equal_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::EQUAL_OPERATOR, $bounds['start'], $bounds['end'] );
+			if (
+				null === $equal_position
+				|| null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::EQUAL_OPERATOR, $equal_position + 1, $bounds['end'] )
+			) {
+				continue;
+			}
+
+			foreach (
+				array(
+					array( $bounds['start'], $equal_position, $equal_position + 1, $bounds['end'] ),
+					array( $equal_position + 1, $bounds['end'], $bounds['start'], $equal_position ),
+				) as $side
+			) {
+				$reference = $this->parse_mysql_column_reference( $tokens, $side[0], $side[1] );
+				if (
+					null === $reference
+					|| $reference['end'] !== $side[1]
+					|| (
+						null !== $reference['qualifier']
+						&& ! $this->is_mysql_wordpress_table_name( $reference['qualifier'], 'comments' )
+					)
+				) {
+					continue;
+				}
+
+				$literal_bounds = $this->normalize_mysql_expression_bounds( $tokens, $side[2], $side[3] );
+				if ( $this->is_mysql_string_literal_range( $tokens, $literal_bounds['start'], $literal_bounds['end'] ) ) {
+					$literal = $tokens[ $literal_bounds['start'] ]->get_value();
+				} else {
+					$numeric = $this->parse_mysql_numeric_literal( $tokens, $literal_bounds['start'], $literal_bounds['end'] );
+					$literal = null !== $numeric && $numeric['end'] === $literal_bounds['end'] ? 'literal' : null;
+				}
+				if ( null === $literal ) {
+					continue;
+				}
+
+				$column = strtolower( $reference['column'] );
+				if ( 'comment_post_id' === $column ) {
+					$has_post_id = true;
+				} elseif ( 'comment_approved' === $column && '1' === $literal ) {
+					$has_approved = true;
+				}
+				break;
+			}
+		}
+
+		if ( ! $has_post_id || ! $has_approved ) {
 			return null;
 		}
 
@@ -35298,21 +35021,18 @@ END',
 		}
 
 		$order_item = $order_items[0];
-		$direction  = 'ASC';
 		$item_end   = $order_item['end'];
 		if ( isset( $tokens[ $item_end - 1 ] ) ) {
 			if ( WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $item_end - 1 ]->id ) {
 				return null;
 			}
 			if ( WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $item_end - 1 ]->id ) {
-				$item_end  = $item_end - 1;
-				$direction = 'ASC';
+				--$item_end;
 			}
 		}
 
 		if (
-			'ASC' !== $direction
-			|| ! $this->is_mysql_column_reference_expression(
+			! $this->is_mysql_column_reference_expression(
 				$tokens,
 				$order_item['start'],
 				$item_end,
@@ -35325,111 +35045,6 @@ END',
 		}
 
 		return $this->connection->quote_identifier( 'comment_ID' ) . ' ASC';
-	}
-
-	private function is_simple_wordpress_approved_comments_where_clause( array $tokens, int $start, int $end ): bool {
-		$conjuncts = $this->split_mysql_top_level_boolean_conjuncts( $tokens, $start, $end );
-		if ( null === $conjuncts ) {
-			return false;
-		}
-
-		$has_post_id  = false;
-		$has_approved = false;
-		foreach ( $conjuncts as $conjunct ) {
-			$match = $this->get_simple_wordpress_comments_literal_equality(
-				$tokens,
-				$conjunct['start'],
-				$conjunct['end']
-			);
-			if ( null === $match ) {
-				continue;
-			}
-
-			if ( 'comment_post_id' === $match['column'] ) {
-				$has_post_id = true;
-				continue;
-			}
-
-			if ( 'comment_approved' === $match['column'] && '1' === $match['value'] ) {
-				$has_approved = true;
-			}
-		}
-
-		return $has_post_id && $has_approved;
-	}
-
-	private function get_simple_wordpress_comments_literal_equality( array $tokens, int $start, int $end ): ?array {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
-		$start  = $bounds['start'];
-		$end    = $bounds['end'];
-
-		$equal_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::EQUAL_OPERATOR, $start, $end );
-		if (
-			null === $equal_position
-			|| null !== $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::EQUAL_OPERATOR, $equal_position + 1, $end )
-		) {
-			return null;
-		}
-
-		$match = $this->get_simple_wordpress_comments_literal_equality_side(
-			$tokens,
-			$start,
-			$equal_position,
-			$equal_position + 1,
-			$end
-		);
-		if ( null !== $match ) {
-			return $match;
-		}
-
-		return $this->get_simple_wordpress_comments_literal_equality_side(
-			$tokens,
-			$equal_position + 1,
-			$end,
-			$start,
-			$equal_position
-		);
-	}
-
-	private function get_simple_wordpress_comments_literal_equality_side(
-		array $tokens,
-		int $column_start,
-		int $column_end,
-		int $literal_start,
-		int $literal_end
-	): ?array {
-		$reference = $this->parse_mysql_column_reference( $tokens, $column_start, $column_end );
-		if (
-			null === $reference
-			|| $reference['end'] !== $column_end
-			|| (
-				null !== $reference['qualifier']
-				&& ! $this->is_mysql_wordpress_table_name( $reference['qualifier'], 'comments' )
-			)
-		) {
-			return null;
-		}
-
-		$literal_bounds = $this->normalize_mysql_expression_bounds( $tokens, $literal_start, $literal_end );
-		$literal_start  = $literal_bounds['start'];
-		$literal_end    = $literal_bounds['end'];
-		$literal        = null;
-		if ( $this->is_mysql_string_literal_range( $tokens, $literal_start, $literal_end ) ) {
-			$literal = $tokens[ $literal_start ]->get_value();
-		} else {
-			$numeric_literal = $this->parse_mysql_numeric_literal( $tokens, $literal_start, $literal_end );
-			if ( null !== $numeric_literal && $numeric_literal['end'] === $literal_end ) {
-				$literal = 'literal';
-			}
-		}
-		if ( null === $literal ) {
-			return null;
-		}
-
-		return array(
-			'column' => strtolower( $reference['column'] ),
-			'value'  => $literal,
-		);
 	}
 
 	private function get_wordpress_posts_post_date_desc_order_id_tiebreaker_sql( array $tokens, array $order_items, array $scope ): ?string {
@@ -38369,8 +37984,23 @@ END',
 		$position   += 2;
 
 		if ( isset( $tokens[ $position ] ) && $position < $end && WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $position ]->id ) {
-			$position = $this->get_mysql_index_hint_scope_end( $tokens, $position, $end );
-			if ( null === $position ) {
+			if ( ! isset( $tokens[ $position + 1 ] ) || $position + 1 >= $end ) {
+				return null;
+			}
+
+			if ( WP_MySQL_Lexer::JOIN_SYMBOL === $tokens[ $position + 1 ]->id ) {
+				$position += 2;
+			} elseif (
+				isset( $tokens[ $position + 2 ] )
+				&& $position + 2 < $end
+				&& WP_MySQL_Lexer::BY_SYMBOL === $tokens[ $position + 2 ]->id
+				&& (
+					WP_MySQL_Lexer::GROUP_SYMBOL === $tokens[ $position + 1 ]->id
+					|| WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $position + 1 ]->id
+				)
+			) {
+				$position += 3;
+			} else {
 				return null;
 			}
 		}
@@ -38379,13 +38009,9 @@ END',
 			return null;
 		}
 
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
-		if ( null === $after_close ) {
-			return null;
-		}
-
+		$after_close      = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
 		$allow_empty_list = WP_MySQL_Lexer::USE_SYMBOL === $hint_action;
-		if ( ! $this->is_mysql_index_hint_identifier_list( $tokens, $position + 1, $after_close - 1, $allow_empty_list ) ) {
+		if ( null === $after_close || ! $this->is_mysql_index_hint_identifier_list( $tokens, $position + 1, $after_close - 1, $allow_empty_list ) ) {
 			return null;
 		}
 
@@ -38396,60 +38022,15 @@ END',
 
 	private function is_mysql_index_hint_marker( array $tokens, int $position, int $end ): bool {
 		return $position + 1 < $end
-			&& $this->is_mysql_index_hint_action_token( $tokens[ $position ] ?? null )
-			&& $this->is_mysql_index_hint_type_token( $tokens[ $position + 1 ] ?? null );
-	}
-
-	private function is_mysql_index_hint_action_token( ?WP_MySQL_Token $token ): bool {
-		if ( null === $token ) {
-			return false;
-		}
-
-		return in_array(
-			$token->id,
-			array(
-				WP_MySQL_Lexer::FORCE_SYMBOL,
-				WP_MySQL_Lexer::IGNORE_SYMBOL,
-				WP_MySQL_Lexer::USE_SYMBOL,
-			),
-			true
-		);
-	}
-
-	private function is_mysql_index_hint_type_token( ?WP_MySQL_Token $token ): bool {
-		if ( null === $token ) {
-			return false;
-		}
-
-		return WP_MySQL_Lexer::INDEX_SYMBOL === $token->id || WP_MySQL_Lexer::KEY_SYMBOL === $token->id;
-	}
-
-	private function get_mysql_index_hint_scope_end( array $tokens, int $position, int $end ): ?int {
-		if ( ! isset( $tokens[ $position ], $tokens[ $position + 1 ] ) || $position + 1 >= $end ) {
-			return null;
-		}
-
-		if ( WP_MySQL_Lexer::FOR_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		if ( WP_MySQL_Lexer::JOIN_SYMBOL === $tokens[ $position + 1 ]->id ) {
-			return $position + 2;
-		}
-
-		if (
-			isset( $tokens[ $position + 2 ] )
-			&& $position + 2 < $end
-			&& WP_MySQL_Lexer::BY_SYMBOL === $tokens[ $position + 2 ]->id
 			&& (
-				WP_MySQL_Lexer::GROUP_SYMBOL === $tokens[ $position + 1 ]->id
-				|| WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $position + 1 ]->id
+				WP_MySQL_Lexer::FORCE_SYMBOL === ( $tokens[ $position ]->id ?? null )
+				|| WP_MySQL_Lexer::IGNORE_SYMBOL === ( $tokens[ $position ]->id ?? null )
+				|| WP_MySQL_Lexer::USE_SYMBOL === ( $tokens[ $position ]->id ?? null )
 			)
-		) {
-			return $position + 3;
-		}
-
-		return null;
+			&& (
+				WP_MySQL_Lexer::INDEX_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null )
+				|| WP_MySQL_Lexer::KEY_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null )
+			);
 	}
 
 	private function is_mysql_index_hint_identifier_list( array $tokens, int $start, int $end, bool $allow_empty ): bool {
@@ -38460,7 +38041,13 @@ END',
 		$expect_identifier = true;
 		for ( $i = $start; $i < $end; $i++ ) {
 			if ( $expect_identifier ) {
-				if ( ! $this->is_mysql_index_hint_identifier_token( $tokens[ $i ] ?? null ) ) {
+				if (
+					! isset( $tokens[ $i ] )
+					|| (
+						WP_MySQL_Lexer::PRIMARY_SYMBOL !== $tokens[ $i ]->id
+						&& null === $this->get_mysql_identifier_token_value( $tokens[ $i ] )
+					)
+				) {
 					return false;
 				}
 
@@ -38476,15 +38063,6 @@ END',
 		}
 
 		return ! $expect_identifier;
-	}
-
-	private function is_mysql_index_hint_identifier_token( ?WP_MySQL_Token $token ): bool {
-		if ( null === $token ) {
-			return false;
-		}
-
-		return WP_MySQL_Lexer::PRIMARY_SYMBOL === $token->id
-			|| null !== $this->get_mysql_identifier_token_value( $token );
 	}
 
 	private function translate_mysql_limit_offset_count_to_postgresql( array $tokens, int $position, int $end ): ?array {
