@@ -15172,24 +15172,17 @@ $wp_mysql_primary_index_comment$',
 	 * @return string|null Operator, or null when unsupported.
 	 */
 	private function get_mysql_show_where_comparison_operator( WP_MySQL_Token $token ): ?string {
-		switch ( $token->id ) {
-			case WP_MySQL_Lexer::EQUAL_OPERATOR:
-				return '=';
-			case WP_MySQL_Lexer::NOT_EQUAL_OPERATOR:
-				return '<>';
-			case WP_MySQL_Lexer::GREATER_THAN_OPERATOR:
-				return '>';
-			case WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR:
-				return '>=';
-			case WP_MySQL_Lexer::LESS_THAN_OPERATOR:
-				return '<';
-			case WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR:
-				return '<=';
-			case WP_MySQL_Lexer::NULL_SAFE_EQUAL_OPERATOR:
-				return '<=>';
-		}
+		$operators = array(
+			WP_MySQL_Lexer::EQUAL_OPERATOR            => '=',
+			WP_MySQL_Lexer::NOT_EQUAL_OPERATOR        => '<>',
+			WP_MySQL_Lexer::GREATER_THAN_OPERATOR     => '>',
+			WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR => '>=',
+			WP_MySQL_Lexer::LESS_THAN_OPERATOR        => '<',
+			WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR    => '<=',
+			WP_MySQL_Lexer::NULL_SAFE_EQUAL_OPERATOR  => '<=>',
+		);
 
-		return null;
+		return $operators[ $token->id ] ?? null;
 	}
 
 	/**
