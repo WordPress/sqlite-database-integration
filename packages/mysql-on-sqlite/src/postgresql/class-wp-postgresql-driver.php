@@ -57513,42 +57513,31 @@ $wp_mysql_%1$s_domain$',
 	 * @return string|null PostgreSQL expression SQL, or null when unsupported.
 	 */
 	private function get_postgresql_mysql_date_format_sql( string $format, string $expression_sql ): ?string {
-		switch ( $format ) {
-			case '%H.%i':
-				return $this->get_postgresql_mysql_numeric_date_format_sql(
-					$expression_sql,
-					"SUBSTRING(%1\$s FROM 12 FOR 2) || '.' || SUBSTRING(%1\$s FROM 15 FOR 2)",
-					'TO_CHAR(%1$s, %2$s)',
-					'HH24.MI'
-				);
+		$numeric_formats = array(
+			'%H.%i'   => array( "SUBSTRING(%1\$s FROM 12 FOR 2) || '.' || SUBSTRING(%1\$s FROM 15 FOR 2)", 'TO_CHAR(%1$s, %2$s)', 'HH24.MI' ),
+			'%H.%i%s' => array( "SUBSTRING(%1\$s FROM 12 FOR 2) || '.' || SUBSTRING(%1\$s FROM 15 FOR 2) || SUBSTRING(%1\$s FROM 18 FOR 2)", 'TO_CHAR(%1$s, %2$s)', 'HH24.MISS' ),
+			'0.%i%s'  => array( "'0.' || SUBSTRING(%1\$s FROM 15 FOR 2) || SUBSTRING(%1\$s FROM 18 FOR 2)", "'0.' || TO_CHAR(%1\$s, %2\$s)", 'MISS' ),
+		);
+		if ( isset( $numeric_formats[ $format ] ) ) {
+			return $this->get_postgresql_mysql_numeric_date_format_sql(
+				$expression_sql,
+				$numeric_formats[ $format ][0],
+				$numeric_formats[ $format ][1],
+				$numeric_formats[ $format ][2]
+			);
+		}
 
-			case '%H.%i%s':
-				return $this->get_postgresql_mysql_numeric_date_format_sql(
-					$expression_sql,
-					"SUBSTRING(%1\$s FROM 12 FOR 2) || '.' || SUBSTRING(%1\$s FROM 15 FOR 2) || SUBSTRING(%1\$s FROM 18 FOR 2)",
-					'TO_CHAR(%1$s, %2$s)',
-					'HH24.MISS'
-				);
+		if ( '%Y-%m-%d' === $format ) {
+			$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
 
-			case '0.%i%s':
-				return $this->get_postgresql_mysql_numeric_date_format_sql(
-					$expression_sql,
-					"'0.' || SUBSTRING(%1\$s FROM 15 FOR 2) || SUBSTRING(%1\$s FROM 18 FOR 2)",
-					"'0.' || TO_CHAR(%1\$s, %2\$s)",
-					'MISS'
-				);
-
-			case '%Y-%m-%d':
-				$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
-
-				return sprintf(
-					'CASE WHEN %1$s THEN NULL WHEN %2$s THEN SUBSTRING(%3$s FROM 1 FOR 10) ELSE TO_CHAR(%4$s, %5$s) END',
-					$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
-					$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
-					$expression_text_sql,
-					$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-					$this->connection->quote( 'YYYY-MM-DD' )
-				);
+			return sprintf(
+				'CASE WHEN %1$s THEN NULL WHEN %2$s THEN SUBSTRING(%3$s FROM 1 FOR 10) ELSE TO_CHAR(%4$s, %5$s) END',
+				$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
+				$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
+				$expression_text_sql,
+				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+				$this->connection->quote( 'YYYY-MM-DD' )
+			);
 		}
 
 		return $this->get_postgresql_mysql_generic_date_format_sql( $format, $expression_sql );
@@ -58066,38 +58055,31 @@ $wp_mysql_%1$s_domain$',
 	 * @return string|null PostgreSQL SQL fragment, or null when the specifier is not a week specifier.
 	 */
 	private function get_postgresql_mysql_date_format_week_specifier_sql( string $specifier, string $timestamp_sql ): ?string {
-		switch ( $specifier ) {
-			case 'U':
-				return $this->get_postgresql_mysql_zero_padded_week_sql(
-					$this->get_postgresql_mysql_sunday_week_mode_zero_sql( $timestamp_sql )
-				);
+		$zero_padded_week_methods = array(
+			'U' => 'get_postgresql_mysql_sunday_week_mode_zero_sql',
+			'u' => 'get_postgresql_mysql_week_mode_one_timestamp_sql',
+			'V' => 'get_postgresql_mysql_sunday_week_mode_two_sql',
+		);
+		if ( isset( $zero_padded_week_methods[ $specifier ] ) ) {
+			return $this->get_postgresql_mysql_zero_padded_week_sql(
+				$this->{$zero_padded_week_methods[ $specifier ]}( $timestamp_sql )
+			);
+		}
 
-			case 'u':
-				return $this->get_postgresql_mysql_zero_padded_week_sql(
-					$this->get_postgresql_mysql_week_mode_one_timestamp_sql( $timestamp_sql )
-				);
+		$to_char_formats = array(
+			'v' => 'IW',
+			'x' => 'IYYY',
+		);
+		if ( isset( $to_char_formats[ $specifier ] ) ) {
+			return sprintf(
+				'TO_CHAR(%s, %s)',
+				$timestamp_sql,
+				$this->connection->quote( $to_char_formats[ $specifier ] )
+			);
+		}
 
-			case 'V':
-				return $this->get_postgresql_mysql_zero_padded_week_sql(
-					$this->get_postgresql_mysql_sunday_week_mode_two_sql( $timestamp_sql )
-				);
-
-			case 'v':
-				return sprintf(
-					'TO_CHAR(%s, %s)',
-					$timestamp_sql,
-					$this->connection->quote( 'IW' )
-				);
-
-			case 'X':
-				return $this->get_postgresql_mysql_sunday_week_mode_two_year_sql( $timestamp_sql );
-
-			case 'x':
-				return sprintf(
-					'TO_CHAR(%s, %s)',
-					$timestamp_sql,
-					$this->connection->quote( 'IYYY' )
-				);
+		if ( 'X' === $specifier ) {
+			return $this->get_postgresql_mysql_sunday_week_mode_two_year_sql( $timestamp_sql );
 		}
 
 		return null;
