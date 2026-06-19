@@ -1342,16 +1342,6 @@ class WP_PostgreSQL_Driver {
 		return $this->last_result;
 	}
 
-	/**
-	 * Get an explicit unsupported error for unclaimed MySQL administration SQL.
-	 *
-	 * Supported SHOW/table-administration forms are dispatched before this guard.
-	 * If one of these MySQL-only statement families reaches the backend fallback,
-	 * fail closed rather than letting PostgreSQL parse incompatible SQL.
-	 *
-	 * @param string $query MySQL query.
-	 * @return string|null Unsupported error message, or null when not guarded.
-	 */
 	private function get_unsupported_mysql_administration_statement_message( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) ) {
