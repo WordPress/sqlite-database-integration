@@ -38050,6 +38050,107 @@ FROM pg_catalog.pg_tablespace ts';
 FROM pg_catalog.pg_tablespace ts';
 		}
 
+		if ( 'innodb_indexes' === $view ) {
+			return sprintf(
+				'SELECT
+	CAST(idx_class.oid AS bigint) AS "INDEX_ID",
+	CASE WHEN idx.indisprimary THEN \'PRIMARY\' ELSE idx_class.relname END AS "NAME",
+	CAST(table_class.oid AS bigint) AS "TABLE_ID",
+	CASE
+		WHEN idx.indisprimary THEN 3
+		WHEN idx.indisunique THEN 2
+		ELSE 0
+	END AS "TYPE",
+	CAST(idx.indnkeyatts AS bigint) AS "N_FIELDS",
+	0 AS "PAGE_NO",
+	CAST(COALESCE(NULLIF(table_class.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint) AS "SPACE",
+	50 AS "MERGE_THRESHOLD"
+FROM pg_catalog.pg_index idx
+JOIN pg_catalog.pg_class idx_class
+	ON idx_class.oid = idx.indexrelid
+JOIN pg_catalog.pg_class table_class
+	ON table_class.oid = idx.indrelid
+JOIN pg_catalog.pg_namespace table_ns
+	ON table_ns.oid = table_class.relnamespace
+LEFT JOIN pg_catalog.pg_database db
+	ON db.datname = current_database()
+WHERE table_class.relkind IN (\'r\', \'p\')
+	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
+	AND table_class.relname NOT IN (%1$s)',
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
+		if ( 'innodb_fields' === $view ) {
+			return sprintf(
+				'SELECT
+	CAST(idx_class.oid AS bigint) AS "INDEX_ID",
+	att.attname AS "NAME",
+	CAST(key_positions.position AS bigint) AS "POS"
+FROM pg_catalog.pg_index idx
+JOIN pg_catalog.pg_class idx_class
+	ON idx_class.oid = idx.indexrelid
+JOIN pg_catalog.pg_class table_class
+	ON table_class.oid = idx.indrelid
+JOIN pg_catalog.pg_namespace table_ns
+	ON table_ns.oid = table_class.relnamespace
+JOIN pg_catalog.generate_series(0, idx.indnkeyatts - 1) AS key_positions(position)
+	ON TRUE
+JOIN pg_catalog.pg_attribute att
+	ON att.attrelid = table_class.oid
+	AND att.attnum = idx.indkey[key_positions.position]
+WHERE table_class.relkind IN (\'r\', \'p\')
+	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
+	AND table_class.relname NOT IN (%1$s)',
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
+		if ( 'innodb_columns' === $view ) {
+			return sprintf(
+				'SELECT
+	CAST(c.oid AS bigint) AS "TABLE_ID",
+	a.attname AS "NAME",
+	CAST(a.attnum - 1 AS bigint) AS "POS",
+	CASE
+		WHEN typ.typcategory = \'N\' THEN 6
+		WHEN typ.typcategory = \'S\' THEN 1
+		WHEN typ.typcategory = \'B\' THEN 6
+		WHEN typ.typcategory = \'U\' THEN 14
+		ELSE 12
+	END AS "MTYPE",
+	0 AS "PRTYPE",
+	CAST(
+		CASE
+			WHEN a.atttypmod > 0 THEN GREATEST(a.atttypmod - 4, 0)
+			WHEN typ.typlen > 0 THEN typ.typlen
+			ELSE 0
+		END
+	AS bigint) AS "LEN",
+	CASE WHEN def.adbin IS NULL THEN 0 ELSE 1 END AS "HAS_DEFAULT",
+	CASE WHEN def.adbin IS NULL THEN NULL ELSE pg_catalog.pg_get_expr(def.adbin, def.adrelid) END AS "DEFAULT_VALUE"
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n
+	ON n.oid = c.relnamespace
+JOIN pg_catalog.pg_attribute a
+	ON a.attrelid = c.oid
+JOIN pg_catalog.pg_type typ
+	ON typ.oid = a.atttypid
+LEFT JOIN pg_catalog.pg_attrdef def
+	ON def.adrelid = a.attrelid
+	AND def.adnum = a.attnum
+WHERE c.relkind IN (\'r\', \'p\')
+	AND a.attnum > 0
+	AND NOT a.attisdropped
+	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(n.nspname, 3) <> \'pg_\'
+	AND c.relname NOT IN (%1$s)',
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
 		if ( 'columns_extensions' === $view ) {
 			return sprintf(
 				'SELECT
@@ -39135,122 +39236,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 	AND LEFT(n.nspname, 3) <> \'pg_\'
 	AND c.relname NOT IN (%2$s)',
 			$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.INNODB_INDEXES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_innodb_indexes_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	CAST(idx_class.oid AS bigint) AS "INDEX_ID",
-	CASE WHEN idx.indisprimary THEN \'PRIMARY\' ELSE idx_class.relname END AS "NAME",
-	CAST(table_class.oid AS bigint) AS "TABLE_ID",
-	CASE
-		WHEN idx.indisprimary THEN 3
-		WHEN idx.indisunique THEN 2
-		ELSE 0
-	END AS "TYPE",
-	CAST(idx.indnkeyatts AS bigint) AS "N_FIELDS",
-	0 AS "PAGE_NO",
-	CAST(COALESCE(NULLIF(table_class.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint) AS "SPACE",
-	50 AS "MERGE_THRESHOLD"
-FROM pg_catalog.pg_index idx
-JOIN pg_catalog.pg_class idx_class
-	ON idx_class.oid = idx.indexrelid
-JOIN pg_catalog.pg_class table_class
-	ON table_class.oid = idx.indrelid
-JOIN pg_catalog.pg_namespace table_ns
-	ON table_ns.oid = table_class.relnamespace
-LEFT JOIN pg_catalog.pg_database db
-	ON db.datname = current_database()
-WHERE table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
-	AND table_class.relname NOT IN (%1$s)',
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.INNODB_FIELDS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_innodb_fields_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	CAST(idx_class.oid AS bigint) AS "INDEX_ID",
-	att.attname AS "NAME",
-	CAST(key_positions.position AS bigint) AS "POS"
-FROM pg_catalog.pg_index idx
-JOIN pg_catalog.pg_class idx_class
-	ON idx_class.oid = idx.indexrelid
-JOIN pg_catalog.pg_class table_class
-	ON table_class.oid = idx.indrelid
-JOIN pg_catalog.pg_namespace table_ns
-	ON table_ns.oid = table_class.relnamespace
-JOIN pg_catalog.generate_series(0, idx.indnkeyatts - 1) AS key_positions(position)
-	ON TRUE
-JOIN pg_catalog.pg_attribute att
-	ON att.attrelid = table_class.oid
-	AND att.attnum = idx.indkey[key_positions.position]
-WHERE table_class.relkind IN (\'r\', \'p\')
-	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
-	AND table_class.relname NOT IN (%1$s)',
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.INNODB_COLUMNS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_innodb_columns_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	CAST(c.oid AS bigint) AS "TABLE_ID",
-	a.attname AS "NAME",
-	CAST(a.attnum - 1 AS bigint) AS "POS",
-	CASE
-		WHEN typ.typcategory = \'N\' THEN 6
-		WHEN typ.typcategory = \'S\' THEN 1
-		WHEN typ.typcategory = \'B\' THEN 6
-		WHEN typ.typcategory = \'U\' THEN 14
-		ELSE 12
-	END AS "MTYPE",
-	0 AS "PRTYPE",
-	CAST(
-		CASE
-			WHEN a.atttypmod > 0 THEN GREATEST(a.atttypmod - 4, 0)
-			WHEN typ.typlen > 0 THEN typ.typlen
-			ELSE 0
-		END
-	AS bigint) AS "LEN",
-	CASE WHEN def.adbin IS NULL THEN 0 ELSE 1 END AS "HAS_DEFAULT",
-	CASE WHEN def.adbin IS NULL THEN NULL ELSE pg_catalog.pg_get_expr(def.adbin, def.adrelid) END AS "DEFAULT_VALUE"
-FROM pg_catalog.pg_class c
-JOIN pg_catalog.pg_namespace n
-	ON n.oid = c.relnamespace
-JOIN pg_catalog.pg_attribute a
-	ON a.attrelid = c.oid
-JOIN pg_catalog.pg_type typ
-	ON typ.oid = a.atttypid
-LEFT JOIN pg_catalog.pg_attrdef def
-	ON def.adrelid = a.attrelid
-	AND def.adnum = a.attnum
-WHERE c.relkind IN (\'r\', \'p\')
-	AND a.attnum > 0
-	AND NOT a.attisdropped
-	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'
-	AND c.relname NOT IN (%1$s)',
 			$this->get_direct_information_schema_hidden_table_list_sql()
 		);
 	}
