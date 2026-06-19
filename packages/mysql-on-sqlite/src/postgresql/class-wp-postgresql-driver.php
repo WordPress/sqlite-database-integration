@@ -17,7 +17,6 @@ class WP_PostgreSQL_Driver {
 	const MYSQL_INDEX_METADATA_TABLE       = '__wp_postgresql_mysql_index_metadata';
 	const MYSQL_FOREIGN_KEY_METADATA_TABLE = '__wp_postgresql_mysql_foreign_key_metadata';
 	const MYSQL_CHECK_METADATA_TABLE       = '__wp_postgresql_mysql_check_metadata';
-	const MYSQL_CHARSET_METADATA_TABLE     = '__wp_postgresql_mysql_charset_metadata';
 	const MYSQL_TABLE_METADATA_TABLE       = '__wp_postgresql_mysql_table_metadata';
 	const DEFAULT_MYSQL_CHARSET            = 'utf8mb4';
 	const DEFAULT_MYSQL_COLLATION          = 'utf8mb4_unicode_ci';
@@ -39968,10 +39967,7 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 			return array();
 		}
 
-		return array_merge(
-			$this->get_mysql_schema_side_metadata_table_names(),
-			array( self::MYSQL_CHARSET_METADATA_TABLE )
-		);
+		return $this->get_mysql_schema_side_metadata_table_names();
 	}
 
 	/**

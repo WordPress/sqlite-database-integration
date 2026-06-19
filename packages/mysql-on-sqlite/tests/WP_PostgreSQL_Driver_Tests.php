@@ -2288,7 +2288,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -10931,7 +10930,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -11333,7 +11331,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -11449,7 +11446,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -13158,7 +13154,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -21216,7 +21211,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -21691,7 +21685,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -21864,7 +21857,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -22194,7 +22186,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -22513,7 +22504,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -22585,7 +22575,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -22667,7 +22656,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -29640,8 +29628,7 @@ $wp_mysql_on_update$',
 				(table_schema, table_name, table_type)
 			VALUES
 				('public', '__wp_postgresql_mysql_column_metadata', 'BASE TABLE'),
-				('public', '__wp_postgresql_mysql_index_metadata', 'BASE TABLE'),
-				('public', '__wp_postgresql_mysql_charset_metadata', 'BASE TABLE')"
+				('public', '__wp_postgresql_mysql_index_metadata', 'BASE TABLE')"
 		);
 
 		$raw_catalog_tables = $driver->get_connection()->query(
@@ -29650,15 +29637,13 @@ $wp_mysql_on_update$',
 			WHERE table_schema = 'public'
 				AND table_name IN (
 					'__wp_postgresql_mysql_column_metadata',
-					'__wp_postgresql_mysql_index_metadata',
-					'__wp_postgresql_mysql_charset_metadata'
+					'__wp_postgresql_mysql_index_metadata'
 				)
 			ORDER BY table_name"
 		)->fetchAll( PDO::FETCH_COLUMN );
 
 		$this->assertSame(
 			array(
-				'__wp_postgresql_mysql_charset_metadata',
 				'__wp_postgresql_mysql_column_metadata',
 				'__wp_postgresql_mysql_index_metadata',
 			),
@@ -29808,7 +29793,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -29870,7 +29854,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$tables = $driver->query( 'SHOW TABLE STATUS' );
@@ -30014,7 +29997,6 @@ $wp_mysql_on_update$',
 			VALUES
 				('public', '__wp_postgresql_mysql_column_metadata', 'BASE TABLE'),
 				('public', '__wp_postgresql_mysql_index_metadata', 'BASE TABLE'),
-				('public', '__wp_postgresql_mysql_charset_metadata', 'BASE TABLE'),
 				('public', 'other_visible', 'BASE TABLE')"
 		);
 
@@ -30446,7 +30428,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -30562,7 +30543,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$tables = $driver->query( 'SHOW CREATE TABLE wptests_show_create' );
@@ -31745,7 +31725,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( false !== strpos( $sql, $metadata_table ) ) {
@@ -32471,7 +32450,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -33476,7 +33454,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -33922,7 +33899,6 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -33957,7 +33933,6 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -34022,7 +33997,6 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -34055,7 +34029,6 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -34176,7 +34149,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 		$sql             = $this->translate_driver_query_with_private_method(
 			$driver,
@@ -34226,7 +34198,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		foreach ( $get_relations() as $relation ) {
@@ -34631,7 +34602,6 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE, $sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $sql );
 	}
 
 	/**
@@ -35714,7 +35684,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -35950,7 +35919,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -36196,7 +36164,6 @@ $wp_mysql_on_update$',
 				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 			) as $metadata_table
 		) {
 			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ), $metadata_table );
@@ -36493,7 +36460,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 		$reflection       = new ReflectionClass( WP_PostgreSQL_Driver::class );
 		$offenders        = array();
@@ -36655,7 +36621,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -36702,7 +36667,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$rows = $driver->query(
@@ -36826,7 +36790,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -36868,7 +36831,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$rows = $driver->query(
@@ -37027,7 +36989,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -37086,7 +37047,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$describe = $driver->query( 'DESCRIBE wptests_options' );
@@ -37249,7 +37209,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -37305,7 +37264,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$connection->get_pdo()->exec( 'CREATE TABLE catalog_dml_columnless (id INTEGER NOT NULL, value TEXT)' );
@@ -37377,7 +37335,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -37446,7 +37403,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$pdo->exec( "ATTACH DATABASE ':memory:' AS plugin_schema" );
@@ -37512,7 +37468,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -37568,7 +37523,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$connection->get_pdo()->exec( 'CREATE TABLE catalog_dml_insert_select_columnless (id INTEGER NOT NULL, value TEXT)' );
@@ -38458,7 +38412,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -38513,7 +38466,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 		$queries         = array(
 			'schemata'   => array(
@@ -38740,7 +38692,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -38786,7 +38737,6 @@ $wp_mysql_on_update$',
 		$character_sets_sql = $this->get_last_single_postgresql_sql( $driver );
 		$this->assertStringContainsString( "'utf8' AS \"CHARACTER_SET_NAME\"", $character_sets_sql );
 		$this->assertStringContainsString( "'utf8mb4' AS \"CHARACTER_SET_NAME\"", $character_sets_sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $character_sets_sql );
 
 		$collations = $driver->query(
 			"SELECT collation_name, character_set_name
@@ -38815,7 +38765,6 @@ $wp_mysql_on_update$',
 		$collations_sql = $this->get_last_single_postgresql_sql( $driver );
 		$this->assertStringContainsString( "'utf8mb4_bin' AS \"COLLATION_NAME\"", $collations_sql );
 		$this->assertStringContainsString( "'utf8mb4_unicode_ci' AS \"COLLATION_NAME\"", $collations_sql );
-		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE, $collations_sql );
 
 		$this->assertGreaterThanOrEqual( 2, count( $connection->get_queries() ) );
 		$this->assertSame(
@@ -39966,7 +39915,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -40009,7 +39957,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$rows = $driver->query(
@@ -40122,7 +40069,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -40191,7 +40137,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$table_constraints = $driver->query(
@@ -40921,7 +40866,6 @@ $wp_mysql_on_update$',
 						WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 						WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-						WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 					) as $metadata_table
 				) {
 					if ( 1 === preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) ) {
@@ -40978,7 +40922,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-			WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 		);
 
 		$indexes = $driver->query( 'SHOW INDEX FROM `wptests_options`;' );
