@@ -18690,7 +18690,7 @@ ORDER BY table_name';
 	 * @return mixed SHOW TABLE STATUS result rows.
 	 */
 	private function execute_show_table_status_query( array $show_table_status_query, $fetch_mode, ...$fetch_mode_args ) {
-		$columns = $this->get_show_table_status_result_columns();
+		$columns = explode( ' ', 'Name Engine Version Row_format Rows Avg_row_length Data_length Max_data_length Index_length Data_free Auto_increment Create_time Update_time Check_time Collation Checksum Create_options Comment' );
 		if ( 0 === strcasecmp( $show_table_status_query['database'], 'information_schema' ) ) {
 			$rows = $this->filter_show_table_status_rows(
 				$this->get_information_schema_show_table_status_rows(),
@@ -18761,15 +18761,6 @@ ORDER BY table_name';
 			},
 			$this->get_direct_information_schema_relation_names()
 		);
-	}
-
-	/**
-	 * Get MySQL SHOW TABLE STATUS result columns.
-	 *
-	 * @return string[] Column names.
-	 */
-	private function get_show_table_status_result_columns(): array {
-		return explode( ' ', 'Name Engine Version Row_format Rows Avg_row_length Data_length Max_data_length Index_length Data_free Auto_increment Create_time Update_time Check_time Collation Checksum Create_options Comment' );
 	}
 
 	/**
@@ -20293,45 +20284,6 @@ ORDER BY table_name';
 	}
 
 	/**
-	 * Get static MySQL-compatible SHOW COLLATION rows.
-	 *
-	 * @return array[] SHOW COLLATION rows.
-	 */
-	private function get_mysql_static_show_collation_rows(): array {
-		$rows = array();
-		foreach ( $this->get_mysql_static_collation_rows() as $row ) {
-			$rows[] = array(
-				'Collation'     => $row['COLLATION_NAME'],
-				'Charset'       => $row['CHARACTER_SET_NAME'],
-				'Id'            => $row['ID'],
-				'Default'       => $row['IS_DEFAULT'],
-				'Compiled'      => $row['IS_COMPILED'],
-				'Sortlen'       => $row['SORTLEN'],
-				'Pad_attribute' => $row['PAD_ATTRIBUTE'],
-			);
-		}
-		return $rows;
-	}
-
-	/**
-	 * Get static MySQL-compatible SHOW CHARACTER SET rows.
-	 *
-	 * @return array[] SHOW CHARACTER SET rows.
-	 */
-	private function get_mysql_static_show_character_set_rows(): array {
-		$rows = array();
-		foreach ( $this->get_mysql_static_character_set_rows() as $row ) {
-			$rows[] = array(
-				'Charset'           => $row['CHARACTER_SET_NAME'],
-				'Description'       => $row['DESCRIPTION'],
-				'Default collation' => $row['DEFAULT_COLLATE_NAME'],
-				'Maxlen'            => $row['MAXLEN'],
-			);
-		}
-		return $rows;
-	}
-
-	/**
 	 * Get static MySQL-compatible SHOW ENGINES rows.
 	 *
 	 * @return array[] SHOW ENGINES rows.
@@ -20375,7 +20327,17 @@ ORDER BY table_name';
 	 */
 	private function execute_show_character_set_query( array $show_character_set_query, $fetch_mode, ...$fetch_mode_args ) {
 		$rows = $this->filter_mysql_static_show_rows(
-			$this->get_mysql_static_show_character_set_rows(),
+			array_map(
+				static function ( array $row ): array {
+					return array(
+						'Charset'           => $row['CHARACTER_SET_NAME'],
+						'Description'       => $row['DESCRIPTION'],
+						'Default collation' => $row['DEFAULT_COLLATE_NAME'],
+						'Maxlen'            => $row['MAXLEN'],
+					);
+				},
+				$this->get_mysql_static_character_set_rows()
+			),
 			$show_character_set_query
 		);
 
@@ -20397,7 +20359,20 @@ ORDER BY table_name';
 	 */
 	private function execute_show_collation_query( array $show_collation_query, $fetch_mode, ...$fetch_mode_args ) {
 		$rows = $this->filter_mysql_static_show_rows(
-			$this->get_mysql_static_show_collation_rows(),
+			array_map(
+				static function ( array $row ): array {
+					return array(
+						'Collation'     => $row['COLLATION_NAME'],
+						'Charset'       => $row['CHARACTER_SET_NAME'],
+						'Id'            => $row['ID'],
+						'Default'       => $row['IS_DEFAULT'],
+						'Compiled'      => $row['IS_COMPILED'],
+						'Sortlen'       => $row['SORTLEN'],
+						'Pad_attribute' => $row['PAD_ATTRIBUTE'],
+					);
+				},
+				$this->get_mysql_static_collation_rows()
+			),
 			$show_collation_query
 		);
 
