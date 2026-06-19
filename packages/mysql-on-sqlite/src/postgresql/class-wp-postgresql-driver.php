@@ -30671,7 +30671,10 @@ WHERE option_name IN (
 		$year_sql        = sprintf( 'CAST(%s AS integer)', $year_text_sql );
 		$month_sql       = sprintf( 'CAST(%s AS integer)', $month_text_sql );
 		$day_sql         = sprintf( 'CAST(%s AS integer)', $day_text_sql );
-		$error_sql       = $this->get_postgresql_mysql_inline_temporal_validation_error_sql( $value_sql_alias );
+		$error_sql       = sprintf(
+			"CAST(CAST('__wp_pg_invalid_temporal__' || COALESCE(%s, '') AS timestamp) AS text)",
+			$value_sql_alias
+		);
 
 		if ( 'date' === $mysql_type ) {
 			$format_condition_sql = sprintf(
@@ -30745,19 +30748,6 @@ WHERE option_name IN (
 			'(SELECT CASE %s ELSE %s END FROM (SELECT CAST(%s AS text) AS "value") AS "__wp_pg_mysql_temporal_value")',
 			implode( ' ', $when_clauses ),
 			$error_sql,
-			$value_sql
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL that raises an invalid timestamp input error when evaluated.
-	 *
-	 * @param string $value_sql Runtime value SQL.
-	 * @return string Error expression SQL.
-	 */
-	private function get_postgresql_mysql_inline_temporal_validation_error_sql( string $value_sql ): string {
-		return sprintf(
-			"CAST(CAST('__wp_pg_invalid_temporal__' || COALESCE(%s, '') AS timestamp) AS text)",
 			$value_sql
 		);
 	}
