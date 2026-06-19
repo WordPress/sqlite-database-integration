@@ -43207,26 +43207,6 @@ END',
 	}
 
 	/**
-	 * Get MySQL column charset metadata from a PostgreSQL column comment.
-	 *
-	 * @param string $column_comment_sql SQL expression returning a PostgreSQL column comment.
-	 * @return string SQL expression returning the decoded MySQL charset, or NULL.
-	 */
-	private function get_postgresql_catalog_column_charset_comment_sql( string $column_comment_sql ): string {
-		return $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_CHARSET_PREFIX );
-	}
-
-	/**
-	 * Get MySQL column collation metadata from a PostgreSQL column comment.
-	 *
-	 * @param string $column_comment_sql SQL expression returning a PostgreSQL column comment.
-	 * @return string SQL expression returning the decoded MySQL collation, or NULL.
-	 */
-	private function get_postgresql_catalog_column_collation_comment_sql( string $column_comment_sql ): string {
-		return $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_COLLATION_PREFIX );
-	}
-
-	/**
 	 * Get internal MySQL metadata from a PostgreSQL column comment marker line.
 	 *
 	 * @param string $column_comment_sql SQL expression returning a PostgreSQL column comment.
@@ -43460,7 +43440,7 @@ END',
 	private function get_direct_information_schema_character_set_expression( string $column_type_sql, string $metadata_sql, ?string $column_comment_sql = null, ?string $default_charset_sql = null ): string {
 		$comment_charset_sql = null === $column_comment_sql
 			? 'NULL'
-			: $this->get_postgresql_catalog_column_charset_comment_sql( $column_comment_sql );
+			: $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_CHARSET_PREFIX );
 		$default_charset_sql = $default_charset_sql ?? $this->connection->quote( $this->charset );
 
 		return sprintf(
@@ -43489,7 +43469,7 @@ END',
 	private function get_direct_information_schema_collation_expression( string $column_type_sql, string $metadata_sql, ?string $column_comment_sql = null, ?string $default_collation_sql = null ): string {
 		$comment_collation_sql = null === $column_comment_sql
 			? 'NULL'
-			: $this->get_postgresql_catalog_column_collation_comment_sql( $column_comment_sql );
+			: $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_COLLATION_PREFIX );
 		$default_collation_sql = $default_collation_sql ?? $this->connection->quote( $this->collation );
 
 		return sprintf(
