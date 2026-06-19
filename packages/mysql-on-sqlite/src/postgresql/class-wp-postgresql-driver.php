@@ -2668,6 +2668,27 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
+	 * Execute one PostgreSQL statement and record it in the query log.
+	 *
+	 * @param string $statement    PostgreSQL SQL statement.
+	 * @param bool   $close_cursor Whether to close the cursor after reading row count.
+	 * @return int Affected row count.
+	 */
+	private function execute_postgresql_logged_statement( string $statement, bool $close_cursor = false ): int {
+		$stmt                            = $this->connection->query( $statement );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $statement,
+			'params' => array(),
+		);
+		$row_count                       = $stmt->rowCount();
+		if ( $close_cursor ) {
+			$stmt->closeCursor();
+		}
+
+		return $row_count;
+	}
+
+	/**
 	 * Execute translated DML statements for a single MySQL-facing query.
 	 *
 	 * @param array    $dml_query    Translated DML query metadata.
@@ -2717,13 +2738,7 @@ class WP_PostgreSQL_Driver {
 			: array();
 
 		foreach ( $materialize_statements as $statement ) {
-			$statement                       = (string) $statement;
-			$stmt                            = $this->connection->query( $statement );
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $statement,
-				'params' => array(),
-			);
-			$stmt->closeCursor();
+			$this->execute_postgresql_logged_statement( (string) $statement, true );
 		}
 
 		try {
@@ -2745,25 +2760,13 @@ class WP_PostgreSQL_Driver {
 				} else {
 					$affected_rows = 0;
 					foreach ( $mutation_statements as $statement ) {
-						$statement                       = (string) $statement;
-						$stmt                            = $this->connection->query( $statement );
-						$this->last_postgresql_queries[] = array(
-							'sql'    => $statement,
-							'params' => array(),
-						);
-						$affected_rows                  += $stmt->rowCount();
+						$affected_rows += $this->execute_postgresql_logged_statement( (string) $statement );
 					}
 				}
 			}
 		} finally {
 			foreach ( $cleanup_statements as $statement ) {
-				$statement                       = (string) $statement;
-				$stmt                            = $this->connection->query( $statement );
-				$this->last_postgresql_queries[] = array(
-					'sql'    => $statement,
-					'params' => array(),
-				);
-				$stmt->closeCursor();
+				$this->execute_postgresql_logged_statement( (string) $statement, true );
 			}
 		}
 
@@ -3164,7 +3167,7 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
-		$create_ordinal_table_sql        = sprintf(
+		$create_ordinal_table_sql = sprintf(
 			'CREATE TEMPORARY TABLE %s AS SELECT ROW_NUMBER() OVER () AS %s, %s.* FROM %s AS %s',
 			$upsert_query['ordinal_source_table_sql'],
 			$quoted_ordinal,
@@ -3172,12 +3175,7 @@ class WP_PostgreSQL_Driver {
 			$upsert_query['source_table_sql'],
 			$source_alias
 		);
-		$stmt                            = $this->connection->query( $create_ordinal_table_sql );
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $create_ordinal_table_sql,
-			'params' => array(),
-		);
-		$stmt->closeCursor();
+		$this->execute_postgresql_logged_statement( $create_ordinal_table_sql, true );
 
 		$drop_ordinal_table_sql = sprintf( 'DROP TABLE IF EXISTS %s', $upsert_query['ordinal_source_table_sql'] );
 
@@ -3222,12 +3220,7 @@ class WP_PostgreSQL_Driver {
 
 			return $affected_rows;
 		} finally {
-			$stmt                            = $this->connection->query( $drop_ordinal_table_sql );
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $drop_ordinal_table_sql,
-				'params' => array(),
-			);
-			$stmt->closeCursor();
+			$this->execute_postgresql_logged_statement( $drop_ordinal_table_sql, true );
 		}
 	}
 
@@ -3249,13 +3242,7 @@ class WP_PostgreSQL_Driver {
 			: array();
 
 		foreach ( $materialize_statements as $statement ) {
-			$statement                       = (string) $statement;
-			$stmt                            = $this->connection->query( $statement );
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $statement,
-				'params' => array(),
-			);
-			$stmt->closeCursor();
+			$this->execute_postgresql_logged_statement( (string) $statement, true );
 		}
 
 		try {
@@ -3285,24 +3272,12 @@ class WP_PostgreSQL_Driver {
 			if ( ! $has_duplicate ) {
 				$affected_rows = 0;
 				foreach ( $mutation_statements as $statement ) {
-					$statement                       = (string) $statement;
-					$stmt                            = $this->connection->query( $statement );
-					$this->last_postgresql_queries[] = array(
-						'sql'    => $statement,
-						'params' => array(),
-					);
-					$affected_rows                  += $stmt->rowCount();
+					$affected_rows += $this->execute_postgresql_logged_statement( (string) $statement );
 				}
 			}
 		} finally {
 			foreach ( $cleanup_statements as $statement ) {
-				$statement                       = (string) $statement;
-				$stmt                            = $this->connection->query( $statement );
-				$this->last_postgresql_queries[] = array(
-					'sql'    => $statement,
-					'params' => array(),
-				);
-				$stmt->closeCursor();
+				$this->execute_postgresql_logged_statement( (string) $statement, true );
 			}
 		}
 
@@ -3413,23 +3388,13 @@ class WP_PostgreSQL_Driver {
 				);
 
 				foreach ( array( $delete_sql, $insert_sql ) as $statement ) {
-					$stmt                            = $this->connection->query( $statement );
-					$this->last_postgresql_queries[] = array(
-						'sql'    => $statement,
-						'params' => array(),
-					);
-					$affected_rows                  += $stmt->rowCount();
+					$affected_rows += $this->execute_postgresql_logged_statement( $statement );
 				}
 			}
 
 			return $affected_rows;
 		} finally {
-			$stmt                            = $this->connection->query( $drop_ordinal_table_sql );
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $drop_ordinal_table_sql,
-				'params' => array(),
-			);
-			$stmt->closeCursor();
+			$this->execute_postgresql_logged_statement( $drop_ordinal_table_sql, true );
 		}
 	}
 
@@ -5744,7 +5709,7 @@ $wp_mysql_on_update$',
 	 */
 	private function apply_mysql_add_column_metadata( string $table_schema, string $table_name, array $metadata ): void {
 		$column              = $metadata['column'];
-		$catalog_recoverable = $this->is_postgresql_catalog_recoverable_mysql_add_column_metadata( $metadata );
+		$catalog_recoverable = $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata );
 		if ( $this->should_use_postgresql_catalog_metadata() && $catalog_recoverable ) {
 			$column_comment = $this->get_postgresql_catalog_column_comment( $column );
 			if ( '' !== $column_comment ) {
@@ -5798,37 +5763,6 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Check whether PostgreSQL catalogs can reconstruct added column metadata.
-	 *
-	 * @param array $metadata ADD COLUMN metadata.
-	 * @return bool Whether stored side metadata can be skipped.
-	 */
-	private function is_postgresql_catalog_recoverable_mysql_add_column_metadata( array $metadata ): bool {
-		foreach ( $metadata['indexes'] ?? array() as $index ) {
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_index_metadata( $index ) ) {
-				return false;
-			}
-		}
-
-		foreach ( $metadata['checks'] ?? array() as $check ) {
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check ) ) {
-				return false;
-			}
-		}
-
-		$column = $metadata['column'];
-		if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_type( (string) ( $column['type'] ?? '' ) ) ) {
-			return false;
-		}
-
-		if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_default( $column['default'] ?? null, $column['extra'] ?? '' ) ) {
-			return false;
-		}
-
-		return $this->is_postgresql_catalog_recoverable_mysql_column_extra( $column['extra'] ?? '', $column );
-	}
-
-	/**
 	 * Apply metadata updates for ALTER TABLE CHANGE/MODIFY COLUMN.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -5837,7 +5771,7 @@ $wp_mysql_on_update$',
 	 */
 	private function apply_mysql_change_column_metadata( string $table_schema, string $table_name, array $metadata ): void {
 		$column              = $metadata['column'];
-		$catalog_recoverable = $this->is_postgresql_catalog_recoverable_mysql_change_column_metadata( $metadata );
+		$catalog_recoverable = $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata );
 
 		if ( $this->should_use_postgresql_catalog_metadata() && $catalog_recoverable ) {
 			$old_has_on_update = $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] );
@@ -5924,12 +5858,12 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Check whether PostgreSQL catalogs can reconstruct changed column metadata.
+	 * Check whether PostgreSQL catalogs can reconstruct ALTER COLUMN metadata.
 	 *
-	 * @param array $metadata CHANGE/MODIFY COLUMN metadata.
+	 * @param array $metadata Column metadata.
 	 * @return bool Whether stored side metadata can be skipped.
 	 */
-	private function is_postgresql_catalog_recoverable_mysql_change_column_metadata( array $metadata ): bool {
+	private function is_postgresql_catalog_recoverable_mysql_column_metadata( array $metadata ): bool {
 		foreach ( $metadata['indexes'] ?? array() as $index ) {
 			if ( ! $this->is_postgresql_catalog_recoverable_mysql_index_metadata( $index ) ) {
 				return false;
