@@ -19925,18 +19925,7 @@ ORDER BY table_name';
 				'sql'    => $sql,
 				'params' => array(),
 			);
-			$rows                            = array_map(
-				static function ( array $row ): array {
-					return array(
-						'Name'    => (string) ( $row['Name'] ?? '' ),
-						'Status'  => (string) ( $row['Status'] ?? '' ),
-						'Type'    => (string) ( $row['Type'] ?? '' ),
-						'Library' => isset( $row['Library'] ) ? (string) $row['Library'] : null,
-						'License' => (string) ( $row['License'] ?? '' ),
-					);
-				},
-				$stmt->fetchAll( PDO::FETCH_ASSOC )
-			);
+			$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
 		}
 		$rows = $this->filter_mysql_static_show_rows( $rows, $show_plugins_query );
 
