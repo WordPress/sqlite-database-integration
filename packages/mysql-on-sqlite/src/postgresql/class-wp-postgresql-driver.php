@@ -1714,11 +1714,10 @@ class WP_PostgreSQL_Driver {
 			return 'Unsupported CREATE TABLE statement.';
 		}
 
-		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
-			return 'Unsupported CREATE TABLE statement.';
-		}
-
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id ) {
+		if (
+			$this->is_at_mysql_query_end( $tokens, $position )
+			|| ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id )
+		) {
 			return 'Unsupported CREATE TABLE statement.';
 		}
 
@@ -1728,40 +1727,17 @@ class WP_PostgreSQL_Driver {
 			++$position;
 		}
 
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id ) {
-			return 'Unsupported CREATE TABLE statement.';
-		}
-
-		if ( $has_as && isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
-			return 'Unsupported CREATE TABLE statement.';
-		}
-
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
+		if (
+			! isset( $tokens[ $position ] )
+			|| ( $has_as && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id
+		) {
 			return 'Unsupported CREATE TABLE statement.';
 		}
 
 		$definition_end = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $statement_end );
-		if ( null === $definition_end ) {
-			return 'Unsupported CREATE TABLE statement.';
-		}
-
-		$position = $definition_end;
-		if ( $this->is_at_mysql_query_end( $tokens, $position ) ) {
+		if ( null !== $definition_end && $this->is_at_mysql_query_end( $tokens, $definition_end ) ) {
 			return null;
-		}
-
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		if (
-			isset( $tokens[ $position ] )
-			&& (
-				WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $position ]->id
-				|| WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id
-			)
-		) {
-			return 'Unsupported CREATE TABLE statement.';
 		}
 
 		return 'Unsupported CREATE TABLE statement.';
