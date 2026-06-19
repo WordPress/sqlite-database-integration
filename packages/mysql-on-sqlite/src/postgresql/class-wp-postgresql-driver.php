@@ -20510,7 +20510,7 @@ ORDER BY t."TRIGGER_NAME"';
 	 * @return mixed SHOW EVENTS result rows.
 	 */
 	private function execute_show_events_query( array $show_events_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->get_show_events_relation_rows( $show_events_query['schema'] );
+		$rows = array();
 		$rows = $this->filter_mysql_static_show_rows( $rows, $show_events_query['filter'] );
 
 		return $this->set_mysql_static_show_result(
@@ -20534,65 +20534,6 @@ ORDER BY t."TRIGGER_NAME"';
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Get MySQL-shaped SHOW EVENTS rows from the direct information_schema relation.
-	 *
-	 * @param string $schema_name MySQL-facing schema name.
-	 * @return array[] Rows keyed by SHOW EVENTS column names.
-	 */
-	private function get_show_events_relation_rows( string $schema_name ): array {
-		$sql  = 'SELECT
-		e."EVENT_SCHEMA" AS "Db",
-		e."EVENT_NAME" AS "Name",
-		e."DEFINER" AS "Definer",
-		e."TIME_ZONE" AS "Time zone",
-		e."EVENT_TYPE" AS "Type",
-		e."EXECUTE_AT" AS "Execute at",
-		e."INTERVAL_VALUE" AS "Interval value",
-		e."INTERVAL_FIELD" AS "Interval field",
-		e."STARTS" AS "Starts",
-		e."ENDS" AS "Ends",
-		e."STATUS" AS "Status",
-		e."ORIGINATOR" AS "Originator",
-		e."CHARACTER_SET_CLIENT" AS "character_set_client",
-		e."COLLATION_CONNECTION" AS "collation_connection",
-		e."DATABASE_COLLATION" AS "Database Collation"
-	FROM (
-' . $this->get_direct_information_schema_empty_relation_sql( 'events' ) . '
-	) e
-	WHERE e."EVENT_SCHEMA" = ?
-	ORDER BY e."EVENT_NAME"';
-		$stmt = $this->connection->query( $sql, array( $schema_name ) );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => array( $schema_name ),
-		);
-
-		return array_map(
-			static function ( array $row ): array {
-				return array(
-					'Db'                   => (string) ( $row['Db'] ?? '' ),
-					'Name'                 => (string) ( $row['Name'] ?? '' ),
-					'Definer'              => (string) ( $row['Definer'] ?? '' ),
-					'Time zone'            => (string) ( $row['Time zone'] ?? '' ),
-					'Type'                 => (string) ( $row['Type'] ?? '' ),
-					'Execute at'           => isset( $row['Execute at'] ) ? (string) $row['Execute at'] : null,
-					'Interval value'       => isset( $row['Interval value'] ) ? (string) $row['Interval value'] : null,
-					'Interval field'       => isset( $row['Interval field'] ) ? (string) $row['Interval field'] : null,
-					'Starts'               => isset( $row['Starts'] ) ? (string) $row['Starts'] : null,
-					'Ends'                 => isset( $row['Ends'] ) ? (string) $row['Ends'] : null,
-					'Status'               => (string) ( $row['Status'] ?? '' ),
-					'Originator'           => (string) ( $row['Originator'] ?? '' ),
-					'character_set_client' => (string) ( $row['character_set_client'] ?? '' ),
-					'collation_connection' => (string) ( $row['collation_connection'] ?? '' ),
-					'Database Collation'   => (string) ( $row['Database Collation'] ?? '' ),
-				);
-			},
-			$stmt->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 

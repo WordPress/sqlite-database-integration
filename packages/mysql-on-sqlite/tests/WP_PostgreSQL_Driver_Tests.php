@@ -36222,11 +36222,7 @@ $wp_mysql_on_update$',
 		$this->assertSame( array(), $rows );
 		$this->assertSame( $columns, array_column( $driver->get_last_column_meta(), 'name' ) );
 
-		$queries = $driver->get_last_postgresql_queries();
-		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'WHERE e."EVENT_SCHEMA" = ?', $queries[0]['sql'] );
-		$this->assertStringContainsString( 'WHERE 1 = 0', $queries[0]['sql'] );
-		$this->assertSame( array( 'wptests' ), $queries[0]['params'] );
+		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 
 		$like_rows = $driver->query( "SHOW EVENTS LIKE 'ev_%'" );
 		$this->assertSame( array(), $like_rows );
