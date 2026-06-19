@@ -20810,7 +20810,7 @@ FROM (
 	WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %4$s), %5$s)
 		AND "TABLE_NAME" = ?
 ) AS show_index_rows',
-			$this->get_show_index_select_column_sql(),
+			'"' . implode( '",' . "\n\t" . '"', $this->get_show_index_output_columns() ) . '"',
 			$this->get_show_index_relation_select_sql(),
 			$this->get_direct_information_schema_relation_sql(
 				'statistics',
@@ -21232,15 +21232,6 @@ ORDER BY
 		AND a.attnum = k.attnum' . $join_sql . '
 	WHERE ' . implode( "\n\t\tAND ", $where_conditions ) . '
 )';
-	}
-
-	/**
-	 * Get the projected output columns for SHOW INDEX-family SQL.
-	 *
-	 * @return string SQL column list.
-	 */
-	private function get_show_index_select_column_sql(): string {
-		return '"' . implode( '",' . "\n\t" . '"', $this->get_show_index_output_columns() ) . '"';
 	}
 
 	/**
