@@ -35688,18 +35688,41 @@ WHERE "TABLE_SCHEMA" = %3$s
 		}
 
 		$has_information_schema_source = false;
-		foreach ( $sources as $source ) {
-			if ( isset( $source['view'] ) || isset( $source['relation_sql'] ) ) {
-				$has_information_schema_source = true;
-				break;
-			}
-		}
+		$main_table_count              = 0;
+		$source_count                  = count( $sources );
+		$non_join_relations            = explode( ' ', 'collation_character_set_applicability column_statistics columns_extensions files innodb_datafiles innodb_lock_waits innodb_tablespaces innodb_tablespaces_brief keywords optimizer_trace partitions profiling resource_groups schemata_extensions st_geometry_columns table_constraints_extensions tablespaces_extensions user_attributes view_routine_usage view_table_usage' );
 
-		if ( ! $has_information_schema_source ) {
+		foreach ( $sources as $source ) {
+			if ( isset( $source['relation_sql'] ) ) {
+				$has_information_schema_source = true;
+				continue;
+			}
+
+			if ( isset( $source['view'] ) ) {
+				if ( $source_count > 1 && in_array( strtolower( $source['view'] ), $non_join_relations, true ) ) {
+					return null;
+				}
+
+				$has_information_schema_source = true;
+				continue;
+			}
+
+			if ( $source_count <= 1 || isset( $source['cte'] ) ) {
+				continue;
+			}
+
+			if ( isset( $source['table'] ) ) {
+				++$main_table_count;
+				if ( $main_table_count > 1 ) {
+					return null;
+				}
+				continue;
+			}
+
 			return null;
 		}
 
-		if ( count( $sources ) > 1 && ! $this->direct_information_schema_sources_are_joinable( $sources ) ) {
+		if ( ! $has_information_schema_source ) {
 			return null;
 		}
 
@@ -35863,8 +35886,15 @@ WHERE "TABLE_SCHEMA" = %3$s
 			return null;
 		}
 
-		$columns = $this->get_direct_information_schema_main_table_columns( $reference['table'] );
-		if ( null === $columns ) {
+		$columns = array();
+		foreach ( $this->get_mysql_dml_column_metadata( $reference['table'] ) as $column ) {
+			if ( ! isset( $column['column_name'] ) ) {
+				return null;
+			}
+			$columns[] = (string) $column['column_name'];
+		}
+
+		if ( empty( $columns ) ) {
 			return null;
 		}
 
@@ -35874,24 +35904,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 			'position' => $reference['position'],
 			'columns'  => $columns,
 		);
-	}
-
-	/**
-	 * Get MySQL-facing column names for a main-database table source.
-	 *
-	 * @param string $table_name Table name.
-	 * @return string[]|null Ordered column names, or null when unavailable.
-	 */
-	private function get_direct_information_schema_main_table_columns( string $table_name ): ?array {
-		$columns = array();
-		foreach ( $this->get_mysql_dml_column_metadata( $table_name ) as $column ) {
-			if ( ! isset( $column['column_name'] ) ) {
-				return null;
-			}
-			$columns[] = (string) $column['column_name'];
-		}
-
-		return empty( $columns ) ? null : $columns;
 	}
 
 	/**
@@ -36701,51 +36713,9 @@ WHERE "TABLE_SCHEMA" = %3$s
 		return false;
 	}
 
-	/**
-	 * Check whether direct information_schema sources are safe for a multi-source rewrite.
-	 *
-	 * @param array[] $sources Parsed direct information_schema sources.
-	 * @return bool Whether the sources are safe to rewrite together.
-	 */
-	private function direct_information_schema_sources_are_joinable( array $sources ): bool {
-		$has_information_schema_source = false;
-		$main_table_count              = 0;
-		$non_join_relations            = explode( ' ', 'collation_character_set_applicability column_statistics columns_extensions files innodb_datafiles innodb_lock_waits innodb_tablespaces innodb_tablespaces_brief keywords optimizer_trace partitions profiling resource_groups schemata_extensions st_geometry_columns table_constraints_extensions tablespaces_extensions user_attributes view_routine_usage view_table_usage' );
-
-		foreach ( $sources as $source ) {
-			if (
-				isset( $source['relation_sql'] )
-				|| (
-					isset( $source['view'] )
-					&& null !== $this->get_direct_information_schema_relation_columns( strtolower( $source['view'] ) )
-					&& ! in_array( strtolower( $source['view'] ), $non_join_relations, true )
-				)
-			) {
-				$has_information_schema_source = true;
-				continue;
-			}
-
-			if ( isset( $source['cte'] ) ) {
-				continue;
-			}
-
-			if ( isset( $source['table'] ) ) {
-				++$main_table_count;
-				if ( $main_table_count > 1 ) {
-					return false;
-				}
-				continue;
-			}
-
-			return false;
-		}
-
-		return $has_information_schema_source;
-	}
-
-	/**
-	 * Get an identifier-ish token value for information_schema sources/columns.
-	 *
+		/**
+		 * Get an identifier-ish token value for information_schema sources/columns.
+		 *
 	 * @param WP_MySQL_Token|null $token MySQL token.
 	 * @return string|null Identifier value, or null.
 	 */
