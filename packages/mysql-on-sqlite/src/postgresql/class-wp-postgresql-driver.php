@@ -37919,10 +37919,65 @@ SELECT * FROM metadata_columns',
 				);
 			}
 
-			$table_comment_sql = "pg_catalog.obj_description(pc.oid, 'pg_class')";
-			return sprintf(
-				'SELECT
-	\'def\' AS "TABLE_CATALOG",
+				$postgresql_table_comment_sql       = "pg_catalog.obj_description(pc.oid, 'pg_class')";
+				$table_comment_prefix_sql           = $this->connection->quote( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX );
+				$table_comment_value_sql            = sprintf( 'COALESCE(%s, \'\')', $postgresql_table_comment_sql );
+				$table_comment_sql                  = sprintf(
+					'CASE
+		WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN
+			CASE
+				WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
+				ELSE \'\'
+			END
+		ELSE %1$s
+	END',
+					$table_comment_value_sql,
+					$table_comment_prefix_sql
+				);
+				$table_collation_comment_sql        = sprintf(
+					'CASE
+		WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s
+		ELSE NULL
+	END',
+					$table_comment_value_sql,
+					$table_comment_prefix_sql,
+					$this->get_postgresql_catalog_column_comment_marker_decode_sql( $table_comment_value_sql, $table_comment_prefix_sql )
+				);
+				$table_collation_column_comment_sql = 'pg_catalog.col_description(table_collation_pc.oid, table_collation_pa.attnum)';
+				$table_collation_column_type_sql    = $this->get_direct_information_schema_catalog_column_type_expression( 'table_collation_columns', null, $table_collation_column_comment_sql );
+				$table_collation_column_sql         = $this->get_direct_information_schema_collation_expression(
+					$table_collation_column_type_sql,
+					'table_collation_columns.collation_name',
+					$table_collation_column_comment_sql,
+					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+				);
+				$table_collation_sql                = sprintf(
+					'COALESCE(%3$s, (
+		SELECT %1$s
+		FROM information_schema.columns table_collation_columns
+		LEFT JOIN pg_catalog.pg_namespace table_collation_pn
+			ON table_collation_pn.nspname = table_collation_columns.table_schema
+		LEFT JOIN pg_catalog.pg_class table_collation_pc
+			ON table_collation_pc.relnamespace = table_collation_pn.oid
+			AND table_collation_pc.relname = table_collation_columns.table_name
+			AND table_collation_pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+		LEFT JOIN pg_catalog.pg_attribute table_collation_pa
+			ON table_collation_pa.attrelid = table_collation_pc.oid
+			AND table_collation_pa.attname = table_collation_columns.column_name
+			AND table_collation_pa.attnum > 0
+		WHERE table_collation_columns.table_schema = t.table_schema
+			AND table_collation_columns.table_name = t.table_name
+			AND %1$s IS NOT NULL
+		ORDER BY table_collation_columns.ordinal_position
+		LIMIT 1
+	), %2$s)',
+					$table_collation_column_sql,
+					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
+					$table_collation_comment_sql
+				);
+				return sprintf(
+					'SELECT
+		\'def\' AS "TABLE_CATALOG",
 	%1$s AS "TABLE_SCHEMA",
 	t.table_name AS "TABLE_NAME",
 	CASE WHEN t.table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "TABLE_TYPE",
@@ -37978,14 +38033,14 @@ LEFT JOIN pg_catalog.pg_namespace seq_ns
 LEFT JOIN pg_catalog.pg_sequences ps
 	ON ps.schemaname = seq_ns.nspname
 	AND ps.sequencename = seq.relname
-WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
-	AND t.table_name NOT IN (%3$s)',
-				$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
-				$this->get_direct_information_schema_table_collation_catalog_sql( 't.table_schema', 't.table_name', $table_comment_sql ),
-				$this->get_direct_information_schema_hidden_table_list_sql(),
-				$this->get_postgresql_catalog_table_comment_sql( $table_comment_sql )
-			);
+				WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+		AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
+		AND t.table_name NOT IN (%3$s)',
+					$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
+					$table_collation_sql,
+					$this->get_direct_information_schema_hidden_table_list_sql(),
+					$table_comment_sql
+				);
 		}
 
 		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) ) {
@@ -40412,59 +40467,6 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 	}
 
 	/**
-	 * Get a catalog-backed table collation expression for information_schema.TABLES.
-	 *
-	 * PostgreSQL has no table default collation field that maps cleanly to MySQL's
-	 * TABLE_COLLATION, so derive it from the first textual column that can expose
-	 * MySQL-facing column metadata.
-	 *
-	 * @param string $table_schema_sql SQL expression for table schema.
-	 * @param string $table_name_sql   SQL expression for table name.
-	 * @param string|null $table_comment_sql SQL expression for PostgreSQL table comment.
-	 * @return string SQL expression.
-	 */
-	private function get_direct_information_schema_table_collation_catalog_sql( string $table_schema_sql, string $table_name_sql, ?string $table_comment_sql = null ): string {
-		$comment_sql     = 'pg_catalog.col_description(table_collation_pc.oid, table_collation_pa.attnum)';
-		$column_type     = $this->get_direct_information_schema_catalog_column_type_expression( 'table_collation_columns', null, $comment_sql );
-		$collation       = $this->get_direct_information_schema_collation_expression(
-			$column_type,
-			'table_collation_columns.collation_name',
-			$comment_sql,
-			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-		);
-		$table_collation = null === $table_comment_sql
-			? 'NULL'
-			: $this->get_postgresql_catalog_table_collation_comment_sql( $table_comment_sql );
-
-		return sprintf(
-			'COALESCE(%5$s, (
-	SELECT %1$s
-	FROM information_schema.columns table_collation_columns
-	LEFT JOIN pg_catalog.pg_namespace table_collation_pn
-		ON table_collation_pn.nspname = table_collation_columns.table_schema
-	LEFT JOIN pg_catalog.pg_class table_collation_pc
-		ON table_collation_pc.relnamespace = table_collation_pn.oid
-		AND table_collation_pc.relname = table_collation_columns.table_name
-		AND table_collation_pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-	LEFT JOIN pg_catalog.pg_attribute table_collation_pa
-		ON table_collation_pa.attrelid = table_collation_pc.oid
-		AND table_collation_pa.attname = table_collation_columns.column_name
-		AND table_collation_pa.attnum > 0
-	WHERE table_collation_columns.table_schema = %2$s
-		AND table_collation_columns.table_name = %3$s
-		AND %1$s IS NOT NULL
-	ORDER BY table_collation_columns.ordinal_position
-	LIMIT 1
-), %4$s)',
-			$collation,
-			$table_schema_sql,
-			$table_name_sql,
-			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
-			$table_collation
-		);
-	}
-
-	/**
 	 * Get MySQL-shaped information_schema.TABLES rows.
 	 *
 	 * @return array[] Rows keyed by uppercase column name.
@@ -40860,51 +40862,6 @@ END',
 			$fractional_timestamp_default_pattern,
 			$quoted_literal_default_pattern,
 			$column_default_comment_sql
-		);
-	}
-
-	/**
-	 * Get the MySQL-facing table comment after removing internal PostgreSQL catalog metadata.
-	 *
-	 * @param string $table_comment_sql SQL expression returning a PostgreSQL table comment.
-	 * @return string SQL expression returning the user-facing MySQL comment.
-	 */
-	private function get_postgresql_catalog_table_comment_sql( string $table_comment_sql ): string {
-		$prefix_sql  = $this->connection->quote( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX );
-		$comment_sql = sprintf( 'COALESCE(%s, \'\')', $table_comment_sql );
-
-		return sprintf(
-			'CASE
-	WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN
-		CASE
-			WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
-			ELSE \'\'
-		END
-	ELSE %1$s
-END',
-			$comment_sql,
-			$prefix_sql
-		);
-	}
-
-	/**
-	 * Get MySQL table collation metadata from a PostgreSQL table comment.
-	 *
-	 * @param string $table_comment_sql SQL expression returning a PostgreSQL table comment.
-	 * @return string SQL expression returning decoded MySQL table collation, or NULL.
-	 */
-	private function get_postgresql_catalog_table_collation_comment_sql( string $table_comment_sql ): string {
-		$prefix_sql  = $this->connection->quote( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX );
-		$comment_sql = sprintf( 'COALESCE(%s, \'\')', $table_comment_sql );
-
-		return sprintf(
-			'CASE
-	WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s
-	ELSE NULL
-END',
-			$comment_sql,
-			$prefix_sql,
-			$this->get_postgresql_catalog_column_comment_marker_decode_sql( $comment_sql, $prefix_sql )
 		);
 	}
 
