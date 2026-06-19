@@ -30313,25 +30313,27 @@ $wp_mysql_on_update$',
 					if ( false !== strpos( $sql, "con.contype = 'f'" ) ) {
 						return parent::query(
 							'SELECT
-								NULL AS constraint_name,
-								NULL AS constraint_ordinal,
-								NULL AS seq_in_index,
-								NULL AS column_name,
-								NULL AS referenced_table_schema,
-								NULL AS referenced_table_name,
-								NULL AS referenced_column_name,
-								NULL AS update_rule,
-								NULL AS delete_rule
-							WHERE 1 = 0'
+									NULL AS constraint_name,
+									NULL AS constraint_ordinal,
+									NULL AS seq_in_index,
+									NULL AS column_name,
+									NULL AS referenced_table_schema,
+									NULL AS referenced_table_name,
+									NULL AS referenced_column_name,
+									NULL AS update_rule,
+									NULL AS delete_rule
+								WHERE 1 = 0'
 						);
 					}
+				}
 
+				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
 					return parent::query(
 						'SELECT
-							\'json_payload\' AS constraint_name,
-							3 AS constraint_ordinal,
-							\'json_valid(title)\' AS check_clause,
-							\'YES\' AS enforced'
+								\'json_payload\' AS constraint_name,
+								3 AS constraint_ordinal,
+								\'json_valid(title)\' AS check_clause,
+								\'YES\' AS enforced'
 					);
 				}
 
@@ -30355,7 +30357,7 @@ $wp_mysql_on_update$',
 				$columns         = $this->get_show_create_table_column_metadata_rows( $schema, $table );
 				$indexes         = $this->get_show_create_table_index_catalog_rows( $schema, $table );
 				$foreign_keys    = $this->get_show_create_table_foreign_key_catalog_rows( $schema, $table );
-				$checks          = $this->get_show_create_table_check_constraint_catalog_rows( $schema, $table );
+				$checks          = $this->get_show_create_table_check_constraint_metadata_rows( $schema, $table );
 				$table_metadata  = $this->get_show_create_table_table_metadata( $schema, $table );
 
 				return $this->get_mysql_create_table_statement_from_metadata(
@@ -30378,11 +30380,11 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( "  `title` varchar(191) NOT NULL DEFAULT '' COMMENT 'Title note'", $create_table );
 		$this->assertStringContainsString( '  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'Title note\'', $create_table );
 		$this->assertStringContainsString( '  PRIMARY KEY (`id`)', $create_table );
-			$this->assertStringContainsString( "  UNIQUE KEY `title` (`title`) COMMENT 'Title index note'", $create_table );
-			$this->assertStringContainsString( '  CONSTRAINT `json_payload` CHECK (json_valid(title))', $create_table );
-			$this->assertStringContainsString( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci', $create_table );
-			$this->assertStringContainsString( "COMMENT='Native table note'", $create_table );
-			$this->assertStringNotContainsString( 'latin1_swedish_ci', $create_table );
+		$this->assertStringContainsString( "  UNIQUE KEY `title` (`title`) COMMENT 'Title index note'", $create_table );
+		$this->assertStringContainsString( '  CONSTRAINT `json_payload` CHECK (json_valid(title))', $create_table );
+		$this->assertStringContainsString( ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci', $create_table );
+		$this->assertStringContainsString( "COMMENT='Native table note'", $create_table );
+		$this->assertStringNotContainsString( 'latin1_swedish_ci', $create_table );
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 5, $queries );
@@ -30395,7 +30397,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'pg_catalog.obj_description(idx.oid, \'pg_class\')', $queries[1]['sql'] );
 		$this->assertStringContainsString( '__wp_mysql_index_sub_part:', $queries[1]['sql'] );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
-		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
+		$this->assertStringContainsString( 'FROM information_schema.check_constraints cc', $queries[3]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $queries[3]['sql'] );
 		$this->assertStringContainsString( '__wp_mysql_check_clause:', $queries[3]['sql'] );
 		$this->assertStringContainsString( 'AS "TABLE_COMMENT"', $queries[4]['sql'] );
@@ -30511,7 +30513,7 @@ $wp_mysql_on_update$',
 					if ( false !== strpos( $sql, "con.contype = 'f'" ) ) {
 						return parent::query(
 							'SELECT
-								NULL AS constraint_name,
+									NULL AS constraint_name,
 								NULL AS constraint_ordinal,
 								NULL AS seq_in_index,
 								NULL AS column_name,
@@ -30520,13 +30522,15 @@ $wp_mysql_on_update$',
 								NULL AS referenced_column_name,
 								NULL AS update_rule,
 								NULL AS delete_rule
-							WHERE 1 = 0'
+								WHERE 1 = 0'
 						);
 					}
+				}
 
+				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
 					return parent::query(
 						'SELECT
-							\'json_payload\' AS constraint_name,
+								\'json_payload\' AS constraint_name,
 							3 AS constraint_ordinal,
 							\'json_valid(title)\' AS check_clause,
 							\'YES\' AS enforced'
@@ -30576,7 +30580,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $queries[1]['sql'] );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
-		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
+		$this->assertStringContainsString( 'FROM information_schema.check_constraints cc', $queries[3]['sql'] );
 		$this->assertStringContainsString( 'AS "TABLE_COMMENT"', $queries[4]['sql'] );
 
 		foreach ( $queries as $query ) {
@@ -30663,26 +30667,23 @@ $wp_mysql_on_update$',
 					if ( false !== strpos( $sql, "con.contype = 'f'" ) ) {
 						return parent::query(
 							'SELECT
-								NULL AS constraint_name,
-								NULL AS constraint_ordinal,
-								NULL AS seq_in_index,
-								NULL AS column_name,
-								NULL AS referenced_table_schema,
-								NULL AS referenced_table_name,
-								NULL AS referenced_column_name,
-								NULL AS update_rule,
-								NULL AS delete_rule
-							WHERE 1 = 0'
+									NULL AS constraint_name,
+									NULL AS constraint_ordinal,
+									NULL AS seq_in_index,
+									NULL AS column_name,
+									NULL AS referenced_table_schema,
+									NULL AS referenced_table_name,
+									NULL AS referenced_column_name,
+									NULL AS update_rule,
+									NULL AS delete_rule
+								WHERE 1 = 0'
 						);
 					}
+				}
 
+				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
 					return parent::query(
-						'SELECT
-							NULL AS constraint_name,
-							NULL AS constraint_ordinal,
-							NULL AS check_clause,
-							NULL AS enforced
-						WHERE 1 = 0'
+						'SELECT NULL AS constraint_name, NULL AS constraint_ordinal, NULL AS check_clause, NULL AS enforced WHERE 1 = 0'
 					);
 				}
 
@@ -37320,15 +37321,15 @@ $wp_mysql_on_update$',
 			$rows
 		);
 
-		$catalog_queries = $connection->get_catalog_queries();
-		$this->assertNotEmpty( $catalog_queries );
-		$dml_metadata_queries = array();
+			$catalog_queries = $connection->get_catalog_queries();
+			$this->assertNotEmpty( $catalog_queries );
+			$dml_metadata_queries = array();
 		foreach ( $catalog_queries as $catalog_query ) {
 			$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_query['sql'] );
 			$this->assertSame( array( 'public', 'catalog_dml_columnless' ), $catalog_query['params'] );
 			if (
-				false !== strpos( $catalog_query['sql'], 'c.ordinal_position' )
-				&& false !== strpos( $catalog_query['sql'], 'pg_catalog.col_description(pc.oid, pa.attnum)' )
+			false !== strpos( $catalog_query['sql'], 'c.ordinal_position' )
+			&& false !== strpos( $catalog_query['sql'], 'pg_catalog.col_description(pc.oid, pa.attnum)' )
 			) {
 				$dml_metadata_queries[] = $catalog_query;
 			}
@@ -37464,7 +37465,7 @@ $wp_mysql_on_update$',
 		);
 
 		$catalog_queries = $connection->get_catalog_queries();
-		$this->assertNotEmpty( $catalog_queries );
+			$this->assertNotEmpty( $catalog_queries );
 		foreach ( $catalog_queries as $catalog_query ) {
 			$this->assertSame( array( 'plugin_schema', 'catalog_current_schema_dml' ), $catalog_query['params'] );
 			$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_query['sql'] );
@@ -37592,9 +37593,9 @@ $wp_mysql_on_update$',
 			$rows
 		);
 
-		$catalog_queries      = $connection->get_catalog_queries();
-		$dml_metadata_queries = array();
-		$this->assertNotEmpty( $catalog_queries );
+		$catalog_queries          = $connection->get_catalog_queries();
+			$dml_metadata_queries = array();
+			$this->assertNotEmpty( $catalog_queries );
 		foreach ( $catalog_queries as $catalog_query ) {
 			$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_query['sql'] );
 			if ( array( 'public', 'catalog_dml_insert_select_columnless' ) === $catalog_query['params'] ) {
@@ -37997,11 +37998,11 @@ $wp_mysql_on_update$',
 		$catalog_queries = $pgsql_connection->get_catalog_queries();
 		$this->assertCount( 2, $catalog_queries );
 		foreach ( $catalog_queries as $catalog_query ) {
-			$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_namespace pn', $catalog_query['sql'] );
-			$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_class pc', $catalog_query['sql'] );
-			$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_attribute pa', $catalog_query['sql'] );
-			$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $catalog_query['sql'] );
-			$this->assertStringContainsString( 'pg_catalog.pg_enum e', $catalog_query['sql'] );
+				$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_namespace pn', $catalog_query['sql'] );
+				$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_class pc', $catalog_query['sql'] );
+				$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_attribute pa', $catalog_query['sql'] );
+				$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $catalog_query['sql'] );
+				$this->assertStringContainsString( 'pg_catalog.pg_enum e', $catalog_query['sql'] );
 			$this->assertStringContainsString( '__wp_mysql_column_type:', $catalog_query['sql'] );
 			if ( false !== strpos( $catalog_query['sql'], ' AS collation_name' ) ) {
 				$this->assertStringContainsString( '__wp_mysql_column_collation:', $catalog_query['sql'] );
@@ -45546,6 +45547,12 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
 				}
 
+				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
+					return parent::query(
+						'SELECT NULL AS constraint_name, NULL AS constraint_ordinal, NULL AS check_clause, NULL AS enforced WHERE 1 = 0'
+					);
+				}
+
 				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
 						"SELECT
@@ -45732,6 +45739,12 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
 				}
 
+				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
+					return parent::query(
+						'SELECT NULL AS constraint_name, NULL AS constraint_ordinal, NULL AS check_clause, NULL AS enforced WHERE 1 = 0'
+					);
+				}
+
 				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query( "SELECT '' AS table_comment, 'utf8mb4_unicode_ci' AS table_collation" );
 				}
@@ -45901,6 +45914,12 @@ $wp_mysql_on_update$',
 
 				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) ) {
 					return parent::query( 'SELECT NULL AS constraint_name WHERE 0 = 1' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
+					return parent::query(
+						'SELECT NULL AS constraint_name, NULL AS constraint_ordinal, NULL AS check_clause, NULL AS enforced WHERE 1 = 0'
+					);
 				}
 
 				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {

@@ -18057,7 +18057,7 @@ ORDER BY table_name';
 				ORDER BY "ORDINAL_POSITION"',
 				$this->get_direct_information_schema_relation_sql( 'columns' )
 			);
-			$params = array( $schema_name, $table_name );
+			$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
 			$stmt   = $this->connection->query( $sql, $params );
 
 			$this->last_postgresql_queries[] = array(
@@ -18338,7 +18338,32 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_check_constraint_metadata_rows( string $schema_name, string $table_name ): array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_show_create_table_check_constraint_catalog_rows( $schema_name, $table_name );
+			$sql    = sprintf(
+				'SELECT
+					checks."CONSTRAINT_NAME" AS constraint_name,
+					ROW_NUMBER() OVER (ORDER BY checks."CONSTRAINT_NAME") AS constraint_ordinal,
+					checks."CHECK_CLAUSE" AS check_clause,
+					constraints."ENFORCED" AS enforced
+				FROM (%1$s) constraints
+				INNER JOIN (%2$s) checks
+					ON checks."CONSTRAINT_SCHEMA" = constraints."CONSTRAINT_SCHEMA"
+					AND checks."CONSTRAINT_NAME" = constraints."CONSTRAINT_NAME"
+				WHERE constraints."TABLE_SCHEMA" = ?
+					AND constraints."TABLE_NAME" = ?
+					AND constraints."CONSTRAINT_TYPE" = \'CHECK\'
+				ORDER BY constraint_ordinal, constraint_name',
+				$this->get_direct_information_schema_relation_sql( 'table_constraints' ),
+				$this->get_direct_information_schema_relation_sql( 'check_constraints' )
+			);
+			$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
+			$stmt   = $this->connection->query( $sql, $params );
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => $params,
+			);
+
+			return $stmt->fetchAll( PDO::FETCH_ASSOC );
 		}
 
 		$sql    = sprintf(
@@ -18391,50 +18416,6 @@ ORDER BY table_name';
 	}
 
 	/**
-	 * Get CHECK constraint catalog rows for SHOW CREATE TABLE.
-	 *
-	 * @param string $schema_name Backend schema.
-	 * @param string $table_name  Table name.
-	 * @return array[] CHECK constraint metadata-shaped rows.
-	 */
-	private function get_show_create_table_check_constraint_catalog_rows( string $schema_name, string $table_name ): array {
-		$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
-			'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
-			'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
-		);
-		$enforced_sql     = $this->get_postgresql_mysql_check_enforced_comment_sql(
-			'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
-		);
-		$sql              = sprintf(
-			'SELECT
-				con.conname AS constraint_name,
-				CAST(con.oid AS bigint) AS constraint_ordinal,
-				%1$s AS check_clause,
-				%2$s AS enforced
-			FROM pg_catalog.pg_constraint con
-			INNER JOIN pg_catalog.pg_class t
-				ON t.oid = con.conrelid
-			INNER JOIN pg_catalog.pg_namespace n
-				ON n.oid = t.relnamespace
-			WHERE n.nspname = ?
-				AND t.relname = ?
-				AND con.contype = \'c\'
-			ORDER BY con.oid, con.conname',
-			$check_clause_sql,
-			$enforced_sql
-		);
-		$params           = array( $schema_name, $table_name );
-		$stmt             = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
-	}
-
-	/**
 	 * Get table metadata for SHOW CREATE TABLE.
 	 *
 	 * @param string $schema_name Backend metadata schema.
@@ -18453,7 +18434,7 @@ ORDER BY table_name';
 				LIMIT 1',
 				$this->get_direct_information_schema_relation_sql( 'tables' )
 			);
-			$params = array( $schema_name, $table_name );
+			$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
 			$stmt   = $this->connection->query( $sql, $params );
 
 			$this->last_postgresql_queries[] = array(
