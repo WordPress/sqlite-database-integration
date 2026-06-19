@@ -5349,12 +5349,6 @@ $wp_mysql_on_update$',
 			)
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-		$this->sync_postgresql_catalog_table_comment(
-			$table_schema,
-			$table_name,
-			(string) ( $metadata['comment'] ?? '' ),
-			(string) ( $metadata['collation'] ?? '' )
-		);
 	}
 
 	/**
@@ -5836,12 +5830,6 @@ $wp_mysql_on_update$',
 			)
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-		$this->sync_postgresql_catalog_column_metadata_comment(
-			$table_schema,
-			$table_name,
-			$column
-		);
-		$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
 	}
 
 	/**
@@ -6233,7 +6221,6 @@ END',
 		}
 
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-		$this->sync_postgresql_catalog_index_comment( $table_schema, $table_name, $index );
 	}
 
 	/**
