@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath, janjakes, zieladam, berislav.grgic
 Requires at least: 6.4
 Tested up to:      6.9
 Requires PHP:      7.2
-Stable tag:        3.0.0-rc.3
+Stable tag:        3.0.0-rc.4
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              performance, database
@@ -43,6 +43,18 @@ the wpdb API, while queries are internally adapted to be compatible
 with SQLite syntax and behavior.
 
 == Changelog ==
+
+= 3.0.0-rc.4 =
+
+* Normalize BIT column default literals ([#439](https://github.com/WordPress/sqlite-database-integration/pull/439))
+* Optimize MySQL lexer (~2× speedup) ([#424](https://github.com/WordPress/sqlite-database-integration/pull/424))
+* Fix `RAND()` function behavior ([#363](https://github.com/WordPress/sqlite-database-integration/pull/363))
+* CI: Disable Xdebug, use Rust release builds, consolidate unit-test matrix ([#425](https://github.com/WordPress/sqlite-database-integration/pull/425))
+* GitHub Actions workflow updates ([#404](https://github.com/WordPress/sqlite-database-integration/pull/404))
+* Add native Rust-based MySQL parser extension ([#381](https://github.com/WordPress/sqlite-database-integration/pull/381), [#384](https://github.com/WordPress/sqlite-database-integration/pull/384), [#386](https://github.com/WordPress/sqlite-database-integration/pull/386), [#389](https://github.com/WordPress/sqlite-database-integration/pull/389), [#390](https://github.com/WordPress/sqlite-database-integration/pull/390), [#394](https://github.com/WordPress/sqlite-database-integration/pull/394), [#398](https://github.com/WordPress/sqlite-database-integration/pull/398))
+* Ship native parser as WASM  ([#395](https://github.com/WordPress/sqlite-database-integration/pull/395), [#396](https://github.com/WordPress/sqlite-database-integration/pull/396), [#397](https://github.com/WordPress/sqlite-database-integration/pull/397), [#399](https://github.com/WordPress/sqlite-database-integration/pull/399), [#400](https://github.com/WordPress/sqlite-database-integration/pull/400), [#401](https://github.com/WordPress/sqlite-database-integration/pull/401))
+* Add SQLite plugin landing page ([#407](https://github.com/WordPress/sqlite-database-integration/pull/407), [#412](https://github.com/WordPress/sqlite-database-integration/pull/412))
+* Check Playground web runtime compatibility ([#419](https://github.com/WordPress/sqlite-database-integration/pull/419))
 
 = 3.0.0-rc.3 =
 
