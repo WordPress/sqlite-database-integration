@@ -34449,8 +34449,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'c.table_name NOT IN', $columns_extensions_sql );
 
 		$table_constraints_extensions_sql = $get_sql( 'table_constraints_extensions' );
-		$this->assertStringContainsString( 'FROM information_schema.table_constraints tc', $table_constraints_extensions_sql );
-		$this->assertStringContainsString( 'tc.table_name AS "TABLE_NAME"', $table_constraints_extensions_sql );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $table_constraints_extensions_sql );
+		$this->assertStringContainsString( 'tc."TABLE_NAME" AS "TABLE_NAME"', $table_constraints_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $table_constraints_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "SECONDARY_ENGINE_ATTRIBUTE"', $table_constraints_extensions_sql );
 
@@ -40052,7 +40052,7 @@ $wp_mysql_on_update$',
 			"SELECT constraint_name, constraint_type
 			FROM information_schema.table_constraints
 			WHERE table_schema = DATABASE()
-				AND table_name = 'wptests_posts'" => array( 'information_schema.table_constraints tc' ),
+				AND table_name = 'wptests_posts'" => array( 'FROM pg_catalog.pg_constraint con', "con.contype IN ('p', 'u', 'f', 'c')" ),
 			"SELECT constraint_name, column_name, referenced_table_name
 			FROM information_schema.key_column_usage
 			WHERE table_schema = DATABASE()
@@ -40134,7 +40134,7 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.table_constraints tc' ) ) {
+				if ( false !== strpos( $sql, "con.contype IN ('p', 'u', 'f', 'c')" ) ) {
 					return parent::query(
 						"SELECT
 							'wptests_posts_status_chk' AS \"CONSTRAINT_NAME\",
@@ -40234,7 +40234,7 @@ $wp_mysql_on_update$',
 			array_filter(
 				$connection->get_queries(),
 				static function ( string $sql ): bool {
-					return false !== strpos( $sql, 'FROM information_schema.table_constraints tc' )
+					return false !== strpos( $sql, "con.contype IN ('p', 'u', 'f', 'c')" )
 						|| false !== strpos( $sql, 'pg_catalog.generate_subscripts(con.conkey, 1)' )
 						|| ( false !== strpos( $sql, "con.contype = 'f'" ) && false !== strpos( $sql, 'ref_con.conkey = con.confkey' ) )
 						|| false !== strpos( $sql, 'FROM information_schema.check_constraints cc' );
@@ -40242,7 +40242,8 @@ $wp_mysql_on_update$',
 			)
 		);
 		$this->assertCount( 4, $queries );
-		$this->assertStringContainsString( 'FROM information_schema.table_constraints tc', $queries[0] );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[0] );
+		$this->assertStringContainsString( "con.contype IN ('p', 'u', 'f', 'c')", $queries[0] );
 		$this->assertStringContainsString( 'pg_catalog.generate_subscripts(con.conkey, 1)', $queries[1] );
 		$this->assertStringContainsString( 'ref_att.attnum = con.confkey[key_positions.position]', $queries[1] );
 		$this->assertStringContainsString( "con.contype = 'f'", $queries[2] );

@@ -23852,7 +23852,7 @@ WHERE option_name IN (
 				continue;
 			}
 
-			if ( in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
+			if ( $this->is_mysql_metadata_only_index_type( $index['index_type'] ) ) {
 				continue;
 			}
 
@@ -24822,7 +24822,7 @@ WHERE option_name IN (
 	private function get_mysql_replace_delete_conflict_index_groups_from_rows( array $rows, array $columns, array $value_rows, array $probe_safe_rows ): array {
 		$conflict_index_groups = array();
 		foreach ( $this->get_mysql_unique_index_groups_from_metadata_rows( $rows ) as $index ) {
-			if ( empty( $index['parts'] ) || in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
+			if ( empty( $index['parts'] ) || $this->is_mysql_metadata_only_index_type( $index['index_type'] ) ) {
 				continue;
 			}
 
@@ -25846,7 +25846,7 @@ WHERE option_name IN (
 		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
 
 		foreach ( $this->get_mysql_unique_index_groups_from_metadata_rows( $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ) ) as $index ) {
-			if ( in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
+			if ( $this->is_mysql_metadata_only_index_type( $index['index_type'] ) ) {
 				continue;
 			}
 
@@ -38570,21 +38570,14 @@ WHERE c.relkind IN (\'r\', \'p\')
 		}
 
 		if ( 'columns_extensions' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	c.table_name AS "TABLE_NAME",
-	c.column_name AS "COLUMN_NAME",
+			return 'SELECT
+	c."TABLE_CATALOG" AS "TABLE_CATALOG",
+	c."TABLE_SCHEMA" AS "TABLE_SCHEMA",
+	c."TABLE_NAME" AS "TABLE_NAME",
+	c."COLUMN_NAME" AS "COLUMN_NAME",
 	NULL AS "ENGINE_ATTRIBUTE",
 	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
-FROM information_schema.columns c
-WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(c.table_schema, 3) <> \'pg_\'
-	AND c.table_name NOT IN (%2$s)',
-				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
-			);
+FROM (' . $this->get_direct_information_schema_relation_sql( 'columns' ) . ') c';
 		}
 
 		if ( 'table_constraints' === $view ) {
@@ -38596,25 +38589,27 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 					'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END AS "CONSTRAINT_NAME",
+	CASE WHEN con.contype = \'p\' THEN \'PRIMARY\' ELSE con.conname END AS "CONSTRAINT_NAME",
 	%1$s AS "TABLE_SCHEMA",
-	tc.table_name AS "TABLE_NAME",
-	tc.constraint_type AS "CONSTRAINT_TYPE",
-	CASE WHEN tc.constraint_type = \'CHECK\' THEN %3$s ELSE \'YES\' END AS "ENFORCED"
-FROM information_schema.table_constraints tc
-LEFT JOIN pg_catalog.pg_namespace n
-	ON n.nspname = tc.table_schema
-LEFT JOIN pg_catalog.pg_class t
-	ON t.relnamespace = n.oid
-	AND t.relname = tc.table_name
-LEFT JOIN pg_catalog.pg_constraint con
-	ON con.conrelid = t.oid
-	AND con.conname = tc.constraint_name
-	AND con.contype = \'c\'
-WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND tc.table_name NOT IN (%2$s)
-	AND tc.constraint_type IN (\'PRIMARY KEY\', \'UNIQUE\', \'FOREIGN KEY\', \'CHECK\')',
-					$this->get_direct_information_schema_display_schema_sql( 'tc.table_schema' ),
+	table_class.relname AS "TABLE_NAME",
+	CASE con.contype
+		WHEN \'p\' THEN \'PRIMARY KEY\'
+		WHEN \'u\' THEN \'UNIQUE\'
+		WHEN \'f\' THEN \'FOREIGN KEY\'
+		ELSE \'CHECK\'
+	END AS "CONSTRAINT_TYPE",
+	CASE WHEN con.contype = \'c\' THEN %3$s ELSE \'YES\' END AS "ENFORCED"
+FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class table_class
+	ON table_class.oid = con.conrelid
+JOIN pg_catalog.pg_namespace table_ns
+	ON table_ns.oid = table_class.relnamespace
+WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
+	AND table_class.relkind IN (\'r\', \'p\')
+	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
+	AND table_class.relname NOT IN (%2$s)',
+					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
 					$this->get_direct_information_schema_hidden_table_list_sql(),
 					$enforced_sql
 				);
@@ -39045,36 +39040,23 @@ FROM (
 		}
 
 		if ( 'table_constraints_extensions' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END AS "CONSTRAINT_NAME",
-	%1$s AS "TABLE_SCHEMA",
-	tc.table_name AS "TABLE_NAME",
+			return 'SELECT
+	tc."CONSTRAINT_CATALOG" AS "CONSTRAINT_CATALOG",
+	tc."CONSTRAINT_SCHEMA" AS "CONSTRAINT_SCHEMA",
+	tc."CONSTRAINT_NAME" AS "CONSTRAINT_NAME",
+	tc."TABLE_SCHEMA" AS "TABLE_SCHEMA",
+	tc."TABLE_NAME" AS "TABLE_NAME",
 	NULL AS "ENGINE_ATTRIBUTE",
 	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
-FROM information_schema.table_constraints tc
-WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(tc.table_schema, 3) <> \'pg_\'
-	AND tc.table_name NOT IN (%2$s)
-	AND tc.constraint_type IN (\'PRIMARY KEY\', \'UNIQUE\', \'FOREIGN KEY\', \'CHECK\')',
-				$this->get_direct_information_schema_display_schema_sql( 'tc.table_schema' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
-			);
+FROM (' . $this->get_direct_information_schema_relation_sql( 'table_constraints' ) . ') tc';
 		}
 
 		if ( 'schemata_extensions' === $view ) {
-			return sprintf(
-				'SELECT
-	\'def\' AS "CATALOG_NAME",
-	%1$s AS "SCHEMA_NAME",
+			return 'SELECT
+	s."CATALOG_NAME" AS "CATALOG_NAME",
+	s."SCHEMA_NAME" AS "SCHEMA_NAME",
 	NULL AS "OPTIONS"
-FROM information_schema.schemata s
-WHERE s.schema_name = \'information_schema\'
-	OR LEFT(s.schema_name, 3) <> \'pg_\'',
-				$this->get_direct_information_schema_display_schema_sql( 's.schema_name' )
-			);
+FROM (' . $this->get_direct_information_schema_relation_sql( 'schemata' ) . ') s';
 		}
 
 		if ( 'view_table_usage' === $view ) {
