@@ -29088,7 +29088,7 @@ WHERE option_name IN (
 		$this->validate_strict_mysql_dml_value_for_column( $column_metadata, $tokens, $start, $end );
 
 		if (
-			! $this->is_mysql_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' )
+			! $this->is_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' )
 			&& $this->is_mysql_auto_increment_column_metadata( $column_metadata )
 			&& $this->is_mysql_zero_literal_range( $tokens, $start, $end )
 		) {
@@ -32458,7 +32458,7 @@ WHERE option_name IN (
 	 * @param array[]          $metadata     Ordered column metadata rows.
 	 */
 	private function normalize_mysql_auto_increment_zero_values_for_columns( array $columns, array &$values, array $value_ranges, array $tokens, array $metadata ): void {
-		if ( $this->is_mysql_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' ) ) {
+		if ( $this->is_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' ) ) {
 			return;
 		}
 
@@ -32695,7 +32695,7 @@ WHERE option_name IN (
 	 */
 	private function validate_strict_mysql_dml_date_parts( string $type, string $value, string $year, string $month, string $day ): void {
 		if ( '0000' === $year && '00' === $month && '00' === $day ) {
-			if ( $this->is_mysql_sql_mode_active( 'NO_ZERO_DATE' ) ) {
+			if ( $this->is_sql_mode_active( 'NO_ZERO_DATE' ) ) {
 				$this->throw_mysql_incorrect_temporal_value( $type, $value );
 			}
 
@@ -32703,7 +32703,7 @@ WHERE option_name IN (
 		}
 
 		if ( '0000' !== $year && ( '00' === $month || '00' === $day ) ) {
-			if ( $this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' ) ) {
+			if ( $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ) {
 				$this->throw_mysql_incorrect_temporal_value( $type, $value );
 			}
 
@@ -32969,8 +32969,8 @@ WHERE option_name IN (
 			return $this->get_postgresql_mysql_inline_validate_temporal_sql(
 				$value_sql,
 				$base_type,
-				$this->is_mysql_sql_mode_active( 'NO_ZERO_DATE' ),
-				$this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' )
+				$this->is_sql_mode_active( 'NO_ZERO_DATE' ),
+				$this->is_sql_mode_active( 'NO_ZERO_IN_DATE' )
 			);
 		}
 
@@ -32979,8 +32979,8 @@ WHERE option_name IN (
 			self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION,
 			$value_sql,
 			$this->connection->quote( $base_type ),
-			$this->is_mysql_sql_mode_active( 'NO_ZERO_DATE' ) ? 1 : 0,
-			$this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? 1 : 0
+			$this->is_sql_mode_active( 'NO_ZERO_DATE' ) ? 1 : 0,
+			$this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? 1 : 0
 		);
 	}
 
@@ -35416,7 +35416,7 @@ WHERE option_name IN (
 
 		return '0000' !== $year
 			&& ( '00' === $month || '00' === $day )
-			&& ! $this->is_mysql_sql_mode_active( 'NO_ZERO_IN_DATE' );
+			&& ! $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' );
 	}
 
 	/**
@@ -35854,18 +35854,8 @@ WHERE option_name IN (
 	 * @return bool Whether strict DML behavior should be preserved.
 	 */
 	private function is_mysql_strict_sql_mode_active(): bool {
-		return $this->is_mysql_sql_mode_active( 'STRICT_TRANS_TABLES' )
-			|| $this->is_mysql_sql_mode_active( 'STRICT_ALL_TABLES' );
-	}
-
-	/**
-	 * Check whether a MySQL session SQL mode is active.
-	 *
-	 * @param string $mode SQL mode name.
-	 * @return bool Whether the mode is active.
-	 */
-	private function is_mysql_sql_mode_active( string $mode ): bool {
-		return $this->is_sql_mode_active( $mode );
+		return $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
+			|| $this->is_sql_mode_active( 'STRICT_ALL_TABLES' );
 	}
 
 	/**
@@ -53328,7 +53318,7 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * @return string PostgreSQL ESCAPE clause, or an empty string.
 	 */
 	private function get_mysql_no_backslash_like_escape_sql(): string {
-		return $this->is_mysql_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ? " ESCAPE ''" : '';
+		return $this->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ? " ESCAPE ''" : '';
 	}
 
 	/**
