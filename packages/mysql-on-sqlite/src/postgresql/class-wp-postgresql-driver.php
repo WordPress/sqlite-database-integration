@@ -7061,26 +7061,7 @@ $wp_mysql_primary_index_comment$',
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
 			$extra_sql          = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );
-			$sql                = sprintf(
-				'SELECT %s AS extra
-				FROM information_schema.columns c
-				LEFT JOIN pg_catalog.pg_namespace pn
-					ON pn.nspname = c.table_schema
-				LEFT JOIN pg_catalog.pg_class pc
-					ON pc.relnamespace = pn.oid
-					AND pc.relname = c.table_name
-					AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-				LEFT JOIN pg_catalog.pg_attribute pa
-					ON pa.attrelid = pc.oid
-					AND pa.attname = c.column_name
-					AND pa.attnum > 0
-				WHERE c.table_schema = ?
-					AND c.table_name = ?
-					AND LOWER(c.column_name) = LOWER(?)
-				ORDER BY c.ordinal_position
-				LIMIT 2',
-				$extra_sql
-			);
+			$sql                = $this->get_postgresql_catalog_column_metadata_sql( $extra_sql . ' AS extra', true );
 
 			try {
 				$stmt = $this->connection->query( $sql, array( $table_schema, $table_name, $column_name ) );
@@ -7137,26 +7118,7 @@ $wp_mysql_primary_index_comment$',
 				true
 			);
 			$stmt               = $this->connection->query(
-				sprintf(
-					'SELECT %s AS column_type
-					FROM information_schema.columns c
-					LEFT JOIN pg_catalog.pg_namespace pn
-						ON pn.nspname = c.table_schema
-					LEFT JOIN pg_catalog.pg_class pc
-						ON pc.relnamespace = pn.oid
-						AND pc.relname = c.table_name
-						AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-					LEFT JOIN pg_catalog.pg_attribute pa
-						ON pa.attrelid = pc.oid
-						AND pa.attname = c.column_name
-						AND pa.attnum > 0
-					WHERE c.table_schema = ?
-						AND c.table_name = ?
-						AND LOWER(c.column_name) = LOWER(?)
-					ORDER BY c.ordinal_position
-					LIMIT 2',
-					$column_type
-				),
+				$this->get_postgresql_catalog_column_metadata_sql( $column_type . ' AS column_type', true ),
 				array( $table_schema, $table_name, $column_name )
 			);
 			$rows               = $stmt->fetchAll( PDO::FETCH_COLUMN );
@@ -7214,30 +7176,14 @@ $wp_mysql_primary_index_comment$',
 			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
 			$column_type        = $this->get_direct_information_schema_catalog_column_type_expression( 'c', null, $column_comment_sql, true );
 			$stmt               = $this->connection->query(
-				sprintf(
-					'SELECT %s AS collation_name
-					FROM information_schema.columns c
-					LEFT JOIN pg_catalog.pg_namespace pn
-						ON pn.nspname = c.table_schema
-					LEFT JOIN pg_catalog.pg_class pc
-						ON pc.relnamespace = pn.oid
-						AND pc.relname = c.table_name
-						AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-					LEFT JOIN pg_catalog.pg_attribute pa
-						ON pa.attrelid = pc.oid
-						AND pa.attname = c.column_name
-						AND pa.attnum > 0
-					WHERE c.table_schema = ?
-						AND c.table_name = ?
-						AND LOWER(c.column_name) = LOWER(?)
-					ORDER BY c.ordinal_position
-					LIMIT 2',
+				$this->get_postgresql_catalog_column_metadata_sql(
 					$this->get_direct_information_schema_collation_expression(
 						$column_type,
 						'c.collation_name',
 						$column_comment_sql,
 						$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-					)
+					) . ' AS collation_name',
+					true
 				),
 				array( $table_schema, $table_name, $column_name )
 			);
@@ -7268,6 +7214,36 @@ $wp_mysql_primary_index_comment$',
 			: (string) $collation;
 
 		return $this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ];
+	}
+
+	/**
+	 * Get a PostgreSQL catalog column metadata query.
+	 *
+	 * @param string $projection_sql SQL projection list.
+	 * @param bool   $filter_column  Whether to filter by one column name.
+	 * @return string SQL query.
+	 */
+	private function get_postgresql_catalog_column_metadata_sql( string $projection_sql, bool $filter_column ): string {
+		return sprintf(
+			'SELECT %1$s
+				FROM information_schema.columns c
+				LEFT JOIN pg_catalog.pg_namespace pn
+					ON pn.nspname = c.table_schema
+				LEFT JOIN pg_catalog.pg_class pc
+					ON pc.relnamespace = pn.oid
+					AND pc.relname = c.table_name
+					AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+				LEFT JOIN pg_catalog.pg_attribute pa
+					ON pa.attrelid = pc.oid
+					AND pa.attname = c.column_name
+					AND pa.attnum > 0
+				WHERE c.table_schema = ?
+					AND c.table_name = ?%2$s
+				ORDER BY c.ordinal_position%3$s',
+			$projection_sql,
+			$filter_column ? "\n\t\t\t\t\tAND LOWER(c.column_name) = LOWER(?)" : '',
+			$filter_column ? "\n\t\t\t\tLIMIT 2" : ''
+		);
 	}
 
 	/**
@@ -32551,31 +32527,20 @@ WHERE option_name IN (
 				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
 				$comment_sql
 			);
-			$sql         = sprintf(
-				'SELECT
+			$sql         = $this->get_postgresql_catalog_column_metadata_sql(
+				sprintf(
+					'
 					c.column_name,
 					c.ordinal_position,
 					%1$s AS column_type,
 					c.is_nullable,
 					%3$s AS column_default,
-					%2$s AS extra
-				FROM information_schema.columns c
-				LEFT JOIN pg_catalog.pg_namespace pn
-					ON pn.nspname = c.table_schema
-				LEFT JOIN pg_catalog.pg_class pc
-					ON pc.relnamespace = pn.oid
-					AND pc.relname = c.table_name
-					AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-				LEFT JOIN pg_catalog.pg_attribute pa
-					ON pa.attrelid = pc.oid
-					AND pa.attname = c.column_name
-					AND pa.attnum > 0
-				WHERE c.table_schema = ?
-					AND c.table_name = ?
-				ORDER BY c.ordinal_position',
-				$column_type,
-				$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-				$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql )
+					%2$s AS extra',
+					$column_type,
+					$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
+					$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql )
+				),
+				false
 			);
 			$stmt        = $this->connection->query( $sql, array( $table_schema, $table_name ) );
 
