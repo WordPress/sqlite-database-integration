@@ -30895,14 +30895,12 @@ WHERE option_name IN (
 			return $date_format_sql;
 		}
 
-		$wrapper_sql = $this->get_mysql_intrinsically_valid_temporal_wrapper_expression_sql_for_column( $base_type, $tokens, $start, $end, $value_sql );
-		if ( null !== $wrapper_sql ) {
-			return $wrapper_sql;
+		if ( $this->is_mysql_intrinsically_valid_temporal_wrapper_expression( $tokens, $start, $end ) ) {
+			return $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql );
 		}
 
-		$case_sql = $this->get_mysql_intrinsically_valid_temporal_case_expression_sql_for_column( $base_type, $tokens, $start, $end, $value_sql );
-		if ( null !== $case_sql ) {
-			return $case_sql;
+		if ( $this->is_mysql_intrinsically_valid_temporal_case_expression( $tokens, $start, $end ) ) {
+			return $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql );
 		}
 
 		if ( $this->is_mysql_intrinsically_valid_temporal_arithmetic_expression( $tokens, $start, $end ) ) {
@@ -31184,24 +31182,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Get storage SQL for a wrapper expression whose possible values are known-valid temporal values.
-	 *
-	 * @param string           $base_type MySQL temporal base type.
-	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
-	 * @param int              $start     First value token position.
-	 * @param int              $end       Final value token position, exclusive.
-	 * @param string           $value_sql Translated PostgreSQL wrapper expression SQL.
-	 * @return string|null Storage SQL, or null when any result branch can produce an invalid temporal value.
-	 */
-	private function get_mysql_intrinsically_valid_temporal_wrapper_expression_sql_for_column( string $base_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
-		if ( ! $this->is_mysql_intrinsically_valid_temporal_wrapper_expression( $tokens, $start, $end ) ) {
-			return null;
-		}
-
-		return $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql );
-	}
-
-	/**
 	 * Check whether a wrapper expression can only return known-valid temporal values.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -31244,24 +31224,6 @@ WHERE option_name IN (
 		}
 
 		return true;
-	}
-
-	/**
-	 * Get storage SQL for a CASE expression whose result branches are known-valid temporal values.
-	 *
-	 * @param string           $base_type MySQL temporal base type.
-	 * @param WP_MySQL_Token[] $tokens    MySQL lexer token stream.
-	 * @param int              $start     First value token position.
-	 * @param int              $end       Final value token position, exclusive.
-	 * @param string           $value_sql Translated PostgreSQL CASE expression SQL.
-	 * @return string|null Storage SQL, or null when any result branch can produce an invalid temporal value.
-	 */
-	private function get_mysql_intrinsically_valid_temporal_case_expression_sql_for_column( string $base_type, array $tokens, int $start, int $end, string $value_sql ): ?string {
-		if ( ! $this->is_mysql_intrinsically_valid_temporal_case_expression( $tokens, $start, $end ) ) {
-			return null;
-		}
-
-		return $this->get_postgresql_mysql_known_valid_temporal_text_storage_expression_sql( $base_type, $value_sql );
 	}
 
 	/**
@@ -31534,7 +31496,7 @@ WHERE option_name IN (
 			return true;
 		}
 
-		if ( $this->is_mysql_intrinsically_valid_from_unixtime_expression( $tokens, $start, $end ) ) {
+		if ( null !== $this->get_mysql_intrinsically_valid_from_unixtime_timestamp_sql( $tokens, $start, $end ) ) {
 			return true;
 		}
 
@@ -31601,18 +31563,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Check whether FROM_UNIXTIME() is based on a safe literal Unix timestamp.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First value token position.
-	 * @param int              $end    Final value token position, exclusive.
-	 * @return bool Whether the expression is known-valid.
-	 */
-	private function is_mysql_intrinsically_valid_from_unixtime_expression( array $tokens, int $start, int $end ): bool {
-		return null !== $this->get_mysql_intrinsically_valid_from_unixtime_timestamp_sql( $tokens, $start, $end );
-	}
-
-	/**
 	 * Check whether a token range is the NULL literal.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -31658,7 +31608,13 @@ WHERE option_name IN (
 		}
 
 		return $constant_value['is_null']
-			|| $this->is_mysql_intrinsically_valid_canonical_temporal_value( $constant_value['value'] );
+			|| (
+				(
+					1 === preg_match( '/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/', $constant_value['value'] )
+					|| 1 === preg_match( '/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$/', $constant_value['value'] )
+				)
+				&& $this->is_mysql_intrinsically_valid_temporal_value( $constant_value['value'] )
+			);
 	}
 
 	/**
@@ -32236,23 +32192,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Check whether a temporal value is already in canonical storage shape.
-	 *
-	 * @param string $value Temporal text value.
-	 * @return bool Whether the value is canonical and intrinsically valid.
-	 */
-	private function is_mysql_intrinsically_valid_canonical_temporal_value( string $value ): bool {
-		if (
-			1 !== preg_match( '/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/', $value )
-			&& 1 !== preg_match( '/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$/', $value )
-		) {
-			return false;
-		}
-
-		return $this->is_mysql_intrinsically_valid_temporal_value( $value );
-	}
-
-	/**
 	 * Get a fixed FROM_UNIXTIME() format that always produces temporal text.
 	 *
 	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
@@ -32425,7 +32364,8 @@ WHERE option_name IN (
 			return sprintf( 'TO_CHAR(%s, %s)', $value_sql, $this->connection->quote( 'YYYY-MM-DD' ) );
 		}
 
-		$fsp = $this->get_mysql_temporal_column_fractional_seconds_precision( $column_type );
+		$fsp = $this->get_mysql_column_type_display_width( $column_type );
+		$fsp = null !== $fsp && $fsp >= 0 && $fsp <= 6 ? $fsp : 0;
 		if ( 0 === $fsp ) {
 			return sprintf( 'TO_CHAR(%s, %s)', $value_sql, $this->connection->quote( 'YYYY-MM-DD HH24:MI:SS' ) );
 		}
@@ -32467,17 +32407,6 @@ WHERE option_name IN (
 			$this->connection->quote( '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' ),
 			$this->connection->quote( ' 00:00:00' )
 		);
-	}
-
-	/**
-	 * Get temporal column fractional seconds precision.
-	 *
-	 * @param string $column_type MySQL temporal column type.
-	 * @return int Precision, 0 through 6.
-	 */
-	private function get_mysql_temporal_column_fractional_seconds_precision( string $column_type ): int {
-		$fsp = $this->get_mysql_column_type_display_width( $column_type );
-		return null !== $fsp && $fsp >= 0 && $fsp <= 6 ? $fsp : 0;
 	}
 
 	/**
