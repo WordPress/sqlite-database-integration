@@ -38252,6 +38252,61 @@ WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 			);
 		}
 
+		if ( 'st_geometry_columns' === $view ) {
+			$geometry_types     = array( 'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geomcollection', 'geometrycollection' );
+			$geometry_domains   = array();
+			$geometry_type_case = array();
+			foreach ( self::MYSQL_TEXT_DOMAIN_TYPES as $domain_name => $mysql_type ) {
+				if ( in_array( $mysql_type, $geometry_types, true ) ) {
+					$geometry_domains[]   = $domain_name;
+					$geometry_type_case[] = sprintf(
+						'WHEN c.domain_name = %s THEN %s',
+						$this->connection->quote( $domain_name ),
+						$this->connection->quote( strtoupper( $mysql_type ) )
+					);
+				}
+			}
+			foreach ( $geometry_types as $geometry_type ) {
+				$geometry_type_case[] = sprintf(
+					'WHEN LOWER(COALESCE(c.udt_name, c.data_type)) = %s THEN %s',
+					$this->connection->quote( $geometry_type ),
+					$this->connection->quote( strtoupper( $geometry_type ) )
+				);
+			}
+
+			$geometry_type_values = array_merge( $geometry_domains, $geometry_types );
+			$geometry_type_list   = implode(
+				', ',
+				array_map(
+					array( $this->connection, 'quote' ),
+					$geometry_type_values
+				)
+			);
+
+			return sprintf(
+				'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	c.table_name AS "TABLE_NAME",
+	c.column_name AS "COLUMN_NAME",
+	NULL AS "SRS_NAME",
+	NULL AS "SRS_ID",
+	CASE
+		%2$s
+		ELSE UPPER(COALESCE(c.domain_name, c.udt_name, c.data_type))
+	END AS "GEOMETRY_TYPE_NAME"
+FROM information_schema.columns c
+WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(c.table_schema, 3) <> \'pg_\'
+	AND c.table_name NOT IN (%3$s)
+	AND LOWER(COALESCE(c.domain_name, c.udt_name, c.data_type)) IN (%4$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
+				implode( "\n\t\t", $geometry_type_case ),
+				$this->get_direct_information_schema_hidden_table_list_sql(),
+				$geometry_type_list
+			);
+		}
+
 		$method = 'get_direct_information_schema_' . $view . '_relation_sql';
 		return method_exists( $this, $method ) ? $this->$method() : null;
 	}
@@ -39782,66 +39837,6 @@ LEFT JOIN information_schema.routines r
 WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND LEFT(p.specific_schema, 3) <> \'pg_\'',
 			$this->get_direct_information_schema_display_schema_sql( 'p.specific_schema' )
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.ST_GEOMETRY_COLUMNS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_st_geometry_columns_relation_sql(): string {
-		$geometry_types     = array( 'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geomcollection', 'geometrycollection' );
-		$geometry_domains   = array();
-		$geometry_type_case = array();
-		foreach ( self::MYSQL_TEXT_DOMAIN_TYPES as $domain_name => $mysql_type ) {
-			if ( in_array( $mysql_type, $geometry_types, true ) ) {
-				$geometry_domains[]   = $domain_name;
-				$geometry_type_case[] = sprintf(
-					'WHEN c.domain_name = %s THEN %s',
-					$this->connection->quote( $domain_name ),
-					$this->connection->quote( strtoupper( $mysql_type ) )
-				);
-			}
-		}
-		foreach ( $geometry_types as $geometry_type ) {
-			$geometry_type_case[] = sprintf(
-				'WHEN LOWER(COALESCE(c.udt_name, c.data_type)) = %s THEN %s',
-				$this->connection->quote( $geometry_type ),
-				$this->connection->quote( strtoupper( $geometry_type ) )
-			);
-		}
-
-		$geometry_type_values = array_merge( $geometry_domains, $geometry_types );
-		$geometry_type_list   = implode(
-			', ',
-			array_map(
-				array( $this->connection, 'quote' ),
-				$geometry_type_values
-			)
-		);
-
-		return sprintf(
-			'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	c.table_name AS "TABLE_NAME",
-	c.column_name AS "COLUMN_NAME",
-	NULL AS "SRS_NAME",
-	NULL AS "SRS_ID",
-	CASE
-		%2$s
-		ELSE UPPER(COALESCE(c.domain_name, c.udt_name, c.data_type))
-	END AS "GEOMETRY_TYPE_NAME"
-FROM information_schema.columns c
-WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(c.table_schema, 3) <> \'pg_\'
-	AND c.table_name NOT IN (%3$s)
-	AND LOWER(COALESCE(c.domain_name, c.udt_name, c.data_type)) IN (%4$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-			implode( "\n\t\t", $geometry_type_case ),
-			$this->get_direct_information_schema_hidden_table_list_sql(),
-			$geometry_type_list
 		);
 	}
 
