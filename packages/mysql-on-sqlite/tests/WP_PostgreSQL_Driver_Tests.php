@@ -30325,16 +30325,16 @@ $wp_mysql_on_update$',
 								WHERE 1 = 0'
 						);
 					}
-				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
-					return parent::query(
-						'SELECT
-								\'json_payload\' AS constraint_name,
-								3 AS constraint_ordinal,
-								\'json_valid(title)\' AS check_clause,
-								\'YES\' AS enforced'
-					);
+					if ( false !== strpos( $sql, "con.contype = 'c'" ) ) {
+						return parent::query(
+							'SELECT
+									\'json_payload\' AS constraint_name,
+									3 AS constraint_ordinal,
+									\'json_valid(title)\' AS check_clause,
+									\'YES\' AS enforced'
+						);
+					}
 				}
 
 				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
@@ -30398,7 +30398,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( '__wp_mysql_index_sub_part:', $queries[1]['sql'] );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.generate_subscripts(con.conkey, 1)', $queries[2]['sql'] );
-		$this->assertStringContainsString( 'FROM information_schema.check_constraints cc', $queries[3]['sql'] );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
+		$this->assertStringContainsString( "con.contype = 'c'", $queries[3]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $queries[3]['sql'] );
 		$this->assertStringContainsString( '__wp_mysql_check_clause:', $queries[3]['sql'] );
 		$this->assertStringContainsString( 'AS "TABLE_COMMENT"', $queries[4]['sql'] );
@@ -30526,16 +30527,16 @@ $wp_mysql_on_update$',
 								WHERE 1 = 0'
 						);
 					}
-				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
-					return parent::query(
-						'SELECT
-								\'json_payload\' AS constraint_name,
-							3 AS constraint_ordinal,
-							\'json_valid(title)\' AS check_clause,
-							\'YES\' AS enforced'
-					);
+					if ( false !== strpos( $sql, "con.contype = 'c'" ) ) {
+						return parent::query(
+							'SELECT
+									\'json_payload\' AS constraint_name,
+								3 AS constraint_ordinal,
+								\'json_valid(title)\' AS check_clause,
+								\'YES\' AS enforced'
+						);
+					}
 				}
 
 				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
@@ -30582,7 +30583,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $queries[1]['sql'] );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[2]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.generate_subscripts(con.conkey, 1)', $queries[2]['sql'] );
-		$this->assertStringContainsString( 'FROM information_schema.check_constraints cc', $queries[3]['sql'] );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3]['sql'] );
+		$this->assertStringContainsString( "con.contype = 'c'", $queries[3]['sql'] );
 		$this->assertStringContainsString( 'AS "TABLE_COMMENT"', $queries[4]['sql'] );
 
 		foreach ( $queries as $query ) {
@@ -30681,12 +30683,12 @@ $wp_mysql_on_update$',
 								WHERE 1 = 0'
 						);
 					}
-				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
-					return parent::query(
-						'SELECT NULL AS constraint_name, NULL AS constraint_ordinal, NULL AS check_clause, NULL AS enforced WHERE 1 = 0'
-					);
+					if ( false !== strpos( $sql, "con.contype = 'c'" ) ) {
+						return parent::query(
+							'SELECT NULL AS constraint_name, NULL AS constraint_ordinal, NULL AS check_clause, NULL AS enforced WHERE 1 = 0'
+						);
+					}
 				}
 
 				if ( false !== strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
@@ -34819,11 +34821,11 @@ $wp_mysql_on_update$',
 
 		$brief_sql = $get_sql( 'innodb_tablespaces_brief' );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $brief_sql );
-		$this->assertStringContainsString( 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"', $brief_sql );
+		$this->assertStringContainsString( 'f."FILE_NAME" AS "PATH"', $brief_sql );
 
 		$datafiles_sql = $get_sql( 'innodb_datafiles' );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $datafiles_sql );
-		$this->assertStringContainsString( 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"', $datafiles_sql );
+		$this->assertStringContainsString( 'ib."PATH" AS "PATH"', $datafiles_sql );
 	}
 
 	/**
@@ -40062,7 +40064,7 @@ $wp_mysql_on_update$',
 			WHERE constraint_schema = DATABASE()' => array( 'FROM pg_catalog.pg_constraint con', "con.contype = 'f'", 'ref_con.conkey = con.confkey' ),
 			'SELECT constraint_name, check_clause
 			FROM information_schema.check_constraints
-			WHERE constraint_schema = DATABASE()' => array( 'information_schema.check_constraints cc' ),
+			WHERE constraint_schema = DATABASE()' => array( 'FROM pg_catalog.pg_constraint con', "con.contype = 'c'", 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)' ),
 		);
 
 		foreach ( $cases as $query => $expected_fragments ) {
@@ -40160,7 +40162,7 @@ $wp_mysql_on_update$',
 					);
 				}
 
-				if ( false !== strpos( $sql, 'FROM information_schema.check_constraints cc' ) ) {
+				if ( false !== strpos( $sql, "con.contype = 'c'" ) && false !== strpos( $sql, 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)' ) ) {
 					return parent::query(
 						"SELECT
 							'wptests_posts_status_chk' AS \"CONSTRAINT_NAME\",
@@ -40237,7 +40239,7 @@ $wp_mysql_on_update$',
 					return false !== strpos( $sql, "con.contype IN ('p', 'u', 'f', 'c')" )
 						|| false !== strpos( $sql, 'pg_catalog.generate_subscripts(con.conkey, 1)' )
 						|| ( false !== strpos( $sql, "con.contype = 'f'" ) && false !== strpos( $sql, 'ref_con.conkey = con.confkey' ) )
-						|| false !== strpos( $sql, 'FROM information_schema.check_constraints cc' );
+						|| ( false !== strpos( $sql, "con.contype = 'c'" ) && false !== strpos( $sql, 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)' ) );
 				}
 			)
 		);
@@ -40248,7 +40250,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'ref_att.attnum = con.confkey[key_positions.position]', $queries[1] );
 		$this->assertStringContainsString( "con.contype = 'f'", $queries[2] );
 		$this->assertStringContainsString( 'ref_con.conkey = con.confkey', $queries[2] );
-		$this->assertStringContainsString( 'FROM information_schema.check_constraints cc', $queries[3] );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $queries[3] );
+		$this->assertStringContainsString( "con.contype = 'c'", $queries[3] );
 		foreach ( $queries as $index => $sql ) {
 			if ( in_array( $index, array( 0, 3 ), true ) ) {
 				$this->assertStringContainsString( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', $sql );

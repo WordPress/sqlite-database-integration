@@ -18272,25 +18272,31 @@ ORDER BY table_name';
 	 */
 	private function get_show_create_table_check_constraint_metadata_rows( string $schema_name, string $table_name ): array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$sql    = sprintf(
-				'SELECT
-					checks."CONSTRAINT_NAME" AS constraint_name,
-					ROW_NUMBER() OVER (ORDER BY checks."CONSTRAINT_NAME") AS constraint_ordinal,
-					checks."CHECK_CLAUSE" AS check_clause,
-					constraints."ENFORCED" AS enforced
-				FROM (%1$s) constraints
-				INNER JOIN (%2$s) checks
-					ON checks."CONSTRAINT_SCHEMA" = constraints."CONSTRAINT_SCHEMA"
-					AND checks."CONSTRAINT_NAME" = constraints."CONSTRAINT_NAME"
-				WHERE constraints."TABLE_SCHEMA" = ?
-					AND constraints."TABLE_NAME" = ?
-					AND constraints."CONSTRAINT_TYPE" = \'CHECK\'
-				ORDER BY constraint_ordinal, constraint_name',
-				$this->get_direct_information_schema_relation_sql( 'table_constraints' ),
-				$this->get_direct_information_schema_relation_sql( 'check_constraints' )
+			$comment_sql      = 'pg_catalog.obj_description(con.oid, \'pg_constraint\')';
+			$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
+				$comment_sql,
+				'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
 			);
-			$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
-			$stmt   = $this->connection->query( $sql, $params );
+			$enforced_sql     = $this->get_postgresql_mysql_check_enforced_comment_sql( $comment_sql );
+			$sql              = sprintf(
+				'SELECT
+					con.conname AS constraint_name,
+					ROW_NUMBER() OVER (ORDER BY con.conname) AS constraint_ordinal,
+					%1$s AS check_clause,
+					%2$s AS enforced
+				FROM pg_catalog.pg_constraint con
+				INNER JOIN pg_catalog.pg_class t ON t.oid = con.conrelid
+				INNER JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+				WHERE n.nspname = ?
+					AND t.relname = ?
+					AND t.relkind IN (\'r\', \'p\')
+					AND con.contype = \'c\'
+				ORDER BY constraint_ordinal, constraint_name',
+				$check_clause_sql,
+				$enforced_sql
+			);
+			$params           = array( $schema_name, $table_name );
+			$stmt             = $this->connection->query( $sql, $params );
 
 			$this->last_postgresql_queries[] = array(
 				'sql'    => $sql,
@@ -38392,10 +38398,8 @@ WHERE c.relkind IN (\'r\', \'p\')
 		}
 
 		if ( 'tablespaces_extensions' === $view ) {
-			return 'SELECT
-	ts.spcname AS "TABLESPACE_NAME",
-	NULL AS "ENGINE_ATTRIBUTE"
-FROM pg_catalog.pg_tablespace ts';
+			return 'SELECT ts."TABLESPACE_NAME" AS "TABLESPACE_NAME", NULL AS "ENGINE_ATTRIBUTE"
+FROM (' . $this->get_direct_information_schema_relation_sql( 'tablespaces' ) . ') ts';
 		}
 
 		if ( 'tablespaces' === $view ) {
@@ -38433,20 +38437,14 @@ FROM pg_catalog.pg_tablespace ts';
 		}
 
 		if ( 'innodb_tablespaces_brief' === $view ) {
-			return 'SELECT
-	CAST(ts.oid AS bigint) AS "SPACE",
-	ts.spcname AS "NAME",
-	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH",
-	0 AS "FLAG",
-	\'Single\' AS "SPACE_TYPE"
-FROM pg_catalog.pg_tablespace ts';
+			return 'SELECT f."FILE_ID" AS "SPACE", f."TABLESPACE_NAME" AS "NAME", f."FILE_NAME" AS "PATH",
+	0 AS "FLAG", \'Single\' AS "SPACE_TYPE"
+FROM (' . $this->get_direct_information_schema_relation_sql( 'files' ) . ') f';
 		}
 
 		if ( 'innodb_datafiles' === $view ) {
-			return 'SELECT
-	CAST(ts.oid AS bigint) AS "SPACE",
-	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"
-FROM pg_catalog.pg_tablespace ts';
+			return 'SELECT ib."SPACE" AS "SPACE", ib."PATH" AS "PATH"
+FROM (' . $this->get_direct_information_schema_relation_sql( 'innodb_tablespaces_brief' ) . ') ib';
 		}
 
 		if ( 'innodb_indexes' === $view ) {
@@ -38951,31 +38949,25 @@ FROM (
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
 				$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
 					'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
-					'cc.check_clause'
+					'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
 				);
 				return sprintf(
 					'SELECT
 	\'def\' AS "CONSTRAINT_CATALOG",
 	%1$s AS "CONSTRAINT_SCHEMA",
-	cc.constraint_name AS "CONSTRAINT_NAME",
+	con.conname AS "CONSTRAINT_NAME",
 	%2$s AS "CHECK_CLAUSE"
-FROM information_schema.check_constraints cc
-LEFT JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = cc.constraint_schema
-	AND tc.constraint_name = cc.constraint_name
-	AND tc.constraint_type = \'CHECK\'
-LEFT JOIN pg_catalog.pg_namespace n
-	ON n.nspname = tc.table_schema
-LEFT JOIN pg_catalog.pg_class t
-	ON t.relnamespace = n.oid
-	AND t.relname = tc.table_name
-LEFT JOIN pg_catalog.pg_constraint con
-	ON con.conrelid = t.oid
-	AND con.conname = cc.constraint_name
-	AND con.contype = \'c\'
-WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
-					$this->get_direct_information_schema_display_schema_sql( 'cc.constraint_schema' ),
-					$check_clause_sql
+FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class t ON t.oid = con.conrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+WHERE con.contype = \'c\'
+	AND t.relkind IN (\'r\', \'p\')
+	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(n.nspname, 3) <> \'pg_\'
+	AND t.relname NOT IN (%3$s)',
+					$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
+					$check_clause_sql,
+					$this->get_direct_information_schema_hidden_table_list_sql()
 				);
 			}
 
