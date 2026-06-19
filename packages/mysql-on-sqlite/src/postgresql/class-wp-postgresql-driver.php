@@ -37404,9 +37404,75 @@ SELECT * FROM metadata_columns',
 
 		if ( 'tables' === $view ) {
 			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-				return $this->get_direct_information_schema_literal_relation_sql(
-					$this->get_direct_information_schema_relation_columns( 'tables' ),
-					$this->get_direct_information_schema_table_rows()
+				$this->ensure_mysql_schema_metadata_tables();
+
+				$sqlite_sequence_relation = 'SELECT NULL AS name, NULL AS auto_increment WHERE 1 = 0';
+				if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
+					try {
+						$this->connection->query( 'SELECT 1 FROM "information_schema"."tables" LIMIT 1' );
+						$has_sequence_table = $this->connection->query( "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence' LIMIT 1" )->fetchColumn();
+						if ( false !== $has_sequence_table ) {
+							$sqlite_sequence_relation = 'SELECT name, seq + 1 AS auto_increment FROM sqlite_sequence';
+						}
+					} catch ( PDOException $e ) {
+						return $this->get_direct_information_schema_literal_relation_sql(
+							$this->get_direct_information_schema_relation_columns( 'tables' ),
+							array()
+						);
+					}
+				}
+
+				return sprintf(
+					'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	t.table_name AS "TABLE_NAME",
+	CASE WHEN UPPER(t.table_type) = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "TABLE_TYPE",
+	\'InnoDB\' AS "ENGINE",
+	10 AS "VERSION",
+	\'Dynamic\' AS "ROW_FORMAT",
+	0 AS "TABLE_ROWS",
+	0 AS "AVG_ROW_LENGTH",
+	0 AS "DATA_LENGTH",
+	0 AS "MAX_DATA_LENGTH",
+	0 AS "INDEX_LENGTH",
+	0 AS "DATA_FREE",
+	CASE
+		WHEN NOT EXISTS (
+			SELECT 1
+			FROM (
+				SELECT table_schema, table_name, is_identity
+				FROM "information_schema"."columns"
+			) c
+			WHERE c.table_schema = t.table_schema
+				AND c.table_name = t.table_name
+				AND c.is_identity = \'YES\'
+		) THEN NULL
+		ELSE CAST(COALESCE(ss.auto_increment, 1) AS bigint)
+	END AS "AUTO_INCREMENT",
+	CURRENT_TIMESTAMP AS "CREATE_TIME",
+	NULL AS "UPDATE_TIME",
+	NULL AS "CHECK_TIME",
+	%2$s AS "TABLE_COLLATION",
+	NULL AS "CHECKSUM",
+	\'\' AS "CREATE_OPTIONS",
+	COALESCE(tm.table_comment, \'\') AS "TABLE_COMMENT"
+FROM "information_schema"."tables" t
+LEFT JOIN (
+	%3$s
+) ss
+	ON ss.name = t.table_name
+LEFT JOIN %4$s tm
+	ON tm.table_schema = t.table_schema
+	AND tm.table_name = t.table_name
+WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
+	AND t.table_name NOT IN (%5$s)',
+					$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
+					$this->connection->quote( $this->collation ),
+					$sqlite_sequence_relation,
+					$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE ),
+					$this->get_direct_information_schema_hidden_table_list_sql()
 				);
 			}
 
@@ -39857,103 +39923,6 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 				$this->get_mysql_schema_side_metadata_table_names()
 			)
 		);
-	}
-
-	/**
-	 * Get MySQL-shaped information_schema.TABLES rows.
-	 *
-	 * @return array[] Rows keyed by uppercase column name.
-	 */
-	private function get_direct_information_schema_table_rows(): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			throw new LogicException( 'PostgreSQL information_schema.TABLES must use a catalog relation.' );
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$sql = sprintf(
-			'SELECT
-					t.table_schema,
-					t.table_name,
-					t.table_type,
-					COALESCE(tm.table_comment, \'\') AS table_comment,
-					(
-						SELECT c.column_name
-						FROM information_schema.columns c
-						WHERE c.table_schema = t.table_schema
-							AND c.table_name = t.table_name
-							AND (
-								c.is_identity = \'YES\'
-								OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\'
-							)
-						ORDER BY c.ordinal_position
-						LIMIT 1
-					) AS identity_column
-				FROM information_schema.tables t
-				LEFT JOIN %s tm
-					ON tm.table_schema = t.table_schema
-					AND tm.table_name = t.table_name
-				WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-					AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
-					AND t.table_name NOT IN (' . $this->get_direct_information_schema_hidden_table_list_sql() . ')
-				ORDER BY t.table_schema, t.table_name',
-			$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
-		);
-
-		try {
-			$stmt = $this->connection->query( $sql );
-		} catch ( PDOException $e ) {
-			return array();
-		}
-
-		$rows        = array();
-		$create_time = gmdate( 'Y-m-d H:i:s' );
-		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
-			$table_schema    = (string) $row['table_schema'];
-			$table_name      = (string) $row['table_name'];
-			$table_type      = 'VIEW' === strtoupper( (string) $row['table_type'] ) ? 'VIEW' : 'BASE TABLE';
-			$identity_column = null === $row['identity_column'] ? null : (string) $row['identity_column'];
-			$auto_increment  = null;
-
-			if ( null !== $identity_column ) {
-				try {
-					$pdo_driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-					if ( 'pgsql' === $pdo_driver_name ) {
-						$auto_increment = $this->get_postgresql_show_table_status_auto_increment_value( $table_schema, $table_name, $identity_column );
-					} elseif ( 'sqlite' === $pdo_driver_name ) {
-						$auto_increment = $this->get_sqlite_show_table_status_auto_increment_value( $table_name );
-					}
-				} catch ( PDOException $e ) {
-					$auto_increment = null;
-				}
-			}
-
-			$rows[] = array(
-				'TABLE_CATALOG'   => 'def',
-				'TABLE_SCHEMA'    => $this->get_direct_information_schema_display_schema( $table_schema ),
-				'TABLE_NAME'      => $table_name,
-				'TABLE_TYPE'      => $table_type,
-				'ENGINE'          => 'InnoDB',
-				'VERSION'         => 10,
-				'ROW_FORMAT'      => 'Dynamic',
-				'TABLE_ROWS'      => 0,
-				'AVG_ROW_LENGTH'  => 0,
-				'DATA_LENGTH'     => 0,
-				'MAX_DATA_LENGTH' => 0,
-				'INDEX_LENGTH'    => 0,
-				'DATA_FREE'       => 0,
-				'AUTO_INCREMENT'  => $auto_increment,
-				'CREATE_TIME'     => $create_time,
-				'UPDATE_TIME'     => null,
-				'CHECK_TIME'      => null,
-				'TABLE_COLLATION' => $this->collation,
-				'CHECKSUM'        => null,
-				'CREATE_OPTIONS'  => '',
-				'TABLE_COMMENT'   => (string) ( $row['table_comment'] ?? '' ),
-			);
-		}
-
-		return $rows;
 	}
 
 	/**
@@ -55283,23 +55252,6 @@ END',
 	}
 
 	/**
-	 * Get PostgreSQL SQL for MySQL FROM_BASE64().
-	 *
-	 * PostgreSQL DECODE(..., 'base64') raises for malformed input. MySQL and
-	 * the SQLite UDF return NULL, so guard before decoding.
-	 *
-	 * @param string $argument_sql PostgreSQL argument SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_from_base64_sql( string $argument_sql ): string {
-		return sprintf(
-			'CASE WHEN %1$s THEN NULL ELSE CONVERT_FROM(DECODE(CAST(%2$s AS text), \'base64\'), \'UTF8\') END',
-			$this->get_postgresql_mysql_base64_invalid_condition_sql( $argument_sql ),
-			$argument_sql
-		);
-	}
-
-	/**
 	 * Get PostgreSQL SQL testing whether a MySQL FROM_BASE64() input is invalid.
 	 *
 	 * @param string $argument_sql PostgreSQL argument SQL.
@@ -55395,7 +55347,12 @@ END',
 	 * @return string PostgreSQL expression SQL.
 	 */
 	private function get_postgresql_mysql_dynamic_trim_sql( string $direction, string $value_text_sql, string $remove_text_sql ): string {
-		$escaped_remove_sql = $this->get_postgresql_regex_escaped_expression_sql( $remove_text_sql );
+		$escaped_remove_sql = sprintf(
+			"REGEXP_REPLACE(%s, %s, %s, 'g')",
+			$remove_text_sql,
+			$this->connection->quote( '([\\\\.^$|?*+()[\]{}])' ),
+			$this->connection->quote( '\\\\\1' )
+		);
 		$leading_pattern    = sprintf( "( '^(' || %s || ')+' )", $escaped_remove_sql );
 		$trailing_pattern   = sprintf( "( '(' || %s || ')+$' )", $escaped_remove_sql );
 
@@ -55417,21 +55374,6 @@ END',
 			$value_text_sql,
 			$remove_text_sql,
 			$trimmed_sql
-		);
-	}
-
-	/**
-	 * Escape a PostgreSQL text expression for use inside a regular expression.
-	 *
-	 * @param string $expression_sql PostgreSQL text expression SQL.
-	 * @return string PostgreSQL escaped expression SQL.
-	 */
-	private function get_postgresql_regex_escaped_expression_sql( string $expression_sql ): string {
-		return sprintf(
-			"REGEXP_REPLACE(%s, %s, %s, 'g')",
-			$expression_sql,
-			$this->connection->quote( '([\\\\.^$|?*+()[\]{}])' ),
-			$this->connection->quote( '\\\\\1' )
 		);
 	}
 
@@ -55623,7 +55565,13 @@ END',
 				return $this->get_postgresql_mysql_log_sql( $argument_sql );
 
 			case 'from_base64':
-				return 1 === $count ? $this->get_postgresql_mysql_from_base64_sql( $argument_sql[0] ) : null;
+				return 1 === $count
+					? sprintf(
+						'CASE WHEN %1$s THEN NULL ELSE CONVERT_FROM(DECODE(CAST(%2$s AS text), \'base64\'), \'UTF8\') END',
+						$this->get_postgresql_mysql_base64_invalid_condition_sql( $argument_sql[0] ),
+						$argument_sql[0]
+					)
+					: null;
 
 			case 'inet_aton':
 				if ( 1 !== $count ) {
@@ -57441,20 +57389,6 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	/**
-	 * Get PostgreSQL SQL for a MySQL-compatible interval value.
-	 *
-	 * @param string $value_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_interval_value_sql( string $value_sql, string $unit ): string {
-		$value_cast_sql = 'second' === $unit
-			? $this->get_postgresql_mysql_numeric_cast_sql( $value_sql )
-			: $this->get_postgresql_mysql_integer_cast_sql( $value_sql );
-
-		return sprintf( 'CAST(%s AS double precision)', $value_cast_sql );
-	}
-
-	/**
 	 * Get PostgreSQL SQL for a MySQL-compatible interval expression.
 	 *
 	 * @param string $value_sql PostgreSQL interval value SQL.
@@ -57462,11 +57396,14 @@ $wp_mysql_%1$s_domain$',
 	 * @return string PostgreSQL interval SQL.
 	 */
 	private function get_postgresql_mysql_interval_sql( string $value_sql, string $unit ): string {
-		$interval_unit = '3 months' === $unit ? $unit : '1 ' . $unit;
+		$interval_unit  = '3 months' === $unit ? $unit : '1 ' . $unit;
+		$value_cast_sql = 'second' === $unit
+			? $this->get_postgresql_mysql_numeric_cast_sql( $value_sql )
+			: $this->get_postgresql_mysql_integer_cast_sql( $value_sql );
 
 		return sprintf(
 			'(%1$s * INTERVAL %2$s)',
-			$this->get_postgresql_mysql_interval_value_sql( $value_sql, $unit ),
+			sprintf( 'CAST(%s AS double precision)', $value_cast_sql ),
 			$this->connection->quote( $interval_unit )
 		);
 	}
@@ -57885,7 +57822,11 @@ $wp_mysql_%1$s_domain$',
 				return $this->get_postgresql_mysql_sunday_week_mode_two_sql( $timestamp_sql );
 
 			case 3:
-				return $this->get_postgresql_mysql_iso_week_timestamp_sql( $timestamp_sql );
+				return sprintf(
+					'CAST(TO_CHAR(%s, %s) AS integer)',
+					$timestamp_sql,
+					$this->connection->quote( 'IW' )
+				);
 
 			case 4:
 				return $this->get_postgresql_mysql_sunday_week_mode_four_sql( $timestamp_sql );
@@ -58881,7 +58822,13 @@ $wp_mysql_%1$s_domain$',
 			++$i;
 				$fragment = $this->get_postgresql_mysql_zero_date_format_specifier_sql( $format[ $i ], $expression_text_sql );
 			if ( null === $fragment ) {
-				if ( $this->is_postgresql_mysql_known_date_format_specifier( $format[ $i ] ) ) {
+				if (
+						'%' === $format[ $i ]
+						|| 'D' === $format[ $i ]
+						|| 'w' === $format[ $i ]
+						|| null !== $this->get_postgresql_mysql_date_format_week_specifier_sql( $format[ $i ], 'NULL' )
+						|| isset( $this->get_postgresql_mysql_date_format_to_char_formats()[ $format[ $i ] ] )
+					) {
 					return 'NULL';
 				}
 
@@ -58988,20 +58935,6 @@ $wp_mysql_%1$s_domain$',
 		}
 
 		return null;
-	}
-
-	/**
-	 * Check whether a DATE_FORMAT() specifier is one MySQL defines.
-	 *
-	 * @param string $specifier MySQL DATE_FORMAT specifier without the leading percent.
-	 * @return bool Whether MySQL defines the specifier.
-	 */
-	private function is_postgresql_mysql_known_date_format_specifier( string $specifier ): bool {
-		return '%' === $specifier
-			|| 'D' === $specifier
-			|| 'w' === $specifier
-			|| null !== $this->get_postgresql_mysql_date_format_week_specifier_sql( $specifier, 'NULL' )
-			|| isset( $this->get_postgresql_mysql_date_format_to_char_formats()[ $specifier ] );
 	}
 
 	/**
@@ -59387,23 +59320,6 @@ $wp_mysql_%1$s_domain$',
 			$week_start_sql,
 			$first_week_start_sql,
 			$previous_first_week_sql
-		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for MySQL WEEK(expr, 3).
-	 *
-	 * Mode 3 is ISO week numbering: Monday-first, range 1-53, and week 1
-	 * has four or more days in the week-year.
-	 *
-	 * @param string $timestamp_sql PostgreSQL timestamp expression.
-	 * @return string PostgreSQL integer expression.
-	 */
-	private function get_postgresql_mysql_iso_week_timestamp_sql( string $timestamp_sql ): string {
-		return sprintf(
-			'CAST(TO_CHAR(%s, %s) AS integer)',
-			$timestamp_sql,
-			$this->connection->quote( 'IW' )
 		);
 	}
 

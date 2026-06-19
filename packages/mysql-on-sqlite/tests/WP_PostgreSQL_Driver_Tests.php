@@ -36327,7 +36327,7 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( "AS 'bytes'", $sql );
 		$this->assertStringContainsString( 'AS information_schema_tables', $sql );
 		$this->assertStringContainsString( '"TABLE_NAME" AS "table_name"', $sql );
-		$this->assertStringNotContainsString( '"information_schema"."tables"', $sql );
+		$this->assertStringContainsString( '"information_schema"."tables"', $sql );
 		$this->assertStringContainsString( "\"TABLE_SCHEMA\" = 'wordpress_develop_tests'", $sql );
 		$this->assertStringNotContainsString( '"wordpress_develop_tests"', $sql );
 		$this->assertStringNotContainsString( 'FROM "wptests_missing"', $sql );
@@ -36523,33 +36523,10 @@ $wp_mysql_on_update$',
 	/**
 	 * Tests PostgreSQL-backed information_schema.TABLES does not use PHP materialized rows.
 	 */
-	public function test_direct_information_schema_pgsql_tables_rows_helper_fails_closed(): void {
-		$pdo        = $this->create_pgsql_reporting_sqlite_pdo();
-		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
-			array(
-				'pdo' => $pdo,
-			)
-		);
-		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
-		$get_rows   = Closure::bind(
-			function (): array {
-				return $this->get_direct_information_schema_table_rows();
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
+	public function test_direct_information_schema_pgsql_tables_rows_helper_is_removed(): void {
+		$reflection = new ReflectionClass( WP_PostgreSQL_Driver::class );
 
-		try {
-			$get_rows();
-			$this->fail( 'Expected PostgreSQL information_schema.TABLES materialization to fail.' );
-		} catch ( LogicException $e ) {
-			$this->assertSame( 'PostgreSQL information_schema.TABLES must use a catalog relation.', $e->getMessage() );
-		}
-
-		$this->assertSame(
-			array(),
-			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
-		);
+		$this->assertFalse( $reflection->hasMethod( 'get_direct_information_schema_table_rows' ) );
 	}
 
 	/**
