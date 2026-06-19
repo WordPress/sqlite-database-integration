@@ -4667,10 +4667,6 @@ class WP_PostgreSQL_Driver {
 			return true;
 		}
 
-		if ( $this->is_postgresql_catalog_column_type_comment_needed( $column_type ) ) {
-			return true;
-		}
-
 		return (bool) preg_match( '/^(?:var)?char(?:\(\d+\))?$|^year(?: unsigned)?$|^(?:dec|fixed|numeric|decimal)(?:\(\d+(?:,\d+)?\))?(?: unsigned)?$|^(?:double|float|real)(?:\(\d+(?:,\d+)?\))?(?: unsigned)?$/', $column_type );
 	}
 
