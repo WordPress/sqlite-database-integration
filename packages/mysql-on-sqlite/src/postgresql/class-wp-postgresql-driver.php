@@ -1735,7 +1735,16 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function contains_unsupported_mysql_create_table_column_attribute_query( string $query ): bool {
 		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! $this->is_mysql_create_table_statement_prefix( $tokens ) ) {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$position = 1;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
 			return false;
 		}
 
@@ -1755,25 +1764,6 @@ class WP_PostgreSQL_Driver {
 		}
 
 		return false;
-	}
-
-	/**
-	 * Check whether a token stream starts with CREATE [TEMPORARY] TABLE.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @return bool Whether this is a CREATE TABLE statement.
-	 */
-	private function is_mysql_create_table_statement_prefix( array $tokens ): bool {
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
-			return false;
-		}
-
-		$position = 1;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
-			++$position;
-		}
-
-		return isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $position ]->id;
 	}
 
 	/**
