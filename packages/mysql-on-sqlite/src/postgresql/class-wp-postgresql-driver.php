@@ -5480,10 +5480,11 @@ $wp_mysql_on_update$',
 				);
 			}
 
-			$this->sync_postgresql_catalog_column_metadata_comment(
+			$this->sync_postgresql_catalog_column_comment(
 				$table_schema,
 				$table_name,
-				$column
+				(string) $column['name'],
+				$this->get_postgresql_catalog_column_comment( $column )
 			);
 			$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
 			foreach ( $metadata['checks'] ?? array() as $check ) {
@@ -5880,22 +5881,6 @@ $wp_mysql_on_update$',
 					$this->get_postgresql_catalog_comment_literal( $column_comment )
 				),
 			)
-		);
-	}
-
-	/**
-	 * Sync MySQL column metadata into PostgreSQL catalog comments.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $column       Column metadata.
-	 */
-	private function sync_postgresql_catalog_column_metadata_comment( string $table_schema, string $table_name, array $column ): void {
-		$this->sync_postgresql_catalog_column_comment(
-			$table_schema,
-			$table_name,
-			(string) $column['name'],
-			$this->get_postgresql_catalog_column_comment( $column )
 		);
 	}
 
