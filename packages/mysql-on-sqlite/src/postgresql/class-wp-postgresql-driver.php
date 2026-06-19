@@ -4737,9 +4737,18 @@ class WP_PostgreSQL_Driver {
 			return false;
 		}
 
+		$integer_domain_type = null;
+		if ( 1 === preg_match( '/^(bit|bool|boolean|tinyint|smallint|mediumint|int|int1|int2|int3|int4|int8|integer|bigint)(?:\(\d+\))?(?: unsigned)?$/', $column_type, $matches ) ) {
+			$integer_domain_type = 'integer' === $matches[1] ? 'int' : $matches[1];
+		}
+
 		if (
 			in_array( $column_type, array( 'int', 'bigint', 'text' ), true )
-			|| $this->is_postgresql_mysql_integer_domain_column_type( $column_type )
+			|| (
+				null !== $integer_domain_type
+				&& isset( self::MYSQL_INTEGER_DOMAIN_BASE_TYPES[ $integer_domain_type ] )
+				&& ! in_array( $column_type, array( 'int', 'bigint' ), true )
+			)
 		) {
 			return true;
 		}
@@ -4752,7 +4761,7 @@ class WP_PostgreSQL_Driver {
 			return true;
 		}
 
-		if ( $this->is_postgresql_mysql_numeric_domain_column_type( $column_type ) ) {
+		if ( 1 === preg_match( '/^(?:dec|fixed)(?:\(\d+(?:,\d+)?\))?$|^float(?:\(\d+(?:,\d+)?\))?$|^real$|^double\(\d+(?:,\d+)?\)$|^numeric\(\d+(?:,\d+)?\)$/', $column_type ) ) {
 			return true;
 		}
 
@@ -4783,33 +4792,6 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function is_postgresql_catalog_column_type_comment_needed( string $column_type ): bool {
 		return (bool) preg_match( '/^year unsigned$|^(?:dec|fixed|numeric|decimal)(?:\(\d+(?:,\d+)?\))? unsigned$|^(?:double|float|real)(?:\(\d+(?:,\d+)?\))? unsigned$/', $column_type );
-	}
-
-	/**
-	 * Check whether a MySQL integer type is preserved by a PostgreSQL domain.
-	 *
-	 * @param string $column_type MySQL-facing column type.
-	 * @return bool Whether a catalog domain preserves this integer shape.
-	 */
-	private function is_postgresql_mysql_integer_domain_column_type( string $column_type ): bool {
-		if ( ! preg_match( '/^(bit|bool|boolean|tinyint|smallint|mediumint|int|int1|int2|int3|int4|int8|integer|bigint)(?:\(\d+\))?(?: unsigned)?$/', $column_type, $matches ) ) {
-			return false;
-		}
-
-		$type = 'integer' === $matches[1] ? 'int' : $matches[1];
-		return isset( self::MYSQL_INTEGER_DOMAIN_BASE_TYPES[ $type ] )
-			&& ! in_array( $column_type, array( 'int', 'bigint' ), true );
-	}
-
-	/**
-	 * Check whether a MySQL numeric alias type is preserved by a PostgreSQL domain.
-	 *
-	 * @param string $column_type MySQL-facing column type.
-	 * @return bool Whether a catalog domain preserves this numeric shape.
-	 */
-	private function is_postgresql_mysql_numeric_domain_column_type( string $column_type ): bool {
-		$column_type = strtolower( trim( $column_type ) );
-		return (bool) preg_match( '/^(?:dec|fixed)(?:\(\d+(?:,\d+)?\))?$|^float(?:\(\d+(?:,\d+)?\))?$|^real$|^double\(\d+(?:,\d+)?\)$|^numeric\(\d+(?:,\d+)?\)$/', $column_type );
 	}
 
 	/**
