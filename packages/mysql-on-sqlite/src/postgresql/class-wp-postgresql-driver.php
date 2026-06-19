@@ -19357,11 +19357,9 @@ ORDER BY table_name';
 			ON l.relation = c.oid
 		WHERE n.nspname = ?
 			AND c.relkind IN (\'r\', \'p\', \'v\', \'m\', \'f\')
-			AND c.relname NOT IN (%2$s)
-		GROUP BY n.nspname, c.relname
-		ORDER BY c.relname',
-				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+			GROUP BY n.nspname, c.relname
+			ORDER BY c.relname',
+				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
 			);
 			$stmt = $this->connection->query( $sql, array( $show_open_tables_query['schema'] ) );
 

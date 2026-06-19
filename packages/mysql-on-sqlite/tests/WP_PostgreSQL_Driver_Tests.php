@@ -35805,7 +35805,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'LEFT JOIN pg_catalog.pg_locks l', $open_table_queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.pg_backend_pid()', $open_table_queries[0]['sql'] );
 		$this->assertStringContainsString( 'c.relkind IN (\'r\', \'p\', \'v\', \'m\', \'f\')', $open_table_queries[0]['sql'] );
-		$this->assertStringContainsString( 'c.relname NOT IN', $open_table_queries[0]['sql'] );
 		$this->assertStringContainsString( 'ORDER BY c.relname', $open_table_queries[0]['sql'] );
 		$this->assertSame( array( 'public' ), $open_table_queries[0]['params'] );
 
