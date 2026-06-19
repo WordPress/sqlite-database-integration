@@ -34196,7 +34196,36 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$existing_table_names = $this->get_information_schema_tables_site_health_existing_table_names( $where_clause['table_names'] );
+		$placeholders = implode( ', ', array_fill( 0, count( $where_clause['table_names'] ), '?' ) );
+		$stmt         = $this->connection->query(
+			sprintf(
+				'SELECT "TABLE_NAME" FROM (%1$s) AS information_schema_tables WHERE "TABLE_SCHEMA" = ? AND "TABLE_TYPE" IN (?, ?) AND "TABLE_NAME" IN (%2$s)',
+				$this->get_direct_information_schema_relation_sql( 'tables' ),
+				$placeholders
+			),
+			array_merge(
+				array(
+					$this->db_name,
+					'BASE TABLE',
+					'VIEW',
+				),
+				$where_clause['table_names']
+			)
+		);
+
+		$existing_table_name_lookup = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $table_name ) {
+			$existing_table_name_lookup[ (string) $table_name ] = true;
+		}
+
+		$existing_table_names = array_values(
+			array_filter(
+				$where_clause['table_names'],
+				static function ( string $table_name ) use ( $existing_table_name_lookup ): bool {
+					return isset( $existing_table_name_lookup[ $table_name ] );
+				}
+			)
+		);
 		if ( empty( $existing_table_names ) ) {
 			$table_rows_sql = sprintf(
 				'0 AS %s',
@@ -34527,49 +34556,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 	private function is_information_schema_tables_site_health_group_by_clause( array $tokens, int $start, int $end ): bool {
 		return $start + 1 === $end
 			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start ] ?? null, 'table_name' );
-	}
-
-	/**
-	 * Get requested Site Health table names that exist in the PostgreSQL catalog.
-	 *
-	 * @param string[] $table_names Table names from the validated TABLE_NAME predicate.
-	 * @return string[] Existing table names in requested order.
-	 */
-	private function get_information_schema_tables_site_health_existing_table_names( array $table_names ): array {
-		if ( empty( $table_names ) ) {
-			return array();
-		}
-
-		$placeholders = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
-		$stmt         = $this->connection->query(
-			sprintf(
-				'SELECT "TABLE_NAME" FROM (%1$s) AS information_schema_tables WHERE "TABLE_SCHEMA" = ? AND "TABLE_TYPE" IN (?, ?) AND "TABLE_NAME" IN (%2$s)',
-				$this->get_direct_information_schema_relation_sql( 'tables' ),
-				$placeholders
-			),
-			array_merge(
-				array(
-					$this->db_name,
-					'BASE TABLE',
-					'VIEW',
-				),
-				$table_names
-			)
-		);
-
-		$existing_table_names = array();
-		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $table_name ) {
-			$existing_table_names[ (string) $table_name ] = true;
-		}
-
-		return array_values(
-			array_filter(
-				$table_names,
-				static function ( string $table_name ) use ( $existing_table_names ): bool {
-					return isset( $existing_table_names[ $table_name ] );
-				}
-			)
-		);
 	}
 
 	/**
