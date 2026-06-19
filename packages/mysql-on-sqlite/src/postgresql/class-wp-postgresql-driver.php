@@ -19783,13 +19783,10 @@ ORDER BY table_name';
 	 */
 	private function execute_show_databases_query( array $show_databases_query, $fetch_mode, ...$fetch_mode_args ) {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$sql    = 'SELECT
-					CASE WHEN s.schema_name = \'public\' THEN ? ELSE s.schema_name END AS "Database"
-				FROM information_schema.schemata s
-				WHERE s.schema_name = \'information_schema\'
-					OR LEFT(s.schema_name, 3) <> \'pg_\'
+			$sql    = 'SELECT s."SCHEMA_NAME" AS "Database"
+				FROM (' . $this->get_direct_information_schema_schemata_relation_sql() . ') s
 				ORDER BY "Database"';
-			$params = array( $this->main_db_name );
+			$params = array();
 			$stmt   = $this->connection->query( $sql, $params );
 
 			$this->last_postgresql_queries[] = array(
@@ -19865,9 +19862,8 @@ ORDER BY table_name';
 	 */
 	private function mysql_database_exists_in_postgresql_catalog( string $database ): bool {
 		$sql    = 'SELECT 1
-			FROM information_schema.schemata s
-			WHERE (s.schema_name = \'information_schema\' OR LEFT(s.schema_name, 3) <> \'pg_\')
-				AND (CASE WHEN s.schema_name = \'public\' THEN ? ELSE s.schema_name END) = ?
+			FROM (' . $this->get_direct_information_schema_schemata_relation_sql() . ') s
+			WHERE ? IS NOT NULL AND s."SCHEMA_NAME" = ?
 			LIMIT 1';
 		$params = array( $this->main_db_name, $database );
 		$stmt   = $this->connection->query( $sql, $params );

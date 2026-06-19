@@ -31938,7 +31938,7 @@ $wp_mysql_on_update$',
 			array(
 				array(
 					'sql'    => $connection->get_catalog_queries()[0]['sql'],
-					'params' => array( 'wptests' ),
+					'params' => array(),
 				),
 			),
 			$driver->get_last_postgresql_queries()
@@ -31959,7 +31959,8 @@ $wp_mysql_on_update$',
 
 		$catalog_query = $connection->get_catalog_queries()[0]['sql'];
 		$this->assertStringContainsString( 'FROM information_schema.schemata s', $catalog_query );
-		$this->assertStringContainsString( 'CASE WHEN s.schema_name = \'public\' THEN ? ELSE s.schema_name END AS "Database"', $catalog_query );
+		$this->assertStringContainsString( 's."SCHEMA_NAME" AS "Database"', $catalog_query );
+		$this->assertStringContainsString( 'AS "SCHEMA_NAME"', $catalog_query );
 		$this->assertStringContainsString( 'LEFT(s.schema_name, 3) <> \'pg_\'', $catalog_query );
 		$this->assertStringContainsString( 'ORDER BY "Database"', $catalog_query );
 		$this->assertStringNotContainsString( '__wp_postgresql_mysql_', $catalog_query );
@@ -32169,7 +32170,8 @@ $wp_mysql_on_update$',
 
 		$catalog_query = $connection->get_catalog_queries()[0]['sql'];
 		$this->assertStringContainsString( 'FROM information_schema.schemata s', $catalog_query );
-		$this->assertStringContainsString( 'CASE WHEN s.schema_name = \'public\' THEN ? ELSE s.schema_name END', $catalog_query );
+		$this->assertStringContainsString( 'AS "SCHEMA_NAME"', $catalog_query );
+		$this->assertStringContainsString( 's."SCHEMA_NAME" = ?', $catalog_query );
 		$this->assertStringContainsString( 'LEFT(s.schema_name, 3) <> \'pg_\'', $catalog_query );
 		$this->assertStringNotContainsString( '__wp_postgresql_mysql_', $catalog_query );
 	}
