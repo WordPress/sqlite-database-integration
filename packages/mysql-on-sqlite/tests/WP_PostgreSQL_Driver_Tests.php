@@ -41964,15 +41964,6 @@ $wp_mysql_on_update$',
 	 * Tests the WordPress core schema can use PostgreSQL catalogs without hidden metadata.
 	 */
 	public function test_wordpress_core_schema_is_catalog_recoverable_for_pgsql_connections(): void {
-		$driver    = $this->create_driver();
-		$can_store = Closure::bind(
-			function ( array $metadata ): bool {
-				return $this->can_use_postgresql_catalog_for_mysql_table_metadata( $metadata );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
-
 		$schema   = $this->get_wordpress_core_schema();
 		$metadata = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $schema, true );
 
@@ -41993,9 +41984,6 @@ $wp_mysql_on_update$',
 			),
 			array_column( $metadata, 'table_name' )
 		);
-		foreach ( $metadata as $table ) {
-			$this->assertTrue( $can_store( $table ) );
-		}
 
 		$pdo          = new class( 'sqlite::memory:' ) extends PDO {
 			/**

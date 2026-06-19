@@ -4516,8 +4516,25 @@ class WP_PostgreSQL_Driver {
 		}
 
 		foreach ( $metadata_tables as $metadata ) {
-			if ( ! $this->can_use_postgresql_catalog_for_mysql_table_metadata( $metadata ) ) {
-				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.' );
+			foreach ( $metadata['columns'] ?? array() as $column ) {
+				if (
+					! $this->is_postgresql_catalog_recoverable_mysql_column_type( (string) ( $column['type'] ?? '' ) )
+					|| ! $this->is_postgresql_catalog_recoverable_mysql_column_extra( $column['extra'] ?? '', $column )
+				) {
+					throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.' );
+				}
+			}
+
+			foreach ( $metadata['indexes'] ?? array() as $index ) {
+				if ( ! $this->is_postgresql_catalog_recoverable_mysql_index_metadata( $index ) ) {
+					throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.' );
+				}
+			}
+
+			foreach ( $metadata['checks'] ?? array() as $check ) {
+				if ( ! $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check ) ) {
+					throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.' );
+				}
 			}
 		}
 
@@ -4580,38 +4597,6 @@ class WP_PostgreSQL_Driver {
 			},
 			$metadata_tables
 		);
-	}
-
-	/**
-	 * Check one table's metadata for catalog-only compatibility.
-	 *
-	 * @param array $metadata MySQL-facing table metadata.
-	 * @return bool Whether catalogs preserve the same MySQL-facing shape.
-	 */
-	private function can_use_postgresql_catalog_for_mysql_table_metadata( array $metadata ): bool {
-		foreach ( $metadata['columns'] ?? array() as $column ) {
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_type( (string) ( $column['type'] ?? '' ) ) ) {
-				return false;
-			}
-
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_extra( $column['extra'] ?? '', $column ) ) {
-				return false;
-			}
-		}
-
-		foreach ( $metadata['indexes'] ?? array() as $index ) {
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_index_metadata( $index ) ) {
-				return false;
-			}
-		}
-
-		foreach ( $metadata['checks'] ?? array() as $check ) {
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check ) ) {
-				return false;
-			}
-		}
-
-		return true;
 	}
 
 	/**
@@ -17911,7 +17896,31 @@ ORDER BY table_name';
 		$columns = explode( ' ', 'Name Engine Version Row_format Rows Avg_row_length Data_length Max_data_length Index_length Data_free Auto_increment Create_time Update_time Check_time Collation Checksum Create_options Comment' );
 		if ( 0 === strcasecmp( $show_table_status_query['database'], 'information_schema' ) ) {
 			$rows = $this->filter_show_table_status_rows(
-				$this->get_information_schema_show_table_status_rows(),
+				array_map(
+					static function ( string $relation ): array {
+						return array(
+							'Name'            => strtoupper( $relation ),
+							'Engine'          => null,
+							'Version'         => null,
+							'Row_format'      => null,
+							'Rows'            => null,
+							'Avg_row_length'  => null,
+							'Data_length'     => null,
+							'Max_data_length' => null,
+							'Index_length'    => null,
+							'Data_free'       => null,
+							'Auto_increment'  => null,
+							'Create_time'     => null,
+							'Update_time'     => null,
+							'Check_time'      => null,
+							'Collation'       => null,
+							'Checksum'        => null,
+							'Create_options'  => '',
+							'Comment'         => 'SYSTEM VIEW',
+						);
+					},
+					$this->get_direct_information_schema_relation_names()
+				),
 				$show_table_status_query
 			);
 
@@ -17964,39 +17973,6 @@ ORDER BY table_name';
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Get MySQL-shaped SHOW TABLE STATUS rows for supported information_schema views.
-	 *
-	 * @return array[] SHOW TABLE STATUS rows.
-	 */
-	private function get_information_schema_show_table_status_rows(): array {
-		return array_map(
-			static function ( string $relation ): array {
-				return array(
-					'Name'            => strtoupper( $relation ),
-					'Engine'          => null,
-					'Version'         => null,
-					'Row_format'      => null,
-					'Rows'            => null,
-					'Avg_row_length'  => null,
-					'Data_length'     => null,
-					'Max_data_length' => null,
-					'Index_length'    => null,
-					'Data_free'       => null,
-					'Auto_increment'  => null,
-					'Create_time'     => null,
-					'Update_time'     => null,
-					'Check_time'      => null,
-					'Collation'       => null,
-					'Checksum'        => null,
-					'Create_options'  => '',
-					'Comment'         => 'SYSTEM VIEW',
-				);
-			},
-			$this->get_direct_information_schema_relation_names()
 		);
 	}
 
@@ -18943,27 +18919,6 @@ ORDER BY table_name';
 		);
 
 		return "'" . strtr( $literal, $replacements ) . "'";
-	}
-
-	/**
-	 * Get the next MySQL-compatible AUTO_INCREMENT value for a table.
-	 *
-	 * @param string $table_name      Table name.
-	 * @param string $identity_column Identity column name.
-	 * @param string $table_schema    Backend schema name.
-	 * @return string|null Next AUTO_INCREMENT value, or null when unavailable.
-	 */
-	private function get_show_table_status_auto_increment_value( string $table_name, string $identity_column, string $table_schema = 'public' ): ?string {
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		if ( 'pgsql' === $driver_name ) {
-			return $this->get_postgresql_show_table_status_auto_increment_value( $table_schema, $table_name, $identity_column );
-		}
-
-		if ( 'sqlite' === $driver_name ) {
-			return $this->get_sqlite_show_table_status_auto_increment_value( $table_name );
-		}
-
-		return null;
 	}
 
 	/**
@@ -40745,7 +40700,12 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 
 			if ( null !== $identity_column ) {
 				try {
-					$auto_increment = $this->get_show_table_status_auto_increment_value( $table_name, $identity_column, $table_schema );
+					$pdo_driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+					if ( 'pgsql' === $pdo_driver_name ) {
+						$auto_increment = $this->get_postgresql_show_table_status_auto_increment_value( $table_schema, $table_name, $identity_column );
+					} elseif ( 'sqlite' === $pdo_driver_name ) {
+						$auto_increment = $this->get_sqlite_show_table_status_auto_increment_value( $table_name );
+					}
 				} catch ( PDOException $e ) {
 					$auto_increment = null;
 				}
