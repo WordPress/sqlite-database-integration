@@ -8667,47 +8667,31 @@ $wp_mysql_primary_index_comment$',
 				$tokens[ $position ]->id,
 				array(
 					WP_MySQL_Lexer::AS_SYMBOL,
+					WP_MySQL_Lexer::CHARACTER_SYMBOL,
+					WP_MySQL_Lexer::CHARSET_SYMBOL,
+					WP_MySQL_Lexer::CHAR_SYMBOL,
+					WP_MySQL_Lexer::COLLATE_SYMBOL,
 					WP_MySQL_Lexer::COMMA_SYMBOL,
+					WP_MySQL_Lexer::COMMENT_SYMBOL,
+					WP_MySQL_Lexer::DATA_SYMBOL,
 					WP_MySQL_Lexer::EOF,
 					WP_MySQL_Lexer::EQUAL_OPERATOR,
+					WP_MySQL_Lexer::INDEX_SYMBOL,
 					WP_MySQL_Lexer::LIKE_SYMBOL,
 					WP_MySQL_Lexer::SELECT_SYMBOL,
 					WP_MySQL_Lexer::SEMICOLON_SYMBOL,
+					WP_MySQL_Lexer::TABLESPACE_SYMBOL,
+					WP_MySQL_Lexer::UNION_SYMBOL,
 				),
 				true
 			)
-			|| $this->is_mysql_create_table_select_option_start_token( $tokens[ $position ] )
+			|| $this->is_mysql_create_table_select_assignment_option_token( $tokens[ $position ] )
 		) {
 			return false;
 		}
 
 		++$position;
 		return true;
-	}
-
-	/**
-	 * Check whether a token starts a supported CTAS no-op table option.
-	 *
-	 * @param WP_MySQL_Token $token MySQL token.
-	 * @return bool Whether the token starts a supported option.
-	 */
-	private function is_mysql_create_table_select_option_start_token( WP_MySQL_Token $token ): bool {
-		return $this->is_mysql_create_table_select_assignment_option_token( $token )
-			|| in_array(
-				$token->id,
-				array(
-					WP_MySQL_Lexer::CHARACTER_SYMBOL,
-					WP_MySQL_Lexer::CHARSET_SYMBOL,
-					WP_MySQL_Lexer::CHAR_SYMBOL,
-					WP_MySQL_Lexer::COLLATE_SYMBOL,
-					WP_MySQL_Lexer::COMMENT_SYMBOL,
-					WP_MySQL_Lexer::DATA_SYMBOL,
-					WP_MySQL_Lexer::INDEX_SYMBOL,
-					WP_MySQL_Lexer::TABLESPACE_SYMBOL,
-					WP_MySQL_Lexer::UNION_SYMBOL,
-				),
-				true
-			);
 	}
 
 	/**
