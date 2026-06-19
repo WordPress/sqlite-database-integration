@@ -37997,11 +37997,9 @@ WHERE option_name IN (
 	 * @return bool Whether the view may be used in a JOIN rewrite.
 	 */
 	private function is_direct_information_schema_join_relation( string $view ): bool {
-		return in_array(
-			strtolower( $view ),
-			explode( ' ', 'tables columns schemata statistics table_constraints key_column_usage referential_constraints check_constraints character_sets collations engines events session_variables global_variables server_status session_status global_status plugins user_privileges schema_privileges table_privileges column_privileges applicable_roles administrable_role_authorizations enabled_roles role_column_grants role_routine_grants role_table_grants processlist innodb_tables innodb_indexes innodb_fields innodb_columns tablespaces views triggers routines parameters' ),
-			true
-		);
+		$view               = strtolower( $view );
+		$non_join_relations = explode( ' ', 'collation_character_set_applicability column_statistics columns_extensions files innodb_datafiles innodb_lock_waits innodb_tablespaces innodb_tablespaces_brief keywords optimizer_trace partitions profiling resource_groups schemata_extensions st_geometry_columns table_constraints_extensions tablespaces_extensions user_attributes view_routine_usage view_table_usage' );
+		return null !== $this->get_direct_information_schema_relation_columns( $view ) && ! in_array( $view, $non_join_relations, true );
 	}
 
 	/**
