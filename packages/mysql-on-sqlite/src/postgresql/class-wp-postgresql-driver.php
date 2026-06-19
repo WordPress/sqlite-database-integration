@@ -35755,7 +35755,25 @@ WHERE "TABLE_SCHEMA" = %3$s
 		}
 
 		if ( isset( $cte_sources[ strtolower( $first ) ] ) ) {
-			return $this->parse_direct_information_schema_cte_select_source( $tokens, $position, $end, $cte_sources[ strtolower( $first ) ] );
+			$cte_source = $cte_sources[ strtolower( $first ) ];
+			if ( ! isset( $cte_source['name'], $cte_source['columns'] ) || ! is_array( $cte_source['columns'] ) ) {
+				return null;
+			}
+
+			$cte_name = (string) $cte_source['name'];
+			++$position;
+
+			$alias = $this->parse_direct_information_schema_optional_alias( $tokens, $position, $end, $cte_name );
+			if ( null === $alias ) {
+				return null;
+			}
+
+			return array(
+				'cte'      => $cte_name,
+				'alias'    => $alias,
+				'position' => $position,
+				'columns'  => $cte_source['columns'],
+			);
 		}
 
 		++$position;
@@ -35801,36 +35819,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 			'view'     => $view,
 			'alias'    => $alias,
 			'position' => $position,
-		);
-	}
-
-	/**
-	 * Parse a CTE source used by a final direct information_schema SELECT.
-	 *
-	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
-	 * @param int              $position   Source token position.
-	 * @param int              $end        Source range end position, exclusive.
-	 * @param array            $cte_source CTE source metadata.
-	 * @return array{cte:string,alias:string,position:int,columns:string[]}|null Parsed source, or null.
-	 */
-	private function parse_direct_information_schema_cte_select_source( array $tokens, int $position, int $end, array $cte_source ): ?array {
-		if ( ! isset( $cte_source['name'], $cte_source['columns'] ) || ! is_array( $cte_source['columns'] ) ) {
-			return null;
-		}
-
-		$cte_name = (string) $cte_source['name'];
-		++$position;
-
-		$alias = $this->parse_direct_information_schema_optional_alias( $tokens, $position, $end, $cte_name );
-		if ( null === $alias ) {
-			return null;
-		}
-
-		return array(
-			'cte'      => $cte_name,
-			'alias'    => $alias,
-			'position' => $position,
-			'columns'  => $cte_source['columns'],
 		);
 	}
 
