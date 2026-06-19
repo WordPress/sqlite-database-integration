@@ -34621,7 +34621,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_innodb_tables_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'innodb_tables' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -36148,7 +36148,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_partitions_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'partitions' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

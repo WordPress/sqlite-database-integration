@@ -38336,6 +38336,144 @@ JOIN pg_catalog.pg_locks blocking
 WHERE NOT waiting.granted';
 		}
 
+		if ( 'innodb_tables' === $view ) {
+			return sprintf(
+				'SELECT
+	CAST(c.oid AS bigint) AS "TABLE_ID",
+	%1$s || \'/\' || c.relname AS "NAME",
+	0 AS "FLAG",
+	CAST(COALESCE(column_counts.n_cols, 0) + 3 AS bigint) AS "N_COLS",
+	CAST(COALESCE(NULLIF(c.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint) AS "SPACE",
+	\'Dynamic\' AS "ROW_FORMAT",
+	0 AS "ZIP_PAGE_SIZE",
+	\'Single\' AS "SPACE_TYPE",
+	NULL AS "INSTANT_COLS",
+	0 AS "TOTAL_ROW_VERSIONS"
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n
+	ON n.oid = c.relnamespace
+LEFT JOIN pg_catalog.pg_database db
+	ON db.datname = current_database()
+LEFT JOIN LATERAL (
+	SELECT COUNT(*) AS n_cols
+	FROM pg_catalog.pg_attribute a
+	WHERE a.attrelid = c.oid
+		AND a.attnum > 0
+		AND NOT a.attisdropped
+) column_counts
+	ON TRUE
+WHERE c.relkind IN (\'r\', \'p\')
+	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(n.nspname, 3) <> \'pg_\'
+	AND c.relname NOT IN (%2$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
+		if ( 'partitions' === $view ) {
+			return sprintf(
+				'SELECT
+		\'def\' AS "TABLE_CATALOG",
+		%1$s AS "TABLE_SCHEMA",
+		parent_class.relname AS "TABLE_NAME",
+		child_class.relname AS "PARTITION_NAME",
+		NULL AS "SUBPARTITION_NAME",
+		CAST(ROW_NUMBER() OVER (PARTITION BY parent_class.oid ORDER BY child_class.relname) AS bigint) AS "PARTITION_ORDINAL_POSITION",
+		NULL AS "SUBPARTITION_ORDINAL_POSITION",
+		CASE
+			WHEN partkey.definition LIKE \'RANGE%%\' THEN \'RANGE\'
+			WHEN partkey.definition LIKE \'LIST%%\' THEN \'LIST\'
+			WHEN partkey.definition LIKE \'HASH%%\' THEN \'HASH\'
+			ELSE NULL
+		END AS "PARTITION_METHOD",
+		NULL AS "SUBPARTITION_METHOD",
+		CASE
+			WHEN partkey.definition IS NULL THEN NULL
+			ELSE pg_catalog.regexp_replace(partkey.definition, \'^[^(]*\((.*)\)$\', \'\1\')
+		END AS "PARTITION_EXPRESSION",
+		NULL AS "SUBPARTITION_EXPRESSION",
+		pg_catalog.pg_get_expr(child_class.relpartbound, child_class.oid) AS "PARTITION_DESCRIPTION",
+		GREATEST(CAST(COALESCE(child_class.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS",
+		0 AS "AVG_ROW_LENGTH",
+		0 AS "DATA_LENGTH",
+		0 AS "MAX_DATA_LENGTH",
+		0 AS "INDEX_LENGTH",
+		0 AS "DATA_FREE",
+		NULL AS "CREATE_TIME",
+		NULL AS "UPDATE_TIME",
+		NULL AS "CHECK_TIME",
+		NULL AS "CHECKSUM",
+		\'\' AS "PARTITION_COMMENT",
+		\'default\' AS "NODEGROUP",
+		\'DEFAULT\' AS "TABLESPACE_NAME"
+	FROM pg_catalog.pg_inherits inh
+	JOIN pg_catalog.pg_class child_class
+		ON child_class.oid = inh.inhrelid
+	JOIN pg_catalog.pg_class parent_class
+		ON parent_class.oid = inh.inhparent
+	JOIN pg_catalog.pg_namespace parent_ns
+		ON parent_ns.oid = parent_class.relnamespace
+	LEFT JOIN LATERAL (
+		SELECT pg_catalog.pg_get_partkeydef(parent_class.oid) AS definition
+	) partkey
+		ON TRUE
+	WHERE parent_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+		AND LEFT(parent_ns.nspname, 3) <> \'pg_\'
+		AND parent_class.relname NOT IN (%2$s)
+	UNION ALL
+	SELECT
+		\'def\' AS "TABLE_CATALOG",
+		%3$s AS "TABLE_SCHEMA",
+		t.table_name AS "TABLE_NAME",
+		NULL AS "PARTITION_NAME",
+		NULL AS "SUBPARTITION_NAME",
+		NULL AS "PARTITION_ORDINAL_POSITION",
+		NULL AS "SUBPARTITION_ORDINAL_POSITION",
+		NULL AS "PARTITION_METHOD",
+		NULL AS "SUBPARTITION_METHOD",
+		NULL AS "PARTITION_EXPRESSION",
+		NULL AS "SUBPARTITION_EXPRESSION",
+		NULL AS "PARTITION_DESCRIPTION",
+		GREATEST(CAST(COALESCE(pc.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS",
+		0 AS "AVG_ROW_LENGTH",
+		0 AS "DATA_LENGTH",
+		0 AS "MAX_DATA_LENGTH",
+		0 AS "INDEX_LENGTH",
+		0 AS "DATA_FREE",
+		NULL AS "CREATE_TIME",
+		NULL AS "UPDATE_TIME",
+		NULL AS "CHECK_TIME",
+		NULL AS "CHECKSUM",
+		\'\' AS "PARTITION_COMMENT",
+		\'\' AS "NODEGROUP",
+		\'DEFAULT\' AS "TABLESPACE_NAME"
+	FROM information_schema.tables t
+	LEFT JOIN pg_catalog.pg_namespace pn
+		ON pn.nspname = t.table_schema
+	LEFT JOIN pg_catalog.pg_class pc
+		ON pc.relnamespace = pn.oid
+		AND pc.relname = t.table_name
+		AND pc.relkind IN (\'r\', \'p\')
+	WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+		AND LEFT(t.table_schema, 3) <> \'pg_\'
+		AND t.table_type = \'BASE TABLE\'
+		AND t.table_name NOT IN (%2$s)
+		AND (
+			pc.oid IS NULL
+			OR NOT EXISTS (
+				SELECT 1
+				FROM pg_catalog.pg_inherits table_partition
+				WHERE table_partition.inhrelid = pc.oid
+					OR table_partition.inhparent = pc.oid
+			)
+		)',
+				$this->get_direct_information_schema_display_schema_sql( 'parent_ns.nspname' ),
+				$this->get_direct_information_schema_hidden_table_list_sql(),
+				$this->get_direct_information_schema_display_schema_sql( 't.table_schema' )
+			);
+		}
+
 		if ( 'tablespaces_extensions' === $view ) {
 			return 'SELECT
 	ts.spcname AS "TABLESPACE_NAME",
@@ -39704,154 +39842,6 @@ WHERE s.schema_name = \'information_schema\'
 					'DEFAULT_ENCRYPTION'         => 'NO',
 				),
 			)
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.INNODB_TABLES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_innodb_tables_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	CAST(c.oid AS bigint) AS "TABLE_ID",
-	%1$s || \'/\' || c.relname AS "NAME",
-	0 AS "FLAG",
-	CAST(COALESCE(column_counts.n_cols, 0) + 3 AS bigint) AS "N_COLS",
-	CAST(COALESCE(NULLIF(c.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint) AS "SPACE",
-	\'Dynamic\' AS "ROW_FORMAT",
-	0 AS "ZIP_PAGE_SIZE",
-	\'Single\' AS "SPACE_TYPE",
-	NULL AS "INSTANT_COLS",
-	0 AS "TOTAL_ROW_VERSIONS"
-FROM pg_catalog.pg_class c
-JOIN pg_catalog.pg_namespace n
-	ON n.oid = c.relnamespace
-LEFT JOIN pg_catalog.pg_database db
-	ON db.datname = current_database()
-LEFT JOIN LATERAL (
-	SELECT COUNT(*) AS n_cols
-	FROM pg_catalog.pg_attribute a
-	WHERE a.attrelid = c.oid
-		AND a.attnum > 0
-		AND NOT a.attisdropped
-) column_counts
-	ON TRUE
-WHERE c.relkind IN (\'r\', \'p\')
-	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'
-	AND c.relname NOT IN (%2$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.PARTITIONS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_partitions_relation_sql(): string {
-		return sprintf(
-			'SELECT
-		\'def\' AS "TABLE_CATALOG",
-		%1$s AS "TABLE_SCHEMA",
-		parent_class.relname AS "TABLE_NAME",
-		child_class.relname AS "PARTITION_NAME",
-		NULL AS "SUBPARTITION_NAME",
-		CAST(ROW_NUMBER() OVER (PARTITION BY parent_class.oid ORDER BY child_class.relname) AS bigint) AS "PARTITION_ORDINAL_POSITION",
-		NULL AS "SUBPARTITION_ORDINAL_POSITION",
-		CASE
-			WHEN partkey.definition LIKE \'RANGE%%\' THEN \'RANGE\'
-			WHEN partkey.definition LIKE \'LIST%%\' THEN \'LIST\'
-			WHEN partkey.definition LIKE \'HASH%%\' THEN \'HASH\'
-			ELSE NULL
-		END AS "PARTITION_METHOD",
-		NULL AS "SUBPARTITION_METHOD",
-		CASE
-			WHEN partkey.definition IS NULL THEN NULL
-			ELSE pg_catalog.regexp_replace(partkey.definition, \'^[^(]*\((.*)\)$\', \'\1\')
-		END AS "PARTITION_EXPRESSION",
-		NULL AS "SUBPARTITION_EXPRESSION",
-		pg_catalog.pg_get_expr(child_class.relpartbound, child_class.oid) AS "PARTITION_DESCRIPTION",
-		GREATEST(CAST(COALESCE(child_class.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS",
-		0 AS "AVG_ROW_LENGTH",
-		0 AS "DATA_LENGTH",
-		0 AS "MAX_DATA_LENGTH",
-		0 AS "INDEX_LENGTH",
-		0 AS "DATA_FREE",
-		NULL AS "CREATE_TIME",
-		NULL AS "UPDATE_TIME",
-		NULL AS "CHECK_TIME",
-		NULL AS "CHECKSUM",
-		\'\' AS "PARTITION_COMMENT",
-		\'default\' AS "NODEGROUP",
-		\'DEFAULT\' AS "TABLESPACE_NAME"
-	FROM pg_catalog.pg_inherits inh
-	JOIN pg_catalog.pg_class child_class
-		ON child_class.oid = inh.inhrelid
-	JOIN pg_catalog.pg_class parent_class
-		ON parent_class.oid = inh.inhparent
-	JOIN pg_catalog.pg_namespace parent_ns
-		ON parent_ns.oid = parent_class.relnamespace
-	LEFT JOIN LATERAL (
-		SELECT pg_catalog.pg_get_partkeydef(parent_class.oid) AS definition
-	) partkey
-		ON TRUE
-	WHERE parent_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-		AND LEFT(parent_ns.nspname, 3) <> \'pg_\'
-		AND parent_class.relname NOT IN (%2$s)
-	UNION ALL
-	SELECT
-		\'def\' AS "TABLE_CATALOG",
-		%3$s AS "TABLE_SCHEMA",
-		t.table_name AS "TABLE_NAME",
-		NULL AS "PARTITION_NAME",
-		NULL AS "SUBPARTITION_NAME",
-		NULL AS "PARTITION_ORDINAL_POSITION",
-		NULL AS "SUBPARTITION_ORDINAL_POSITION",
-		NULL AS "PARTITION_METHOD",
-		NULL AS "SUBPARTITION_METHOD",
-		NULL AS "PARTITION_EXPRESSION",
-		NULL AS "SUBPARTITION_EXPRESSION",
-		NULL AS "PARTITION_DESCRIPTION",
-		GREATEST(CAST(COALESCE(pc.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS",
-		0 AS "AVG_ROW_LENGTH",
-		0 AS "DATA_LENGTH",
-		0 AS "MAX_DATA_LENGTH",
-		0 AS "INDEX_LENGTH",
-		0 AS "DATA_FREE",
-		NULL AS "CREATE_TIME",
-		NULL AS "UPDATE_TIME",
-		NULL AS "CHECK_TIME",
-		NULL AS "CHECKSUM",
-		\'\' AS "PARTITION_COMMENT",
-		\'\' AS "NODEGROUP",
-		\'DEFAULT\' AS "TABLESPACE_NAME"
-	FROM information_schema.tables t
-	LEFT JOIN pg_catalog.pg_namespace pn
-		ON pn.nspname = t.table_schema
-	LEFT JOIN pg_catalog.pg_class pc
-		ON pc.relnamespace = pn.oid
-		AND pc.relname = t.table_name
-		AND pc.relkind IN (\'r\', \'p\')
-	WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND LEFT(t.table_schema, 3) <> \'pg_\'
-		AND t.table_type = \'BASE TABLE\'
-		AND t.table_name NOT IN (%2$s)
-		AND (
-			pc.oid IS NULL
-			OR NOT EXISTS (
-				SELECT 1
-				FROM pg_catalog.pg_inherits table_partition
-				WHERE table_partition.inhrelid = pc.oid
-					OR table_partition.inhparent = pc.oid
-			)
-		)',
-			$this->get_direct_information_schema_display_schema_sql( 'parent_ns.nspname' ),
-			$this->get_direct_information_schema_hidden_table_list_sql(),
-			$this->get_direct_information_schema_display_schema_sql( 't.table_schema' )
 		);
 	}
 
