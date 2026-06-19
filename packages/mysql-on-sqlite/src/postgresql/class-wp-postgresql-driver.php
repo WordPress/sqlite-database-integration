@@ -679,9 +679,23 @@ class WP_PostgreSQL_Driver {
 			return;
 		}
 
-		$this->charset   = $this->normalize_mysql_charset_name( $charset );
+		$this->charset = $this->normalize_mysql_charset_name( $charset );
+		$collations    = array(
+			'ascii'   => 'ascii_general_ci',
+			'big5'    => 'big5_chinese_ci',
+			'binary'  => 'binary',
+			'cp1251'  => 'cp1251_general_ci',
+			'hebrew'  => 'hebrew_general_ci',
+			'koi8r'   => 'koi8r_general_ci',
+			'latin1'  => 'latin1_swedish_ci',
+			'tis620'  => 'tis620_thai_ci',
+			'ujis'    => 'ujis_japanese_ci',
+			'utf8'    => 'utf8_general_ci',
+			'utf8mb4' => 'utf8mb4_unicode_ci',
+		);
+
 		$this->collation = null === $collation || '' === $collation
-			? $this->get_default_mysql_collation_for_charset( $this->charset )
+			? ( $collations[ $this->charset ] ?? $this->charset . '_general_ci' )
 			: $this->normalize_mysql_collation_name( $collation );
 		$this->sync_mysql_charset_session_variables();
 	}
@@ -22431,31 +22445,6 @@ ORDER BY t."TRIGGER_NAME"';
 		}
 
 		return $collation;
-	}
-
-	/**
-	 * Get the default MySQL collation for a charset.
-	 *
-	 * @param string $charset Charset name.
-	 * @return string Collation name.
-	 */
-	private function get_default_mysql_collation_for_charset( string $charset ): string {
-		$charset    = $this->normalize_mysql_charset_name( $charset );
-		$collations = array(
-			'ascii'   => 'ascii_general_ci',
-			'big5'    => 'big5_chinese_ci',
-			'binary'  => 'binary',
-			'cp1251'  => 'cp1251_general_ci',
-			'hebrew'  => 'hebrew_general_ci',
-			'koi8r'   => 'koi8r_general_ci',
-			'latin1'  => 'latin1_swedish_ci',
-			'tis620'  => 'tis620_thai_ci',
-			'ujis'    => 'ujis_japanese_ci',
-			'utf8'    => 'utf8_general_ci',
-			'utf8mb4' => 'utf8mb4_unicode_ci',
-		);
-
-		return $collations[ $charset ] ?? $charset . '_general_ci';
 	}
 
 	/**
