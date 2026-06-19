@@ -56688,9 +56688,13 @@ $wp_mysql_%1$s_domain$',
 			$bounds['expression_start'],
 			$bounds['expression_end']
 		);
+		$timestamp_sql  = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+		$sql            = 'dayofweek' === $bounds['function']
+			? sprintf( 'CAST(EXTRACT(DOW FROM %s) AS integer) + 1', $timestamp_sql )
+			: sprintf( 'CAST(EXTRACT(ISODOW FROM %s) AS integer) - 1', $timestamp_sql );
 
 		return array(
-			'sql'      => $this->get_postgresql_mysql_weekday_index_sql( $bounds['function'], $expression_sql ),
+			'sql'      => $sql,
 			'token_id' => WP_MySQL_Lexer::CAST_SYMBOL,
 			'position' => $bounds['close'],
 		);
@@ -56731,23 +56735,6 @@ $wp_mysql_%1$s_domain$',
 			'expression_end'   => $arguments[0]['end'],
 			'close'            => $bounds['close'],
 		);
-	}
-
-	/**
-	 * Get PostgreSQL SQL for a MySQL weekday index function.
-	 *
-	 * @param string $function_name  Lowercase MySQL function name.
-	 * @param string $expression_sql PostgreSQL expression SQL.
-	 * @return string PostgreSQL expression SQL.
-	 */
-	private function get_postgresql_mysql_weekday_index_sql( string $function_name, string $expression_sql ): string {
-		$timestamp_sql = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
-
-		if ( 'dayofweek' === $function_name ) {
-			return sprintf( 'CAST(EXTRACT(DOW FROM %s) AS integer) + 1', $timestamp_sql );
-		}
-
-		return sprintf( 'CAST(EXTRACT(ISODOW FROM %s) AS integer) - 1', $timestamp_sql );
 	}
 
 	/**
