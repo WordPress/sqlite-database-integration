@@ -37065,7 +37065,7 @@ $wp_mysql_on_update$',
 	 * Tests DML column metadata uses PostgreSQL catalogs directly for pgsql connections.
 	 */
 	public function test_dml_column_metadata_uses_postgresql_catalog_for_pgsql_connections(): void {
-		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
 			/**
 			 * Captured column catalog queries.
 			 *
@@ -37081,6 +37081,10 @@ $wp_mysql_on_update$',
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
 				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) ) {
 					$this->catalog_queries[] = array(
 						'sql'    => $sql,
@@ -37121,7 +37125,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_rows   = Closure::bind(
 			function (): array {
-				return $this->get_mysql_dml_column_catalog_metadata( 'public', 'wptests_posts' );
+				return $this->get_mysql_dml_column_metadata( 'wptests_posts' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -37554,7 +37558,7 @@ $wp_mysql_on_update$',
 	 * Tests DML identity repair metadata uses PostgreSQL catalogs for pgsql connections.
 	 */
 	public function test_dml_identity_metadata_uses_postgresql_catalog_for_pgsql_connections(): void {
-		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
 			/**
 			 * Captured identity catalog queries.
 			 *
@@ -37604,7 +37608,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_rows   = Closure::bind(
 			function (): array {
-				return $this->get_dml_identity_column_catalog_metadata( 'public', 'wptests_posts' );
+				return $this->get_dml_identity_column_metadata( 'public', 'wptests_posts' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

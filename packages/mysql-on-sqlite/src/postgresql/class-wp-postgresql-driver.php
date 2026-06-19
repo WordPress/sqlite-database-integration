@@ -6366,7 +6366,38 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function mysql_index_metadata_exists( string $table_schema, string $table_name, string $index_name, bool $unique_only = false ): bool {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->postgresql_catalog_index_metadata_exists( $table_schema, $table_name, $index_name, $unique_only );
+			try {
+				$stmt = $this->connection->query(
+					'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
+						'',
+						'',
+						array_merge(
+							array(
+								'n.nspname = ?',
+								't.relname = ?',
+								't.relkind IN (\'r\', \'p\')',
+							),
+							$unique_only ? array( 'i.indisunique' ) : array()
+						)
+					) . '
+					SELECT 1
+					FROM index_columns
+					WHERE (indisprimary AND LOWER(?) = \'primary\')
+						OR (
+							NOT indisprimary
+							AND (
+								LOWER(postgresql_index_name) = LOWER(?)
+								OR LOWER(postgresql_index_name) = LOWER(table_name || \'__\' || ?)
+							)
+						)
+					LIMIT 1',
+					array( $table_schema, $table_name, $index_name, $index_name, $index_name )
+				);
+
+				return false !== $stmt->fetchColumn();
+			} catch ( PDOException $e ) {
+				return false;
+			}
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -6380,50 +6411,6 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		return false !== $stmt->fetchColumn();
-	}
-
-	/**
-	 * Check whether PostgreSQL catalogs expose an index with the given MySQL-facing name.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @param string $index_name   MySQL-facing index name.
-	 * @param bool   $unique_only  Whether only unique indexes should match.
-	 * @return bool Whether the catalog index exists.
-	 */
-	private function postgresql_catalog_index_metadata_exists( string $table_schema, string $table_name, string $index_name, bool $unique_only ): bool {
-		try {
-			$stmt = $this->connection->query(
-				'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
-					'',
-					'',
-					array_merge(
-						array(
-							'n.nspname = ?',
-							't.relname = ?',
-							't.relkind IN (\'r\', \'p\')',
-						),
-						$unique_only ? array( 'i.indisunique' ) : array()
-					)
-				) . '
-				SELECT 1
-				FROM index_columns
-				WHERE (indisprimary AND LOWER(?) = \'primary\')
-					OR (
-						NOT indisprimary
-						AND (
-							LOWER(postgresql_index_name) = LOWER(?)
-							OR LOWER(postgresql_index_name) = LOWER(table_name || \'__\' || ?)
-						)
-					)
-				LIMIT 1',
-				array( $table_schema, $table_name, $index_name, $index_name, $index_name )
-			);
-
-			return false !== $stmt->fetchColumn();
-		} catch ( PDOException $e ) {
-			return false;
-		}
 	}
 
 	/**
@@ -12381,7 +12368,34 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_existing_dbdelta_column_identity_metadata( string $table_schema, string $table_name, string $column_name ): ?array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_existing_dbdelta_column_identity_catalog_metadata( $table_schema, $table_name, $column_name );
+			$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
+				'c',
+				$this->get_postgresql_identity_sequence_comment_sql( 'c' )
+			);
+
+			try {
+				$stmt = $this->connection->query(
+					sprintf(
+						'SELECT
+							c.data_type,
+							c.is_identity,
+							c.column_default,
+							%s AS mysql_column_type,
+							NULL AS mysql_extra
+						FROM information_schema.columns c
+						WHERE c.table_schema = ?
+							AND c.table_name = ?
+							AND c.column_name = ?',
+						$column_type
+					),
+					array( $table_schema, $table_name, $column_name )
+				);
+			} catch ( PDOException $e ) {
+				return null;
+			}
+
+			$row = $stmt->fetch( PDO::FETCH_ASSOC );
+			return false === $row ? null : $row;
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -12406,45 +12420,6 @@ $wp_mysql_primary_index_comment$',
 			),
 			array( $table_schema, $table_name, $column_name )
 		);
-
-		$row = $stmt->fetch( PDO::FETCH_ASSOC );
-		return false === $row ? null : $row;
-	}
-
-	/**
-	 * Get existing dbDelta column identity metadata from PostgreSQL catalogs.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 * @return array|null Existing column metadata, or null.
-	 */
-	private function get_existing_dbdelta_column_identity_catalog_metadata( string $table_schema, string $table_name, string $column_name ): ?array {
-		$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
-			'c',
-			$this->get_postgresql_identity_sequence_comment_sql( 'c' )
-		);
-
-		try {
-			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT
-						c.data_type,
-						c.is_identity,
-						c.column_default,
-						%s AS mysql_column_type,
-						NULL AS mysql_extra
-					FROM information_schema.columns c
-					WHERE c.table_schema = ?
-						AND c.table_name = ?
-						AND c.column_name = ?',
-					$column_type
-				),
-				array( $table_schema, $table_name, $column_name )
-			);
-		} catch ( PDOException $e ) {
-			return null;
-		}
 
 		$row = $stmt->fetch( PDO::FETCH_ASSOC );
 		return false === $row ? null : $row;
@@ -13191,17 +13166,45 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_mysql_rename_table_index_statements( string $table_schema, string $old_table_name, string $new_table_name, string $metadata_table_name ): array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$key_names = $this->get_postgresql_catalog_rename_table_index_names( $table_schema, $metadata_table_name );
-			if ( null !== $key_names ) {
-				return $this->get_mysql_rename_table_index_statements_for_key_names(
-					$table_schema,
-					$old_table_name,
-					$new_table_name,
-					$key_names
+			$index_prefix = $metadata_table_name . '__';
+			try {
+				$stmt = $this->connection->query(
+					'SELECT idx.relname
+					FROM pg_catalog.pg_class t
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					INNER JOIN pg_catalog.pg_index i
+						ON i.indrelid = t.oid
+					INNER JOIN pg_catalog.pg_class idx
+						ON idx.oid = i.indexrelid
+					WHERE n.nspname = ?
+						AND t.relname = ?
+						AND t.relkind IN (\'r\', \'p\')
+						AND i.indisvalid
+						AND i.indislive
+						AND NOT i.indisprimary
+						AND LEFT(idx.relname, CHAR_LENGTH(?)) = ?
+					ORDER BY idx.relname',
+					array( $table_schema, $metadata_table_name, $index_prefix, $index_prefix )
 				);
+			} catch ( PDOException $e ) {
+				return array();
 			}
 
-			return array();
+			$key_names = array();
+			foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $index_name ) {
+				$key_name = substr( (string) $index_name, strlen( $index_prefix ) );
+				if ( '' !== $key_name ) {
+					$key_names[] = $key_name;
+				}
+			}
+
+			return $this->get_mysql_rename_table_index_statements_for_key_names(
+				$table_schema,
+				$old_table_name,
+				$new_table_name,
+				$key_names
+			);
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -13232,50 +13235,6 @@ $wp_mysql_primary_index_comment$',
 			$new_table_name,
 			$key_names
 		);
-	}
-
-	/**
-	 * Get MySQL-facing index names from PostgreSQL catalogs before a table rename.
-	 *
-	 * @param string $table_schema        Backend schema name.
-	 * @param string $metadata_table_name Current table name that still owns the physical indexes.
-	 * @return string[]|null Key names, or null when the catalog lookup fails.
-	 */
-	private function get_postgresql_catalog_rename_table_index_names( string $table_schema, string $metadata_table_name ): ?array {
-		$index_prefix = $metadata_table_name . '__';
-		try {
-			$stmt = $this->connection->query(
-				'SELECT idx.relname
-				FROM pg_catalog.pg_class t
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				INNER JOIN pg_catalog.pg_index i
-					ON i.indrelid = t.oid
-				INNER JOIN pg_catalog.pg_class idx
-					ON idx.oid = i.indexrelid
-				WHERE n.nspname = ?
-					AND t.relname = ?
-					AND t.relkind IN (\'r\', \'p\')
-					AND i.indisvalid
-					AND i.indislive
-					AND NOT i.indisprimary
-					AND LEFT(idx.relname, CHAR_LENGTH(?)) = ?
-				ORDER BY idx.relname',
-				array( $table_schema, $metadata_table_name, $index_prefix, $index_prefix )
-			);
-		} catch ( PDOException $e ) {
-			return null;
-		}
-
-		$key_names = array();
-		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $index_name ) {
-			$key_name = substr( (string) $index_name, strlen( $index_prefix ) );
-			if ( '' !== $key_name ) {
-				$key_names[] = $key_name;
-			}
-		}
-
-		return $key_names;
 	}
 
 	/**
@@ -27172,7 +27131,40 @@ WHERE option_name IN (
 		}
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->mysql_dml_identity_column_metadata_cache[ $cache_key ] = $this->get_dml_identity_column_catalog_metadata( $table_schema, $table_name );
+			$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
+				'c',
+				'pg_catalog.obj_description(seq.oid, \'pg_class\')'
+			);
+			$extra       = $this->get_direct_information_schema_column_extra_expression( 'c', true );
+			$stmt        = $this->connection->query(
+				sprintf(
+					'SELECT
+						c.column_name,
+						c.data_type,
+						c.is_identity,
+						c.column_default,
+						%1$s AS mysql_column_type,
+						%2$s AS mysql_extra,
+						seq_ns.nspname AS sequence_schema,
+						seq.relname AS sequence_name
+					FROM information_schema.columns c
+					LEFT JOIN LATERAL (
+						SELECT pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', c.table_schema, c.table_name), c.column_name)::regclass AS sequence_oid
+					) identity_sequence ON TRUE
+					LEFT JOIN pg_catalog.pg_class seq
+						ON seq.oid = identity_sequence.sequence_oid
+					LEFT JOIN pg_catalog.pg_namespace seq_ns
+						ON seq_ns.oid = seq.relnamespace
+					WHERE c.table_schema = ?
+						AND c.table_name = ?
+					ORDER BY c.ordinal_position',
+					$column_type,
+					$extra
+				),
+				array( $table_schema, $table_name )
+			);
+
+			$this->mysql_dml_identity_column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
 			return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
 		}
 
@@ -27219,50 +27211,6 @@ WHERE option_name IN (
 		}
 
 		return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
-	}
-
-	/**
-	 * Get PostgreSQL catalog metadata for DML identity repair.
-	 *
-	 * @param string $table_schema Backend table schema.
-	 * @param string $table_name   Table name.
-	 * @return array[] Column metadata rows.
-	 */
-	private function get_dml_identity_column_catalog_metadata( string $table_schema, string $table_name ): array {
-		$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
-			'c',
-			'pg_catalog.obj_description(seq.oid, \'pg_class\')'
-		);
-		$extra       = $this->get_direct_information_schema_column_extra_expression( 'c', true );
-		$stmt        = $this->connection->query(
-			sprintf(
-				'SELECT
-					c.column_name,
-					c.data_type,
-					c.is_identity,
-					c.column_default,
-					%1$s AS mysql_column_type,
-					%2$s AS mysql_extra,
-					seq_ns.nspname AS sequence_schema,
-					seq.relname AS sequence_name
-				FROM information_schema.columns c
-				LEFT JOIN LATERAL (
-					SELECT pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', c.table_schema, c.table_name), c.column_name)::regclass AS sequence_oid
-				) identity_sequence ON TRUE
-				LEFT JOIN pg_catalog.pg_class seq
-					ON seq.oid = identity_sequence.sequence_oid
-				LEFT JOIN pg_catalog.pg_namespace seq_ns
-					ON seq_ns.oid = seq.relnamespace
-				WHERE c.table_schema = ?
-					AND c.table_name = ?
-				ORDER BY c.ordinal_position',
-				$column_type,
-				$extra
-			),
-			array( $table_schema, $table_name )
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 
 	/**
@@ -32860,7 +32808,41 @@ WHERE option_name IN (
 		}
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->mysql_dml_column_metadata_cache[ $cache_key ] = $this->get_mysql_dml_column_catalog_metadata( $table_schema, $table_name );
+			$comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+			$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
+				'c',
+				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+				$comment_sql
+			);
+			$sql         = sprintf(
+				'SELECT
+					c.column_name,
+					c.ordinal_position,
+					%1$s AS column_type,
+					c.is_nullable,
+					%3$s AS column_default,
+					%2$s AS extra
+				FROM information_schema.columns c
+				LEFT JOIN pg_catalog.pg_namespace pn
+					ON pn.nspname = c.table_schema
+				LEFT JOIN pg_catalog.pg_class pc
+					ON pc.relnamespace = pn.oid
+					AND pc.relname = c.table_name
+					AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+				LEFT JOIN pg_catalog.pg_attribute pa
+					ON pa.attrelid = pc.oid
+					AND pa.attname = c.column_name
+					AND pa.attnum > 0
+				WHERE c.table_schema = ?
+					AND c.table_name = ?
+				ORDER BY c.ordinal_position',
+				$column_type,
+				$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
+				$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql )
+			);
+			$stmt        = $this->connection->query( $sql, array( $table_schema, $table_name ) );
+
+			$this->mysql_dml_column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
 			return $this->mysql_dml_column_metadata_cache[ $cache_key ];
 		}
 
@@ -32932,51 +32914,6 @@ WHERE option_name IN (
 		}
 
 		return $this->connection->quote_identifier( $table_name );
-	}
-
-	/**
-	 * Get ordered DML column metadata from PostgreSQL catalogs.
-	 *
-	 * @param string $table_schema Backend table schema.
-	 * @param string $table_name   Table name.
-	 * @return array[] Column metadata rows.
-	 */
-	private function get_mysql_dml_column_catalog_metadata( string $table_schema, string $table_name ): array {
-		$comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-		$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
-			'c',
-			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-			$comment_sql
-		);
-		$sql         = sprintf(
-			'SELECT
-				c.column_name,
-				c.ordinal_position,
-				%1$s AS column_type,
-				c.is_nullable,
-				%3$s AS column_default,
-				%2$s AS extra
-			FROM information_schema.columns c
-			LEFT JOIN pg_catalog.pg_namespace pn
-				ON pn.nspname = c.table_schema
-			LEFT JOIN pg_catalog.pg_class pc
-				ON pc.relnamespace = pn.oid
-				AND pc.relname = c.table_name
-				AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-			LEFT JOIN pg_catalog.pg_attribute pa
-				ON pa.attrelid = pc.oid
-				AND pa.attname = c.column_name
-				AND pa.attnum > 0
-			WHERE c.table_schema = ?
-				AND c.table_name = ?
-			ORDER BY c.ordinal_position',
-			$column_type,
-			$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-			$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql )
-		);
-		$stmt        = $this->connection->query( $sql, array( $table_schema, $table_name ) );
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 
 	/**
