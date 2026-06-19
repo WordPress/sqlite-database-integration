@@ -688,7 +688,9 @@ class WP_PostgreSQL_Driver {
 	 * @return mixed Return value, depending on the query type.
 	 */
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->last_row_count = $this->get_mysql_row_count_from_last_result();
+		$this->last_row_count = is_array( $this->last_result )
+			? -1
+			: ( is_numeric( $this->last_result ) ? (int) $this->last_result : 0 );
 		$this->reset_query_state();
 		$this->last_result      = -1;
 		$this->last_mysql_query = $query;
@@ -58692,9 +58694,27 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 	 * @param string $query PostgreSQL query.
 	 */
 	private function ensure_postgresql_runtime_helpers_for_query( string $query ): void {
-		if ( $this->postgresql_query_uses_mysql_text_domain( $query ) ) {
-			$this->ensure_postgresql_mysql_text_domains();
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			foreach ( array_keys( self::MYSQL_TEXT_DOMAIN_TYPES ) as $domain_name ) {
+				if ( false === strpos( $query, $domain_name ) ) {
+					continue;
+				}
+
+				$this->connection->query(
+					sprintf(
+						'DO $wp_mysql_text_domain$
+BEGIN
+	CREATE DOMAIN %s AS text;
+EXCEPTION WHEN duplicate_object THEN
+	NULL;
+END;
+$wp_mysql_text_domain$',
+						$this->connection->quote_identifier( $domain_name )
+					)
+				);
+			}
 		}
+
 		$this->ensure_postgresql_mysql_domains( 'binary', $this->get_postgresql_mysql_binary_domain_definitions_for_query( $query ) );
 		$this->ensure_postgresql_mysql_domains( 'integer', $this->get_postgresql_mysql_integer_domain_definitions_for_query( $query ) );
 		$this->ensure_postgresql_mysql_domains( 'numeric', $this->get_postgresql_mysql_numeric_domain_definitions_for_query( $query ) );
@@ -58703,46 +58723,6 @@ WHERE cc.constraint_schema NOT IN (\'information_schema\', \'pg_catalog\')',
 			&& 1 === preg_match( '/(?:pg_temp\.)?' . preg_quote( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, '/' ) . '\s*\(/i', $query )
 		) {
 			$this->ensure_sqlite_mysql_validate_temporal_function();
-		}
-	}
-
-	/**
-	 * Check whether a translated PostgreSQL query references a MySQL text-domain type.
-	 *
-	 * @param string $query PostgreSQL query.
-	 * @return bool Whether a helper domain is referenced.
-	 */
-	private function postgresql_query_uses_mysql_text_domain( string $query ): bool {
-		foreach ( array_keys( self::MYSQL_TEXT_DOMAIN_TYPES ) as $domain_name ) {
-			if ( false !== strpos( $query, $domain_name ) ) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * Ensure PostgreSQL domains that preserve lossy MySQL text-backed types exist.
-	 */
-	private function ensure_postgresql_mysql_text_domains(): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
-		foreach ( array_keys( self::MYSQL_TEXT_DOMAIN_TYPES ) as $domain_name ) {
-			$this->connection->query(
-				sprintf(
-					'DO $wp_mysql_text_domain$
-BEGIN
-	CREATE DOMAIN %s AS text;
-EXCEPTION WHEN duplicate_object THEN
-	NULL;
-END;
-$wp_mysql_text_domain$',
-					$this->connection->quote_identifier( $domain_name )
-				)
-			);
 		}
 	}
 
@@ -59059,19 +59039,6 @@ $wp_mysql_%1$s_domain$',
 			? $this->mysql_last_insert_id_assignment_value
 			: $this->get_insert_id();
 		return is_numeric( $last_insert_id ) ? (string) (int) $last_insert_id : '0';
-	}
-
-	/**
-	 * Get the MySQL ROW_COUNT() value from the previous driver result.
-	 *
-	 * @return int MySQL-compatible ROW_COUNT() value.
-	 */
-	private function get_mysql_row_count_from_last_result(): int {
-		if ( is_array( $this->last_result ) ) {
-			return -1;
-		}
-
-		return is_numeric( $this->last_result ) ? (int) $this->last_result : 0;
 	}
 
 	/**
