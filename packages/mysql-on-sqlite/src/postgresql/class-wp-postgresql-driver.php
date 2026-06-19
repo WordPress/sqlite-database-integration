@@ -19294,22 +19294,16 @@ ORDER BY ' . $table_name_sql;
 		}
 
 		$comparison = $this->compare_mysql_show_where_values( $left, $right, $binary );
-		switch ( $operator ) {
-			case '=':
-				return 0 === $comparison;
-			case '<>':
-				return 0 !== $comparison;
-			case '>':
-				return $comparison > 0;
-			case '>=':
-				return $comparison >= 0;
-			case '<':
-				return $comparison < 0;
-			case '<=':
-				return $comparison <= 0;
-		}
+		$matches    = array(
+			'='  => 0 === $comparison,
+			'<>' => 0 !== $comparison,
+			'>'  => $comparison > 0,
+			'>=' => $comparison >= 0,
+			'<'  => $comparison < 0,
+			'<=' => $comparison <= 0,
+		);
 
-		return false;
+		return $matches[ $operator ] ?? false;
 	}
 
 	/**
