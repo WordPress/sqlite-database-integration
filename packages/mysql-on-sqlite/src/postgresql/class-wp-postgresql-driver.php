@@ -53771,7 +53771,7 @@ END',
 		$branches = array(
 			sprintf(
 				'WHEN %s THEN %d',
-				$this->get_postgresql_mysql_not_utf8_continuation_byte_condition_sql( $next_byte_sql ),
+				sprintf( '(%1$s < 128 OR %1$s >= 192)', $next_byte_sql ),
 				$limit
 			),
 		);
@@ -53784,7 +53784,7 @@ END',
 			$byte_sql   = sprintf( 'GET_BYTE(%s, %d)', $bytes_sql, $limit - $offset );
 			$branches[] = sprintf(
 				'WHEN %s THEN %d',
-				$this->get_postgresql_mysql_not_utf8_continuation_byte_condition_sql( $byte_sql ),
+				sprintf( '(%1$s < 128 OR %1$s >= 192)', $byte_sql ),
 				$limit - $offset
 			);
 		}
@@ -53798,16 +53798,6 @@ END',
 			$bytes_sql,
 			$safe_length_sql
 		);
-	}
-
-	/**
-	 * Get a PostgreSQL condition for a byte that is not a UTF-8 continuation byte.
-	 *
-	 * @param string $byte_sql SQL expression returning a byte integer.
-	 * @return string PostgreSQL condition SQL.
-	 */
-	private function get_postgresql_mysql_not_utf8_continuation_byte_condition_sql( string $byte_sql ): string {
-		return sprintf( '(%1$s < 128 OR %1$s >= 192)', $byte_sql );
 	}
 
 	/**
@@ -56609,17 +56599,7 @@ $wp_mysql_%1$s_domain$',
 			return null;
 		}
 
-		return $this->get_mysql_fractional_seconds_precision_sql_value( $argument_sql[0] );
-	}
-
-	/**
-	 * Get a bounded MySQL fractional seconds precision from a SQL literal.
-	 *
-	 * @param string $sql SQL expression.
-	 * @return int|null Precision, or null when unsupported.
-	 */
-	private function get_mysql_fractional_seconds_precision_sql_value( string $sql ): ?int {
-		$sql = trim( $sql );
+		$sql = trim( $argument_sql[0] );
 		return 1 === preg_match( '/^[0-6]$/', $sql ) ? (int) $sql : null;
 	}
 
@@ -56634,7 +56614,8 @@ $wp_mysql_%1$s_domain$',
 			return null;
 		}
 
-		return $this->get_mysql_fractional_seconds_precision_sql_value( $token->get_value() );
+		$value = $token->get_value();
+		return 1 === preg_match( '/^[0-6]$/', $value ) ? (int) $value : null;
 	}
 
 	/**
