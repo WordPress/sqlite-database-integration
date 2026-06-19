@@ -56666,12 +56666,7 @@ $wp_mysql_%1$s_domain$',
 			$year_start_sql
 		);
 
-		return sprintf(
-			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
-			$timestamp_sql,
-			$week_start_sql,
-			$first_week_start_sql
-		);
+		return $this->get_postgresql_mysql_zero_based_week_index_sql( $timestamp_sql, $week_start_sql, $first_week_start_sql );
 	}
 
 	/**
@@ -58080,12 +58075,7 @@ $wp_mysql_%1$s_domain$',
 		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 		$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
 
-		return sprintf(
-			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
-			$timestamp_sql,
-			$week_start_sql,
-			$first_week_start_sql
-		);
+		return $this->get_postgresql_mysql_zero_based_week_index_sql( $timestamp_sql, $week_start_sql, $first_week_start_sql );
 	}
 
 	/**
@@ -58127,12 +58117,7 @@ $wp_mysql_%1$s_domain$',
 		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 		$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( $year_start_sql );
 
-		return sprintf(
-			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
-			$timestamp_sql,
-			$week_start_sql,
-			$first_week_start_sql
-		);
+		return $this->get_postgresql_mysql_zero_based_week_index_sql( $timestamp_sql, $week_start_sql, $first_week_start_sql );
 	}
 
 	/**
@@ -58149,6 +58134,18 @@ $wp_mysql_%1$s_domain$',
 		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 		$first_week_start_sql = $this->get_postgresql_mysql_first_monday_of_year_sql( $year_start_sql );
 
+		return $this->get_postgresql_mysql_zero_based_week_index_sql( $timestamp_sql, $week_start_sql, $first_week_start_sql );
+	}
+
+	/**
+	 * Get PostgreSQL SQL for MySQL week modes that return 0 before the first week.
+	 *
+	 * @param string $timestamp_sql        PostgreSQL timestamp expression.
+	 * @param string $week_start_sql       PostgreSQL week-start expression.
+	 * @param string $first_week_start_sql PostgreSQL first-week-start expression.
+	 * @return string PostgreSQL integer expression.
+	 */
+	private function get_postgresql_mysql_zero_based_week_index_sql( string $timestamp_sql, string $week_start_sql, string $first_week_start_sql ): string {
 		return sprintf(
 			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN 0 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
 			$timestamp_sql,
