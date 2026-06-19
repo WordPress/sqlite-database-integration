@@ -36328,7 +36328,9 @@ $wp_mysql_on_update$',
 		$this->assertStringNotContainsString( "AS 'table'", $sql );
 		$this->assertStringNotContainsString( "AS 'rows'", $sql );
 		$this->assertStringNotContainsString( "AS 'bytes'", $sql );
-		$this->assertStringContainsString( '"information_schema"."tables"', $sql );
+		$this->assertStringContainsString( 'AS information_schema_tables', $sql );
+		$this->assertStringContainsString( '"TABLE_NAME" AS "table_name"', $sql );
+		$this->assertStringNotContainsString( '"information_schema"."tables"', $sql );
 		$this->assertStringContainsString( "\"TABLE_SCHEMA\" = 'wordpress_develop_tests'", $sql );
 		$this->assertStringNotContainsString( '"wordpress_develop_tests"', $sql );
 		$this->assertStringNotContainsString( 'FROM "wptests_missing"', $sql );

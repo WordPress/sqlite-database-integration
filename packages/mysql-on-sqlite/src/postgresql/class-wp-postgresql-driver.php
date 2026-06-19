@@ -34506,28 +34506,19 @@ WHERE option_name IN (
 			return array();
 		}
 
-		$hidden_table_names        = $this->get_direct_information_schema_hidden_table_names();
-		$hidden_table_placeholders = empty( $hidden_table_names )
-			? $this->connection->quote( '' )
-			: implode( ', ', array_fill( 0, count( $hidden_table_names ), '?' ) );
-		$placeholders              = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
-		$stmt                      = $this->connection->query(
+		$placeholders = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
+		$stmt         = $this->connection->query(
 			sprintf(
-				'SELECT %1$s FROM %2$s WHERE %3$s = ? AND %4$s IN (?, ?) AND %1$s NOT IN (%5$s) AND %1$s IN (%6$s)',
-				$this->connection->quote_identifier( 'table_name' ),
-				$this->get_postgresql_qualified_identifier( 'information_schema', 'tables' ),
-				$this->connection->quote_identifier( 'table_schema' ),
-				$this->connection->quote_identifier( 'table_type' ),
-				$hidden_table_placeholders,
+				'SELECT "TABLE_NAME" FROM (%1$s) AS information_schema_tables WHERE "TABLE_SCHEMA" = ? AND "TABLE_TYPE" IN (?, ?) AND "TABLE_NAME" IN (%2$s)',
+				$this->get_direct_information_schema_relation_sql( 'tables' ),
 				$placeholders
 			),
 			array_merge(
 				array(
-					'public',
+					$this->db_name,
 					'BASE TABLE',
 					'VIEW',
 				),
-				$hidden_table_names,
 				$table_names
 			)
 		);
@@ -34555,20 +34546,15 @@ WHERE option_name IN (
 	 */
 	private function get_information_schema_tables_site_health_relation_sql( array $existing_table_names ): string {
 		return sprintf(
-			'SELECT %1$s AS %1$s, %2$s AS %3$s, %4$s, 0 AS %5$s, 0 AS %6$s FROM %7$s WHERE %8$s = %9$s AND %10$s IN (%11$s, %12$s) AND %1$s NOT IN (%13$s)',
-			$this->connection->quote_identifier( 'table_name' ),
-			$this->connection->quote( $this->db_name ),
-			$this->connection->quote_identifier( 'TABLE_SCHEMA' ),
+			'SELECT "TABLE_NAME" AS "table_name", "TABLE_SCHEMA" AS "table_schema", %1$s, "DATA_LENGTH" AS "data_length", "INDEX_LENGTH" AS "index_length"
+FROM (%2$s) AS information_schema_tables
+WHERE "TABLE_SCHEMA" = %3$s
+	AND "TABLE_TYPE" IN (%4$s, %5$s)',
 			$this->get_information_schema_tables_site_health_table_rows_sql( $existing_table_names ),
-			$this->connection->quote_identifier( 'data_length' ),
-			$this->connection->quote_identifier( 'index_length' ),
-			$this->get_postgresql_qualified_identifier( 'information_schema', 'tables' ),
-			$this->connection->quote_identifier( 'table_schema' ),
-			$this->connection->quote( 'public' ),
-			$this->connection->quote_identifier( 'table_type' ),
+			$this->get_direct_information_schema_relation_sql( 'tables' ),
+			$this->connection->quote( $this->db_name ),
 			$this->connection->quote( 'BASE TABLE' ),
-			$this->connection->quote( 'VIEW' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
+			$this->connection->quote( 'VIEW' )
 		);
 	}
 
@@ -34597,7 +34583,7 @@ WHERE option_name IN (
 
 		return sprintf(
 			'CASE %s %s ELSE 0 END AS %s',
-			$this->connection->quote_identifier( 'table_name' ),
+			$this->connection->quote_identifier( 'TABLE_NAME' ),
 			implode( ' ', $cases ),
 			$this->connection->quote_identifier( 'TABLE_ROWS' )
 		);
