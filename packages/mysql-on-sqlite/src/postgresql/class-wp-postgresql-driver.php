@@ -41602,21 +41602,19 @@ WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_column_privileges_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	pg_catalog.quote_literal(cp.grantee) || \'@\'\'%%\'\'\' AS "GRANTEE",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	cp.table_name AS "TABLE_NAME",
-	cp.column_name AS "COLUMN_NAME",
-	cp.privilege_type AS "PRIVILEGE_TYPE",
-	cp.is_grantable AS "IS_GRANTABLE"
-FROM information_schema.column_privileges cp
-WHERE cp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(cp.table_schema, 3) <> \'pg_\'
-	AND cp.table_name NOT IN (%2$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'cp.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
+		return str_replace(
+			array(
+				'tp.table_name AS "TABLE_NAME",',
+				'information_schema.table_privileges tp',
+				'tp.',
+			),
+			array(
+				'tp.table_name AS "TABLE_NAME",
+	tp.column_name AS "COLUMN_NAME",',
+				'information_schema.column_privileges cp',
+				'cp.',
+			),
+			$this->get_direct_information_schema_table_privileges_relation_sql()
 		);
 	}
 
@@ -41652,24 +41650,19 @@ WHERE rtg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string Relation SQL.
 	 */
 	private function get_direct_information_schema_role_column_grants_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	rcg.grantor AS "GRANTOR",
-	\'%%\' AS "GRANTOR_HOST",
-	rcg.grantee AS "GRANTEE",
-	\'%%\' AS "GRANTEE_HOST",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	rcg.table_name AS "TABLE_NAME",
-	rcg.column_name AS "COLUMN_NAME",
-	rcg.privilege_type AS "PRIVILEGE_TYPE",
-	rcg.is_grantable AS "IS_GRANTABLE"
-FROM information_schema.role_column_grants rcg
-WHERE rcg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(rcg.table_schema, 3) <> \'pg_\'
-	AND rcg.table_name NOT IN (%2$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'rcg.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
+		return str_replace(
+			array(
+				'rtg.table_name AS "TABLE_NAME",',
+				'information_schema.role_table_grants rtg',
+				'rtg.',
+			),
+			array(
+				'rtg.table_name AS "TABLE_NAME",
+	rtg.column_name AS "COLUMN_NAME",',
+				'information_schema.role_column_grants rcg',
+				'rcg.',
+			),
+			$this->get_direct_information_schema_role_table_grants_relation_sql()
 		);
 	}
 
