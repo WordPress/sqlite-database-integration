@@ -40815,7 +40815,13 @@ $wp_mysql_on_update$',
 		$get_query  = Closure::bind(
 			function (): array {
 				return array(
-					'relation' => $this->get_direct_information_schema_statistics_relation_sql( true, true ),
+					'relation' => $this->get_direct_information_schema_relation_sql(
+						'statistics',
+						array(
+							'include_internal_sort_column' => true,
+							'include_catalog_fallback'     => true,
+						)
+					),
 					'select'   => $this->get_show_index_relation_select_sql(),
 				);
 			},
