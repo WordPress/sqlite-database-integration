@@ -5070,7 +5070,8 @@ $wp_mysql_on_update$',
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
 				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			} else {
-				$this->rename_mysql_index_metadata_if_table_exists(
+				$this->ensure_mysql_schema_metadata_tables();
+				$this->rename_mysql_index_metadata(
 					$table_schema,
 					$table_name,
 					$metadata['old_index'],
@@ -5100,7 +5101,8 @@ $wp_mysql_on_update$',
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
 				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			} else {
-				$this->delete_mysql_foreign_key_metadata_if_table_exists( $table_schema, $table_name, $metadata['constraint'] );
+				$this->ensure_mysql_schema_metadata_tables();
+				$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, $metadata['constraint'] );
 			}
 			return;
 		}
@@ -5123,7 +5125,8 @@ $wp_mysql_on_update$',
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
 				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			} else {
-				$this->delete_mysql_check_metadata_if_table_exists( $table_schema, $table_name, $metadata['constraint'] );
+				$this->ensure_mysql_schema_metadata_tables();
+				$this->delete_mysql_check_metadata( $table_schema, $table_name, $metadata['constraint'] );
 			}
 			return;
 		}
@@ -6406,25 +6409,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Rename index side metadata only when the hidden side table already exists.
-	 *
-	 * @param string $table_schema   Metadata schema.
-	 * @param string $table_name     Table name.
-	 * @param string $old_index_name Old index name.
-	 * @param string $new_index_name New index name.
-	 */
-	private function rename_mysql_index_metadata_if_table_exists(
-		string $table_schema,
-		string $table_name,
-		string $old_index_name,
-		string $new_index_name
-	): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->rename_mysql_index_metadata( $table_schema, $table_name, $old_index_name, $new_index_name );
-	}
-
-	/**
 	 * Check whether stored MySQL metadata has an index with the given name.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -6718,19 +6702,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Delete CHECK side metadata only when the hidden side table already exists.
-	 *
-	 * @param string $table_schema    Metadata schema.
-	 * @param string $table_name      Table name.
-	 * @param string $constraint_name Constraint name.
-	 */
-	private function delete_mysql_check_metadata_if_table_exists( string $table_schema, string $table_name, string $constraint_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->delete_mysql_check_metadata( $table_schema, $table_name, $constraint_name );
-	}
-
-	/**
 	 * Get stored metadata for one CHECK constraint.
 	 *
 	 * @param string $table_schema    Metadata schema.
@@ -6834,19 +6805,6 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Delete foreign key side metadata only when the hidden side table already exists.
-	 *
-	 * @param string $table_schema    Metadata schema.
-	 * @param string $table_name      Table name.
-	 * @param string $constraint_name Constraint name.
-	 */
-	private function delete_mysql_foreign_key_metadata_if_table_exists( string $table_schema, string $table_name, string $constraint_name ): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, $constraint_name );
 	}
 
 	/**

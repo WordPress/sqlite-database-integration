@@ -22341,9 +22341,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'rename_mysql_index_metadata'                  => function (): void {
 				$this->rename_mysql_index_metadata( 'public', 'catalog_side_table', 'old_idx', 'id_idx' );
 			},
-			'rename_mysql_index_metadata_if_table_exists'  => function (): void {
-				$this->rename_mysql_index_metadata_if_table_exists( 'public', 'catalog_side_table', 'old_idx', 'id_idx' );
-			},
 			'insert_mysql_foreign_key_metadata'            => function (): void {
 				$this->insert_mysql_foreign_key_metadata(
 					'public',
@@ -22373,17 +22370,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'delete_mysql_check_metadata'                  => function (): void {
 				$this->delete_mysql_check_metadata( 'public', 'catalog_side_table', 'chk_id' );
 			},
-			'delete_mysql_check_metadata_if_table_exists'  => function (): void {
-				$this->delete_mysql_check_metadata_if_table_exists( 'public', 'catalog_side_table', 'chk_id' );
-			},
 			'get_next_mysql_check_metadata_ordinal'        => function (): void {
 				$this->get_next_mysql_check_metadata_ordinal( 'public', 'catalog_side_table' );
 			},
 			'delete_mysql_foreign_key_metadata'            => function (): void {
 				$this->delete_mysql_foreign_key_metadata( 'public', 'catalog_side_table', 'fk_id' );
-			},
-			'delete_mysql_foreign_key_metadata_if_table_exists' => function (): void {
-				$this->delete_mysql_foreign_key_metadata_if_table_exists( 'public', 'catalog_side_table', 'fk_id' );
 			},
 			'delete_mysql_foreign_key_metadata_for_column' => function (): void {
 				$this->delete_mysql_foreign_key_metadata_for_column( 'public', 'catalog_side_table', 'parent_id' );
