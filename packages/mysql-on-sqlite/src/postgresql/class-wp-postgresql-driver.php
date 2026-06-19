@@ -8289,37 +8289,15 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function translate_mysql_create_table_select_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+		$prefix = $this->get_mysql_create_table_prefix( $tokens );
+		if ( null === $prefix ) {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		if ( null === $statement_end ) {
-			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
-		}
-
-		$position     = 1;
-		$is_temporary = false;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
-			$is_temporary = true;
-			++$position;
-		}
-
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		++$position;
-		$if_not_exists = false;
-		if (
-			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
-			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
-			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
-			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
-		) {
-			$if_not_exists = true;
-			$position     += 3;
-		}
+		$statement_end = $prefix['statement_end'];
+		$position      = $prefix['position'];
+		$is_temporary  = $prefix['temporary'];
+		$if_not_exists = $prefix['if_not_exists'];
 
 		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
 		if ( null === $table_reference ) {
@@ -8943,37 +8921,15 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function translate_mysql_create_table_like_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+		$prefix = $this->get_mysql_create_table_prefix( $tokens );
+		if ( null === $prefix ) {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		if ( null === $statement_end ) {
-			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
-		}
-
-		$position     = 1;
-		$is_temporary = false;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
-			$is_temporary = true;
-			++$position;
-		}
-
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		++$position;
-		$if_not_exists = false;
-		if (
-			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
-			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
-			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
-			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
-		) {
-			$if_not_exists = true;
-			$position     += 3;
-		}
+		$statement_end = $prefix['statement_end'];
+		$position      = $prefix['position'];
+		$is_temporary  = $prefix['temporary'];
+		$if_not_exists = $prefix['if_not_exists'];
 
 			$target_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
 		if ( null === $target_reference ) {
@@ -9039,6 +8995,53 @@ $wp_mysql_primary_index_comment$',
 			'table'          => $target_reference['table'],
 			'temporary'      => $is_temporary,
 			'noop'           => false,
+		);
+	}
+
+	/**
+	 * Parse the common CREATE [TEMPORARY] TABLE [IF NOT EXISTS] prefix.
+	 *
+	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
+	 * @return array{statement_end: int, position: int, temporary: bool, if_not_exists: bool}|null Prefix data, or null when this is not CREATE TABLE.
+	 */
+	private function get_mysql_create_table_prefix( array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
+		$position     = 1;
+		$is_temporary = false;
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
+			$is_temporary = true;
+			++$position;
+		}
+
+		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
+			return null;
+		}
+
+		++$position;
+		$if_not_exists = false;
+		if (
+			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
+			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
+		) {
+			$if_not_exists = true;
+			$position     += 3;
+		}
+
+		return array(
+			'statement_end' => $statement_end,
+			'position'      => $position,
+			'temporary'     => $is_temporary,
+			'if_not_exists' => $if_not_exists,
 		);
 	}
 
@@ -64955,30 +64958,13 @@ $wp_mysql_%1$s_domain$',
 	 */
 	private function get_mysql_create_table_target( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+		$prefix = $this->get_mysql_create_table_prefix( $tokens );
+		if ( null === $prefix ) {
 			return null;
 		}
 
-		$position     = 1;
-		$is_temporary = false;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
-			$is_temporary = true;
-			++$position;
-		}
-
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		++$position;
-		if (
-			isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
-			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $position ]->id
-			&& WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $position + 1 ]->id
-			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $position + 2 ]->id
-		) {
-			$position += 3;
-		}
+		$position     = $prefix['position'];
+		$is_temporary = $prefix['temporary'];
 
 		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
 		if ( null === $table_reference || ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id ) ) {
@@ -65015,32 +65001,13 @@ $wp_mysql_%1$s_domain$',
 	 */
 	private function get_mysql_create_table_if_not_exists_target( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
+		$prefix = $this->get_mysql_create_table_prefix( $tokens );
+		if ( null === $prefix || ! $prefix['if_not_exists'] ) {
 			return null;
 		}
 
-		$position     = 1;
-		$is_temporary = false;
-		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $position ]->id ) {
-			$is_temporary = true;
-			++$position;
-		}
-
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		++$position;
-		if (
-			! isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] )
-			|| WP_MySQL_Lexer::IF_SYMBOL !== $tokens[ $position ]->id
-			|| WP_MySQL_Lexer::NOT_SYMBOL !== $tokens[ $position + 1 ]->id
-			|| WP_MySQL_Lexer::EXISTS_SYMBOL !== $tokens[ $position + 2 ]->id
-		) {
-			return null;
-		}
-
-		$position       += 3;
+		$position        = $prefix['position'];
+		$is_temporary    = $prefix['temporary'];
 		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
 		if ( null === $table_reference || $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			return null;
