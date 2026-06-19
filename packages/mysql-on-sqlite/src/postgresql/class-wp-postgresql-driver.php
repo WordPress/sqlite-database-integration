@@ -21,6 +21,14 @@ class WP_PostgreSQL_Driver {
 	const DEFAULT_MYSQL_CHARSET            = 'utf8mb4';
 	const DEFAULT_MYSQL_COLLATION          = 'utf8mb4_unicode_ci';
 
+	private const MYSQL_SCHEMA_SIDE_METADATA_TABLES = array(
+		self::MYSQL_TABLE_METADATA_TABLE,
+		self::MYSQL_COLUMN_METADATA_TABLE,
+		self::MYSQL_INDEX_METADATA_TABLE,
+		self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
+		self::MYSQL_CHECK_METADATA_TABLE,
+	);
+
 	private const DEFAULT_MYSQL_SQL_MODES = array(
 		'ERROR_FOR_DIVISION_BY_ZERO',
 		'NO_ENGINE_SUBSTITUTION',
@@ -133,6 +141,13 @@ class WP_PostgreSQL_Driver {
 	 * Prefix for MySQL column collation metadata stored on PostgreSQL column comments.
 	 */
 	private const MYSQL_COLUMN_COMMENT_COLLATION_PREFIX = '__wp_mysql_column_collation:';
+
+	private const POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES = array(
+		self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX,
+		self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX,
+		self::MYSQL_COLUMN_COMMENT_CHARSET_PREFIX,
+		self::MYSQL_COLUMN_COMMENT_COLLATION_PREFIX,
+	);
 
 	/**
 	 * Prefix for MySQL index type metadata stored on PostgreSQL index comments.
@@ -1128,7 +1143,7 @@ class WP_PostgreSQL_Driver {
 			foreach ( $drop_query['tables'] as $table_name ) {
 				if (
 					! $this->should_use_postgresql_catalog_metadata()
-					&& in_array( (string) $table_name, $this->get_mysql_schema_side_metadata_table_names(), true )
+					&& in_array( (string) $table_name, self::MYSQL_SCHEMA_SIDE_METADATA_TABLES, true )
 				) {
 					$this->mysql_schema_metadata_tables_ensured = false;
 					$this->clear_mysql_metadata_caches();
@@ -4397,21 +4412,6 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Get the hidden side metadata tables that store per-table MySQL schema state.
-	 *
-	 * @return string[] Metadata table names.
-	 */
-	private function get_mysql_schema_side_metadata_table_names(): array {
-		return array(
-			self::MYSQL_TABLE_METADATA_TABLE,
-			self::MYSQL_COLUMN_METADATA_TABLE,
-			self::MYSQL_INDEX_METADATA_TABLE,
-			self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-			self::MYSQL_CHECK_METADATA_TABLE,
-		);
-	}
-
-	/**
 	 * Clear all cached MySQL metadata derived from side tables.
 	 */
 	private function clear_mysql_metadata_caches(): void {
@@ -5018,12 +5018,11 @@ $wp_mysql_on_update$',
 		}
 
 		$this->assert_mysql_schema_side_metadata_allowed();
-		$metadata_tables = $this->get_mysql_schema_side_metadata_table_names();
 		$this->ensure_mysql_schema_metadata_tables();
 
 		foreach ( $table_names as $table_name ) {
 			$params = array( $table_schema, $table_name );
-			foreach ( $metadata_tables as $metadata_table ) {
+			foreach ( self::MYSQL_SCHEMA_SIDE_METADATA_TABLES as $metadata_table ) {
 				$this->connection->query(
 					sprintf(
 						'DELETE FROM %s WHERE table_schema = ? AND table_name = ?',
@@ -5207,10 +5206,9 @@ $wp_mysql_on_update$',
 			return;
 		}
 
-		$table_schema    = $metadata['schema'];
-		$old_table_name  = $metadata['old_table'];
-		$new_table_name  = $metadata['new_table'];
-		$metadata_tables = $this->get_mysql_schema_side_metadata_table_names();
+		$table_schema   = $metadata['schema'];
+		$old_table_name = $metadata['old_table'];
+		$new_table_name = $metadata['new_table'];
 		if ( $old_table_name === $new_table_name ) {
 			return;
 		}
@@ -5232,7 +5230,7 @@ $wp_mysql_on_update$',
 		);
 		$referencing_tables = $stmt->fetchAll( PDO::FETCH_ASSOC );
 
-		foreach ( $metadata_tables as $metadata_table ) {
+		foreach ( self::MYSQL_SCHEMA_SIDE_METADATA_TABLES as $metadata_table ) {
 			$this->connection->query(
 				sprintf(
 					'UPDATE %s SET table_name = ? WHERE table_schema = ? AND table_name = ?',
@@ -36944,7 +36942,7 @@ WHERE s.schema_name = \'information_schema\' OR s.schema_name !~ \'^pg_\'',
 				$column_comment  = $comment_sql;
 				for ( $i = 0; $i < 4; ++$i ) {
 					$marker_conditions = array();
-					foreach ( $this->get_postgresql_catalog_column_comment_marker_prefixes() as $prefix ) {
+					foreach ( self::POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES as $prefix ) {
 						$prefix_sql          = $this->connection->quote( $prefix );
 						$marker_conditions[] = sprintf(
 							'LEFT(COALESCE(%1$s, \'\'), LENGTH(%2$s)) = %2$s',
@@ -39567,7 +39565,7 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 			', ',
 			array_map(
 				array( $this->connection, 'quote' ),
-				$this->get_mysql_schema_side_metadata_table_names()
+				self::MYSQL_SCHEMA_SIDE_METADATA_TABLES
 			)
 		);
 	}
@@ -39872,7 +39870,7 @@ END',
 		$prefix_sql  = $this->connection->quote( $prefix );
 		$comment_sql = sprintf( 'COALESCE(%s, \'\')', $column_comment_sql );
 		$cases       = array();
-		for ( $line_number = 1; $line_number <= count( $this->get_postgresql_catalog_column_comment_marker_prefixes() ); ++$line_number ) {
+		for ( $line_number = 1; $line_number <= count( self::POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES ); ++$line_number ) {
 			$line_sql = sprintf( 'split_part(%s, CHR(10), %d)', $comment_sql, $line_number );
 			$cases[]  = sprintf(
 				'WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s',
@@ -39888,20 +39886,6 @@ END',
 	ELSE NULL
 END',
 			implode( "\n\t", $cases )
-		);
-	}
-
-	/**
-	 * Get column comment marker prefixes that may precede the user-facing comment.
-	 *
-	 * @return string[] Marker prefixes.
-	 */
-	private function get_postgresql_catalog_column_comment_marker_prefixes(): array {
-		return array(
-			self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX,
-			self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX,
-			self::MYSQL_COLUMN_COMMENT_CHARSET_PREFIX,
-			self::MYSQL_COLUMN_COMMENT_COLLATION_PREFIX,
 		);
 	}
 
