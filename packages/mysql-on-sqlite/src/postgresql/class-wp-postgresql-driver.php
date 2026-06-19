@@ -40263,7 +40263,21 @@ WHERE option_name IN (
 	 */
 	private function get_direct_information_schema_schemata_relation_sql(): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_direct_information_schema_schemata_catalog_relation_sql();
+			return sprintf(
+				'SELECT
+	\'def\' AS "CATALOG_NAME",
+	%1$s AS "SCHEMA_NAME",
+	%2$s AS "DEFAULT_CHARACTER_SET_NAME",
+	%3$s AS "DEFAULT_COLLATION_NAME",
+	NULL AS "SQL_PATH",
+	\'NO\' AS "DEFAULT_ENCRYPTION"
+FROM information_schema.schemata s
+WHERE s.schema_name = \'information_schema\'
+	OR LEFT(s.schema_name, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 's.schema_name' ),
+				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+			);
 		}
 
 		$columns = $this->get_direct_information_schema_relation_columns( 'schemata' );
@@ -40287,29 +40301,6 @@ WHERE option_name IN (
 					'DEFAULT_ENCRYPTION'         => 'NO',
 				),
 			)
-		);
-	}
-
-	/**
-	 * Build information_schema.SCHEMATA rows from PostgreSQL catalogs.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_schemata_catalog_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "CATALOG_NAME",
-	%1$s AS "SCHEMA_NAME",
-	%2$s AS "DEFAULT_CHARACTER_SET_NAME",
-	%3$s AS "DEFAULT_COLLATION_NAME",
-	NULL AS "SQL_PATH",
-	\'NO\' AS "DEFAULT_ENCRYPTION"
-FROM information_schema.schemata s
-WHERE s.schema_name = \'information_schema\'
-	OR LEFT(s.schema_name, 3) <> \'pg_\'',
-			$this->get_direct_information_schema_display_schema_sql( 's.schema_name' ),
-			$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
 		);
 	}
 
@@ -41461,18 +41452,6 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 FROM pg_catalog.pg_get_keywords() k';
 		}
 
-		return $this->get_direct_information_schema_keywords_literal_relation_sql();
-	}
-
-	/**
-	 * Build fallback MySQL-shaped information_schema.KEYWORDS rows.
-	 *
-	 * This is a small parser compatibility surface for non-catalog fallback
-	 * connections.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_keywords_literal_relation_sql(): string {
 		return $this->get_direct_information_schema_literal_relation_sql(
 			$this->get_direct_information_schema_relation_columns( 'keywords' ),
 			array(
