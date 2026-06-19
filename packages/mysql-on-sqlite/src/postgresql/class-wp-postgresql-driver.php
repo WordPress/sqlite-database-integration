@@ -6419,43 +6419,20 @@ $wp_mysql_primary_index_comment$',
 	 * @param string $table_schema Metadata schema.
 	 * @param string $table_name   Table name.
 	 * @param string $index_name   Index name.
+	 * @param bool   $unique_only  Whether only unique indexes should match.
 	 * @return bool Whether the index metadata exists.
 	 */
-	private function mysql_index_metadata_exists( string $table_schema, string $table_name, string $index_name ): bool {
+	private function mysql_index_metadata_exists( string $table_schema, string $table_name, string $index_name, bool $unique_only = false ): bool {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->postgresql_catalog_index_metadata_exists( $table_schema, $table_name, $index_name, false );
+			return $this->postgresql_catalog_index_metadata_exists( $table_schema, $table_name, $index_name, $unique_only );
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
 		$stmt = $this->connection->query(
 			sprintf(
-				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?) LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $index_name )
-		);
-
-		return false !== $stmt->fetchColumn();
-	}
-
-	/**
-	 * Check whether stored MySQL metadata has a unique index with the given name.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param string $index_name   Index name.
-	 * @return bool Whether the unique index metadata exists.
-	 */
-	private function mysql_unique_index_metadata_exists( string $table_schema, string $table_name, string $index_name ): bool {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->postgresql_catalog_index_metadata_exists( $table_schema, $table_name, $index_name, true );
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?) AND non_unique = \'0\' LIMIT 1',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+				'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?)%s LIMIT 1',
+				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE ),
+				$unique_only ? ' AND non_unique = \'0\'' : ''
 			),
 			array( $table_schema, $table_name, $index_name )
 		);
@@ -11616,7 +11593,7 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$matching_constraint_types = array();
-		if ( $this->mysql_unique_index_metadata_exists( $table_schema, $table_name, $constraint_name ) ) {
+		if ( $this->mysql_index_metadata_exists( $table_schema, $table_name, $constraint_name, true ) ) {
 			$matching_constraint_types[] = 'unique';
 		}
 		if ( $this->mysql_foreign_key_metadata_exists( $table_schema, $table_name, $constraint_name ) ) {

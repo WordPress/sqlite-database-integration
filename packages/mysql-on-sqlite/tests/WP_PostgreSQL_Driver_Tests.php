@@ -40336,7 +40336,7 @@ $wp_mysql_on_update$',
 			function (): array {
 				return array(
 					'index'       => $this->mysql_index_metadata_exists( 'public', 'wptests_posts', 'post_title' ),
-					'unique'      => $this->mysql_unique_index_metadata_exists( 'public', 'wptests_posts', 'slug_unique' ),
+					'unique'      => $this->mysql_index_metadata_exists( 'public', 'wptests_posts', 'slug_unique', true ),
 					'index_rows'  => $this->mysql_index_metadata_has_rows( 'public', 'wptests_posts' ),
 					'foreign_key' => $this->mysql_foreign_key_metadata_exists( 'public', 'wptests_posts', 'fk_post_parent' ),
 					'check'       => $this->get_mysql_check_metadata( 'public', 'wptests_posts', 'positive_id' ),
