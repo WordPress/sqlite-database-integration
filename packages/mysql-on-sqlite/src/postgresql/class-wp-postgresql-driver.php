@@ -19415,24 +19415,6 @@ ORDER BY table_name';
 			return $this->get_show_create_table_table_catalog_metadata( $schema_name, $table_name );
 		}
 
-		return array(
-			'comment'   => $this->get_show_create_table_table_comment_metadata( $schema_name, $table_name ),
-			'collation' => null,
-		);
-	}
-
-	/**
-	 * Get table comment metadata for SHOW CREATE TABLE.
-	 *
-	 * @param string $schema_name Backend metadata schema.
-	 * @param string $table_name  Table name.
-	 * @return string Table comment.
-	 */
-	private function get_show_create_table_table_comment_metadata( string $schema_name, string $table_name ): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_show_create_table_table_comment_catalog( $schema_name, $table_name );
-		}
-
 		$sql    = sprintf(
 			'SELECT table_comment
 			FROM %s
@@ -19449,18 +19431,11 @@ ORDER BY table_name';
 		);
 
 		$comment = $stmt->fetchColumn();
-		return false === $comment ? '' : (string) $comment;
-	}
 
-	/**
-	 * Get table comment from PostgreSQL catalogs for SHOW CREATE TABLE.
-	 *
-	 * @param string $schema_name Backend schema.
-	 * @param string $table_name  Table name.
-	 * @return string Table comment.
-	 */
-	private function get_show_create_table_table_comment_catalog( string $schema_name, string $table_name ): string {
-		return $this->get_show_create_table_table_catalog_metadata( $schema_name, $table_name )['comment'];
+		return array(
+			'comment'   => false === $comment ? '' : (string) $comment,
+			'collation' => null,
+		);
 	}
 
 	/**
