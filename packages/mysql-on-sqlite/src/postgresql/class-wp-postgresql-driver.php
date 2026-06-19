@@ -5441,35 +5441,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Check whether PostgreSQL catalog metadata has indexes for a table.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @return bool Whether index metadata exists.
-	 */
-	private function mysql_index_metadata_has_rows( string $table_schema, string $table_name ): bool {
-		try {
-			$stmt = $this->connection->query(
-				'SELECT 1
-				FROM pg_catalog.pg_class t
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				INNER JOIN pg_catalog.pg_index i
-					ON i.indrelid = t.oid
-				WHERE n.nspname = ?
-					AND t.relname = ?
-					AND t.relkind IN (\'r\', \'p\')
-				LIMIT 1',
-				array( $table_schema, $table_name )
-			);
-
-			return false !== $stmt->fetchColumn();
-		} catch ( PDOException $e ) {
-			return false;
-		}
-	}
-
-	/**
 	 * Get catalog metadata for one CHECK constraint.
 	 *
 	 * @param string $table_schema    Backend schema.
@@ -6778,45 +6749,6 @@ $wp_mysql_primary_index_comment$',
 			'temporary'     => $is_temporary,
 			'if_not_exists' => $if_not_exists,
 		);
-	}
-
-	/**
-	 * Get MySQL-facing column metadata for a backend CTAS table.
-	 *
-	 * @param string $table_schema Backend schema name.
-	 * @param string $table_name   Table name.
-	 * @return array[] Column metadata rows.
-	 */
-	private function get_mysql_create_table_select_column_metadata( string $table_schema, string $table_name ): array {
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		if ( 'sqlite' === $driver_name ) {
-			return $this->get_sqlite_create_table_select_column_metadata( $table_schema, $table_name );
-		}
-
-		$stmt = $this->connection->query(
-			'SELECT column_name, ordinal_position, data_type, character_maximum_length, numeric_precision, numeric_scale, is_nullable, column_default
-			FROM information_schema.columns
-			WHERE table_schema = ? AND table_name = ?
-			ORDER BY ordinal_position',
-			array( $table_schema, $table_name )
-		);
-
-		$columns = array();
-		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
-			$column_type = $this->get_mysql_column_type_from_backend_metadata( $column );
-			$columns[]   = array(
-				'name'      => (string) $column['column_name'],
-				'ordinal'   => (int) $column['ordinal_position'],
-				'type'      => $column_type,
-				'charset'   => $this->mysql_column_type_uses_charset( $column_type ) ? $this->charset : null,
-				'collation' => $this->mysql_column_type_uses_charset( $column_type ) ? $this->collation : null,
-				'nullable'  => (string) $column['is_nullable'],
-				'default'   => null === $column['column_default'] ? null : (string) $column['column_default'],
-				'extra'     => '',
-			);
-		}
-
-		return $columns;
 	}
 
 	/**
