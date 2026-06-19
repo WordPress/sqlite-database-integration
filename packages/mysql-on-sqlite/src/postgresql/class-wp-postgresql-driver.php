@@ -24882,7 +24882,7 @@ WHERE option_name IN (
 			$upsert_query['last_insert_id_on_duplicate_key_update'] = $last_insert_id_on_duplicate_key_update;
 		}
 
-		if ( null !== $conflict_indexes && $this->has_duplicate_mysql_upsert_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
+		if ( null !== $conflict_indexes && $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
 			$statements = array();
 			foreach ( $value_rows as $values ) {
 				$statements[] = sprintf(
@@ -26523,22 +26523,6 @@ WHERE option_name IN (
 			'found' => false !== $value,
 			'value' => false === $value ? null : $value,
 		);
-	}
-
-	/**
-	 * Check whether an upsert batch contains duplicate deterministic conflict rows.
-	 *
-	 * PostgreSQL cannot update the same row twice in one INSERT ... ON CONFLICT
-	 * statement. MySQL applies VALUES rows sequentially, so duplicate conflict
-	 * keys need one PostgreSQL statement per input row.
-	 *
-	 * @param array[] $value_rows       Translated VALUES rows.
-	 * @param array[] $probe_safe_rows  Per-value probe safety.
-	 * @param array   $conflict_indexes Conflict target column/index tuples.
-	 * @return bool Whether PostgreSQL needs per-row statements.
-	 */
-	private function has_duplicate_mysql_upsert_conflict_value_rows( array $value_rows, array $probe_safe_rows, array $conflict_indexes ): bool {
-		return $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes );
 	}
 
 	/**
@@ -32139,7 +32123,21 @@ WHERE option_name IN (
 
 		if ( WP_MySQL_Lexer::ON_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
 			$predicate_start = $position + 1;
-			$predicate_end   = $this->find_mysql_join_separator( $tokens, $predicate_start, $end ) ?? $end;
+			$predicate_end   = $this->find_first_top_level_mysql_token(
+				$tokens,
+				array(
+					WP_MySQL_Lexer::COMMA_SYMBOL,
+					WP_MySQL_Lexer::CROSS_SYMBOL,
+					WP_MySQL_Lexer::INNER_SYMBOL,
+					WP_MySQL_Lexer::JOIN_SYMBOL,
+					WP_MySQL_Lexer::LEFT_SYMBOL,
+					WP_MySQL_Lexer::NATURAL_SYMBOL,
+					WP_MySQL_Lexer::RIGHT_SYMBOL,
+					WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+				),
+				$predicate_start,
+				$end
+			) ?? $end;
 			if (
 				$predicate_start >= $predicate_end
 				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $predicate_start, $predicate_end )
@@ -32191,32 +32189,6 @@ WHERE option_name IN (
 		$left_alias = $joined_alias;
 
 		return true;
-	}
-
-		/**
-		 * Find the next top-level MySQL join separator.
-		 *
-		 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-		 * @param int              $start  First token position.
-		 * @param int              $end    Final token position, exclusive.
-		 * @return int|null Join separator position, or null when none exists.
-		 */
-	private function find_mysql_join_separator( array $tokens, int $start, int $end ): ?int {
-		return $this->find_first_top_level_mysql_token(
-			$tokens,
-			array(
-				WP_MySQL_Lexer::COMMA_SYMBOL,
-				WP_MySQL_Lexer::CROSS_SYMBOL,
-				WP_MySQL_Lexer::INNER_SYMBOL,
-				WP_MySQL_Lexer::JOIN_SYMBOL,
-				WP_MySQL_Lexer::LEFT_SYMBOL,
-				WP_MySQL_Lexer::NATURAL_SYMBOL,
-				WP_MySQL_Lexer::RIGHT_SYMBOL,
-				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
-			),
-			$start,
-			$end
-		);
 	}
 
 	/**
