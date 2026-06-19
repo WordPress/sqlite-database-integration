@@ -35122,6 +35122,8 @@ END',
 				$fragment          = $translated_fragment['sql'];
 				$fragment_token_id = $translated_fragment['token_id'];
 				$i                 = $translated_fragment['position'];
+			} elseif ( WP_MySQL_Lexer::AS_SYMBOL === $previous_token_id && $this->is_mysql_quoted_text_token( $token ) ) {
+				$fragment = $this->connection->quote_identifier( $token->get_value() );
 			} else {
 				$fragment                        = $this->translate_mysql_token_to_postgresql(
 					$token,

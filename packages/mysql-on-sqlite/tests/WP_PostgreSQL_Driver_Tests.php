@@ -57,6 +57,40 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests MySQL single-quoted SELECT aliases are translated to PostgreSQL identifiers.
+	 */
+	public function test_select_single_quoted_projection_aliases_translate_to_postgresql_identifiers(): void {
+		$driver = $this->create_driver();
+
+		$driver->query(
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) as 'bytes'
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+			AND TABLE_NAME IN ('wptests_comments','wptests_options','wptests_posts','wptests_terms','wptests_users')
+			GROUP BY TABLE_NAME"
+		);
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringNotContainsString( "AS 'table'", $sql );
+		$this->assertStringNotContainsString( "AS 'rows'", $sql );
+		$this->assertStringNotContainsString( "as 'bytes'", $sql );
+		$this->assertStringContainsString( 'AS "table"', $sql );
+		$this->assertStringContainsString( 'AS "rows"', $sql );
+		$this->assertStringContainsString( 'as "bytes"', $sql );
+		$this->assertStringContainsString( "'wordpress_develop_tests'", $sql );
+		$this->assertStringContainsString( "'wptests_posts'", $sql );
+
+		$rows = $driver->query( "SELECT 'table' AS 'alias', 1 AS id WHERE 'rows' = 'rows'" );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'table', $rows[0]->alias );
+		$this->assertSame(
+			"SELECT 'table' AS \"alias\", 1 AS id WHERE 'rows' = 'rows'",
+			$this->get_last_single_postgresql_sql( $driver )
+		);
+	}
+
+	/**
 	 * Tests MySQL optimizer index hints are removed before PostgreSQL execution.
 	 */
 	public function test_select_index_hints_are_removed_before_postgresql_execution(): void {
