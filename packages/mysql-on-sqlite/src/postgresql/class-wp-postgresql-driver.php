@@ -61572,14 +61572,51 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	private function contains_unsupported_mysql_date_arithmetic_function_query( string $query ): bool {
-		return $this->contains_unsupported_mysql_range_scanner_query(
-			$query,
-			array(
-				'contains_unsupported_mysql_date_arithmetic_function',
-				'contains_unsupported_mysql_timestampadd_function',
-				'contains_unsupported_mysql_timestampdiff_function',
-			)
-		);
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$end           = null === $statement_end ? count( $tokens ) : $statement_end;
+
+		return $this->contains_unsupported_mysql_date_arithmetic_function( $tokens, 0, $end )
+			|| $this->contains_unsupported_mysql_translated_common_function( $tokens, 0, $end, 'timestampadd', 'translate_mysql_timestampadd_function_to_postgresql' )
+			|| $this->contains_unsupported_mysql_translated_common_function( $tokens, 0, $end, 'timestampdiff', 'translate_mysql_timestampdiff_function_to_postgresql' );
+	}
+
+	/**
+	 * Check whether a range contains an unsupported translated MySQL common function call.
+	 *
+	 * @param WP_MySQL_Token[] $tokens          MySQL lexer token stream.
+	 * @param int              $start           First token position.
+	 * @param int              $end             Final token position, exclusive.
+	 * @param string           $function_name   Lowercase MySQL function name.
+	 * @param string           $translator_name Private translator method name.
+	 * @return bool Whether an unsupported call is present.
+	 */
+	private function contains_unsupported_mysql_translated_common_function( array $tokens, int $start, int $end, string $function_name, string $translator_name ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if (
+				$function_name !== $this->get_mysql_common_function_name( $tokens[ $i ] ?? null )
+				|| ! isset( $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+
+			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $end );
+			if ( null === $bounds ) {
+				return true;
+			}
+
+			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+			if ( null === $arguments || null === $this->$translator_name( $tokens, $arguments, $bounds['close'] ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -62032,41 +62069,6 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	/**
-	 * Check whether a range contains an unsupported MySQL TIMESTAMPADD() call.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First token position.
-	 * @param int              $end    Final token position, exclusive.
-	 * @return bool Whether an unsupported TIMESTAMPADD() call is present.
-	 */
-	private function contains_unsupported_mysql_timestampadd_function( array $tokens, int $start, int $end ): bool {
-		for ( $i = $start; $i < $end; $i++ ) {
-			if (
-				'timestampadd' !== $this->get_mysql_common_function_name( $tokens[ $i ] ?? null )
-				|| ! isset( $tokens[ $i + 1 ] )
-				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
-			) {
-				continue;
-			}
-
-			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $end );
-			if ( null === $bounds ) {
-				return true;
-			}
-
-			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
-			if (
-				null === $arguments
-				|| null === $this->translate_mysql_timestampadd_function_to_postgresql( $tokens, $arguments, $bounds['close'] )
-			) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	/**
 	 * Translate MySQL TIMESTAMPDIFF(unit, datetime_expr1, datetime_expr2) to PostgreSQL.
 	 *
 	 * @param WP_MySQL_Token[]                    $tokens    MySQL lexer token stream.
@@ -62104,41 +62106,6 @@ $wp_mysql_%1$s_domain$',
 			'token_id' => WP_MySQL_Lexer::IDENTIFIER,
 			'position' => $close,
 		);
-	}
-
-	/**
-	 * Check whether a range contains an unsupported MySQL TIMESTAMPDIFF() call.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First token position.
-	 * @param int              $end    Final token position, exclusive.
-	 * @return bool Whether an unsupported TIMESTAMPDIFF() call is present.
-	 */
-	private function contains_unsupported_mysql_timestampdiff_function( array $tokens, int $start, int $end ): bool {
-		for ( $i = $start; $i < $end; $i++ ) {
-			if (
-				'timestampdiff' !== $this->get_mysql_common_function_name( $tokens[ $i ] ?? null )
-				|| ! isset( $tokens[ $i + 1 ] )
-				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
-			) {
-				continue;
-			}
-
-			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $end );
-			if ( null === $bounds ) {
-				return true;
-			}
-
-			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
-			if (
-				null === $arguments
-				|| null === $this->translate_mysql_timestampdiff_function_to_postgresql( $tokens, $arguments, $bounds['close'] )
-			) {
-				return true;
-			}
-		}
-
-		return false;
 	}
 
 	/**
