@@ -33560,9 +33560,49 @@ WHERE option_name IN (
 				$projection_items[0]['expression_end'],
 				$table
 			)
-			|| ! $this->is_mysql_postmeta_meta_key_not_like_predicate( $tokens, $having_position + 1, $order_position, $table )
-			|| ! $this->is_mysql_postmeta_meta_key_order_by_clause( $tokens, $order_position + 2, $select_end, $table )
 		) {
+			return null;
+		}
+
+		$having_reference = $this->parse_mysql_column_reference( $tokens, $having_position + 1, $order_position );
+		if (
+			null === $having_reference
+			|| ! $this->is_mysql_postmeta_meta_key_reference( $tokens, $having_reference['start'], $having_reference['end'], $table )
+			|| ! isset( $tokens[ $having_reference['end'] ], $tokens[ $having_reference['end'] + 1 ] )
+			|| WP_MySQL_Lexer::NOT_SYMBOL !== $tokens[ $having_reference['end'] ]->id
+			|| WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $having_reference['end'] + 1 ]->id
+			|| $having_reference['end'] + 2 >= $order_position
+			|| $this->contains_top_level_mysql_token(
+				$tokens,
+				$having_reference['end'] + 2,
+				$order_position,
+				array(
+					WP_MySQL_Lexer::AND_SYMBOL,
+					WP_MySQL_Lexer::OR_SYMBOL,
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+				)
+			)
+		) {
+			return null;
+		}
+
+		$order_items = $this->split_top_level_mysql_arguments( $tokens, $order_position + 2, $select_end );
+		if ( null === $order_items || 1 !== count( $order_items ) ) {
+			return null;
+		}
+
+		$order_item_end = $order_items[0]['end'];
+		if (
+			isset( $tokens[ $order_item_end - 1 ] )
+			&& (
+				WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $order_item_end - 1 ]->id
+				|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $order_item_end - 1 ]->id
+			)
+		) {
+			--$order_item_end;
+		}
+
+		if ( ! $this->is_mysql_postmeta_meta_key_reference( $tokens, $order_items[0]['start'], $order_item_end, $table ) ) {
 			return null;
 		}
 
@@ -33617,69 +33657,6 @@ WHERE option_name IN (
 
 		return null === $reference['qualifier']
 			|| $this->is_mysql_dml_table_qualifier( $reference['qualifier'], $table['table'], $table['alias'] );
-	}
-
-	/**
-	 * Check whether a HAVING predicate is meta_key NOT LIKE pattern.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First HAVING predicate token.
-	 * @param int              $end    Final HAVING predicate token, exclusive.
-	 * @param array            $table  Parsed postmeta table reference.
-	 * @return bool Whether the predicate is supported.
-	 */
-	private function is_mysql_postmeta_meta_key_not_like_predicate( array $tokens, int $start, int $end, array $table ): bool {
-		$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
-		if (
-			null === $reference
-			|| ! $this->is_mysql_postmeta_meta_key_reference( $tokens, $reference['start'], $reference['end'], $table )
-			|| ! isset( $tokens[ $reference['end'] ], $tokens[ $reference['end'] + 1 ] )
-			|| WP_MySQL_Lexer::NOT_SYMBOL !== $tokens[ $reference['end'] ]->id
-			|| WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $reference['end'] + 1 ]->id
-			|| $reference['end'] + 2 >= $end
-		) {
-			return false;
-		}
-
-		return ! $this->contains_top_level_mysql_token(
-			$tokens,
-			$reference['end'] + 2,
-			$end,
-			array(
-				WP_MySQL_Lexer::AND_SYMBOL,
-				WP_MySQL_Lexer::OR_SYMBOL,
-				WP_MySQL_Lexer::SELECT_SYMBOL,
-			)
-		);
-	}
-
-	/**
-	 * Check whether an ORDER BY clause sorts by meta_key.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First ORDER BY item token.
-	 * @param int              $end    Final ORDER BY token, exclusive.
-	 * @param array            $table  Parsed postmeta table reference.
-	 * @return bool Whether the ORDER BY clause is supported.
-	 */
-	private function is_mysql_postmeta_meta_key_order_by_clause( array $tokens, int $start, int $end, array $table ): bool {
-		$order_items = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
-		if ( null === $order_items || 1 !== count( $order_items ) ) {
-			return false;
-		}
-
-		$item_end = $order_items[0]['end'];
-		if (
-			isset( $tokens[ $item_end - 1 ] )
-			&& (
-				WP_MySQL_Lexer::ASC_SYMBOL === $tokens[ $item_end - 1 ]->id
-				|| WP_MySQL_Lexer::DESC_SYMBOL === $tokens[ $item_end - 1 ]->id
-			)
-		) {
-			--$item_end;
-		}
-
-		return $this->is_mysql_postmeta_meta_key_reference( $tokens, $order_items[0]['start'], $item_end, $table );
 	}
 
 	/**
