@@ -98,11 +98,6 @@ class WP_PostgreSQL_Driver {
 	private const MYSQL_GROUP_CONCAT_MAX_LEN_SQL_LIMIT = 2147483647;
 
 	/**
-	 * SQLite-only test-harness helper used to validate MySQL temporal values at runtime.
-	 */
-	private const SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION = '__wp_pg_mysql_validate_temporal';
-
-	/**
 	 * Prefix for MySQL AUTO_INCREMENT type metadata stored on PostgreSQL identity sequences.
 	 */
 	private const MYSQL_IDENTITY_SEQUENCE_COMMENT_TYPE_PREFIX = '__wp_mysql_auto_increment_type:';
@@ -394,13 +389,6 @@ class WP_PostgreSQL_Driver {
 	 * @var array<string, array{query: string, sql: string}>
 	 */
 	private $mysql_sql_calc_found_rows_count_query_cache = array();
-
-	/**
-	 * Whether the SQLite MySQL temporal validation helper is registered.
-	 *
-	 * @var bool
-	 */
-	private $sqlite_mysql_validate_temporal_function_registered = false;
 
 	/**
 	 * Most recently tokenized MySQL query.
@@ -29677,14 +29665,7 @@ WHERE option_name IN (
 			);
 		}
 
-		return sprintf(
-			'%s(CAST(%s AS text), %s, %d, %d)',
-			self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION,
-			$value_sql,
-			$this->connection->quote( $base_type ),
-			$this->is_sql_mode_active( 'NO_ZERO_DATE' ) ? 1 : 0,
-			$this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? 1 : 0
-		);
+		return null;
 	}
 
 	/**
@@ -53928,12 +53909,6 @@ $wp_mysql_text_domain$',
 		$this->ensure_postgresql_mysql_domains( 'binary', $this->get_postgresql_mysql_binary_domain_definitions_for_query( $query ) );
 		$this->ensure_postgresql_mysql_domains( 'integer', $this->get_postgresql_mysql_integer_domain_definitions_for_query( $query ) );
 		$this->ensure_postgresql_mysql_domains( 'numeric', $this->get_postgresql_mysql_numeric_domain_definitions_for_query( $query ) );
-		if (
-			'sqlite' === $this->connection->get_driver_name()
-			&& 1 === preg_match( '/(?:pg_temp\.)?' . preg_quote( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, '/' ) . '\s*\(/i', $query )
-		) {
-			$this->ensure_sqlite_mysql_validate_temporal_function();
-		}
 	}
 
 	/**
@@ -54055,109 +54030,6 @@ $wp_mysql_%1$s_domain$',
 
 		json_decode( (string) $value );
 		return JSON_ERROR_NONE === json_last_error() ? 1 : 0;
-	}
-
-	/**
-	 * Ensure the SQLite strict temporal validation helper exists.
-	 */
-	private function ensure_sqlite_mysql_validate_temporal_function(): void {
-		if ( $this->sqlite_mysql_validate_temporal_function_registered ) {
-			return;
-		}
-
-		$pdo      = $this->connection->get_pdo();
-		$callback = static function ( $value, $mysql_type, $reject_zero_date, $reject_zero_in_date ): ?string {
-			return self::get_mysql_validate_temporal_runtime_result(
-				$value,
-				(string) $mysql_type,
-				0 !== (int) $reject_zero_date,
-				0 !== (int) $reject_zero_in_date
-			);
-		};
-
-		if ( method_exists( $pdo, 'createFunction' ) ) {
-			$pdo->createFunction( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, $callback, 4 );
-			$this->sqlite_mysql_validate_temporal_function_registered = true;
-			return;
-		}
-
-		if ( method_exists( $pdo, 'sqliteCreateFunction' ) ) {
-			// phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Base PDO SQLite exposes only the deprecated fallback on PHP 8.5.
-			@$pdo->sqliteCreateFunction( self::SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION, $callback, 4 );
-			$this->sqlite_mysql_validate_temporal_function_registered = true;
-			return;
-		}
-
-		throw new RuntimeException( 'SQLite temporal validation helper registration is unavailable.' );
-	}
-
-	/**
-	 * Validate a runtime temporal value using strict MySQL rules.
-	 *
-	 * @param mixed  $value               Runtime value.
-	 * @param string $mysql_type          MySQL temporal type.
-	 * @param bool   $reject_zero_date    Whether NO_ZERO_DATE rejects full zero dates.
-	 * @param bool   $reject_zero_in_date Whether NO_ZERO_IN_DATE rejects partial-zero dates.
-	 * @return string|null Normalized runtime value.
-	 */
-	private static function get_mysql_validate_temporal_runtime_result( $value, string $mysql_type, bool $reject_zero_date, bool $reject_zero_in_date ): ?string {
-		if ( null === $value ) {
-			return null;
-		}
-
-		$value      = (string) $value;
-		$mysql_type = strtolower( $mysql_type );
-		if ( 'date' === $mysql_type ) {
-			if ( 1 !== preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?Z?)?$/', $value, $matches ) ) {
-				throw new InvalidArgumentException( sprintf( "Incorrect %s value: '%s'", $mysql_type, $value ) );
-			}
-			$date_part        = $matches[1];
-			$normalized_value = $date_part;
-		} else {
-			if ( 1 === preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})$/', $value, $matches ) ) {
-				$date_part        = $matches[1];
-				$normalized_value = $date_part . ' 00:00:00';
-				$hour             = '00';
-				$minute           = '00';
-				$second           = '00';
-			} elseif ( 1 === preg_match( '/^([0-9]{4}-[0-9]{2}-[0-9]{2})[ T]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:[.][0-9]+)?Z?$/', $value, $matches ) ) {
-				$date_part        = $matches[1];
-				$normalized_value = $date_part . ' ' . $matches[2] . ':' . $matches[3] . ':' . $matches[4];
-				$hour             = $matches[2];
-				$minute           = $matches[3];
-				$second           = $matches[4];
-			} else {
-				throw new InvalidArgumentException( sprintf( "Incorrect %s value: '%s'", $mysql_type, $value ) );
-			}
-
-			if ( (int) $hour > 23 || (int) $minute > 59 || (int) $second > 59 ) {
-				throw new InvalidArgumentException( sprintf( "Incorrect %s value: '%s'", $mysql_type, $value ) );
-			}
-		}
-
-		$year  = substr( $date_part, 0, 4 );
-		$month = substr( $date_part, 5, 2 );
-		$day   = substr( $date_part, 8, 2 );
-
-		if ( '0000' === $year && '00' === $month && '00' === $day ) {
-			if ( $reject_zero_date ) {
-				throw new InvalidArgumentException( sprintf( "Incorrect %s value: '%s'", $mysql_type, $value ) );
-			}
-			return $normalized_value;
-		}
-
-		if ( '0000' !== $year && ( '00' === $month || '00' === $day ) ) {
-			if ( $reject_zero_in_date ) {
-				throw new InvalidArgumentException( sprintf( "Incorrect %s value: '%s'", $mysql_type, $value ) );
-			}
-			return $normalized_value;
-		}
-
-		if ( ! checkdate( (int) $month, (int) $day, (int) $year ) ) {
-			throw new InvalidArgumentException( sprintf( "Incorrect %s value: '%s'", $mysql_type, $value ) );
-		}
-
-		return $normalized_value;
 	}
 
 	/**

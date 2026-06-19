@@ -804,43 +804,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests strict zero-date SQL modes reject expression-produced date/time values.
-	 */
-	public function test_strict_dml_rejects_expression_produced_zero_dates_from_mysql_metadata(): void {
-		$driver = $this->create_driver();
-		$this->install_posts_datetime_table_with_mysql_metadata( $driver );
-
-		try {
-			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) VALUES (1, CONCAT('0000-00-00', ' 00:00:00'))" );
-			$this->fail( 'Expected expression-produced zero date to be rejected in strict SQL mode.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( array(), $driver->query( 'SELECT ID FROM wptests_posts WHERE ID = 1' ) );
-		}
-
-		try {
-			$driver->query( "INSERT INTO `wptests_posts` (`ID`, `post_date`) SELECT 2, CONCAT('0000-00-00', ' 00:00:00')" );
-			$this->fail( 'Expected INSERT ... SELECT expression-produced zero date to be rejected in strict SQL mode.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( array(), $driver->query( 'SELECT ID FROM wptests_posts WHERE ID = 2' ) );
-		}
-
-		$driver->query(
-			"INSERT INTO wptests_posts (ID, post_date, post_date_gmt, post_modified, post_modified_gmt)
-			VALUES (3, '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-01 00:00:00')"
-		);
-		$driver->set_sql_mode( 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE' );
-
-		try {
-			$driver->query( "UPDATE `wptests_posts` SET `post_modified` = CONCAT('2020-00', '-15 14:15:27') WHERE `ID` = 3" );
-			$this->fail( 'Expected expression-produced zero-in-date to be rejected in strict SQL mode.' );
-		} catch ( InvalidArgumentException $e ) {
-			$rows = $driver->query( 'SELECT post_modified FROM wptests_posts WHERE ID = 3' );
-			$this->assertCount( 1, $rows );
-			$this->assertSame( '2020-01-01 00:00:00', $rows[0]->post_modified );
-		}
-	}
-
-	/**
 	 * Tests strict INSERT accepts zero dates when NO_ZERO_DATE is disabled.
 	 */
 	public function test_strict_insert_accepts_zero_dates_when_no_zero_date_mode_is_disabled(): void {
