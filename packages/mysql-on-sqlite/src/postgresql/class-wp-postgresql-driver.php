@@ -20045,17 +20045,7 @@ ORDER BY table_name';
 				'sql'    => $sql,
 				'params' => array( $show_open_tables_query['schema'] ),
 			);
-			$rows                            = array_map(
-				static function ( array $row ): array {
-					return array(
-						'Database'    => (string) ( $row['Database'] ?? '' ),
-						'Table'       => (string) ( $row['Table'] ?? '' ),
-						'In_use'      => (string) ( $row['In_use'] ?? '0' ),
-						'Name_locked' => (string) ( $row['Name_locked'] ?? '0' ),
-					);
-				},
-				$stmt->fetchAll( PDO::FETCH_ASSOC )
-			);
+			$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
 		}
 		$rows = $this->filter_mysql_static_show_rows( $rows, $show_open_tables_query['filter'] );
 
