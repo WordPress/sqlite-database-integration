@@ -33325,14 +33325,16 @@ WHERE option_name IN (
 				continue;
 			}
 
-			if (
-				$this->contains_mysql_last_insert_id_function_call_with_arguments(
-					$tokens,
-					$expression_bounds['start'],
-					$expression_bounds['end']
-				)
-			) {
-				return null;
+			for ( $position = $expression_bounds['start']; $position < $expression_bounds['end']; $position++ ) {
+				$bounds = $this->get_mysql_common_function_bounds( $tokens, $position, $expression_bounds['end'] );
+				if ( null === $bounds || 'last_insert_id' !== $bounds['function'] ) {
+					continue;
+				}
+
+				$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+				if ( null === $arguments || 0 !== count( $arguments ) ) {
+					return null;
+				}
 			}
 		}
 
@@ -33391,55 +33393,17 @@ WHERE option_name IN (
 			return null;
 		}
 
-		return $this->get_mysql_non_negative_php_integer_literal_value(
-			$tokens,
-			$arguments[0]['start'],
-			$arguments[0]['end']
-		);
-	}
-
-	/**
-	 * Check whether a range contains a nonzero-arg LAST_INSERT_ID(...) call.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First token.
-	 * @param int              $end    Final token, exclusive.
-	 * @return bool Whether LAST_INSERT_ID(...) with arguments appears in the range.
-	 */
-	private function contains_mysql_last_insert_id_function_call_with_arguments( array $tokens, int $start, int $end ): bool {
-		for ( $position = $start; $position < $end; $position++ ) {
-			$bounds = $this->get_mysql_common_function_bounds( $tokens, $position, $end );
-			if ( null === $bounds || 'last_insert_id' !== $bounds['function'] ) {
-				continue;
-			}
-
-			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
-			if ( null === $arguments || 0 !== count( $arguments ) ) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * Get a supported non-negative decimal integer literal value.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First literal token.
-	 * @param int              $end    Final literal token, exclusive.
-	 * @return int|null Integer value, or null when unsupported.
-	 */
-	private function get_mysql_non_negative_php_integer_literal_value( array $tokens, int $start, int $end ): ?int {
-		if ( $start + 2 === $end && WP_MySQL_Lexer::PLUS_OPERATOR === ( $tokens[ $start ]->id ?? null ) ) {
-			++$start;
+		$literal_start = $arguments[0]['start'];
+		$literal_end   = $arguments[0]['end'];
+		if ( $literal_start + 2 === $literal_end && WP_MySQL_Lexer::PLUS_OPERATOR === ( $tokens[ $literal_start ]->id ?? null ) ) {
+			++$literal_start;
 		}
 
 		if (
-			$start + 1 !== $end
-			|| ! isset( $tokens[ $start ] )
+			$literal_start + 1 !== $literal_end
+			|| ! isset( $tokens[ $literal_start ] )
 			|| ! in_array(
-				$tokens[ $start ]->id,
+				$tokens[ $literal_start ]->id,
 				array(
 					WP_MySQL_Lexer::INT_NUMBER,
 					WP_MySQL_Lexer::LONG_NUMBER,
@@ -33451,7 +33415,7 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$value = $tokens[ $start ]->get_value();
+		$value = $tokens[ $literal_start ]->get_value();
 		if ( '' === $value || ! ctype_digit( $value ) ) {
 			return null;
 		}
