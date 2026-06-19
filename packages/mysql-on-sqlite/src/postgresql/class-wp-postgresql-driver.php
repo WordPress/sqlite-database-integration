@@ -17091,7 +17091,7 @@ $wp_mysql_primary_index_comment$',
 			}
 
 			if ( ! $this->mysql_table_administration_table_exists( $requested_schema, $table_name ) ) {
-				$table_label = $this->get_mysql_table_administration_result_table_name( $requested_schema, $table_name );
+				$table_label = ( null === $requested_schema ? $this->db_name : $requested_schema ) . '.' . $table_name;
 				throw new InvalidArgumentException( sprintf( "Table '%s' doesn't exist", $table_label ) );
 			}
 		}
@@ -17170,7 +17170,7 @@ $wp_mysql_primary_index_comment$',
 				throw new InvalidArgumentException( 'Unsupported table administration statement.' );
 			}
 
-			$table_label = $this->get_mysql_table_administration_result_table_name( $requested_schema, $table_name );
+			$table_label = ( null === $requested_schema ? $this->db_name : $requested_schema ) . '.' . $table_name;
 			if ( $this->mysql_table_administration_table_exists( $requested_schema, $table_name ) ) {
 				$rows[] = array(
 					'Table'    => $table_label,
@@ -17201,18 +17201,6 @@ $wp_mysql_primary_index_comment$',
 			$fetch_mode,
 			...$fetch_mode_args
 		);
-	}
-
-	/**
-	 * Get the MySQL-facing Table column value for an administration result row.
-	 *
-	 * @param string|null $requested_schema Requested schema, or null for the current database.
-	 * @param string      $table_name       Table name.
-	 * @return string MySQL-facing qualified table name.
-	 */
-	private function get_mysql_table_administration_result_table_name( ?string $requested_schema, string $table_name ): string {
-		$display_schema = null === $requested_schema ? $this->db_name : $requested_schema;
-		return $display_schema . '.' . $table_name;
 	}
 
 	/**
@@ -20369,12 +20357,12 @@ ORDER BY table_name';
 		}
 
 		if ( WP_MySQL_Lexer::AT_TEXT_SUFFIX === $tokens[ $position ]->id ) {
+			$value = $this->get_mysql_user_variable_value(
+				$this->normalize_mysql_user_variable_name( $tokens[ $position ]->get_value() )
+			);
+
 			return array(
-				'sql'      => $this->get_mysql_variable_literal_sql(
-					$this->get_mysql_user_variable_value(
-						$this->normalize_mysql_user_variable_name( $tokens[ $position ]->get_value() )
-					)
-				),
+				'sql'      => null === $value ? 'NULL' : $this->connection->quote( $value ),
 				'token_id' => $tokens[ $position ]->id,
 				'position' => $position,
 			);
@@ -20398,20 +20386,10 @@ ORDER BY table_name';
 		}
 
 		return array(
-			'sql'      => $this->get_mysql_variable_literal_sql( $value ),
+			'sql'      => $this->connection->quote( $value ),
 			'token_id' => $tokens[ $position ]->id,
 			'position' => $reference_position - 1,
 		);
-	}
-
-	/**
-	 * Render a MySQL variable value as a PostgreSQL literal.
-	 *
-	 * @param string|null $value Variable value.
-	 * @return string PostgreSQL literal SQL.
-	 */
-	private function get_mysql_variable_literal_sql( ?string $value ): string {
-		return null === $value ? 'NULL' : $this->connection->quote( $value );
 	}
 
 	/**
