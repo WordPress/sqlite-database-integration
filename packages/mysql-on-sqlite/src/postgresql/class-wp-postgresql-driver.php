@@ -34141,21 +34141,30 @@ WHERE "TABLE_SCHEMA" = %3$s
 				continue;
 			}
 
-			if (
-				'data_index_sum' === $expected_projection['type']
-				&& $this->is_information_schema_tables_data_index_sum_expression(
+			if ( 'data_index_sum' === $expected_projection['type'] ) {
+				$bounds = $this->normalize_mysql_expression_bounds(
 					$tokens,
 					$projection_item['expression_start'],
 					$projection_item['expression_end']
-				)
-			) {
-				$projection_sql[] = sprintf(
-					'SUM(%s + %s) AS %s',
-					$this->connection->quote_identifier( 'data_length' ),
-					$this->connection->quote_identifier( 'index_length' ),
-					$this->connection->quote_identifier( $projection_item['alias'] )
 				);
-				continue;
+				if (
+					$bounds['start'] + 6 === $bounds['end']
+					&& isset( $tokens[ $bounds['start'] ], $tokens[ $bounds['start'] + 1 ], $tokens[ $bounds['start'] + 2 ], $tokens[ $bounds['start'] + 3 ], $tokens[ $bounds['start'] + 4 ], $tokens[ $bounds['start'] + 5 ] )
+					&& WP_MySQL_Lexer::SUM_SYMBOL === $tokens[ $bounds['start'] ]->id
+					&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $bounds['start'] + 1 ]->id
+					&& $this->is_mysql_identifier_like_token_value( $tokens[ $bounds['start'] + 2 ], 'data_length' )
+					&& WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[ $bounds['start'] + 3 ]->id
+					&& $this->is_mysql_identifier_like_token_value( $tokens[ $bounds['start'] + 4 ], 'index_length' )
+					&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $bounds['start'] + 5 ]->id
+				) {
+					$projection_sql[] = sprintf(
+						'SUM(%s + %s) AS %s',
+						$this->connection->quote_identifier( 'data_length' ),
+						$this->connection->quote_identifier( 'index_length' ),
+						$this->connection->quote_identifier( $projection_item['alias'] )
+					);
+					continue;
+				}
 			}
 
 			return null;
@@ -34177,29 +34186,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
 		return $bounds['start'] + 1 === $bounds['end']
 			&& $this->is_mysql_identifier_like_token_value( $tokens[ $bounds['start'] ] ?? null, $column );
-	}
-
-	/**
-	 * Check whether a projection expression is SUM(data_length + index_length).
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int             $start  First expression token position.
-	 * @param int             $end    Final expression token position, exclusive.
-	 * @return bool Whether the expression is the supported size aggregate.
-	 */
-	private function is_information_schema_tables_data_index_sum_expression( array $tokens, int $start, int $end ): bool {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
-		$start  = $bounds['start'];
-		$end    = $bounds['end'];
-
-		return $start + 6 === $end
-			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ], $tokens[ $start + 5 ] )
-			&& WP_MySQL_Lexer::SUM_SYMBOL === $tokens[ $start ]->id
-			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $start + 1 ]->id
-			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start + 2 ], 'data_length' )
-			&& WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[ $start + 3 ]->id
-			&& $this->is_mysql_identifier_like_token_value( $tokens[ $start + 4 ], 'index_length' )
-			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $start + 5 ]->id;
 	}
 
 	/**
