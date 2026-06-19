@@ -729,8 +729,9 @@ class WP_PostgreSQL_Driver {
 
 		$mysql_variable_select_query = $this->get_mysql_variable_select_query( $query );
 		if ( null !== $mysql_variable_select_query ) {
-			return $this->execute_mysql_variable_select_query(
-				$mysql_variable_select_query,
+			return $this->set_mysql_static_show_result(
+				$mysql_variable_select_query['columns'],
+				array( $mysql_variable_select_query['row'] ),
 				$fetch_mode,
 				...$fetch_mode_args
 			);
@@ -816,7 +817,28 @@ class WP_PostgreSQL_Driver {
 
 		$show_events_query = $this->get_show_events_query( $query );
 		if ( null !== $show_events_query ) {
-			return $this->execute_show_events_query( $fetch_mode, ...$fetch_mode_args );
+			return $this->set_mysql_static_show_result(
+				array(
+					'Db',
+					'Name',
+					'Definer',
+					'Time zone',
+					'Type',
+					'Execute at',
+					'Interval value',
+					'Interval field',
+					'Starts',
+					'Ends',
+					'Status',
+					'Originator',
+					'character_set_client',
+					'collation_connection',
+					'Database Collation',
+				),
+				array(),
+				$fetch_mode,
+				...$fetch_mode_args
+			);
 		}
 
 		$show_grants_query = $this->get_show_grants_query( $query );
@@ -18860,23 +18882,6 @@ ORDER BY ' . $table_name_sql;
 	}
 
 	/**
-	 * Execute a simple MySQL variable SELECT query from emulated variable state.
-	 *
-	 * @param array $mysql_variable_select_query Parsed variable SELECT query.
-	 * @param int   $fetch_mode                  PDO fetch mode.
-	 * @param array ...$fetch_mode_args          Additional fetch mode arguments.
-	 * @return mixed Variable SELECT result rows.
-	 */
-	private function execute_mysql_variable_select_query( array $mysql_variable_select_query, $fetch_mode, ...$fetch_mode_args ) {
-		return $this->set_mysql_static_show_result(
-			$mysql_variable_select_query['columns'],
-			array( $mysql_variable_select_query['row'] ),
-			$fetch_mode,
-			...$fetch_mode_args
-		);
-	}
-
-	/**
 	 * Execute a MySQL SHOW VARIABLES statement from emulated session state.
 	 *
 	 * @param array  $show_variables_query SHOW VARIABLES options.
@@ -19606,38 +19611,6 @@ ORDER BY ' . $table_name_sql;
 				'Database Collation',
 			),
 			$rows,
-			$fetch_mode,
-			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Execute a MySQL SHOW EVENTS statement from information_schema.EVENTS.
-	 *
-	 * @param int   $fetch_mode        PDO fetch mode.
-	 * @param array ...$fetch_mode_args Additional fetch mode arguments.
-	 * @return mixed SHOW EVENTS result rows.
-	 */
-	private function execute_show_events_query( $fetch_mode, ...$fetch_mode_args ) {
-		return $this->set_mysql_static_show_result(
-			array(
-				'Db',
-				'Name',
-				'Definer',
-				'Time zone',
-				'Type',
-				'Execute at',
-				'Interval value',
-				'Interval field',
-				'Starts',
-				'Ends',
-				'Status',
-				'Originator',
-				'character_set_client',
-				'collation_connection',
-				'Database Collation',
-			),
-			array(),
 			$fetch_mode,
 			...$fetch_mode_args
 		);
