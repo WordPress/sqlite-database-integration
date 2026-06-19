@@ -36120,7 +36120,7 @@ WHERE "TABLE_SCHEMA" = %3$s
 			);
 		}
 
-		if ( 'global_status' === $view || 'session_status' === $view || 'server_status' === $view ) {
+		if ( in_array( $view, array( 'global_status', 'session_status', 'server_status' ), true ) ) {
 			$rows = array();
 			foreach ( $this->get_mysql_status_variables() as $name => $value ) {
 				$rows[] = array(
@@ -36135,17 +36135,14 @@ WHERE "TABLE_SCHEMA" = %3$s
 			);
 		}
 
-		if ( 'character_sets' === $view ) {
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'character_sets' ),
-				$this->get_mysql_static_character_set_rows()
-			);
-		}
+		if ( 'character_sets' === $view || 'collations' === $view ) {
+			$rows = 'character_sets' === $view
+				? $this->get_mysql_static_character_set_rows()
+				: $this->get_mysql_static_collation_rows();
 
-		if ( 'collations' === $view ) {
 			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'collations' ),
-				$this->get_mysql_static_collation_rows()
+				$this->get_direct_information_schema_relation_columns( $view ),
+				$rows
 			);
 		}
 
