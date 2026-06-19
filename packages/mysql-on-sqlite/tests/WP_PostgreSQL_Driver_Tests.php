@@ -22576,11 +22576,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$apply      = Closure::bind(
 			function (): void {
-				$this->apply_mysql_add_column_metadata(
-					'public',
-					'catalog_bad_metadata',
+				$this->apply_mysql_dbdelta_alter_metadata(
 					array(
-						'column' => array(
+						'operation' => 'add_column',
+						'schema'    => 'public',
+						'table'     => 'catalog_bad_metadata',
+						'column'    => array(
 							'name'     => 'created',
 							'type'     => 'date',
 							'nullable' => 'YES',
