@@ -19969,24 +19969,7 @@ ORDER BY table_name';
 			'sql'    => $sql,
 			'params' => array( $show_routine_status_query['routine_type'] ),
 		);
-		$rows                            = array_map(
-			static function ( array $row ): array {
-				return array(
-					'Db'                   => (string) ( $row['Db'] ?? '' ),
-					'Name'                 => (string) ( $row['Name'] ?? '' ),
-					'Type'                 => (string) ( $row['Type'] ?? '' ),
-					'Definer'              => (string) ( $row['Definer'] ?? '' ),
-					'Modified'             => isset( $row['Modified'] ) ? (string) $row['Modified'] : null,
-					'Created'              => isset( $row['Created'] ) ? (string) $row['Created'] : null,
-					'Security_type'        => (string) ( $row['Security_type'] ?? '' ),
-					'Comment'              => (string) ( $row['Comment'] ?? '' ),
-					'character_set_client' => (string) ( $row['character_set_client'] ?? '' ),
-					'collation_connection' => (string) ( $row['collation_connection'] ?? '' ),
-					'Database Collation'   => (string) ( $row['Database Collation'] ?? '' ),
-				);
-			},
-			$stmt->fetchAll( PDO::FETCH_ASSOC )
-		);
+		$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
 		$rows                            = $this->filter_mysql_static_show_rows( $rows, $show_routine_status_query['filter'] );
 
 		return $this->set_mysql_static_show_result(
@@ -20286,24 +20269,7 @@ ORDER BY table_name';
 			'sql'    => $sql,
 			'params' => array( $show_triggers_query['schema'] ),
 		);
-		$rows                            = array_map(
-			static function ( array $row ): array {
-				return array(
-					'Trigger'              => (string) ( $row['Trigger'] ?? '' ),
-					'Event'                => (string) ( $row['Event'] ?? '' ),
-					'Table'                => (string) ( $row['Table'] ?? '' ),
-					'Statement'            => (string) ( $row['Statement'] ?? '' ),
-					'Timing'               => (string) ( $row['Timing'] ?? '' ),
-					'Created'              => isset( $row['Created'] ) ? (string) $row['Created'] : null,
-					'sql_mode'             => (string) ( $row['sql_mode'] ?? '' ),
-					'Definer'              => (string) ( $row['Definer'] ?? '' ),
-					'character_set_client' => (string) ( $row['character_set_client'] ?? '' ),
-					'collation_connection' => (string) ( $row['collation_connection'] ?? '' ),
-					'Database Collation'   => (string) ( $row['Database Collation'] ?? '' ),
-				);
-			},
-			$stmt->fetchAll( PDO::FETCH_ASSOC )
-		);
+		$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
 		$rows                            = $this->filter_mysql_static_show_rows( $rows, $show_triggers_query['filter'] );
 
 		return $this->set_mysql_static_show_result(
