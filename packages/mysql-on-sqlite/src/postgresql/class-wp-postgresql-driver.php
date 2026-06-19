@@ -38307,6 +38307,26 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 			);
 		}
 
+		if ( 'column_statistics' === $view ) {
+			return sprintf(
+				'SELECT
+	%1$s AS "SCHEMA_NAME",
+	stats.tablename AS "TABLE_NAME",
+	stats.attname AS "COLUMN_NAME",
+	CAST(pg_catalog.json_build_object(
+		\'buckets\', COALESCE(pg_catalog.to_json(stats.histogram_bounds), \'[]\'::json),
+		\'null-values\', stats.null_frac,
+		\'last-updated\', NULL
+	) AS text) AS "HISTOGRAM"
+FROM pg_catalog.pg_stats stats
+WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(stats.schemaname, 3) <> \'pg_\'
+	AND stats.tablename NOT IN (%2$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
 		$method = 'get_direct_information_schema_' . $view . '_relation_sql';
 		return method_exists( $this, $method ) ? $this->$method() : null;
 	}
@@ -41547,31 +41567,6 @@ SELECT * FROM catalog_index_rows',
 			$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
 			$internal_sort_column,
 			$catalog_internal_sort_column
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.COLUMN_STATISTICS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_column_statistics_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	%1$s AS "SCHEMA_NAME",
-	stats.tablename AS "TABLE_NAME",
-	stats.attname AS "COLUMN_NAME",
-	CAST(pg_catalog.json_build_object(
-		\'buckets\', COALESCE(pg_catalog.to_json(stats.histogram_bounds), \'[]\'::json),
-		\'null-values\', stats.null_frac,
-		\'last-updated\', NULL
-	) AS text) AS "HISTOGRAM"
-FROM pg_catalog.pg_stats stats
-WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(stats.schemaname, 3) <> \'pg_\'
-	AND stats.tablename NOT IN (%2$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
 		);
 	}
 
