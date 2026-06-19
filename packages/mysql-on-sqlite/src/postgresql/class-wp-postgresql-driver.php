@@ -5091,12 +5091,16 @@ $wp_mysql_on_update$',
 				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			} else {
 				$this->ensure_mysql_schema_metadata_tables();
-				$this->rename_mysql_index_metadata(
-					$table_schema,
-					$table_name,
-					$metadata['old_index'],
-					$metadata['new_index']
-				);
+				if ( $metadata['old_index'] !== $metadata['new_index'] ) {
+					$this->connection->query(
+						sprintf(
+							'UPDATE %s SET key_name = ? WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?)',
+							$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
+						),
+						array( $metadata['new_index'], $table_schema, $table_name, $metadata['old_index'] )
+					);
+					$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+				}
 			}
 			return;
 		}
@@ -5142,7 +5146,22 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'add_check' === $metadata['operation'] ) {
-			$this->apply_mysql_add_check_metadata( $table_schema, $table_name, $metadata['check'] );
+			$check = $metadata['check'];
+			if (
+				$this->should_use_postgresql_catalog_metadata()
+				&& $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check )
+			) {
+				$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
+				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+				return;
+			}
+
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
+			}
+
+			$this->ensure_mysql_schema_metadata_tables();
+			$this->insert_mysql_check_metadata( $table_schema, $table_name, $check );
 			return;
 		}
 
@@ -5773,12 +5792,16 @@ $wp_mysql_on_update$',
 		$this->ensure_mysql_schema_metadata_tables();
 
 		$old_extra = $this->get_mysql_column_extra_metadata( $table_schema, $table_name, $metadata['old_column'] );
-		$this->rename_mysql_column_metadata(
-			$table_schema,
-			$table_name,
-			$metadata['old_column'],
-			$metadata['new_column']
-		);
+		if ( $metadata['old_column'] !== $metadata['new_column'] ) {
+			$this->connection->query(
+				sprintf(
+					'UPDATE %s SET column_name = ? WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+				),
+				array( $metadata['new_column'], $table_schema, $table_name, $metadata['old_column'] )
+			);
+			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+		}
 		$this->rename_mysql_index_column_metadata(
 			$table_schema,
 			$table_name,
@@ -6127,36 +6150,6 @@ END',
 	}
 
 	/**
-	 * Rename stored MySQL column metadata.
-	 *
-	 * @param string $table_schema    Table schema.
-	 * @param string $table_name      Table name.
-	 * @param string $old_column_name Old column name.
-	 * @param string $new_column_name New column name.
-	 */
-	private function rename_mysql_column_metadata(
-		string $table_schema,
-		string $table_name,
-		string $old_column_name,
-		string $new_column_name
-	): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
-		if ( $old_column_name === $new_column_name ) {
-			return;
-		}
-
-		$this->connection->query(
-			sprintf(
-				'UPDATE %s SET column_name = ? WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $new_column_name, $table_schema, $table_name, $old_column_name )
-		);
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
 	 * Insert MySQL SHOW INDEX metadata rows for an index.
 	 *
 	 * @param string     $table_schema    Table schema.
@@ -6335,36 +6328,6 @@ $wp_mysql_primary_index_comment$',
 				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
 			),
 			array( $table_schema, $table_name, $index_name )
-		);
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Rename stored MySQL index metadata.
-	 *
-	 * @param string $table_schema   Metadata schema.
-	 * @param string $table_name     Table name.
-	 * @param string $old_index_name Old index name.
-	 * @param string $new_index_name New index name.
-	 */
-	private function rename_mysql_index_metadata(
-		string $table_schema,
-		string $table_name,
-		string $old_index_name,
-		string $new_index_name
-	): void {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
-		if ( $old_index_name === $new_index_name ) {
-			return;
-		}
-
-		$this->connection->query(
-			sprintf(
-				'UPDATE %s SET key_name = ? WHERE table_schema = ? AND table_name = ? AND LOWER(key_name) = LOWER(?)',
-				$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-			),
-			array( $new_index_name, $table_schema, $table_name, $old_index_name )
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
@@ -6553,31 +6516,6 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Store CHECK metadata only when PostgreSQL catalogs cannot recover it.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $check        CHECK constraint metadata.
-	 */
-	private function apply_mysql_add_check_metadata( string $table_schema, string $table_name, array $check ): void {
-		if (
-			$this->should_use_postgresql_catalog_metadata()
-			&& $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check )
-		) {
-			$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			return;
-		}
-
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->insert_mysql_check_metadata( $table_schema, $table_name, $check );
 	}
 
 	/**

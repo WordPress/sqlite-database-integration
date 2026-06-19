@@ -22303,9 +22303,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'delete_mysql_column_metadata'                 => function (): void {
 				$this->delete_mysql_column_metadata( 'public', 'catalog_side_table', 'id' );
 			},
-			'rename_mysql_column_metadata'                 => function (): void {
-				$this->rename_mysql_column_metadata( 'public', 'catalog_side_table', 'old_id', 'id' );
-			},
 			'insert_mysql_index_metadata'                  => function (): void {
 				$this->insert_mysql_index_metadata(
 					'public',
@@ -22328,9 +22325,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			},
 			'delete_mysql_index_metadata'                  => function (): void {
 				$this->delete_mysql_index_metadata( 'public', 'catalog_side_table', 'id_idx' );
-			},
-			'rename_mysql_index_metadata'                  => function (): void {
-				$this->rename_mysql_index_metadata( 'public', 'catalog_side_table', 'old_idx', 'id_idx' );
 			},
 			'insert_mysql_foreign_key_metadata'            => function (): void {
 				$this->insert_mysql_foreign_key_metadata(
@@ -22666,13 +22660,16 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$apply      = Closure::bind(
 			function (): void {
-				$this->apply_mysql_add_check_metadata(
-					'public',
-					'catalog_bad_metadata',
+				$this->apply_mysql_dbdelta_alter_metadata(
 					array(
-						'name'         => 'bad_check',
-						'check_clause' => '',
-						'enforced'     => 'YES',
+						'operation' => 'add_check',
+						'schema'    => 'public',
+						'table'     => 'catalog_bad_metadata',
+						'check'     => array(
+							'name'         => 'bad_check',
+							'check_clause' => '',
+							'enforced'     => 'YES',
+						),
 					)
 				);
 			},
