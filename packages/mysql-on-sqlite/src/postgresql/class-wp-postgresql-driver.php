@@ -35250,8 +35250,14 @@ WHERE "TABLE_SCHEMA" = %3$s
 			}
 
 			$union_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::UNION_SYMBOL, $position + 1, $statement_end );
-			$select_end     = $union_position ?? $this->get_direct_information_schema_union_tail_start( $tokens, $position + 1, $statement_end );
+			$select_end     = $union_position ?? $statement_end;
 			if ( null === $union_position ) {
+				foreach ( array( WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL ) as $token_id ) {
+					$tail_position = $this->find_top_level_mysql_token( $tokens, $token_id, $position + 1, $statement_end );
+					if ( null !== $tail_position ) {
+						$select_end = min( $select_end, $tail_position );
+					}
+				}
 				$tail_start = $select_end;
 			}
 			if (
@@ -35332,26 +35338,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 		}
 
 		return $sql;
-	}
-
-	/**
-	 * Get the start of a top-level ORDER BY/LIMIT tail for an information_schema UNION.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First token to inspect.
-	 * @param int              $end    Final token, exclusive.
-	 * @return int Tail start, or $end when absent.
-	 */
-	private function get_direct_information_schema_union_tail_start( array $tokens, int $start, int $end ): int {
-		$tail_start = $end;
-		foreach ( array( WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL ) as $token_id ) {
-			$position = $this->find_top_level_mysql_token( $tokens, $token_id, $start, $end );
-			if ( null !== $position ) {
-				$tail_start = min( $tail_start, $position );
-			}
-		}
-
-		return $tail_start;
 	}
 
 	/**
