@@ -37561,14 +37561,20 @@ WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 		}
 
 		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) ) {
-			return $this->get_direct_information_schema_empty_relation_sql( $view );
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( $view ),
+				array()
+			);
 		}
 
 		if (
 			! $this->should_use_postgresql_catalog_metadata()
 			&& ! in_array( $view, explode( ' ', 'processlist keywords table_constraints key_column_usage referential_constraints check_constraints statistics' ), true )
 		) {
-			return $this->get_direct_information_schema_empty_relation_sql( $view );
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( $view ),
+				array()
+			);
 		}
 
 		if ( 'processlist' === $view ) {
@@ -39878,19 +39884,6 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 				array( $this->connection, 'quote' ),
 				$this->get_mysql_schema_side_metadata_table_names()
 			)
-		);
-	}
-
-	/**
-	 * Build an empty MySQL-shaped information_schema relation.
-	 *
-	 * @param string $view information_schema relation name.
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_empty_relation_sql( string $view ): string {
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( $view ),
-			array()
 		);
 	}
 
