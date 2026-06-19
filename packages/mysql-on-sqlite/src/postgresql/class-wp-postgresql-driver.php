@@ -36242,29 +36242,20 @@ WHERE s.schema_name = \'information_schema\' OR s.schema_name !~ \'^pg_\'',
 					$comment_sql,
 					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
 				);
-				$column_key      = 'COALESCE((
-	SELECT CASE
-		WHEN BOOL_OR(i.indisprimary) THEN \'PRI\'
-		WHEN BOOL_OR(i.indisunique) THEN \'UNI\'
-		ELSE \'MUL\'
+				$column_key      = sprintf(
+					'(SELECT CASE
+		WHEN BOOL_OR(s."INDEX_NAME" = \'PRIMARY\') THEN \'PRI\'
+		WHEN BOOL_OR(s."NON_UNIQUE" = 0) THEN \'UNI\'
+		WHEN COUNT(*) > 0 THEN \'MUL\'
+		ELSE \'\'
 	END
-	FROM pg_catalog.pg_class t
-	INNER JOIN pg_catalog.pg_namespace n
-		ON n.oid = t.relnamespace
-	INNER JOIN pg_catalog.pg_index i
-		ON i.indrelid = t.oid
-	CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-	INNER JOIN pg_catalog.pg_attribute a
-		ON a.attrelid = t.oid
-		AND a.attnum = k.attnum
-	WHERE n.nspname = c.table_schema
-		AND t.relname = c.table_name
-		AND a.attname = c.column_name
-		AND k.ordinality <= i.indnkeyatts
-		AND k.attnum > 0
-		AND i.indisvalid
-		AND i.indislive
-), \'\')';
+	FROM (%1$s) s
+	WHERE s."TABLE_SCHEMA" = %2$s
+		AND s."TABLE_NAME" = c.table_name
+		AND s."COLUMN_NAME" = c.column_name)',
+					$this->get_direct_information_schema_relation_sql( 'statistics' ),
+					$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' )
+				);
 				$column_comment  = $comment_sql;
 				for ( $i = 0; $i < 4; ++$i ) {
 					$marker_conditions = array();
