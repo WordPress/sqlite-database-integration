@@ -20142,9 +20142,45 @@ ORDER BY table_name';
 	 * @return mixed SHOW OPEN TABLES result rows.
 	 */
 	private function execute_show_open_tables_query( array $show_open_tables_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->should_use_postgresql_catalog_metadata()
-			? $this->get_show_open_tables_catalog_rows( $show_open_tables_query['schema'] )
-			: array();
+		$rows = array();
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$sql  = sprintf(
+				'SELECT
+			%1$s AS "Database",
+			c.relname AS "Table",
+			CASE WHEN COALESCE(SUM(CASE WHEN l.granted AND l.pid <> pg_catalog.pg_backend_pid() THEN 1 ELSE 0 END), 0) > 0 THEN \'1\' ELSE \'0\' END AS "In_use",
+			CASE WHEN COALESCE(SUM(CASE WHEN NOT l.granted THEN 1 ELSE 0 END), 0) > 0 THEN \'1\' ELSE \'0\' END AS "Name_locked"
+		FROM pg_catalog.pg_class c
+		INNER JOIN pg_catalog.pg_namespace n
+			ON n.oid = c.relnamespace
+		LEFT JOIN pg_catalog.pg_locks l
+			ON l.relation = c.oid
+		WHERE n.nspname = ?
+			AND c.relkind IN (\'r\', \'p\', \'v\', \'m\', \'f\')
+			AND c.relname NOT IN (%2$s)
+		GROUP BY n.nspname, c.relname
+		ORDER BY c.relname',
+				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+			$stmt = $this->connection->query( $sql, array( $show_open_tables_query['schema'] ) );
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => array( $show_open_tables_query['schema'] ),
+			);
+			$rows                            = array_map(
+				static function ( array $row ): array {
+					return array(
+						'Database'    => (string) ( $row['Database'] ?? '' ),
+						'Table'       => (string) ( $row['Table'] ?? '' ),
+						'In_use'      => (string) ( $row['In_use'] ?? '0' ),
+						'Name_locked' => (string) ( $row['Name_locked'] ?? '0' ),
+					);
+				},
+				$stmt->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
 		$rows = $this->filter_mysql_static_show_rows( $rows, $show_open_tables_query['filter'] );
 
 		return $this->set_mysql_static_show_result(
@@ -20152,52 +20188,6 @@ ORDER BY table_name';
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Get MySQL-shaped SHOW OPEN TABLES rows from PostgreSQL catalogs.
-	 *
-	 * @param string $schema_name Backend schema name.
-	 * @return array[] Rows keyed by SHOW OPEN TABLES column names.
-	 */
-	private function get_show_open_tables_catalog_rows( string $schema_name ): array {
-		$sql  = sprintf(
-			'SELECT
-		%1$s AS "Database",
-		c.relname AS "Table",
-		CASE WHEN COALESCE(SUM(CASE WHEN l.granted AND l.pid <> pg_catalog.pg_backend_pid() THEN 1 ELSE 0 END), 0) > 0 THEN \'1\' ELSE \'0\' END AS "In_use",
-		CASE WHEN COALESCE(SUM(CASE WHEN NOT l.granted THEN 1 ELSE 0 END), 0) > 0 THEN \'1\' ELSE \'0\' END AS "Name_locked"
-	FROM pg_catalog.pg_class c
-	INNER JOIN pg_catalog.pg_namespace n
-		ON n.oid = c.relnamespace
-	LEFT JOIN pg_catalog.pg_locks l
-		ON l.relation = c.oid
-	WHERE n.nspname = ?
-		AND c.relkind IN (\'r\', \'p\', \'v\', \'m\', \'f\')
-		AND c.relname NOT IN (%2$s)
-	GROUP BY n.nspname, c.relname
-	ORDER BY c.relname',
-			$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-		$stmt = $this->connection->query( $sql, array( $schema_name ) );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => array( $schema_name ),
-		);
-
-		return array_map(
-			static function ( array $row ): array {
-				return array(
-					'Database'    => (string) ( $row['Database'] ?? '' ),
-					'Table'       => (string) ( $row['Table'] ?? '' ),
-					'In_use'      => (string) ( $row['In_use'] ?? '0' ),
-					'Name_locked' => (string) ( $row['Name_locked'] ?? '0' ),
-				);
-			},
-			$stmt->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
