@@ -37101,7 +37101,7 @@ LEFT JOIN pg_catalog.pg_attribute pa
 	ON pa.attrelid = pc.oid
 	AND pa.attname = c.column_name
 	AND pa.attnum > 0
-WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+WHERE c.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 ',
 					$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
 					$type_expression,
@@ -37425,7 +37425,7 @@ LEFT JOIN pg_catalog.pg_namespace seq_ns
 LEFT JOIN pg_catalog.pg_sequences ps
 	ON ps.schemaname = seq_ns.nspname
 	AND ps.sequencename = seq.relname
-WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+WHERE t.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 		AND t.table_type IN (\'BASE TABLE\', \'VIEW\')',
 					$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
 					$table_collation_sql,
@@ -38809,7 +38809,7 @@ FROM index_columns',
 						'n.nspname AS table_schema',
 						'',
 						array(
-							'n.nspname NOT IN (\'information_schema\', \'pg_catalog\')',
+							'n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 							't.relkind IN (\'r\', \'p\')',
 						)
 					),
