@@ -13070,7 +13070,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	 * Tests WordPress expired transient cleanup DELETE statements are translated.
 	 */
 	public function test_wordpress_expired_transients_delete_is_translated_to_postgresql(): void {
-		$driver = $this->create_driver();
+		$driver = $this->create_driver_with_postgresql_substring_function();
 
 		$driver->query(
 			'CREATE TABLE wptests_options (
@@ -13078,8 +13078,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				option_value TEXT NOT NULL
 			)'
 		);
-		$driver->query( "INSERT INTO wptests_options (option_name, option_value) VALUES ('_transient_expired', 'value')" );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value) VALUES ('_transient_expired', 'a:4:{i:1781909759;s:16:\"wp_version_check\";}')" );
 		$driver->query( "INSERT INTO wptests_options (option_name, option_value) VALUES ('_transient_timeout_expired', '100')" );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value) VALUES ('_transient_expired_text_timeout', 'a:4:{i:1781909759;s:16:\"wp_version_check\";}')" );
+		$driver->query( "INSERT INTO wptests_options (option_name, option_value) VALUES ('_transient_timeout_expired_text_timeout', 'a:4:{i:1781909759;s:16:\"wp_version_check\";}')" );
 		$driver->query( "INSERT INTO wptests_options (option_name, option_value) VALUES ('_transient_fresh', 'value')" );
 		$driver->query( "INSERT INTO wptests_options (option_name, option_value) VALUES ('_transient_timeout_fresh', '9999999999')" );
 
@@ -13097,6 +13099,8 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertStringContainsString( 'WITH expired_transients AS', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'DELETE FROM "wptests_options"', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'SUBSTR(a.option_name, 12)', $queries[0]['sql'] );
+		$this->assertStringContainsString( $this->get_expected_mysql_numeric_cast_sql( 'b.option_value' ) . ' < 200', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'CAST(b.option_value AS BIGINT)', $queries[0]['sql'] );
 
 		$rows = $driver->query( 'SELECT option_name FROM wptests_options ORDER BY option_name' );
 

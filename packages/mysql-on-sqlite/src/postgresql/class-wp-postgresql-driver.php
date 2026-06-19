@@ -13461,6 +13461,7 @@ FROM (
 		) {
 			return null;
 		}
+		$timeout_value_sql = $this->get_postgresql_mysql_numeric_cast_sql( 'b.option_value' );
 		return sprintf(
 			'WITH expired_transients AS (
 	SELECT a.option_name AS value_name, b.option_name AS timeout_name
@@ -13469,7 +13470,7 @@ FROM (
 		ON b.option_name = %2$s || SUBSTR(a.option_name, %3$d)
 	WHERE a.option_name LIKE %4$s ESCAPE %5$s
 		AND a.option_name NOT LIKE %6$s ESCAPE %5$s
-		AND CAST(b.option_value AS BIGINT) < %7$s
+		AND %7$s < %8$s
 )
 DELETE FROM %1$s
 WHERE option_name IN (
@@ -13483,6 +13484,7 @@ WHERE option_name IN (
 			$this->connection->quote( $value_like ),
 			$this->connection->quote( '\\' ),
 			$this->connection->quote( $timeout_like ),
+			$timeout_value_sql,
 			$expires_before
 		);
 	}
