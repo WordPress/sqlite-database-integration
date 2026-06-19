@@ -1123,7 +1123,10 @@ class WP_PostgreSQL_Driver {
 		if ( null !== $drop_query ) {
 			$this->execute_postgresql_statements( $drop_query['statements'] );
 			foreach ( $drop_query['tables'] as $table_name ) {
-				if ( in_array( (string) $table_name, $this->get_direct_information_schema_hidden_table_names(), true ) ) {
+				if (
+					! $this->should_use_postgresql_catalog_metadata()
+					&& in_array( (string) $table_name, $this->get_mysql_schema_side_metadata_table_names(), true )
+				) {
 					$this->mysql_schema_metadata_tables_ensured = false;
 					$this->clear_mysql_metadata_caches();
 					break;
@@ -37309,7 +37312,7 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 			$metadata_key               = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name' );
 			$metadata_schema_where      = $include_temporary_metadata
 				? '1 = 1'
-				: 'NOT ' . $this->get_mysql_temporary_schema_sql_condition( 'cm.table_schema' );
+				: 'NOT (LOWER(cm.table_schema) IN (\'temp\', \'pg_temp\') OR LOWER(cm.table_schema) LIKE \'pg_temp_%\')';
 
 			return sprintf(
 				'WITH catalog_columns AS (
@@ -39857,26 +39860,12 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 	}
 
 	/**
-	 * Get hidden PostgreSQL metadata table names.
-	 *
-	 * @return string[] Table names.
-	 */
-	private function get_direct_information_schema_hidden_table_names(): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return array();
-		}
-
-		return $this->get_mysql_schema_side_metadata_table_names();
-	}
-
-	/**
 	 * Get SQL for the hidden metadata table exclusion list.
 	 *
 	 * @return string SQL literal list.
 	 */
 	private function get_direct_information_schema_hidden_table_list_sql(): string {
-		$hidden_table_names = $this->get_direct_information_schema_hidden_table_names();
-		if ( empty( $hidden_table_names ) ) {
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			return $this->connection->quote( '' );
 		}
 
@@ -39884,7 +39873,7 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 			', ',
 			array_map(
 				array( $this->connection, 'quote' ),
-				$hidden_table_names
+				$this->get_mysql_schema_side_metadata_table_names()
 			)
 		);
 	}
@@ -39997,19 +39986,6 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 		}
 
 		return $rows;
-	}
-
-	/**
-	 * Get a SQL condition that matches temporary metadata schemas.
-	 *
-	 * @param string $schema_sql SQL expression for a backend schema name.
-	 * @return string SQL condition.
-	 */
-	private function get_mysql_temporary_schema_sql_condition( string $schema_sql ): string {
-		return sprintf(
-			'(LOWER(%1$s) IN (\'temp\', \'pg_temp\') OR LOWER(%1$s) LIKE \'pg_temp_%%\')',
-			$schema_sql
-		);
 	}
 
 	/**
