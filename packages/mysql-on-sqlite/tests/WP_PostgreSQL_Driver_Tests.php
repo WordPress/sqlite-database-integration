@@ -31534,9 +31534,9 @@ $wp_mysql_on_update$',
 		);
 		$this->assertSame( array( 'Id', 'User', 'Host', 'db', 'Command', 'Time', 'State', 'Info' ), array_column( $driver->get_last_column_meta(), 'name' ) );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_stat_activity a', $connection->get_activity_sql() );
-		$this->assertStringContainsString( 'CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END AS "Command"', $connection->get_activity_sql() );
-		$this->assertStringContainsString( 'ORDER BY a.pid', $connection->get_activity_sql() );
-		$this->assertStringNotContainsString( '\'root\' AS "User"', $connection->get_activity_sql() );
+		$this->assertStringContainsString( 'CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END AS "COMMAND"', $connection->get_activity_sql() );
+		$this->assertStringContainsString( 'ORDER BY p."ID"', $connection->get_activity_sql() );
+		$this->assertStringNotContainsString( '\'root\' AS "USER"', $connection->get_activity_sql() );
 		$this->assertCount( 1, $driver->get_last_postgresql_queries() );
 		$this->assertSame( $connection->get_activity_sql(), $driver->get_last_postgresql_queries()[0]['sql'] );
 	}

@@ -20283,7 +20283,45 @@ ORDER BY table_name';
 	 */
 	private function execute_show_processlist_query( array $show_processlist_query, $fetch_mode, ...$fetch_mode_args ) {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$rows = $this->get_show_processlist_catalog_rows( $show_processlist_query['full'] );
+			$sql  = 'SELECT
+		p."ID" AS "Id",
+		p."USER" AS "User",
+		p."HOST" AS "Host",
+		p."DB" AS "db",
+		p."COMMAND" AS "Command",
+		p."TIME" AS "Time",
+		p."STATE" AS "State",
+		p."INFO" AS "Info"
+	FROM (
+' . $this->get_direct_information_schema_relation_sql( 'processlist' ) . '
+	) p
+	ORDER BY p."ID"';
+			$stmt = $this->connection->query( $sql );
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => array(),
+			);
+			$rows                            = array_map(
+				static function ( array $row ) use ( $show_processlist_query ): array {
+					$info = (string) ( $row['Info'] ?? '' );
+					if ( ! $show_processlist_query['full'] && strlen( $info ) > 100 ) {
+						$info = substr( $info, 0, 100 );
+					}
+
+					return array(
+						'Id'      => (string) ( $row['Id'] ?? '' ),
+						'User'    => (string) ( $row['User'] ?? '' ),
+						'Host'    => (string) ( $row['Host'] ?? '' ),
+						'db'      => (string) ( $row['db'] ?? '' ),
+						'Command' => (string) ( $row['Command'] ?? '' ),
+						'Time'    => (string) ( $row['Time'] ?? '0' ),
+						'State'   => (string) ( $row['State'] ?? '' ),
+						'Info'    => $info,
+					);
+				},
+				$stmt->fetchAll( PDO::FETCH_ASSOC )
+			);
 
 			if ( isset( $show_processlist_query['where_filter'] ) && is_array( $show_processlist_query['where_filter'] ) ) {
 				$rows = $this->filter_mysql_static_show_rows( $rows, $show_processlist_query['where_filter'] );
@@ -20340,62 +20378,6 @@ ORDER BY table_name';
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Get MySQL-shaped SHOW PROCESSLIST rows from PostgreSQL activity catalogs.
-	 *
-	 * @param bool $full Whether to preserve full INFO text.
-	 * @return array[] Rows keyed by SHOW PROCESSLIST column names.
-	 */
-	private function get_show_processlist_catalog_rows( bool $full ): array {
-		$sql  = 'SELECT
-	a.pid AS "Id",
-	COALESCE(a.usename, CURRENT_USER) AS "User",
-	CASE
-		WHEN a.client_addr IS NULL THEN \'localhost\'
-		WHEN a.client_port IS NULL THEN CAST(a.client_addr AS text)
-		ELSE CAST(a.client_addr AS text) || \':\' || CAST(a.client_port AS text)
-	END AS "Host",
-	COALESCE(a.datname, \'\') AS "db",
-	CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END AS "Command",
-	GREATEST(CAST(FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(a.query_start, a.state_change, a.backend_start, CURRENT_TIMESTAMP)))) AS bigint), 0) AS "Time",
-	COALESCE(
-		a.wait_event_type || CASE WHEN a.wait_event IS NULL THEN \'\' ELSE \':\' || a.wait_event END,
-		a.state,
-		\'\'
-	) AS "State",
-	COALESCE(a.query, \'\') AS "Info"
-FROM pg_catalog.pg_stat_activity a
-WHERE a.datname IS NULL OR a.datname = current_database()
-ORDER BY a.pid';
-		$stmt = $this->connection->query( $sql );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => array(),
-		);
-
-		return array_map(
-			static function ( array $row ) use ( $full ): array {
-				$info = (string) ( $row['Info'] ?? '' );
-				if ( ! $full && strlen( $info ) > 100 ) {
-					$info = substr( $info, 0, 100 );
-				}
-
-				return array(
-					'Id'      => (string) ( $row['Id'] ?? '' ),
-					'User'    => (string) ( $row['User'] ?? '' ),
-					'Host'    => (string) ( $row['Host'] ?? '' ),
-					'db'      => (string) ( $row['db'] ?? '' ),
-					'Command' => (string) ( $row['Command'] ?? '' ),
-					'Time'    => (string) ( $row['Time'] ?? '0' ),
-					'State'   => (string) ( $row['State'] ?? '' ),
-					'Info'    => $info,
-				);
-			},
-			$stmt->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
