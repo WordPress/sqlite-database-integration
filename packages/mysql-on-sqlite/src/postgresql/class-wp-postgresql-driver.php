@@ -33172,31 +33172,7 @@ WHERE "TABLE_SCHEMA" = %3$s
 			}
 
 			$separator = $this->find_next_direct_information_schema_source_separator( $tokens, $position, $end );
-			if ( null === $separator ) {
-				$predicate = $this->get_direct_information_schema_join_predicate_range_data(
-					$tokens,
-					$position,
-					$end,
-					$sources,
-					$using_columns
-				);
-				if ( null === $predicate ) {
-					return null;
-				}
-				if ( isset( $predicate['range'] ) ) {
-					$join_predicate_ranges[] = $predicate['range'];
-				}
-				if ( isset( $predicate['replacement'] ) ) {
-					$join_predicate_replacements[] = $predicate['replacement'];
-				}
-				if ( isset( $predicate['using_columns'] ) ) {
-					$using_columns = $this->merge_direct_information_schema_using_columns( $using_columns, $predicate['using_columns'] );
-				}
-				$position = $end;
-				break;
-			}
-
-			if ( 'comma' === $separator['type'] ) {
+			if ( null !== $separator && 'comma' === $separator['type'] ) {
 				if ( $position !== $separator['start'] ) {
 					return null;
 				}
@@ -33205,10 +33181,11 @@ WHERE "TABLE_SCHEMA" = %3$s
 				continue;
 			}
 
-			$predicate = $this->get_direct_information_schema_join_predicate_range_data(
+			$predicate_end = null === $separator ? $end : $separator['start'];
+			$predicate     = $this->get_direct_information_schema_join_predicate_range_data(
 				$tokens,
 				$position,
-				$separator['start'],
+				$predicate_end,
 				$sources,
 				$using_columns
 			);
@@ -33223,6 +33200,11 @@ WHERE "TABLE_SCHEMA" = %3$s
 			}
 			if ( isset( $predicate['using_columns'] ) ) {
 				$using_columns = $this->merge_direct_information_schema_using_columns( $using_columns, $predicate['using_columns'] );
+			}
+
+			if ( null === $separator ) {
+				$position = $end;
+				break;
 			}
 
 			$position = $separator['source_start'];
@@ -34808,137 +34790,6 @@ WHERE a.datname IS NULL OR a.datname = current_database()';
 			);
 		}
 
-		if ( 'files' === $view ) {
-			return 'SELECT
-	CAST(ts.oid AS bigint) AS "FILE_ID",
-	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "FILE_NAME",
-	\'TABLESPACE\' AS "FILE_TYPE",
-	ts.spcname AS "TABLESPACE_NAME",
-	\'\' AS "TABLE_CATALOG",
-	NULL AS "TABLE_SCHEMA",
-	NULL AS "TABLE_NAME",
-	NULL AS "LOGFILE_GROUP_NAME",
-	NULL AS "LOGFILE_GROUP_NUMBER",
-	\'InnoDB\' AS "ENGINE",
-	NULL AS "FULLTEXT_KEYS",
-	NULL AS "DELETED_ROWS",
-	NULL AS "UPDATE_COUNT",
-	NULL AS "FREE_EXTENTS",
-	NULL AS "TOTAL_EXTENTS",
-	NULL AS "EXTENT_SIZE",
-	NULL AS "INITIAL_SIZE",
-	NULL AS "MAXIMUM_SIZE",
-	NULL AS "AUTOEXTEND_SIZE",
-	NULL AS "CREATION_TIME",
-	NULL AS "LAST_UPDATE_TIME",
-	NULL AS "LAST_ACCESS_TIME",
-	NULL AS "RECOVER_TIME",
-	NULL AS "TRANSACTION_COUNTER",
-	NULL AS "VERSION",
-	NULL AS "ROW_FORMAT",
-	NULL AS "TABLE_ROWS",
-	NULL AS "AVG_ROW_LENGTH",
-	NULL AS "DATA_LENGTH",
-	NULL AS "MAX_DATA_LENGTH",
-	NULL AS "INDEX_LENGTH",
-	NULL AS "DATA_FREE",
-	NULL AS "CREATE_TIME",
-	NULL AS "UPDATE_TIME",
-	NULL AS "CHECK_TIME",
-	NULL AS "CHECKSUM",
-	\'NORMAL\' AS "STATUS",
-	NULL AS "EXTRA"
-	FROM pg_catalog.pg_tablespace ts';
-		}
-
-		if ( 'plugins' === $view ) {
-			return 'SELECT
-	ae.name AS "PLUGIN_NAME",
-	COALESCE(ae.installed_version, ae.default_version, \'\') AS "PLUGIN_VERSION",
-	CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END AS "PLUGIN_STATUS",
-	\'EXTENSION\' AS "PLUGIN_TYPE",
-	COALESCE(ae.default_version, \'\') AS "PLUGIN_TYPE_VERSION",
-	NULL AS "PLUGIN_LIBRARY",
-	NULL AS "PLUGIN_LIBRARY_VERSION",
-	\'\' AS "PLUGIN_AUTHOR",
-	COALESCE(ae.comment, \'\') AS "PLUGIN_DESCRIPTION",
-	\'\' AS "PLUGIN_LICENSE",
-	CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END AS "LOAD_OPTION"
-FROM pg_catalog.pg_available_extensions ae';
-		}
-
-		if ( 'user_privileges' === $view ) {
-			return 'SELECT
-	pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%\'\'\' AS "GRANTEE",
-	\'def\' AS "TABLE_CATALOG",
-	acl.privilege_type AS "PRIVILEGE_TYPE",
-	CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"
-FROM pg_catalog.pg_database d
-CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(d.datacl, pg_catalog.acldefault(\'d\', d.datdba))) acl
-LEFT JOIN pg_catalog.pg_roles grantee_role
-	ON grantee_role.oid = acl.grantee
-WHERE d.datname = current_database()';
-		}
-
-		if ( 'schema_privileges' === $view ) {
-			return sprintf(
-				'SELECT
-	pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%%\'\'\' AS "GRANTEE",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	acl.privilege_type AS "PRIVILEGE_TYPE",
-	CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"
-FROM pg_catalog.pg_namespace n
-CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault(\'n\', n.nspowner))) acl
-LEFT JOIN pg_catalog.pg_roles grantee_role
-	ON grantee_role.oid = acl.grantee
-WHERE n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
-				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
-			);
-		}
-
-		if ( 'column_privileges' === $view ) {
-			return str_replace(
-				array(
-					'tp.table_name AS "TABLE_NAME",',
-					'information_schema.table_privileges tp',
-					'tp.',
-				),
-				array(
-					'tp.table_name AS "TABLE_NAME",
-	tp.column_name AS "COLUMN_NAME",',
-					'information_schema.column_privileges cp',
-					'cp.',
-				),
-				$this->get_direct_information_schema_relation_sql( 'table_privileges' )
-			);
-		}
-
-		if ( 'role_column_grants' === $view ) {
-			return str_replace(
-				array(
-					'rtg.table_name AS "TABLE_NAME",',
-					'information_schema.role_table_grants rtg',
-					'rtg.',
-				),
-				array(
-					'rtg.table_name AS "TABLE_NAME",
-	rtg.column_name AS "COLUMN_NAME",',
-					'information_schema.role_column_grants rcg',
-					'rcg.',
-				),
-				$this->get_direct_information_schema_relation_sql( 'role_table_grants' )
-			);
-		}
-
-		if ( 'administrable_role_authorizations' === $view ) {
-			return str_replace(
-				array( 'applicable_roles ar', 'ar.' ),
-				array( 'administrable_role_authorizations ara', 'ara.' ),
-				$this->get_direct_information_schema_relation_sql( 'applicable_roles' )
-			);
-		}
-
 		if ( 'keywords' === $view ) {
 			if ( $this->should_use_postgresql_catalog_metadata() ) {
 				return 'SELECT
@@ -35147,64 +34998,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 				$this->get_direct_information_schema_display_schema_sql( 'parent_ns.nspname' ),
 				$this->get_direct_information_schema_display_schema_sql( 't.table_schema' )
 			);
-		}
-
-		if ( 'tablespaces_extensions' === $view ) {
-			return 'SELECT
-	ts.spcname AS "TABLESPACE_NAME",
-	NULL AS "ENGINE_ATTRIBUTE"
-FROM pg_catalog.pg_tablespace ts';
-		}
-
-		if ( 'tablespaces' === $view ) {
-			return 'SELECT
-	ts.spcname AS "TABLESPACE_NAME",
-	\'InnoDB\' AS "ENGINE",
-	\'General\' AS "TABLESPACE_TYPE",
-	NULL AS "LOGFILE_GROUP_NAME",
-	NULL AS "EXTENT_SIZE",
-	NULL AS "AUTOEXTEND_SIZE",
-	NULL AS "MAXIMUM_SIZE",
-	NULL AS "NODEGROUP_ID",
-	COALESCE(pg_catalog.obj_description(ts.oid, \'pg_tablespace\'), \'\') AS "TABLESPACE_COMMENT"
-FROM pg_catalog.pg_tablespace ts';
-		}
-
-		if ( 'innodb_tablespaces' === $view ) {
-			return 'SELECT
-	CAST(ts.oid AS bigint) AS "SPACE",
-	ts.spcname AS "NAME",
-	0 AS "FLAG",
-	\'Dynamic\' AS "ROW_FORMAT",
-	16384 AS "PAGE_SIZE",
-	0 AS "ZIP_PAGE_SIZE",
-	\'Single\' AS "SPACE_TYPE",
-	NULL AS "FS_BLOCK_SIZE",
-	NULL AS "FILE_SIZE",
-	NULL AS "ALLOCATED_SIZE",
-	0 AS "AUTOEXTEND_SIZE",
-	NULL AS "SERVER_VERSION",
-	1 AS "SPACE_VERSION",
-	\'N\' AS "ENCRYPTION",
-	\'normal\' AS "STATE"
-FROM pg_catalog.pg_tablespace ts';
-		}
-
-		if ( 'innodb_tablespaces_brief' === $view ) {
-			return 'SELECT
-	CAST(ts.oid AS bigint) AS "SPACE",
-	ts.spcname AS "NAME",
-	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH",
-	0 AS "FLAG",
-	\'Single\' AS "SPACE_TYPE"
-FROM pg_catalog.pg_tablespace ts';
-		}
-
-		if ( 'innodb_datafiles' === $view ) {
-			return 'SELECT
-	CAST(ts.oid AS bigint) AS "SPACE",
-	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"
-FROM pg_catalog.pg_tablespace ts';
 		}
 
 		if ( 'innodb_indexes' === $view ) {
@@ -35450,8 +35243,42 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 		$check_comment_sql   = 'pg_catalog.obj_description(con.oid, \'pg_constraint\')';
 		$check_clause_sql    = $this->get_postgresql_mysql_check_clause_comment_sql( $check_comment_sql, 'cc.check_clause' );
 		$check_enforced_sql  = $this->get_postgresql_mysql_check_enforced_comment_sql( $check_comment_sql );
+		$acl_grantee_sql     = 'pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || ' . $user_host_sql;
+		$tablespace_path_sql = 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\')';
+		$tablespace_relation = array(
+			'alias'   => 'ts',
+			'from'    => 'pg_catalog.pg_tablespace ts',
+			'default' => 'NULL',
+		);
 
 		$definitions = array(
+			'files'                        => $tablespace_relation + array(
+				'expressions' => array(
+					'FILE_ID'         => 'CAST(ts.oid AS bigint)',
+					'FILE_NAME'       => $tablespace_path_sql,
+					'FILE_TYPE'       => $this->connection->quote( 'TABLESPACE' ),
+					'TABLESPACE_NAME' => 'ts.spcname',
+					'TABLE_CATALOG'   => $empty_sql,
+					'ENGINE'          => $this->connection->quote( 'InnoDB' ),
+					'STATUS'          => $this->connection->quote( 'NORMAL' ),
+				),
+			),
+			'plugins'                      => array(
+				'alias'       => 'ae',
+				'from'        => 'pg_catalog.pg_available_extensions ae',
+				'default'     => 'NULL',
+				'expressions' => array(
+					'PLUGIN_NAME'         => 'ae.name',
+					'PLUGIN_VERSION'      => 'COALESCE(ae.installed_version, ae.default_version, \'\')',
+					'PLUGIN_STATUS'       => 'CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END',
+					'PLUGIN_TYPE'         => $this->connection->quote( 'EXTENSION' ),
+					'PLUGIN_TYPE_VERSION' => 'COALESCE(ae.default_version, \'\')',
+					'PLUGIN_AUTHOR'       => $empty_sql,
+					'PLUGIN_DESCRIPTION'  => 'COALESCE(ae.comment, \'\')',
+					'PLUGIN_LICENSE'      => $empty_sql,
+					'LOAD_OPTION'         => 'CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END',
+				),
+			),
 			'schemata'                     => array(
 				'alias'       => 's',
 				'from'        => 'information_schema.schemata s',
@@ -35580,6 +35407,76 @@ LEFT JOIN pg_catalog.pg_constraint con
 					'TABLE_SCHEMA'               => $this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
 					'ENGINE_ATTRIBUTE'           => 'NULL',
 					'SECONDARY_ENGINE_ATTRIBUTE' => 'NULL',
+				),
+			),
+			'tablespaces_extensions'       => $tablespace_relation + array(
+				'expressions' => array(
+					'TABLESPACE_NAME' => 'ts.spcname',
+				),
+			),
+			'tablespaces'                  => $tablespace_relation + array(
+				'expressions' => array(
+					'TABLESPACE_NAME'    => 'ts.spcname',
+					'ENGINE'             => $this->connection->quote( 'InnoDB' ),
+					'TABLESPACE_TYPE'    => $this->connection->quote( 'General' ),
+					'TABLESPACE_COMMENT' => 'COALESCE(pg_catalog.obj_description(ts.oid, \'pg_tablespace\'), \'\')',
+				),
+			),
+			'innodb_tablespaces'           => $tablespace_relation + array(
+				'expressions' => array(
+					'SPACE'           => 'CAST(ts.oid AS bigint)',
+					'NAME'            => 'ts.spcname',
+					'FLAG'            => '0',
+					'ROW_FORMAT'      => $this->connection->quote( 'Dynamic' ),
+					'PAGE_SIZE'       => '16384',
+					'ZIP_PAGE_SIZE'   => '0',
+					'SPACE_TYPE'      => $this->connection->quote( 'Single' ),
+					'AUTOEXTEND_SIZE' => '0',
+					'SPACE_VERSION'   => '1',
+					'ENCRYPTION'      => $this->connection->quote( 'N' ),
+					'STATE'           => $this->connection->quote( 'normal' ),
+				),
+			),
+			'innodb_tablespaces_brief'     => $tablespace_relation + array(
+				'expressions' => array(
+					'SPACE'      => 'CAST(ts.oid AS bigint)',
+					'NAME'       => 'ts.spcname',
+					'PATH'       => $tablespace_path_sql,
+					'FLAG'       => '0',
+					'SPACE_TYPE' => $this->connection->quote( 'Single' ),
+				),
+			),
+			'innodb_datafiles'             => $tablespace_relation + array(
+				'expressions' => array(
+					'SPACE' => 'CAST(ts.oid AS bigint)',
+					'PATH'  => $tablespace_path_sql,
+				),
+			),
+			'user_privileges'              => array(
+				'alias'       => 'acl',
+				'from'        => 'pg_catalog.pg_database d
+CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(d.datacl, pg_catalog.acldefault(\'d\', d.datdba))) acl',
+				'join'        => 'LEFT JOIN pg_catalog.pg_roles grantee_role
+	ON grantee_role.oid = acl.grantee',
+				'where'       => 'd.datname = current_database()',
+				'expressions' => array(
+					'GRANTEE'       => $acl_grantee_sql,
+					'TABLE_CATALOG' => $def_sql,
+					'IS_GRANTABLE'  => 'CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END',
+				),
+			),
+			'schema_privileges'            => array(
+				'alias'       => 'acl',
+				'from'        => 'pg_catalog.pg_namespace n
+CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault(\'n\', n.nspowner))) acl',
+				'join'        => 'LEFT JOIN pg_catalog.pg_roles grantee_role
+	ON grantee_role.oid = acl.grantee',
+				'where'       => 'n.nspname ' . $schema_filter,
+				'expressions' => array(
+					'GRANTEE'       => $acl_grantee_sql,
+					'TABLE_CATALOG' => $def_sql,
+					'TABLE_SCHEMA'  => $this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
+					'IS_GRANTABLE'  => 'CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END',
 				),
 			),
 			'table_privileges'             => array(
@@ -35735,6 +35632,40 @@ LEFT JOIN pg_catalog.pg_constraint con
 			),
 		);
 
+		foreach (
+			array(
+				'column_privileges'                 => array(
+					'base'       => 'table_privileges',
+					'base_alias' => 'tp',
+					'alias'      => 'cp',
+					'from'       => 'information_schema.column_privileges cp',
+				),
+				'role_column_grants'                => array(
+					'base'       => 'role_table_grants',
+					'base_alias' => 'rtg',
+					'alias'      => 'rcg',
+					'from'       => 'information_schema.role_column_grants rcg',
+				),
+				'administrable_role_authorizations' => array(
+					'base'       => 'applicable_roles',
+					'base_alias' => 'ar',
+					'alias'      => 'ara',
+					'from'       => 'information_schema.administrable_role_authorizations ara',
+				),
+			) as $relation => $variant
+		) {
+			$definition          = $definitions[ $variant['base'] ];
+			$definition['alias'] = $variant['alias'];
+			$definition['from']  = $variant['from'];
+			if ( isset( $definition['where'] ) ) {
+				$definition['where'] = str_replace( $variant['base_alias'] . '.', $variant['alias'] . '.', $definition['where'] );
+			}
+			foreach ( $definition['expressions'] as $column => $expression ) {
+				$definition['expressions'][ $column ] = str_replace( $variant['base_alias'] . '.', $variant['alias'] . '.', $expression );
+			}
+			$definitions[ $relation ] = $definition;
+		}
+
 		if ( ! isset( $definitions[ $view ] ) ) {
 			return null;
 		}
@@ -35770,11 +35701,12 @@ FROM ' . $definition['from'];
 
 		$alias       = $definition['alias'];
 		$expressions = $definition['expressions'] ?? array();
+		$default     = $definition['default'] ?? null;
 		$projection  = array();
 		foreach ( $columns as $column ) {
 			$expression = array_key_exists( $column, $expressions )
 				? $expressions[ $column ]
-				: $alias . '.' . strtolower( $column );
+				: ( $default ?? $alias . '.' . strtolower( $column ) );
 
 			$projection[] = $expression . ' AS ' . $this->connection->quote_identifier( $column );
 		}
