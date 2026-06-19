@@ -33544,7 +33544,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_processlist_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'processlist' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33574,7 +33574,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_user_privileges_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'user_privileges' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33604,7 +33604,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_schema_privileges_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'schema_privileges' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -33885,7 +33885,7 @@ $wp_mysql_on_update$',
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 		$get_sql    = Closure::bind(
 			function (): string {
-				return $this->get_direct_information_schema_plugins_relation_sql();
+				return $this->get_direct_information_schema_relation_sql( 'plugins' );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class

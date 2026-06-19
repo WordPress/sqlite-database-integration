@@ -37999,6 +37999,46 @@ WHERE option_name IN (
 			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
 
+		if ( 'processlist' === $view ) {
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				return 'SELECT
+	a.pid AS "ID",
+	COALESCE(a.usename, CURRENT_USER) AS "USER",
+	CASE
+		WHEN a.client_addr IS NULL THEN \'localhost\'
+		WHEN a.client_port IS NULL THEN CAST(a.client_addr AS text)
+		ELSE CAST(a.client_addr AS text) || \':\' || CAST(a.client_port AS text)
+	END AS "HOST",
+	COALESCE(a.datname, \'\') AS "DB",
+	CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END AS "COMMAND",
+	GREATEST(CAST(FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(a.query_start, a.state_change, a.backend_start, CURRENT_TIMESTAMP)))) AS bigint), 0) AS "TIME",
+	COALESCE(
+		a.wait_event_type || CASE WHEN a.wait_event IS NULL THEN \'\' ELSE \':\' || a.wait_event END,
+		a.state,
+		\'\'
+	) AS "STATE",
+	COALESCE(a.query, \'\') AS "INFO"
+FROM pg_catalog.pg_stat_activity a
+WHERE a.datname IS NULL OR a.datname = current_database()';
+			}
+
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'processlist' ),
+				array(
+					array(
+						'ID'      => '1',
+						'USER'    => 'root',
+						'HOST'    => 'localhost',
+						'DB'      => $this->db_name,
+						'COMMAND' => 'Query',
+						'TIME'    => '0',
+						'STATE'   => '',
+						'INFO'    => (string) $this->last_mysql_query,
+					),
+				)
+			);
+		}
+
 		if ( 'files' === $view ) {
 			return 'SELECT
 	CAST(ts.oid AS bigint) AS "FILE_ID",
@@ -38040,6 +38080,53 @@ WHERE option_name IN (
 	\'NORMAL\' AS "STATUS",
 	NULL AS "EXTRA"
 	FROM pg_catalog.pg_tablespace ts';
+		}
+
+		if ( 'plugins' === $view ) {
+			return 'SELECT
+	ae.name AS "PLUGIN_NAME",
+	COALESCE(ae.installed_version, ae.default_version, \'\') AS "PLUGIN_VERSION",
+	CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END AS "PLUGIN_STATUS",
+	\'EXTENSION\' AS "PLUGIN_TYPE",
+	COALESCE(ae.default_version, \'\') AS "PLUGIN_TYPE_VERSION",
+	NULL AS "PLUGIN_LIBRARY",
+	NULL AS "PLUGIN_LIBRARY_VERSION",
+	\'\' AS "PLUGIN_AUTHOR",
+	COALESCE(ae.comment, \'\') AS "PLUGIN_DESCRIPTION",
+	\'\' AS "PLUGIN_LICENSE",
+	CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END AS "LOAD_OPTION"
+FROM pg_catalog.pg_available_extensions ae';
+		}
+
+		if ( 'user_privileges' === $view ) {
+			return 'SELECT
+	pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%\'\'\' AS "GRANTEE",
+	\'def\' AS "TABLE_CATALOG",
+	acl.privilege_type AS "PRIVILEGE_TYPE",
+	CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"
+FROM pg_catalog.pg_database d
+CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(d.datacl, pg_catalog.acldefault(\'d\', d.datdba))) acl
+LEFT JOIN pg_catalog.pg_roles grantee_role
+	ON grantee_role.oid = acl.grantee
+WHERE d.datname = current_database()';
+		}
+
+		if ( 'schema_privileges' === $view ) {
+			return sprintf(
+				'SELECT
+	pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%%\'\'\' AS "GRANTEE",
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	acl.privilege_type AS "PRIVILEGE_TYPE",
+	CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"
+FROM pg_catalog.pg_namespace n
+CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault(\'n\', n.nspowner))) acl
+LEFT JOIN pg_catalog.pg_roles grantee_role
+	ON grantee_role.oid = acl.grantee
+WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(n.nspname, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
+			);
 		}
 
 		if ( 'tablespaces_extensions' === $view ) {
@@ -39422,113 +39509,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 			$this->get_direct_information_schema_display_schema_sql( 'parent_ns.nspname' ),
 			$this->get_direct_information_schema_hidden_table_list_sql(),
 			$this->get_direct_information_schema_display_schema_sql( 't.table_schema' )
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.PROCESSLIST relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_processlist_relation_sql(): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return 'SELECT
-		a.pid AS "ID",
-	COALESCE(a.usename, CURRENT_USER) AS "USER",
-	CASE
-		WHEN a.client_addr IS NULL THEN \'localhost\'
-		WHEN a.client_port IS NULL THEN CAST(a.client_addr AS text)
-		ELSE CAST(a.client_addr AS text) || \':\' || CAST(a.client_port AS text)
-	END AS "HOST",
-	COALESCE(a.datname, \'\') AS "DB",
-	CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END AS "COMMAND",
-	GREATEST(CAST(FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(a.query_start, a.state_change, a.backend_start, CURRENT_TIMESTAMP)))) AS bigint), 0) AS "TIME",
-	COALESCE(
-		a.wait_event_type || CASE WHEN a.wait_event IS NULL THEN \'\' ELSE \':\' || a.wait_event END,
-		a.state,
-		\'\'
-	) AS "STATE",
-	COALESCE(a.query, \'\') AS "INFO"
-FROM pg_catalog.pg_stat_activity a
-WHERE a.datname IS NULL OR a.datname = current_database()';
-		}
-
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( 'processlist' ),
-			array(
-				array(
-					'ID'      => '1',
-					'USER'    => 'root',
-					'HOST'    => 'localhost',
-					'DB'      => $this->db_name,
-					'COMMAND' => 'Query',
-					'TIME'    => '0',
-					'STATE'   => '',
-					'INFO'    => (string) $this->last_mysql_query,
-				),
-			)
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.PLUGINS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_plugins_relation_sql(): string {
-		return 'SELECT
-	ae.name AS "PLUGIN_NAME",
-	COALESCE(ae.installed_version, ae.default_version, \'\') AS "PLUGIN_VERSION",
-	CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END AS "PLUGIN_STATUS",
-	\'EXTENSION\' AS "PLUGIN_TYPE",
-	COALESCE(ae.default_version, \'\') AS "PLUGIN_TYPE_VERSION",
-	NULL AS "PLUGIN_LIBRARY",
-	NULL AS "PLUGIN_LIBRARY_VERSION",
-	\'\' AS "PLUGIN_AUTHOR",
-	COALESCE(ae.comment, \'\') AS "PLUGIN_DESCRIPTION",
-	\'\' AS "PLUGIN_LICENSE",
-	CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END AS "LOAD_OPTION"
-FROM pg_catalog.pg_available_extensions ae';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.USER_PRIVILEGES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_user_privileges_relation_sql(): string {
-		return 'SELECT
-	pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%\'\'\' AS "GRANTEE",
-	\'def\' AS "TABLE_CATALOG",
-	acl.privilege_type AS "PRIVILEGE_TYPE",
-	CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"
-FROM pg_catalog.pg_database d
-CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(d.datacl, pg_catalog.acldefault(\'d\', d.datdba))) acl
-LEFT JOIN pg_catalog.pg_roles grantee_role
-	ON grantee_role.oid = acl.grantee
-WHERE d.datname = current_database()';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.SCHEMA_PRIVILEGES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_schema_privileges_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || \'@\'\'%%\'\'\' AS "GRANTEE",
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	acl.privilege_type AS "PRIVILEGE_TYPE",
-	CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END AS "IS_GRANTABLE"
-FROM pg_catalog.pg_namespace n
-CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault(\'n\', n.nspowner))) acl
-LEFT JOIN pg_catalog.pg_roles grantee_role
-	ON grantee_role.oid = acl.grantee
-WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'',
-			$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
 		);
 	}
 
