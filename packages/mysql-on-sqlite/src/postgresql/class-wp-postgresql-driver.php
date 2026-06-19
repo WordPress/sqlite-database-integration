@@ -37258,7 +37258,32 @@ WHERE s.schema_name = \'information_schema\'
 ), \'\')';
 				$column_comment  = $comment_sql;
 				for ( $i = 0; $i < 4; ++$i ) {
-					$column_comment = $this->get_postgresql_catalog_column_comment_without_metadata_line_sql( $column_comment );
+					$marker_conditions = array();
+					foreach ( $this->get_postgresql_catalog_column_comment_marker_prefixes() as $prefix ) {
+						$prefix_sql          = $this->connection->quote( $prefix );
+						$marker_conditions[] = sprintf(
+							'LEFT(COALESCE(%1$s, \'\'), LENGTH(%2$s)) = %2$s',
+							$column_comment,
+							$prefix_sql
+						);
+					}
+
+					$column_comment = sprintf(
+						'CASE
+		WHEN %2$s THEN
+			CASE
+				WHEN POSITION(CHR(10) IN COALESCE(%1$s, \'\')) > 0 THEN SUBSTRING(COALESCE(%1$s, \'\') FROM POSITION(CHR(10) IN COALESCE(%1$s, \'\')) + 1)
+				ELSE \'\'
+		END
+		ELSE COALESCE(%1$s, \'\')
+	END',
+						$column_comment,
+						implode(
+							'
+			OR ',
+							$marker_conditions
+						)
+					);
 				}
 
 				return sprintf(
@@ -40280,43 +40305,6 @@ END',
 			$quoted_literal_default_pattern,
 			$column_default_comment_sql
 		);
-	}
-
-	/**
-	 * Strip one leading internal metadata line from a PostgreSQL column comment.
-	 *
-	 * @param string $column_comment_sql SQL expression returning a PostgreSQL column comment.
-	 * @return string SQL expression returning the remaining comment.
-	 */
-	private function get_postgresql_catalog_column_comment_without_metadata_line_sql( string $column_comment_sql ): string {
-		$marker_conditions = array();
-		foreach ( $this->get_postgresql_catalog_column_comment_marker_prefixes() as $prefix ) {
-			$prefix_sql          = $this->connection->quote( $prefix );
-			$marker_conditions[] = sprintf(
-				'LEFT(COALESCE(%1$s, \'\'), LENGTH(%2$s)) = %2$s',
-				$column_comment_sql,
-				$prefix_sql
-			);
-		}
-
-		$marker_condition_sql = implode(
-			'
-			OR ',
-			$marker_conditions
-		);
-
-			return sprintf(
-				'CASE
-		WHEN %2$s THEN
-			CASE
-				WHEN POSITION(CHR(10) IN COALESCE(%1$s, \'\')) > 0 THEN SUBSTRING(COALESCE(%1$s, \'\') FROM POSITION(CHR(10) IN COALESCE(%1$s, \'\')) + 1)
-				ELSE \'\'
-		END
-		ELSE COALESCE(%1$s, \'\')
-	END',
-				$column_comment_sql,
-				$marker_condition_sql
-			);
 	}
 
 	/**
