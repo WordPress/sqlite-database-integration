@@ -30220,6 +30220,10 @@ $wp_mysql_on_update$',
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
+					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
+				}
+
 				if ( false !== strpos( $sql, 'FROM information_schema.columns c' ) && false === strpos( $sql, 'AS "TABLE_COMMENT"' ) ) {
 					return parent::query(
 						"SELECT
@@ -30323,33 +30327,18 @@ $wp_mysql_on_update$',
 			}
 		};
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
-		$get_create = Closure::bind(
-			function (): string {
+		Closure::bind(
+			function (): void {
 				$this->collation = 'latin1_swedish_ci';
-				$schema          = 'public';
-				$table           = 'wptests_show_create';
-				$columns         = $this->get_show_create_table_column_metadata_rows( $schema, $table );
-				$indexes         = $this->get_show_create_table_index_catalog_rows( $schema, $table );
-				$foreign_keys    = $this->get_show_create_table_foreign_key_metadata_rows( $schema, $table );
-				$checks          = $this->get_show_create_table_check_constraint_metadata_rows( $schema, $table );
-				$table_metadata  = $this->get_show_create_table_table_metadata( $schema, $table );
-
-				return $this->get_mysql_create_table_statement_from_metadata(
-					$table,
-					$columns,
-					$indexes,
-					$foreign_keys,
-					$checks,
-					$table_metadata['comment'],
-					false,
-					$table_metadata['collation']
-				);
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
-		);
+		)();
 
-		$create_table = $get_create();
+		$tables = $driver->query( 'SHOW CREATE TABLE wptests_show_create' );
+		$this->assertCount( 1, $tables );
+
+		$create_table = $tables[0]->{'Create Table'};
 		$this->assertStringContainsString( '  `id` bigint(20) NOT NULL AUTO_INCREMENT', $create_table );
 		$this->assertStringContainsString( "  `title` varchar(191) NOT NULL DEFAULT '' COMMENT 'Title note'", $create_table );
 		$this->assertStringContainsString( '  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'Title note\'', $create_table );

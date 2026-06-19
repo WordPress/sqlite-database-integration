@@ -17673,11 +17673,51 @@ ORDER BY ' . $table_name_sql;
 			);
 		}
 
-		$indexes          = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
-		$foreign_keys     = $this->get_show_create_table_foreign_key_metadata_rows( $resolved_schema, $table_name );
-		$checks           = $this->get_show_create_table_check_constraint_metadata_rows( $resolved_schema, $table_name );
-		$table_metadata   = $this->get_show_create_table_table_metadata( $resolved_schema, $table_name );
-		$create_statement = $this->get_mysql_create_table_statement_from_metadata(
+		$indexes = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
+		if ( $use_postgresql_catalog ) {
+			$sql    = sprintf(
+				'SELECT
+					kcu."CONSTRAINT_NAME" AS constraint_name,
+					DENSE_RANK() OVER (ORDER BY kcu."CONSTRAINT_NAME") AS constraint_ordinal,
+					kcu."ORDINAL_POSITION" AS seq_in_index,
+					kcu."COLUMN_NAME" AS column_name,
+					kcu."REFERENCED_TABLE_SCHEMA" AS referenced_table_schema,
+					kcu."REFERENCED_TABLE_NAME" AS referenced_table_name,
+					kcu."REFERENCED_COLUMN_NAME" AS referenced_column_name,
+					rc."UPDATE_RULE" AS update_rule,
+					rc."DELETE_RULE" AS delete_rule
+				FROM (%1$s) kcu
+				INNER JOIN (%2$s) rc
+					ON rc."CONSTRAINT_SCHEMA" = kcu."CONSTRAINT_SCHEMA"
+					AND rc."CONSTRAINT_NAME" = kcu."CONSTRAINT_NAME"
+					AND rc."TABLE_NAME" = kcu."TABLE_NAME"
+				WHERE kcu."TABLE_SCHEMA" = ?
+					AND kcu."TABLE_NAME" = ?
+					AND kcu."REFERENCED_TABLE_NAME" IS NOT NULL
+				ORDER BY constraint_ordinal, seq_in_index',
+				$this->get_direct_information_schema_relation_sql( 'key_column_usage' ),
+				$this->get_direct_information_schema_relation_sql( 'referential_constraints' )
+			);
+			$params = array( $this->get_direct_information_schema_display_schema( $resolved_schema ), $table_name );
+		} else {
+			$sql    = sprintf(
+				'SELECT constraint_name, constraint_ordinal, seq_in_index, column_name, referenced_table_schema, referenced_table_name, referenced_column_name, update_rule, delete_rule
+				FROM %s
+				WHERE table_schema = ? AND table_name = ?
+				ORDER BY constraint_name, seq_in_index',
+				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			);
+			$params = array( $resolved_schema, $table_name );
+		}
+		$stmt                            = $this->connection->query( $sql, $params );
+		$foreign_keys                    = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+		$checks                          = $this->get_show_create_table_check_constraint_metadata_rows( $resolved_schema, $table_name );
+		$table_metadata                  = $this->get_show_create_table_table_metadata( $resolved_schema, $table_name );
+		$create_statement                = $this->get_mysql_create_table_statement_from_metadata(
 			$table_name,
 			$columns,
 			$indexes,
@@ -17687,7 +17727,7 @@ ORDER BY ' . $table_name_sql;
 			$this->is_mysql_temporary_schema_name( $resolved_schema ),
 			$table_metadata['collation']
 		);
-		$rows             = array(
+		$rows                            = array(
 			array(
 				'Table'        => $table_name,
 				'Create Table' => $create_statement,
@@ -17898,67 +17938,6 @@ ORDER BY ' . $table_name_sql;
 			$this->get_postgresql_prefix_index_expression_column_name_sql( $expression_sql ),
 			$expression_sql
 		);
-	}
-
-	/**
-	 * Get foreign key metadata rows for SHOW CREATE TABLE.
-	 *
-	 * @param string $schema_name Backend metadata schema.
-	 * @param string $table_name  Table name.
-	 * @return array[] Foreign key metadata rows.
-	 */
-	private function get_show_create_table_foreign_key_metadata_rows( string $schema_name, string $table_name ): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$sql    = sprintf(
-				'SELECT
-					kcu."CONSTRAINT_NAME" AS constraint_name,
-					DENSE_RANK() OVER (ORDER BY kcu."CONSTRAINT_NAME") AS constraint_ordinal,
-					kcu."ORDINAL_POSITION" AS seq_in_index,
-					kcu."COLUMN_NAME" AS column_name,
-					kcu."REFERENCED_TABLE_SCHEMA" AS referenced_table_schema,
-					kcu."REFERENCED_TABLE_NAME" AS referenced_table_name,
-					kcu."REFERENCED_COLUMN_NAME" AS referenced_column_name,
-					rc."UPDATE_RULE" AS update_rule,
-					rc."DELETE_RULE" AS delete_rule
-				FROM (%1$s) kcu
-				INNER JOIN (%2$s) rc
-					ON rc."CONSTRAINT_SCHEMA" = kcu."CONSTRAINT_SCHEMA"
-					AND rc."CONSTRAINT_NAME" = kcu."CONSTRAINT_NAME"
-					AND rc."TABLE_NAME" = kcu."TABLE_NAME"
-				WHERE kcu."TABLE_SCHEMA" = ?
-					AND kcu."TABLE_NAME" = ?
-					AND kcu."REFERENCED_TABLE_NAME" IS NOT NULL
-				ORDER BY constraint_ordinal, seq_in_index',
-				$this->get_direct_information_schema_relation_sql( 'key_column_usage' ),
-				$this->get_direct_information_schema_relation_sql( 'referential_constraints' )
-			);
-			$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
-			$stmt   = $this->connection->query( $sql, $params );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
-			);
-
-			return $stmt->fetchAll( PDO::FETCH_ASSOC );
-		}
-
-		$sql    = sprintf(
-			'SELECT constraint_name, constraint_ordinal, seq_in_index, column_name, referenced_table_schema, referenced_table_name, referenced_column_name, update_rule, delete_rule
-			FROM %s
-			WHERE table_schema = ? AND table_name = ?
-			ORDER BY constraint_name, seq_in_index',
-			$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-		);
-		$params = array( $schema_name, $table_name );
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 
 	/**
