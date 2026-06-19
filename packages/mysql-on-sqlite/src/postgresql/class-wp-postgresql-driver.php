@@ -15420,28 +15420,23 @@ $wp_mysql_primary_index_comment$',
 	 * @return bool Whether the expression is numeric.
 	 */
 	private function is_mysql_show_where_numeric_value_expression( array $expression, array $numeric_columns ): bool {
-		switch ( $expression['type'] ?? null ) {
-			case 'number':
-			case 'literal':
-			case 'arithmetic':
-			case 'column':
-			case 'null':
-				return true;
-
-			case 'function':
-				return in_array(
-					$expression['function'] ?? null,
-					array( 'lower', 'upper', 'left', 'right', 'substring', 'length', 'char_length', 'mod' ),
-					true
-				);
-
-			case 'binary':
-				return isset( $expression['expr'] )
-					&& is_array( $expression['expr'] )
-					&& $this->is_mysql_show_where_numeric_value_expression( $expression['expr'], $numeric_columns );
+		$type = $expression['type'] ?? null;
+		if ( in_array( $type, array( 'number', 'literal', 'arithmetic', 'column', 'null' ), true ) ) {
+			return true;
 		}
 
-		return false;
+		if ( 'function' === $type ) {
+			return in_array(
+				$expression['function'] ?? null,
+				array( 'lower', 'upper', 'left', 'right', 'substring', 'length', 'char_length', 'mod' ),
+				true
+			);
+		}
+
+		return 'binary' === $type
+			&& isset( $expression['expr'] )
+			&& is_array( $expression['expr'] )
+			&& $this->is_mysql_show_where_numeric_value_expression( $expression['expr'], $numeric_columns );
 	}
 
 	/**
