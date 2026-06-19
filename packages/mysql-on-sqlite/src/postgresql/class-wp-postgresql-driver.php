@@ -58510,43 +58510,37 @@ $wp_mysql_%1$s_domain$',
 	private function get_postgresql_zero_date_extract_part_sql( string $unit, string $expression_text_sql ): string {
 		$date_time_text_pattern = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
 
-		switch ( $unit ) {
-			case 'DOY':
-				return 'NULL';
+		if ( 'DOY' === $unit ) {
+			return 'NULL';
+		}
 
-			case 'YEAR':
-				return sprintf( 'CAST(SUBSTRING(%s FROM 1 FOR 4) AS integer)', $expression_text_sql );
+		$date_part_starts = array(
+			'YEAR'  => array( 1, 4 ),
+			'MONTH' => array( 6, 2 ),
+			'DAY'   => array( 9, 2 ),
+		);
+		if ( isset( $date_part_starts[ $unit ] ) ) {
+			return sprintf( 'CAST(SUBSTRING(%s FROM %d FOR %d) AS integer)', $expression_text_sql, $date_part_starts[ $unit ][0], $date_part_starts[ $unit ][1] );
+		}
 
-			case 'MONTH':
-				return sprintf( 'CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer)', $expression_text_sql );
+		if ( 'QUARTER' === $unit ) {
+			return sprintf( 'CAST(FLOOR((CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer) + 2) / 3.0) AS integer)', $expression_text_sql );
+		}
 
-			case 'QUARTER':
-				return sprintf( 'CAST(FLOOR((CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer) + 2) / 3.0) AS integer)', $expression_text_sql );
-
-			case 'DAY':
-				return sprintf( 'CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer)', $expression_text_sql );
-
-			case 'HOUR':
-				$start = 12;
-				break;
-
-			case 'MINUTE':
-				$start = 15;
-				break;
-
-			case 'SECOND':
-				$start = 18;
-				break;
-
-			default:
-				return sprintf( 'CAST(EXTRACT(%s FROM CAST(%s AS timestamp)) AS integer)', $unit, $expression_text_sql );
+		$time_part_starts = array(
+			'HOUR'   => 12,
+			'MINUTE' => 15,
+			'SECOND' => 18,
+		);
+		if ( ! isset( $time_part_starts[ $unit ] ) ) {
+			return sprintf( 'CAST(EXTRACT(%s FROM CAST(%s AS timestamp)) AS integer)', $unit, $expression_text_sql );
 		}
 
 		return sprintf(
 			'CASE WHEN %1$s ~ %2$s THEN CAST(SUBSTRING(%1$s FROM %3$d FOR 2) AS integer) ELSE 0 END',
 			$expression_text_sql,
 			$date_time_text_pattern,
-			$start
+			$time_part_starts[ $unit ]
 		);
 	}
 
