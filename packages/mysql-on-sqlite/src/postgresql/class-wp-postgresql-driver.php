@@ -35792,25 +35792,9 @@ WHERE "TABLE_SCHEMA" = %3$s
 			return null;
 		}
 
-		$alias = $view;
-		if ( $position < $end ) {
-			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
-				++$position;
-
-				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
-				if ( null === $parsed_alias ) {
-					return null;
-				}
-
-				$alias = $parsed_alias;
-				++$position;
-			} else {
-				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
-				if ( null !== $parsed_alias ) {
-					$alias = $parsed_alias;
-					++$position;
-				}
-			}
+		$alias = $this->parse_direct_information_schema_optional_alias( $tokens, $position, $end, $view );
+		if ( null === $alias ) {
+			return null;
 		}
 
 		return array(
@@ -35835,27 +35819,11 @@ WHERE "TABLE_SCHEMA" = %3$s
 		}
 
 		$cte_name = (string) $cte_source['name'];
-		$alias    = $cte_name;
 		++$position;
 
-		if ( $position < $end ) {
-			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
-				++$position;
-
-				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
-				if ( null === $parsed_alias ) {
-					return null;
-				}
-
-				$alias = $parsed_alias;
-				++$position;
-			} else {
-				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
-				if ( null !== $parsed_alias ) {
-					$alias = $parsed_alias;
-					++$position;
-				}
-			}
+		$alias = $this->parse_direct_information_schema_optional_alias( $tokens, $position, $end, $cte_name );
+		if ( null === $alias ) {
+			return null;
 		}
 
 		return array(
@@ -35953,23 +35921,9 @@ WHERE "TABLE_SCHEMA" = %3$s
 		}
 
 		$position = $after_close;
-		$alias    = 'derived';
-		if ( $position < $end ) {
-			if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
-				++$position;
-				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
-				if ( null === $parsed_alias ) {
-					return null;
-				}
-				$alias = $parsed_alias;
-				++$position;
-			} else {
-				$parsed_alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
-				if ( null !== $parsed_alias ) {
-					$alias = $parsed_alias;
-					++$position;
-				}
-			}
+		$alias    = $this->parse_direct_information_schema_optional_alias( $tokens, $position, $end, 'derived' );
+		if ( null === $alias ) {
+			return null;
 		}
 
 		return array(
@@ -35978,6 +35932,39 @@ WHERE "TABLE_SCHEMA" = %3$s
 			'relation_sql' => $translated_select,
 			'columns'      => $columns,
 		);
+	}
+
+	/**
+	 * Parse an optional information_schema source alias.
+	 *
+	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
+	 * @param int              $position      Current token position, advanced past an alias when present.
+	 * @param int              $end           Source range end position, exclusive.
+	 * @param string           $default_alias Alias to use when no alias is present.
+	 * @return string|null Parsed alias, or null when an explicit AS lacks an identifier.
+	 */
+	private function parse_direct_information_schema_optional_alias( array $tokens, int &$position, int $end, string $default_alias ): ?string {
+		if ( $position >= $end ) {
+			return $default_alias;
+		}
+
+		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $position ]->id ) {
+			++$position;
+			$alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+			if ( null === $alias ) {
+				return null;
+			}
+			++$position;
+			return $alias;
+		}
+
+		$alias = $this->get_mysql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null !== $alias ) {
+			++$position;
+			return $alias;
+		}
+
+		return $default_alias;
 	}
 
 	/**
