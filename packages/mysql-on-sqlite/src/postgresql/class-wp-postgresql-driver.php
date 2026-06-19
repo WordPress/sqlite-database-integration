@@ -27857,7 +27857,11 @@ WHERE option_name IN (
 			return;
 		}
 
-		if ( empty( $explicit_identity_columns ) || ! $this->is_postgresql_catalog_available_for_dml_identity_repair() ) {
+		$pdo_driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		if (
+			empty( $explicit_identity_columns )
+			|| ( 'pgsql' !== $pdo_driver_name && ( 'sqlite' !== $pdo_driver_name || ! $this->sqlite_information_schema_columns_table_exists() ) )
+		) {
 			return;
 		}
 
@@ -28057,24 +28061,6 @@ WHERE option_name IN (
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
-	}
-
-	/**
-	 * Check whether PostgreSQL catalog metadata is available for identity repair.
-	 *
-	 * @return bool Whether catalog-backed identity repair can run.
-	 */
-	private function is_postgresql_catalog_available_for_dml_identity_repair(): bool {
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		if ( 'pgsql' === $driver_name ) {
-			return true;
-		}
-
-		if ( 'sqlite' === $driver_name ) {
-			return $this->sqlite_information_schema_columns_table_exists();
-		}
-
-		return false;
 	}
 
 	/**
