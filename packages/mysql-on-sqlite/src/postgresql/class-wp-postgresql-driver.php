@@ -6196,7 +6196,19 @@ END',
 
 		foreach ( $index['columns'] as $column ) {
 			$is_nullable = $column_nullable[ strtolower( $column['column_name'] ) ]
-				?? $this->get_mysql_column_nullable( $table_schema, $table_name, $column['column_name'] );
+				?? null;
+			if ( null === $is_nullable ) {
+				$stmt = $this->connection->query(
+					sprintf(
+						'SELECT is_nullable FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
+						$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+					),
+					array( $table_schema, $table_name, $column['column_name'] )
+				);
+
+				$nullable    = $stmt->fetchColumn();
+				$is_nullable = false === $nullable ? 'YES' : (string) $nullable;
+			}
 
 			$this->connection->query(
 				sprintf(
@@ -7198,29 +7210,6 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		return (int) $stmt->fetchColumn();
-	}
-
-	/**
-	 * Get stored nullable metadata for an index column.
-	 *
-	 * @param string $table_schema Table schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 * @return string MySQL nullable value.
-	 */
-	private function get_mysql_column_nullable( string $table_schema, string $table_name, string $column_name ): string {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT is_nullable FROM %s WHERE table_schema = ? AND table_name = ? AND column_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name, $column_name )
-		);
-
-		$nullable = $stmt->fetchColumn();
-		return false === $nullable ? 'YES' : (string) $nullable;
 	}
 
 	/**

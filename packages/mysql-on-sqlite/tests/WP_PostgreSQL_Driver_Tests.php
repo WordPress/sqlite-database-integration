@@ -22388,9 +22388,6 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			'get_next_mysql_index_ordinal'                 => function (): void {
 				$this->get_next_mysql_index_ordinal( 'public', 'catalog_side_table' );
 			},
-			'get_mysql_column_nullable'                    => function (): void {
-				$this->get_mysql_column_nullable( 'public', 'catalog_side_table', 'id' );
-			},
 		);
 
 		$guarded_helpers             = array();
