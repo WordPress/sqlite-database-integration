@@ -2979,103 +2979,28 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function execute_materialized_mysql_upsert_select_rows_with_ambiguous_targets( array $upsert_query ): int {
 		if (
-			! isset( $upsert_query['table_name'], $upsert_query['columns'], $upsert_query['source_table_sql'], $upsert_query['ordinal_source_table_sql'], $upsert_query['conflict_targets'], $upsert_query['assignments'] )
-			|| ! is_string( $upsert_query['table_name'] )
-			|| ! is_array( $upsert_query['columns'] )
-			|| ! is_string( $upsert_query['source_table_sql'] )
-			|| ! is_string( $upsert_query['ordinal_source_table_sql'] )
+			! isset( $upsert_query['conflict_targets'], $upsert_query['assignments'] )
 			|| ! is_array( $upsert_query['conflict_targets'] )
 			|| ! is_array( $upsert_query['assignments'] )
 		) {
 			throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
 		}
 
-		$ordinal_column      = '__wp_pg_upsert_ordinal';
-		$quoted_ordinal      = $this->connection->quote_identifier( $ordinal_column );
-		$source_alias        = $this->connection->quote_identifier( '__wp_pg_upsert_source' );
-		$rows_alias          = $this->connection->quote_identifier( '__wp_pg_upsert_rows' );
-		$quoted_target_table = $this->connection->quote_identifier( $upsert_query['table_name'] );
-		$column_sql          = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $upsert_query['columns'] ) );
-
-		$insert_projection_sql = array();
-		foreach ( $upsert_query['columns'] as $column ) {
-			$insert_projection_sql[] = sprintf(
-				'%s.%s',
-				$rows_alias,
-				$this->connection->quote_identifier( (string) $column )
-			);
-		}
-
-		$create_ordinal_table_sql        = sprintf(
-			'CREATE TEMPORARY TABLE %s AS SELECT ROW_NUMBER() OVER () AS %s, %s.* FROM %s AS %s',
-			$upsert_query['ordinal_source_table_sql'],
-			$quoted_ordinal,
-			$source_alias,
-			$upsert_query['source_table_sql'],
-			$source_alias
-		);
-		$stmt                            = $this->connection->query( $create_ordinal_table_sql );
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $create_ordinal_table_sql,
-			'params' => array(),
-		);
-		$stmt->closeCursor();
-
-		$drop_ordinal_table_sql = sprintf( 'DROP TABLE IF EXISTS %s', $upsert_query['ordinal_source_table_sql'] );
-
-		try {
-			$stmt     = $this->connection->query(
-				sprintf(
-					'SELECT %1$s FROM %2$s ORDER BY %1$s',
-					$quoted_ordinal,
-					$upsert_query['ordinal_source_table_sql']
-				)
-			);
-			$ordinals = $stmt->fetchAll( PDO::FETCH_COLUMN );
-			$stmt->closeCursor();
-
-			$affected_rows = 0;
-			foreach ( $ordinals as $ordinal ) {
-				$ordinal_value   = (int) $ordinal;
+		return $this->execute_materialized_mysql_upsert_select_rows(
+			$upsert_query,
+			function ( int $ordinal_value ) use ( $upsert_query ): ?string {
 				$conflict_target = $this->get_materialized_mysql_upsert_select_conflict_target_for_ordinal( $upsert_query, $ordinal_value );
 				if ( null === $conflict_target ) {
-					throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
+					return null;
 				}
 
-				$conflict_sql = sprintf(
+				return sprintf(
 					'ON CONFLICT (%s) DO UPDATE SET %s',
 					implode( ', ', $conflict_target['sql'] ),
 					implode( ', ', $upsert_query['assignments'] )
 				);
-				$row_filter   = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
-				$insert_sql   = sprintf(
-					'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s %s',
-					$quoted_target_table,
-					$column_sql,
-					implode( ', ', $insert_projection_sql ),
-					$upsert_query['ordinal_source_table_sql'],
-					$rows_alias,
-					$row_filter,
-					$conflict_sql
-				);
-
-				$stmt                            = $this->connection->query( $insert_sql );
-				$this->last_postgresql_queries[] = array(
-					'sql'    => $insert_sql,
-					'params' => array(),
-				);
-				$affected_rows                  += $stmt->rowCount();
 			}
-
-			return $affected_rows;
-		} finally {
-			$stmt                            = $this->connection->query( $drop_ordinal_table_sql );
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $drop_ordinal_table_sql,
-				'params' => array(),
-			);
-			$stmt->closeCursor();
-		}
+		);
 	}
 
 	/**
@@ -3191,12 +3116,34 @@ class WP_PostgreSQL_Driver {
 	 */
 	private function execute_materialized_mysql_upsert_select_rows_sequentially( array $upsert_query ): int {
 		if (
-			! isset( $upsert_query['table_name'], $upsert_query['columns'], $upsert_query['source_table_sql'], $upsert_query['ordinal_source_table_sql'], $upsert_query['conflict_sql'] )
+			! isset( $upsert_query['conflict_sql'] )
+			|| ! is_string( $upsert_query['conflict_sql'] )
+		) {
+			throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
+		}
+
+		return $this->execute_materialized_mysql_upsert_select_rows(
+			$upsert_query,
+			static function () use ( $upsert_query ): string {
+				return $upsert_query['conflict_sql'];
+			}
+		);
+	}
+
+	/**
+	 * Replay materialized INSERT ... SELECT upsert source rows.
+	 *
+	 * @param array    $upsert_query     Translated INSERT ... SELECT upsert metadata.
+	 * @param callable $get_conflict_sql Callback receiving the source row ordinal and returning ON CONFLICT SQL.
+	 * @return int MySQL-compatible affected rows.
+	 */
+	private function execute_materialized_mysql_upsert_select_rows( array $upsert_query, callable $get_conflict_sql ): int {
+		if (
+			! isset( $upsert_query['table_name'], $upsert_query['columns'], $upsert_query['source_table_sql'], $upsert_query['ordinal_source_table_sql'] )
 			|| ! is_string( $upsert_query['table_name'] )
 			|| ! is_array( $upsert_query['columns'] )
 			|| ! is_string( $upsert_query['source_table_sql'] )
 			|| ! is_string( $upsert_query['ordinal_source_table_sql'] )
-			|| ! is_string( $upsert_query['conflict_sql'] )
 		) {
 			throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
 		}
@@ -3248,8 +3195,13 @@ class WP_PostgreSQL_Driver {
 			$affected_rows = 0;
 			foreach ( $ordinals as $ordinal ) {
 				$ordinal_value = (int) $ordinal;
-				$row_filter    = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
-				$insert_sql    = sprintf(
+				$conflict_sql  = $get_conflict_sql( $ordinal_value );
+				if ( null === $conflict_sql ) {
+					throw new InvalidArgumentException( 'Unsupported INSERT SELECT ON DUPLICATE KEY UPDATE statement.' );
+				}
+
+				$row_filter = sprintf( '%s.%s = %d', $rows_alias, $quoted_ordinal, $ordinal_value );
+				$insert_sql = sprintf(
 					'INSERT INTO %s (%s) SELECT %s FROM %s AS %s WHERE %s %s',
 					$quoted_target_table,
 					$column_sql,
@@ -3257,7 +3209,7 @@ class WP_PostgreSQL_Driver {
 					$upsert_query['ordinal_source_table_sql'],
 					$rows_alias,
 					$row_filter,
-					$upsert_query['conflict_sql']
+					$conflict_sql
 				);
 
 				$stmt                            = $this->connection->query( $insert_sql );
