@@ -37999,6 +37999,49 @@ WHERE option_name IN (
 			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
 
+		if ( 'files' === $view ) {
+			return 'SELECT
+	CAST(ts.oid AS bigint) AS "FILE_ID",
+	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "FILE_NAME",
+	\'TABLESPACE\' AS "FILE_TYPE",
+	ts.spcname AS "TABLESPACE_NAME",
+	\'\' AS "TABLE_CATALOG",
+	NULL AS "TABLE_SCHEMA",
+	NULL AS "TABLE_NAME",
+	NULL AS "LOGFILE_GROUP_NAME",
+	NULL AS "LOGFILE_GROUP_NUMBER",
+	\'InnoDB\' AS "ENGINE",
+	NULL AS "FULLTEXT_KEYS",
+	NULL AS "DELETED_ROWS",
+	NULL AS "UPDATE_COUNT",
+	NULL AS "FREE_EXTENTS",
+	NULL AS "TOTAL_EXTENTS",
+	NULL AS "EXTENT_SIZE",
+	NULL AS "INITIAL_SIZE",
+	NULL AS "MAXIMUM_SIZE",
+	NULL AS "AUTOEXTEND_SIZE",
+	NULL AS "CREATION_TIME",
+	NULL AS "LAST_UPDATE_TIME",
+	NULL AS "LAST_ACCESS_TIME",
+	NULL AS "RECOVER_TIME",
+	NULL AS "TRANSACTION_COUNTER",
+	NULL AS "VERSION",
+	NULL AS "ROW_FORMAT",
+	NULL AS "TABLE_ROWS",
+	NULL AS "AVG_ROW_LENGTH",
+	NULL AS "DATA_LENGTH",
+	NULL AS "MAX_DATA_LENGTH",
+	NULL AS "INDEX_LENGTH",
+	NULL AS "DATA_FREE",
+	NULL AS "CREATE_TIME",
+	NULL AS "UPDATE_TIME",
+	NULL AS "CHECK_TIME",
+	NULL AS "CHECKSUM",
+	\'NORMAL\' AS "STATUS",
+	NULL AS "EXTRA"
+	FROM pg_catalog.pg_tablespace ts';
+		}
+
 		if ( 'tablespaces_extensions' === $view ) {
 			return 'SELECT
 	ts.spcname AS "TABLESPACE_NAME",
@@ -39232,54 +39275,6 @@ WHERE s.schema_name = \'information_schema\'
 				),
 			)
 		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.FILES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_files_relation_sql(): string {
-		return 'SELECT
-	CAST(ts.oid AS bigint) AS "FILE_ID",
-	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "FILE_NAME",
-	\'TABLESPACE\' AS "FILE_TYPE",
-	ts.spcname AS "TABLESPACE_NAME",
-	\'\' AS "TABLE_CATALOG",
-	NULL AS "TABLE_SCHEMA",
-	NULL AS "TABLE_NAME",
-	NULL AS "LOGFILE_GROUP_NAME",
-	NULL AS "LOGFILE_GROUP_NUMBER",
-	\'InnoDB\' AS "ENGINE",
-	NULL AS "FULLTEXT_KEYS",
-	NULL AS "DELETED_ROWS",
-	NULL AS "UPDATE_COUNT",
-	NULL AS "FREE_EXTENTS",
-	NULL AS "TOTAL_EXTENTS",
-	NULL AS "EXTENT_SIZE",
-	NULL AS "INITIAL_SIZE",
-	NULL AS "MAXIMUM_SIZE",
-	NULL AS "AUTOEXTEND_SIZE",
-	NULL AS "CREATION_TIME",
-	NULL AS "LAST_UPDATE_TIME",
-	NULL AS "LAST_ACCESS_TIME",
-	NULL AS "RECOVER_TIME",
-	NULL AS "TRANSACTION_COUNTER",
-	NULL AS "VERSION",
-	NULL AS "ROW_FORMAT",
-	NULL AS "TABLE_ROWS",
-	NULL AS "AVG_ROW_LENGTH",
-	NULL AS "DATA_LENGTH",
-	NULL AS "MAX_DATA_LENGTH",
-	NULL AS "INDEX_LENGTH",
-	NULL AS "DATA_FREE",
-	NULL AS "CREATE_TIME",
-	NULL AS "UPDATE_TIME",
-	NULL AS "CHECK_TIME",
-	NULL AS "CHECKSUM",
-	\'NORMAL\' AS "STATUS",
-	NULL AS "EXTRA"
-	FROM pg_catalog.pg_tablespace ts';
 	}
 
 	/**
