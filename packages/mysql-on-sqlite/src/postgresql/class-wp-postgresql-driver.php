@@ -17674,10 +17674,52 @@ ORDER BY ordinal_position';
 	 */
 	private function execute_show_tables_query( bool $is_full, string $schema_name, string $database_name, ?string $like, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ) {
 		if ( 0 === strcasecmp( $database_name, 'information_schema' ) ) {
-			return $this->execute_information_schema_show_tables_query(
-				$is_full,
-				$like,
-				$where_filter,
+			$table_column = 'Tables_in_information_schema';
+			$columns      = array( $table_column );
+			if ( $is_full ) {
+				$columns[] = 'Table_type';
+			}
+
+			$rows = array_map(
+				static function ( string $relation ) use ( $table_column, $is_full ): array {
+					$row = array(
+						$table_column => strtoupper( $relation ),
+					);
+					if ( $is_full ) {
+						$row['Table_type'] = 'SYSTEM VIEW';
+					}
+
+					return $row;
+				},
+				$this->get_direct_information_schema_relation_names()
+			);
+
+			if ( null !== $like ) {
+				$rows = $this->filter_mysql_static_show_rows(
+					$rows,
+					array(
+						'type'    => 'like',
+						'column'  => $table_column,
+						'pattern' => $like,
+					)
+				);
+			}
+
+			if ( null !== $where_filter ) {
+				$rows = $this->filter_mysql_static_show_rows(
+					$rows,
+					$this->is_mysql_show_where_expression_filter( $where_filter )
+						? $where_filter
+						: array(
+							'type'       => 'where',
+							'conditions' => $where_filter,
+						)
+				);
+			}
+
+			return $this->set_mysql_static_show_result(
+				$columns,
+				$rows,
 				$fetch_mode,
 				...$fetch_mode_args
 			);
@@ -17766,68 +17808,6 @@ ORDER BY ' . $table_name_sql;
 		}
 
 		return $this->last_result;
-	}
-
-	/**
-	 * Execute SHOW TABLES for the supported direct information_schema relations.
-	 *
-	 * @param bool        $is_full         Whether this is SHOW FULL TABLES.
-	 * @param string|null $like            Optional MySQL LIKE pattern.
-	 * @param array|null  $where_filter    Optional MySQL WHERE filters.
-	 * @param int         $fetch_mode      PDO fetch mode.
-	 * @param array       ...$fetch_mode_args Additional fetch mode arguments.
-	 * @return mixed SHOW TABLES result rows.
-	 */
-	private function execute_information_schema_show_tables_query( bool $is_full, ?string $like, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ) {
-		$table_column = 'Tables_in_information_schema';
-		$columns      = array( $table_column );
-		if ( $is_full ) {
-			$columns[] = 'Table_type';
-		}
-
-		$rows = array_map(
-			static function ( string $relation ) use ( $table_column, $is_full ): array {
-				$row = array(
-					$table_column => strtoupper( $relation ),
-				);
-				if ( $is_full ) {
-					$row['Table_type'] = 'SYSTEM VIEW';
-				}
-
-				return $row;
-			},
-			$this->get_direct_information_schema_relation_names()
-		);
-
-		if ( null !== $like ) {
-			$rows = $this->filter_mysql_static_show_rows(
-				$rows,
-				array(
-					'type'    => 'like',
-					'column'  => $table_column,
-					'pattern' => $like,
-				)
-			);
-		}
-
-		if ( null !== $where_filter ) {
-			$rows = $this->filter_mysql_static_show_rows(
-				$rows,
-				$this->is_mysql_show_where_expression_filter( $where_filter )
-					? $where_filter
-					: array(
-						'type'       => 'where',
-						'conditions' => $where_filter,
-					)
-			);
-		}
-
-		return $this->set_mysql_static_show_result(
-			$columns,
-			$rows,
-			$fetch_mode,
-			...$fetch_mode_args
-		);
 	}
 
 	/**
