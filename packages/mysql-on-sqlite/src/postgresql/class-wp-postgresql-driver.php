@@ -25792,107 +25792,42 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$projection_start = 1;
-		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id ) {
-			++$projection_start;
-		}
-
-		$ranges = $this->split_top_level_mysql_arguments( $tokens, $projection_start, $context['from_position'] );
-		if ( null === $ranges || array() === $ranges ) {
-			return null;
-		}
-
-		$columns = array();
-		foreach ( $ranges as $range ) {
-			$expression_bounds = $this->get_mysql_select_projection_expression_bounds( $tokens, $range['start'], $range['end'] );
-			if ( null === $expression_bounds ) {
-				return null;
-			}
-
-			$star_sources = $this->get_direct_information_schema_star_projection_sources(
-				$tokens,
-				$expression_bounds['start'],
-				$expression_bounds['end'],
-				$context
-			);
-			if ( null !== $star_sources ) {
-				if ( null !== $this->get_mysql_select_projection_explicit_or_implicit_alias( $tokens, $range['start'], $range['end'] ) ) {
-					return null;
-				}
-				foreach ( $star_sources as $source ) {
-					$columns = array_merge( $columns, $source['columns'] );
-				}
-				continue;
-			}
-
-			$alias = $this->get_mysql_select_projection_explicit_or_implicit_alias( $tokens, $range['start'], $range['end'] );
-			if ( null !== $alias ) {
-				$columns[] = $alias;
-				continue;
-			}
-
-			if ( $this->is_direct_information_schema_count_star_projection( $tokens, $expression_bounds['start'], $expression_bounds['end'] ) ) {
-				$columns[] = 'COUNT(*)';
-				continue;
-			}
-
-			$column = $this->get_direct_information_schema_cte_projection_column_name(
-				$tokens,
-				$expression_bounds['start'],
-				$expression_bounds['end'],
-				$context
-			);
-			if ( null === $column ) {
-				return null;
-			}
-			$columns[] = $column;
-		}
-
-		return $columns;
+		return $this->get_direct_information_schema_projection_output_columns( $tokens, $context, true );
 	}
 
-	private function get_direct_information_schema_cte_projection_column_name( array $tokens, int $start, int $end, array $context ): ?string {
+	private function get_direct_information_schema_projection_column_name( array $tokens, int $start, int $end, array $context, bool $preserve_token_name = false ): ?string {
+		$token_position = null;
+		$column         = null;
 		if ( $start + 1 === $end && isset( $tokens[ $start ] ) ) {
-			return null === $this->get_direct_information_schema_unqualified_column_name( $tokens[ $start ], $context )
-				? null
-				: $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-		}
-
-		if (
+			$token_position = $start;
+			$column         = $this->get_direct_information_schema_unqualified_column_name( $tokens[ $start ], $context );
+		} elseif (
 			$start + 3 === $end
 			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
 		) {
-			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-			if ( null === $source || null === $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 2 ], $source['column_map'] ) ) {
-				return null;
-			}
-
-			return $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
-		}
-
-		if (
+			$qualifier      = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			$source         = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			$column         = null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 2 ], $source['column_map'] );
+			$token_position = $start + 2;
+		} elseif (
 			$start + 5 === $end
 			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
 		) {
 			$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-			if ( null === $schema || 0 !== strcasecmp( $schema, 'information_schema' ) ) {
-				return null;
+			if ( null !== $schema && 0 === strcasecmp( $schema, 'information_schema' ) ) {
+				$qualifier      = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
+				$source         = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+				$column         = null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 4 ], $source['column_map'] );
+				$token_position = $start + 4;
 			}
-
-			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
-			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-			if ( null === $source || null === $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 4 ], $source['column_map'] ) ) {
-				return null;
-			}
-
-			return $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 4 ] );
 		}
 
-		return null;
+		return null === $column || null === $token_position
+			? null
+			: ( $preserve_token_name ? $this->get_direct_information_schema_identifier_token_value( $tokens[ $token_position ] ) : $column );
 	}
 
 	private function translate_direct_information_schema_select_query( string $query, array $cte_sources = array() ): ?string {
@@ -25978,18 +25913,10 @@ WHERE option_name IN (
 				$context
 			);
 			if ( null !== $star_sources ) {
-				$select_lists = array();
-				foreach ( $star_sources as $source ) {
-					$select = array();
-					foreach ( $source['columns'] as $column ) {
-						$select[] = $this->connection->quote_identifier( $source['alias'] ) . '.' . $this->connection->quote_identifier( $column ) . ' AS ' . $this->connection->quote_identifier( $column );
-					}
-					$select_lists[] = implode( ', ', $select );
-				}
 				$replacements[] = array(
 					'start' => $expression_bounds['start'],
 					'end'   => $expression_bounds['end'],
-					'sql'   => implode( ', ', $select_lists ),
+					'sql'   => $this->get_direct_information_schema_star_projection_sql( $star_sources ),
 				);
 				continue;
 			}
@@ -26007,32 +25934,18 @@ WHERE option_name IN (
 				continue;
 			}
 
-			$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements(
-				$tokens,
-				$expression_bounds['start'],
-				$expression_bounds['end'],
-				$nested_select_replacements
-			);
-			if ( null === $current_database_function_replacements ) {
-				return null;
-			}
-
-			$column_replacements = $this->get_direct_information_schema_column_replacements(
+			$expression_replacements = $this->get_direct_information_schema_select_expression_replacements(
 				$tokens,
 				$expression_bounds['start'],
 				$expression_bounds['end'],
 				$context,
-				array_merge( $nested_select_replacements, $current_database_function_replacements )
+				$nested_select_replacements
 			);
-			if ( null === $column_replacements ) {
+			if ( null === $expression_replacements ) {
 				return null;
 			}
 
-			foreach ( $current_database_function_replacements as $replacement ) {
-				$replacements[] = $replacement;
-			}
-
-			foreach ( $column_replacements as $replacement ) {
+			foreach ( $expression_replacements as $replacement ) {
 				$replacements[] = $replacement;
 			}
 		}
@@ -26042,43 +25955,18 @@ WHERE option_name IN (
 		}
 
 		foreach ( array_merge( $context['join_predicate_ranges'], $context['clause_ranges'] ) as $range ) {
-			$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements(
-				$tokens,
-				$range['start'],
-				$range['end'],
-				$nested_select_replacements
-			);
-			if ( null === $current_database_function_replacements ) {
-				return null;
-			}
-
-			$column_replacements = $this->get_direct_information_schema_column_replacements(
+			$expression_replacements = $this->get_direct_information_schema_select_expression_replacements(
 				$tokens,
 				$range['start'],
 				$range['end'],
 				$context,
-				array_merge( $nested_select_replacements, $current_database_function_replacements )
+				$nested_select_replacements,
+				true
 			);
-			if ( null === $column_replacements ) {
+			if ( null === $expression_replacements ) {
 				return null;
 			}
-
-			$binary_operator_replacements = $this->get_direct_information_schema_binary_operator_replacements(
-				$tokens,
-				$range['start'],
-				$range['end'],
-				array_merge( $nested_select_replacements, $current_database_function_replacements, $column_replacements )
-			);
-
-			foreach ( $current_database_function_replacements as $replacement ) {
-				$replacements[] = $replacement;
-			}
-
-			foreach ( $column_replacements as $replacement ) {
-				$replacements[] = $replacement;
-			}
-
-			foreach ( $binary_operator_replacements as $replacement ) {
+			foreach ( $expression_replacements as $replacement ) {
 				$replacements[] = $replacement;
 			}
 		}
@@ -26143,6 +26031,44 @@ WHERE option_name IN (
 			1,
 			$statement_end,
 			$nested_select_replacements
+		);
+	}
+
+	private function get_direct_information_schema_select_expression_replacements( array $tokens, int $start, int $end, array $context, array $protected_ranges, bool $include_binary_operators = false ): ?array {
+		$current_database_function_replacements = $this->get_direct_information_schema_current_database_function_replacements(
+			$tokens,
+			$start,
+			$end,
+			$protected_ranges
+		);
+		if ( null === $current_database_function_replacements ) {
+			return null;
+		}
+
+		$column_replacements = $this->get_direct_information_schema_column_replacements(
+			$tokens,
+			$start,
+			$end,
+			$context,
+			array_merge( $protected_ranges, $current_database_function_replacements )
+		);
+		if ( null === $column_replacements ) {
+			return null;
+		}
+
+		if ( ! $include_binary_operators ) {
+			return array_merge( $current_database_function_replacements, $column_replacements );
+		}
+
+		return array_merge(
+			$current_database_function_replacements,
+			$column_replacements,
+			$this->get_direct_information_schema_binary_operator_replacements(
+				$tokens,
+				$start,
+				$end,
+				array_merge( $protected_ranges, $current_database_function_replacements, $column_replacements )
+			)
 		);
 	}
 
@@ -27068,6 +26994,10 @@ WHERE option_name IN (
 	}
 
 	private function get_direct_information_schema_select_output_columns( array $tokens, array $context ): ?array {
+		return $this->get_direct_information_schema_projection_output_columns( $tokens, $context );
+	}
+
+	private function get_direct_information_schema_projection_output_columns( array $tokens, array $context, bool $preserve_token_names = false ): ?array {
 		$projection_start = 1;
 		if ( isset( $tokens[ $projection_start ] ) && WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $projection_start ]->id ) {
 			++$projection_start;
@@ -27112,32 +27042,13 @@ WHERE option_name IN (
 				continue;
 			}
 
-			$start  = $expression_bounds['start'];
-			$end    = $expression_bounds['end'];
-			$column = null;
-			if ( $start + 1 === $end && isset( $tokens[ $start ] ) ) {
-				$column = $this->get_direct_information_schema_unqualified_column_name( $tokens[ $start ], $context );
-			} elseif (
-				$start + 3 === $end
-				&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
-				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
-			) {
-				$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-				$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-				$column    = null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 2 ], $source['column_map'] );
-			} elseif (
-				$start + 5 === $end
-				&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
-				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
-				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
-			) {
-				$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
-				if ( null !== $schema && 0 === strcasecmp( $schema, 'information_schema' ) ) {
-					$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
-					$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
-					$column    = null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 4 ], $source['column_map'] );
-				}
-			}
+			$column = $this->get_direct_information_schema_projection_column_name(
+				$tokens,
+				$expression_bounds['start'],
+				$expression_bounds['end'],
+				$context,
+				$preserve_token_names
+			);
 			if ( null === $column ) {
 				return null;
 			}
@@ -27145,6 +27056,19 @@ WHERE option_name IN (
 		}
 
 		return $columns;
+	}
+
+	private function get_direct_information_schema_star_projection_sql( array $sources ): string {
+		$select_lists = array();
+		foreach ( $sources as $source ) {
+			$select = array();
+			foreach ( $source['columns'] as $column ) {
+				$select[] = $this->connection->quote_identifier( $source['alias'] ) . '.' . $this->connection->quote_identifier( $column ) . ' AS ' . $this->connection->quote_identifier( $column );
+			}
+			$select_lists[] = implode( ', ', $select );
+		}
+
+		return implode( ', ', $select_lists );
 	}
 
 	private function get_mysql_select_projection_explicit_or_implicit_alias( array $tokens, int $start, int $end ): ?string {
@@ -27592,87 +27516,62 @@ WHERE option_name IN (
 	}
 
 	private function get_direct_information_schema_relation_names(): array {
-		return explode( ' ', 'administrable_role_authorizations applicable_roles character_sets check_constraints collations collation_character_set_applicability column_statistics column_privileges columns columns_extensions enabled_roles engines events files global_status global_variables innodb_columns innodb_datafiles innodb_fields innodb_indexes innodb_lock_waits innodb_tables innodb_tablespaces innodb_tablespaces_brief key_column_usage keywords optimizer_trace parameters partitions plugins profiling processlist referential_constraints resource_groups role_column_grants role_routine_grants role_table_grants routines schemata schemata_extensions schema_privileges server_status session_status session_variables statistics st_geometry_columns table_constraints table_constraints_extensions table_privileges tables tablespaces tablespaces_extensions triggers user_attributes user_privileges view_routine_usage view_table_usage views' );
+		$names = array_keys( $this->get_direct_information_schema_relation_column_map() );
+		sort( $names, SORT_STRING );
+		return $names;
 	}
 
 	private function get_direct_information_schema_relation_columns( string $view ): ?array {
-		static $columns = array(
-			'schemata'                              => 'CATALOG_NAME SCHEMA_NAME DEFAULT_CHARACTER_SET_NAME DEFAULT_COLLATION_NAME SQL_PATH DEFAULT_ENCRYPTION',
-			'tables'                                => 'TABLE_CATALOG TABLE_SCHEMA TABLE_NAME TABLE_TYPE ENGINE VERSION ROW_FORMAT TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE AUTO_INCREMENT CREATE_TIME UPDATE_TIME CHECK_TIME TABLE_COLLATION CHECKSUM CREATE_OPTIONS TABLE_COMMENT',
-			'columns'                               => 'TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ORDINAL_POSITION COLUMN_DEFAULT IS_NULLABLE DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME COLUMN_TYPE COLUMN_KEY EXTRA PRIVILEGES COLUMN_COMMENT GENERATION_EXPRESSION SRS_ID',
-			'columns_extensions'                    => 'TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ENGINE_ATTRIBUTE SECONDARY_ENGINE_ATTRIBUTE',
-			'statistics'                            => 'TABLE_CATALOG TABLE_SCHEMA TABLE_NAME NON_UNIQUE INDEX_SCHEMA INDEX_NAME SEQ_IN_INDEX COLUMN_NAME COLLATION CARDINALITY SUB_PART PACKED NULLABLE INDEX_TYPE COMMENT INDEX_COMMENT IS_VISIBLE EXPRESSION',
-			'column_statistics'                     => 'SCHEMA_NAME TABLE_NAME COLUMN_NAME HISTOGRAM',
-			'table_constraints'                     => 'CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_SCHEMA TABLE_NAME CONSTRAINT_TYPE ENFORCED',
-			'table_constraints_extensions'          => 'CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_SCHEMA TABLE_NAME ENGINE_ATTRIBUTE SECONDARY_ENGINE_ATTRIBUTE',
-			'key_column_usage'                      => 'CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ORDINAL_POSITION POSITION_IN_UNIQUE_CONSTRAINT REFERENCED_TABLE_SCHEMA REFERENCED_TABLE_NAME REFERENCED_COLUMN_NAME',
-			'referential_constraints'               => 'CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME UNIQUE_CONSTRAINT_CATALOG UNIQUE_CONSTRAINT_SCHEMA UNIQUE_CONSTRAINT_NAME MATCH_OPTION UPDATE_RULE DELETE_RULE TABLE_NAME REFERENCED_TABLE_NAME',
-			'check_constraints'                     => 'CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME CHECK_CLAUSE',
-			'character_sets'                        => 'CHARACTER_SET_NAME DEFAULT_COLLATE_NAME DESCRIPTION MAXLEN',
-			'collations'                            => 'COLLATION_NAME CHARACTER_SET_NAME ID IS_DEFAULT IS_COMPILED SORTLEN PAD_ATTRIBUTE',
-			'collation_character_set_applicability' => 'COLLATION_NAME CHARACTER_SET_NAME',
-			'engines'                               => 'ENGINE SUPPORT COMMENT TRANSACTIONS XA SAVEPOINTS',
-			'events'                                => 'EVENT_CATALOG EVENT_SCHEMA EVENT_NAME DEFINER TIME_ZONE EVENT_BODY EVENT_DEFINITION EVENT_TYPE EXECUTE_AT INTERVAL_VALUE INTERVAL_FIELD SQL_MODE STARTS ENDS STATUS ON_COMPLETION CREATED LAST_ALTERED LAST_EXECUTED EVENT_COMMENT ORIGINATOR CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION',
-			'files'                                 => 'FILE_ID FILE_NAME FILE_TYPE TABLESPACE_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME LOGFILE_GROUP_NAME LOGFILE_GROUP_NUMBER ENGINE FULLTEXT_KEYS DELETED_ROWS UPDATE_COUNT FREE_EXTENTS TOTAL_EXTENTS EXTENT_SIZE INITIAL_SIZE MAXIMUM_SIZE AUTOEXTEND_SIZE CREATION_TIME LAST_UPDATE_TIME LAST_ACCESS_TIME RECOVER_TIME TRANSACTION_COUNTER VERSION ROW_FORMAT TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE CREATE_TIME UPDATE_TIME CHECK_TIME CHECKSUM STATUS EXTRA',
-			'partitions'                            => 'TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PARTITION_NAME SUBPARTITION_NAME PARTITION_ORDINAL_POSITION SUBPARTITION_ORDINAL_POSITION PARTITION_METHOD SUBPARTITION_METHOD PARTITION_EXPRESSION SUBPARTITION_EXPRESSION PARTITION_DESCRIPTION TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE CREATE_TIME UPDATE_TIME CHECK_TIME CHECKSUM PARTITION_COMMENT NODEGROUP TABLESPACE_NAME',
-			'tablespaces_extensions'                => 'TABLESPACE_NAME ENGINE_ATTRIBUTE',
-			'tablespaces'                           => 'TABLESPACE_NAME ENGINE TABLESPACE_TYPE LOGFILE_GROUP_NAME EXTENT_SIZE AUTOEXTEND_SIZE MAXIMUM_SIZE NODEGROUP_ID TABLESPACE_COMMENT',
-			'innodb_tables'                         => 'TABLE_ID NAME FLAG N_COLS SPACE ROW_FORMAT ZIP_PAGE_SIZE SPACE_TYPE INSTANT_COLS TOTAL_ROW_VERSIONS',
-			'innodb_tablespaces'                    => 'SPACE NAME FLAG ROW_FORMAT PAGE_SIZE ZIP_PAGE_SIZE SPACE_TYPE FS_BLOCK_SIZE FILE_SIZE ALLOCATED_SIZE AUTOEXTEND_SIZE SERVER_VERSION SPACE_VERSION ENCRYPTION STATE',
-			'innodb_tablespaces_brief'              => 'SPACE NAME PATH FLAG SPACE_TYPE',
-			'innodb_datafiles'                      => 'SPACE PATH',
-			'innodb_indexes'                        => 'INDEX_ID NAME TABLE_ID TYPE N_FIELDS PAGE_NO SPACE MERGE_THRESHOLD',
-			'innodb_fields'                         => 'INDEX_ID NAME POS',
-			'innodb_columns'                        => 'TABLE_ID NAME POS MTYPE PRTYPE LEN HAS_DEFAULT DEFAULT_VALUE',
-			'innodb_lock_waits'                     => 'REQUESTING_TRX_ID REQUESTED_LOCK_ID BLOCKING_TRX_ID BLOCKING_LOCK_ID',
-			'session_variables'                     => 'VARIABLE_NAME VARIABLE_VALUE',
-			'global_variables'                      => 'VARIABLE_NAME VARIABLE_VALUE',
-			'server_status'                         => 'VARIABLE_NAME VARIABLE_VALUE',
-			'session_status'                        => 'VARIABLE_NAME VARIABLE_VALUE',
-			'global_status'                         => 'VARIABLE_NAME VARIABLE_VALUE',
-			'processlist'                           => 'ID USER HOST DB COMMAND TIME STATE INFO',
-			'optimizer_trace'                       => 'QUERY TRACE MISSING_BYTES_BEYOND_MAX_MEM_SIZE INSUFFICIENT_PRIVILEGES',
-			'profiling'                             => 'QUERY_ID SEQ STATE DURATION CPU_USER CPU_SYSTEM CONTEXT_VOLUNTARY CONTEXT_INVOLUNTARY BLOCK_OPS_IN BLOCK_OPS_OUT MESSAGES_SENT MESSAGES_RECEIVED PAGE_FAULTS_MAJOR PAGE_FAULTS_MINOR SWAPS SOURCE_FUNCTION SOURCE_FILE SOURCE_LINE',
-			'keywords'                              => 'WORD RESERVED',
-			'plugins'                               => 'PLUGIN_NAME PLUGIN_VERSION PLUGIN_STATUS PLUGIN_TYPE PLUGIN_TYPE_VERSION PLUGIN_LIBRARY PLUGIN_LIBRARY_VERSION PLUGIN_AUTHOR PLUGIN_DESCRIPTION PLUGIN_LICENSE LOAD_OPTION',
-			'user_attributes'                       => 'USER HOST ATTRIBUTE',
-			'user_privileges'                       => 'GRANTEE TABLE_CATALOG PRIVILEGE_TYPE IS_GRANTABLE',
-			'schema_privileges'                     => 'GRANTEE TABLE_CATALOG TABLE_SCHEMA PRIVILEGE_TYPE IS_GRANTABLE',
-			'table_privileges'                      => 'GRANTEE TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PRIVILEGE_TYPE IS_GRANTABLE',
-			'column_privileges'                     => 'GRANTEE TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME PRIVILEGE_TYPE IS_GRANTABLE',
-			'resource_groups'                       => 'RESOURCE_GROUP_NAME RESOURCE_GROUP_TYPE RESOURCE_GROUP_ENABLED VCPU_IDS THREAD_PRIORITY',
-			'applicable_roles'                      => 'USER HOST GRANTEE GRANTEE_HOST ROLE_NAME ROLE_HOST IS_GRANTABLE IS_DEFAULT IS_MANDATORY',
-			'administrable_role_authorizations'     => 'USER HOST GRANTEE GRANTEE_HOST ROLE_NAME ROLE_HOST IS_GRANTABLE IS_DEFAULT IS_MANDATORY',
-			'enabled_roles'                         => 'ROLE_NAME ROLE_HOST IS_DEFAULT IS_MANDATORY',
-			'role_table_grants'                     => 'GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PRIVILEGE_TYPE IS_GRANTABLE',
-			'role_column_grants'                    => 'GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME PRIVILEGE_TYPE IS_GRANTABLE',
-			'role_routine_grants'                   => 'GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME ROUTINE_CATALOG ROUTINE_SCHEMA ROUTINE_NAME PRIVILEGE_TYPE IS_GRANTABLE',
-			'views'                                 => 'TABLE_CATALOG TABLE_SCHEMA TABLE_NAME VIEW_DEFINITION CHECK_OPTION IS_UPDATABLE DEFINER SECURITY_TYPE CHARACTER_SET_CLIENT COLLATION_CONNECTION',
-			'schemata_extensions'                   => 'CATALOG_NAME SCHEMA_NAME OPTIONS',
-			'view_table_usage'                      => 'VIEW_CATALOG VIEW_SCHEMA VIEW_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME',
-			'view_routine_usage'                    => 'TABLE_CATALOG TABLE_SCHEMA TABLE_NAME SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME',
-			'triggers'                              => 'TRIGGER_CATALOG TRIGGER_SCHEMA TRIGGER_NAME EVENT_MANIPULATION EVENT_OBJECT_CATALOG EVENT_OBJECT_SCHEMA EVENT_OBJECT_TABLE ACTION_ORDER ACTION_CONDITION ACTION_STATEMENT ACTION_ORIENTATION ACTION_TIMING ACTION_REFERENCE_OLD_TABLE ACTION_REFERENCE_NEW_TABLE ACTION_REFERENCE_OLD_ROW ACTION_REFERENCE_NEW_ROW CREATED SQL_MODE DEFINER CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION',
-			'st_geometry_columns'                   => 'TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME SRS_NAME SRS_ID GEOMETRY_TYPE_NAME',
-			'routines'                              => 'SPECIFIC_NAME ROUTINE_CATALOG ROUTINE_SCHEMA ROUTINE_NAME ROUTINE_TYPE DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME DTD_IDENTIFIER ROUTINE_BODY ROUTINE_DEFINITION EXTERNAL_NAME EXTERNAL_LANGUAGE PARAMETER_STYLE IS_DETERMINISTIC SQL_DATA_ACCESS SQL_PATH SECURITY_TYPE CREATED LAST_ALTERED SQL_MODE ROUTINE_COMMENT DEFINER CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION',
-			'parameters'                            => 'SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME ORDINAL_POSITION PARAMETER_MODE PARAMETER_NAME DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME DTD_IDENTIFIER ROUTINE_TYPE',
-		);
-
-		$view = strtolower( $view );
+		$columns = $this->get_direct_information_schema_relation_column_map();
+		$view    = strtolower( $view );
 		return isset( $columns[ $view ] ) ? explode( ' ', $columns[ $view ] ) : null;
+	}
+
+	private function get_direct_information_schema_relation_column_map(): array {
+		static $columns = null;
+		if ( null !== $columns ) {
+			return $columns;
+		}
+
+		$columns = array();
+		$raw     = <<<'RELATIONS'
+schemata|CATALOG_NAME SCHEMA_NAME DEFAULT_CHARACTER_SET_NAME DEFAULT_COLLATION_NAME SQL_PATH DEFAULT_ENCRYPTION;tables|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME TABLE_TYPE ENGINE VERSION ROW_FORMAT TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE AUTO_INCREMENT CREATE_TIME UPDATE_TIME CHECK_TIME TABLE_COLLATION CHECKSUM CREATE_OPTIONS TABLE_COMMENT;columns|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ORDINAL_POSITION COLUMN_DEFAULT IS_NULLABLE DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME COLUMN_TYPE COLUMN_KEY EXTRA PRIVILEGES COLUMN_COMMENT GENERATION_EXPRESSION SRS_ID;columns_extensions|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ENGINE_ATTRIBUTE SECONDARY_ENGINE_ATTRIBUTE
+statistics|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME NON_UNIQUE INDEX_SCHEMA INDEX_NAME SEQ_IN_INDEX COLUMN_NAME COLLATION CARDINALITY SUB_PART PACKED NULLABLE INDEX_TYPE COMMENT INDEX_COMMENT IS_VISIBLE EXPRESSION;column_statistics|SCHEMA_NAME TABLE_NAME COLUMN_NAME HISTOGRAM;table_constraints|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_SCHEMA TABLE_NAME CONSTRAINT_TYPE ENFORCED;table_constraints_extensions|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_SCHEMA TABLE_NAME ENGINE_ATTRIBUTE SECONDARY_ENGINE_ATTRIBUTE
+key_column_usage|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ORDINAL_POSITION POSITION_IN_UNIQUE_CONSTRAINT REFERENCED_TABLE_SCHEMA REFERENCED_TABLE_NAME REFERENCED_COLUMN_NAME;referential_constraints|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME UNIQUE_CONSTRAINT_CATALOG UNIQUE_CONSTRAINT_SCHEMA UNIQUE_CONSTRAINT_NAME MATCH_OPTION UPDATE_RULE DELETE_RULE TABLE_NAME REFERENCED_TABLE_NAME;check_constraints|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME CHECK_CLAUSE;character_sets|CHARACTER_SET_NAME DEFAULT_COLLATE_NAME DESCRIPTION MAXLEN
+collations|COLLATION_NAME CHARACTER_SET_NAME ID IS_DEFAULT IS_COMPILED SORTLEN PAD_ATTRIBUTE;collation_character_set_applicability|COLLATION_NAME CHARACTER_SET_NAME;engines|ENGINE SUPPORT COMMENT TRANSACTIONS XA SAVEPOINTS;events|EVENT_CATALOG EVENT_SCHEMA EVENT_NAME DEFINER TIME_ZONE EVENT_BODY EVENT_DEFINITION EVENT_TYPE EXECUTE_AT INTERVAL_VALUE INTERVAL_FIELD SQL_MODE STARTS ENDS STATUS ON_COMPLETION CREATED LAST_ALTERED LAST_EXECUTED EVENT_COMMENT ORIGINATOR CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION
+files|FILE_ID FILE_NAME FILE_TYPE TABLESPACE_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME LOGFILE_GROUP_NAME LOGFILE_GROUP_NUMBER ENGINE FULLTEXT_KEYS DELETED_ROWS UPDATE_COUNT FREE_EXTENTS TOTAL_EXTENTS EXTENT_SIZE INITIAL_SIZE MAXIMUM_SIZE AUTOEXTEND_SIZE CREATION_TIME LAST_UPDATE_TIME LAST_ACCESS_TIME RECOVER_TIME TRANSACTION_COUNTER VERSION ROW_FORMAT TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE CREATE_TIME UPDATE_TIME CHECK_TIME CHECKSUM STATUS EXTRA;partitions|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PARTITION_NAME SUBPARTITION_NAME PARTITION_ORDINAL_POSITION SUBPARTITION_ORDINAL_POSITION PARTITION_METHOD SUBPARTITION_METHOD PARTITION_EXPRESSION SUBPARTITION_EXPRESSION PARTITION_DESCRIPTION TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE CREATE_TIME UPDATE_TIME CHECK_TIME CHECKSUM PARTITION_COMMENT NODEGROUP TABLESPACE_NAME;tablespaces_extensions|TABLESPACE_NAME ENGINE_ATTRIBUTE;tablespaces|TABLESPACE_NAME ENGINE TABLESPACE_TYPE LOGFILE_GROUP_NAME EXTENT_SIZE AUTOEXTEND_SIZE MAXIMUM_SIZE NODEGROUP_ID TABLESPACE_COMMENT
+innodb_tables|TABLE_ID NAME FLAG N_COLS SPACE ROW_FORMAT ZIP_PAGE_SIZE SPACE_TYPE INSTANT_COLS TOTAL_ROW_VERSIONS;innodb_tablespaces|SPACE NAME FLAG ROW_FORMAT PAGE_SIZE ZIP_PAGE_SIZE SPACE_TYPE FS_BLOCK_SIZE FILE_SIZE ALLOCATED_SIZE AUTOEXTEND_SIZE SERVER_VERSION SPACE_VERSION ENCRYPTION STATE;innodb_tablespaces_brief|SPACE NAME PATH FLAG SPACE_TYPE;innodb_datafiles|SPACE PATH
+innodb_indexes|INDEX_ID NAME TABLE_ID TYPE N_FIELDS PAGE_NO SPACE MERGE_THRESHOLD;innodb_fields|INDEX_ID NAME POS;innodb_columns|TABLE_ID NAME POS MTYPE PRTYPE LEN HAS_DEFAULT DEFAULT_VALUE;innodb_lock_waits|REQUESTING_TRX_ID REQUESTED_LOCK_ID BLOCKING_TRX_ID BLOCKING_LOCK_ID
+session_variables|VARIABLE_NAME VARIABLE_VALUE;global_variables|VARIABLE_NAME VARIABLE_VALUE;server_status|VARIABLE_NAME VARIABLE_VALUE;session_status|VARIABLE_NAME VARIABLE_VALUE
+global_status|VARIABLE_NAME VARIABLE_VALUE;processlist|ID USER HOST DB COMMAND TIME STATE INFO;optimizer_trace|QUERY TRACE MISSING_BYTES_BEYOND_MAX_MEM_SIZE INSUFFICIENT_PRIVILEGES;profiling|QUERY_ID SEQ STATE DURATION CPU_USER CPU_SYSTEM CONTEXT_VOLUNTARY CONTEXT_INVOLUNTARY BLOCK_OPS_IN BLOCK_OPS_OUT MESSAGES_SENT MESSAGES_RECEIVED PAGE_FAULTS_MAJOR PAGE_FAULTS_MINOR SWAPS SOURCE_FUNCTION SOURCE_FILE SOURCE_LINE
+keywords|WORD RESERVED;plugins|PLUGIN_NAME PLUGIN_VERSION PLUGIN_STATUS PLUGIN_TYPE PLUGIN_TYPE_VERSION PLUGIN_LIBRARY PLUGIN_LIBRARY_VERSION PLUGIN_AUTHOR PLUGIN_DESCRIPTION PLUGIN_LICENSE LOAD_OPTION;user_attributes|USER HOST ATTRIBUTE;user_privileges|GRANTEE TABLE_CATALOG PRIVILEGE_TYPE IS_GRANTABLE
+schema_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA PRIVILEGE_TYPE IS_GRANTABLE;table_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PRIVILEGE_TYPE IS_GRANTABLE;column_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME PRIVILEGE_TYPE IS_GRANTABLE;resource_groups|RESOURCE_GROUP_NAME RESOURCE_GROUP_TYPE RESOURCE_GROUP_ENABLED VCPU_IDS THREAD_PRIORITY
+applicable_roles|USER HOST GRANTEE GRANTEE_HOST ROLE_NAME ROLE_HOST IS_GRANTABLE IS_DEFAULT IS_MANDATORY;administrable_role_authorizations|USER HOST GRANTEE GRANTEE_HOST ROLE_NAME ROLE_HOST IS_GRANTABLE IS_DEFAULT IS_MANDATORY;enabled_roles|ROLE_NAME ROLE_HOST IS_DEFAULT IS_MANDATORY;role_table_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PRIVILEGE_TYPE IS_GRANTABLE
+role_column_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME PRIVILEGE_TYPE IS_GRANTABLE;role_routine_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME ROUTINE_CATALOG ROUTINE_SCHEMA ROUTINE_NAME PRIVILEGE_TYPE IS_GRANTABLE;views|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME VIEW_DEFINITION CHECK_OPTION IS_UPDATABLE DEFINER SECURITY_TYPE CHARACTER_SET_CLIENT COLLATION_CONNECTION;schemata_extensions|CATALOG_NAME SCHEMA_NAME OPTIONS
+view_table_usage|VIEW_CATALOG VIEW_SCHEMA VIEW_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME;view_routine_usage|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME;triggers|TRIGGER_CATALOG TRIGGER_SCHEMA TRIGGER_NAME EVENT_MANIPULATION EVENT_OBJECT_CATALOG EVENT_OBJECT_SCHEMA EVENT_OBJECT_TABLE ACTION_ORDER ACTION_CONDITION ACTION_STATEMENT ACTION_ORIENTATION ACTION_TIMING ACTION_REFERENCE_OLD_TABLE ACTION_REFERENCE_NEW_TABLE ACTION_REFERENCE_OLD_ROW ACTION_REFERENCE_NEW_ROW CREATED SQL_MODE DEFINER CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION;st_geometry_columns|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME SRS_NAME SRS_ID GEOMETRY_TYPE_NAME
+routines|SPECIFIC_NAME ROUTINE_CATALOG ROUTINE_SCHEMA ROUTINE_NAME ROUTINE_TYPE DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME DTD_IDENTIFIER ROUTINE_BODY ROUTINE_DEFINITION EXTERNAL_NAME EXTERNAL_LANGUAGE PARAMETER_STYLE IS_DETERMINISTIC SQL_DATA_ACCESS SQL_PATH SECURITY_TYPE CREATED LAST_ALTERED SQL_MODE ROUTINE_COMMENT DEFINER CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION;parameters|SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME ORDINAL_POSITION PARAMETER_MODE PARAMETER_NAME DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME DTD_IDENTIFIER ROUTINE_TYPE
+RELATIONS;
+		foreach ( explode( ';', str_replace( "\n", ';', $raw ) ) as $definition ) {
+			if ( '' === $definition ) {
+				continue;
+			}
+			list( $relation, $relation_columns ) = explode( '|', $definition, 2 );
+			$columns[ $relation ]                = $relation_columns;
+		}
+
+		return $columns;
 	}
 	private function get_direct_information_schema_create_column_type( string $column ): string {
 		static $type_by_column = null;
 
 		if ( null === $type_by_column ) {
 			$type_by_column = array();
-			foreach (
-				array(
-					'bigint DEFAULT NULL'        => 'VERSION TABLE_ID INDEX_ID FLAG N_COLS SPACE ZIP_PAGE_SIZE INSTANT_COLS TOTAL_ROW_VERSIONS PAGE_SIZE FS_BLOCK_SIZE FILE_SIZE ALLOCATED_SIZE SPACE_VERSION TYPE N_FIELDS PAGE_NO MERGE_THRESHOLD QUERY_ID SEQ MISSING_BYTES_BEYOND_MAX_MEM_SIZE CONTEXT_VOLUNTARY CONTEXT_INVOLUNTARY RESERVED RESOURCE_GROUP_ENABLED THREAD_PRIORITY BLOCK_OPS_IN BLOCK_OPS_OUT MESSAGES_SENT MESSAGES_RECEIVED PAGE_FAULTS_MAJOR PAGE_FAULTS_MINOR SWAPS SOURCE_LINE NODEGROUP NODEGROUP_ID POS MTYPE PRTYPE LEN HAS_DEFAULT TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE AUTO_INCREMENT ORDINAL_POSITION CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION SRS_ID NON_UNIQUE SEQ_IN_INDEX CARDINALITY SUB_PART POSITION_IN_UNIQUE_CONSTRAINT MAXLEN ID SORTLEN TIME ACTION_ORDER FILE_ID LOGFILE_GROUP_NUMBER FULLTEXT_KEYS DELETED_ROWS UPDATE_COUNT FREE_EXTENTS TOTAL_EXTENTS EXTENT_SIZE INITIAL_SIZE MAXIMUM_SIZE AUTOEXTEND_SIZE TRANSACTION_COUNTER ORIGINATOR PARTITION_ORDINAL_POSITION SUBPARTITION_ORDINAL_POSITION',
-					'decimal(20,6) DEFAULT NULL' => 'DURATION CPU_USER CPU_SYSTEM',
-					'longtext DEFAULT NULL'      => 'COLUMN_DEFAULT CHECK_CLAUSE GENERATION_EXPRESSION EXPRESSION VIEW_DEFINITION ACTION_CONDITION ACTION_STATEMENT ROUTINE_DEFINITION FILE_NAME EXTRA PARTITION_EXPRESSION SUBPARTITION_EXPRESSION PARTITION_DESCRIPTION ENGINE_ATTRIBUTE SECONDARY_ENGINE_ATTRIBUTE OPTIONS ATTRIBUTE VCPU_IDS SRS_NAME PATH DEFAULT_VALUE HISTOGRAM QUERY TRACE TABLESPACE_COMMENT',
-					'datetime DEFAULT NULL'      => 'CREATE_TIME UPDATE_TIME CHECK_TIME CREATED EXECUTE_AT STARTS ENDS LAST_ALTERED LAST_EXECUTED CREATION_TIME LAST_UPDATE_TIME LAST_ACCESS_TIME RECOVER_TIME',
-				) as $type => $columns
-			) {
+			foreach ( array(
+				'bigint DEFAULT NULL'        => 'VERSION TABLE_ID INDEX_ID FLAG N_COLS SPACE ZIP_PAGE_SIZE INSTANT_COLS TOTAL_ROW_VERSIONS PAGE_SIZE FS_BLOCK_SIZE FILE_SIZE ALLOCATED_SIZE SPACE_VERSION TYPE N_FIELDS PAGE_NO MERGE_THRESHOLD QUERY_ID SEQ MISSING_BYTES_BEYOND_MAX_MEM_SIZE CONTEXT_VOLUNTARY CONTEXT_INVOLUNTARY RESERVED RESOURCE_GROUP_ENABLED THREAD_PRIORITY BLOCK_OPS_IN BLOCK_OPS_OUT MESSAGES_SENT MESSAGES_RECEIVED PAGE_FAULTS_MAJOR PAGE_FAULTS_MINOR SWAPS SOURCE_LINE NODEGROUP NODEGROUP_ID POS MTYPE PRTYPE LEN HAS_DEFAULT TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE AUTO_INCREMENT ORDINAL_POSITION CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION SRS_ID NON_UNIQUE SEQ_IN_INDEX CARDINALITY SUB_PART POSITION_IN_UNIQUE_CONSTRAINT MAXLEN ID SORTLEN TIME ACTION_ORDER FILE_ID LOGFILE_GROUP_NUMBER FULLTEXT_KEYS DELETED_ROWS UPDATE_COUNT FREE_EXTENTS TOTAL_EXTENTS EXTENT_SIZE INITIAL_SIZE MAXIMUM_SIZE AUTOEXTEND_SIZE TRANSACTION_COUNTER ORIGINATOR PARTITION_ORDINAL_POSITION SUBPARTITION_ORDINAL_POSITION',
+				'decimal(20,6) DEFAULT NULL' => 'DURATION CPU_USER CPU_SYSTEM',
+				'longtext DEFAULT NULL'      => 'COLUMN_DEFAULT CHECK_CLAUSE GENERATION_EXPRESSION EXPRESSION VIEW_DEFINITION ACTION_CONDITION ACTION_STATEMENT ROUTINE_DEFINITION FILE_NAME EXTRA PARTITION_EXPRESSION SUBPARTITION_EXPRESSION PARTITION_DESCRIPTION ENGINE_ATTRIBUTE SECONDARY_ENGINE_ATTRIBUTE OPTIONS ATTRIBUTE VCPU_IDS SRS_NAME PATH DEFAULT_VALUE HISTOGRAM QUERY TRACE TABLESPACE_COMMENT',
+				'datetime DEFAULT NULL'      => 'CREATE_TIME UPDATE_TIME CHECK_TIME CREATED EXECUTE_AT STARTS ENDS LAST_ALTERED LAST_EXECUTED CREATION_TIME LAST_UPDATE_TIME LAST_ACCESS_TIME RECOVER_TIME',
+			) as $type => $columns ) {
 				foreach ( explode( ' ', $columns ) as $typed_column ) {
 					$type_by_column[ $typed_column ] = $type;
 				}
@@ -27682,51 +27581,19 @@ WHERE option_name IN (
 		return $type_by_column[ $column ] ?? 'varchar(512) DEFAULT NULL';
 	}
 
-	private function get_direct_information_schema_relation_sql( string $view, array $options = array() ): ?string {
-		$view = strtolower( $view );
-		if ( null === $this->get_direct_information_schema_relation_columns( $view ) ) {
-			return null;
-		}
-
+	private function get_direct_information_schema_static_literal_relation_sql( string $view ): ?string {
 		if ( 'global_variables' === $view || 'session_variables' === $view ) {
-			$rows      = array();
-			$variables = 'global_variables' === $view ? $this->get_mysql_global_variables() : $this->get_mysql_session_variables();
-			foreach ( $variables as $name => $value ) {
-				$rows[] = array(
-					'VARIABLE_NAME'  => $name,
-					'VARIABLE_VALUE' => $value,
-				);
-			}
-
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'session_variables' ),
-				$rows
-			);
+			return $this->get_direct_information_schema_name_value_literal_relation_sql( 'session_variables', 'global_variables' === $view ? $this->get_mysql_global_variables() : $this->get_mysql_session_variables() );
 		}
 
 		if ( in_array( $view, array( 'global_status', 'session_status', 'server_status' ), true ) ) {
-			$rows = array();
-			foreach ( $this->get_mysql_status_variables() as $name => $value ) {
-				$rows[] = array(
-					'VARIABLE_NAME'  => $name,
-					'VARIABLE_VALUE' => $value,
-				);
-			}
-
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'session_status' ),
-				$rows
-			);
+			return $this->get_direct_information_schema_name_value_literal_relation_sql( 'session_status', $this->get_mysql_status_variables() );
 		}
 
 		if ( 'character_sets' === $view || 'collations' === $view ) {
-			$rows = 'character_sets' === $view
-				? $this->get_mysql_static_character_set_rows()
-				: $this->get_mysql_static_collation_rows();
-
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( $view ),
-				$rows
+			return $this->get_direct_information_schema_view_literal_relation_sql(
+				$view,
+				'character_sets' === $view ? $this->get_mysql_static_character_set_rows() : $this->get_mysql_static_collation_rows()
 			);
 		}
 
@@ -27743,10 +27610,7 @@ WHERE option_name IN (
 				);
 			}
 
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'engines' ),
-				$rows
-			);
+			return $this->get_direct_information_schema_view_literal_relation_sql( 'engines', $rows );
 		}
 
 		if ( 'collation_character_set_applicability' === $view ) {
@@ -27758,38 +27622,56 @@ WHERE option_name IN (
 				);
 			}
 
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'collation_character_set_applicability' ),
-				$rows
+			return $this->get_direct_information_schema_view_literal_relation_sql( 'collation_character_set_applicability', $rows );
+		}
+
+		if ( 'schemata' !== $view || $this->should_use_postgresql_catalog_metadata() ) {
+			return null;
+		}
+
+		$rows = array();
+		foreach ( array( 'information_schema', $this->main_db_name ) as $schema ) {
+			$rows[] = array(
+				'CATALOG_NAME'               => 'def',
+				'SCHEMA_NAME'                => $schema,
+				'DEFAULT_CHARACTER_SET_NAME' => self::DEFAULT_MYSQL_CHARSET,
+				'DEFAULT_COLLATION_NAME'     => self::DEFAULT_MYSQL_COLLATION,
+				'SQL_PATH'                   => null,
+				'DEFAULT_ENCRYPTION'         => 'NO',
 			);
 		}
 
-		if ( 'schemata' === $view ) {
-			if ( $this->should_use_postgresql_catalog_metadata() ) {
-				return $this->get_direct_information_schema_simple_native_relation_sql( 'schemata' );
-			}
+		return $this->get_direct_information_schema_view_literal_relation_sql( 'schemata', $rows );
+	}
 
-			return $this->get_direct_information_schema_literal_relation_sql(
-				$this->get_direct_information_schema_relation_columns( 'schemata' ),
-				array(
-					array(
-						'CATALOG_NAME'               => 'def',
-						'SCHEMA_NAME'                => 'information_schema',
-						'DEFAULT_CHARACTER_SET_NAME' => self::DEFAULT_MYSQL_CHARSET,
-						'DEFAULT_COLLATION_NAME'     => self::DEFAULT_MYSQL_COLLATION,
-						'SQL_PATH'                   => null,
-						'DEFAULT_ENCRYPTION'         => 'NO',
-					),
-					array(
-						'CATALOG_NAME'               => 'def',
-						'SCHEMA_NAME'                => $this->main_db_name,
-						'DEFAULT_CHARACTER_SET_NAME' => self::DEFAULT_MYSQL_CHARSET,
-						'DEFAULT_COLLATION_NAME'     => self::DEFAULT_MYSQL_COLLATION,
-						'SQL_PATH'                   => null,
-						'DEFAULT_ENCRYPTION'         => 'NO',
-					),
-				)
+	private function get_direct_information_schema_name_value_literal_relation_sql( string $view, array $values ): string {
+		$rows = array();
+		foreach ( $values as $name => $value ) {
+			$rows[] = array(
+				'VARIABLE_NAME'  => $name,
+				'VARIABLE_VALUE' => $value,
 			);
+		}
+
+		return $this->get_direct_information_schema_view_literal_relation_sql( $view, $rows );
+	}
+
+	private function get_direct_information_schema_view_literal_relation_sql( string $view, array $rows ): string {
+		return $this->get_direct_information_schema_literal_relation_sql(
+			$this->get_direct_information_schema_relation_columns( $view ),
+			$rows
+		);
+	}
+
+	private function get_direct_information_schema_relation_sql( string $view, array $options = array() ): ?string {
+		$view = strtolower( $view );
+		if ( null === $this->get_direct_information_schema_relation_columns( $view ) ) {
+			return null;
+		}
+
+		$literal_relation_sql = $this->get_direct_information_schema_static_literal_relation_sql( $view );
+		if ( null !== $literal_relation_sql ) {
+			return $literal_relation_sql;
 		}
 
 		if ( 'columns' === $view ) {
@@ -28156,9 +28038,7 @@ WHERE option_name IN (
 		);
 
 		$definitions = array(
-			'files'                        => $tablespace_relation + array(
-				'expressions' => 'FILE_ID=CAST(ts.oid AS bigint); FILE_NAME=' . $tablespace_path_sql . '; FILE_TYPE=' . $this->connection->quote( 'TABLESPACE' ) . '; TABLESPACE_NAME=ts.spcname; TABLE_CATALOG=' . $empty_sql . '; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; STATUS=' . $this->connection->quote( 'NORMAL' ),
-			),
+			'files'                        => $tablespace_relation + array( 'expressions' => 'FILE_ID=CAST(ts.oid AS bigint); FILE_NAME=' . $tablespace_path_sql . '; FILE_TYPE=' . $this->connection->quote( 'TABLESPACE' ) . '; TABLESPACE_NAME=ts.spcname; TABLE_CATALOG=' . $empty_sql . '; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; STATUS=' . $this->connection->quote( 'NORMAL' ) ),
 			'plugins'                      => array(
 				'alias'       => 'ae',
 				'from'        => 'pg_catalog.pg_available_extensions ae',
@@ -28248,21 +28128,11 @@ LEFT JOIN pg_catalog.pg_constraint con
 				'from'  => 'information_schema.columns c',
 				'where' => 'c.table_schema ' . $schema_filter,
 			),
-			'tablespaces_extensions'       => $tablespace_relation + array(
-				'expressions' => 'TABLESPACE_NAME=ts.spcname',
-			),
-			'tablespaces'                  => $tablespace_relation + array(
-				'expressions' => 'TABLESPACE_NAME=ts.spcname; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; TABLESPACE_TYPE=' . $this->connection->quote( 'General' ) . '; TABLESPACE_COMMENT=COALESCE(pg_catalog.obj_description(ts.oid, \'pg_tablespace\'), \'\')',
-			),
-			'innodb_tablespaces'           => $tablespace_relation + array(
-				'expressions' => 'SPACE=CAST(ts.oid AS bigint); NAME=ts.spcname; FLAG=0; ROW_FORMAT=' . $this->connection->quote( 'Dynamic' ) . '; PAGE_SIZE=16384; ZIP_PAGE_SIZE=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ) . '; AUTOEXTEND_SIZE=0; SPACE_VERSION=1; ENCRYPTION=' . $this->connection->quote( 'N' ) . '; STATE=' . $this->connection->quote( 'normal' ),
-			),
-			'innodb_tablespaces_brief'     => $tablespace_relation + array(
-				'expressions' => 'SPACE=CAST(ts.oid AS bigint); NAME=ts.spcname; PATH=' . $tablespace_path_sql . '; FLAG=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ),
-			),
-			'innodb_datafiles'             => $tablespace_relation + array(
-				'expressions' => 'SPACE=CAST(ts.oid AS bigint); PATH=' . $tablespace_path_sql,
-			),
+			'tablespaces_extensions'       => $tablespace_relation + array( 'expressions' => 'TABLESPACE_NAME=ts.spcname' ),
+			'tablespaces'                  => $tablespace_relation + array( 'expressions' => 'TABLESPACE_NAME=ts.spcname; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; TABLESPACE_TYPE=' . $this->connection->quote( 'General' ) . '; TABLESPACE_COMMENT=COALESCE(pg_catalog.obj_description(ts.oid, \'pg_tablespace\'), \'\')' ),
+			'innodb_tablespaces'           => $tablespace_relation + array( 'expressions' => 'SPACE=CAST(ts.oid AS bigint); NAME=ts.spcname; FLAG=0; ROW_FORMAT=' . $this->connection->quote( 'Dynamic' ) . '; PAGE_SIZE=16384; ZIP_PAGE_SIZE=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ) . '; AUTOEXTEND_SIZE=0; SPACE_VERSION=1; ENCRYPTION=' . $this->connection->quote( 'N' ) . '; STATE=' . $this->connection->quote( 'normal' ) ),
+			'innodb_tablespaces_brief'     => $tablespace_relation + array( 'expressions' => 'SPACE=CAST(ts.oid AS bigint); NAME=ts.spcname; PATH=' . $tablespace_path_sql . '; FLAG=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ) ),
+			'innodb_datafiles'             => $tablespace_relation + array( 'expressions' => 'SPACE=CAST(ts.oid AS bigint); PATH=' . $tablespace_path_sql ),
 			'user_privileges'              => array(
 				'alias'       => 'acl',
 				'from'        => 'pg_catalog.pg_database d
@@ -28461,6 +28331,20 @@ FROM ' . $definition['from'];
 
 		$alias      = $definition['alias'];
 		$column_sql = $alias . '.' . strtolower( $column );
+		foreach (
+			array(
+				self::DEFAULT_MYSQL_CHARSET   => 'CHARACTER_SET_CLIENT',
+				self::DEFAULT_MYSQL_COLLATION => 'COLLATION_CONNECTION DATABASE_COLLATION',
+				''                            => 'DEFINER ROUTINE_COMMENT',
+				'%'                           => 'GRANTOR_HOST GRANTEE_HOST HOST ROLE_HOST',
+				'NO'                          => 'IS_DEFAULT IS_MANDATORY',
+			) as $value => $columns
+		) {
+			if ( in_array( $column, explode( ' ', $columns ), true ) ) {
+				return $this->connection->quote( $value );
+			}
+		}
+
 		if ( 'CATALOG_NAME' === $column || '_CATALOG' === substr( $column, -8 ) ) {
 			return $this->connection->quote( 'def' );
 		}
@@ -28469,32 +28353,12 @@ FROM ' . $definition['from'];
 			return $this->get_direct_information_schema_display_schema_sql( $column_sql );
 		}
 
-		if ( in_array( $column, array( 'CHARACTER_SET_CLIENT' ), true ) ) {
-			return $this->connection->quote( self::DEFAULT_MYSQL_CHARSET );
-		}
-
-		if ( in_array( $column, array( 'COLLATION_CONNECTION', 'DATABASE_COLLATION' ), true ) ) {
-			return $this->connection->quote( self::DEFAULT_MYSQL_COLLATION );
-		}
-
 		if ( 'SQL_MODE' === $column ) {
 			return $this->connection->quote( $this->get_sql_mode() );
 		}
 
-		if ( in_array( $column, array( 'DEFINER', 'ROUTINE_COMMENT' ), true ) ) {
-			return $this->connection->quote( '' );
-		}
-
 		if ( in_array( $column, array( 'ENGINE_ATTRIBUTE', 'SECONDARY_ENGINE_ATTRIBUTE', 'OPTIONS' ), true ) ) {
 			return 'NULL';
-		}
-
-		if ( in_array( $column, array( 'GRANTOR_HOST', 'GRANTEE_HOST', 'HOST', 'ROLE_HOST' ), true ) ) {
-			return $this->connection->quote( '%' );
-		}
-
-		if ( in_array( $column, array( 'IS_DEFAULT', 'IS_MANDATORY' ), true ) ) {
-			return $this->connection->quote( 'NO' );
 		}
 
 		return $column_sql;
