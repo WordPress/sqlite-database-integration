@@ -23389,7 +23389,12 @@ show_index_rows AS (
 		%6$s
 	FROM show_index_rows',
 			$index_metadata_table,
-			$this->get_show_index_postgresql_index_columns_cte_sql(),
+			$this->get_postgresql_catalog_index_columns_cte_sql(
+				'',
+				'INNER JOIN requested_table rt
+		ON rt.table_schema = n.nspname
+		AND rt.table_name = t.relname'
+			),
 			$this->get_postgresql_prefix_index_expression_column_name_sql( 'expression' ),
 			$this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' ),
 			$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
@@ -23398,14 +23403,28 @@ show_index_rows AS (
 	}
 
 	/**
-	 * Get PostgreSQL catalog index-column rows for SHOW INDEX-family statements.
+	 * Get PostgreSQL catalog index-column rows.
 	 *
+	 * @param string   $extra_select_sql       Additional SELECT columns.
+	 * @param string   $extra_join_sql         Additional JOIN SQL.
+	 * @param string[] $extra_where_conditions Additional WHERE conditions.
 	 * @return string SQL common table expression.
 	 */
-	private function get_show_index_postgresql_index_columns_cte_sql(): string {
+	private function get_postgresql_catalog_index_columns_cte_sql( string $extra_select_sql = '', string $extra_join_sql = '', array $extra_where_conditions = array() ): string {
+		$select_sql       = '' === $extra_select_sql ? '' : "\t\t" . $extra_select_sql . ",\n";
+		$join_sql         = '' === $extra_join_sql ? '' : "\n" . $extra_join_sql;
+		$where_conditions = array_merge(
+			$extra_where_conditions,
+			array(
+				'k.ordinality <= i.indnkeyatts',
+				'i.indisvalid',
+				'i.indislive',
+			)
+		);
+
 		return 'index_columns AS (
 	SELECT
-		t.relname AS table_name,
+' . $select_sql . '		t.relname AS table_name,
 		CAST(idx.oid AS bigint) AS postgresql_index_oid,
 		idx.relname AS postgresql_index_name,
 		i.indisunique,
@@ -23433,13 +23452,8 @@ show_index_rows AS (
 	CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
 	LEFT JOIN pg_catalog.pg_attribute a
 		ON a.attrelid = t.oid
-		AND a.attnum = k.attnum
-	INNER JOIN requested_table rt
-		ON rt.table_schema = n.nspname
-		AND rt.table_name = t.relname
-	WHERE k.ordinality <= i.indnkeyatts
-		AND i.indisvalid
-		AND i.indislive
+		AND a.attnum = k.attnum' . $join_sql . '
+	WHERE ' . implode( "\n\t\tAND ", $where_conditions ) . '
 )';
 	}
 
@@ -23491,7 +23505,12 @@ show_index_rows AS (
 	SELECT
 		%7$s
 	FROM show_index_rows',
-			$this->get_show_index_postgresql_index_columns_cte_sql(),
+			$this->get_postgresql_catalog_index_columns_cte_sql(
+				'',
+				'INNER JOIN requested_table rt
+		ON rt.table_schema = n.nspname
+		AND rt.table_name = t.relname'
+			),
 			$column_name_sql,
 			$index_type_sql,
 			$sub_part_sql,
@@ -43951,44 +43970,7 @@ FROM %2$s im',
 		$sub_part_sql    = $this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' );
 
 		return sprintf(
-			'WITH index_columns AS (
-	SELECT
-		n.nspname AS table_schema,
-		t.relname AS table_name,
-		idx.relname AS postgresql_index_name,
-		i.indisunique,
-		i.indisprimary,
-		am.amname AS access_method,
-		COALESCE(pg_catalog.obj_description(idx.oid, \'pg_class\'), \'\') AS index_comment,
-		k.ordinality AS seq_in_index,
-		k.attnum,
-		a.attname AS column_name,
-		a.attnotnull,
-		CASE
-			WHEN 0 = k.attnum THEN pg_catalog.pg_get_indexdef(i.indexrelid, CAST(k.ordinality AS integer), true)
-			ELSE NULL
-		END AS expression,
-		pg_catalog.pg_index_column_has_property(i.indexrelid, CAST(k.ordinality AS integer), \'desc\') AS is_desc
-	FROM pg_catalog.pg_class t
-	INNER JOIN pg_catalog.pg_namespace n
-		ON n.oid = t.relnamespace
-	INNER JOIN pg_catalog.pg_index i
-		ON i.indrelid = t.oid
-	INNER JOIN pg_catalog.pg_class idx
-		ON idx.oid = i.indexrelid
-	INNER JOIN pg_catalog.pg_am am
-		ON am.oid = idx.relam
-	CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-	LEFT JOIN pg_catalog.pg_attribute a
-		ON a.attrelid = t.oid
-		AND a.attnum = k.attnum
-	WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-		AND t.relname NOT IN (%2$s)
-		AND t.relkind IN (\'r\', \'p\')
-		AND k.ordinality <= i.indnkeyatts
-		AND i.indisvalid
-		AND i.indislive
-)
+			'%8$s
 SELECT
 	\'def\' AS "TABLE_CATALOG",
 	%1$s AS "TABLE_SCHEMA",
@@ -44022,7 +44004,16 @@ FROM index_columns',
 			$index_type_sql,
 			$sub_part_sql,
 			$this->get_postgresql_catalog_index_comment_sql( 'index_comment' ),
-			$this->get_postgresql_non_prefix_index_expression_sql( 'expression' )
+			$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
+			$this->get_postgresql_catalog_index_columns_cte_sql(
+				'n.nspname AS table_schema',
+				'',
+				array(
+					'n.nspname NOT IN (\'information_schema\', \'pg_catalog\')',
+					't.relname NOT IN (%2$s)',
+					't.relkind IN (\'r\', \'p\')',
+				)
+			)
 		);
 	}
 
