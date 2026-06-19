@@ -5670,7 +5670,51 @@ $wp_mysql_on_update$',
 	 */
 	private function apply_mysql_column_default_metadata( string $table_schema, string $table_name, string $column_name, ?string $column_default ): void {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->clear_postgresql_catalog_column_default_comment( $table_schema, $table_name, $column_name );
+			$sql    = 'SELECT pg_catalog.col_description(c.oid, a.attnum) AS column_comment
+				FROM pg_catalog.pg_class c
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = c.relnamespace
+				INNER JOIN pg_catalog.pg_attribute a
+					ON a.attrelid = c.oid
+				WHERE n.nspname = ?
+					AND c.relname = ?
+					AND c.relkind IN (\'r\', \'p\', \'v\', \'m\')
+					AND a.attname = ?
+					AND a.attnum > 0
+				LIMIT 1';
+			$params = array( $table_schema, $table_name, $column_name );
+
+			try {
+				$stmt = $this->connection->query( $sql, $params );
+			} catch ( PDOException $e ) {
+				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+				return;
+			}
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => $params,
+			);
+
+			$current_comment = $stmt->fetchColumn();
+			if ( false !== $current_comment && null !== $current_comment ) {
+				$lines = explode( "\n", (string) $current_comment );
+				foreach ( array( 0, 1 ) as $offset ) {
+					if (
+						isset( $lines[ $offset ] )
+						&& 0 === strpos( $lines[ $offset ], self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX )
+					) {
+						unset( $lines[ $offset ] );
+						break;
+					}
+				}
+
+				$clean_comment = implode( "\n", array_values( $lines ) );
+				if ( $clean_comment !== $current_comment ) {
+					$this->sync_postgresql_catalog_column_comment( $table_schema, $table_name, $column_name, $clean_comment );
+				}
+			}
+
 			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 			return;
 		}
@@ -5684,63 +5728,6 @@ $wp_mysql_on_update$',
 			array( $column_default, $table_schema, $table_name, $column_name )
 		);
 		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-	}
-
-	/**
-	 * Clear generated DEFAULT metadata from a PostgreSQL column comment.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 */
-	private function clear_postgresql_catalog_column_default_comment( string $table_schema, string $table_name, string $column_name ): void {
-		$sql    = 'SELECT pg_catalog.col_description(c.oid, a.attnum) AS column_comment
-			FROM pg_catalog.pg_class c
-			INNER JOIN pg_catalog.pg_namespace n
-				ON n.oid = c.relnamespace
-			INNER JOIN pg_catalog.pg_attribute a
-				ON a.attrelid = c.oid
-			WHERE n.nspname = ?
-				AND c.relname = ?
-				AND c.relkind IN (\'r\', \'p\', \'v\', \'m\')
-				AND a.attname = ?
-				AND a.attnum > 0
-			LIMIT 1';
-		$params = array( $table_schema, $table_name, $column_name );
-
-		try {
-			$stmt = $this->connection->query( $sql, $params );
-		} catch ( PDOException $e ) {
-			return;
-		}
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		$current_comment = $stmt->fetchColumn();
-		if ( false === $current_comment || null === $current_comment ) {
-			return;
-		}
-
-		$lines = explode( "\n", (string) $current_comment );
-		foreach ( array( 0, 1 ) as $offset ) {
-			if (
-				isset( $lines[ $offset ] )
-				&& 0 === strpos( $lines[ $offset ], self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX )
-			) {
-				unset( $lines[ $offset ] );
-				break;
-			}
-		}
-
-		$clean_comment = implode( "\n", array_values( $lines ) );
-		if ( $clean_comment === $current_comment ) {
-			return;
-		}
-
-		$this->sync_postgresql_catalog_column_comment( $table_schema, $table_name, $column_name, $clean_comment );
 	}
 
 	/**
