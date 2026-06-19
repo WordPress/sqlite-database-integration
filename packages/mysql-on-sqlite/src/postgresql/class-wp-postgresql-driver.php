@@ -38050,6 +38050,100 @@ FROM pg_catalog.pg_tablespace ts';
 FROM pg_catalog.pg_tablespace ts';
 		}
 
+		if ( 'columns_extensions' === $view ) {
+			return sprintf(
+				'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	c.table_name AS "TABLE_NAME",
+	c.column_name AS "COLUMN_NAME",
+	NULL AS "ENGINE_ATTRIBUTE",
+	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
+FROM information_schema.columns c
+WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(c.table_schema, 3) <> \'pg_\'
+	AND c.table_name NOT IN (%2$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
+		if ( 'table_constraints_extensions' === $view ) {
+			return sprintf(
+				'SELECT
+	\'def\' AS "CONSTRAINT_CATALOG",
+	%1$s AS "CONSTRAINT_SCHEMA",
+	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END AS "CONSTRAINT_NAME",
+	%1$s AS "TABLE_SCHEMA",
+	tc.table_name AS "TABLE_NAME",
+	NULL AS "ENGINE_ATTRIBUTE",
+	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
+FROM information_schema.table_constraints tc
+WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(tc.table_schema, 3) <> \'pg_\'
+	AND tc.table_name NOT IN (%2$s)
+	AND tc.constraint_type IN (\'PRIMARY KEY\', \'UNIQUE\', \'FOREIGN KEY\', \'CHECK\')',
+				$this->get_direct_information_schema_display_schema_sql( 'tc.table_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
+		if ( 'schemata_extensions' === $view ) {
+			return sprintf(
+				'SELECT
+	\'def\' AS "CATALOG_NAME",
+	%1$s AS "SCHEMA_NAME",
+	NULL AS "OPTIONS"
+FROM information_schema.schemata s
+WHERE s.schema_name = \'information_schema\'
+	OR LEFT(s.schema_name, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 's.schema_name' )
+			);
+		}
+
+		if ( 'view_table_usage' === $view ) {
+			return sprintf(
+				'SELECT
+	\'def\' AS "VIEW_CATALOG",
+	%1$s AS "VIEW_SCHEMA",
+	vtu.view_name AS "VIEW_NAME",
+	\'def\' AS "TABLE_CATALOG",
+	%2$s AS "TABLE_SCHEMA",
+	vtu.table_name AS "TABLE_NAME"
+FROM information_schema.view_table_usage vtu
+WHERE vtu.view_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(vtu.view_schema, 3) <> \'pg_\'
+	AND vtu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(vtu.table_schema, 3) <> \'pg_\'
+	AND vtu.view_name NOT IN (%3$s)
+	AND vtu.table_name NOT IN (%3$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'vtu.view_schema' ),
+				$this->get_direct_information_schema_display_schema_sql( 'vtu.table_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
+		if ( 'view_routine_usage' === $view ) {
+			return sprintf(
+				'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	vru.table_name AS "TABLE_NAME",
+	\'def\' AS "SPECIFIC_CATALOG",
+	%2$s AS "SPECIFIC_SCHEMA",
+	vru.specific_name AS "SPECIFIC_NAME"
+FROM information_schema.view_routine_usage vru
+WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(vru.table_schema, 3) <> \'pg_\'
+	AND vru.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(vru.specific_schema, 3) <> \'pg_\'
+	AND vru.table_name NOT IN (%3$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'vru.table_schema' ),
+				$this->get_direct_information_schema_display_schema_sql( 'vru.specific_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+		}
+
 		$method = 'get_direct_information_schema_' . $view . '_relation_sql';
 		return method_exists( $this, $method ) ? $this->$method() : null;
 	}
@@ -39744,125 +39838,6 @@ LEFT JOIN information_schema.routines r
 WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND LEFT(p.specific_schema, 3) <> \'pg_\'',
 			$this->get_direct_information_schema_display_schema_sql( 'p.specific_schema' )
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.COLUMNS_EXTENSIONS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_columns_extensions_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	c.table_name AS "TABLE_NAME",
-	c.column_name AS "COLUMN_NAME",
-	NULL AS "ENGINE_ATTRIBUTE",
-	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
-FROM information_schema.columns c
-WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(c.table_schema, 3) <> \'pg_\'
-	AND c.table_name NOT IN (%2$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.TABLE_CONSTRAINTS_EXTENSIONS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_table_constraints_extensions_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "CONSTRAINT_CATALOG",
-	%1$s AS "CONSTRAINT_SCHEMA",
-	CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END AS "CONSTRAINT_NAME",
-	%1$s AS "TABLE_SCHEMA",
-	tc.table_name AS "TABLE_NAME",
-	NULL AS "ENGINE_ATTRIBUTE",
-	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
-FROM information_schema.table_constraints tc
-WHERE tc.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(tc.table_schema, 3) <> \'pg_\'
-	AND tc.table_name NOT IN (%2$s)
-	AND tc.constraint_type IN (\'PRIMARY KEY\', \'UNIQUE\', \'FOREIGN KEY\', \'CHECK\')',
-			$this->get_direct_information_schema_display_schema_sql( 'tc.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.SCHEMATA_EXTENSIONS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_schemata_extensions_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "CATALOG_NAME",
-	%1$s AS "SCHEMA_NAME",
-	NULL AS "OPTIONS"
-FROM information_schema.schemata s
-WHERE s.schema_name = \'information_schema\'
-	OR LEFT(s.schema_name, 3) <> \'pg_\'',
-			$this->get_direct_information_schema_display_schema_sql( 's.schema_name' )
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.VIEW_TABLE_USAGE relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_view_table_usage_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "VIEW_CATALOG",
-	%1$s AS "VIEW_SCHEMA",
-	vtu.view_name AS "VIEW_NAME",
-	\'def\' AS "TABLE_CATALOG",
-	%2$s AS "TABLE_SCHEMA",
-	vtu.table_name AS "TABLE_NAME"
-FROM information_schema.view_table_usage vtu
-WHERE vtu.view_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vtu.view_schema, 3) <> \'pg_\'
-	AND vtu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vtu.table_schema, 3) <> \'pg_\'
-	AND vtu.view_name NOT IN (%3$s)
-	AND vtu.table_name NOT IN (%3$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'vtu.view_schema' ),
-			$this->get_direct_information_schema_display_schema_sql( 'vtu.table_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.VIEW_ROUTINE_USAGE relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_view_routine_usage_relation_sql(): string {
-		return sprintf(
-			'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	vru.table_name AS "TABLE_NAME",
-	\'def\' AS "SPECIFIC_CATALOG",
-	%2$s AS "SPECIFIC_SCHEMA",
-	vru.specific_name AS "SPECIFIC_NAME"
-FROM information_schema.view_routine_usage vru
-WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vru.table_schema, 3) <> \'pg_\'
-	AND vru.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vru.specific_schema, 3) <> \'pg_\'
-	AND vru.table_name NOT IN (%3$s)',
-			$this->get_direct_information_schema_display_schema_sql( 'vru.table_schema' ),
-			$this->get_direct_information_schema_display_schema_sql( 'vru.specific_schema' ),
-			$this->get_direct_information_schema_hidden_table_list_sql()
 		);
 	}
 
