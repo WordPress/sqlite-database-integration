@@ -1005,11 +1005,31 @@ class WP_PostgreSQL_Driver {
 					);
 				}
 			} else {
-				$this->store_mysql_create_table_select_metadata(
-					$metadata_schema,
-					$create_table_select_query['table'],
-					$create_table_select_query['table_comment']
-				);
+				if ( $this->should_use_postgresql_catalog_metadata() ) {
+					$this->clear_mysql_metadata_cache_for_table( $metadata_schema, $create_table_select_query['table'] );
+					if ( '' !== $create_table_select_query['table_comment'] ) {
+						$this->sync_postgresql_catalog_table_comment( $metadata_schema, $create_table_select_query['table'], $create_table_select_query['table_comment'] );
+					}
+				} else {
+					$this->ensure_mysql_schema_metadata_tables();
+					$this->delete_mysql_schema_metadata_for_tables( array( $create_table_select_query['table'] ), $metadata_schema );
+
+					if ( '' !== $create_table_select_query['table_comment'] ) {
+						$this->insert_mysql_table_metadata(
+							$metadata_schema,
+							$create_table_select_query['table'],
+							array(
+								'comment' => $create_table_select_query['table_comment'],
+							)
+						);
+					}
+
+					foreach ( $this->get_mysql_create_table_select_column_metadata( $metadata_schema, $create_table_select_query['table'] ) as $column ) {
+						$this->insert_mysql_column_metadata( $metadata_schema, $create_table_select_query['table'], $column );
+					}
+
+					$this->clear_mysql_metadata_cache_for_table( $metadata_schema, $create_table_select_query['table'] );
+				}
 			}
 			return $result;
 		}
@@ -7870,41 +7890,6 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		return $statements;
-	}
-
-	/**
-	 * Store MySQL-facing column metadata for a CREATE TABLE ... SELECT result.
-	 *
-	 * @param string $table_schema Backend schema name.
-	 * @param string $table_name   Table name.
-	 */
-	private function store_mysql_create_table_select_metadata( string $table_schema, string $table_name, string $table_comment = '' ): void {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			if ( '' !== $table_comment ) {
-				$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment );
-			}
-			return;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->delete_mysql_schema_metadata_for_tables( array( $table_name ), $table_schema );
-
-		if ( '' !== $table_comment ) {
-			$this->insert_mysql_table_metadata(
-				$table_schema,
-				$table_name,
-				array(
-					'comment' => $table_comment,
-				)
-			);
-		}
-
-		foreach ( $this->get_mysql_create_table_select_column_metadata( $table_schema, $table_name ) as $column ) {
-			$this->insert_mysql_column_metadata( $table_schema, $table_name, $column );
-		}
-
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
 	}
 
 	/**
