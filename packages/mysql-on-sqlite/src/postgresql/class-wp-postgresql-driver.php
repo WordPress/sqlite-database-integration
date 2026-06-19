@@ -40614,9 +40614,50 @@ END',
 		if (
 			null === $where_position
 			|| ! $this->is_mysql_distinct_term_taxonomy_from_shape( $tokens, $from_position, $where_position )
-			|| ! $this->is_mysql_term_cache_priming_where_clause( $tokens, $where_position + 1, $statement_end )
 		) {
 			return null;
+		}
+
+		$where_bounds    = $this->normalize_mysql_expression_bounds( $tokens, $where_position + 1, $statement_end );
+		$where_reference = $this->parse_mysql_column_reference( $tokens, $where_bounds['start'], $where_bounds['end'] );
+		if (
+			null === $where_reference
+			|| $where_reference['end'] + 3 > $where_bounds['end']
+			|| 't' !== strtolower( (string) $where_reference['qualifier'] )
+			|| 'term_id' !== strtolower( $where_reference['column'] )
+			|| ! isset( $tokens[ $where_reference['end'] ], $tokens[ $where_reference['end'] + 1 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $where_reference['end'] ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $where_reference['end'] + 1 ]->id
+		) {
+			return null;
+		}
+
+		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $where_reference['end'] + 1, $where_bounds['end'] );
+		if ( $after_close !== $where_bounds['end'] ) {
+			return null;
+		}
+
+		$items = $this->split_top_level_mysql_arguments( $tokens, $where_reference['end'] + 2, $where_bounds['end'] - 1 );
+		if ( null === $items || empty( $items ) ) {
+			return null;
+		}
+
+		foreach ( $items as $item ) {
+			if (
+				$item['start'] + 1 !== $item['end']
+				|| ! isset( $tokens[ $item['start'] ] )
+				|| ! in_array(
+					$tokens[ $item['start'] ]->id,
+					array(
+						WP_MySQL_Lexer::INT_NUMBER,
+						WP_MySQL_Lexer::LONG_NUMBER,
+						WP_MySQL_Lexer::ULONGLONG_NUMBER,
+					),
+					true
+				)
+			) {
+				return null;
+			}
 		}
 
 		return $this->translate_mysql_token_sequence_to_postgresql( $tokens, 0, $statement_end ) . ' ORDER BY tt.term_taxonomy_id ASC';
@@ -40784,63 +40825,6 @@ END',
 			&& isset( $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
 			&& WP_MySQL_Lexer::MULT_OPERATOR === $tokens[ $start + 2 ]->id;
-	}
-
-	/**
-	 * Check whether a WHERE clause is t.term_id IN (integer list).
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int             $start  First WHERE predicate token.
-	 * @param int             $end    Final WHERE predicate token, exclusive.
-	 * @return bool Whether the WHERE clause matches term cache priming.
-	 */
-	private function is_mysql_term_cache_priming_where_clause( array $tokens, int $start, int $end ): bool {
-		$bounds = $this->normalize_mysql_expression_bounds( $tokens, $start, $end );
-		$start  = $bounds['start'];
-		$end    = $bounds['end'];
-
-		$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
-		if (
-			null === $reference
-			|| $reference['end'] + 3 > $end
-			|| 't' !== strtolower( (string) $reference['qualifier'] )
-			|| 'term_id' !== strtolower( $reference['column'] )
-			|| ! isset( $tokens[ $reference['end'] ], $tokens[ $reference['end'] + 1 ] )
-			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $reference['end'] ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $reference['end'] + 1 ]->id
-		) {
-			return false;
-		}
-
-		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $reference['end'] + 1, $end );
-		if ( $after_close !== $end ) {
-			return false;
-		}
-
-		$items = $this->split_top_level_mysql_arguments( $tokens, $reference['end'] + 2, $end - 1 );
-		if ( null === $items || empty( $items ) ) {
-			return false;
-		}
-
-		foreach ( $items as $item ) {
-			if (
-				$item['start'] + 1 !== $item['end']
-				|| ! isset( $tokens[ $item['start'] ] )
-				|| ! in_array(
-					$tokens[ $item['start'] ]->id,
-					array(
-						WP_MySQL_Lexer::INT_NUMBER,
-						WP_MySQL_Lexer::LONG_NUMBER,
-						WP_MySQL_Lexer::ULONGLONG_NUMBER,
-					),
-					true
-				)
-			) {
-				return false;
-			}
-		}
-
-		return true;
 	}
 
 	/**
