@@ -23476,13 +23476,65 @@ metadata_index_rows AS (
 		ON rt.table_schema = im.table_schema
 		AND rt.table_name = im.table_name
 ),
-index_columns AS (
-		SELECT
-			t.relname AS table_name,
-			CAST(idx.oid AS bigint) AS postgresql_index_oid,
-			idx.relname AS postgresql_index_name,
-			i.indisunique,
-			i.indisprimary,
+%2$s,
+catalog_index_rows AS (
+	SELECT
+		table_name AS "Table",
+		CASE WHEN indisunique THEN \'0\' ELSE \'1\' END AS "Non_unique",
+	CASE
+		WHEN indisprimary THEN \'PRIMARY\'
+			WHEN postgresql_index_name LIKE table_name || \'__%%\' THEN SUBSTRING(postgresql_index_name FROM CHAR_LENGTH(table_name || \'__\') + 1)
+		ELSE postgresql_index_name
+	END AS "Key_name",
+	CAST(seq_in_index AS text) AS "Seq_in_index",
+	COALESCE(column_name, %3$s) AS "Column_name",
+	CASE WHEN is_desc THEN \'D\' ELSE \'A\' END AS "Collation",
+	\'0\' AS "Cardinality",
+	%4$s AS "Sub_part",
+	NULL AS "Packed",
+	CASE
+		WHEN 0 = attnum OR attnotnull THEN \'\'
+		ELSE \'YES\'
+	END AS "Null",
+	UPPER(access_method) AS "Index_type",
+	\'\' AS "Comment",
+	index_comment AS "Index_comment",
+		\'YES\' AS "Visible",
+		%5$s AS "Expression",
+		postgresql_index_oid
+	FROM index_columns
+	WHERE NOT (SELECT has_metadata FROM metadata_exists)
+),
+show_index_rows AS (
+	SELECT * FROM metadata_index_rows
+	UNION ALL
+	SELECT * FROM catalog_index_rows
+	)
+	SELECT
+		%6$s
+	FROM show_index_rows',
+			$index_metadata_table,
+			$this->get_show_index_postgresql_index_columns_cte_sql(),
+			$this->get_postgresql_prefix_index_expression_column_name_sql( 'expression' ),
+			$this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' ),
+			$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
+			$this->get_show_index_select_column_sql()
+		);
+	}
+
+	/**
+	 * Get PostgreSQL catalog index-column rows for SHOW INDEX-family statements.
+	 *
+	 * @return string SQL common table expression.
+	 */
+	private function get_show_index_postgresql_index_columns_cte_sql(): string {
+		return 'index_columns AS (
+	SELECT
+		t.relname AS table_name,
+		CAST(idx.oid AS bigint) AS postgresql_index_oid,
+		idx.relname AS postgresql_index_name,
+		i.indisunique,
+		i.indisprimary,
 		am.amname AS access_method,
 		COALESCE(pg_catalog.obj_description(idx.oid, \'pg_class\'), \'\') AS index_comment,
 		k.ordinality AS seq_in_index,
@@ -23503,72 +23555,17 @@ index_columns AS (
 		ON idx.oid = i.indexrelid
 	INNER JOIN pg_catalog.pg_am am
 		ON am.oid = idx.relam
-		CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-		LEFT JOIN pg_catalog.pg_attribute a
-			ON a.attrelid = t.oid
-			AND a.attnum = k.attnum
-		INNER JOIN requested_table rt
-			ON rt.table_schema = n.nspname
-			AND rt.table_name = t.relname
-		WHERE k.ordinality <= i.indnkeyatts
-			AND i.indisvalid
-			AND i.indislive
-),
-catalog_index_rows AS (
-	SELECT
-		table_name AS "Table",
-		CASE WHEN indisunique THEN \'0\' ELSE \'1\' END AS "Non_unique",
-	CASE
-		WHEN indisprimary THEN \'PRIMARY\'
-			WHEN postgresql_index_name LIKE table_name || \'__%%\' THEN SUBSTRING(postgresql_index_name FROM CHAR_LENGTH(table_name || \'__\') + 1)
-		ELSE postgresql_index_name
-	END AS "Key_name",
-	CAST(seq_in_index AS text) AS "Seq_in_index",
-	COALESCE(column_name, %2$s) AS "Column_name",
-	CASE WHEN is_desc THEN \'D\' ELSE \'A\' END AS "Collation",
-	\'0\' AS "Cardinality",
-	%3$s AS "Sub_part",
-	NULL AS "Packed",
-	CASE
-		WHEN 0 = attnum OR attnotnull THEN \'\'
-		ELSE \'YES\'
-	END AS "Null",
-	UPPER(access_method) AS "Index_type",
-	\'\' AS "Comment",
-	index_comment AS "Index_comment",
-		\'YES\' AS "Visible",
-		%4$s AS "Expression",
-		postgresql_index_oid
-	FROM index_columns
-	WHERE NOT (SELECT has_metadata FROM metadata_exists)
-),
-show_index_rows AS (
-	SELECT * FROM metadata_index_rows
-	UNION ALL
-	SELECT * FROM catalog_index_rows
-	)
-	SELECT
-		"Table",
-	"Non_unique",
-	"Key_name",
-	"Seq_in_index",
-	"Column_name",
-	"Collation",
-	"Cardinality",
-	"Sub_part",
-	"Packed",
-	"Null",
-	"Index_type",
-	"Comment",
-	"Index_comment",
-		"Visible",
-		"Expression"
-	FROM show_index_rows',
-			$index_metadata_table,
-			$this->get_postgresql_prefix_index_expression_column_name_sql( 'expression' ),
-			$this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' ),
-			$this->get_postgresql_non_prefix_index_expression_sql( 'expression' )
-		);
+	CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
+	LEFT JOIN pg_catalog.pg_attribute a
+		ON a.attrelid = t.oid
+		AND a.attnum = k.attnum
+	INNER JOIN requested_table rt
+		ON rt.table_schema = n.nspname
+		AND rt.table_name = t.relname
+	WHERE k.ordinality <= i.indnkeyatts
+		AND i.indisvalid
+		AND i.indislive
+)';
 	}
 
 	/**
@@ -23588,44 +23585,7 @@ show_index_rows AS (
 			'WITH requested_table AS (
 	SELECT ? AS table_schema, ? AS table_name
 ),
-index_columns AS (
-		SELECT
-			t.relname AS table_name,
-			CAST(idx.oid AS bigint) AS postgresql_index_oid,
-			idx.relname AS postgresql_index_name,
-			i.indisunique,
-			i.indisprimary,
-		am.amname AS access_method,
-		COALESCE(pg_catalog.obj_description(idx.oid, \'pg_class\'), \'\') AS index_comment,
-		k.ordinality AS seq_in_index,
-		k.attnum,
-		a.attname AS column_name,
-		a.attnotnull,
-		CASE
-			WHEN 0 = k.attnum THEN pg_catalog.pg_get_indexdef(i.indexrelid, CAST(k.ordinality AS integer), true)
-			ELSE NULL
-		END AS expression,
-		pg_catalog.pg_index_column_has_property(i.indexrelid, CAST(k.ordinality AS integer), \'desc\') AS is_desc
-	FROM pg_catalog.pg_class t
-	INNER JOIN pg_catalog.pg_namespace n
-		ON n.oid = t.relnamespace
-	INNER JOIN pg_catalog.pg_index i
-		ON i.indrelid = t.oid
-	INNER JOIN pg_catalog.pg_class idx
-		ON idx.oid = i.indexrelid
-	INNER JOIN pg_catalog.pg_am am
-		ON am.oid = idx.relam
-		CROSS JOIN LATERAL pg_catalog.unnest(i.indkey) WITH ORDINALITY AS k(attnum, ordinality)
-		LEFT JOIN pg_catalog.pg_attribute a
-			ON a.attrelid = t.oid
-			AND a.attnum = k.attnum
-		INNER JOIN requested_table rt
-			ON rt.table_schema = n.nspname
-			AND rt.table_name = t.relname
-		WHERE k.ordinality <= i.indnkeyatts
-			AND i.indisvalid
-			AND i.indislive
-),
+%1$s,
 show_index_rows AS (
 	SELECT
 		table_name AS "Table",
@@ -23636,46 +23596,43 @@ show_index_rows AS (
 		ELSE postgresql_index_name
 	END AS "Key_name",
 	CAST(seq_in_index AS text) AS "Seq_in_index",
-	COALESCE(column_name, %1$s) AS "Column_name",
-	CASE WHEN %2$s = \'FULLTEXT\' THEN NULL ELSE CASE WHEN is_desc THEN \'D\' ELSE \'A\' END END AS "Collation",
+	COALESCE(column_name, %2$s) AS "Column_name",
+	CASE WHEN %3$s = \'FULLTEXT\' THEN NULL ELSE CASE WHEN is_desc THEN \'D\' ELSE \'A\' END END AS "Collation",
 	\'0\' AS "Cardinality",
-	CASE WHEN %2$s = \'FULLTEXT\' THEN NULL ELSE %3$s END AS "Sub_part",
+	CASE WHEN %3$s = \'FULLTEXT\' THEN NULL ELSE %4$s END AS "Sub_part",
 	NULL AS "Packed",
 	CASE
 		WHEN 0 = attnum OR attnotnull THEN \'\'
 		ELSE \'YES\'
 	END AS "Null",
-	%2$s AS "Index_type",
+	%3$s AS "Index_type",
 	\'\' AS "Comment",
-	%4$s AS "Index_comment",
+	%5$s AS "Index_comment",
 		\'YES\' AS "Visible",
-		%5$s AS "Expression",
+		%6$s AS "Expression",
 		postgresql_index_oid
 	FROM index_columns
 )
 	SELECT
-		"Table",
-	"Non_unique",
-	"Key_name",
-	"Seq_in_index",
-	"Column_name",
-	"Collation",
-	"Cardinality",
-	"Sub_part",
-	"Packed",
-	"Null",
-	"Index_type",
-	"Comment",
-	"Index_comment",
-		"Visible",
-		"Expression"
+		%7$s
 	FROM show_index_rows',
+			$this->get_show_index_postgresql_index_columns_cte_sql(),
 			$column_name_sql,
 			$index_type_sql,
 			$sub_part_sql,
 			$this->get_postgresql_catalog_index_comment_sql( 'index_comment' ),
-			$this->get_postgresql_non_prefix_index_expression_sql( 'expression' )
+			$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
+			$this->get_show_index_select_column_sql()
 		);
+	}
+
+	/**
+	 * Get the projected output columns for SHOW INDEX-family SQL.
+	 *
+	 * @return string SQL column list.
+	 */
+	private function get_show_index_select_column_sql(): string {
+		return '"' . implode( '",' . "\n\t" . '"', $this->get_show_index_output_columns() ) . '"';
 	}
 
 	/**
@@ -23688,21 +23645,7 @@ show_index_rows AS (
 
 		return sprintf(
 			'SELECT
-	"Table",
-	"Non_unique",
-	"Key_name",
-	"Seq_in_index",
-	"Column_name",
-	"Collation",
-	"Cardinality",
-	"Sub_part",
-	"Packed",
-	"Null",
-	"Index_type",
-	"Comment",
-	"Index_comment",
-	"Visible",
-	"Expression"
+	%2$s
 FROM (
 	SELECT
 		im.table_name AS "Table",
@@ -23721,11 +23664,12 @@ FROM (
 			\'YES\' AS "Visible",
 		NULL AS "Expression",
 		im.index_ordinal AS postgresql_index_oid
-	FROM %s im
+	FROM %1$s im
 	WHERE im.table_schema = ?
 		AND im.table_name = ?
 ) AS show_index_rows',
-			$index_metadata_table
+			$index_metadata_table,
+			$this->get_show_index_select_column_sql()
 		);
 	}
 
