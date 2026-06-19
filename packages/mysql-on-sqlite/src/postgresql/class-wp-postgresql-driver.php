@@ -18221,25 +18221,44 @@ ORDER BY table_name';
 			return $this->set_mysql_static_show_result( $columns, $rows, $fetch_mode, ...$fetch_mode_args );
 		}
 
-		$rows = array();
-		foreach ( $this->get_show_table_status_catalog_rows( $show_table_status_query['schema'] ) as $catalog_row ) {
-			$table_name      = (string) $catalog_row['table_name'];
-			$identity_column = isset( $catalog_row['identity_column'] ) && null !== $catalog_row['identity_column']
-				? (string) $catalog_row['identity_column']
-				: null;
-			$table_collation = isset( $catalog_row['table_collation'] ) && null !== $catalog_row['table_collation']
-				? (string) $catalog_row['table_collation']
-				: $this->collation;
+		$sql    = sprintf(
+			'SELECT
+				"TABLE_NAME" AS "Name",
+				"ENGINE" AS "Engine",
+				CAST("VERSION" AS text) AS "Version",
+				"ROW_FORMAT" AS "Row_format",
+				CAST("TABLE_ROWS" AS text) AS "Rows",
+				CAST("AVG_ROW_LENGTH" AS text) AS "Avg_row_length",
+				CAST("DATA_LENGTH" AS text) AS "Data_length",
+				CAST("MAX_DATA_LENGTH" AS text) AS "Max_data_length",
+				CAST("INDEX_LENGTH" AS text) AS "Index_length",
+				CAST("DATA_FREE" AS text) AS "Data_free",
+				CASE WHEN "AUTO_INCREMENT" IS NULL THEN NULL ELSE CAST("AUTO_INCREMENT" AS text) END AS "Auto_increment",
+				"CREATE_TIME" AS "Create_time",
+				"UPDATE_TIME" AS "Update_time",
+				"CHECK_TIME" AS "Check_time",
+				"TABLE_COLLATION" AS "Collation",
+				"CHECKSUM" AS "Checksum",
+				"CREATE_OPTIONS" AS "Create_options",
+				"TABLE_COMMENT" AS "Comment"
+			FROM (%s) information_schema_tables
+			WHERE "TABLE_SCHEMA" = ?
+				AND "TABLE_TYPE" = ?
+			ORDER BY "TABLE_NAME"',
+			$this->get_direct_information_schema_tables_relation_sql()
+		);
+		$params = array(
+			$this->get_direct_information_schema_display_schema( $show_table_status_query['schema'] ),
+			'BASE TABLE',
+		);
+		$stmt   = $this->connection->query( $sql, $params );
 
-			$rows[] = $this->get_show_table_status_result_row(
-				$table_name,
-				null === $identity_column
-					? null
-					: $this->get_show_table_status_auto_increment_value( $table_name, $identity_column, $show_table_status_query['schema'] ),
-				(string) ( $catalog_row['table_comment'] ?? '' ),
-				$table_collation
-			);
-		}
+		$this->last_postgresql_queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
 
 		$rows = $this->filter_show_table_status_rows( $rows, $show_table_status_query );
 
@@ -19246,147 +19265,6 @@ ORDER BY table_name';
 		);
 
 		return "'" . strtr( $literal, $replacements ) . "'";
-	}
-
-	/**
-	 * Get base table rows used by SHOW TABLE STATUS.
-	 *
-	 * @param string $schema_name Backend schema name.
-	 * @return array[] Catalog rows.
-	 */
-	private function get_show_table_status_catalog_rows( string $schema_name ): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_show_table_status_postgresql_catalog_rows( $schema_name );
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
-		$sql    = sprintf(
-			'SELECT
-					t.table_name,
-					COALESCE(tm.table_comment, \'\') AS table_comment,
-					(
-						SELECT c.column_name
-						FROM information_schema.columns c
-						WHERE c.table_schema = t.table_schema
-							AND c.table_name = t.table_name
-							AND (
-								c.is_identity = \'YES\'
-								OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\'
-							)
-						ORDER BY c.ordinal_position
-						LIMIT 1
-					) AS identity_column
-				FROM information_schema.tables t
-				LEFT JOIN %s tm
-					ON tm.table_schema = t.table_schema
-					AND tm.table_name = t.table_name
-				WHERE t.table_schema = ?
-					AND t.table_type = ?
-					AND t.table_name NOT IN (%s)
-					ORDER BY t.table_name',
-			$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE ),
-			$this->get_direct_information_schema_hidden_table_placeholders_sql()
-		);
-		$params = array_merge(
-			array(
-				$schema_name,
-				'BASE TABLE',
-			),
-			$this->get_direct_information_schema_hidden_table_names()
-		);
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
-	}
-
-	/**
-	 * Get base table rows used by SHOW TABLE STATUS from PostgreSQL catalogs.
-	 *
-	 * @param string $schema_name Backend schema name.
-	 * @return array[] Catalog rows.
-	 */
-	private function get_show_table_status_postgresql_catalog_rows( string $schema_name ): array {
-		$table_comment_sql = "pg_catalog.obj_description(pc.oid, 'pg_class')";
-		$sql               = 'SELECT
-					t.table_name,
-					' . $this->get_postgresql_catalog_table_comment_sql( $table_comment_sql ) . ' AS table_comment,
-					' . $this->get_direct_information_schema_table_collation_catalog_sql( 't.table_schema', 't.table_name', $table_comment_sql ) . ' AS table_collation,
-					(
-						SELECT c.column_name
-						FROM information_schema.columns c
-						WHERE c.table_schema = t.table_schema
-							AND c.table_name = t.table_name
-							AND (
-								c.is_identity = \'YES\'
-								OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\'
-							)
-						ORDER BY c.ordinal_position
-						LIMIT 1
-					) AS identity_column
-				FROM information_schema.tables t
-				LEFT JOIN pg_catalog.pg_namespace pn
-					ON pn.nspname = t.table_schema
-				LEFT JOIN pg_catalog.pg_class pc
-					ON pc.relnamespace = pn.oid
-					AND pc.relname = t.table_name
-					AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-				WHERE t.table_schema = ?
-					AND t.table_type = ?
-					AND t.table_name NOT IN (' . $this->get_direct_information_schema_hidden_table_placeholders_sql() . ')
-					ORDER BY t.table_name';
-		$params            = array_merge(
-			array(
-				$schema_name,
-				'BASE TABLE',
-			),
-			$this->get_direct_information_schema_hidden_table_names()
-		);
-		$stmt              = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
-	}
-
-	/**
-	 * Build a MySQL-shaped SHOW TABLE STATUS row.
-	 *
-	 * @param string      $table_name     Table name.
-	 * @param string|null $auto_increment Next auto-increment value, or null.
-	 * @param string      $comment        Table comment.
-	 * @param string|null $collation      Table collation, or null to use the active connection default.
-	 * @return array MySQL-shaped row.
-	 */
-	private function get_show_table_status_result_row( string $table_name, ?string $auto_increment, string $comment = '', ?string $collation = null ): array {
-		return array(
-			'Name'            => $table_name,
-			'Engine'          => 'InnoDB',
-			'Version'         => '10',
-			'Row_format'      => 'Dynamic',
-			'Rows'            => '0',
-			'Avg_row_length'  => '0',
-			'Data_length'     => '0',
-			'Max_data_length' => '0',
-			'Index_length'    => '0',
-			'Data_free'       => '0',
-			'Auto_increment'  => $auto_increment,
-			'Create_time'     => gmdate( 'Y-m-d H:i:s' ),
-			'Update_time'     => null,
-			'Check_time'      => null,
-			'Collation'       => $collation ?? $this->collation,
-			'Checksum'        => null,
-			'Create_options'  => '',
-			'Comment'         => $comment,
-		);
 	}
 
 	/**

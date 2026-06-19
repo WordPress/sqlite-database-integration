@@ -29770,14 +29770,15 @@ $wp_mysql_on_update$',
 		foreach ( $driver->get_last_postgresql_queries() as $query ) {
 			$this->assertStringNotContainsString( 'SHOW TABLE STATUS', $query['sql'] );
 		}
-		$this->assertStringContainsString( 'information_schema.tables', $driver->get_last_postgresql_queries()[0]['sql'] );
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertStringContainsString( 'information_schema_tables', end( $queries )['sql'] );
 	}
 
 	/**
 	 * Tests SHOW TABLE STATUS uses PostgreSQL catalogs directly for pgsql connections.
 	 */
 	public function test_show_table_status_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
-		$connection = new class( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
 			/**
 			 * Execute fixture-backed table status catalog queries.
 			 *
@@ -29789,10 +29790,24 @@ $wp_mysql_on_update$',
 				if ( false !== strpos( $sql, 'pg_catalog.obj_description(pc.oid, \'pg_class\')' ) ) {
 					return parent::query(
 						"SELECT
-							'wptests_options' AS table_name,
-							'PostgreSQL table note' AS table_comment,
-							'latin1_swedish_ci' AS table_collation,
-							NULL AS identity_column"
+							'wptests_options' AS \"Name\",
+							'InnoDB' AS \"Engine\",
+							'10' AS \"Version\",
+							'Dynamic' AS \"Row_format\",
+							'0' AS \"Rows\",
+							'0' AS \"Avg_row_length\",
+							'0' AS \"Data_length\",
+							'0' AS \"Max_data_length\",
+							'0' AS \"Index_length\",
+							'0' AS \"Data_free\",
+							NULL AS \"Auto_increment\",
+							'2026-01-02 03:04:05' AS \"Create_time\",
+							NULL AS \"Update_time\",
+							NULL AS \"Check_time\",
+							'latin1_swedish_ci' AS \"Collation\",
+							NULL AS \"Checksum\",
+							'' AS \"Create_options\",
+							'PostgreSQL table note' AS \"Comment\""
 					);
 				}
 
@@ -29800,30 +29815,23 @@ $wp_mysql_on_update$',
 			}
 		};
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
-		$get_rows   = Closure::bind(
-			function (): array {
-				return $this->get_show_table_status_postgresql_catalog_rows( 'public' );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
 
-		$tables = $get_rows();
+		$tables = $driver->query( 'SHOW TABLE STATUS' );
 
-			$this->assertCount( 1, $tables );
-			$this->assertSame( 'wptests_options', $tables[0]['table_name'] );
-			$this->assertSame( 'PostgreSQL table note', $tables[0]['table_comment'] );
-			$this->assertSame( 'latin1_swedish_ci', $tables[0]['table_collation'] );
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'wptests_options', $tables[0]->Name );
+		$this->assertSame( 'PostgreSQL table note', $tables[0]->Comment );
+		$this->assertSame( 'latin1_swedish_ci', $tables[0]->Collation );
 
-			$queries = $driver->get_last_postgresql_queries();
-			$this->assertCount( 1, $queries );
-			$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $queries[0]['sql'] );
-			$this->assertStringContainsString( 'AS table_collation', $queries[0]['sql'] );
-			$this->assertStringContainsString( 'FROM information_schema.columns table_collation_columns', $queries[0]['sql'] );
-			$this->assertStringContainsString( 'pg_catalog.pg_class pc', $queries[0]['sql'] );
-			$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
-			$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
-		$this->assertSame( 'public', $queries[0]['params'][0] );
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'AS "TABLE_COLLATION"', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'FROM information_schema.columns table_collation_columns', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_class pc', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'FROM "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( 'JOIN "' . WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE . '"', $queries[0]['sql'] );
+		$this->assertSame( array( 'wptests', 'BASE TABLE' ), $queries[0]['params'] );
 	}
 
 	/**
@@ -29875,10 +29883,24 @@ $wp_mysql_on_update$',
 				) {
 					return parent::query(
 						"SELECT
-							'wptests_options' AS table_name,
-							'PostgreSQL table note' AS table_comment,
-							'latin1_swedish_ci' AS table_collation,
-							NULL AS identity_column"
+							'wptests_options' AS \"Name\",
+							'InnoDB' AS \"Engine\",
+							'10' AS \"Version\",
+							'Dynamic' AS \"Row_format\",
+							'0' AS \"Rows\",
+							'0' AS \"Avg_row_length\",
+							'0' AS \"Data_length\",
+							'0' AS \"Max_data_length\",
+							'0' AS \"Index_length\",
+							'0' AS \"Data_free\",
+							NULL AS \"Auto_increment\",
+							'2026-01-02 03:04:05' AS \"Create_time\",
+							NULL AS \"Update_time\",
+							NULL AS \"Check_time\",
+							'latin1_swedish_ci' AS \"Collation\",
+							NULL AS \"Checksum\",
+							'' AS \"Create_options\",
+							'PostgreSQL table note' AS \"Comment\""
 					);
 				}
 
@@ -29916,7 +29938,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'FROM information_schema.tables t', $sql );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $sql );
 		$this->assertStringContainsString( 'pg_catalog.pg_class pc', $sql );
-		$this->assertStringContainsString( 'AS table_collation', $sql );
+		$this->assertStringContainsString( 'AS "TABLE_COLLATION"', $sql );
 		foreach ( $metadata_tables as $metadata_table ) {
 			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $sql ) );
 		}
@@ -29930,10 +29952,10 @@ $wp_mysql_on_update$',
 	 */
 	public function test_show_table_status_accepts_current_database_qualification_forms(): void {
 		$cases = array(
-			'SHOW TABLE STATUS FROM wptests' => 'public',
-			'SHOW TABLE STATUS IN `wptests`' => 'public',
-			'SHOW TABLE STATUS FROM public'  => 'public',
-			'SHOW TABLE STATUS IN `public`'  => 'public',
+			'SHOW TABLE STATUS FROM wptests' => 'wptests',
+			'SHOW TABLE STATUS IN `wptests`' => 'wptests',
+			'SHOW TABLE STATUS FROM public'  => 'wptests',
+			'SHOW TABLE STATUS IN `public`'  => 'wptests',
 		);
 
 		foreach ( $cases as $query => $expected_schema ) {
@@ -29944,7 +29966,8 @@ $wp_mysql_on_update$',
 
 			$this->assertSame( array( 'wptests_options', 'wptests_posts' ), array_map( array( $this, 'get_show_table_status_row_name' ), $tables ), $query );
 			$this->assertSame( $query, $driver->get_last_mysql_query(), $query );
-			$this->assertSame( $expected_schema, $driver->get_last_postgresql_queries()[0]['params'][0], $query );
+			$queries = $driver->get_last_postgresql_queries();
+			$this->assertSame( $expected_schema, end( $queries )['params'][0], $query );
 			foreach ( $driver->get_last_postgresql_queries() as $postgresql_query ) {
 				$this->assertStringNotContainsString( 'SHOW TABLE STATUS', $postgresql_query['sql'], $query );
 			}
@@ -29983,10 +30006,24 @@ $wp_mysql_on_update$',
 				if ( false !== strpos( $sql, 'pg_catalog.obj_description(pc.oid, \'pg_class\')' ) ) {
 					return parent::query(
 						"SELECT
-							'plugin_options' AS table_name,
-							'Plugin table note' AS table_comment,
-							'latin1_swedish_ci' AS table_collation,
-							NULL AS identity_column"
+							'plugin_options' AS \"Name\",
+							'InnoDB' AS \"Engine\",
+							'10' AS \"Version\",
+							'Dynamic' AS \"Row_format\",
+							'0' AS \"Rows\",
+							'0' AS \"Avg_row_length\",
+							'0' AS \"Data_length\",
+							'0' AS \"Max_data_length\",
+							'0' AS \"Index_length\",
+							'0' AS \"Data_free\",
+							NULL AS \"Auto_increment\",
+							'2026-01-02 03:04:05' AS \"Create_time\",
+							NULL AS \"Update_time\",
+							NULL AS \"Check_time\",
+							'latin1_swedish_ci' AS \"Collation\",
+							NULL AS \"Checksum\",
+							'' AS \"Create_options\",
+							'Plugin table note' AS \"Comment\""
 					);
 				}
 
@@ -30006,7 +30043,7 @@ $wp_mysql_on_update$',
 		$this->assertCount( 1, $queries );
 		$this->assertStringContainsString( 'FROM information_schema.tables t', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.obj_description(pc.oid, \'pg_class\')', $queries[0]['sql'] );
-		$this->assertSame( 'plugin_schema', $queries[0]['params'][0] );
+		$this->assertSame( array( 'plugin_schema', 'BASE TABLE' ), $queries[0]['params'] );
 
 		try {
 			$driver->query( 'SHOW TABLE STATUS FROM pg_catalog' );
