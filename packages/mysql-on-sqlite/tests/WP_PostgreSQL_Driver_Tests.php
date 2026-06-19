@@ -40867,32 +40867,42 @@ $wp_mysql_on_update$',
 	 * Tests SHOW INDEX uses PostgreSQL catalogs directly for pgsql connections.
 	 */
 	public function test_show_index_uses_postgresql_catalog_without_metadata_for_pgsql_connections(): void {
-		$driver    = $this->create_show_index_driver();
-		$get_query = Closure::bind(
-			function (): string {
-				return $this->get_show_index_postgresql_catalog_query();
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_query  = Closure::bind(
+			function (): array {
+				return array(
+					'relation' => $this->get_direct_information_schema_statistics_relation_sql( true, true ),
+					'select'   => $this->get_show_index_relation_select_sql(),
+				);
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
 		);
-		$sql       = $get_query();
+		$sql        = $get_query();
 
-		$this->assertStringContainsString( 'FROM pg_catalog.pg_class t', $sql );
-		$this->assertStringContainsString( 'pg_catalog.pg_index', $sql );
-		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey)', $sql );
-		$this->assertStringContainsString( 'pg_catalog.obj_description(idx.oid, \'pg_class\')', $sql );
-		$this->assertStringContainsString( '__wp_mysql_index_type:', $sql );
-		$this->assertStringContainsString( '__wp_mysql_index_sub_part:', $sql );
-		$this->assertStringContainsString( 'AS "Index_comment"', $sql );
-		$this->assertStringContainsString( "pg_catalog.pg_index_column_has_property(i.indexrelid, CAST(k.ordinality AS integer), 'desc') AS is_desc", $sql );
-		$this->assertStringContainsString( '= \'FULLTEXT\' THEN NULL ELSE CASE WHEN is_desc THEN \'D\' ELSE \'A\' END END AS "Collation"', $sql );
-		$this->assertStringContainsString( 'COALESCE(column_name, NULLIF(REPLACE(COALESCE(', $sql );
-		$this->assertStringContainsString( '= \'FULLTEXT\' THEN NULL ELSE COALESCE(CASE WHEN NULLIF(REPLACE(COALESCE(', $sql );
-		$this->assertStringContainsString( 'END AS "Sub_part"', $sql );
-		$this->assertStringContainsString( 'THEN expression ELSE NULL END AS "Expression"', $sql );
-		$this->assertStringNotContainsString( 'metadata_exists', $sql );
-		$this->assertStringNotContainsString( 'metadata_index_rows', $sql );
-		$this->assertStringNotContainsString( '__wp_postgresql_mysql_index_metadata', $sql );
+		$this->assertStringContainsString( 'FROM pg_catalog.pg_class t', $sql['relation'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_index', $sql['relation'] );
+		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey)', $sql['relation'] );
+		$this->assertStringContainsString( 'pg_catalog.obj_description(idx.oid, \'pg_class\')', $sql['relation'] );
+		$this->assertStringContainsString( '__wp_mysql_index_type:', $sql['relation'] );
+		$this->assertStringContainsString( '__wp_mysql_index_sub_part:', $sql['relation'] );
+		$this->assertStringContainsString( 'AS "INDEX_COMMENT"', $sql['relation'] );
+		$this->assertStringContainsString( "pg_catalog.pg_index_column_has_property(i.indexrelid, CAST(k.ordinality AS integer), 'desc') AS is_desc", $sql['relation'] );
+		$this->assertStringContainsString( '= \'FULLTEXT\' THEN NULL ELSE CASE WHEN is_desc THEN \'D\' ELSE \'A\' END END AS "COLLATION"', $sql['relation'] );
+		$this->assertStringContainsString( 'COALESCE(column_name, NULLIF(REPLACE(COALESCE(', $sql['relation'] );
+		$this->assertStringContainsString( '= \'FULLTEXT\' THEN NULL ELSE COALESCE(CASE WHEN NULLIF(REPLACE(COALESCE(', $sql['relation'] );
+		$this->assertStringContainsString( 'END AS "SUB_PART"', $sql['relation'] );
+		$this->assertStringContainsString( 'THEN expression ELSE NULL END AS "EXPRESSION"', $sql['relation'] );
+		$this->assertStringContainsString( '"INDEX_COMMENT" AS "Index_comment"', $sql['select'] );
+		$this->assertStringContainsString( '"EXPRESSION" AS "Expression"', $sql['select'] );
+		$this->assertStringNotContainsString( 'metadata_exists', $sql['relation'] );
+		$this->assertStringNotContainsString( 'metadata_index_rows', $sql['relation'] );
+		$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, '/' ) . '"?/i', $sql['relation'] ) );
 	}
 
 	/**
@@ -41052,10 +41062,10 @@ $wp_mysql_on_update$',
 		$this->assertSame( 'FULLTEXT', $indexes[1]->Index_type );
 			$this->assertNull( $indexes[1]->Collation );
 			$this->assertNull( $indexes[1]->Sub_part );
-			$this->assertStringContainsString(
-				'CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "Collation"',
-				$driver->get_last_postgresql_queries()[0]['sql']
-			);
+		$this->assertStringContainsString(
+			'CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "COLLATION"',
+			$driver->get_last_postgresql_queries()[0]['sql']
+		);
 	}
 
 	/**
@@ -41332,7 +41342,7 @@ $wp_mysql_on_update$',
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, 'FROM show_index_rows' ) ) {
+				if ( false !== strpos( $sql, 'AS show_index_rows' ) ) {
 					return parent::query(
 						"SELECT
 							'plugin_options' AS \"Table\",
