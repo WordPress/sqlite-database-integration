@@ -18,7 +18,6 @@ if ( ! fs.existsSync( path.join( wordpressDir, 'package.json' ) ) ) {
 
 if ( isWordPressInstalled() ) {
 	console.log( 'PostgreSQL WordPress site is already installed.' );
-	ensureInformationSchemaCompatibilityViews();
 	process.exit( 0 );
 }
 
@@ -34,7 +33,6 @@ runEnvCli( [
 	'--admin_email=test@test.com',
 	'--skip-email',
 ] );
-ensureInformationSchemaCompatibilityViews();
 
 function isWordPressInstalled() {
 	try {
@@ -62,28 +60,6 @@ function runEnvCli( args, stdio = 'inherit' ) {
 			stdio,
 		}
 	);
-}
-
-function ensureInformationSchemaCompatibilityViews() {
-	const evalFile = path.join( wordpressDir, 'postgresql-ensure-information-schema.php' );
-	fs.writeFileSync(
-		evalFile,
-		`<?php
-if ( isset( $GLOBALS['wpdb']->dbh ) && method_exists( $GLOBALS['wpdb']->dbh, 'ensure_postgresql_information_schema_compatibility_views' ) ) {
-	$GLOBALS['wpdb']->dbh->ensure_postgresql_information_schema_compatibility_views();
-}
-`
-	);
-
-	try {
-		runEnvCli( [
-			'eval-file',
-			'/var/www/postgresql-ensure-information-schema.php',
-			'--path=/var/www/src',
-		] );
-	} finally {
-		fs.rmSync( evalFile, { force: true } );
-	}
 }
 
 function getDockerEnv() {

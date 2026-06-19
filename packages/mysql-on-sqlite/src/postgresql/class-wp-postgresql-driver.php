@@ -96,16 +96,6 @@ class WP_PostgreSQL_Driver {
 	private const SQLITE_MYSQL_VALIDATE_TEMPORAL_FUNCTION = '__wp_pg_mysql_validate_temporal';
 
 	/**
-	 * Driver-owned schema for future PostgreSQL-backed information_schema compatibility views.
-	 */
-	private const POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA = '__wp_mysql_information_schema';
-
-	/**
-	 * Version marker for PostgreSQL-backed information_schema compatibility views.
-	 */
-	private const POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA_COMMENT = 'wordpress/mysql-on-sqlite:postgresql-information-schema-compatibility:v1';
-
-	/**
 	 * Prefix for MySQL AUTO_INCREMENT type metadata stored on PostgreSQL identity sequences.
 	 */
 	private const MYSQL_IDENTITY_SEQUENCE_COMMENT_TYPE_PREFIX = '__wp_mysql_auto_increment_type:';
@@ -399,34 +389,6 @@ class WP_PostgreSQL_Driver {
 	private $sqlite_mysql_validate_temporal_function_registered = false;
 
 	/**
-	 * Whether PostgreSQL-backed information_schema compatibility views are installed.
-	 *
-	 * @var bool
-	 */
-	private $postgresql_information_schema_compatibility_views_ensured = false;
-
-	/**
-	 * PostgreSQL-backed information_schema compatibility views installed on this connection.
-	 *
-	 * @var array<string, bool>
-	 */
-	private $postgresql_information_schema_compatibility_view_relations = array();
-
-	/**
-	 * Whether installed PostgreSQL-backed information_schema compatibility views were discovered.
-	 *
-	 * @var bool
-	 */
-	private $postgresql_information_schema_compatibility_view_relations_discovered = false;
-
-	/**
-	 * Whether PostgreSQL information_schema compatibility view definitions are being built.
-	 *
-	 * @var bool
-	 */
-	private $building_postgresql_information_schema_compatibility_view_definitions = false;
-
-	/**
 	 * Most recently tokenized MySQL query.
 	 *
 	 * @var string|null
@@ -609,7 +571,6 @@ class WP_PostgreSQL_Driver {
 		$this->mysql_token_cache_sql_mode = null;
 		$this->mysql_token_cache_tokens   = array();
 		$this->clear_mysql_query_translation_caches();
-		$this->set_postgresql_mysql_variable_setting_value( 'session', 'sql_mode', $this->get_sql_mode() );
 	}
 
 	/**
@@ -4597,52 +4558,6 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$this->store_mysql_schema_metadata_for_schema( $query, 'public' );
-	}
-
-	/**
-	 * Ensure deterministic PostgreSQL-backed information_schema compatibility views exist.
-	 */
-	public function ensure_postgresql_information_schema_compatibility_views(): void {
-		if (
-			$this->postgresql_information_schema_compatibility_views_ensured
-			|| ! $this->should_use_postgresql_catalog_metadata()
-		) {
-			return;
-		}
-
-		$definitions = $this->get_postgresql_information_schema_compatibility_view_definitions();
-		$relations   = array_keys( $definitions );
-
-		$statements = array();
-		foreach ( $this->get_direct_information_schema_hidden_table_names() as $table_name ) {
-			$statements[] = sprintf(
-				'DROP TABLE IF EXISTS %s',
-				$this->connection->quote_identifier( $table_name )
-			);
-		}
-
-		$statements = array_merge(
-			$statements,
-			array(
-				sprintf(
-					'CREATE SCHEMA IF NOT EXISTS %s',
-					$this->connection->quote_identifier( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA )
-				),
-				sprintf(
-					'COMMENT ON SCHEMA %s IS %s',
-					$this->connection->quote_identifier( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA ),
-					$this->connection->quote( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA_COMMENT )
-				),
-			),
-			array_values( $definitions )
-		);
-
-		$this->execute_postgresql_side_effect_statements( $statements );
-
-		$this->postgresql_information_schema_compatibility_view_relations            = array_fill_keys( $relations, true );
-		$this->postgresql_information_schema_compatibility_view_relations_discovered = true;
-		$this->postgresql_information_schema_compatibility_views_ensured             = true;
-		$this->sync_postgresql_mysql_compatibility_settings();
 	}
 
 	/**
@@ -21811,7 +21726,6 @@ ORDER BY t."TRIGGER_NAME"';
 			) as $variable
 		) {
 			$this->mysql_session_variable_values[ $variable ] = $this->charset;
-			$this->set_postgresql_mysql_variable_setting_value( 'session', $variable, $this->charset );
 		}
 
 		foreach (
@@ -21822,131 +21736,7 @@ ORDER BY t."TRIGGER_NAME"';
 			) as $variable
 		) {
 			$this->mysql_session_variable_values[ $variable ] = $this->collation;
-			$this->set_postgresql_mysql_variable_setting_value( 'session', $variable, $this->collation );
 		}
-	}
-
-	/**
-	 * Mirror an emulated MySQL variable into a PostgreSQL session setting.
-	 *
-	 * Compatibility views read these settings with current_setting(). Local
-	 * SQLite-backed PostgreSQL fixtures cannot execute pg_catalog.set_config(),
-	 * so those test-only failures are ignored after the PHP state is updated.
-	 *
-	 * @param string $scope Variable scope.
-	 * @param string $name  Lowercase variable name.
-	 * @param string $value Variable value.
-	 */
-	private function set_postgresql_mysql_variable_setting_value( string $scope, string $name, string $value ): void {
-		if (
-			! $this->should_use_postgresql_catalog_metadata()
-			|| (
-				! $this->postgresql_information_schema_compatibility_views_ensured
-				&& ! isset( $this->postgresql_information_schema_compatibility_view_relations[ $scope . '_variables' ] )
-			)
-		) {
-			return;
-		}
-
-		$this->set_postgresql_mysql_setting_value(
-			$this->get_postgresql_mysql_variable_setting_name( $scope, $name ),
-			$value
-		);
-	}
-
-	/**
-	 * Mirror a MySQL compatibility setting into PostgreSQL session state.
-	 *
-	 * @param string $name  PostgreSQL custom setting name.
-	 * @param string $value Setting value.
-	 */
-	private function set_postgresql_mysql_setting_value( string $name, string $value ): void {
-		try {
-			$stmt = $this->connection->query(
-				'SELECT pg_catalog.set_config(?, ?, false)',
-				array( $name, $value )
-			);
-			$stmt->closeCursor();
-		} catch ( Throwable $e ) {
-			if ( $this->is_postgresql_mysql_variable_setting_test_double_error( $e ) ) {
-				return;
-			}
-
-			throw $e;
-		}
-	}
-
-	/**
-	 * Mirror MySQL compatibility state into PostgreSQL session settings.
-	 */
-	private function sync_postgresql_mysql_compatibility_settings(): void {
-		$this->set_postgresql_mysql_database_setting_value();
-		$this->sync_postgresql_mysql_variable_settings();
-	}
-
-	/**
-	 * Mirror the MySQL-facing database name into a PostgreSQL session setting.
-	 */
-	private function set_postgresql_mysql_database_setting_value(): void {
-		if (
-			! $this->should_use_postgresql_catalog_metadata()
-			|| (
-				! $this->postgresql_information_schema_compatibility_views_ensured
-				&& array() === $this->postgresql_information_schema_compatibility_view_relations
-			)
-		) {
-			return;
-		}
-
-		$this->set_postgresql_mysql_setting_value(
-			$this->get_postgresql_mysql_database_setting_name(),
-			$this->main_db_name
-		);
-	}
-
-	/**
-	 * Mirror all emulated MySQL variables into PostgreSQL session settings.
-	 */
-	private function sync_postgresql_mysql_variable_settings(): void {
-		foreach ( $this->get_mysql_session_variables() as $name => $value ) {
-			$this->set_postgresql_mysql_variable_setting_value( 'session', (string) $name, (string) $value );
-		}
-
-		foreach ( $this->get_mysql_global_variables() as $name => $value ) {
-			$this->set_postgresql_mysql_variable_setting_value( 'global', (string) $name, (string) $value );
-		}
-	}
-
-	/**
-	 * Check whether setting sync failed on a local SQLite-backed PostgreSQL fixture.
-	 *
-	 * @param Throwable $e Setting sync exception.
-	 * @return bool Whether this is the local fixture's missing set_config().
-	 */
-	private function is_postgresql_mysql_variable_setting_test_double_error( Throwable $e ): bool {
-		$message = $e->getMessage();
-		return false !== strpos( $message, 'no such function: pg_catalog.set_config' )
-			|| false !== strpos( $message, 'near "(": syntax error' );
-	}
-
-	/**
-	 * Get the PostgreSQL setting name for an emulated MySQL variable.
-	 *
-	 * @param string $scope Variable scope.
-	 * @param string $name  Lowercase variable name.
-	 * @return string PostgreSQL custom setting name.
-	 */
-	private function get_postgresql_mysql_variable_setting_name( string $scope, string $name ): string {
-		return 'wp_mysql.' . strtolower( $scope ) . '.' . strtolower( $name );
-	}
-
-	/**
-	 * Get the PostgreSQL setting name for the MySQL-facing database name.
-	 *
-	 * @return string PostgreSQL custom setting name.
-	 */
-	private function get_postgresql_mysql_database_setting_name(): string {
-		return 'wp_mysql.database';
 	}
 
 	/**
@@ -21962,7 +21752,6 @@ ORDER BY t."TRIGGER_NAME"';
 		}
 
 		$this->mysql_session_variable_values[ $name ] = $value;
-		$this->set_postgresql_mysql_variable_setting_value( 'session', $name, $value );
 	}
 
 	/**
@@ -21977,7 +21766,6 @@ ORDER BY t."TRIGGER_NAME"';
 		}
 
 		$this->mysql_global_variable_values[ $name ] = $value;
-		$this->set_postgresql_mysql_variable_setting_value( 'global', $name, $value );
 	}
 
 	/**
@@ -38753,21 +38541,6 @@ WHERE option_name IN (
 				continue;
 			}
 
-			if ( isset( $source['view'] ) ) {
-				$view_source_sql = $this->get_postgresql_information_schema_compatibility_view_source_sql(
-					$source['view'],
-					$source['alias']
-				);
-				if ( null !== $view_source_sql ) {
-					$replacements[] = array(
-						'start' => $source['source_start'],
-						'end'   => $source['source_end'],
-						'sql'   => $view_source_sql,
-					);
-					continue;
-				}
-			}
-
 			$relation_sql = $source['relation_sql'] ?? $this->get_direct_information_schema_relation_sql( $source['view'] ?? '' );
 			if ( null === $relation_sql ) {
 				return null;
@@ -39685,146 +39458,6 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Get a PostgreSQL compatibility view source for an installed information_schema relation.
-	 *
-	 * @param string $relation Lowercase information_schema relation name.
-	 * @param string $alias    Source alias.
-	 * @return string|null PostgreSQL source SQL, or null when the relation should stay inline.
-	 */
-	private function get_postgresql_information_schema_compatibility_view_source_sql( string $relation, string $alias ): ?string {
-		if ( ! $this->postgresql_information_schema_compatibility_view_relations_discovered ) {
-			$this->discover_postgresql_information_schema_compatibility_view_relations();
-		}
-
-		if (
-			$this->should_use_postgresql_catalog_metadata()
-			&& ! $this->postgresql_information_schema_compatibility_views_ensured
-		) {
-			$logged_queries = $this->last_postgresql_queries;
-			try {
-				$this->ensure_postgresql_information_schema_compatibility_views();
-			} catch ( Throwable $e ) {
-				// Keep direct catalog rewrites available for restricted or fixture connections.
-			} finally {
-				$this->last_postgresql_queries = $logged_queries;
-			}
-		}
-
-		if ( ! isset( $this->postgresql_information_schema_compatibility_view_relations[ $relation ] ) ) {
-			return null;
-		}
-
-		return sprintf(
-			'%s.%s AS %s',
-			$this->connection->quote_identifier( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA ),
-			$this->connection->quote_identifier( $relation ),
-			$this->connection->quote_identifier( $alias )
-		);
-	}
-
-	/**
-	 * Discover already-installed PostgreSQL information_schema compatibility views.
-	 */
-	private function discover_postgresql_information_schema_compatibility_view_relations(): void {
-		if (
-			$this->postgresql_information_schema_compatibility_view_relations_discovered
-			|| ! $this->should_use_postgresql_catalog_metadata()
-		) {
-			return;
-		}
-
-		$this->postgresql_information_schema_compatibility_view_relations_discovered = true;
-
-		try {
-			$stmt = $this->connection->query(
-				'SELECT pg_catalog.obj_description(n.oid, \'pg_namespace\')
-				FROM pg_catalog.pg_namespace n
-				WHERE n.nspname = ?
-				LIMIT 1',
-				array( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA )
-			);
-		} catch ( Throwable $e ) {
-			return;
-		}
-
-		if ( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA_COMMENT !== (string) $stmt->fetchColumn() ) {
-			return;
-		}
-
-		try {
-			$stmt = $this->connection->query(
-				'SELECT c.relname
-				FROM pg_catalog.pg_class c
-				JOIN pg_catalog.pg_namespace n
-					ON n.oid = c.relnamespace
-				WHERE n.nspname = ?
-					AND c.relkind IN (\'v\', \'m\')',
-				array( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA )
-			);
-		} catch ( Throwable $e ) {
-			return;
-		}
-
-		$relations = array();
-		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN ) as $relation ) {
-			$relation = strtolower( (string) $relation );
-			if ( null !== $this->get_direct_information_schema_relation_columns( $relation ) ) {
-				$relations[ $relation ] = true;
-			}
-		}
-
-		if ( array() === $relations ) {
-			return;
-		}
-
-		$expected_relations = array_keys( $this->get_postgresql_information_schema_compatibility_view_definitions() );
-
-		$this->postgresql_information_schema_compatibility_view_relations = $relations;
-		$this->postgresql_information_schema_compatibility_views_ensured  = array() === array_diff( $expected_relations, array_keys( $relations ) );
-
-		$this->sync_postgresql_mysql_compatibility_settings();
-	}
-
-	/**
-	 * Get PostgreSQL view definitions for information_schema compatibility relations.
-	 *
-	 * @return array<string, string> View SQL keyed by lowercase information_schema relation name.
-	 */
-	private function get_postgresql_information_schema_compatibility_view_definitions(): array {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return array();
-		}
-
-		$definitions            = array();
-		$previous_building_flag = $this->building_postgresql_information_schema_compatibility_view_definitions;
-		$this->building_postgresql_information_schema_compatibility_view_definitions = true;
-
-		try {
-			foreach ( $this->get_direct_information_schema_relation_names() as $relation ) {
-				$relation_sql = in_array( $relation, array( 'global_variables', 'session_variables' ), true )
-					? $this->get_postgresql_information_schema_variables_compatibility_relation_sql(
-						'global_variables' === $relation ? 'global' : 'session'
-					)
-					: $this->get_direct_information_schema_relation_sql( $relation );
-				if ( null === $relation_sql ) {
-					continue;
-				}
-
-				$definitions[ $relation ] = sprintf(
-					'CREATE OR REPLACE VIEW %s.%s AS %s',
-					$this->connection->quote_identifier( self::POSTGRESQL_INFORMATION_SCHEMA_COMPATIBILITY_SCHEMA ),
-					$this->connection->quote_identifier( $relation ),
-					$relation_sql
-				);
-			}
-		} finally {
-			$this->building_postgresql_information_schema_compatibility_view_definitions = $previous_building_flag;
-		}
-
-		return $definitions;
-	}
-
-	/**
 	 * Get an explicit SELECT list for a supported information_schema star.
 	 *
 	 * @param WP_MySQL_Token[] $tokens  MySQL lexer token stream.
@@ -40645,48 +40278,10 @@ WHERE option_name IN (
 	/**
 	 * Get SQL for the MySQL-facing main database name in direct information_schema relations.
 	 *
-	 * Persisted PostgreSQL compatibility views read a custom session setting so
-	 * the view definition itself does not bake in the creating driver's database
-	 * name. Inline rewrites keep using a literal for local fixture compatibility.
-	 *
 	 * @return string SQL expression.
 	 */
 	private function get_direct_information_schema_display_main_database_sql(): string {
-		if ( $this->building_postgresql_information_schema_compatibility_view_definitions ) {
-			return sprintf(
-				'COALESCE(NULLIF(pg_catalog.current_setting(%s, true), \'\'), current_database())',
-				$this->connection->quote( $this->get_postgresql_mysql_database_setting_name() )
-			);
-		}
-
 		return $this->connection->quote( $this->main_db_name );
-	}
-
-	/**
-	 * Get SQL for a MySQL session variable used by direct information_schema relations.
-	 *
-	 * Persisted PostgreSQL compatibility views read custom session settings so
-	 * session-shaped metadata is not fixed at view creation time. Inline rewrites
-	 * keep using literals for local fixture compatibility.
-	 *
-	 * @param string $name     Lowercase MySQL session variable name.
-	 * @param string $fallback Fallback value.
-	 * @return string SQL expression.
-	 */
-	private function get_direct_information_schema_session_variable_value_sql( string $name, string $fallback ): string {
-		if ( $this->building_postgresql_information_schema_compatibility_view_definitions ) {
-			if ( 'sql_mode' === strtolower( $name ) ) {
-				$fallback = implode( ',', self::DEFAULT_MYSQL_SQL_MODES );
-			}
-
-			return sprintf(
-				'COALESCE(pg_catalog.current_setting(%s, true), %s)',
-				$this->connection->quote( $this->get_postgresql_mysql_variable_setting_name( 'session', $name ) ),
-				$this->connection->quote( $fallback )
-			);
-		}
-
-		return $this->connection->quote( $fallback );
 	}
 
 	/**
@@ -41273,28 +40868,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 	}
 
 	/**
-	 * Build a PostgreSQL-setting-backed information_schema variables relation.
-	 *
-	 * @param string $scope Variable scope.
-	 * @return string Relation SQL.
-	 */
-	private function get_postgresql_information_schema_variables_compatibility_relation_sql( string $scope ): string {
-		$variables = $this->get_default_mysql_session_variables();
-		$selects   = array();
-
-		foreach ( $variables as $name => $value ) {
-			$selects[] = sprintf(
-				'SELECT %s AS "VARIABLE_NAME", COALESCE(pg_catalog.current_setting(%s, true), %s) AS "VARIABLE_VALUE"',
-				$this->connection->quote( (string) $name ),
-				$this->connection->quote( $this->get_postgresql_mysql_variable_setting_name( $scope, (string) $name ) ),
-				$this->connection->quote( (string) $value )
-			);
-		}
-
-		return implode( ' UNION ALL ', $selects );
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.SESSION_STATUS/GLOBAL_STATUS relation.
 	 *
 	 * This is a static MySQL compatibility surface, not PostgreSQL object
@@ -41614,8 +41187,8 @@ WHERE v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND LEFT(v.table_schema, 3) <> \'pg_\'
 	AND v.table_name NOT IN (%4$s)',
 			$this->get_direct_information_schema_display_schema_sql( 'v.table_schema' ),
-			$this->get_direct_information_schema_session_variable_value_sql( 'character_set_client', self::DEFAULT_MYSQL_CHARSET ),
-			$this->get_direct_information_schema_session_variable_value_sql( 'collation_connection', self::DEFAULT_MYSQL_COLLATION ),
+			$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
+			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
 			$this->get_direct_information_schema_hidden_table_list_sql()
 		);
 	}
@@ -41656,9 +41229,9 @@ WHERE t.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND t.event_object_table NOT IN (%6$s)',
 			$this->get_direct_information_schema_display_schema_sql( 't.trigger_schema' ),
 			$this->get_direct_information_schema_display_schema_sql( 't.event_object_schema' ),
-			$this->get_direct_information_schema_session_variable_value_sql( 'sql_mode', $this->get_sql_mode() ),
-			$this->get_direct_information_schema_session_variable_value_sql( 'character_set_client', self::DEFAULT_MYSQL_CHARSET ),
-			$this->get_direct_information_schema_session_variable_value_sql( 'collation_connection', self::DEFAULT_MYSQL_COLLATION ),
+			$this->connection->quote( $this->get_sql_mode() ),
+			$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
+			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
 			$this->get_direct_information_schema_hidden_table_list_sql()
 		);
 	}
@@ -41706,9 +41279,9 @@ FROM information_schema.routines r
 WHERE r.routine_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND LEFT(r.routine_schema, 3) <> \'pg_\'',
 			$this->get_direct_information_schema_display_schema_sql( 'r.routine_schema' ),
-			$this->get_direct_information_schema_session_variable_value_sql( 'sql_mode', $this->get_sql_mode() ),
-			$this->get_direct_information_schema_session_variable_value_sql( 'character_set_client', self::DEFAULT_MYSQL_CHARSET ),
-			$this->get_direct_information_schema_session_variable_value_sql( 'collation_connection', self::DEFAULT_MYSQL_COLLATION )
+			$this->connection->quote( $this->get_sql_mode() ),
+			$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
+			$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
 		);
 	}
 

@@ -47,10 +47,6 @@ if ( ! function_exists( 'postgresql_make_db_current_silent' ) ) {
 			}
 		}
 
-		if ( $wpdb->dbh instanceof WP_PostgreSQL_Driver ) {
-			$wpdb->dbh->ensure_postgresql_information_schema_compatibility_views();
-		}
-
 		return true;
 	}
 }

@@ -203,22 +203,7 @@ PHP
 		$this->assertCount( 1, $result['queries'] );
 		$this->assertStringStartsWith( 'CREATE TABLE wp_options', $result['queries'][0] );
 		$this->assertStringContainsString( 'UNIQUE KEY option_name (option_name)', $result['queries'][0] );
-		$this->assertStringContainsString(
-			'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"',
-			implode( "\n", $result['connection_queries'] )
-		);
-		$this->assertStringContainsString(
-			'COMMENT ON SCHEMA "__wp_mysql_information_schema"',
-			implode( "\n", $result['connection_queries'] )
-		);
-		$this->assertStringContainsString(
-			'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS',
-			implode( "\n", $result['connection_queries'] )
-		);
-		$this->assertStringContainsString(
-			'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."keywords" AS',
-			implode( "\n", $result['connection_queries'] )
-		);
+		$this->assertSame( array(), $result['connection_queries'] );
 	}
 
 	/**
@@ -345,10 +330,8 @@ PHP
 		$this->assertStringContainsString( 'DO $wp_mysql_text_domain$', $sql );
 		$this->assertStringContainsString( 'CREATE TABLE "wp_options"', $sql );
 		$this->assertStringContainsString( 'DO $wp_mysql_identity_sequence_comment$', $sql );
-		$this->assertStringContainsString( 'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"', $sql );
-		$this->assertStringContainsString( 'COMMENT ON SCHEMA "__wp_mysql_information_schema"', $sql );
-		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', $sql );
-		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."keywords" AS', $sql );
+		$this->assertStringNotContainsString( '__wp_mysql_information_schema', $sql );
+		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', $sql );
 
 		foreach (
 			array(
@@ -360,190 +343,6 @@ PHP
 				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
 			) as $metadata_table
 		) {
-			$this->assertStringContainsString(
-				'DROP TABLE IF EXISTS "' . $metadata_table . '"',
-				$sql,
-				$metadata_table
-			);
-			$this->assertSame(
-				0,
-				preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
-				$metadata_table
-			);
-		}
-	}
-
-	/**
-	 * Tests schema installation refreshes existing PostgreSQL information_schema compatibility views.
-	 */
-	public function test_postgresql_make_db_current_silent_refreshes_existing_information_schema_views(): void {
-		$result = $this->run_isolated_install_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-class WP_PostgreSQL_Install_View_Reuse_Test_PDO extends PDO {
-	#[\ReturnTypeWillChange]
-	public function getAttribute( $attribute ) {
-		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-			return 'pgsql';
-		}
-
-		if ( PDO::ATTR_SERVER_VERSION === $attribute ) {
-			return '16.0';
-		}
-
-		return parent::getAttribute( $attribute );
-	}
-}
-
-class WP_PostgreSQL_Install_View_Reuse_Test_Connection extends WP_PostgreSQL_Connection {
-	public $installed_relations = array();
-	public $queries             = array();
-	private $test_pdo;
-
-	public function __construct() {
-		$this->test_pdo = new WP_PostgreSQL_Install_View_Reuse_Test_PDO( 'sqlite::memory:' );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->test_pdo;
-	}
-
-	public function get_driver_name(): string {
-		return 'pgsql';
-	}
-
-	public function quote( $value, int $type = PDO::PARAM_STR ): string {
-		return $this->test_pdo->quote( $value, $type );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		foreach (
-			array(
-				WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
-			) as $metadata_table
-		) {
-			if ( 1 === preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ) ) {
-				throw new RuntimeException( 'Hidden metadata table SQL was not expected during PostgreSQL install.' );
-			}
-		}
-
-		$this->queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relkind IN' ) ) {
-			$selects = array();
-			foreach ( $this->installed_relations as $index => $relation ) {
-				$selects[] = 0 === $index
-					? sprintf( 'SELECT %s AS relname', $this->test_pdo->quote( $relation ) )
-					: sprintf( 'SELECT %s', $this->test_pdo->quote( $relation ) );
-			}
-
-			return $this->test_pdo->query( implode( "\nUNION ALL ", $selects ) );
-		}
-
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'c.relname IN' ) ) {
-			return $this->test_pdo->query( 'SELECT NULL AS relname WHERE 0 = 1' );
-		}
-
-		return $this->test_pdo->query( 'SELECT 1' );
-	}
-}
-
-$root = sys_get_temp_dir() . '/wp-pg-install-' . str_replace( '.', '-', uniqid( '', true ) ) . '/';
-register_shutdown_function( 'wp_pg_install_test_remove_tree', $root );
-mkdir( $root . 'wp-admin/includes', 0777, true );
-file_put_contents(
-	$root . 'wp-admin/includes/schema.php',
-	'<?php
-function wp_get_db_schema() {
-	return "CREATE TABLE wp_options (
-		option_id bigint(20) unsigned NOT NULL auto_increment,
-		option_name varchar(191) NOT NULL default \'\',
-		option_value longtext NOT NULL,
-		autoload varchar(20) NOT NULL default \'yes\',
-		PRIMARY KEY (option_id),
-		UNIQUE KEY option_name (option_name)
-	) DEFAULT CHARACTER SET utf8mb4";
-}
-'
-);
-
-define( 'ABSPATH', $root );
-
-$connection = new WP_PostgreSQL_Install_View_Reuse_Test_Connection();
-$driver     = new WP_PostgreSQL_Driver( $connection, 'WordPress' );
-
-$get_definitions = Closure::bind(
-	function (): array {
-		return $this->get_postgresql_information_schema_compatibility_view_definitions();
-	},
-	$driver,
-	WP_PostgreSQL_Driver::class
-);
-
-$connection->installed_relations = array_keys( $get_definitions() );
-
-$GLOBALS['wpdb'] = new class( $driver ) {
-	public $dbh;
-	public $last_error = '';
-
-	public function __construct( $driver ) {
-		$this->dbh = $driver;
-	}
-
-	public function query( $statement ) {
-		throw new RuntimeException( '$wpdb->query() should not receive translated PostgreSQL DDL.' );
-	}
-};
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/install-functions.php';
-
-$result = postgresql_make_db_current_silent();
-
-wp_pg_install_test_remove_tree( $root );
-wp_pg_install_test_respond(
-	array(
-		'result'  => $result,
-		'queries' => array_column( $connection->queries, 'sql' ),
-		'params'  => array_column( $connection->queries, 'params' ),
-	)
-);
-PHP
-		);
-
-		$sql = implode( "\n", $result['queries'] );
-
-		$this->assertTrue( $result['result'] );
-		$this->assertStringContainsString( 'CREATE TABLE "wp_options"', $sql );
-		$this->assertStringNotContainsString( 'SELECT c.relname', $sql );
-		$this->assertStringContainsString( 'CREATE SCHEMA IF NOT EXISTS "__wp_mysql_information_schema"', $sql );
-		$this->assertStringContainsString( 'COMMENT ON SCHEMA "__wp_mysql_information_schema"', $sql );
-		$this->assertStringContainsString( 'CREATE OR REPLACE VIEW "__wp_mysql_information_schema"."tables" AS', $sql );
-		$this->assertStringContainsString( 'current_database()', $sql );
-
-		foreach (
-			array(
-				WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
-			) as $metadata_table
-		) {
-			$this->assertStringContainsString(
-				'DROP TABLE IF EXISTS "' . $metadata_table . '"',
-				$sql,
-				$metadata_table
-			);
 			$this->assertSame(
 				0,
 				preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
