@@ -8455,7 +8455,42 @@ $wp_mysql_primary_index_comment$',
 			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
 		}
 
-		if ( $this->contains_mysql_unsupported_view_trailing_clause( $tokens, $position, $statement_end ) ) {
+		$depth = 0;
+		for ( $i = $position; $i < $statement_end; $i++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+				}
+				continue;
+			}
+
+			if ( 0 !== $depth || WP_MySQL_Lexer::WITH_SYMBOL !== $tokens[ $i ]->id ) {
+				continue;
+			}
+
+			$next_token = $tokens[ $i + 1 ] ?? null;
+			if (
+				null !== $next_token
+				&& in_array(
+					$next_token->id,
+					array(
+						WP_MySQL_Lexer::CASCADED_SYMBOL,
+						WP_MySQL_Lexer::CHECK_SYMBOL,
+						WP_MySQL_Lexer::LOCAL_SYMBOL,
+					),
+					true
+				)
+			) {
+				throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+			}
+		}
+		if ( 0 !== $depth ) {
 			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
 		}
 
@@ -8535,54 +8570,6 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		return false;
-	}
-
-	/**
-	 * Check whether a VIEW SELECT has unsupported MySQL trailing clauses.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First SELECT token position.
-	 * @param int              $end    Final SELECT token position, exclusive.
-	 * @return bool Whether an unsupported trailing clause is present.
-	 */
-	private function contains_mysql_unsupported_view_trailing_clause( array $tokens, int $start, int $end ): bool {
-		$depth = 0;
-		for ( $i = $start; $i < $end; $i++ ) {
-			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
-				++$depth;
-				continue;
-			}
-
-			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
-				--$depth;
-				if ( $depth < 0 ) {
-					return true;
-				}
-				continue;
-			}
-
-			if ( 0 !== $depth || WP_MySQL_Lexer::WITH_SYMBOL !== $tokens[ $i ]->id ) {
-				continue;
-			}
-
-			$next_token = $tokens[ $i + 1 ] ?? null;
-			if (
-				null !== $next_token
-				&& in_array(
-					$next_token->id,
-					array(
-						WP_MySQL_Lexer::CASCADED_SYMBOL,
-						WP_MySQL_Lexer::CHECK_SYMBOL,
-						WP_MySQL_Lexer::LOCAL_SYMBOL,
-					),
-					true
-				)
-			) {
-				return true;
-			}
-		}
-
-		return 0 !== $depth;
 	}
 
 	/**
