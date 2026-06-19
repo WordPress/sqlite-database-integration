@@ -830,26 +830,20 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$direct_information_schema_translated = false;
-		$site_health_tables_query             = $this->translate_information_schema_tables_site_health_query( $query );
-		if ( null !== $site_health_tables_query ) {
-			$query                                = $site_health_tables_query;
+		$direct_information_schema_cte_query  = $this->translate_direct_information_schema_cte_select_query( $query );
+		if ( null !== $direct_information_schema_cte_query ) {
+			$query                                = $direct_information_schema_cte_query;
 			$direct_information_schema_translated = true;
 		} else {
-			$direct_information_schema_cte_query = $this->translate_direct_information_schema_cte_select_query( $query );
-			if ( null !== $direct_information_schema_cte_query ) {
-				$query                                = $direct_information_schema_cte_query;
+			$direct_information_schema_query = $this->translate_direct_information_schema_select_query( $query );
+			if ( null !== $direct_information_schema_query ) {
+				$query                                = $direct_information_schema_query;
 				$direct_information_schema_translated = true;
 			} else {
-				$direct_information_schema_query = $this->translate_direct_information_schema_select_query( $query );
-				if ( null !== $direct_information_schema_query ) {
-					$query                                = $direct_information_schema_query;
+				$direct_information_schema_nested_query = $this->translate_application_select_with_direct_information_schema_nested_selects( $query );
+				if ( null !== $direct_information_schema_nested_query ) {
+					$query                                = $direct_information_schema_nested_query;
 					$direct_information_schema_translated = true;
-				} else {
-					$direct_information_schema_nested_query = $this->translate_application_select_with_direct_information_schema_nested_selects( $query );
-					if ( null !== $direct_information_schema_nested_query ) {
-						$query                                = $direct_information_schema_nested_query;
-						$direct_information_schema_translated = true;
-					}
 				}
 			}
 		}
@@ -1725,14 +1719,6 @@ class WP_PostgreSQL_Driver {
 	 * @return array{sql: string, translated: bool, last_insert_id?: int} PostgreSQL SQL and translation flag.
 	 */
 	private function translate_mysql_select_query_for_postgresql( string $query ): array {
-		$translated_query = $this->translate_information_schema_tables_site_health_query( $query );
-		if ( null !== $translated_query ) {
-			return array(
-				'sql'        => $translated_query,
-				'translated' => true,
-			);
-		}
-
 		$translated_query = $this->translate_mysql_select_row_locking_query( $query );
 		if ( null !== $translated_query ) {
 			return array(
@@ -31244,16 +31230,6 @@ WHERE option_name IN (
 		}
 
 		return $sql;
-	}
-
-	/**
-	 * Leave Site Health TABLES queries to the generic direct information_schema translator.
-	 *
-	 * @param string $query MySQL query.
-	 * @return string|null Always null so the generic relation rewrite can handle the query.
-	 */
-	private function translate_information_schema_tables_site_health_query( string $query ): ?string {
-		return null;
 	}
 
 	/**

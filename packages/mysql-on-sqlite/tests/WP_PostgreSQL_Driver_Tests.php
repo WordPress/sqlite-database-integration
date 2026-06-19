@@ -32396,39 +32396,6 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Tests unsupported information_schema.TABLES shapes do not enter the Site Health translator.
-	 */
-	public function test_information_schema_tables_site_health_unsupported_shapes_fail_closed(): void {
-		$driver  = $this->create_driver();
-		$queries = array(
-			"SELECT COUNT(*) AS 'rows'
-				FROM information_schema.TABLES
-				WHERE TABLE_SCHEMA = 'wptests' AND TABLE_NAME IN ('wptests_options')
-				GROUP BY TABLE_NAME",
-			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) AS 'bytes'
-				FROM information_schema.TABLES
-				WHERE TABLE_ROWS > 0
-				GROUP BY TABLE_NAME",
-			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) AS 'bytes'
-				FROM information_schema.TABLES
-				WHERE TABLE_SCHEMA = 'wptests' AND TABLE_NAME IN ('wptests_options')
-				GROUP BY TABLE_NAME
-				ORDER BY TABLE_NAME",
-		);
-
-		foreach ( $queries as $query ) {
-			$this->assertNull(
-				$this->translate_driver_query_with_private_method(
-					$driver,
-					'translate_information_schema_tables_site_health_query',
-					$query
-				),
-				$query
-			);
-		}
-	}
-
-	/**
 	 * Tests PostgreSQL-backed information_schema relations do not read hidden metadata tables.
 	 */
 	public function test_direct_information_schema_pgsql_relations_do_not_join_hidden_metadata_tables(): void {
@@ -43671,34 +43638,6 @@ $wp_mysql_on_update$',
 	private function create_show_index_driver(): WP_PostgreSQL_Driver {
 		$connection = new WP_PostgreSQL_Driver_Show_Index_Fixture_Connection();
 		return new WP_PostgreSQL_Driver( $connection, 'wptests' );
-	}
-
-	/**
-	 * Install backend tables used by Site Health TABLE_ROWS emulation tests.
-	 *
-	 * @param WP_PostgreSQL_Driver $driver Driver under test.
-	 */
-	private function install_site_health_table_count_fixture( WP_PostgreSQL_Driver $driver ): void {
-		$pdo        = $driver->get_connection()->get_pdo();
-		$connection = $driver->get_connection();
-		$schema     = $connection->quote_identifier( 'public' );
-
-		$pdo->exec( "ATTACH DATABASE ':memory:' AS public" );
-		foreach ( array( 'wptests_options', 'wptests_posts' ) as $table_name ) {
-			$pdo->exec(
-				sprintf(
-					'CREATE TABLE %s.%s (id INTEGER)',
-					$schema,
-					$connection->quote_identifier( $table_name )
-				)
-			);
-		}
-
-		$options_table = $schema . '.' . $connection->quote_identifier( 'wptests_options' );
-		$posts_table   = $schema . '.' . $connection->quote_identifier( 'wptests_posts' );
-
-		$pdo->exec( 'INSERT INTO ' . $options_table . ' (id) VALUES (1), (2)' );
-		$pdo->exec( 'INSERT INTO ' . $posts_table . ' (id) VALUES (1)' );
 	}
 
 	/**
