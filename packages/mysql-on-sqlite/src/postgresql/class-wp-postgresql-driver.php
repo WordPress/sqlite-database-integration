@@ -1969,8 +1969,22 @@ class WP_PostgreSQL_Driver {
 			);
 		}
 
-		if ( $this->should_reject_unsupported_direct_information_schema_select_query( $query ) ) {
-			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+		$tokens = $this->get_mysql_tokens( $query );
+		if ( isset( $tokens[0] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[0]->id ) {
+			$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+			if (
+				null !== $statement_end
+				&& (
+					$this->select_references_direct_information_schema_relation( $tokens, 1, $statement_end )
+					|| (
+						0 === strcasecmp( $this->db_name, 'information_schema' )
+						&& ! $this->information_schema_select_query_targets_main_database_explicitly( $query, $tokens, $statement_end )
+						&& $this->information_schema_select_has_table_reference( $tokens )
+					)
+				)
+			) {
+				throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+			}
 		}
 
 		$translated_query = $this->translate_strict_aggregate_grouped_order_by_query( $query );
@@ -27018,10 +27032,24 @@ WHERE option_name IN (
 			return;
 		}
 
-		$pdo_driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		$pdo_driver_name                       = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+		$has_sqlite_information_schema_columns = false;
+		if ( 'sqlite' === $pdo_driver_name ) {
+			$stmt = $this->connection->query( 'PRAGMA database_list' );
+			foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $database ) {
+				if ( isset( $database['name'] ) && 'information_schema' === $database['name'] ) {
+					$tables                                = $this->connection->query(
+						"SELECT 1 FROM information_schema.sqlite_master WHERE type = 'table' AND name = 'columns' LIMIT 1"
+					);
+					$has_sqlite_information_schema_columns = false !== $tables->fetchColumn();
+					break;
+				}
+			}
+		}
+
 		if (
 			empty( $explicit_identity_columns )
-			|| ( 'pgsql' !== $pdo_driver_name && ( 'sqlite' !== $pdo_driver_name || ! $this->sqlite_information_schema_columns_table_exists() ) )
+			|| ( 'pgsql' !== $pdo_driver_name && ! $has_sqlite_information_schema_columns )
 		) {
 			return;
 		}
@@ -27211,25 +27239,6 @@ WHERE option_name IN (
 		}
 
 		return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
-	}
-
-	/**
-	 * Check whether the SQLite test shim has an information_schema.columns fixture.
-	 *
-	 * @return bool Whether the fixture table exists.
-	 */
-	private function sqlite_information_schema_columns_table_exists(): bool {
-		$stmt = $this->connection->query( 'PRAGMA database_list' );
-		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $database ) {
-			if ( isset( $database['name'] ) && 'information_schema' === $database['name'] ) {
-				$tables = $this->connection->query(
-					"SELECT 1 FROM information_schema.sqlite_master WHERE type = 'table' AND name = 'columns' LIMIT 1"
-				);
-				return false !== $tables->fetchColumn();
-			}
-		}
-
-		return false;
 	}
 
 	/**
@@ -34166,7 +34175,32 @@ WHERE "TABLE_SCHEMA" = %3$s
 				if ( null === $after_column_list ) {
 					return null;
 				}
-				$columns = $this->get_direct_information_schema_cte_column_list( $tokens, $position + 1, $after_column_list - 1 );
+				$column_ranges = $this->split_top_level_mysql_arguments( $tokens, $position + 1, $after_column_list - 1 );
+				if ( null === $column_ranges || array() === $column_ranges ) {
+					return null;
+				}
+
+				$columns = array();
+				$seen    = array();
+				foreach ( $column_ranges as $range ) {
+					if ( $range['start'] + 1 !== $range['end'] || ! isset( $tokens[ $range['start'] ] ) ) {
+						return null;
+					}
+
+					$column = $this->get_direct_information_schema_identifier_token_value( $tokens[ $range['start'] ] );
+					if ( null === $column ) {
+						return null;
+					}
+
+					$column_key = strtolower( $column );
+					if ( isset( $seen[ $column_key ] ) ) {
+						return null;
+					}
+
+					$seen[ $column_key ] = true;
+					$columns[]           = $column;
+				}
+
 				if ( empty( $columns ) ) {
 					return null;
 				}
@@ -34394,44 +34428,6 @@ WHERE "TABLE_SCHEMA" = %3$s
 		}
 
 		return false;
-	}
-
-	/**
-	 * Get explicit CTE output columns from a parenthesized column list.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  First column token.
-	 * @param int              $end    Final column token, exclusive.
-	 * @return string[]|null Column names, or null when unsupported.
-	 */
-	private function get_direct_information_schema_cte_column_list( array $tokens, int $start, int $end ): ?array {
-		$ranges = $this->split_top_level_mysql_arguments( $tokens, $start, $end );
-		if ( null === $ranges || array() === $ranges ) {
-			return null;
-		}
-
-		$columns = array();
-		$seen    = array();
-		foreach ( $ranges as $range ) {
-			if ( $range['start'] + 1 !== $range['end'] || ! isset( $tokens[ $range['start'] ] ) ) {
-				return null;
-			}
-
-			$column = $this->get_direct_information_schema_identifier_token_value( $tokens[ $range['start'] ] );
-			if ( null === $column ) {
-				return null;
-			}
-
-			$column_key = strtolower( $column );
-			if ( isset( $seen[ $column_key ] ) ) {
-				return null;
-			}
-
-			$seen[ $column_key ] = true;
-			$columns[]           = $column;
-		}
-
-		return $columns;
 	}
 
 	/**
@@ -44769,35 +44765,6 @@ END',
 	}
 
 	/**
-	 * Check whether an untranslated SELECT must not fall through to PostgreSQL.
-	 *
-	 * @param string $query MySQL query.
-	 * @return bool Whether the query names information_schema in a table-scoped way.
-	 */
-	private function should_reject_unsupported_direct_information_schema_select_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
-		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
-			return false;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		if ( null === $statement_end ) {
-			return false;
-		}
-
-		if ( $this->select_references_direct_information_schema_relation( $tokens, 1, $statement_end ) ) {
-			return true;
-		}
-
-		if ( $this->information_schema_select_query_targets_main_database_explicitly( $query, $tokens, $statement_end ) ) {
-			return false;
-		}
-
-		return 0 === strcasecmp( $this->db_name, 'information_schema' )
-			&& $this->information_schema_select_has_table_reference( $tokens );
-	}
-
-	/**
 	 * Translate SELECTs that explicitly target only main-database tables while information_schema is selected.
 	 *
 	 * @param string $query MySQL query.
@@ -44994,11 +44961,18 @@ END',
 					continue;
 				}
 
-				$reference_start = $position;
-				$reference       = $this->parse_mysql_table_reference( $tokens, $position, $end );
+				$reference_start  = $position;
+				$reference        = $this->parse_mysql_table_reference( $tokens, $position, $end );
+				$reference_schema = $this->get_mysql_identifier_token_value( $tokens[ $reference_start ] ?? null );
 				if (
 					null === $reference
-					|| ! $this->is_information_schema_explicit_main_database_select_table_reference( $tokens, $reference_start )
+					|| ! isset( $tokens[ $reference_start + 1 ], $tokens[ $reference_start + 2 ] )
+					|| WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $reference_start + 1 ]->id
+					|| null === $reference_schema
+					|| (
+						0 !== strcasecmp( $reference_schema, $this->main_db_name )
+						&& 0 !== strcasecmp( $reference_schema, 'public' )
+					)
 				) {
 					return null;
 				}
@@ -45024,30 +44998,6 @@ END',
 		}
 
 		return empty( $replacements ) || $expect_next ? null : $replacements;
-	}
-
-	/**
-	 * Check whether a SELECT source explicitly targets the main database.
-	 *
-	 * @param WP_MySQL_Token[] $tokens MySQL lexer token stream.
-	 * @param int              $start  Table reference start token.
-	 * @return bool Whether the source starts with a main-database-qualified table.
-	 */
-	private function is_information_schema_explicit_main_database_select_table_reference( array $tokens, int $start ): bool {
-		if (
-			! isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
-			|| WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $start + 1 ]->id
-		) {
-			return false;
-		}
-
-		$schema = $this->get_mysql_identifier_token_value( $tokens[ $start ] );
-		if ( null === $schema ) {
-			return false;
-		}
-
-		return 0 === strcasecmp( $schema, $this->main_db_name )
-			|| 0 === strcasecmp( $schema, 'public' );
 	}
 
 	/**
