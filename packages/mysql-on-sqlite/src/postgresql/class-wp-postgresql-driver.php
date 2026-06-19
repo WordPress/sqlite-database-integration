@@ -26957,11 +26957,17 @@ WHERE option_name IN (
 			return;
 		}
 
-		$explicit_insert_id = $this->get_explicit_mysql_auto_increment_insert_id(
-			$auto_increment_column,
-			$dml_query['columns'],
-			$this->get_dml_insert_id_value_rows( $dml_query )
-		);
+		if ( isset( $dml_query['insert_id_value_rows'] ) && is_array( $dml_query['insert_id_value_rows'] ) ) {
+			$insert_id_value_rows = $dml_query['insert_id_value_rows'];
+		} elseif ( isset( $dml_query['value_rows'] ) && is_array( $dml_query['value_rows'] ) ) {
+			$insert_id_value_rows = $dml_query['value_rows'];
+		} elseif ( isset( $dml_query['values'] ) && is_array( $dml_query['values'] ) ) {
+			$insert_id_value_rows = array( $dml_query['values'] );
+		} else {
+			$insert_id_value_rows = array();
+		}
+
+		$explicit_insert_id = $this->get_explicit_mysql_auto_increment_insert_id( $auto_increment_column, $dml_query['columns'], $insert_id_value_rows );
 		if ( null !== $explicit_insert_id ) {
 			$this->last_insert_id = $explicit_insert_id;
 			return;
@@ -27009,38 +27015,6 @@ WHERE option_name IN (
 		}
 
 		return null;
-	}
-
-	/**
-	 * Get DML value rows from translated insert metadata.
-	 *
-	 * @param array $dml_query Translated DML query metadata.
-	 * @return array[] DML value rows.
-	 */
-	private function get_dml_insert_value_rows( array $dml_query ): array {
-		if ( isset( $dml_query['value_rows'] ) && is_array( $dml_query['value_rows'] ) ) {
-			return $dml_query['value_rows'];
-		}
-
-		if ( isset( $dml_query['values'] ) && is_array( $dml_query['values'] ) ) {
-			return array( $dml_query['values'] );
-		}
-
-		return array();
-	}
-
-	/**
-	 * Get DML value rows used for MySQL insert ID detection.
-	 *
-	 * @param array $dml_query Translated DML query metadata.
-	 * @return array[] DML value rows.
-	 */
-	private function get_dml_insert_id_value_rows( array $dml_query ): array {
-		if ( isset( $dml_query['insert_id_value_rows'] ) && is_array( $dml_query['insert_id_value_rows'] ) ) {
-			return $dml_query['insert_id_value_rows'];
-		}
-
-		return $this->get_dml_insert_value_rows( $dml_query );
 	}
 
 	/**
@@ -32891,7 +32865,9 @@ WHERE option_name IN (
 
 		if ( 'string' === $literal['type'] ) {
 			$value         = $literal['value'];
-			$storage_value = $this->get_non_strict_mysql_dml_date_time_storage_value( $base_type, $value );
+			$storage_value = 'date' === $base_type
+				? $this->get_non_strict_mysql_dml_date_storage_value( $value )
+				: $this->get_non_strict_mysql_dml_datetime_storage_value( $value );
 			if ( null === $storage_value || $storage_value === $value ) {
 				return null;
 			}
@@ -32906,21 +32882,7 @@ WHERE option_name IN (
 			return null;
 		}
 
-		return $this->connection->quote( $this->get_mysql_zero_date_time_storage_value_for_type( $base_type ) );
-	}
-
-	/**
-	 * Get the MySQL zero storage value for a date/time type.
-	 *
-	 * @param string $base_type Base MySQL date/time column type.
-	 * @return string Zero storage value.
-	 */
-	private function get_mysql_zero_date_time_storage_value_for_type( string $base_type ): string {
-		if ( 'date' === $base_type ) {
-			return '0000-00-00';
-		}
-
-		return '0000-00-00 00:00:00';
+		return $this->connection->quote( 'date' === $base_type ? '0000-00-00' : '0000-00-00 00:00:00' );
 	}
 
 	/**
@@ -32940,21 +32902,6 @@ WHERE option_name IN (
 		}
 
 		return 1 === preg_match( '/^-?(?:0+)(?:\.0+)?(?:[eE][+-]?0+)?$/', $value );
-	}
-
-	/**
-	 * Get the non-strict MySQL storage value for a date/time literal.
-	 *
-	 * @param string $base_type Base MySQL date/time column type.
-	 * @param string $value     Unquoted literal value.
-	 * @return string|null Storage value, or null when the literal is not date/time-shaped.
-	 */
-	private function get_non_strict_mysql_dml_date_time_storage_value( string $base_type, string $value ): ?string {
-		if ( 'date' === $base_type ) {
-			return $this->get_non_strict_mysql_dml_date_storage_value( $value );
-		}
-
-		return $this->get_non_strict_mysql_dml_datetime_storage_value( $value );
 	}
 
 	/**
