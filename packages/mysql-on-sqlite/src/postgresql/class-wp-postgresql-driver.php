@@ -7954,12 +7954,48 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 
-		$metadata_query = $this->get_mysql_create_table_like_metadata_query(
+		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
+			$this->ensure_mysql_schema_metadata_tables();
+		}
+
+		$source_schema = $this->get_mysql_read_table_backend_schema( $source_reference['schema'] );
+		if ( 0 === strcasecmp( $source_schema, 'information_schema' ) ) {
+			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
+		}
+
+		$source_schema = $this->resolve_mysql_table_schema_for_introspection( $source_schema, $source_reference['table'] );
+
+		$logged_queries = $this->last_postgresql_queries;
+		try {
+			$columns        = $this->get_show_create_table_column_metadata_rows( $source_schema, $source_reference['table'] );
+			$indexes        = $this->get_show_create_table_index_metadata_rows( $source_schema, $source_reference['table'] );
+			$checks         = $this->get_show_create_table_check_constraint_metadata_rows( $source_schema, $source_reference['table'] );
+			$table_metadata = $this->get_show_create_table_table_metadata( $source_schema, $source_reference['table'] );
+		} finally {
+			$this->last_postgresql_queries = $logged_queries;
+		}
+
+		if ( empty( $columns ) ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
+		}
+
+		$metadata_query = $this->get_mysql_create_table_statement_from_metadata(
 			$target_reference['table'],
-			$source_reference,
+			$columns,
+			$indexes,
+			array(),
+			$checks,
+			$table_metadata['comment'],
 			$is_temporary,
-			$if_not_exists
+			$table_metadata['collation']
 		);
+		if ( $if_not_exists ) {
+			$prefix      = $is_temporary ? 'CREATE TEMPORARY TABLE ' : 'CREATE TABLE ';
+			$replacement = $is_temporary ? 'CREATE TEMPORARY TABLE IF NOT EXISTS ' : 'CREATE TABLE IF NOT EXISTS ';
+			if ( 0 === strpos( $metadata_query, $prefix ) ) {
+				$metadata_query = $replacement . substr( $metadata_query, strlen( $prefix ) );
+			}
+		}
 
 		$translator = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
 		return array(
@@ -8022,65 +8058,6 @@ $wp_mysql_primary_index_comment$',
 			'temporary'     => $is_temporary,
 			'if_not_exists' => $if_not_exists,
 		);
-	}
-
-	/**
-	 * Build a MySQL CREATE TABLE definition for a CREATE TABLE ... LIKE target.
-	 *
-	 * @param string $target_table     Destination table name.
-	 * @param array  $source_reference Source table reference.
-	 * @param bool   $is_temporary     Whether the destination table is temporary.
-	 * @param bool   $if_not_exists    Whether IF NOT EXISTS was present.
-	 * @return string MySQL CREATE TABLE statement used for translation and metadata.
-	 */
-	private function get_mysql_create_table_like_metadata_query( string $target_table, array $source_reference, bool $is_temporary, bool $if_not_exists ): string {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			$this->ensure_mysql_schema_metadata_tables();
-		}
-
-		$source_schema = $this->get_mysql_read_table_backend_schema( $source_reference['schema'] );
-		if ( 0 === strcasecmp( $source_schema, 'information_schema' ) ) {
-			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
-		}
-
-		$source_schema = $this->resolve_mysql_table_schema_for_introspection( $source_schema, $source_reference['table'] );
-
-		$logged_queries = $this->last_postgresql_queries;
-		try {
-			$columns        = $this->get_show_create_table_column_metadata_rows( $source_schema, $source_reference['table'] );
-			$indexes        = $this->get_show_create_table_index_metadata_rows( $source_schema, $source_reference['table'] );
-			$checks         = $this->get_show_create_table_check_constraint_metadata_rows( $source_schema, $source_reference['table'] );
-			$table_metadata = $this->get_show_create_table_table_metadata( $source_schema, $source_reference['table'] );
-		} finally {
-			$this->last_postgresql_queries = $logged_queries;
-		}
-
-		if ( empty( $columns ) ) {
-			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
-		}
-
-		$metadata_query = $this->get_mysql_create_table_statement_from_metadata(
-			$target_table,
-			$columns,
-			$indexes,
-			array(),
-			$checks,
-			$table_metadata['comment'],
-			$is_temporary,
-			$table_metadata['collation']
-		);
-
-		if ( ! $if_not_exists ) {
-			return $metadata_query;
-		}
-
-		$prefix      = $is_temporary ? 'CREATE TEMPORARY TABLE ' : 'CREATE TABLE ';
-		$replacement = $is_temporary ? 'CREATE TEMPORARY TABLE IF NOT EXISTS ' : 'CREATE TABLE IF NOT EXISTS ';
-		if ( 0 === strpos( $metadata_query, $prefix ) ) {
-			return $replacement . substr( $metadata_query, strlen( $prefix ) );
-		}
-
-		return $metadata_query;
 	}
 
 	/**
