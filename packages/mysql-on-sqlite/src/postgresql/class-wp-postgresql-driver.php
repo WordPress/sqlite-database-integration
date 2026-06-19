@@ -15174,8 +15174,9 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$table_reference = $this->get_show_create_table_reference( $tokens, 3 );
-		if ( null === $table_reference || ! $this->is_at_mysql_query_end( $tokens, $table_reference['position'] ) ) {
+		$position        = 3;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
+		if ( null === $table_reference || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW CREATE TABLE statement.' );
 		}
 
@@ -15195,40 +15196,6 @@ $wp_mysql_primary_index_comment$',
 		return array(
 			'schema' => $schema_name,
 			'table'  => $table_reference['table'],
-		);
-	}
-
-	/**
-	 * Parse a SHOW CREATE TABLE table reference.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int              $position Table reference start position.
-	 * @return array{schema: string|null, table: string, position: int}|null Parsed reference, or null when unsupported.
-	 */
-	private function get_show_create_table_reference( array $tokens, int $position ): ?array {
-		$first_identifier = $this->get_mysql_table_reference_identifier_token_value( $tokens[ $position ] ?? null );
-		if ( null === $first_identifier ) {
-			return null;
-		}
-
-		++$position;
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $position ]->id ) {
-			return array(
-				'schema'   => null,
-				'table'    => $first_identifier,
-				'position' => $position,
-			);
-		}
-
-		$table_name = $this->get_mysql_table_reference_identifier_token_value( $tokens[ $position + 1 ] ?? null );
-		if ( null === $table_name ) {
-			return null;
-		}
-
-		return array(
-			'schema'   => $first_identifier,
-			'table'    => $table_name,
-			'position' => $position + 2,
 		);
 	}
 
@@ -17300,14 +17267,13 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		++$position;
-		$table_reference = $this->get_show_columns_table_reference( $tokens, $position );
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
 		if ( null === $table_reference ) {
 			throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
 		}
 
 		$schema_name = $this->get_mysql_read_table_backend_schema( $table_reference['schema'] );
 		$table_name  = $table_reference['table'];
-		$position    = $table_reference['position'];
 
 		if (
 			isset( $tokens[ $position ] )
@@ -17388,40 +17354,6 @@ $wp_mysql_primary_index_comment$',
 			'full'   => $is_full,
 			'like'   => $like,
 			'where'  => $where,
-		);
-	}
-
-	/**
-	 * Parse a SHOW COLUMNS table reference.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int             $position Table reference start position.
-	 * @return array{schema: string|null, table: string, position: int}|null Parsed reference, or null when unsupported.
-	 */
-	private function get_show_columns_table_reference( array $tokens, int $position ): ?array {
-		$first_identifier = $this->get_mysql_table_reference_identifier_token_value( $tokens[ $position ] ?? null );
-		if ( null === $first_identifier ) {
-			return null;
-		}
-
-		++$position;
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $position ]->id ) {
-			return array(
-				'schema'   => null,
-				'table'    => $first_identifier,
-				'position' => $position,
-			);
-		}
-
-		$table_name = $this->get_mysql_table_reference_identifier_token_value( $tokens[ $position + 1 ] ?? null );
-		if ( null === $table_name ) {
-			return null;
-		}
-
-		return array(
-			'schema'   => $first_identifier,
-			'table'    => $table_name,
-			'position' => $position + 2,
 		);
 	}
 
