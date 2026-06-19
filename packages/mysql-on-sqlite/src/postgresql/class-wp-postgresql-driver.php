@@ -26469,74 +26469,36 @@ WHERE option_name IN (
 			return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
 		}
 
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
-				'c',
-				'pg_catalog.obj_description(seq.oid, \'pg_class\')'
-			);
-			$extra       = $this->get_direct_information_schema_column_extra_expression( 'c', true );
-			$stmt        = $this->connection->query(
-				sprintf(
-					'SELECT
-						c.column_name,
-						c.data_type,
-						c.is_identity,
-						c.column_default,
-						%1$s AS mysql_column_type,
-						%2$s AS mysql_extra,
-						seq_ns.nspname AS sequence_schema,
-						seq.relname AS sequence_name
-					FROM information_schema.columns c
-					LEFT JOIN LATERAL (
-						SELECT pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', c.table_schema, c.table_name), c.column_name)::regclass AS sequence_oid
-					) identity_sequence ON TRUE
-					LEFT JOIN pg_catalog.pg_class seq
-						ON seq.oid = identity_sequence.sequence_oid
-					LEFT JOIN pg_catalog.pg_namespace seq_ns
-						ON seq_ns.oid = seq.relnamespace
-					WHERE c.table_schema = ?
-						AND c.table_name = ?
-					ORDER BY c.ordinal_position',
-					$column_type,
-					$extra
-				),
-				array( $table_schema, $table_name )
-			);
-
-			$this->mysql_dml_identity_column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			return $this->mysql_dml_identity_column_metadata_cache[ $cache_key ];
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-
+		$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
+			'c',
+			'pg_catalog.obj_description(seq.oid, \'pg_class\')'
+		);
+		$extra       = $this->get_direct_information_schema_column_extra_expression( 'c', true );
 		try {
 			$stmt = $this->connection->query(
 				sprintf(
 					'SELECT
-						c.column_name,
-						c.data_type,
-						c.is_identity,
-						c.column_default,
-						cm.column_type AS mysql_column_type,
-						cm.extra AS mysql_extra,
-						seq_ns.nspname AS sequence_schema,
-						seq.relname AS sequence_name
-					FROM information_schema.columns c
-					LEFT JOIN %s cm
-						ON cm.table_schema = c.table_schema
-						AND cm.table_name = c.table_name
-						AND cm.column_name = c.column_name
-					LEFT JOIN LATERAL (
-						SELECT pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', c.table_schema, c.table_name), c.column_name)::regclass AS sequence_oid
-					) identity_sequence ON TRUE
-					LEFT JOIN pg_catalog.pg_class seq
-						ON seq.oid = identity_sequence.sequence_oid
-					LEFT JOIN pg_catalog.pg_namespace seq_ns
-						ON seq_ns.oid = seq.relnamespace
-					WHERE c.table_schema = ?
-						AND c.table_name = ?
-					ORDER BY c.ordinal_position',
-					$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+					c.column_name,
+					c.data_type,
+					c.is_identity,
+					c.column_default,
+					%1$s AS mysql_column_type,
+					%2$s AS mysql_extra,
+					seq_ns.nspname AS sequence_schema,
+					seq.relname AS sequence_name
+				FROM information_schema.columns c
+				LEFT JOIN LATERAL (
+					SELECT pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', c.table_schema, c.table_name), c.column_name)::regclass AS sequence_oid
+				) identity_sequence ON TRUE
+				LEFT JOIN pg_catalog.pg_class seq
+					ON seq.oid = identity_sequence.sequence_oid
+				LEFT JOIN pg_catalog.pg_namespace seq_ns
+					ON seq_ns.oid = seq.relnamespace
+				WHERE c.table_schema = ?
+					AND c.table_name = ?
+				ORDER BY c.ordinal_position',
+					$column_type,
+					$extra
 				),
 				array( $table_schema, $table_name )
 			);
