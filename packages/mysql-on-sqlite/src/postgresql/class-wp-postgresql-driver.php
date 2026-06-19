@@ -4594,10 +4594,6 @@ class WP_PostgreSQL_Driver {
 				return false;
 			}
 
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_default( $column['default'] ?? null, $column['extra'] ?? '' ) ) {
-				return false;
-			}
-
 			if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_extra( $column['extra'] ?? '', $column ) ) {
 				return false;
 			}
@@ -5578,10 +5574,6 @@ $wp_mysql_on_update$',
 			return false;
 		}
 
-		if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_default( $column['default'] ?? null, $column['extra'] ?? '' ) ) {
-			return false;
-		}
-
 		return $this->is_postgresql_catalog_recoverable_mysql_column_extra( $column['extra'] ?? '', $column );
 	}
 
@@ -5634,25 +5626,6 @@ $wp_mysql_on_update$',
 		}
 
 		return $has_default_generated || $has_on_update;
-	}
-
-	/**
-	 * Check whether PostgreSQL catalogs can reconstruct a MySQL column default.
-	 *
-	 * @param string|null $column_default MySQL-facing default metadata.
-	 * @param string|null $extra          MySQL-facing extra metadata.
-	 * @return bool Whether stored side metadata can be skipped.
-	 */
-	private function is_postgresql_catalog_recoverable_mysql_column_default( ?string $column_default, ?string $extra ): bool {
-		if ( null === $column_default ) {
-			return true;
-		}
-
-		if ( $this->mysql_column_extra_has_default_generated( $extra ) ) {
-			return true;
-		}
-
-		return true;
 	}
 
 	/**
