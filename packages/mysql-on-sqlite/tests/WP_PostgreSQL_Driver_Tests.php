@@ -22635,7 +22635,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						'params' => $params,
 					);
 
-					if ( false !== strpos( $sql, 'LOWER(con.conname)' ) ) {
+					if ( isset( $params[2] ) ) {
 						return parent::query( 'SELECT 1 WHERE 0 = 1' );
 					}
 
@@ -23919,7 +23919,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 						'params' => $params,
 					);
 
-					if ( false !== strpos( $sql, 'LOWER(con.conname)' ) ) {
+					if ( isset( $params[2] ) ) {
 						return parent::query(
 							$this->foreign_key_added && 'catalog_fk_child_ibfk_3' === (string) ( $params[2] ?? '' )
 								? 'SELECT 1'
@@ -24001,6 +24001,124 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array(),
 			$pdo->query( "SELECT name FROM sqlite_master WHERE name LIKE '__wp_postgresql_mysql_%' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
 		);
+	}
+
+	/**
+	 * Tests PostgreSQL-backed foreign key metadata readers use catalog MySQL names.
+	 */
+	public function test_foreign_key_metadata_readers_use_postgresql_catalog_mysql_names_without_metadata_table(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured foreign-key catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $foreign_key_catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed catalog/foreign-key metadata reader queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE ) ) {
+					throw new RuntimeException( 'Hidden foreign-key metadata table access was not expected for catalog-backed foreign key metadata readers.' );
+				}
+
+				if ( false !== strpos( $sql, 'FROM pg_catalog.pg_constraint con' ) && false !== strpos( $sql, 'con.contype = \'f\'' ) ) {
+					$this->foreign_key_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					if ( array( 'plugin_schema', 'catalog_fk_reader' ) !== array_slice( $params, 0, 2 ) ) {
+						throw new RuntimeException( 'Foreign key catalog readers should resolve against the requested PostgreSQL schema and table.' );
+					}
+
+					if ( false === strpos( $sql, "t.relname || '__'" ) ) {
+						throw new RuntimeException( 'Foreign key catalog readers should expose PostgreSQL constraint names as MySQL-shaped names.' );
+					}
+
+					if ( isset( $params[2] ) ) {
+						return parent::query(
+							'catalog_fk_reader_ibfk_3' === (string) $params[2]
+								? 'SELECT 1'
+								: 'SELECT 1 WHERE 0 = 1'
+						);
+					}
+
+					return parent::query(
+						"SELECT 'catalog_fk_reader_ibfk_1' AS constraint_name
+						UNION ALL
+						SELECT 'catalog_fk_reader_ibfk_3' AS constraint_name"
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured foreign-key catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_foreign_key_catalog_queries(): array {
+				return $this->foreign_key_catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$readers    = Closure::bind(
+			function (): array {
+				return array(
+					'next'    => $this->get_next_mysql_foreign_key_constraint_name(
+						'plugin_schema',
+						'catalog_fk_reader',
+						array( 'catalog_fk_reader_ibfk_2' )
+					),
+					'exists'  => $this->mysql_foreign_key_metadata_exists(
+						'plugin_schema',
+						'catalog_fk_reader',
+						'catalog_fk_reader_ibfk_3'
+					),
+					'missing' => $this->mysql_foreign_key_metadata_exists(
+						'plugin_schema',
+						'catalog_fk_reader',
+						'missing_fk'
+					),
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$results = $readers();
+
+		$this->assertSame( 'catalog_fk_reader_ibfk_4', $results['next'] );
+		$this->assertTrue( $results['exists'] );
+		$this->assertFalse( $results['missing'] );
+
+		$catalog_queries = $connection->get_foreign_key_catalog_queries();
+		$this->assertCount( 3, $catalog_queries );
+		$this->assertSame( array( 'plugin_schema', 'catalog_fk_reader' ), $catalog_queries[0]['params'] );
+		$this->assertSame( array( 'plugin_schema', 'catalog_fk_reader', 'catalog_fk_reader_ibfk_3' ), $catalog_queries[1]['params'] );
+		$this->assertSame( array( 'plugin_schema', 'catalog_fk_reader', 'missing_fk' ), $catalog_queries[2]['params'] );
+
+		foreach ( $catalog_queries as $catalog_query ) {
+			$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $catalog_query['sql'] );
+			$this->assertStringContainsString( 'INNER JOIN pg_catalog.pg_class t', $catalog_query['sql'] );
+			$this->assertStringContainsString( 'INNER JOIN pg_catalog.pg_namespace n', $catalog_query['sql'] );
+			$this->assertStringContainsString( "t.relkind IN ('r', 'p')", $catalog_query['sql'] );
+			$this->assertStringContainsString( "con.contype = 'f'", $catalog_query['sql'] );
+			$this->assertStringContainsString( "t.relname || '__'", $catalog_query['sql'] );
+			$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE, $catalog_query['sql'] );
+		}
+
+		$this->assertStringContainsString( 'AS constraint_name', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'LOWER(', $catalog_queries[1]['sql'] );
+		$this->assertStringContainsString( 'LOWER(?)', $catalog_queries[1]['sql'] );
+		$this->assertStringContainsString( 'LIMIT 1', $catalog_queries[1]['sql'] );
 	}
 
 	/**

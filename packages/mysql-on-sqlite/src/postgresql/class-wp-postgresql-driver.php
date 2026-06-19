@@ -999,7 +999,6 @@ class WP_PostgreSQL_Driver {
 						$this->sync_postgresql_catalog_table_comment( $metadata_schema, $create_table_select_query['table'], $create_table_select_query['table_comment'] );
 					}
 				} else {
-					$this->ensure_mysql_schema_metadata_tables();
 					$this->delete_mysql_schema_metadata_for_tables( array( $create_table_select_query['table'] ), $metadata_schema );
 
 					if ( '' !== $create_table_select_query['table_comment'] ) {
@@ -4504,8 +4503,6 @@ class WP_PostgreSQL_Driver {
 	 * @param string|callable $table_schema Metadata schema, or resolver receiving the table name.
 	 */
 	private function store_mysql_schema_metadata_for_schema( string $query, $table_schema ): void {
-		$this->ensure_mysql_schema_metadata_tables();
-
 		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
 		foreach ( $metadata_tables as $metadata ) {
 			$schema_name = is_callable( $table_schema )
@@ -5702,10 +5699,6 @@ $wp_mysql_on_update$',
 	 * @param string $table_collation MySQL table collation.
 	 */
 	private function sync_postgresql_catalog_table_comment( string $table_schema, string $table_name, string $table_comment, string $table_collation = '' ): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
 		$this->execute_postgresql_side_effect_statements(
 			array(
 				sprintf(
@@ -5728,10 +5721,6 @@ $wp_mysql_on_update$',
 	 * @param string $column_comment Column comment.
 	 */
 	private function sync_postgresql_catalog_column_comment( string $table_schema, string $table_name, string $column_name, string $column_comment ): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
 		$this->execute_postgresql_side_effect_statements(
 			array(
 				sprintf(
@@ -5801,8 +5790,7 @@ $wp_mysql_on_update$',
 		$column_type          = (string) ( $column['type'] ?? '' );
 		$identity_column_type = (string) preg_replace( '/\s+/', ' ', strtolower( trim( $column_type ) ) );
 		if (
-			! $this->should_use_postgresql_catalog_metadata()
-			|| 'auto_increment' !== strtolower( (string) ( $column['extra'] ?? '' ) )
+			'auto_increment' !== strtolower( (string) ( $column['extra'] ?? '' ) )
 			|| ! $this->is_mysql_integer_family_column_type( $column_type )
 			|| in_array( $identity_column_type, array( 'int', 'integer', 'bigint' ), true )
 		) {
@@ -5839,10 +5827,6 @@ $wp_mysql_identity_sequence_comment$',
 	 * @param array  $check        CHECK constraint metadata.
 	 */
 	private function sync_postgresql_catalog_check_comment( string $table_schema, string $table_name, array $check ): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
 		$metadata_lines          = array();
 		$check_clause            = trim( (string) ( $check['check_clause'] ?? '' ) );
 		$postgresql_check_clause = array_key_exists( 'postgresql_check_clause', $check )
@@ -6043,10 +6027,6 @@ END',
 	 * @param bool   $skip_empty   Whether to skip empty no-op index comments.
 	 */
 	private function sync_postgresql_catalog_index_comment( string $table_schema, string $table_name, array $index, bool $skip_empty = false ): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
 		$metadata_lines = array();
 		$index_name     = (string) $index['name'];
 		$index_comment  = (string) ( $index['comment'] ?? '' );
@@ -6559,24 +6539,12 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_next_mysql_foreign_key_constraint_name( string $table_schema, string $table_name, array $reserved = array() ): string {
 		$constraint_names = $reserved;
+
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			try {
-				$stmt             = $this->connection->query(
-					'SELECT con.conname
-					FROM pg_catalog.pg_constraint con
-					INNER JOIN pg_catalog.pg_class t
-						ON t.oid = con.conrelid
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					WHERE n.nspname = ?
-						AND t.relname = ?
-						AND con.contype = \'f\'',
-					array( $table_schema, $table_name )
-				);
-				$constraint_names = array_merge( $constraint_names, array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) ) );
-			} catch ( PDOException $e ) {
-				$constraint_names = $reserved;
-			}
+			$constraint_names = array_merge(
+				$constraint_names,
+				$this->get_postgresql_catalog_foreign_key_constraint_names( $table_schema, $table_name )
+			);
 
 			return $this->get_next_mysql_foreign_key_constraint_name_from_names( $table_name, $constraint_names );
 		}
@@ -6592,6 +6560,59 @@ $wp_mysql_primary_index_comment$',
 		$constraint_names = array_merge( $constraint_names, $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
 
 		return $this->get_next_mysql_foreign_key_constraint_name_from_names( $table_name, $constraint_names );
+	}
+
+	/**
+	 * Get PostgreSQL catalog FOREIGN KEY constraint names for a table.
+	 *
+	 * @param string $table_schema Backend schema.
+	 * @param string $table_name   Table name.
+	 * @return string[] MySQL-shaped FOREIGN KEY constraint names.
+	 */
+	private function get_postgresql_catalog_foreign_key_constraint_names( string $table_schema, string $table_name ): array {
+		$constraint_name_sql = $this->get_postgresql_catalog_foreign_key_constraint_name_sql( 'con.conname', 't.relname' );
+
+		try {
+			$stmt = $this->connection->query(
+				sprintf(
+					'SELECT %s AS constraint_name
+					FROM pg_catalog.pg_constraint con
+					INNER JOIN pg_catalog.pg_class t
+						ON t.oid = con.conrelid
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					WHERE n.nspname = ?
+						AND t.relname = ?
+						AND t.relkind IN (\'r\', \'p\')
+						AND con.contype = \'f\'',
+					$constraint_name_sql
+				),
+				array( $table_schema, $table_name )
+			);
+
+			return array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
+		} catch ( PDOException $e ) {
+			return array();
+		}
+	}
+
+	/**
+	 * Get SQL that exposes PostgreSQL FOREIGN KEY constraint names as MySQL names.
+	 *
+	 * @param string $constraint_name_sql SQL expression returning the PostgreSQL constraint name.
+	 * @param string $table_name_sql      SQL expression returning the table name.
+	 * @return string SQL expression returning the MySQL-shaped constraint name.
+	 */
+	private function get_postgresql_catalog_foreign_key_constraint_name_sql( string $constraint_name_sql, string $table_name_sql ): string {
+		return sprintf(
+			'CASE
+				WHEN SUBSTRING(%1$s FROM 1 FOR CHAR_LENGTH(%2$s || \'__\')) = %2$s || \'__\'
+					THEN SUBSTRING(%1$s FROM CHAR_LENGTH(%2$s || \'__\') + 1)
+				ELSE %1$s
+			END',
+			$constraint_name_sql,
+			$table_name_sql
+		);
 	}
 
 	/**
@@ -6622,19 +6643,25 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function mysql_foreign_key_metadata_exists( string $table_schema, string $table_name, string $constraint_name ): bool {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$constraint_name_sql = $this->get_postgresql_catalog_foreign_key_constraint_name_sql( 'con.conname', 't.relname' );
+
 			try {
 				$stmt = $this->connection->query(
-					'SELECT 1
-					FROM pg_catalog.pg_constraint con
-					INNER JOIN pg_catalog.pg_class t
-						ON t.oid = con.conrelid
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					WHERE n.nspname = ?
-						AND t.relname = ?
-						AND con.contype = \'f\'
-						AND LOWER(con.conname) = LOWER(?)
-					LIMIT 1',
+					sprintf(
+						'SELECT 1
+						FROM pg_catalog.pg_constraint con
+						INNER JOIN pg_catalog.pg_class t
+							ON t.oid = con.conrelid
+						INNER JOIN pg_catalog.pg_namespace n
+							ON n.oid = t.relnamespace
+						WHERE n.nspname = ?
+							AND t.relname = ?
+							AND t.relkind IN (\'r\', \'p\')
+							AND con.contype = \'f\'
+							AND LOWER(%s) = LOWER(?)
+						LIMIT 1',
+						$constraint_name_sql
+					),
 					array( $table_schema, $table_name, $constraint_name )
 				);
 
