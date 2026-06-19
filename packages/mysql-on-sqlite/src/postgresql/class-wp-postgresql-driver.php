@@ -37933,6 +37933,54 @@ WHERE option_name IN (
 			return $this->get_direct_information_schema_status_relation_sql();
 		}
 
+		if ( 'character_sets' === $view ) {
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'character_sets' ),
+				$this->get_mysql_static_character_set_rows()
+			);
+		}
+
+		if ( 'collations' === $view ) {
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'collations' ),
+				$this->get_mysql_static_collation_rows()
+			);
+		}
+
+		if ( 'engines' === $view ) {
+			$rows = array();
+			foreach ( $this->get_mysql_static_show_engine_rows() as $row ) {
+				$rows[] = array(
+					'ENGINE'       => $row['Engine'],
+					'SUPPORT'      => $row['Support'],
+					'COMMENT'      => $row['Comment'],
+					'TRANSACTIONS' => $row['Transactions'],
+					'XA'           => $row['XA'],
+					'SAVEPOINTS'   => $row['Savepoints'],
+				);
+			}
+
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'engines' ),
+				$rows
+			);
+		}
+
+		if ( 'collation_character_set_applicability' === $view ) {
+			$rows = array();
+			foreach ( $this->get_mysql_static_collation_rows() as $row ) {
+				$rows[] = array(
+					'COLLATION_NAME'     => $row['COLLATION_NAME'],
+					'CHARACTER_SET_NAME' => $row['CHARACTER_SET_NAME'],
+				);
+			}
+
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'collation_character_set_applicability' ),
+				$rows
+			);
+		}
+
 		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) ) {
 			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
@@ -38852,63 +38900,6 @@ WHERE s.schema_name = \'information_schema\'
 	}
 
 	/**
-	 * Build the MySQL-shaped information_schema.CHARACTER_SETS relation.
-	 *
-	 * This is a static MySQL compatibility surface, not PostgreSQL object
-	 * metadata. Keep it literal and stateless.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_character_sets_relation_sql(): string {
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( 'character_sets' ),
-			$this->get_mysql_static_character_set_rows()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.COLLATIONS relation.
-	 *
-	 * This is a static MySQL compatibility surface, not PostgreSQL object
-	 * metadata. Keep it literal and stateless.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_collations_relation_sql(): string {
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( 'collations' ),
-			$this->get_mysql_static_collation_rows()
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.ENGINES relation.
-	 *
-	 * This is a static MySQL compatibility surface, not PostgreSQL object
-	 * metadata. Keep it literal and stateless.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_engines_relation_sql(): string {
-		$rows = array();
-		foreach ( $this->get_mysql_static_show_engine_rows() as $row ) {
-			$rows[] = array(
-				'ENGINE'       => $row['Engine'],
-				'SUPPORT'      => $row['Support'],
-				'COMMENT'      => $row['Comment'],
-				'TRANSACTIONS' => $row['Transactions'],
-				'XA'           => $row['XA'],
-				'SAVEPOINTS'   => $row['Savepoints'],
-			);
-		}
-
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( 'engines' ),
-			$rows
-		);
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.FILES relation.
 	 *
 	 * @return string Relation SQL.
@@ -39781,29 +39772,6 @@ LEFT JOIN information_schema.routines r
 WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND LEFT(p.specific_schema, 3) <> \'pg_\'',
 			$this->get_direct_information_schema_display_schema_sql( 'p.specific_schema' )
-		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.COLLATION_CHARACTER_SET_APPLICABILITY relation.
-	 *
-	 * This is a static MySQL compatibility surface, not PostgreSQL object
-	 * metadata. Keep it literal and stateless.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_collation_character_set_applicability_relation_sql(): string {
-		$rows = array();
-		foreach ( $this->get_mysql_static_collation_rows() as $row ) {
-			$rows[] = array(
-				'COLLATION_NAME'     => $row['COLLATION_NAME'],
-				'CHARACTER_SET_NAME' => $row['CHARACTER_SET_NAME'],
-			);
-		}
-
-		return $this->get_direct_information_schema_literal_relation_sql(
-			$this->get_direct_information_schema_relation_columns( 'collation_character_set_applicability' ),
-			$rows
 		);
 	}
 
