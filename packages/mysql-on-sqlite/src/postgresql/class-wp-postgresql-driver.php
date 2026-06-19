@@ -656,7 +656,10 @@ class WP_PostgreSQL_Driver {
 
 		$this->collation = null === $collation || '' === $collation
 			? ( $collations[ $this->charset ] ?? $this->charset . '_general_ci' )
-			: $this->normalize_mysql_collation_name( $collation );
+			: strtolower( trim( $collation, "'\"` \t\n\r\0\x0B" ) );
+		if ( 0 === strpos( $this->collation, 'utf8mb3_' ) ) {
+			$this->collation = 'utf8_' . substr( $this->collation, strlen( 'utf8mb3_' ) );
+		}
 		$this->sync_mysql_charset_session_variables();
 	}
 
@@ -20514,33 +20517,18 @@ ORDER BY ' . $table_name_sql;
 		}
 
 		if ( $this->is_mysql_boolean_system_variable( $name ) ) {
-			return $this->normalize_mysql_boolean_system_variable_value( $value );
+			if ( in_array( $normalized_value, array( '1', 'on', 'true' ), true ) ) {
+				return '1';
+			}
+
+			return in_array( $normalized_value, array( '0', 'off', 'false' ), true ) ? '0' : null;
 		}
 
 		if ( $this->is_mysql_charset_session_variable( $name ) || $this->is_mysql_collation_session_variable( $name ) ) {
-			return strtolower( trim( $value, "'\"` \t\n\r\0\x0B" ) );
+			return $normalized_value;
 		}
 
 		return $value;
-	}
-
-	/**
-	 * Normalize a MySQL boolean system variable value.
-	 *
-	 * @param string $value Raw assignment value.
-	 * @return string|null Normalized 1/0 value, or null when unsupported.
-	 */
-	private function normalize_mysql_boolean_system_variable_value( string $value ): ?string {
-		$value = strtolower( trim( $value, "'\"` \t\n\r\0\x0B" ) );
-		if ( in_array( $value, array( '1', 'on', 'true' ), true ) ) {
-			return '1';
-		}
-
-		if ( in_array( $value, array( '0', 'off', 'false' ), true ) ) {
-			return '0';
-		}
-
-		return null;
 	}
 
 	/**
@@ -20745,21 +20733,6 @@ ORDER BY ' . $table_name_sql;
 	private function normalize_mysql_charset_name( string $charset ): string {
 		$charset = strtolower( trim( $charset, "'\"` \t\n\r\0\x0B" ) );
 		return 'utf8mb3' === $charset ? 'utf8' : $charset;
-	}
-
-	/**
-	 * Normalize a MySQL collation name.
-	 *
-	 * @param string $collation Collation name.
-	 * @return string Normalized collation.
-	 */
-	private function normalize_mysql_collation_name( string $collation ): string {
-		$collation = strtolower( trim( $collation, "'\"` \t\n\r\0\x0B" ) );
-		if ( 0 === strpos( $collation, 'utf8mb3_' ) ) {
-			return 'utf8_' . substr( $collation, strlen( 'utf8mb3_' ) );
-		}
-
-		return $collation;
 	}
 
 	/**
