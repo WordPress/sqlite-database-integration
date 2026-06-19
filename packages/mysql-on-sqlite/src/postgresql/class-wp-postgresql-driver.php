@@ -605,7 +605,9 @@ class WP_PostgreSQL_Driver {
 	public function set_sql_mode( string $sql_mode ): void {
 		$this->active_sql_modes = $this->normalize_mysql_sql_modes( $sql_mode );
 		unset( $this->mysql_session_variable_values['sql_mode'] );
-		$this->clear_mysql_token_cache();
+		$this->mysql_token_cache_query    = null;
+		$this->mysql_token_cache_sql_mode = null;
+		$this->mysql_token_cache_tokens   = array();
 		$this->clear_mysql_query_translation_caches();
 		$this->set_postgresql_mysql_variable_setting_value( 'session', 'sql_mode', $this->get_sql_mode() );
 	}
@@ -4536,15 +4538,6 @@ class WP_PostgreSQL_Driver {
 	private function clear_mysql_query_translation_caches(): void {
 		$this->mysql_select_translation_cache              = array();
 		$this->mysql_sql_calc_found_rows_count_query_cache = array();
-	}
-
-	/**
-	 * Clear the mode-sensitive MySQL token cache.
-	 */
-	private function clear_mysql_token_cache(): void {
-		$this->mysql_token_cache_query    = null;
-		$this->mysql_token_cache_sql_mode = null;
-		$this->mysql_token_cache_tokens   = array();
 	}
 
 	/**
@@ -10912,7 +10905,16 @@ $wp_mysql_primary_index_comment$',
 
 			case WP_MySQL_Lexer::ADD_SYMBOL:
 				if ( $this->is_mysql_dbdelta_add_constraint_action( $tokens, $start, $end ) ) {
-					return $this->translate_mysql_dbdelta_add_constraint_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end, $check_names, $foreign_key_names );
+					return $this->translate_mysql_dbdelta_add_constraint_definition_alter_action(
+						$table_schema,
+						$table_name,
+						$clause,
+						$tokens,
+						$start + 1,
+						$end,
+						$check_names,
+						$foreign_key_names
+					);
 				}
 				if ( $this->is_mysql_dbdelta_add_index_action( $tokens, $start, $end ) ) {
 					return $this->translate_mysql_dbdelta_add_index_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
@@ -11591,32 +11593,6 @@ $wp_mysql_primary_index_comment$',
 				'operation' => 'add_index',
 				'index'     => $index['metadata'],
 			),
-		);
-	}
-
-	/**
-	 * Translate an ALTER TABLE ADD CONSTRAINT or ADD CHECK action.
-	 *
-	 * @param string           $table_schema      Backend schema name.
-	 * @param string           $table_name        Table name.
-	 * @param string           $clause            Full ALTER clause string.
-	 * @param WP_MySQL_Token[] $tokens            Clause token stream.
-	 * @param int              $start             First action token.
-	 * @param int              $end               Final action token, exclusive.
-	 * @param string[]         $check_names       CHECK names generated for this ALTER TABLE statement.
-	 * @param string[]         $foreign_key_names Foreign key names generated for this ALTER TABLE statement.
-	 * @return array{statements: string[], metadata: array}|null Translation, or null when unsupported.
-	 */
-	private function translate_mysql_dbdelta_add_constraint_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end, array &$check_names, array &$foreign_key_names ): ?array {
-		return $this->translate_mysql_dbdelta_add_constraint_definition_alter_action(
-			$table_schema,
-			$table_name,
-			$clause,
-			$tokens,
-			$start + 1,
-			$end,
-			$check_names,
-			$foreign_key_names
 		);
 	}
 
@@ -19508,10 +19484,11 @@ ORDER BY table_name';
 			$definitions[] = $this->get_mysql_create_table_check_constraint_definition_from_metadata( $check );
 		}
 
-		$collation = null !== $table_collation && '' !== $table_collation
+		$collation           = null !== $table_collation && '' !== $table_collation
 			? $table_collation
 			: $this->get_mysql_create_table_collation_from_metadata( $columns );
-		$charset   = $this->get_mysql_charset_from_collation( $collation );
+		$underscore_position = strpos( $collation, '_' );
+		$charset             = false === $underscore_position ? $collation : substr( $collation, 0, $underscore_position );
 
 		$sql = sprintf(
 			"CREATE %sTABLE %s (\n%s\n) ENGINE=InnoDB DEFAULT CHARSET=%s COLLATE=%s",
@@ -19759,21 +19736,6 @@ ORDER BY table_name';
 		}
 
 		return $this->collation;
-	}
-
-	/**
-	 * Get a MySQL charset name from a collation.
-	 *
-	 * @param string $collation MySQL collation.
-	 * @return string MySQL charset.
-	 */
-	private function get_mysql_charset_from_collation( string $collation ): string {
-		$underscore_position = strpos( $collation, '_' );
-		if ( false === $underscore_position ) {
-			return $collation;
-		}
-
-		return substr( $collation, 0, $underscore_position );
 	}
 
 	/**
