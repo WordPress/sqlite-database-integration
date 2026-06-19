@@ -41838,9 +41838,30 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string SQL expression.
 	 */
 	private function get_direct_information_schema_catalog_data_type_expression( string $alias, bool $include_domain_cases = true, ?string $column_comment_sql = null ): string {
-		$comment_type_sql = null === $column_comment_sql
+		$comment_type_sql         = null === $column_comment_sql
 			? 'NULL'
 			: $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX );
+		$column_comment_type_case = sprintf(
+			'WHEN %1$s IS NOT NULL THEN %2$s
+	',
+			$comment_type_sql,
+			$this->get_direct_information_schema_metadata_data_type_expression( $comment_type_sql, 'NULL' )
+		);
+		$enum_data_type_case      = $include_domain_cases
+			? sprintf(
+				'WHEN %1$s.data_type = \'USER-DEFINED\' AND %1$s.udt_name LIKE \'__wp_mysql_enum_%%\' THEN \'enum\'
+	',
+				$alias
+			)
+			: '';
+		$set_data_type_case       = $include_domain_cases
+			? sprintf(
+				'WHEN %1$s.domain_name LIKE \'__wp_mysql_set_%%\' THEN \'set\'
+	',
+				$alias
+			)
+			: '';
+
 		return sprintf(
 			'CASE
 	%2$s%3$s%4$s%5$s
@@ -41854,9 +41875,9 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	ELSE %1$s.data_type
 END',
 			$alias,
-			$this->get_postgresql_mysql_column_comment_data_type_case( $comment_type_sql ),
-			$include_domain_cases ? $this->get_postgresql_mysql_enum_data_type_case( $alias ) : '',
-			$include_domain_cases ? $this->get_postgresql_mysql_set_data_type_case( $alias ) : '',
+			$column_comment_type_case,
+			$enum_data_type_case,
+			$set_data_type_case,
 			$include_domain_cases ? $this->get_postgresql_mysql_domain_data_type_cases( $alias ) : ''
 		);
 	}
@@ -41906,6 +41927,58 @@ END)',
 		?string $column_comment_sql = null,
 		bool $include_helper_type_cases = true
 	): string {
+		$identity_sequence_type_case = '';
+		if ( null !== $identity_sequence_comment_sql ) {
+			$prefix                      = $this->connection->quote( self::MYSQL_IDENTITY_SEQUENCE_COMMENT_TYPE_PREFIX );
+			$identity_sequence_type_case = sprintf(
+				'WHEN %1$s LIKE %2$s || \'%%\' THEN SUBSTR(%1$s, LENGTH(%2$s) + 1)
+	',
+				$identity_sequence_comment_sql,
+				$prefix
+			);
+		}
+
+		$column_comment_type_case = '';
+		if ( null !== $column_comment_sql ) {
+			$column_type_comment_sql  = $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX );
+			$column_comment_type_case = sprintf(
+				'WHEN %1$s IS NOT NULL THEN %1$s
+	',
+				$column_type_comment_sql
+			);
+		}
+
+		$enum_column_type_case = $include_helper_type_cases
+			? sprintf(
+				'WHEN %1$s.data_type = \'USER-DEFINED\' AND %1$s.udt_name LIKE \'__wp_mysql_enum_%%\' THEN (
+		SELECT \'enum(\' || pg_catalog.string_agg(pg_catalog.quote_literal(e.enumlabel), \',\' ORDER BY e.enumsortorder) || \')\'
+		FROM pg_catalog.pg_type typ
+		INNER JOIN pg_catalog.pg_namespace ns
+			ON ns.oid = typ.typnamespace
+		INNER JOIN pg_catalog.pg_enum e
+			ON e.enumtypid = typ.oid
+		WHERE ns.nspname = %1$s.udt_schema
+			AND typ.typname = %1$s.udt_name
+	)
+	',
+				$catalog_alias
+			)
+			: '';
+		$set_column_type_case  = $include_helper_type_cases
+			? sprintf(
+				'WHEN %1$s.domain_name LIKE \'__wp_mysql_set_%%\' THEN COALESCE((SELECT %2$s
+		FROM pg_catalog.pg_type domain_type
+		INNER JOIN pg_catalog.pg_namespace domain_ns
+			ON domain_ns.oid = domain_type.typnamespace
+		WHERE domain_ns.nspname = %1$s.domain_schema
+			AND domain_type.typname = %1$s.domain_name
+	), \'set\')
+	',
+				$catalog_alias,
+				$this->get_postgresql_catalog_column_comment_marker_sql( 'pg_catalog.obj_description(domain_type.oid, \'pg_type\')', self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX )
+			)
+			: '';
+
 		return sprintf(
 			'CASE
 	%2$s%3$s%4$s%5$s%6$s
@@ -41926,164 +41999,11 @@ END)',
 	ELSE %1$s.data_type
 END',
 			$catalog_alias,
-			$this->get_postgresql_mysql_identity_sequence_column_type_case( $identity_sequence_comment_sql ),
-			$this->get_postgresql_mysql_column_comment_column_type_case( $column_comment_sql ),
-			$include_helper_type_cases ? $this->get_postgresql_mysql_enum_column_type_case( $catalog_alias ) : '',
-			$include_helper_type_cases ? $this->get_postgresql_mysql_set_column_type_case( $catalog_alias ) : '',
+			$identity_sequence_type_case,
+			$column_comment_type_case,
+			$enum_column_type_case,
+			$set_column_type_case,
 			$include_helper_type_cases ? $this->get_postgresql_mysql_domain_column_type_cases( $catalog_alias ) : ''
-		);
-	}
-
-	/**
-	 * Get a CASE branch mapping PostgreSQL identity sequence comments back to MySQL types.
-	 *
-	 * @param string|null $identity_sequence_comment_sql Identity sequence comment SQL.
-	 * @return string SQL CASE branch, or an empty string.
-	 */
-	private function get_postgresql_mysql_identity_sequence_column_type_case( ?string $identity_sequence_comment_sql ): string {
-		if ( null === $identity_sequence_comment_sql ) {
-			return '';
-		}
-
-		$prefix = $this->connection->quote( self::MYSQL_IDENTITY_SEQUENCE_COMMENT_TYPE_PREFIX );
-		return sprintf(
-			'WHEN %1$s LIKE %2$s || \'%%\' THEN SUBSTR(%1$s, LENGTH(%2$s) + 1)
-	',
-			$identity_sequence_comment_sql,
-			$prefix
-		);
-	}
-
-	/**
-	 * Get a CASE branch mapping PostgreSQL column comments back to MySQL DATA_TYPE.
-	 *
-	 * @param string $column_type_comment_sql SQL expression returning MySQL column type metadata, or NULL.
-	 * @return string SQL CASE branch.
-	 */
-	private function get_postgresql_mysql_column_comment_data_type_case( string $column_type_comment_sql ): string {
-		return sprintf(
-			'WHEN %1$s IS NOT NULL THEN %2$s
-	',
-			$column_type_comment_sql,
-			$this->get_direct_information_schema_metadata_data_type_expression( $column_type_comment_sql, 'NULL' )
-		);
-	}
-
-	/**
-	 * Get a CASE branch mapping PostgreSQL column comments back to MySQL COLUMN_TYPE.
-	 *
-	 * @param string|null $column_comment_sql SQL expression returning a PostgreSQL column comment.
-	 * @return string SQL CASE branch, or an empty string.
-	 */
-	private function get_postgresql_mysql_column_comment_column_type_case( ?string $column_comment_sql ): string {
-		if ( null === $column_comment_sql ) {
-			return '';
-		}
-
-		$column_type_comment_sql = $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX );
-		return sprintf(
-			'WHEN %1$s IS NOT NULL THEN %1$s
-	',
-			$column_type_comment_sql
-		);
-	}
-
-	/**
-	 * Get a CASE branch mapping PostgreSQL enum helper types back to MySQL DATA_TYPE.
-	 *
-	 * @param string $catalog_alias Catalog column table alias.
-	 * @return string SQL CASE branch.
-	 */
-	private function get_postgresql_mysql_enum_data_type_case( string $catalog_alias ): string {
-		return sprintf(
-			'WHEN %1$s.data_type = \'USER-DEFINED\' AND %1$s.udt_name LIKE \'__wp_mysql_enum_%%\' THEN \'enum\'
-	',
-			$catalog_alias
-		);
-	}
-
-	/**
-	 * Get a CASE branch mapping PostgreSQL enum helper types back to MySQL COLUMN_TYPE.
-	 *
-	 * @param string $catalog_alias Catalog column table alias.
-	 * @return string SQL CASE branch.
-	 */
-	private function get_postgresql_mysql_enum_column_type_case( string $catalog_alias ): string {
-		return sprintf(
-			'WHEN %1$s.data_type = \'USER-DEFINED\' AND %1$s.udt_name LIKE \'__wp_mysql_enum_%%\' THEN (
-		SELECT \'enum(\' || pg_catalog.string_agg(pg_catalog.quote_literal(e.enumlabel), \',\' ORDER BY e.enumsortorder) || \')\'
-		FROM pg_catalog.pg_type typ
-		INNER JOIN pg_catalog.pg_namespace ns
-			ON ns.oid = typ.typnamespace
-		INNER JOIN pg_catalog.pg_enum e
-			ON e.enumtypid = typ.oid
-		WHERE ns.nspname = %1$s.udt_schema
-			AND typ.typname = %1$s.udt_name
-	)
-	',
-			$catalog_alias
-		);
-	}
-
-	/**
-	 * Get a CASE branch mapping PostgreSQL SET helper domains back to MySQL DATA_TYPE.
-	 *
-	 * @param string $catalog_alias Catalog column table alias.
-	 * @return string SQL CASE branch.
-	 */
-	private function get_postgresql_mysql_set_data_type_case( string $catalog_alias ): string {
-		return sprintf(
-			'WHEN %1$s.domain_name LIKE \'__wp_mysql_set_%%\' THEN \'set\'
-	',
-			$catalog_alias
-		);
-	}
-
-	/**
-	 * Get a CASE branch mapping PostgreSQL SET helper domains back to MySQL COLUMN_TYPE.
-	 *
-	 * @param string $catalog_alias Catalog column table alias.
-	 * @return string SQL CASE branch.
-	 */
-	private function get_postgresql_mysql_set_column_type_case( string $catalog_alias ): string {
-		return sprintf(
-			'WHEN %1$s.domain_name LIKE \'__wp_mysql_set_%%\' THEN COALESCE(%2$s, \'set\')
-	',
-			$catalog_alias,
-			$this->get_postgresql_mysql_domain_type_comment_sql( $catalog_alias )
-		);
-	}
-
-	/**
-	 * Get SQL that reads MySQL type metadata from a PostgreSQL helper domain comment.
-	 *
-	 * @param string $catalog_alias Catalog column table alias.
-	 * @return string SQL expression.
-	 */
-	private function get_postgresql_mysql_domain_type_comment_sql( string $catalog_alias ): string {
-		return sprintf(
-			'(SELECT %1$s
-		FROM pg_catalog.pg_type domain_type
-		INNER JOIN pg_catalog.pg_namespace domain_ns
-			ON domain_ns.oid = domain_type.typnamespace
-		WHERE domain_ns.nspname = %2$s.domain_schema
-			AND domain_type.typname = %2$s.domain_name
-	)',
-			$this->get_postgresql_catalog_column_comment_marker_sql( 'pg_catalog.obj_description(domain_type.oid, \'pg_type\')', self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX ),
-			$catalog_alias
-		);
-	}
-
-	/**
-	 * Get SQL that resolves the identity sequence oid for a catalog column row.
-	 *
-	 * @param string $catalog_alias Catalog column table alias.
-	 * @return string SQL expression.
-	 */
-	private function get_postgresql_identity_sequence_oid_sql( string $catalog_alias ): string {
-		return sprintf(
-			'pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', %1$s.table_schema, %1$s.table_name), %1$s.column_name)::regclass',
-			$catalog_alias
 		);
 	}
 
@@ -42095,8 +42015,8 @@ END',
 	 */
 	private function get_postgresql_identity_sequence_comment_sql( string $catalog_alias ): string {
 		return sprintf(
-			'pg_catalog.obj_description(%s, \'pg_class\')',
-			$this->get_postgresql_identity_sequence_oid_sql( $catalog_alias )
+			'pg_catalog.obj_description(pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', %1$s.table_schema, %1$s.table_name), %1$s.column_name)::regclass, \'pg_class\')',
+			$catalog_alias
 		);
 	}
 
