@@ -507,10 +507,11 @@ class WP_PostgreSQL_Driver {
 	public function set_sql_mode( string $sql_mode ): void {
 		$this->active_sql_modes = $this->normalize_mysql_sql_modes( $sql_mode );
 		unset( $this->mysql_session_variable_values['sql_mode'] );
-		$this->mysql_token_cache_query    = null;
-		$this->mysql_token_cache_sql_mode = null;
-		$this->mysql_token_cache_tokens   = array();
-		$this->clear_mysql_query_translation_caches();
+		$this->mysql_token_cache_query                     = null;
+		$this->mysql_token_cache_sql_mode                  = null;
+		$this->mysql_token_cache_tokens                    = array();
+		$this->mysql_select_translation_cache              = array();
+		$this->mysql_sql_calc_found_rows_count_query_cache = array();
 	}
 
 	/**
@@ -899,9 +900,10 @@ class WP_PostgreSQL_Driver {
 				return $this->execute_mysql_admin_noop_query();
 			}
 
+			$metadata_tables                        = array();
 			$use_postgresql_catalog_schema_metadata = null !== $create_table_select_query['metadata_query'];
 			if ( $use_postgresql_catalog_schema_metadata ) {
-				$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $create_table_select_query['metadata_query'] );
+				$metadata_tables = $this->get_postgresql_catalog_mysql_schema_metadata_or_fail( $create_table_select_query['metadata_query'] );
 			}
 			$result          = $this->execute_postgresql_statements(
 				$this->prepend_postgresql_mysql_helper_type_statements(
@@ -914,20 +916,12 @@ class WP_PostgreSQL_Driver {
 				? $this->get_temporary_schema_for_metadata_table( $create_table_select_query['table'] )
 				: $create_table_select_query['schema'];
 			if ( null !== $create_table_select_query['metadata_query'] ) {
-				if ( $create_table_select_query['temporary'] ) {
-					$this->store_mysql_temporary_schema_metadata( $create_table_select_query['metadata_query'] );
-				} else {
-					$this->clear_mysql_metadata_cache_for_tables(
-						$this->get_mysql_schema_metadata_table_names( $create_table_select_query['metadata_query'] ),
-						$metadata_schema
-					);
-					$this->sync_mysql_schema_catalog_side_effects_for_schema(
-						$create_table_select_query['metadata_query'],
-						$metadata_schema
-					);
-				}
+				$this->sync_mysql_schema_catalog_side_effects_for_schema(
+					$metadata_tables,
+					$create_table_select_query['temporary'] ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $metadata_schema
+				);
 			} else {
-				$this->clear_mysql_metadata_cache_for_table( $metadata_schema, $create_table_select_query['table'] );
+				$this->clear_mysql_metadata_caches();
 				if ( '' !== $create_table_select_query['table_comment'] ) {
 					$this->sync_postgresql_catalog_table_comment( $metadata_schema, $create_table_select_query['table'], $create_table_select_query['table_comment'] );
 				}
@@ -941,26 +935,18 @@ class WP_PostgreSQL_Driver {
 				return $this->execute_mysql_admin_noop_query();
 			}
 
-			$use_postgresql_catalog_schema_metadata = $this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $create_table_like_query['metadata_query'] );
-			$result                                 = $this->execute_postgresql_statements(
+			$metadata_tables = $this->get_postgresql_catalog_mysql_schema_metadata_or_fail( $create_table_like_query['metadata_query'] );
+			$result          = $this->execute_postgresql_statements(
 				$this->prepend_postgresql_mysql_helper_type_statements(
 					$create_table_like_query['statements'],
 					$create_table_like_query['metadata_query'],
-					$use_postgresql_catalog_schema_metadata
+					true
 				)
 			);
-			if ( $create_table_like_query['temporary'] ) {
-				$this->store_mysql_temporary_schema_metadata( $create_table_like_query['metadata_query'] );
-			} else {
-				$this->clear_mysql_metadata_cache_for_tables(
-					array( $create_table_like_query['table'] ),
-					$create_table_like_query['schema']
-				);
-				$this->sync_mysql_schema_catalog_side_effects_for_schema(
-					$create_table_like_query['metadata_query'],
-					$create_table_like_query['schema']
-				);
-			}
+			$this->sync_mysql_schema_catalog_side_effects_for_schema(
+				$metadata_tables,
+				$create_table_like_query['temporary'] ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $create_table_like_query['schema']
+			);
 			return $result;
 		}
 
@@ -978,32 +964,25 @@ class WP_PostgreSQL_Driver {
 				return $this->execute_mysql_admin_noop_query();
 			}
 
-			$translator                             = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
-			$use_postgresql_catalog_schema_metadata = $this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query );
-			$statements                             = $this->qualify_translated_create_table_statements(
+			$translator      = new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes );
+			$metadata_tables = $this->get_postgresql_catalog_mysql_schema_metadata_or_fail( $query );
+			$statements      = $this->qualify_translated_create_table_statements(
 				$translator->translate_schema( $query ),
 				$create_table_target['schema'],
 				$create_table_target['table'],
 				$create_table_target['temporary']
 			);
-			$result                                 = $this->execute_postgresql_statements(
+			$result          = $this->execute_postgresql_statements(
 				$this->prepend_postgresql_mysql_helper_type_statements(
 					$statements,
 					$query,
-					$use_postgresql_catalog_schema_metadata
+					true
 				)
 			);
-			if ( $create_table_target['temporary'] ) {
-				$this->store_mysql_temporary_schema_metadata( $query );
-			} elseif ( $use_postgresql_catalog_schema_metadata ) {
-				$this->clear_mysql_metadata_cache_for_tables(
-					$this->get_mysql_schema_metadata_table_names( $query ),
-					$create_table_target['schema']
-				);
-				$this->sync_mysql_schema_catalog_side_effects_for_schema( $query, $create_table_target['schema'] );
-			} else {
-				$this->store_mysql_schema_metadata( $query );
-			}
+			$this->sync_mysql_schema_catalog_side_effects_for_schema(
+				$metadata_tables,
+				$create_table_target['temporary'] ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $create_table_target['schema']
+			);
 			return $result;
 		}
 
@@ -1014,9 +993,11 @@ class WP_PostgreSQL_Driver {
 
 		$create_index_query = $this->translate_mysql_create_index_query( $query );
 		if ( null !== $create_index_query ) {
-			$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $create_index_query['metadata']['index'] );
+			$metadata = $create_index_query['metadata'];
+			$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $metadata['index'] );
 			$this->execute_postgresql_statements( $create_index_query['statements'] );
-			$this->apply_mysql_create_index_metadata( $create_index_query['metadata'] );
+			$this->clear_mysql_metadata_caches();
+			$this->sync_postgresql_catalog_index_comment( $metadata['schema'], $metadata['table'], $metadata['index'], true );
 			$this->last_result = 0;
 			return $this->last_result;
 		}
@@ -1056,12 +1037,7 @@ class WP_PostgreSQL_Driver {
 		$drop_query = $this->translate_mysql_drop_table_query( $query );
 		if ( null !== $drop_query ) {
 			$this->execute_postgresql_statements( $drop_query['statements'] );
-			foreach ( $drop_query['metadata_targets'] as $target ) {
-				$this->clear_mysql_metadata_cache_for_table(
-					$target['schema'],
-					$target['table']
-				);
-			}
+			$this->clear_mysql_metadata_caches();
 			$this->last_result = 0;
 			return $this->last_result;
 		}
@@ -1076,7 +1052,7 @@ class WP_PostgreSQL_Driver {
 		$drop_index_query = $this->translate_mysql_drop_index_query( $query );
 		if ( null !== $drop_index_query ) {
 			$this->execute_postgresql_statements( $drop_index_query['statements'] );
-			$this->apply_mysql_drop_index_metadata( $drop_index_query['metadata'] );
+			$this->clear_mysql_metadata_caches();
 			$this->last_result = 0;
 			return $this->last_result;
 		}
@@ -1088,7 +1064,7 @@ class WP_PostgreSQL_Driver {
 		$rename_table_query = $this->translate_mysql_rename_table_query( $query );
 		if ( null !== $rename_table_query ) {
 			$this->execute_postgresql_statements( $rename_table_query['statements'] );
-			$this->apply_mysql_rename_table_metadata( $rename_table_query['metadata'] );
+			$this->clear_mysql_metadata_caches();
 			$this->last_result = 0;
 			return $this->last_result;
 		}
@@ -4124,57 +4100,9 @@ class WP_PostgreSQL_Driver {
 	 * Clear all cached MySQL metadata derived from PostgreSQL catalogs.
 	 */
 	private function clear_mysql_metadata_caches(): void {
-		$this->mysql_table_schema_introspection_cache = array();
-		$this->mysql_upsert_conflict_target_cache     = array();
-		$this->mysql_introspection_result_cache       = array();
-		$this->clear_mysql_query_translation_caches();
-	}
-
-	/**
-	 * Clear cached MySQL metadata for one table.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 */
-	private function clear_mysql_metadata_cache_for_table( string $table_schema, string $table_name ): void {
-		$this->mysql_upsert_conflict_target_cache = array();
-		$this->mysql_introspection_result_cache   = array();
-		$this->clear_mysql_query_translation_caches();
-
-		/*
-		 * Temporary table creation/drop can change which backend schema an
-		 * unqualified MySQL table resolves to, so clear all schema resolutions.
-		 */
-		$this->mysql_table_schema_introspection_cache = array();
-	}
-
-	/**
-	 * Clear cached MySQL metadata for multiple tables.
-	 *
-	 * @param string[] $table_names  Table names.
-	 * @param string   $table_schema Metadata schema.
-	 */
-	private function clear_mysql_metadata_cache_for_tables( array $table_names, string $table_schema ): void {
-		foreach ( $table_names as $table_name ) {
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, (string) $table_name );
-		}
-	}
-
-	/**
-	 * Get a cache key for metadata keyed by backend schema and table name.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @return string Cache key.
-	 */
-	private function get_mysql_metadata_cache_key( string $table_schema, string $table_name ): string {
-		return $table_schema . "\0" . $table_name;
-	}
-
-	/**
-	 * Clear exact query translation caches derived from metadata-sensitive rewrites.
-	 */
-	private function clear_mysql_query_translation_caches(): void {
+		$this->mysql_table_schema_introspection_cache      = array();
+		$this->mysql_upsert_conflict_target_cache          = array();
+		$this->mysql_introspection_result_cache            = array();
 		$this->mysql_select_translation_cache              = array();
 		$this->mysql_sql_calc_found_rows_count_query_cache = array();
 	}
@@ -4189,9 +4117,10 @@ class WP_PostgreSQL_Driver {
 			return;
 		}
 
-		$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query );
-		$this->clear_mysql_metadata_cache_for_tables( $this->get_mysql_schema_metadata_table_names( $query ), 'public' );
-		$this->sync_mysql_schema_catalog_side_effects_for_schema( $query, 'public' );
+		$this->sync_mysql_schema_catalog_side_effects_for_schema(
+			$this->get_postgresql_catalog_mysql_schema_metadata_or_fail( $query ),
+			'public'
+		);
 	}
 
 	/**
@@ -4200,30 +4129,23 @@ class WP_PostgreSQL_Driver {
 	 * @param string $query MySQL CREATE TEMPORARY TABLE query.
 	 */
 	private function store_mysql_temporary_schema_metadata( string $query ): void {
-		$this->use_postgresql_catalog_for_mysql_schema_metadata_or_fail( $query );
-		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
-		foreach ( $metadata_tables as $metadata ) {
-			$table_name  = (string) $metadata['table_name'];
-			$schema_name = $this->get_temporary_schema_for_metadata_table( $table_name );
-			$this->clear_mysql_metadata_cache_for_tables( array( $table_name ), $schema_name );
-		}
 		$this->sync_mysql_schema_catalog_side_effects_for_schema(
-			$query,
+			$this->get_postgresql_catalog_mysql_schema_metadata_or_fail( $query ),
 			array( $this, 'get_temporary_schema_for_metadata_table' )
 		);
 	}
 
 	/**
-	 * Determine whether real PostgreSQL catalog metadata should be used for a CREATE TABLE statement.
+	 * Extract MySQL schema metadata that real PostgreSQL catalogs can preserve.
 	 *
 	 * Real PostgreSQL connections must not fall back to hidden MySQL metadata
 	 * tables. If a shape cannot be reconstructed from PostgreSQL catalogs and
 	 * catalog comments, fail closed instead of making the driver stateful.
 	 *
 	 * @param string $query MySQL CREATE TABLE query.
-	 * @return bool Whether the PostgreSQL catalog path should be used.
+	 * @return array<int,array<string,mixed>> MySQL-facing schema metadata.
 	 */
-	private function use_postgresql_catalog_for_mysql_schema_metadata_or_fail( string $query ): bool {
+	private function get_postgresql_catalog_mysql_schema_metadata_or_fail( string $query ): array {
 		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
 		if ( empty( $metadata_tables ) ) {
 			throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for CREATE TABLE statement.' );
@@ -4252,23 +4174,7 @@ class WP_PostgreSQL_Driver {
 			}
 		}
 
-		return true;
-	}
-
-	/**
-	 * Get table names from MySQL-facing CREATE TABLE metadata.
-	 *
-	 * @param string $query MySQL CREATE TABLE query.
-	 * @return string[] Table names.
-	 */
-	private function get_mysql_schema_metadata_table_names( string $query ): array {
-		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
-		return array_map(
-			static function ( array $metadata ): string {
-				return (string) $metadata['table_name'];
-			},
-			$metadata_tables
-		);
+		return $metadata_tables;
 	}
 
 	/**
@@ -4373,11 +4279,12 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Sync PostgreSQL catalog side effects from MySQL-facing CREATE TABLE metadata.
 	 *
-	 * @param string          $query        MySQL CREATE TABLE query.
-	 * @param string|callable $table_schema Backend schema, or resolver receiving the table name.
+	 * @param array<int,array<string,mixed>> $metadata_tables MySQL-facing schema metadata.
+	 * @param string|callable                $table_schema    Backend schema, or resolver receiving the table name.
 	 */
-	private function sync_mysql_schema_catalog_side_effects_for_schema( string $query, $table_schema ): void {
-		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
+	private function sync_mysql_schema_catalog_side_effects_for_schema( array $metadata_tables, $table_schema ): void {
+		$this->clear_mysql_metadata_caches();
+
 		foreach ( $metadata_tables as $metadata ) {
 			$schema_name = is_callable( $table_schema )
 				? (string) call_user_func( $table_schema, $metadata['table_name'] )
@@ -4650,8 +4557,9 @@ $wp_mysql_on_update$',
 	private function apply_mysql_dbdelta_alter_metadata( array $metadata ): void {
 		$table_schema = $metadata['schema'] ?? 'public';
 		$table_name   = $metadata['table'];
+		$operation    = $metadata['operation'];
 
-		if ( 'operations' === $metadata['operation'] ) {
+		if ( 'operations' === $operation ) {
 			foreach ( $metadata['operations'] as $operation_metadata ) {
 				$operation_metadata['schema'] = $table_schema;
 				$operation_metadata['table']  = $table_name;
@@ -4660,50 +4568,38 @@ $wp_mysql_on_update$',
 			return;
 		}
 
-		if ( 'noop' === $metadata['operation'] || 'set_auto_increment' === $metadata['operation'] ) {
+		if ( 'noop' === $operation || 'set_auto_increment' === $operation ) {
 			return;
 		}
 
-		if ( 'rename_table' === $metadata['operation'] ) {
-			$this->apply_mysql_rename_table_metadata(
-				array(
-					'schema'    => $table_schema,
-					'old_table' => $table_name,
-					'new_table' => $metadata['new_table'],
-				)
-			);
-			return;
-		}
-
-		if ( 'drop_index' === $metadata['operation'] ) {
-			$this->apply_mysql_drop_index_metadata( $metadata );
-			return;
-		}
-
-		if ( 'rename_index' === $metadata['operation'] ) {
-			if ( $metadata['old_index'] !== $metadata['new_index'] ) {
-				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+		if ( 'rename_table' === $operation ) {
+			if ( $table_name !== $metadata['new_table'] ) {
+				$this->clear_mysql_metadata_caches();
 			}
 			return;
 		}
 
-		if ( 'add_index' === $metadata['operation'] ) {
-			$this->apply_mysql_create_index_metadata(
-				array(
-					'schema' => $table_schema,
-					'table'  => $table_name,
-					'index'  => $metadata['index'],
-				)
-			);
+		if ( 'rename_index' === $operation ) {
+			if ( $metadata['old_index'] !== $metadata['new_index'] ) {
+				$this->clear_mysql_metadata_caches();
+			}
 			return;
 		}
 
-		if ( 'add_foreign_key' === $metadata['operation'] || 'drop_foreign_key' === $metadata['operation'] || 'drop_check' === $metadata['operation'] ) {
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+		if ( in_array( $operation, array( 'drop_index', 'add_foreign_key', 'drop_foreign_key', 'drop_check' ), true ) ) {
+			$this->clear_mysql_metadata_caches();
 			return;
 		}
 
-		if ( 'set_table_comment' === $metadata['operation'] ) {
+		if ( 'add_index' === $operation ) {
+			$index = $metadata['index'];
+			$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $index );
+			$this->clear_mysql_metadata_caches();
+			$this->sync_postgresql_catalog_index_comment( $table_schema, $table_name, $index, true );
+			return;
+		}
+
+		if ( 'set_table_comment' === $operation ) {
 			$table_comment   = (string) ( $metadata['comment'] ?? '' );
 			$logged_queries  = $this->last_postgresql_queries;
 			$table_collation = '';
@@ -4716,50 +4612,27 @@ $wp_mysql_on_update$',
 			$this->last_postgresql_queries = $logged_queries;
 
 			$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment, $table_collation );
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+			$this->clear_mysql_metadata_caches();
 			return;
 		}
 
-		if ( 'add_check' === $metadata['operation'] ) {
+		if ( 'add_check' === $operation ) {
 			$check = $metadata['check'];
 			if ( ! $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check ) ) {
 				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
 			}
 
 			$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+			$this->clear_mysql_metadata_caches();
 			return;
 		}
 
-		if ( 'add_column' === $metadata['operation'] ) {
-			$column = $metadata['column'];
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata ) ) {
-				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
-			}
-
-			$column_comment = $this->get_postgresql_catalog_column_comment( $column );
-			if ( '' !== $column_comment ) {
-				$this->sync_postgresql_catalog_column_comment(
-					$table_schema,
-					$table_name,
-					(string) $column['name'],
-					$column_comment
-				);
-			}
-			$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
-			if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
-				$this->execute_postgresql_side_effect_statements(
-					$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
-				);
-			}
-			foreach ( $metadata['checks'] ?? array() as $check ) {
-				$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-			}
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+		if ( 'add_column' === $operation ) {
+			$this->sync_mysql_column_catalog_side_effects( $table_schema, $table_name, $metadata );
 			return;
 		}
 
-		if ( 'rename_column' === $metadata['operation'] ) {
+		if ( 'rename_column' === $operation ) {
 			if ( $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] ) ) {
 				$this->execute_postgresql_side_effect_statements(
 					array_merge(
@@ -4768,65 +4641,32 @@ $wp_mysql_on_update$',
 					)
 				);
 			}
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+			$this->clear_mysql_metadata_caches();
 			return;
 		}
 
-		if ( 'drop_column' === $metadata['operation'] ) {
+		if ( 'drop_column' === $operation ) {
 			$this->execute_postgresql_side_effect_statements(
 				$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['column'] )
 			);
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+			$this->clear_mysql_metadata_caches();
 			return;
 		}
 
-		if ( 'set_default' === $metadata['operation'] ) {
-			$this->apply_mysql_column_default_metadata( $table_schema, $table_name, $metadata['column'], $metadata['default'] );
+		if ( 'set_default' === $operation || 'drop_default' === $operation ) {
+			$this->apply_mysql_column_default_metadata( $table_schema, $table_name, $metadata['column'] );
 			return;
 		}
 
-		if ( 'drop_default' === $metadata['operation'] ) {
-			$this->apply_mysql_column_default_metadata( $table_schema, $table_name, $metadata['column'], null );
+		if ( 'change_column' === $operation ) {
+			$this->sync_mysql_column_catalog_side_effects( $table_schema, $table_name, $metadata, $metadata['old_column'] );
 			return;
 		}
 
-		if ( 'change_column' === $metadata['operation'] ) {
-			$column = $metadata['column'];
-			if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata ) ) {
-				throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
-			}
-
-			$old_has_on_update = $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $metadata['old_column'] );
-			$new_has_on_update = $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' );
-
-			if ( $old_has_on_update ) {
-				$this->execute_postgresql_side_effect_statements(
-					$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $metadata['old_column'] )
-				);
-			}
-			if ( $new_has_on_update ) {
-				$this->execute_postgresql_side_effect_statements(
-					$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
-				);
-			}
-
-			$this->sync_postgresql_catalog_column_comment(
-				$table_schema,
-				$table_name,
-				(string) $column['name'],
-				$this->get_postgresql_catalog_column_comment( $column )
-			);
-			$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
-			foreach ( $metadata['checks'] ?? array() as $check ) {
-				$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
-			}
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			return;
-		}
-
-		if ( 'change_columns' === $metadata['operation'] ) {
+		if ( 'change_columns' === $operation ) {
 			foreach ( $metadata['columns'] as $column_metadata ) {
 				$column_metadata['operation'] = 'change_column';
+				$column_metadata['schema']    = $table_schema;
 				$column_metadata['table']     = $table_name;
 				$this->apply_mysql_dbdelta_alter_metadata( $column_metadata );
 			}
@@ -4835,24 +4675,48 @@ $wp_mysql_on_update$',
 	}
 
 	/**
-	 * Apply MySQL-facing metadata cache invalidation after a table rename.
+	 * Sync PostgreSQL catalog side effects for an ALTER COLUMN operation.
 	 *
-	 * @param array{schema?: string, old_table?: string, new_table?: string, renames?: array<int,array{schema:string,old_table:string,new_table:string}>} $metadata Rename metadata.
+	 * @param string      $table_schema Backend schema.
+	 * @param string      $table_name   Table name.
+	 * @param array       $metadata     Column metadata.
+	 * @param string|null $old_column   Previous column name for CHANGE COLUMN.
 	 */
-	private function apply_mysql_rename_table_metadata( array $metadata ): void {
-		if ( isset( $metadata['renames'] ) && is_array( $metadata['renames'] ) ) {
-			foreach ( $metadata['renames'] as $rename_metadata ) {
-				$this->apply_mysql_rename_table_metadata( $rename_metadata );
-			}
-			return;
+	private function sync_mysql_column_catalog_side_effects( string $table_schema, string $table_name, array $metadata, ?string $old_column = null ): void {
+		if ( ! $this->is_postgresql_catalog_recoverable_mysql_column_metadata( $metadata ) ) {
+			throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for ALTER TABLE statement.' );
 		}
 
-		if ( $metadata['old_table'] === $metadata['new_table'] ) {
-			return;
+		$column = $metadata['column'];
+		if ( null !== $old_column && $this->postgresql_on_update_current_timestamp_trigger_exists( $table_schema, $table_name, $old_column ) ) {
+			$this->execute_postgresql_side_effect_statements(
+				$this->get_postgresql_on_update_current_timestamp_drop_statements( $table_schema, $table_name, $old_column )
+			);
 		}
 
+		if ( $this->mysql_column_extra_has_on_update_current_timestamp( $column['extra'] ?? '' ) ) {
+			$this->execute_postgresql_side_effect_statements(
+				$this->get_postgresql_on_update_current_timestamp_create_statements( $table_schema, $table_name, $column['name'] )
+			);
+		}
+
+		$column_comment = $this->get_postgresql_catalog_column_comment( $column );
+		if ( null !== $old_column || '' !== $column_comment ) {
+			$this->sync_postgresql_catalog_column_comment(
+				$table_schema,
+				$table_name,
+				(string) $column['name'],
+				$column_comment
+			);
+		}
+
+		$this->sync_postgresql_catalog_identity_sequence_comment( $table_schema, $table_name, $column );
+		foreach ( $metadata['checks'] ?? array() as $check ) {
+			$this->sync_postgresql_catalog_check_comment( $table_schema, $table_name, $check );
+		}
 		$this->clear_mysql_metadata_caches();
 	}
+
 	/**
 	 * Check whether ALTER metadata contains an operation.
 	 *
@@ -4878,29 +4742,6 @@ $wp_mysql_on_update$',
 		return false;
 	}
 
-	/**
-	 * Store MySQL metadata for a standalone CREATE INDEX statement.
-	 *
-	 * @param array $metadata CREATE INDEX metadata.
-	 */
-	private function apply_mysql_create_index_metadata( array $metadata ): void {
-		$table_schema = $metadata['schema'];
-		$table_name   = $metadata['table'];
-		$index        = $metadata['index'];
-
-		$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $index );
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-		$this->sync_postgresql_catalog_index_comment( $table_schema, $table_name, $index, true );
-	}
-
-	/**
-	 * Remove MySQL metadata for a standalone DROP INDEX statement.
-	 *
-	 * @param array $metadata DROP INDEX metadata.
-	 */
-	private function apply_mysql_drop_index_metadata( array $metadata ): void {
-		$this->clear_mysql_metadata_cache_for_table( $metadata['schema'], $metadata['table'] );
-	}
 	/**
 	 * Check whether PostgreSQL catalogs can reconstruct ALTER COLUMN metadata.
 	 *
@@ -5000,9 +4841,8 @@ $wp_mysql_on_update$',
 	 * @param string      $table_schema   Metadata schema.
 	 * @param string      $table_name     Table name.
 	 * @param string      $column_name    Column name.
-	 * @param string|null $column_default MySQL-facing column default, or null for no default.
 	 */
-	private function apply_mysql_column_default_metadata( string $table_schema, string $table_name, string $column_name, ?string $column_default ): void {
+	private function apply_mysql_column_default_metadata( string $table_schema, string $table_name, string $column_name ): void {
 		$sql    = 'SELECT pg_catalog.col_description(c.oid, a.attnum) AS column_comment
 			FROM pg_catalog.pg_class c
 			INNER JOIN pg_catalog.pg_namespace n
@@ -5020,7 +4860,7 @@ $wp_mysql_on_update$',
 		try {
 			$stmt = $this->connection->query( $sql, $params );
 		} catch ( PDOException $e ) {
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+			$this->clear_mysql_metadata_caches();
 			return;
 		}
 
@@ -5048,7 +4888,7 @@ $wp_mysql_on_update$',
 			}
 		}
 
-		$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+		$this->clear_mysql_metadata_caches();
 	}
 	/**
 	 * Sync a MySQL table comment into PostgreSQL catalog comments.
@@ -10726,10 +10566,10 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Translate supported DROP TABLE statements and expose dropped table names.
+	 * Translate supported DROP TABLE statements.
 	 *
 	 * @param string $query MySQL DROP TABLE query.
-	 * @return array{statements: string[], tables: string[], metadata_targets: array[]}|null Translation, or null when unsupported.
+	 * @return array{statements: string[]}|null Translation, or null when unsupported.
 	 */
 	private function translate_mysql_drop_table_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -10764,9 +10604,7 @@ $wp_mysql_primary_index_comment$',
 			$position += 2;
 		}
 
-		$table_names      = array();
-		$drop_targets     = array();
-		$metadata_targets = array();
+		$drop_targets = array();
 		while ( $position < $statement_end ) {
 			$reference_start = $position;
 			$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position );
@@ -10774,8 +10612,7 @@ $wp_mysql_primary_index_comment$',
 				throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
 			}
 
-			$table_name    = $table_reference['table'];
-			$table_names[] = $table_name;
+			$table_name = $table_reference['table'];
 
 			if ( $temporary ) {
 				if ( null !== $table_reference['schema'] ) {
@@ -10787,19 +10624,12 @@ $wp_mysql_primary_index_comment$',
 					'schema'     => null,
 					'table'      => $table_name,
 				);
-				foreach ( $this->get_mysql_schema_metadata_drop_targets( array( $table_name ), true ) as $target ) {
-					$metadata_targets[] = $target;
-				}
 			} else {
-				$table_schema       = $this->get_mysql_schema_aware_table_backend_schema( $table_reference, 'DROP TABLE' );
-				$drop_targets[]     = array(
+				$table_schema   = $this->get_mysql_schema_aware_table_backend_schema( $table_reference, 'DROP TABLE' );
+				$drop_targets[] = array(
 					'identifier' => $this->get_mysql_schema_aware_table_identifier( $table_reference, $table_schema ),
 					'schema'     => $table_schema,
 					'table'      => $table_name,
-				);
-				$metadata_targets[] = array(
-					'schema' => $table_schema,
-					'table'  => $table_name,
 				);
 			}
 
@@ -10832,7 +10662,7 @@ $wp_mysql_primary_index_comment$',
 			}
 		}
 
-		if ( array() === $table_names ) {
+		if ( array() === $drop_targets ) {
 			throw new InvalidArgumentException( 'Unsupported DROP TABLE statement.' );
 		}
 
@@ -10857,11 +10687,7 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 
-		return array(
-			'statements'       => $statements,
-			'tables'           => $table_names,
-			'metadata_targets' => $metadata_targets,
-		);
+		return array( 'statements' => $statements );
 	}
 
 	/**
@@ -11134,7 +10960,7 @@ $wp_mysql_primary_index_comment$',
 	 * Translate supported MySQL RENAME TABLE statements to PostgreSQL.
 	 *
 	 * @param string $query MySQL query.
-	 * @return array{statements: string[], metadata: array{schema?: string, old_table?: string, new_table?: string, renames?: array<int,array{schema:string,old_table:string,new_table:string}>}}|null Translation, or null when this is not RENAME TABLE.
+	 * @return array{statements: string[]}|null Translation, or null when this is not RENAME TABLE.
 	 */
 	private function translate_mysql_rename_table_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -11153,7 +10979,6 @@ $wp_mysql_primary_index_comment$',
 
 		$position              = 2;
 		$statements            = array();
-		$renames               = array();
 		$metadata_source_names = array();
 		while ( $position < $statement_end ) {
 			$old_table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
@@ -11187,11 +11012,6 @@ $wp_mysql_primary_index_comment$',
 				$statements,
 				$this->get_mysql_rename_table_statements( $table_schema, $old_table_name, $new_table_name, $metadata_source_name )
 			);
-			$renames[]  = array(
-				'schema'    => $table_schema,
-				'old_table' => $old_table_name,
-				'new_table' => $new_table_name,
-			);
 
 			unset( $metadata_source_names[ $old_metadata_key ] );
 			$metadata_source_names[ $new_metadata_key ] = $metadata_source_name;
@@ -11206,23 +11026,11 @@ $wp_mysql_primary_index_comment$',
 			++$position;
 		}
 
-		if ( empty( $renames ) ) {
+		if ( empty( $statements ) ) {
 			throw new InvalidArgumentException( 'Unsupported RENAME TABLE statement.' );
 		}
 
-		if ( 1 === count( $renames ) ) {
-			return array(
-				'statements' => $statements,
-				'metadata'   => $renames[0],
-			);
-		}
-
-		return array(
-			'statements' => $statements,
-			'metadata'   => array(
-				'renames' => $renames,
-			),
-		);
+		return array( 'statements' => $statements );
 	}
 
 	/**
@@ -11444,37 +11252,6 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		return null;
-	}
-
-	/**
-	 * Get the MySQL metadata rows that should be removed after a DROP TABLE.
-	 *
-	 * @param string[] $table_names Table names.
-	 * @param bool     $temporary   Whether the DROP TABLE explicitly targets temporary tables.
-	 * @return array[] Metadata targets.
-	 */
-	private function get_mysql_schema_metadata_drop_targets( array $table_names, bool $temporary ): array {
-		$targets = array();
-
-		foreach ( $table_names as $table_name ) {
-			$temporary_schema = $this->get_active_temporary_table_schema( $table_name );
-			if ( null !== $temporary_schema ) {
-				$targets[] = array(
-					'schema' => $temporary_schema,
-					'table'  => $table_name,
-				);
-				continue;
-			}
-
-			if ( ! $temporary ) {
-				$targets[] = array(
-					'schema' => 'public',
-					'table'  => $table_name,
-				);
-			}
-		}
-
-		return $targets;
 	}
 
 	/**
@@ -18640,7 +18417,7 @@ FROM (
 			return $schema_name;
 		}
 
-		$cache_key = $this->get_mysql_metadata_cache_key( $schema_name, $table_name );
+		$cache_key = $schema_name . "\0" . $table_name;
 		if ( isset( $this->mysql_table_schema_introspection_cache[ $cache_key ] ) ) {
 			return $this->mysql_table_schema_introspection_cache[ $cache_key ];
 		}
@@ -21087,7 +20864,7 @@ WHERE option_name IN (
 		sort( $insert_columns, SORT_STRING );
 
 		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
-		$cache_key    = $this->get_mysql_metadata_cache_key( $table_schema, $table_name ) . "\0" . serialize( $insert_columns );
+		$cache_key    = $table_schema . "\0" . $table_name . "\0" . serialize( $insert_columns );
 		if ( array_key_exists( $cache_key, $this->mysql_upsert_conflict_target_cache ) ) {
 			$cached = $this->mysql_upsert_conflict_target_cache[ $cache_key ];
 			return null === $cached ? null : $cached;
