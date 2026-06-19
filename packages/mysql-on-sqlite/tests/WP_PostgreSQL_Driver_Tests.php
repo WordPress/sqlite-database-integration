@@ -2335,7 +2335,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 					}
 
 					return parent::query(
-						"SELECT 'slug_key' AS key_name, 'slug' AS column_name, 'BTREE' AS index_type, NULL AS sub_part"
+						"SELECT 'slug_key' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'slug' AS column_name, '0' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment"
 					);
 				}
 
@@ -40389,23 +40389,11 @@ $wp_mysql_on_update$',
 					);
 
 					return parent::query(
-						"SELECT
-							'PRIMARY' AS key_name,
-							'id' AS column_name,
-							'BTREE' AS index_type,
-							NULL AS sub_part
+						"SELECT 'PRIMARY' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'id' AS column_name, '0' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment
 						UNION ALL
-						SELECT
-							'source_external_id' AS key_name,
-							'source' AS column_name,
-							'BTREE' AS index_type,
-							NULL AS sub_part
+						SELECT 'source_external_id', 2, 1, 'source', '0', 'BTREE', 'A', NULL, ''
 						UNION ALL
-						SELECT
-							'source_external_id' AS key_name,
-							'external_id' AS column_name,
-							'BTREE' AS index_type,
-							NULL AS sub_part"
+						SELECT 'source_external_id', 2, 2, 'external_id', '0', 'BTREE', 'A', NULL, ''"
 					);
 				}
 
@@ -40450,7 +40438,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'i.indisunique', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.pg_get_indexdef(i.indexrelid', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'COALESCE(column_name, NULLIF(REPLACE(COALESCE(', $catalog_queries[0]['sql'] );
-		$this->assertStringContainsString( 'AS "SUB_PART"', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( 'AS sub_part', $catalog_queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_plugin_lookup' ), $catalog_queries[0]['params'] );
 	}
 
@@ -48550,7 +48538,7 @@ $wp_mysql_on_update$',
 					);
 
 					return parent::query(
-						"SELECT 'slug_key' AS key_name, 'slug' AS column_name, 'BTREE' AS index_type, NULL AS sub_part"
+						"SELECT 'slug_key' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'slug' AS column_name, '0' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment"
 					);
 				}
 
@@ -48703,7 +48691,7 @@ $wp_mysql_on_update$',
 					);
 
 					return parent::query(
-						"SELECT 'slug' AS key_name, 'slug' AS column_name, 'BTREE' AS index_type, NULL AS sub_part"
+						"SELECT 'slug' AS key_name, 1 AS index_ordinal, 1 AS seq_in_index, 'slug' AS column_name, '0' AS non_unique, 'BTREE' AS index_type, 'A' AS \"collation\", NULL AS sub_part, '' AS index_comment"
 					);
 				}
 

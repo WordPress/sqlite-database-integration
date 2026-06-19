@@ -17803,9 +17803,10 @@ ORDER BY ' . $table_name_sql;
 	 *
 	 * @param string $schema_name Backend schema.
 	 * @param string $table_name  Table name.
+	 * @param bool   $log_query   Whether to record the catalog query as last PostgreSQL SQL.
 	 * @return array[] Index metadata-shaped rows.
 	 */
-	private function get_show_create_table_index_catalog_rows( string $schema_name, string $table_name ): array {
+	private function get_show_create_table_index_catalog_rows( string $schema_name, string $table_name, bool $log_query = true ): array {
 		$column_name_sql = $this->get_postgresql_prefix_index_expression_column_name_sql( 'expression' );
 		$index_type_sql  = sprintf(
 			'COALESCE(%s, UPPER(access_method))',
@@ -17853,10 +17854,12 @@ ORDER BY ' . $table_name_sql;
 		);
 		$stmt            = $this->connection->query( $sql, $params );
 
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
+		if ( $log_query ) {
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => $params,
+			);
+		}
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
@@ -23182,30 +23185,21 @@ WHERE option_name IN (
 	 */
 	private function get_mysql_unique_index_metadata_rows( string $table_schema, string $table_name ): array {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT
-						"INDEX_NAME" AS key_name,
-						"COLUMN_NAME" AS column_name,
-						"INDEX_TYPE" AS index_type,
-						"SUB_PART" AS sub_part
-					FROM (%s) statistics
-					WHERE "TABLE_SCHEMA" = ?
-						AND "TABLE_NAME" = ?
-						AND "NON_UNIQUE" = 0
-					ORDER BY
-						CASE WHEN UPPER("INDEX_NAME") = \'PRIMARY\' THEN 0 ELSE 1 END,
-						"POSTGRESQL_INDEX_OID",
-						"SEQ_IN_INDEX"',
-					$this->get_direct_information_schema_relation_sql(
-						'statistics',
-						array( 'include_internal_sort_column' => true )
-					)
-				),
-				array( $table_schema, $table_name )
-			);
+			$rows = array();
+			foreach ( $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name, false ) as $row ) {
+				if ( '0' !== (string) ( $row['non_unique'] ?? '' ) ) {
+					continue;
+				}
 
-			return $stmt->fetchAll( PDO::FETCH_ASSOC );
+				$rows[] = array(
+					'key_name'    => $row['key_name'],
+					'column_name' => $row['column_name'],
+					'index_type'  => $row['index_type'],
+					'sub_part'    => $row['sub_part'],
+				);
+			}
+
+			return $rows;
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
