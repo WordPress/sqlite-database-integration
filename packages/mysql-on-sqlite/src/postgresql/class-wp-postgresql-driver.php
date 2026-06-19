@@ -4656,16 +4656,6 @@ class WP_PostgreSQL_Driver {
 	}
 
 	/**
-	 * Check whether a MySQL column type needs a PostgreSQL column-comment marker.
-	 *
-	 * @param string $column_type MySQL-facing column type.
-	 * @return bool Whether the type is otherwise lossy in PostgreSQL catalogs.
-	 */
-	private function is_postgresql_catalog_column_type_comment_needed( string $column_type ): bool {
-		return (bool) preg_match( '/^year unsigned$|^(?:dec|fixed|numeric|decimal)(?:\(\d+(?:,\d+)?\))? unsigned$|^(?:double|float|real)(?:\(\d+(?:,\d+)?\))? unsigned$/', $column_type );
-	}
-
-	/**
 	 * Check whether MySQL index metadata can be reconstructed from PostgreSQL catalogs.
 	 *
 	 * @param array $index MySQL-facing index metadata.
@@ -5906,7 +5896,7 @@ $wp_mysql_on_update$',
 		}
 
 		$column_type = strtolower( trim( (string) ( $column['type'] ?? '' ) ) );
-		if ( $this->is_postgresql_catalog_column_type_comment_needed( $column_type ) ) {
+		if ( 1 === preg_match( '/^year unsigned$|^(?:dec|fixed|numeric|decimal)(?:\(\d+(?:,\d+)?\))? unsigned$|^(?:double|float|real)(?:\(\d+(?:,\d+)?\))? unsigned$/', $column_type ) ) {
 			$metadata_lines[] = self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX . base64_encode( (string) $column['type'] );
 		}
 
@@ -6213,39 +6203,12 @@ END',
 			return;
 		}
 
-		$statement = $this->get_postgresql_catalog_index_comment_statement(
-			$table_schema,
-			$table_name,
-			(string) $index['name'],
-			(string) ( $index['comment'] ?? '' ),
-			(string) ( $index['index_type'] ?? 'BTREE' ),
-			$index['columns'] ?? array(),
-			$skip_empty
-		);
-		if ( null === $statement ) {
-			return;
-		}
-
-		$this->execute_postgresql_side_effect_statements( array( $statement ) );
-	}
-
-	/**
-	 * Build a PostgreSQL COMMENT ON INDEX statement.
-	 *
-	 * @param string $table_schema  Backend schema.
-	 * @param string $table_name    Table name.
-	 * @param string $index_name    MySQL-facing index name.
-	 * @param string $index_comment Index comment.
-	 * @param string $index_type    MySQL-facing index type.
-	 * @param array  $index_columns MySQL-facing index columns.
-	 * @param bool   $skip_empty    Whether to skip empty no-op index comments.
-	 * @return string|null COMMENT statement, or null when no physical PostgreSQL index is expected.
-	 */
-	private function get_postgresql_catalog_index_comment_statement( string $table_schema, string $table_name, string $index_name, string $index_comment, string $index_type = 'BTREE', array $index_columns = array(), bool $skip_empty = false ): ?string {
 		$metadata_lines = array();
-		$index_type     = strtoupper( $index_type );
+		$index_name     = (string) $index['name'];
+		$index_comment  = (string) ( $index['comment'] ?? '' );
+		$index_type     = strtoupper( (string) ( $index['index_type'] ?? 'BTREE' ) );
 		if ( 'PRIMARY' === strtoupper( $index_name ) || ! $this->is_mysql_metadata_only_index_type( $index_type ) ) {
-			foreach ( $index_columns as $column ) {
+			foreach ( $index['columns'] ?? array() as $column ) {
 				if ( null === ( $column['sub_part'] ?? null ) || '' === (string) $column['sub_part'] ) {
 					continue;
 				}
@@ -6277,16 +6240,14 @@ END',
 		}
 
 		if ( $skip_empty && '' === $index_comment ) {
-			return null;
+			return;
 		}
 
+		$statement = null;
 		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
-			if ( 0 !== strpos( $index_comment, self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX ) ) {
-				return null;
-			}
-
-			return sprintf(
-				'DO $wp_mysql_primary_index_comment$
+			if ( 0 === strpos( $index_comment, self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX ) ) {
+				$statement = sprintf(
+					'DO $wp_mysql_primary_index_comment$
 DECLARE
 	index_identifier text;
 BEGIN
@@ -6313,17 +6274,22 @@ BEGIN
 	END IF;
 END
 $wp_mysql_primary_index_comment$',
-				$this->connection->quote( $table_schema ),
-				$this->connection->quote( $table_name ),
+					$this->connection->quote( $table_schema ),
+					$this->connection->quote( $table_name ),
+					$this->get_postgresql_catalog_comment_literal( $index_comment )
+				);
+			}
+		} else {
+			$statement = sprintf(
+				'COMMENT ON INDEX %s IS %s',
+				$this->get_postgresql_qualified_identifier( $table_schema, $table_name . '__' . $index_name ),
 				$this->get_postgresql_catalog_comment_literal( $index_comment )
 			);
 		}
 
-		return sprintf(
-			'COMMENT ON INDEX %s IS %s',
-			$this->get_postgresql_qualified_identifier( $table_schema, $table_name . '__' . $index_name ),
-			$this->get_postgresql_catalog_comment_literal( $index_comment )
-		);
+		if ( null !== $statement ) {
+			$this->execute_postgresql_side_effect_statements( array( $statement ) );
+		}
 	}
 
 	/**
