@@ -7842,10 +7842,6 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			$this->ensure_mysql_schema_metadata_tables();
-		}
-
 		$source_schema = $this->get_mysql_read_table_backend_schema( $source_reference['schema'] );
 		if ( 0 === strcasecmp( $source_schema, 'information_schema' ) ) {
 			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
@@ -16821,7 +16817,7 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 	AND "TABLE_NAME" = ?
 ORDER BY "ORDINAL_POSITION"',
 			$this->get_show_columns_relation_select_sql( false ),
-			$this->get_direct_information_schema_relation_sql( 'columns', array( 'include_temporary_metadata' => true ) ),
+			$this->get_direct_information_schema_relation_sql( 'columns' ),
 			$this->connection->quote( 'public' ),
 			$this->connection->quote( $this->main_db_name )
 		);
@@ -16890,7 +16886,7 @@ FROM (%2$s) information_schema_columns
 WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 	AND "TABLE_NAME" = ?',
 			$this->get_show_columns_relation_select_sql( $is_full ),
-			$this->get_direct_information_schema_relation_sql( 'columns', array( 'include_temporary_metadata' => true ) ),
+			$this->get_direct_information_schema_relation_sql( 'columns' ),
 			$this->connection->quote( 'public' ),
 			$this->connection->quote( $this->main_db_name )
 		);
@@ -17406,11 +17402,6 @@ ORDER BY ' . $table_name_sql;
 			);
 		}
 
-		$use_postgresql_catalog = $this->should_use_postgresql_catalog_metadata();
-		if ( ! $use_postgresql_catalog ) {
-			$this->ensure_mysql_schema_metadata_tables();
-		}
-
 		$cache_key = $this->get_mysql_introspection_result_cache_key(
 			'show_create_table',
 			$fetch_mode,
@@ -17430,42 +17421,31 @@ ORDER BY ' . $table_name_sql;
 			);
 		}
 
-		$indexes = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
-		if ( $use_postgresql_catalog ) {
-			$sql    = sprintf(
-				'SELECT
-					kcu."CONSTRAINT_NAME" AS constraint_name,
-					DENSE_RANK() OVER (ORDER BY kcu."CONSTRAINT_NAME") AS constraint_ordinal,
-					kcu."ORDINAL_POSITION" AS seq_in_index,
-					kcu."COLUMN_NAME" AS column_name,
-					kcu."REFERENCED_TABLE_SCHEMA" AS referenced_table_schema,
-					kcu."REFERENCED_TABLE_NAME" AS referenced_table_name,
-					kcu."REFERENCED_COLUMN_NAME" AS referenced_column_name,
-					rc."UPDATE_RULE" AS update_rule,
-					rc."DELETE_RULE" AS delete_rule
-				FROM (%1$s) kcu
-				INNER JOIN (%2$s) rc
-					ON rc."CONSTRAINT_SCHEMA" = kcu."CONSTRAINT_SCHEMA"
-					AND rc."CONSTRAINT_NAME" = kcu."CONSTRAINT_NAME"
-					AND rc."TABLE_NAME" = kcu."TABLE_NAME"
-				WHERE kcu."TABLE_SCHEMA" = ?
-					AND kcu."TABLE_NAME" = ?
-					AND kcu."REFERENCED_TABLE_NAME" IS NOT NULL
-				ORDER BY constraint_ordinal, seq_in_index',
-				$this->get_direct_information_schema_relation_sql( 'key_column_usage' ),
-				$this->get_direct_information_schema_relation_sql( 'referential_constraints' )
-			);
-			$params = array( $this->get_direct_information_schema_display_schema( $resolved_schema ), $table_name );
-		} else {
-			$sql    = sprintf(
-				'SELECT constraint_name, constraint_ordinal, seq_in_index, column_name, referenced_table_schema, referenced_table_name, referenced_column_name, update_rule, delete_rule
-				FROM %s
-				WHERE table_schema = ? AND table_name = ?
-				ORDER BY constraint_name, seq_in_index',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			);
-			$params = array( $resolved_schema, $table_name );
-		}
+		$indexes                         = $this->get_show_create_table_index_metadata_rows( $resolved_schema, $table_name );
+		$sql                             = sprintf(
+			'SELECT
+				kcu."CONSTRAINT_NAME" AS constraint_name,
+				DENSE_RANK() OVER (ORDER BY kcu."CONSTRAINT_NAME") AS constraint_ordinal,
+				kcu."ORDINAL_POSITION" AS seq_in_index,
+				kcu."COLUMN_NAME" AS column_name,
+				kcu."REFERENCED_TABLE_SCHEMA" AS referenced_table_schema,
+				kcu."REFERENCED_TABLE_NAME" AS referenced_table_name,
+				kcu."REFERENCED_COLUMN_NAME" AS referenced_column_name,
+				rc."UPDATE_RULE" AS update_rule,
+				rc."DELETE_RULE" AS delete_rule
+			FROM (%1$s) kcu
+			INNER JOIN (%2$s) rc
+				ON rc."CONSTRAINT_SCHEMA" = kcu."CONSTRAINT_SCHEMA"
+				AND rc."CONSTRAINT_NAME" = kcu."CONSTRAINT_NAME"
+				AND rc."TABLE_NAME" = kcu."TABLE_NAME"
+			WHERE kcu."TABLE_SCHEMA" = ?
+				AND kcu."TABLE_NAME" = ?
+				AND kcu."REFERENCED_TABLE_NAME" IS NOT NULL
+			ORDER BY constraint_ordinal, seq_in_index',
+			$this->get_direct_information_schema_relation_sql( 'key_column_usage' ),
+			$this->get_direct_information_schema_relation_sql( 'referential_constraints' )
+		);
+		$params                          = array( $this->get_direct_information_schema_display_schema( $resolved_schema ), $table_name );
 		$stmt                            = $this->connection->query( $sql, $params );
 		$foreign_keys                    = $stmt->fetchAll( PDO::FETCH_ASSOC );
 		$this->last_postgresql_queries[] = array(
@@ -17511,43 +17491,24 @@ ORDER BY ' . $table_name_sql;
 	 * @return array[] Column metadata rows.
 	 */
 	private function get_show_create_table_column_metadata_rows( string $schema_name, string $table_name ): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$sql    = sprintf(
-				'SELECT
-					"COLUMN_NAME" AS column_name,
-					"ORDINAL_POSITION" AS ordinal_position,
-					"COLUMN_TYPE" AS column_type,
-					"CHARACTER_SET_NAME" AS character_set_name,
-					"COLLATION_NAME" AS collation_name,
-					"IS_NULLABLE" AS is_nullable,
-					"COLUMN_DEFAULT" AS column_default,
-					"EXTRA" AS extra,
-					"COLUMN_COMMENT" AS column_comment
-				FROM (%s) columns
-				WHERE "TABLE_SCHEMA" = ?
-					AND "TABLE_NAME" = ?
-				ORDER BY "ORDINAL_POSITION"',
-				$this->get_direct_information_schema_relation_sql( 'columns' )
-			);
-			$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
-			$stmt   = $this->connection->query( $sql, $params );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
-			);
-
-			return $stmt->fetchAll( PDO::FETCH_ASSOC );
-		}
-
 		$sql    = sprintf(
-			'SELECT column_name, ordinal_position, column_type, character_set_name, collation_name, is_nullable, column_default, extra, column_comment
-			FROM %s
-			WHERE table_schema = ? AND table_name = ?
-			ORDER BY ordinal_position',
-			$this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE )
+			'SELECT
+				"COLUMN_NAME" AS column_name,
+				"ORDINAL_POSITION" AS ordinal_position,
+				"COLUMN_TYPE" AS column_type,
+				"CHARACTER_SET_NAME" AS character_set_name,
+				"COLLATION_NAME" AS collation_name,
+				"IS_NULLABLE" AS is_nullable,
+				"COLUMN_DEFAULT" AS column_default,
+				"EXTRA" AS extra,
+				"COLUMN_COMMENT" AS column_comment
+			FROM (%s) columns
+			WHERE "TABLE_SCHEMA" = ?
+				AND "TABLE_NAME" = ?
+			ORDER BY "ORDINAL_POSITION"',
+			$this->get_direct_information_schema_relation_sql( 'columns' )
 		);
-		$params = array( $schema_name, $table_name );
+		$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
 		$stmt   = $this->connection->query( $sql, $params );
 
 		$this->last_postgresql_queries[] = array(
@@ -17566,33 +17527,7 @@ ORDER BY ' . $table_name_sql;
 	 * @return array[] Index metadata rows.
 	 */
 	private function get_show_create_table_index_metadata_rows( string $schema_name, string $table_name ): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_show_create_table_index_catalog_rows( $schema_name, $table_name );
-		}
-
-		$sql    = sprintf(
-			'SELECT key_name, index_ordinal, seq_in_index, column_name, non_unique, index_type, "collation" AS "collation", sub_part, index_comment
-			FROM %s
-			WHERE table_schema = ? AND table_name = ?
-			ORDER BY
-				key_name = \'PRIMARY\' DESC,
-				non_unique = \'0\' DESC,
-				index_type = \'SPATIAL\' DESC,
-				index_type = \'BTREE\' DESC,
-				index_type = \'FULLTEXT\' DESC,
-				index_ordinal,
-				seq_in_index',
-			$this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE )
-		);
-		$params = array( $schema_name, $table_name );
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+		return $this->get_show_create_table_index_catalog_rows( $schema_name, $table_name );
 	}
 
 	/**
@@ -17705,85 +17640,35 @@ ORDER BY ' . $table_name_sql;
 	 * @return array[] CHECK constraint metadata rows.
 	 */
 	private function get_show_create_table_check_constraint_metadata_rows( string $schema_name, string $table_name ): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$comment_sql      = 'pg_catalog.obj_description(con.oid, \'pg_constraint\')';
-			$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
-				$comment_sql,
-				'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
-			);
-			$enforced_sql     = $this->get_postgresql_mysql_check_enforced_comment_sql( $comment_sql );
-			$sql              = sprintf(
-				'SELECT
-					con.conname AS constraint_name,
-					ROW_NUMBER() OVER (ORDER BY con.conname) AS constraint_ordinal,
-					%1$s AS check_clause,
-					%2$s AS enforced
-				FROM pg_catalog.pg_constraint con
-				INNER JOIN pg_catalog.pg_class t ON t.oid = con.conrelid
-				INNER JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
-				WHERE n.nspname = ?
-					AND t.relname = ?
-					AND t.relkind IN (\'r\', \'p\')
-					AND con.contype = \'c\'
-				ORDER BY constraint_ordinal, constraint_name',
-				$check_clause_sql,
-				$enforced_sql
-			);
-			$params           = array( $schema_name, $table_name );
-			$stmt             = $this->connection->query( $sql, $params );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
-			);
-
-			return $stmt->fetchAll( PDO::FETCH_ASSOC );
-		}
-
-		$sql    = sprintf(
-			'SELECT constraint_name, constraint_ordinal, check_clause, enforced
-			FROM %s
-			WHERE table_schema = ? AND table_name = ?
-			ORDER BY constraint_ordinal, constraint_name',
-			$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+		$comment_sql      = 'pg_catalog.obj_description(con.oid, \'pg_constraint\')';
+		$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
+			$comment_sql,
+			'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
 		);
-		$params = array( $schema_name, $table_name );
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$metadata_rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		$enforced_sql     = $this->get_postgresql_mysql_check_enforced_comment_sql( $comment_sql );
+		$sql              = sprintf(
+			'SELECT
+				con.conname AS constraint_name,
+				ROW_NUMBER() OVER (ORDER BY con.conname) AS constraint_ordinal,
+				%1$s AS check_clause,
+				%2$s AS enforced
+			FROM pg_catalog.pg_constraint con
+			INNER JOIN pg_catalog.pg_class t ON t.oid = con.conrelid
+			INNER JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+			WHERE n.nspname = ?
+				AND t.relname = ?
+				AND t.relkind IN (\'r\', \'p\')
+				AND con.contype = \'c\'
+			ORDER BY constraint_ordinal, constraint_name',
+			$check_clause_sql,
+			$enforced_sql
+		);
+		$params           = array( $schema_name, $table_name );
+		$stmt             = $this->connection->query( $sql, $params );
 
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $sql,
 			'params' => $params,
-		);
-
-		if ( ! empty( $metadata_rows ) ) {
-			return $metadata_rows;
-		}
-
-		$catalog_sql    = 'SELECT
-				tc.constraint_name,
-				cc.check_clause,
-				\'YES\' AS enforced
-			FROM information_schema.table_constraints tc
-			INNER JOIN information_schema.check_constraints cc
-				ON cc.constraint_schema = tc.constraint_schema
-				AND cc.constraint_name = tc.constraint_name
-			WHERE tc.table_schema = ?
-				AND tc.table_name = ?
-				AND tc.constraint_type = ?
-			ORDER BY tc.constraint_name';
-		$catalog_params = array( $schema_name, $table_name, 'CHECK' );
-
-		try {
-			$stmt = $this->connection->query( $catalog_sql, $catalog_params );
-		} catch ( PDOException $e ) {
-			return array();
-		}
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $catalog_sql,
-			'params' => $catalog_params,
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
@@ -17797,41 +17682,17 @@ ORDER BY ' . $table_name_sql;
 	 * @return array{comment: string, collation: string|null} Table metadata.
 	 */
 	private function get_show_create_table_table_metadata( string $schema_name, string $table_name ): array {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$sql    = sprintf(
-				'SELECT
-					"TABLE_COMMENT" AS table_comment,
-					"TABLE_COLLATION" AS table_collation
-				FROM (%s) tables
-				WHERE "TABLE_SCHEMA" = ?
-					AND "TABLE_NAME" = ?
-				LIMIT 1',
-				$this->get_direct_information_schema_relation_sql( 'tables' )
-			);
-			$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
-			$stmt   = $this->connection->query( $sql, $params );
-
-			$this->last_postgresql_queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
-			);
-
-			$row = $stmt->fetch( PDO::FETCH_ASSOC );
-
-			return array(
-				'comment'   => false === $row ? '' : (string) ( $row['table_comment'] ?? $row['TABLE_COMMENT'] ?? '' ),
-				'collation' => false === $row ? self::DEFAULT_MYSQL_COLLATION : (string) ( $row['table_collation'] ?? $row['TABLE_COLLATION'] ?? self::DEFAULT_MYSQL_COLLATION ),
-			);
-		}
-
 		$sql    = sprintf(
-			'SELECT table_comment
-			FROM %s
-			WHERE table_schema = ? AND table_name = ?
+			'SELECT
+				"TABLE_COMMENT" AS table_comment,
+				"TABLE_COLLATION" AS table_collation
+			FROM (%s) tables
+			WHERE "TABLE_SCHEMA" = ?
+				AND "TABLE_NAME" = ?
 			LIMIT 1',
-			$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE )
+			$this->get_direct_information_schema_relation_sql( 'tables' )
 		);
-		$params = array( $schema_name, $table_name );
+		$params = array( $this->get_direct_information_schema_display_schema( $schema_name ), $table_name );
 		$stmt   = $this->connection->query( $sql, $params );
 
 		$this->last_postgresql_queries[] = array(
@@ -17839,11 +17700,11 @@ ORDER BY ' . $table_name_sql;
 			'params' => $params,
 		);
 
-		$comment = $stmt->fetchColumn();
+		$row = $stmt->fetch( PDO::FETCH_ASSOC );
 
 		return array(
-			'comment'   => false === $comment ? '' : (string) $comment,
-			'collation' => null,
+			'comment'   => false === $row ? '' : (string) ( $row['table_comment'] ?? $row['TABLE_COMMENT'] ?? '' ),
+			'collation' => false === $row ? self::DEFAULT_MYSQL_COLLATION : (string) ( $row['table_collation'] ?? $row['TABLE_COLLATION'] ?? self::DEFAULT_MYSQL_COLLATION ),
 		);
 	}
 
@@ -36328,199 +36189,17 @@ WHERE c.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'
 				);
 			}
 
-			$this->ensure_mysql_schema_metadata_tables();
-
-			$include_temporary_metadata = ! empty( $options['include_temporary_metadata'] );
-			$column_metadata_table      = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
-			$type_expression            = $this->get_direct_information_schema_catalog_data_type_expression( 'c', false );
-			$column_type                = 'COALESCE(cm.column_type, CASE
-		WHEN c.data_type = \'character varying\' THEN
-			\'varchar\' || CASE WHEN c.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\' END
-		WHEN c.data_type = \'character\' THEN
-			\'char\' || CASE WHEN c.character_maximum_length IS NULL THEN \'\' ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\' END
-		WHEN c.data_type = \'integer\' THEN \'int\'
-		WHEN c.data_type = \'numeric\' AND c.numeric_precision IS NULL THEN \'numeric\'
-		WHEN c.data_type = \'numeric\' THEN
-			\'decimal\' || CASE
-				WHEN c.numeric_scale IS NULL THEN \'(\' || CAST(c.numeric_precision AS text) || \')\'
-				ELSE \'(\' || CAST(c.numeric_precision AS text) || \',\' || CAST(c.numeric_scale AS text) || \')\'
-			END
-		WHEN c.data_type = \'double precision\' THEN \'double\'
-		WHEN c.data_type = \'real\' THEN \'float\'
-		WHEN c.data_type = \'timestamp without time zone\' THEN \'datetime\'
-		ELSE c.data_type
-	END)';
-			$data_type                  = $this->get_direct_information_schema_metadata_data_type_expression( 'cm.column_type', $type_expression );
-			$charset                    = $this->get_direct_information_schema_character_set_expression( $column_type, 'cm.character_set_name' );
-			$collation                  = $this->get_direct_information_schema_collation_expression( $column_type, 'COALESCE(cm.collation_name, c.collation_name)' );
-			$column_key                 = $this->get_direct_information_schema_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
-			$metadata_type              = $this->get_direct_information_schema_metadata_data_type_expression( 'cm.column_type', 'cm.column_type' );
-			$metadata_charset           = $this->get_direct_information_schema_character_set_expression( 'cm.column_type', 'cm.character_set_name' );
-			$metadata_collation         = $this->get_direct_information_schema_collation_expression( 'cm.column_type', 'cm.collation_name' );
-			$metadata_key               = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name' );
-			$metadata_schema_where      = $include_temporary_metadata
-				? '1 = 1'
-				: 'NOT (LOWER(cm.table_schema) IN (\'temp\', \'pg_temp\') OR LOWER(cm.table_schema) LIKE \'pg_temp_%\')';
-
-			return sprintf(
-				'WITH catalog_columns AS (
-	SELECT
-		\'def\' AS "TABLE_CATALOG",
-		%1$s AS "TABLE_SCHEMA",
-		c.table_name AS "TABLE_NAME",
-		c.column_name AS "COLUMN_NAME",
-		c.ordinal_position AS "ORDINAL_POSITION",
-		CASE WHEN cm.column_name IS NOT NULL THEN cm.column_default ELSE c.column_default END AS "COLUMN_DEFAULT",
-		COALESCE(cm.is_nullable, c.is_nullable) AS "IS_NULLABLE",
-		%2$s AS "DATA_TYPE",
-		c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH",
-		CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH",
-		c.numeric_precision AS "NUMERIC_PRECISION",
-		c.numeric_scale AS "NUMERIC_SCALE",
-		c.datetime_precision AS "DATETIME_PRECISION",
-		%3$s AS "CHARACTER_SET_NAME",
-			%4$s AS "COLLATION_NAME",
-			%5$s AS "COLUMN_TYPE",
-			%6$s AS "COLUMN_KEY",
-			COALESCE(cm.extra, %7$s) AS "EXTRA",
-			\'select,insert,update,references\' AS "PRIVILEGES",
-			COALESCE(cm.column_comment, \'\') AS "COLUMN_COMMENT",
-			\'\' AS "GENERATION_EXPRESSION",
-		NULL AS "SRS_ID"
-	FROM information_schema.columns c
-	LEFT JOIN %8$s cm
-		ON cm.table_schema = c.table_schema
-		AND cm.table_name = c.table_name
-		AND cm.column_name = c.column_name
-	WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND c.table_name NOT IN (%9$s)
-),
-metadata_columns AS (
-	SELECT
-		\'def\' AS "TABLE_CATALOG",
-		%10$s AS "TABLE_SCHEMA",
-		cm.table_name AS "TABLE_NAME",
-		cm.column_name AS "COLUMN_NAME",
-		cm.ordinal_position AS "ORDINAL_POSITION",
-		cm.column_default AS "COLUMN_DEFAULT",
-		cm.is_nullable AS "IS_NULLABLE",
-		%11$s AS "DATA_TYPE",
-		NULL AS "CHARACTER_MAXIMUM_LENGTH",
-		NULL AS "CHARACTER_OCTET_LENGTH",
-		NULL AS "NUMERIC_PRECISION",
-		NULL AS "NUMERIC_SCALE",
-		NULL AS "DATETIME_PRECISION",
-		%12$s AS "CHARACTER_SET_NAME",
-			%13$s AS "COLLATION_NAME",
-			cm.column_type AS "COLUMN_TYPE",
-			%14$s AS "COLUMN_KEY",
-			cm.extra AS "EXTRA",
-			\'select,insert,update,references\' AS "PRIVILEGES",
-			cm.column_comment AS "COLUMN_COMMENT",
-			\'\' AS "GENERATION_EXPRESSION",
-		NULL AS "SRS_ID"
-	FROM %8$s cm
-	WHERE %15$s
-		AND NOT EXISTS (
-		SELECT 1
-		FROM information_schema.columns c
-		WHERE c.table_schema = cm.table_schema
-			AND c.table_name = cm.table_name
-			AND c.column_name = cm.column_name
-	)
-)
-SELECT * FROM catalog_columns
-UNION ALL
-SELECT * FROM metadata_columns',
-				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-				$data_type,
-				$charset,
-				$collation,
-				$column_type,
-				$column_key,
-				$this->get_direct_information_schema_column_extra_expression( 'c' ),
-				$column_metadata_table,
-				$this->get_direct_information_schema_hidden_table_list_sql(),
-				$this->get_direct_information_schema_display_schema_sql( 'cm.table_schema' ),
-				$metadata_type,
-				$metadata_charset,
-				$metadata_collation,
-				$metadata_key,
-				$metadata_schema_where
+			return $this->get_direct_information_schema_literal_relation_sql(
+				$this->get_direct_information_schema_relation_columns( 'columns' ),
+				array()
 			);
 		}
 
 		if ( 'tables' === $view ) {
 			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-				$this->ensure_mysql_schema_metadata_tables();
-
-				$sqlite_sequence_relation = 'SELECT NULL AS name, NULL AS auto_increment WHERE 1 = 0';
-				if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
-					try {
-						$this->connection->query( 'SELECT 1 FROM "information_schema"."tables" LIMIT 1' );
-						$has_sequence_table = $this->connection->query( "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence' LIMIT 1" )->fetchColumn();
-						if ( false !== $has_sequence_table ) {
-							$sqlite_sequence_relation = 'SELECT name, seq + 1 AS auto_increment FROM sqlite_sequence';
-						}
-					} catch ( PDOException $e ) {
-						return $this->get_direct_information_schema_literal_relation_sql(
-							$this->get_direct_information_schema_relation_columns( 'tables' ),
-							array()
-						);
-					}
-				}
-
-				return sprintf(
-					'SELECT
-	\'def\' AS "TABLE_CATALOG",
-	%1$s AS "TABLE_SCHEMA",
-	t.table_name AS "TABLE_NAME",
-	CASE WHEN UPPER(t.table_type) = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "TABLE_TYPE",
-	\'InnoDB\' AS "ENGINE",
-	10 AS "VERSION",
-	\'Dynamic\' AS "ROW_FORMAT",
-	0 AS "TABLE_ROWS",
-	0 AS "AVG_ROW_LENGTH",
-	0 AS "DATA_LENGTH",
-	0 AS "MAX_DATA_LENGTH",
-	0 AS "INDEX_LENGTH",
-	0 AS "DATA_FREE",
-	CASE
-		WHEN NOT EXISTS (
-			SELECT 1
-			FROM (
-				SELECT table_schema, table_name, is_identity
-				FROM "information_schema"."columns"
-			) c
-			WHERE c.table_schema = t.table_schema
-				AND c.table_name = t.table_name
-				AND c.is_identity = \'YES\'
-		) THEN NULL
-		ELSE CAST(COALESCE(ss.auto_increment, 1) AS bigint)
-	END AS "AUTO_INCREMENT",
-	CURRENT_TIMESTAMP AS "CREATE_TIME",
-	NULL AS "UPDATE_TIME",
-	NULL AS "CHECK_TIME",
-	%2$s AS "TABLE_COLLATION",
-	NULL AS "CHECKSUM",
-	\'\' AS "CREATE_OPTIONS",
-	COALESCE(tm.table_comment, \'\') AS "TABLE_COMMENT"
-FROM "information_schema"."tables" t
-LEFT JOIN (
-	%3$s
-) ss
-	ON ss.name = t.table_name
-LEFT JOIN %4$s tm
-	ON tm.table_schema = t.table_schema
-	AND tm.table_name = t.table_name
-WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
-	AND t.table_name NOT IN (%5$s)',
-					$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
-					$this->connection->quote( $this->collation ),
-					$sqlite_sequence_relation,
-					$this->connection->quote_identifier( self::MYSQL_TABLE_METADATA_TABLE ),
-					$this->get_direct_information_schema_hidden_table_list_sql()
+				return $this->get_direct_information_schema_literal_relation_sql(
+					$this->get_direct_information_schema_relation_columns( 'tables' ),
+					array()
 				);
 			}
 
@@ -39001,85 +38680,6 @@ END',
 			$metadata_sql,
 			$default_collation_sql,
 			$comment_collation_sql
-		);
-	}
-
-	/**
-	 * Get COLUMN_KEY expression for a table column.
-	 *
-	 * @param string $schema_sql SQL expression for backend schema.
-	 * @param string $table_sql  SQL expression for table name.
-	 * @param string $column_sql SQL expression for column name.
-	 * @param bool   $include_catalog_constraints Whether to include native catalog constraints.
-	 * @return string SQL expression.
-	 */
-	private function get_direct_information_schema_column_key_expression( string $schema_sql, string $table_sql, string $column_sql, bool $include_catalog_constraints = true ): string {
-		$index_metadata_table = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
-		$catalog_constraints  = $include_catalog_constraints
-			? sprintf(
-				'
-	WHEN EXISTS (
-		SELECT 1
-		FROM information_schema.table_constraints tc
-		INNER JOIN information_schema.key_column_usage kcu
-			ON kcu.constraint_schema = tc.constraint_schema
-			AND kcu.constraint_name = tc.constraint_name
-			AND kcu.table_schema = tc.table_schema
-			AND kcu.table_name = tc.table_name
-		WHERE tc.table_schema = %1$s
-			AND tc.table_name = %2$s
-			AND tc.constraint_type = \'PRIMARY KEY\'
-			AND kcu.column_name = %3$s
-	) THEN \'PRI\'
-	WHEN EXISTS (
-		SELECT 1
-		FROM information_schema.table_constraints tc
-		INNER JOIN information_schema.key_column_usage kcu
-			ON kcu.constraint_schema = tc.constraint_schema
-			AND kcu.constraint_name = tc.constraint_name
-			AND kcu.table_schema = tc.table_schema
-			AND kcu.table_name = tc.table_name
-		WHERE tc.table_schema = %1$s
-			AND tc.table_name = %2$s
-			AND tc.constraint_type = \'UNIQUE\'
-			AND kcu.column_name = %3$s
-	) THEN \'UNI\'',
-				$schema_sql,
-				$table_sql,
-				$column_sql
-			)
-			: '';
-
-		return sprintf(
-			'CASE
-	WHEN EXISTS (
-		SELECT 1 FROM %1$s im
-		WHERE im.table_schema = %2$s
-			AND im.table_name = %3$s
-			AND im.column_name = %4$s
-			AND UPPER(im.key_name) = \'PRIMARY\'
-	) THEN \'PRI\'
-	WHEN EXISTS (
-		SELECT 1 FROM %1$s im
-		WHERE im.table_schema = %2$s
-			AND im.table_name = %3$s
-			AND im.column_name = %4$s
-			AND im.non_unique = \'0\'
-	) THEN \'UNI\'
-	WHEN EXISTS (
-		SELECT 1 FROM %1$s im
-		WHERE im.table_schema = %2$s
-			AND im.table_name = %3$s
-			AND im.column_name = %4$s
-	) THEN \'MUL\'
-%5$s
-	ELSE \'\'
-END',
-			$index_metadata_table,
-			$schema_sql,
-			$table_sql,
-			$column_sql,
-			$catalog_constraints
 		);
 	}
 
