@@ -20921,10 +20921,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			 *
 			 * @param string $sql    SQL query.
 			 * @param array  $params Query parameters.
-			 * @return PDOStatement Statement.
+		 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
-				if ( false !== strpos( $sql, 'FROM show_columns_rows' ) ) {
+				if ( false !== strpos( $sql, 'information_schema_columns' ) ) {
 					return parent::query(
 						"SELECT
 							'plugin_id' AS \"Field\",
@@ -20949,7 +20949,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'FROM requested_table rt', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'information_schema_columns', $queries[0]['sql'] );
 		$this->assertStringContainsString( 'information_schema.columns c', $queries[0]['sql'] );
 		$this->assertSame( array( 'plugin_schema', 'plugin_options' ), $queries[0]['params'] );
 
@@ -21008,7 +21008,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'field_name LIKE ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_NAME" LIKE ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW COLUMNS', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_options', 'option_%' ), $queries[0]['params'] );
 	}
@@ -21030,7 +21030,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'field_name LIKE ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_NAME" LIKE ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW FIELDS', strtoupper( $queries[0]['sql'] ) );
 		$this->assertSame( array( 'public', 'wptests_options', 'option_%' ), $queries[0]['params'] );
 	}
@@ -21079,7 +21079,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'field_name LIKE ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_NAME" LIKE ?', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_meta_columns', 'lookup%' ), $queries[0]['params'] );
 
 		$full = $driver->query( 'SHOW FULL COLUMNS FROM wptests_meta_columns' );
@@ -29072,7 +29072,7 @@ $wp_mysql_on_update$',
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'field_name = ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_NAME" = ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW COLUMNS', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_options', 'option_name' ), $queries[0]['params'] );
 	}
@@ -29092,7 +29092,7 @@ $wp_mysql_on_update$',
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'column_type = ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_TYPE" = ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW FIELDS', strtoupper( $queries[0]['sql'] ) );
 		$this->assertSame( array( 'public', 'wptests_options', 'varchar(191)' ), $queries[0]['params'] );
 	}
@@ -29113,7 +29113,7 @@ $wp_mysql_on_update$',
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'field_name = ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_NAME" = ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW FULL COLUMNS', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_options', 'option_name' ), $queries[0]['params'] );
 	}
@@ -29138,7 +29138,7 @@ $wp_mysql_on_update$',
 		);
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'field_name LIKE ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_NAME" LIKE ?', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_options', 'option_%' ), $queries[0]['params'] );
 
 		$result = $driver->query( "SHOW FIELDS FROM wptests_options WHERE Type LIKE 'varchar%'" );
@@ -29154,7 +29154,7 @@ $wp_mysql_on_update$',
 		);
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'column_type LIKE ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_TYPE" LIKE ?', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_options', 'varchar%' ), $queries[0]['params'] );
 	}
 
@@ -29179,8 +29179,8 @@ $wp_mysql_on_update$',
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( "field_name LIKE ? ESCAPE '\\'", $queries[0]['sql'] );
-		$this->assertStringContainsString( 'column_type = ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_NAME" LIKE ? ESCAPE \'\\\'', $queries[0]['sql'] );
+		$this->assertStringContainsString( '"COLUMN_TYPE" = ?', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_options', 'option_%', 'varchar(191)' ), $queries[0]['params'] );
 	}
 
@@ -29206,7 +29206,7 @@ $wp_mysql_on_update$',
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
 		$this->assertSame( array( 'public', 'wptests_options' ), $queries[0]['params'] );
-		$this->assertStringNotContainsString( 'field_name <>', $queries[0]['sql'] );
+		$this->assertStringNotContainsString( '"COLUMN_NAME" <>', $queries[0]['sql'] );
 
 		$result = $driver->query( "SHOW FIELDS FROM wptests_options WHERE Field = 'option_name' OR Type = 'text'" );
 
@@ -32879,7 +32879,7 @@ $wp_mysql_on_update$',
 					return parent::query( "SELECT 'plugin_options' AS \"Tables_in_plugin_schema\"" );
 				}
 
-				if ( false !== strpos( $sql, 'FROM show_columns_rows' ) ) {
+				if ( false !== strpos( $sql, 'information_schema_columns' ) ) {
 					return parent::query(
 						"SELECT
 							'plugin_id' AS \"Field\",
@@ -36972,7 +36972,7 @@ $wp_mysql_on_update$',
 	public function test_describe_and_show_columns_use_postgresql_catalog_for_pgsql_connections(): void {
 		$connection      = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
 			array(
-				'pdo' => new PDO( 'sqlite::memory:' ),
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
 			)
 		);
 		$driver          = new WP_PostgreSQL_Driver( $connection, 'wptests' );
@@ -36980,49 +36980,35 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
 			WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
 		);
-		$get_describe    = Closure::bind(
-			function (): string {
-				return $this->get_describe_postgresql_catalog_query();
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
 		$get_columns     = Closure::bind(
+			function (): string {
+				return $this->get_direct_information_schema_columns_relation_sql();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$get_projection  = Closure::bind(
 			function ( bool $is_full ): string {
-				return $this->get_show_columns_postgresql_catalog_query( $is_full );
+				return $this->get_show_columns_relation_select_sql( $is_full );
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
 		);
 
-		$describe_sql = $get_describe();
-		$columns_sql  = $get_columns( true );
+		$columns_sql             = $get_columns();
+		$describe_projection_sql = $get_projection( false );
+		$full_projection_sql     = $get_projection( true );
 
-		$this->assertStringContainsString( 'describe_rows AS', $describe_sql );
-		$this->assertStringContainsString( 'information_schema.columns c', $describe_sql );
-		$this->assertStringContainsString( 'pg_catalog.pg_index i', $describe_sql );
-		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey) WITH ORDINALITY', $describe_sql );
-		$this->assertStringContainsString( 'k.ordinality <= i.indnkeyatts', $describe_sql );
-		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_datetime' THEN 'datetime'", $describe_sql );
-		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumtext' THEN 'mediumtext'", $describe_sql );
-		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumblob' THEN 'mediumblob'", $describe_sql );
-		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_binary_%' THEN 'binary'", $describe_sql );
-		$this->assertStringContainsString( "c.data_type = 'numeric' AND c.numeric_precision IS NULL THEN 'numeric'", $describe_sql );
-		$this->assertStringContainsString( "'decimal' || CASE", $describe_sql );
-		$this->assertStringContainsString( "c.data_type = 'double precision' THEN 'double'", $describe_sql );
-		$this->assertStringContainsString( "c.data_type = 'real' THEN 'float'", $describe_sql );
-		$this->assertStringContainsString( 'SUBSTRING(c.column_default FROM', $describe_sql );
-		$this->assertStringContainsString( "THEN 'CURRENT_TIMESTAMP'", $describe_sql );
-		$this->assertStringContainsString( "'CURRENT_TIMESTAMP(' || SUBSTRING(c.column_default FROM", $describe_sql );
-		$this->assertStringContainsString( '__wp_mysql_column_type:', $describe_sql );
-		$this->assertStringContainsString( 'show_columns_rows AS', $columns_sql );
 		$this->assertStringContainsString( 'information_schema.columns c', $columns_sql );
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $columns_sql );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $columns_sql );
 		$this->assertStringContainsString( 'pg_catalog.unnest(i.indkey) WITH ORDINALITY', $columns_sql );
 		$this->assertStringContainsString( 'k.ordinality <= i.indnkeyatts', $columns_sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_datetime' THEN 'datetime'", $columns_sql );
 		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_timestamp_6' THEN 'timestamp(6)'", $columns_sql );
+		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumtext' THEN 'mediumtext'", $columns_sql );
 		$this->assertStringContainsString( "c.domain_name = '__wp_mysql_mediumblob' THEN 'mediumblob'", $columns_sql );
+		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_binary_%' THEN 'binary'", $columns_sql );
 		$this->assertStringContainsString( "c.domain_name LIKE '__wp_mysql_varbinary_%' THEN 'varbinary'", $columns_sql );
 		$this->assertStringContainsString( "c.data_type = 'numeric' AND c.numeric_precision IS NULL THEN 'numeric'", $columns_sql );
 		$this->assertStringContainsString( "'decimal' || CASE", $columns_sql );
@@ -37032,11 +37018,13 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( "THEN 'CURRENT_TIMESTAMP'", $columns_sql );
 		$this->assertStringContainsString( "'CURRENT_TIMESTAMP(' || SUBSTRING(c.column_default FROM", $columns_sql );
 		$this->assertStringContainsString( '__wp_mysql_column_type:', $columns_sql );
-		foreach ( array( $describe_sql, $columns_sql ) as $sql ) {
-			foreach ( $metadata_tables as $metadata_table ) {
-				$this->assertStringNotContainsString( 'FROM "' . $metadata_table . '"', $sql );
-				$this->assertStringNotContainsString( 'JOIN "' . $metadata_table . '"', $sql );
-			}
+		$this->assertStringContainsString( '"COLUMN_NAME" AS "Field"', $describe_projection_sql );
+		$this->assertStringNotContainsString( '"COLLATION_NAME" AS "Collation"', $describe_projection_sql );
+		$this->assertStringContainsString( '"COLUMN_NAME" AS "Field"', $full_projection_sql );
+		$this->assertStringContainsString( '"COLLATION_NAME" AS "Collation"', $full_projection_sql );
+		foreach ( $metadata_tables as $metadata_table ) {
+			$this->assertStringNotContainsString( 'FROM "' . $metadata_table . '"', $columns_sql );
+			$this->assertStringNotContainsString( 'JOIN "' . $metadata_table . '"', $columns_sql );
 		}
 	}
 
@@ -37080,7 +37068,22 @@ $wp_mysql_on_update$',
 					return parent::query( 'SELECT NULL AS nspname WHERE 0 = 1' );
 				}
 
-				if ( false !== strpos( $sql, 'FROM describe_rows' ) ) {
+				if ( false !== strpos( $sql, 'information_schema_columns' ) ) {
+					if ( false !== strpos( $sql, '"COLLATION_NAME" AS "Collation"' ) ) {
+						return parent::query(
+							"SELECT
+								'option_name' AS \"Field\",
+								'varchar(191)' AS \"Type\",
+								'utf8mb4_unicode_ci' AS \"Collation\",
+								'NO' AS \"Null\",
+								'UNI' AS \"Key\",
+								'' AS \"Default\",
+								'' AS \"Extra\",
+								'select,insert,update,references' AS \"Privileges\",
+								'Option name' AS \"Comment\""
+						);
+					}
+
 					return parent::query(
 						"SELECT
 							'option_id' AS \"Field\",
@@ -37089,21 +37092,6 @@ $wp_mysql_on_update$',
 							'PRI' AS \"Key\",
 							NULL AS \"Default\",
 							'auto_increment' AS \"Extra\""
-					);
-				}
-
-				if ( false !== strpos( $sql, 'FROM show_columns_rows' ) ) {
-					return parent::query(
-						"SELECT
-							'option_name' AS \"Field\",
-							'varchar(191)' AS \"Type\",
-							'utf8mb4_unicode_ci' AS \"Collation\",
-							'NO' AS \"Null\",
-							'UNI' AS \"Key\",
-							'' AS \"Default\",
-							'' AS \"Extra\",
-							'select,insert,update,references' AS \"Privileges\",
-							'Option name' AS \"Comment\""
 					);
 				}
 
@@ -37136,7 +37124,7 @@ $wp_mysql_on_update$',
 		$this->assertSame( 'PRI', $describe[0]->Key );
 
 		$describe_sql = $this->get_last_single_postgresql_sql( $driver );
-		$this->assertStringContainsString( 'describe_rows AS', $describe_sql );
+		$this->assertStringContainsString( 'information_schema_columns', $describe_sql );
 		$this->assertStringContainsString( 'information_schema.columns c', $describe_sql );
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $describe_sql );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $describe_sql );
@@ -37153,7 +37141,7 @@ $wp_mysql_on_update$',
 		$this->assertSame( 'Option name', $columns[0]->Comment );
 
 		$columns_sql = $this->get_last_single_postgresql_sql( $driver );
-		$this->assertStringContainsString( 'show_columns_rows AS', $columns_sql );
+		$this->assertStringContainsString( 'information_schema_columns', $columns_sql );
 		$this->assertStringContainsString( 'information_schema.columns c', $columns_sql );
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $columns_sql );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $columns_sql );
@@ -41458,15 +41446,11 @@ $wp_mysql_on_update$',
 			)'
 		);
 
-		$describe_catalog_queries     = 0;
-		$show_columns_catalog_queries = 0;
+		$column_catalog_queries = 0;
 		$driver->get_connection()->set_query_logger(
-			static function ( string $sql ) use ( &$describe_catalog_queries, &$show_columns_catalog_queries ): void {
-				if ( false !== strpos( $sql, 'describe_rows' ) ) {
-					++$describe_catalog_queries;
-				}
-				if ( false !== strpos( $sql, 'show_columns_rows' ) ) {
-					++$show_columns_catalog_queries;
+			static function ( string $sql ) use ( &$column_catalog_queries ): void {
+				if ( false !== strpos( $sql, 'information_schema_columns' ) ) {
+					++$column_catalog_queries;
 				}
 			}
 		);
@@ -41476,7 +41460,7 @@ $wp_mysql_on_update$',
 
 		$cached_describe = $driver->query( 'DESC `wptests_options`;' );
 
-		$this->assertSame( 1, $describe_catalog_queries );
+		$this->assertSame( 1, $column_catalog_queries );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		$this->assertSame( 'option_id', $cached_describe[0]->Field );
 		$this->assertSame( 'Field', $driver->get_last_column_meta()[0]['name'] );
@@ -41486,7 +41470,7 @@ $wp_mysql_on_update$',
 
 		$cached_columns = $driver->query( 'SHOW COLUMNS FROM `wptests_options`' );
 
-		$this->assertSame( 1, $show_columns_catalog_queries );
+		$this->assertSame( 2, $column_catalog_queries );
 		$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		$this->assertSame( 'option_id', $cached_columns[0]->Field );
 		$this->assertSame( 'Null', $driver->get_last_column_meta()[2]['name'] );
@@ -41495,7 +41479,7 @@ $wp_mysql_on_update$',
 
 		$indexed_columns = $driver->query( 'SHOW COLUMNS FROM `wptests_options`' );
 
-		$this->assertSame( 2, $show_columns_catalog_queries );
+		$this->assertSame( 3, $column_catalog_queries );
 		$this->assertSame( 'MUL', $indexed_columns[2]->Key );
 
 		$driver->store_mysql_schema_metadata(
@@ -41509,7 +41493,7 @@ $wp_mysql_on_update$',
 		);
 		$driver->query( 'DESC `wptests_options`;' );
 
-		$this->assertSame( 2, $describe_catalog_queries );
+		$this->assertSame( 4, $column_catalog_queries );
 
 		$index_driver               = $this->create_show_index_driver();
 		$show_index_catalog_queries = 0;
@@ -41542,7 +41526,7 @@ $wp_mysql_on_update$',
 		$describe_catalog_queries = 0;
 		$driver->get_connection()->set_query_logger(
 			static function ( string $sql ) use ( &$describe_catalog_queries ): void {
-				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+				if ( false !== strpos( $sql, 'information_schema_columns' ) ) {
 					++$describe_catalog_queries;
 				}
 			}
@@ -41570,7 +41554,7 @@ $wp_mysql_on_update$',
 		$describe_catalog_queries = 0;
 		$driver->get_connection()->set_query_logger(
 			static function ( string $sql ) use ( &$describe_catalog_queries ): void {
-				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+				if ( false !== strpos( $sql, 'information_schema_columns' ) ) {
 					++$describe_catalog_queries;
 				}
 			}
@@ -41605,7 +41589,7 @@ $wp_mysql_on_update$',
 		$describe_catalog_queries = 0;
 		$driver->get_connection()->set_query_logger(
 			static function ( string $sql ) use ( &$describe_catalog_queries ): void {
-				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+				if ( false !== strpos( $sql, 'information_schema_columns' ) ) {
 					++$describe_catalog_queries;
 				}
 			}
@@ -41652,7 +41636,7 @@ $wp_mysql_on_update$',
 		$describe_catalog_queries = 0;
 		$driver->get_connection()->set_query_logger(
 			static function ( string $sql ) use ( &$describe_catalog_queries ): void {
-				if ( false !== strpos( $sql, 'describe_rows' ) ) {
+				if ( false !== strpos( $sql, 'information_schema_columns' ) ) {
 					++$describe_catalog_queries;
 				}
 			}
@@ -43085,13 +43069,6 @@ $wp_mysql_on_update$',
 		$sql       = array_column( $driver->get_last_postgresql_queries(), 'sql' );
 		$all_sql   = implode( "\n", $sql );
 		$prefix    = '__wp_mysql_column_default:';
-		$describe  = Closure::bind(
-			function (): string {
-				return $this->get_describe_postgresql_catalog_query();
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
 		$get_info  = Closure::bind(
 			function (): string {
 				return $this->get_direct_information_schema_columns_catalog_relation_sql();
@@ -43099,7 +43076,7 @@ $wp_mysql_on_update$',
 			$driver,
 			WP_PostgreSQL_Driver::class
 		);
-		$query_sql = $describe() . "\n" . $get_info();
+		$query_sql = $get_info();
 
 		$this->assertStringContainsString( 'CREATE TABLE "catalog_pg_generated_defaults"', $sql[0] );
 		$this->assertStringContainsString( '"col1" integer NOT NULL DEFAULT (1 + 2)', $sql[0] );
@@ -43248,14 +43225,14 @@ $wp_mysql_on_update$',
 		);
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, implode( "\n", $sql ) );
 
-		$get_describe = Closure::bind(
+		$get_info     = Closure::bind(
 			function (): string {
-				return $this->get_describe_postgresql_catalog_query();
+				return $this->get_direct_information_schema_columns_catalog_relation_sql();
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
 		);
-		$describe_sql = $get_describe();
+		$describe_sql = $get_info();
 
 		$this->assertStringContainsString( 'pg_catalog.pg_trigger tr', $describe_sql );
 		$this->assertStringContainsString(

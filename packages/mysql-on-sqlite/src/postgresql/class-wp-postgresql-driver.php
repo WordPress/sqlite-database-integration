@@ -17741,7 +17741,18 @@ $wp_mysql_primary_index_comment$',
 			return $this->last_result;
 		}
 
-		$sql    = $this->get_describe_catalog_query();
+		$sql    = sprintf(
+			'SELECT
+	%1$s
+FROM (%2$s) information_schema_columns
+WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
+	AND "TABLE_NAME" = ?
+ORDER BY "ORDINAL_POSITION"',
+			$this->get_show_columns_relation_select_sql( false ),
+			$this->get_direct_information_schema_columns_relation_sql( true ),
+			$this->connection->quote( 'public' ),
+			$this->connection->quote( $this->main_db_name )
+		);
 		$params = array(
 			$resolved_schema,
 			$table_name,
@@ -17800,14 +17811,24 @@ $wp_mysql_primary_index_comment$',
 			return $this->last_result;
 		}
 
-		$sql    = $this->get_show_columns_catalog_query( $is_full );
+		$sql    = sprintf(
+			'SELECT
+	%1$s
+FROM (%2$s) information_schema_columns
+WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
+	AND "TABLE_NAME" = ?',
+			$this->get_show_columns_relation_select_sql( $is_full ),
+			$this->get_direct_information_schema_columns_relation_sql( true ),
+			$this->connection->quote( 'public' ),
+			$this->connection->quote( $this->main_db_name )
+		);
 		$params = array(
 			$resolved_schema,
 			$table_name,
 		);
 
 		if ( null !== $like ) {
-			$sql     .= " AND field_name LIKE ? ESCAPE '\\'";
+			$sql     .= ' AND "COLUMN_NAME" LIKE ? ESCAPE \'\\\'';
 			$params[] = $like;
 		}
 
@@ -17969,23 +17990,23 @@ ORDER BY ordinal_position';
 	private function get_show_columns_filter_column_expression( string $column ): string {
 		switch ( $column ) {
 			case 'Field':
-				return 'field_name';
+				return '"COLUMN_NAME"';
 			case 'Type':
-				return 'column_type';
+				return '"COLUMN_TYPE"';
 			case 'Collation':
-				return 'collation_name';
+				return '"COLLATION_NAME"';
 			case 'Null':
-				return 'is_nullable';
+				return '"IS_NULLABLE"';
 			case 'Key':
-				return 'column_key';
+				return '"COLUMN_KEY"';
 			case 'Default':
-				return 'column_default';
+				return '"COLUMN_DEFAULT"';
 			case 'Extra':
-				return 'column_extra';
+				return '"EXTRA"';
 			case 'Privileges':
-				return "'select,insert,update,references'";
+				return '"PRIVILEGES"';
 			case 'Comment':
-				return 'column_comment';
+				return '"COLUMN_COMMENT"';
 		}
 
 		throw new InvalidArgumentException( 'Unsupported SHOW COLUMNS statement.' );
@@ -21918,364 +21939,22 @@ ORDER BY
 	}
 
 	/**
-	 * Get the PostgreSQL catalog query backing MySQL DESCRIBE/DESC.
-	 *
-	 * @return string SQL query.
-	 */
-	private function get_describe_catalog_query(): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_describe_postgresql_catalog_query();
-		}
-
-		$column_metadata_table   = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
-		$catalog_key_expression  = $this->get_direct_information_schema_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
-		$metadata_key_expression = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name', false );
-
-		return sprintf(
-			'WITH requested_table AS (
-	SELECT ? AS table_schema, ? AS table_name
-),
-catalog_columns AS (
-	SELECT
-		c.column_name AS field_name,
-		COALESCE(
-			cm.column_type,
-			CASE
-				WHEN c.data_type = \'character varying\' THEN
-					\'varchar\' || CASE
-						WHEN c.character_maximum_length IS NULL THEN \'\'
-						ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\'
-					END
-				WHEN c.data_type = \'character\' THEN
-					\'char\' || CASE
-						WHEN c.character_maximum_length IS NULL THEN \'\'
-						ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\'
-					END
-				WHEN c.data_type = \'integer\' THEN \'int\'
-				WHEN c.data_type = \'timestamp without time zone\' THEN \'datetime\'
-				ELSE c.data_type
-			END
-		) AS column_type,
-		COALESCE(cm.is_nullable, c.is_nullable) AS is_nullable,
-		%2$s AS column_key,
-			CASE
-				WHEN cm.column_name IS NOT NULL THEN cm.column_default
-				ELSE c.column_default
-			END AS column_default,
-		COALESCE(
-			cm.extra,
-			CASE
-				WHEN c.is_identity = \'YES\' THEN \'auto_increment\'
-				WHEN c.column_default LIKE \'nextval(%%\' THEN \'auto_increment\'
-				ELSE \'\'
-			END
-		) AS column_extra,
-		c.ordinal_position
-	FROM requested_table rt
-	INNER JOIN information_schema.columns c
-		ON c.table_schema = rt.table_schema
-		AND c.table_name = rt.table_name
-	LEFT JOIN %1$s cm
-		ON cm.table_schema = c.table_schema
-		AND cm.table_name = c.table_name
-		AND cm.column_name = c.column_name
-),
-metadata_columns AS (
-	SELECT
-		cm.column_name AS field_name,
-		cm.column_type,
-		cm.is_nullable,
-		%3$s AS column_key,
-		cm.column_default,
-		cm.extra AS column_extra,
-		cm.ordinal_position
-	FROM requested_table rt
-	INNER JOIN %1$s cm
-		ON cm.table_schema = rt.table_schema
-		AND cm.table_name = rt.table_name
-	WHERE NOT EXISTS (
-		SELECT 1
-		FROM information_schema.columns c
-		WHERE c.table_schema = cm.table_schema
-			AND c.table_name = cm.table_name
-			AND c.column_name = cm.column_name
-	)
-),
-describe_rows AS (
-	SELECT * FROM catalog_columns
-	UNION ALL
-	SELECT * FROM metadata_columns
-)
-SELECT
-	%4$s
-FROM describe_rows
-ORDER BY ordinal_position',
-			$column_metadata_table,
-			$catalog_key_expression,
-			$metadata_key_expression,
-			$this->get_show_columns_select_column_sql( false )
-		);
-	}
-
-	/**
-	 * Get the PostgreSQL catalog-only query backing MySQL DESCRIBE/DESC.
-	 *
-	 * @return string SQL query.
-	 */
-	private function get_describe_postgresql_catalog_query(): string {
-		$comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-
-		return sprintf(
-			'WITH requested_table AS (
-	SELECT ? AS table_schema, ? AS table_name
-),
-describe_rows AS (
-	SELECT
-		c.column_name AS field_name,
-		%1$s AS column_type,
-		c.is_nullable,
-		%2$s AS column_key,
-		%4$s AS column_default,
-		%3$s AS column_extra,
-		c.ordinal_position
-	FROM requested_table rt
-	INNER JOIN information_schema.columns c
-		ON c.table_schema = rt.table_schema
-		AND c.table_name = rt.table_name
-	LEFT JOIN pg_catalog.pg_namespace pn
-		ON pn.nspname = c.table_schema
-	LEFT JOIN pg_catalog.pg_class pc
-		ON pc.relnamespace = pn.oid
-		AND pc.relname = c.table_name
-		AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-	LEFT JOIN pg_catalog.pg_attribute pa
-		ON pa.attrelid = pc.oid
-		AND pa.attname = c.column_name
-		AND pa.attnum > 0
-)
-SELECT
-	%5$s
-FROM describe_rows
-ORDER BY ordinal_position',
-			$this->get_direct_information_schema_catalog_column_type_expression(
-				'c',
-				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-				$comment_sql
-			),
-			$this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' ),
-			$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-			$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-			$this->get_show_columns_select_column_sql( false )
-		);
-	}
-
-	/**
-	 * Get the PostgreSQL catalog query backing MySQL SHOW COLUMNS/FULL COLUMNS.
-	 *
-	 * @param bool $is_full Whether the query should emit SHOW FULL COLUMNS fields.
-	 * @return string SQL query.
-	 */
-	private function get_show_columns_catalog_query( bool $is_full ): string {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->get_show_columns_postgresql_catalog_query( $is_full );
-		}
-
-		$column_metadata_table = $this->connection->quote_identifier( self::MYSQL_COLUMN_METADATA_TABLE );
-
-		$type_expression = 'CASE
-		WHEN c.data_type = \'character varying\' THEN
-			\'varchar\' || CASE
-				WHEN c.character_maximum_length IS NULL THEN \'\'
-				ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\'
-			END
-		WHEN c.data_type = \'character\' THEN
-			\'char\' || CASE
-				WHEN c.character_maximum_length IS NULL THEN \'\'
-				ELSE \'(\' || CAST(c.character_maximum_length AS text) || \')\'
-			END
-		WHEN c.data_type = \'integer\' THEN \'int\'
-		WHEN c.data_type = \'timestamp without time zone\' THEN \'datetime\'
-		ELSE c.data_type
-	END';
-
-		$catalog_collation_expression = 'CASE
-		WHEN cm.column_type IS NOT NULL THEN
-			CASE
-				WHEN LOWER(cm.column_type) LIKE \'char%\'
-					OR LOWER(cm.column_type) LIKE \'varchar%\'
-					OR LOWER(cm.column_type) LIKE \'%text%\' THEN COALESCE(cm.collation_name, c.collation_name, \'utf8mb4_unicode_ci\')
-				ELSE NULL
-			END
-		WHEN c.data_type IN (\'character varying\', \'character\', \'text\') THEN COALESCE(c.collation_name, \'utf8mb4_unicode_ci\')
-		ELSE NULL
-	END';
-
-		$metadata_collation_expression = 'CASE
-		WHEN LOWER(cm.column_type) LIKE \'char%\'
-			OR LOWER(cm.column_type) LIKE \'varchar%\'
-			OR LOWER(cm.column_type) LIKE \'%text%\' THEN COALESCE(cm.collation_name, \'utf8mb4_unicode_ci\')
-		ELSE NULL
-	END';
-
-		$catalog_key_expression  = $this->get_direct_information_schema_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
-		$metadata_key_expression = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name', false );
-
-		$catalog_extra_expression = 'CASE
-		WHEN c.is_identity = \'YES\' THEN \'auto_increment\'
-		WHEN c.column_default LIKE \'nextval(%\' THEN \'auto_increment\'
-		ELSE \'\'
-	END';
-
-		return sprintf(
-			'WITH requested_table AS (
-	SELECT ? AS table_schema, ? AS table_name
-),
-	catalog_columns AS (
-		SELECT
-			c.column_name AS field_name,
-			COALESCE(cm.column_type, %2$s) AS column_type,
-			%3$s AS collation_name,
-			COALESCE(cm.is_nullable, c.is_nullable) AS is_nullable,
-			%4$s AS column_key,
-				CASE
-					WHEN cm.column_name IS NOT NULL THEN cm.column_default
-					ELSE c.column_default
-				END AS column_default,
-				COALESCE(cm.extra, %6$s) AS column_extra,
-				COALESCE(cm.column_comment, \'\') AS column_comment,
-				c.ordinal_position
-	FROM requested_table rt
-	INNER JOIN information_schema.columns c
-		ON c.table_schema = rt.table_schema
-		AND c.table_name = rt.table_name
-	LEFT JOIN %1$s cm
-		ON cm.table_schema = c.table_schema
-		AND cm.table_name = c.table_name
-		AND cm.column_name = c.column_name
-),
-metadata_columns AS (
-	SELECT
-			cm.column_name AS field_name,
-			cm.column_type,
-			%7$s AS collation_name,
-			cm.is_nullable,
-			%5$s AS column_key,
-				cm.column_default,
-				cm.extra AS column_extra,
-			cm.column_comment,
-			cm.ordinal_position
-	FROM requested_table rt
-	INNER JOIN %1$s cm
-		ON cm.table_schema = rt.table_schema
-		AND cm.table_name = rt.table_name
-	WHERE NOT EXISTS (
-		SELECT 1
-		FROM information_schema.columns c
-		WHERE c.table_schema = cm.table_schema
-			AND c.table_name = cm.table_name
-			AND c.column_name = cm.column_name
-	)
-),
-show_columns_rows AS (
-	SELECT * FROM catalog_columns
-	UNION ALL
-	SELECT * FROM metadata_columns
-	)
-	SELECT
-		%8$s
-	FROM show_columns_rows
-	WHERE 1 = 1',
-			$column_metadata_table,
-			$type_expression,
-			$catalog_collation_expression,
-			$catalog_key_expression,
-			$metadata_key_expression,
-			$catalog_extra_expression,
-			$metadata_collation_expression,
-			$this->get_show_columns_select_column_sql( $is_full )
-		);
-	}
-
-	/**
-	 * Get the PostgreSQL catalog-only query backing MySQL SHOW COLUMNS/FULL COLUMNS.
-	 *
-	 * @param bool $is_full Whether the query should emit SHOW FULL COLUMNS fields.
-	 * @return string SQL query.
-	 */
-	private function get_show_columns_postgresql_catalog_query( bool $is_full ): string {
-		$comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-		$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
-			'c',
-			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
-			$comment_sql
-		);
-
-		return sprintf(
-			'WITH requested_table AS (
-	SELECT ? AS table_schema, ? AS table_name
-),
-show_columns_rows AS (
-	SELECT
-		c.column_name AS field_name,
-		%1$s AS column_type,
-		%2$s AS collation_name,
-		c.is_nullable,
-		%3$s AS column_key,
-		%6$s AS column_default,
-		%4$s AS column_extra,
-		%7$s AS column_comment,
-		c.ordinal_position
-	FROM requested_table rt
-	INNER JOIN information_schema.columns c
-		ON c.table_schema = rt.table_schema
-		AND c.table_name = rt.table_name
-	LEFT JOIN pg_catalog.pg_namespace pn
-		ON pn.nspname = c.table_schema
-	LEFT JOIN pg_catalog.pg_class pc
-		ON pc.relnamespace = pn.oid
-		AND pc.relname = c.table_name
-		AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-	LEFT JOIN pg_catalog.pg_attribute pa
-		ON pa.attrelid = pc.oid
-		AND pa.attname = c.column_name
-		AND pa.attnum > 0
-)
-	SELECT
-		%5$s
-	FROM show_columns_rows
-	WHERE 1 = 1',
-			$column_type,
-			$this->get_direct_information_schema_collation_expression(
-				$column_type,
-				'c.collation_name',
-				$comment_sql,
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-			),
-			$this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' ),
-			$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-			$this->get_show_columns_select_column_sql( $is_full ),
-			$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-			$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
-		);
-	}
-
-	/**
 	 * Get the projected output columns for DESCRIBE and SHOW COLUMNS SQL.
 	 *
 	 * @param bool $is_full Whether to emit SHOW FULL COLUMNS fields.
 	 * @return string SQL column list.
 	 */
-	private function get_show_columns_select_column_sql( bool $is_full ): string {
+	private function get_show_columns_relation_select_sql( bool $is_full ): string {
 		$expressions = array(
-			'Field'      => 'field_name',
-			'Type'       => 'column_type',
-			'Collation'  => 'collation_name',
-			'Null'       => 'is_nullable',
-			'Key'        => 'column_key',
-			'Default'    => 'column_default',
-			'Extra'      => 'column_extra',
-			'Privileges' => '\'select,insert,update,references\'',
-			'Comment'    => 'column_comment',
+			'Field'      => '"COLUMN_NAME"',
+			'Type'       => '"COLUMN_TYPE"',
+			'Collation'  => '"COLLATION_NAME"',
+			'Null'       => '"IS_NULLABLE"',
+			'Key'        => '"COLUMN_KEY"',
+			'Default'    => '"COLUMN_DEFAULT"',
+			'Extra'      => '"EXTRA"',
+			'Privileges' => '"PRIVILEGES"',
+			'Comment'    => '"COLUMN_COMMENT"',
 		);
 		$fields      = array();
 
@@ -41154,7 +40833,7 @@ WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 *
 	 * @return string Relation SQL.
 	 */
-	private function get_direct_information_schema_columns_relation_sql(): string {
+	private function get_direct_information_schema_columns_relation_sql( bool $include_temporary_metadata = false ): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
 			return $this->get_direct_information_schema_columns_catalog_relation_sql();
 		}
@@ -41188,6 +40867,9 @@ WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 		$metadata_charset      = $this->get_direct_information_schema_character_set_expression( 'cm.column_type', 'cm.character_set_name' );
 		$metadata_collation    = $this->get_direct_information_schema_collation_expression( 'cm.column_type', 'cm.collation_name' );
 		$metadata_key          = $this->get_direct_information_schema_column_key_expression( 'cm.table_schema', 'cm.table_name', 'cm.column_name' );
+		$metadata_schema_where = $include_temporary_metadata
+			? '1 = 1'
+			: 'NOT ' . $this->get_mysql_temporary_schema_sql_condition( 'cm.table_schema' );
 
 		return sprintf(
 			'WITH catalog_columns AS (
@@ -41247,7 +40929,7 @@ metadata_columns AS (
 			\'\' AS "GENERATION_EXPRESSION",
 		NULL AS "SRS_ID"
 	FROM %8$s cm
-	WHERE NOT %15$s
+	WHERE %15$s
 		AND NOT EXISTS (
 		SELECT 1
 		FROM information_schema.columns c
@@ -41273,7 +40955,7 @@ SELECT * FROM metadata_columns',
 			$metadata_charset,
 			$metadata_collation,
 			$metadata_key,
-			$this->get_mysql_temporary_schema_sql_condition( 'cm.table_schema' )
+			$metadata_schema_where
 		);
 	}
 
