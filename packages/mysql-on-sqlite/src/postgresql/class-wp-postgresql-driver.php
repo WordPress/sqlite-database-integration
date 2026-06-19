@@ -5093,7 +5093,12 @@ $wp_mysql_on_update$',
 		}
 
 		if ( 'add_foreign_key' === $metadata['operation'] ) {
-			$this->apply_mysql_add_foreign_key_metadata( $table_schema, $table_name, $metadata['foreign_key'] );
+			if ( $this->should_use_postgresql_catalog_metadata() ) {
+				$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
+			} else {
+				$this->ensure_mysql_schema_metadata_tables();
+				$this->insert_mysql_foreign_key_metadata( $table_schema, $table_name, $metadata['foreign_key'] );
+			}
 			return;
 		}
 
@@ -6563,7 +6568,14 @@ $wp_mysql_primary_index_comment$',
 
 		$this->delete_mysql_foreign_key_metadata( $table_schema, $table_name, $foreign_key['name'] );
 
-		$ordinal = $this->get_next_mysql_foreign_key_ordinal( $table_schema, $table_name );
+		$stmt    = $this->connection->query(
+			sprintf(
+				'SELECT COALESCE(MAX(constraint_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
+		$ordinal = (int) $stmt->fetchColumn();
 		foreach ( $foreign_key['columns'] as $index => $column_name ) {
 			$this->connection->query(
 				sprintf(
@@ -6592,23 +6604,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Store foreign key side metadata only when hidden side metadata exists.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @param array  $foreign_key  Foreign key metadata.
-	 */
-	private function apply_mysql_add_foreign_key_metadata( string $table_schema, string $table_name, array $foreign_key ): void {
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->clear_mysql_metadata_cache_for_table( $table_schema, $table_name );
-			return;
-		}
-
-		$this->ensure_mysql_schema_metadata_tables();
-		$this->insert_mysql_foreign_key_metadata( $table_schema, $table_name, $foreign_key );
-	}
-
-	/**
 	 * Insert MySQL CHECK constraint metadata.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -6619,6 +6614,13 @@ $wp_mysql_primary_index_comment$',
 		$this->assert_mysql_schema_side_metadata_allowed();
 
 		$this->delete_mysql_check_metadata( $table_schema, $table_name, $check['name'] );
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT COALESCE(MAX(constraint_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
+			),
+			array( $table_schema, $table_name )
+		);
 
 		$this->connection->query(
 			sprintf(
@@ -6631,7 +6633,7 @@ $wp_mysql_primary_index_comment$',
 				$table_schema,
 				$table_name,
 				$check['name'],
-				$this->get_next_mysql_check_metadata_ordinal( $table_schema, $table_name ),
+				(int) $stmt->fetchColumn(),
 				$check['check_clause'],
 				$check['enforced'] ?? 'YES',
 			)
@@ -6766,27 +6768,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Get the next CHECK metadata ordinal for a table.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @return int Next ordinal.
-	 */
-	private function get_next_mysql_check_metadata_ordinal( string $table_schema, string $table_name ): int {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT COALESCE(MAX(constraint_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_CHECK_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
-
-		return (int) $stmt->fetchColumn();
-	}
-
-	/**
 	 * Delete metadata rows for one foreign key.
 	 *
 	 * @param string $table_schema    Metadata schema.
@@ -6906,27 +6887,6 @@ $wp_mysql_primary_index_comment$',
 				(string) $referencing_table['table_name']
 			);
 		}
-	}
-
-	/**
-	 * Get the next stored foreign key ordinal for a table.
-	 *
-	 * @param string $table_schema Metadata schema.
-	 * @param string $table_name   Table name.
-	 * @return int Next ordinal.
-	 */
-	private function get_next_mysql_foreign_key_ordinal( string $table_schema, string $table_name ): int {
-		$this->assert_mysql_schema_side_metadata_allowed();
-
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT COALESCE(MAX(constraint_ordinal), 0) + 1 FROM %s WHERE table_schema = ? AND table_name = ?',
-				$this->connection->quote_identifier( self::MYSQL_FOREIGN_KEY_METADATA_TABLE )
-			),
-			array( $table_schema, $table_name )
-		);
-
-		return (int) $stmt->fetchColumn();
 	}
 
 	/**
