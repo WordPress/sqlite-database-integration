@@ -42512,7 +42512,9 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string SQL expression.
 	 */
 	private function get_direct_information_schema_catalog_data_type_expression( string $alias, bool $include_domain_cases = true, ?string $column_comment_sql = null ): string {
-		$comment_type_sql = null === $column_comment_sql ? 'NULL' : $this->get_postgresql_catalog_column_type_comment_sql( $column_comment_sql );
+		$comment_type_sql = null === $column_comment_sql
+			? 'NULL'
+			: $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX );
 		return sprintf(
 			'CASE
 	%2$s%3$s%4$s%5$s
@@ -42652,7 +42654,7 @@ END',
 			return '';
 		}
 
-		$column_type_comment_sql = $this->get_postgresql_catalog_column_type_comment_sql( $column_comment_sql );
+		$column_type_comment_sql = $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX );
 		return sprintf(
 			'WHEN %1$s IS NOT NULL THEN %1$s
 	',
@@ -42741,7 +42743,7 @@ END',
 		WHERE domain_ns.nspname = %2$s.domain_schema
 			AND domain_type.typname = %2$s.domain_name
 	)',
-			$this->get_postgresql_catalog_column_type_comment_sql( 'pg_catalog.obj_description(domain_type.oid, \'pg_type\')' ),
+			$this->get_postgresql_catalog_column_comment_marker_sql( 'pg_catalog.obj_description(domain_type.oid, \'pg_type\')', self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX ),
 			$catalog_alias
 		);
 	}
@@ -43082,16 +43084,6 @@ END',
 	 */
 	private function get_postgresql_catalog_column_default_comment_sql( string $column_comment_sql ): string {
 		return $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX );
-	}
-
-	/**
-	 * Get MySQL column type metadata from a PostgreSQL column comment.
-	 *
-	 * @param string $column_comment_sql SQL expression returning a PostgreSQL column comment.
-	 * @return string SQL expression returning the decoded MySQL column type, or NULL.
-	 */
-	private function get_postgresql_catalog_column_type_comment_sql( string $column_comment_sql ): string {
-		return $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX );
 	}
 
 	/**
