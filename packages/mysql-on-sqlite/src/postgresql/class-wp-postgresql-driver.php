@@ -8342,8 +8342,10 @@ $wp_mysql_primary_index_comment$',
 
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 		if ( null === $statement_end ) {
-			if ( $this->contains_mysql_view_token_after_position( $tokens, 1 ) ) {
-				throw new InvalidArgumentException( 'Unsupported ' . $statement_type . ' statement.' );
+			for ( $i = 1; isset( $tokens[ $i ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $i ]->id; $i++ ) {
+				if ( WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[ $i ]->id ) {
+					throw new InvalidArgumentException( 'Unsupported ' . $statement_type . ' statement.' );
+				}
 			}
 			return null;
 		}
@@ -8549,23 +8551,6 @@ $wp_mysql_primary_index_comment$',
 				&& WP_MySQL_Lexer::SECURITY_SYMBOL === $tokens[ $i + 1 ]->id
 			) {
 				$unsupported = true;
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * Check whether a token stream contains VIEW after a position.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int              $position First token position to inspect.
-	 * @return bool Whether VIEW appears before EOF.
-	 */
-	private function contains_mysql_view_token_after_position( array $tokens, int $position ): bool {
-		for ( $i = $position; isset( $tokens[ $i ] ) && WP_MySQL_Lexer::EOF !== $tokens[ $i ]->id; $i++ ) {
-			if ( WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[ $i ]->id ) {
-				return true;
 			}
 		}
 
