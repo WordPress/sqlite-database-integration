@@ -37230,6 +37230,10 @@ WHERE s.schema_name = \'information_schema\'
 					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
 				);
 				$column_key      = $this->get_direct_information_schema_catalog_column_key_expression( 'c.table_schema', 'c.table_name', 'c.column_name' );
+				$column_comment  = $comment_sql;
+				for ( $i = 0; $i < 4; ++$i ) {
+					$column_comment = $this->get_postgresql_catalog_column_comment_without_metadata_line_sql( $column_comment );
+				}
 
 				return sprintf(
 					'SELECT
@@ -37276,7 +37280,7 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 					$column_key,
 					$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
 					$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-					$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
+					$column_comment
 				);
 			}
 
@@ -40275,21 +40279,6 @@ END',
 			$quoted_literal_default_pattern,
 			$column_default_comment_sql
 		);
-	}
-
-	/**
-	 * Get the MySQL-facing column comment after removing internal PostgreSQL catalog metadata.
-	 *
-	 * @param string $column_comment_sql SQL expression returning a PostgreSQL column comment.
-	 * @return string SQL expression returning the user-facing MySQL comment.
-	 */
-	private function get_postgresql_catalog_column_comment_sql( string $column_comment_sql ): string {
-		$without_one_metadata_line = $this->get_postgresql_catalog_column_comment_without_metadata_line_sql( $column_comment_sql );
-		for ( $i = 0; $i < 3; ++$i ) {
-			$without_one_metadata_line = $this->get_postgresql_catalog_column_comment_without_metadata_line_sql( $without_one_metadata_line );
-		}
-
-		return $without_one_metadata_line;
 	}
 
 	/**
