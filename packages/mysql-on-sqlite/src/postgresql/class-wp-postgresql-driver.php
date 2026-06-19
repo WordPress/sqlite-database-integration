@@ -9739,16 +9739,14 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$catalog_removed_indexes = $this->get_postgresql_catalog_index_names_removed_by_dropped_columns(
-				$table_schema,
-				$table_name,
-				$dropped_column_keys
-			);
-			if ( null !== $catalog_removed_indexes ) {
-				return $catalog_removed_indexes;
+			try {
+				return $this->get_mysql_index_names_removed_by_dropped_column_rows(
+					$this->get_show_create_table_index_catalog_rows( $table_schema, $table_name ),
+					$dropped_column_keys
+				);
+			} catch ( PDOException $e ) {
+				return array();
 			}
-
-			return array();
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -9767,24 +9765,6 @@ $wp_mysql_primary_index_comment$',
 			$stmt->fetchAll( PDO::FETCH_ASSOC ),
 			$dropped_column_keys
 		);
-	}
-
-	/**
-	 * Get PostgreSQL catalog indexes removed by dropped columns.
-	 *
-	 * @param string   $table_schema        Backend schema name.
-	 * @param string   $table_name          Table name.
-	 * @param string[] $dropped_column_keys Lowercase column names dropped before the current action.
-	 * @return string[]|null MySQL index names, or null when catalog lookup is unavailable.
-	 */
-	private function get_postgresql_catalog_index_names_removed_by_dropped_columns( string $table_schema, string $table_name, array $dropped_column_keys ): ?array {
-		try {
-			$catalog_rows = $this->get_show_create_table_index_catalog_rows( $table_schema, $table_name );
-		} catch ( PDOException $e ) {
-			return null;
-		}
-
-		return $this->get_mysql_index_names_removed_by_dropped_column_rows( $catalog_rows, $dropped_column_keys );
 	}
 
 	/**
@@ -23866,35 +23846,8 @@ WHERE option_name IN (
 	 * @return array<int,array{columns: string[], parts: array<int,array{column: string, sub_part: string|null}>}> Conflict candidates.
 	 */
 	private function get_mysql_upsert_conflict_target_candidates_from_rows( array $rows, array $insert_column_lookup, bool $allow_omitted_columns ): array {
-		$indexes = array();
-		foreach ( $rows as $row ) {
-			$key_name = (string) ( $row['key_name'] ?? '' );
-			if ( '' === $key_name ) {
-				continue;
-			}
-
-			if ( ! isset( $indexes[ $key_name ] ) ) {
-				$indexes[ $key_name ] = array(
-					'columns'    => array(),
-					'index_type' => strtoupper( (string) ( $row['index_type'] ?? 'BTREE' ) ),
-					'parts'      => array(),
-				);
-			}
-
-			$column_name = (string) ( $row['column_name'] ?? '' );
-			if ( '' === $column_name ) {
-				continue;
-			}
-
-			$indexes[ $key_name ]['columns'][] = $column_name;
-			$indexes[ $key_name ]['parts'][]   = array(
-				'column'   => $column_name,
-				'sub_part' => null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ? (string) $row['sub_part'] : null,
-			);
-		}
-
 		$candidates = array();
-		foreach ( $indexes as $index ) {
+		foreach ( $this->get_mysql_unique_index_groups_from_metadata_rows( $rows ) as $index ) {
 			if ( empty( $index['columns'] ) ) {
 				continue;
 			}
@@ -24867,33 +24820,8 @@ WHERE option_name IN (
 	 * @return array[] Conflict index groups.
 	 */
 	private function get_mysql_replace_delete_conflict_index_groups_from_rows( array $rows, array $columns, array $value_rows, array $probe_safe_rows ): array {
-		$indexes = array();
-		foreach ( $rows as $row ) {
-			$key_name = (string) ( $row['key_name'] ?? '' );
-			if ( '' === $key_name ) {
-				continue;
-			}
-
-			if ( ! isset( $indexes[ $key_name ] ) ) {
-				$indexes[ $key_name ] = array(
-					'index_type' => strtoupper( (string) ( $row['index_type'] ?? 'BTREE' ) ),
-					'parts'      => array(),
-				);
-			}
-
-			$column_name = (string) ( $row['column_name'] ?? '' );
-			if ( '' === $column_name ) {
-				continue;
-			}
-
-			$indexes[ $key_name ]['parts'][] = array(
-				'column'   => $column_name,
-				'sub_part' => null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ? (string) $row['sub_part'] : null,
-			);
-		}
-
 		$conflict_index_groups = array();
-		foreach ( $indexes as $index ) {
+		foreach ( $this->get_mysql_unique_index_groups_from_metadata_rows( $rows ) as $index ) {
 			if ( empty( $index['parts'] ) || in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
 				continue;
 			}
@@ -25916,27 +25844,8 @@ WHERE option_name IN (
 		}
 
 		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
-		$indexes      = array();
-		foreach ( $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ) as $row ) {
-			$key_name = (string) ( $row['key_name'] ?? '' );
-			if ( '' === $key_name ) {
-				continue;
-			}
 
-			if ( ! isset( $indexes[ $key_name ] ) ) {
-				$indexes[ $key_name ] = array(
-					'index_type' => strtoupper( (string) ( $row['index_type'] ?? 'BTREE' ) ),
-					'parts'      => array(),
-				);
-			}
-
-			$indexes[ $key_name ]['parts'][] = array(
-				'column'   => (string) ( $row['column_name'] ?? '' ),
-				'sub_part' => null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ? (string) $row['sub_part'] : null,
-			);
-		}
-
-		foreach ( $indexes as $index ) {
+		foreach ( $this->get_mysql_unique_index_groups_from_metadata_rows( $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ) ) as $index ) {
 			if ( in_array( $index['index_type'], array( 'FULLTEXT', 'SPATIAL' ), true ) ) {
 				continue;
 			}
@@ -25959,6 +25868,43 @@ WHERE option_name IN (
 		}
 
 		return false;
+	}
+
+	/**
+	 * Group MySQL-shaped unique index metadata rows by key.
+	 *
+	 * @param array[] $rows MySQL-shaped unique index metadata rows.
+	 * @return array[] Unique index groups.
+	 */
+	private function get_mysql_unique_index_groups_from_metadata_rows( array $rows ): array {
+		$indexes = array();
+		foreach ( $rows as $row ) {
+			$key_name = (string) ( $row['key_name'] ?? '' );
+			if ( '' === $key_name ) {
+				continue;
+			}
+
+			if ( ! isset( $indexes[ $key_name ] ) ) {
+				$indexes[ $key_name ] = array(
+					'columns'    => array(),
+					'index_type' => strtoupper( (string) ( $row['index_type'] ?? 'BTREE' ) ),
+					'parts'      => array(),
+				);
+			}
+
+			$column_name = (string) ( $row['column_name'] ?? '' );
+			if ( '' === $column_name ) {
+				continue;
+			}
+
+			$indexes[ $key_name ]['columns'][] = $column_name;
+			$indexes[ $key_name ]['parts'][]   = array(
+				'column'   => $column_name,
+				'sub_part' => null !== ( $row['sub_part'] ?? null ) && '' !== (string) $row['sub_part'] ? (string) $row['sub_part'] : null,
+			);
+		}
+
+		return $indexes;
 	}
 
 	/**
