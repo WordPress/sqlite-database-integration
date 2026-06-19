@@ -23536,21 +23536,17 @@ WHERE option_name IN (
 				return $this->get_mysql_constant_string_expression_value( $tokens, $start + 1, $end - 1 );
 			}
 		}
-
 		if ( $this->is_mysql_null_literal_expression( $tokens, $start, $end ) ) {
 			return $this->get_mysql_null_constant_string_value();
 		}
-
 		if ( $this->is_mysql_string_literal_range( $tokens, $start, $end ) ) {
 			return $this->get_mysql_constant_string_value( $tokens[ $start ]->get_value() );
 		}
-
 		$trim_bounds = $this->get_mysql_trim_function_bounds( $tokens, $start, $end );
 		if ( null !== $trim_bounds && $trim_bounds['close'] + 1 === $end ) {
 			if ( null === $trim_bounds['remove'] ) {
 				return null;
 			}
-
 			$value = $this->get_mysql_constant_string_expression_value(
 				$tokens,
 				$trim_bounds['argument_start'],
@@ -23559,24 +23555,20 @@ WHERE option_name IN (
 			if ( null === $value || $value['is_null'] ) {
 				return $value;
 			}
-
 			return $this->get_mysql_constant_string_value( $this->get_mysql_trimmed_string_value( $trim_bounds['direction'], $trim_bounds['remove'], $value['value'] ) );
 		}
-
 		$bounds = $this->get_mysql_common_function_bounds( $tokens, $start, $end );
 		if ( null === $bounds || $bounds['close'] + 1 !== $end ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 		if ( null === $arguments || empty( $arguments ) ) {
 			return null;
 		}
-
 		switch ( $bounds['function'] ) {
 			case 'coalesce':
 				foreach ( $arguments as $argument ) {
-					$value = $this->get_mysql_constant_string_expression_value( $tokens, $argument['start'], $argument['end'] );
+					$value = $this->get_mysql_constant_string_argument_value( $tokens, $argument );
 					if ( null === $value ) {
 						return null;
 					}
@@ -23584,89 +23576,70 @@ WHERE option_name IN (
 						return $value;
 					}
 				}
-
 				return $this->get_mysql_null_constant_string_value();
-
 			case 'concat':
 				$value = '';
 				foreach ( $arguments as $argument ) {
-					$part = $this->get_mysql_constant_string_expression_value( $tokens, $argument['start'], $argument['end'] );
+					$part = $this->get_mysql_constant_string_argument_value( $tokens, $argument );
 					if ( null === $part ) {
 						return null;
 					}
-
 					if ( $part['is_null'] ) {
 						return $this->get_mysql_null_constant_string_value();
 					}
-
 					$value .= $part['value'];
 				}
-
 				return $this->get_mysql_constant_string_value( $value );
-
 			case 'concat_ws':
 				if ( count( $arguments ) < 2 ) {
 					return null;
 				}
-
-				$separator = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$separator = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
 				if ( null === $separator ) {
 					return null;
 				}
-
 				if ( $separator['is_null'] ) {
 					return $this->get_mysql_null_constant_string_value();
 				}
-
 				$parts = array();
 				foreach ( array_slice( $arguments, 1 ) as $argument ) {
-					$part = $this->get_mysql_constant_string_expression_value( $tokens, $argument['start'], $argument['end'] );
+					$part = $this->get_mysql_constant_string_argument_value( $tokens, $argument );
 					if ( null === $part ) {
 						return null;
 					}
-
 					if ( $part['is_null'] ) {
 						continue;
 					}
-
 					$parts[] = $part['value'];
 				}
-
 				return $this->get_mysql_constant_string_value( implode( $separator['value'], $parts ) );
-
 			case 'ifnull':
 				if ( 2 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$left = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$left = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
 				if ( null === $left ) {
 					return null;
 				}
 				return $left['is_null']
-					? $this->get_mysql_constant_string_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] )
+					? $this->get_mysql_constant_string_argument_value( $tokens, $arguments[1] )
 					: $left;
-
 			case 'elt':
 				if ( count( $arguments ) < 2 ) {
 					return null;
 				}
-
-				$index = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$index = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[0] );
 				if ( null === $index ) {
 					return null;
 				}
-
 				if ( $index < 1 || $index >= count( $arguments ) ) {
 					return $this->get_mysql_null_constant_string_value();
 				}
-
 				return $this->get_mysql_constant_string_expression_value(
 					$tokens,
 					$arguments[ $index ]['start'],
 					$arguments[ $index ]['end']
 				);
-
 			case 'lcase':
 			case 'ltrim':
 			case 'ucase':
@@ -23676,42 +23649,33 @@ WHERE option_name IN (
 				if ( 1 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$value = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
 				if ( null === $value || $value['is_null'] ) {
 					return $value;
 				}
-
 				if ( ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
 					return null;
 				}
-
 				if ( 'ltrim' === $bounds['function'] ) {
 					return $this->get_mysql_constant_string_value( ltrim( $value['value'], ' ' ) );
 				}
-
 				if ( 'rtrim' === $bounds['function'] ) {
 					return $this->get_mysql_constant_string_value( rtrim( $value['value'], ' ' ) );
 				}
-
 				return $this->get_mysql_constant_string_value( in_array( $bounds['function'], array( 'lcase', 'lower' ), true ) ? strtolower( $value['value'] ) : strtoupper( $value['value'] ) );
-
 			case 'left':
 			case 'right':
 				if ( 2 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$value = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
 				if ( null === $value || $value['is_null'] ) {
 					return $value;
 				}
-
-				$length = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				$length = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[1] );
 				if ( null === $length || ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
 					return null;
 				}
-
 				$substring_value = $length <= 0
 					? ''
 					: substr(
@@ -23720,23 +23684,20 @@ WHERE option_name IN (
 						$length
 					);
 				return $this->get_mysql_constant_string_value( false === $substring_value ? '' : $substring_value );
-
 			case 'lpad':
 			case 'rpad':
 				if ( 3 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
-				$pad   = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[2]['start'], $arguments[2]['end'] );
+				$value = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
+				$pad   = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[2] );
 				if ( null === $value || null === $pad ) {
 					return null;
 				}
 				if ( $value['is_null'] || $pad['is_null'] ) {
 					return $this->get_mysql_null_constant_string_value();
 				}
-
-				$length = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				$length = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[1] );
 				if (
 					null === $length
 					|| $length < 0
@@ -23746,7 +23707,6 @@ WHERE option_name IN (
 				) {
 					return null;
 				}
-
 				if ( strlen( $value['value'] ) >= $length ) {
 					$padded_value = substr( $value['value'], 0, $length );
 				} else {
@@ -23756,119 +23716,101 @@ WHERE option_name IN (
 						? $pad_value . $value['value']
 						: $value['value'] . $pad_value;
 				}
-
 				return $this->get_mysql_constant_string_value( false === $padded_value ? '' : $padded_value );
-
 			case 'nullif':
 				if ( 2 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$left  = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
-				$right = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				$left  = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
+				$right = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[1] );
 				if ( null === $left || null === $right ) {
 					return null;
 				}
-
 				if ( ! $left['is_null'] && ! $right['is_null'] && $left['value'] === $right['value'] ) {
 					return $this->get_mysql_null_constant_string_value();
 				}
-
 				return $left;
-
 			case 'replace':
 				if ( 3 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$value       = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
-				$search      = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
-				$replacement = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[2]['start'], $arguments[2]['end'] );
+				$value       = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
+				$search      = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[1] );
+				$replacement = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[2] );
 				if ( null === $value || null === $search || null === $replacement ) {
 					return null;
 				}
 				if ( $value['is_null'] || $search['is_null'] || $replacement['is_null'] ) {
 					return $this->get_mysql_null_constant_string_value();
 				}
-
 				return $this->get_mysql_constant_string_value( str_replace( $search['value'], $replacement['value'], $value['value'] ) );
-
 			case 'reverse':
 				if ( 1 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$value = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
 				if ( null === $value || $value['is_null'] ) {
 					return $value;
 				}
-
 				if ( ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
 					return null;
 				}
-
 				return $this->get_mysql_constant_string_value( strrev( $value['value'] ) );
-
 			case 'repeat':
 				if ( 2 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$value = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
 				if ( null === $value || $value['is_null'] ) {
 					return $value;
 				}
-
-				$count = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				$count = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[1] );
 				if ( null === $count || ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
 					return null;
 				}
-
 				return $this->get_mysql_constant_string_value( $count <= 0 ? '' : str_repeat( $value['value'], $count ) );
-
 			case 'space':
 				if ( 1 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$count = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$count = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[0] );
 				if ( null === $count ) {
 					return null;
 				}
-
 				return $this->get_mysql_constant_string_value( str_repeat( ' ', max( $count, 0 ) ) );
-
 			case 'substring':
 			case 'substr':
 				if ( 2 !== count( $arguments ) && 3 !== count( $arguments ) ) {
 					return null;
 				}
-
-				$value = $this->get_mysql_constant_string_expression_value( $tokens, $arguments[0]['start'], $arguments[0]['end'] );
+				$value = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
 				if ( null === $value || $value['is_null'] ) {
 					return $value;
 				}
-
-				$position = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
+				$position = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[1] );
 				if ( null === $position || $position < 1 || ! $this->is_mysql_ascii_constant_string_value( $value['value'] ) ) {
 					return null;
 				}
-
 				if ( 2 === count( $arguments ) ) {
 					$substring_value = substr( $value['value'], $position - 1 );
 					return $this->get_mysql_constant_string_value( false === $substring_value ? '' : $substring_value );
 				}
-
-				$length = $this->get_mysql_constant_php_integer_expression_value( $tokens, $arguments[2]['start'], $arguments[2]['end'] );
+				$length = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[2] );
 				if ( null === $length ) {
 					return null;
 				}
-
 				$substring_value = $length < 1 ? '' : substr( $value['value'], $position - 1, $length );
 				return $this->get_mysql_constant_string_value( false === $substring_value ? '' : $substring_value );
 		}
-
 		return null;
+	}
+
+	private function get_mysql_constant_string_argument_value( array $tokens, array $argument ): ?array {
+		return $this->get_mysql_constant_string_expression_value( $tokens, $argument['start'], $argument['end'] );
+	}
+
+	private function get_mysql_constant_php_integer_argument_value( array $tokens, array $argument ): ?int {
+		return $this->get_mysql_constant_php_integer_expression_value( $tokens, $argument['start'], $argument['end'] );
 	}
 
 	private function get_mysql_null_constant_string_value(): array {
@@ -24061,11 +24003,7 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$format = $this->get_mysql_constant_string_expression_value(
-			$tokens,
-			$arguments[1]['start'],
-			$arguments[1]['end']
-		);
+		$format = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[1] );
 		if ( null === $format || $format['is_null'] ) {
 			return null;
 		}
@@ -39786,31 +39724,26 @@ END',
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 		if ( null === $arguments ) {
 			return null;
 		}
-
 		if ( 'substring' === $bounds['function'] ) {
 			$arguments = $this->get_mysql_substring_function_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 			if ( null === $arguments ) {
 				return null;
 			}
 		}
-
 		if ( 'trim' === $bounds['function'] ) {
 			$trim_bounds = $this->get_mysql_trim_function_bounds( $tokens, $position, $end );
 			if ( null === $trim_bounds ) {
 				return null;
 			}
-
-			$value_sql = $this->translate_mysql_token_sequence_to_postgresql(
+			$value_sql  = $this->translate_mysql_token_sequence_to_postgresql(
 				$tokens,
 				$trim_bounds['argument_start'],
 				$trim_bounds['argument_end']
 			);
-
 			$remove_sql = null;
 			if ( null !== $trim_bounds['remove_start'] && null !== $trim_bounds['remove_end'] ) {
 				$remove_sql = $this->translate_mysql_token_sequence_to_postgresql(
@@ -39819,22 +39752,18 @@ END',
 					$trim_bounds['remove_end']
 				);
 			}
-
 			return $this->get_postgresql_mysql_expression_translation(
 				$this->get_postgresql_mysql_trim_sql( $trim_bounds['direction'], $value_sql, $trim_bounds['remove'], $remove_sql ),
 				WP_MySQL_Lexer::IDENTIFIER,
 				$trim_bounds['close']
 			);
 		}
-
 		if ( 'timestampadd' === $bounds['function'] ) {
 			return $this->translate_mysql_timestampadd_function_to_postgresql( $tokens, $arguments, $bounds['close'] );
 		}
-
 		if ( 'timestampdiff' === $bounds['function'] ) {
 			return $this->translate_mysql_timestampdiff_function_to_postgresql( $tokens, $arguments, $bounds['close'] );
 		}
-
 		if (
 			'from_unixtime' === $bounds['function']
 			&& in_array( count( $arguments ), array( 1, 2 ), true )
@@ -39842,7 +39771,6 @@ END',
 		) {
 			return $this->get_postgresql_mysql_expression_translation( 'NULL', WP_MySQL_Lexer::IDENTIFIER, $bounds['close'] );
 		}
-
 		if (
 			'last_insert_id' === $bounds['function']
 			&& 1 === count( $arguments )
@@ -39852,11 +39780,9 @@ END',
 			if ( null === $last_insert_id ) {
 				return null;
 			}
-
 			$this->mysql_last_insert_id_assignment_value = $last_insert_id;
 			return $this->get_postgresql_mysql_expression_translation( (string) $last_insert_id, WP_MySQL_Lexer::IDENTIFIER, $bounds['close'] );
 		}
-
 		if (
 			in_array( $bounds['function'], array( 'char_length', 'character_length', 'length' ), true )
 			&& 1 === count( $arguments )
@@ -39870,13 +39796,8 @@ END',
 				return $this->get_postgresql_mysql_expression_translation( $binary_length_sql, WP_MySQL_Lexer::IDENTIFIER, $bounds['close'] );
 			}
 		}
-
 		if ( 'from_unixtime' === $bounds['function'] && 2 === count( $arguments ) ) {
-			$format = $this->get_mysql_constant_string_expression_value(
-				$tokens,
-				$arguments[1]['start'],
-				$arguments[1]['end']
-			);
+			$format = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[1] );
 			if ( null !== $format ) {
 				$sql = 'NULL';
 				if ( ! $format['is_null'] ) {
@@ -39892,10 +39813,8 @@ END',
 						return null;
 					}
 				}
-
 				return $this->get_postgresql_mysql_expression_translation( $sql, WP_MySQL_Lexer::IDENTIFIER, $bounds['close'] );
 			}
-
 			$timestamp_sql = $this->get_postgresql_mysql_from_unixtime_timestamp_sql(
 				$this->translate_mysql_token_sequence_to_postgresql(
 					$tokens,
@@ -39914,13 +39833,8 @@ END',
 				return $this->get_postgresql_mysql_expression_translation( $sql, WP_MySQL_Lexer::CASE_SYMBOL, $bounds['close'] );
 			}
 		}
-
 		if ( 'json_valid' === $bounds['function'] && 1 === count( $arguments ) ) {
-			$json_value = $this->get_mysql_constant_string_expression_value(
-				$tokens,
-				$arguments[0]['start'],
-				$arguments[0]['end']
-			);
+			$json_value = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[0] );
 			if ( null !== $json_value ) {
 				return $this->get_postgresql_mysql_expression_translation(
 					$json_value['is_null'] ? 'NULL' : (string) self::get_mysql_json_valid_runtime_result( $json_value['value'] ),
@@ -39929,7 +39843,6 @@ END',
 				);
 			}
 		}
-
 		$argument_sql = array();
 		foreach ( $arguments as $argument ) {
 			$argument_sql[] = $this->translate_mysql_token_sequence_to_postgresql(
@@ -39938,7 +39851,6 @@ END',
 				$argument['end']
 			);
 		}
-
 		if ( 'if' === $bounds['function'] && 3 === count( $argument_sql ) ) {
 			$condition_sql = $this->is_mysql_boolean_condition_expression(
 				$tokens,
@@ -39947,14 +39859,12 @@ END',
 			)
 				? '(' . $argument_sql[0] . ')'
 				: $this->get_postgresql_mysql_truthy_expression_sql( $argument_sql[0] );
-
 			return $this->get_postgresql_mysql_expression_translation(
 				sprintf( 'CASE WHEN %s THEN %s ELSE %s END', $condition_sql, $argument_sql[1], $argument_sql[2] ),
 				WP_MySQL_Lexer::CASE_SYMBOL,
 				$bounds['close']
 			);
 		}
-
 		if ( 'length' === $bounds['function'] && 1 === count( $arguments ) ) {
 			$binary_length_sql = $this->get_postgresql_mysql_unhex_length_sql(
 				$tokens,
@@ -39965,12 +39875,10 @@ END',
 				return $this->get_postgresql_mysql_expression_translation( $binary_length_sql, WP_MySQL_Lexer::IDENTIFIER, $bounds['close'] );
 			}
 		}
-
 		$sql = $this->get_postgresql_mysql_common_function_sql( $bounds['function'], $argument_sql );
 		if ( null === $sql ) {
 			return null;
 		}
-
 		return $this->get_postgresql_mysql_expression_translation( $sql, WP_MySQL_Lexer::IDENTIFIER, $bounds['close'] );
 	}
 
@@ -39979,18 +39887,15 @@ END',
 		if ( null === $bounds || $bounds['close'] + 1 !== $end ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 		if ( null === $arguments || 1 !== count( $arguments ) ) {
 			return null;
 		}
-
 		$hex_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$arguments[0]['start'],
 			$arguments[0]['end']
 		);
-
 		return sprintf( "OCTET_LENGTH(DECODE(CAST(%s AS text), 'hex'))", $hex_sql );
 	}
 
@@ -40000,17 +39905,14 @@ END',
 		if ( null !== $hex_literal_length_sql ) {
 			return $hex_literal_length_sql;
 		}
-
 		$unhex_length_sql = $this->get_postgresql_mysql_unhex_length_sql( $tokens, $start, $end );
 		if ( null !== $unhex_length_sql ) {
 			return $unhex_length_sql;
 		}
-
 		$from_base64_length_sql = $this->get_postgresql_mysql_from_base64_length_sql( $tokens, $start, $end );
 		if ( null !== $from_base64_length_sql ) {
 			return $from_base64_length_sql;
 		}
-
 		$binary_cast = $this->get_mysql_typed_cast_or_convert_bounds(
 			$tokens,
 			$start,
@@ -40026,10 +39928,8 @@ END',
 				$binary_cast['expression_start'],
 				$binary_cast['expression_end']
 			);
-
 			return $this->get_postgresql_mysql_text_byte_length_sql( $expression_sql );
 		}
-
 		if (
 			$start + 1 < $end
 			&& isset( $tokens[ $start ] )
@@ -40040,10 +39940,8 @@ END',
 				$start + 1,
 				$end
 			);
-
 			return $this->get_postgresql_mysql_text_byte_length_sql( $expression_sql );
 		}
-
 		return null;
 	}
 
@@ -40052,18 +39950,15 @@ END',
 		if ( null === $bounds || $bounds['close'] + 1 !== $end ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 		if ( null === $arguments || 1 !== count( $arguments ) ) {
 			return null;
 		}
-
 		$base64_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$arguments[0]['start'],
 			$arguments[0]['end']
 		);
-
 		return sprintf(
 			'CASE WHEN %1$s THEN NULL ELSE OCTET_LENGTH(DECODE(CAST(%2$s AS text), \'base64\')) END',
 			$this->get_postgresql_mysql_base64_invalid_condition_sql( $base64_sql ),
@@ -40080,12 +39975,10 @@ END',
 		) {
 			return null;
 		}
-
 		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
 		if ( null === $after_close ) {
 			return null;
 		}
-
 		return array(
 			'function'        => $function,
 			'arguments_start' => $position + 2,
@@ -40098,7 +39991,6 @@ END',
 		if ( null === $token ) {
 			return null;
 		}
-
 		$keyword_functions = array(
 			WP_MySQL_Lexer::ASCII_SYMBOL             => 'ascii',
 			WP_MySQL_Lexer::COALESCE_SYMBOL          => 'coalesce',
@@ -40131,17 +40023,14 @@ END',
 		if ( isset( $keyword_functions[ $token->id ] ) ) {
 			return $keyword_functions[ $token->id ];
 		}
-
 		if ( WP_MySQL_Lexer::USER_SYMBOL === $token->id ) {
 			$name = strtolower( $token->get_value() );
 			return in_array( $name, array( 'user', 'session_user', 'system_user' ), true ) ? $name : null;
 		}
-
 		$name = $this->get_mysql_identifier_token_value( $token );
 		if ( null === $name ) {
 			return null;
 		}
-
 		$name    = strtolower( $name );
 		$aliases = array_combine(
 			explode( ' ', 'current_date current_time current_timestamp' ),
@@ -40150,9 +40039,7 @@ END',
 		if ( isset( $aliases[ $name ] ) ) {
 			return $aliases[ $name ];
 		}
-
 		$supported = explode( ' ', 'ascii char_length character_length concat concat_ws connection_id curdate current_user database date dayname datediff elt find_in_set found_rows from_base64 from_unixtime get_lock greatest hex if ifnull inet_aton inet_ntoa instr isnull is_uuid json_valid lcase last_insert_id left least length locate log lower lpad localtime localtimestamp ltrim make_set md5 monthnum monthname now nullif release_lock replace regexp repeat reverse right rpad rtrim row_count schema session_user space substr substring system_user timestampadd timestampdiff to_base64 trim ucase unhex unix_timestamp upper utc_date utc_time utc_timestamp user version uuid' );
-
 		return in_array( $name, $supported, true ) ? $name : null;
 	}
 
@@ -40161,12 +40048,10 @@ END',
 			if ( null === $this->get_mysql_common_function_bounds( $tokens, $i, $end ) ) {
 				continue;
 			}
-
 			if ( null === $this->translate_mysql_common_function_to_postgresql( $tokens, $i, $end ) ) {
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -40179,7 +40064,6 @@ END',
 			) {
 				continue;
 			}
-
 			if (
 				null !== $this->get_mysql_convert_using_bounds( $tokens, $i, $end )
 				|| null !== $this->get_mysql_typed_convert_bounds(
@@ -40191,10 +40075,8 @@ END',
 			) {
 				continue;
 			}
-
 			return true;
 		}
-
 		return false;
 	}
 
@@ -40203,12 +40085,10 @@ END',
 		if ( ! isset( $tokens[0] ) ) {
 			return false;
 		}
-
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 		if ( null === $statement_end ) {
 			return false;
 		}
-
 		for ( $i = 0; $i < $statement_end; $i++ ) {
 			if (
 				WP_MySQL_Lexer::MATCH_SYMBOL !== $tokens[ $i ]->id
@@ -40217,7 +40097,6 @@ END',
 			) {
 				continue;
 			}
-
 			$after_match = $this->get_mysql_parenthesized_sequence_end( $tokens, $i + 1, $statement_end );
 			if (
 				null !== $after_match
@@ -40228,7 +40107,6 @@ END',
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -40237,12 +40115,10 @@ END',
 			if ( null === $this->get_mysql_group_concat_function_bounds( $tokens, $i, $end ) ) {
 				continue;
 			}
-
 			if ( null === $this->translate_mysql_group_concat_function_to_postgresql( $tokens, $i, $end ) ) {
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -40274,33 +40150,26 @@ END',
 			if ( null === $remove_sql ) {
 				return $value_text_sql;
 			}
-
 			return $this->get_postgresql_mysql_dynamic_trim_sql( $direction, $value_text_sql, sprintf( 'CAST(%s AS text)', $remove_sql ) );
 		}
-
 		if ( '' === $remove ) {
 			return $value_text_sql;
 		}
-
 		if ( ' ' === $remove ) {
 			$function = array(
 				'both'     => 'BTRIM',
 				'leading'  => 'LTRIM',
 				'trailing' => 'RTRIM',
 			)[ $direction ];
-
 			return sprintf( "%s(%s, ' ')", $function, $value_text_sql );
 		}
-
 		$remove_pattern = (string) preg_replace( '/([\\\\.^$|?*+()[\]{}])/', '\\\\$1', $remove );
 		if ( 'leading' === $direction ) {
 			return sprintf( 'REGEXP_REPLACE(%s, %s, \'\')', $value_text_sql, $this->connection->quote( '^(' . $remove_pattern . ')+' ) );
 		}
-
 		if ( 'trailing' === $direction ) {
 			return sprintf( 'REGEXP_REPLACE(%s, %s, \'\')', $value_text_sql, $this->connection->quote( '(' . $remove_pattern . ')+$' ) );
 		}
-
 		return sprintf(
 			'REGEXP_REPLACE(REGEXP_REPLACE(%s, %s, \'\'), %s, \'\')',
 			$value_text_sql,
@@ -40318,7 +40187,6 @@ END',
 		);
 		$leading_pattern    = sprintf( "( '^(' || %s || ')+' )", $escaped_remove_sql );
 		$trailing_pattern   = sprintf( "( '(' || %s || ')+$' )", $escaped_remove_sql );
-
 		if ( 'leading' === $direction ) {
 			$trimmed_sql = sprintf( "REGEXP_REPLACE(%s, %s, '')", $value_text_sql, $leading_pattern );
 		} elseif ( 'trailing' === $direction ) {
@@ -40331,7 +40199,6 @@ END',
 				$trailing_pattern
 			);
 		}
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s = \'\' THEN %1$s ELSE %3$s END',
 			$value_text_sql,
@@ -40341,44 +40208,36 @@ END',
 	}
 
 	private function get_postgresql_mysql_common_function_sql( string $function_name, array $argument_sql ): ?string {
-		$count = count( $argument_sql );
-
-		$templates = array(
-			1 => array(
-				'char_length'      => 'CHAR_LENGTH(CAST(%s AS text))',
-				'character_length' => 'CHAR_LENGTH(CAST(%s AS text))',
-				'hex'              => "UPPER(ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'hex'))",
-				'isnull'           => 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END',
-				'lcase'            => 'LOWER(CAST(%s AS text))',
-				'lower'            => 'LOWER(CAST(%s AS text))',
-				'ltrim'            => "LTRIM(CAST(%s AS text), ' ')",
-				'md5'              => 'MD5(CAST(%s AS text))',
-				'reverse'          => 'REVERSE(CAST(%s AS text))',
-				'rtrim'            => "RTRIM(CAST(%s AS text), ' ')",
-				'space'            => "CASE WHEN %1\$s IS NULL THEN NULL ELSE REPEAT(' ', GREATEST(CAST(%1\$s AS integer), 0)) END",
-				'to_base64'        => "ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'base64')",
-				'trim'             => "BTRIM(CAST(%s AS text), ' ')",
-				'ucase'            => 'UPPER(CAST(%s AS text))',
-				'unhex'            => "CONVERT_FROM(DECODE(CAST(%s AS text), 'hex'), 'UTF8')",
-				'upper'            => 'UPPER(CAST(%s AS text))',
-			),
-			2 => array(
-				'ifnull' => 'COALESCE(%s, %s)',
-				'instr'  => 'STRPOS(CAST(%s AS text), CAST(%s AS text))',
-				'left'   => 'LEFT(CAST(%s AS text), CAST(%s AS integer))',
-				'nullif' => 'NULLIF(%s, %s)',
-				'repeat' => 'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL ELSE REPEAT(CAST(%1$s AS text), GREATEST(CAST(%2$s AS integer), 0)) END',
-				'right'  => 'RIGHT(CAST(%s AS text), CAST(%s AS integer))',
-			),
-			3 => array(
-				'replace' => 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))',
-			),
+		$count          = count( $argument_sql );
+		$template_specs = array(
+			'char_length'      => array( 1, 'CHAR_LENGTH(CAST(%s AS text))' ),
+			'character_length' => array( 1, 'CHAR_LENGTH(CAST(%s AS text))' ),
+			'hex'              => array( 1, "UPPER(ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'hex'))" ),
+			'ifnull'           => array( 2, 'COALESCE(%s, %s)' ),
+			'instr'            => array( 2, 'STRPOS(CAST(%s AS text), CAST(%s AS text))' ),
+			'isnull'           => array( 1, 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END' ),
+			'lcase'            => array( 1, 'LOWER(CAST(%s AS text))' ),
+			'left'             => array( 2, 'LEFT(CAST(%s AS text), CAST(%s AS integer))' ),
+			'lower'            => array( 1, 'LOWER(CAST(%s AS text))' ),
+			'ltrim'            => array( 1, "LTRIM(CAST(%s AS text), ' ')" ),
+			'md5'              => array( 1, 'MD5(CAST(%s AS text))' ),
+			'nullif'           => array( 2, 'NULLIF(%s, %s)' ),
+			'repeat'           => array( 2, 'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL ELSE REPEAT(CAST(%1$s AS text), GREATEST(CAST(%2$s AS integer), 0)) END' ),
+			'replace'          => array( 3, 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))' ),
+			'reverse'          => array( 1, 'REVERSE(CAST(%s AS text))' ),
+			'right'            => array( 2, 'RIGHT(CAST(%s AS text), CAST(%s AS integer))' ),
+			'rtrim'            => array( 1, "RTRIM(CAST(%s AS text), ' ')" ),
+			'space'            => array( 1, "CASE WHEN %1\$s IS NULL THEN NULL ELSE REPEAT(' ', GREATEST(CAST(%1\$s AS integer), 0)) END" ),
+			'to_base64'        => array( 1, "ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'base64')" ),
+			'trim'             => array( 1, "BTRIM(CAST(%s AS text), ' ')" ),
+			'ucase'            => array( 1, 'UPPER(CAST(%s AS text))' ),
+			'unhex'            => array( 1, "CONVERT_FROM(DECODE(CAST(%s AS text), 'hex'), 'UTF8')" ),
+			'upper'            => array( 1, 'UPPER(CAST(%s AS text))' ),
 		);
-		if ( isset( $templates[ $count ][ $function_name ] ) ) {
-			return vsprintf( $templates[ $count ][ $function_name ], $argument_sql );
+		if ( isset( $template_specs[ $function_name ] ) ) {
+			return $count === $template_specs[ $function_name ][0] ? vsprintf( $template_specs[ $function_name ][1], $argument_sql ) : null;
 		}
-
-		$array_method_specs = array(
+		$method_specs = array(
 			'concat_ws' => array( 2, null, 'get_postgresql_mysql_concat_ws_sql' ),
 			'elt'       => array( 2, null, 'get_postgresql_mysql_elt_sql' ),
 			'log'       => array( 1, 2, 'get_postgresql_mysql_log_sql' ),
@@ -40386,21 +40245,19 @@ END',
 			'substr'    => array( 2, 3, 'get_postgresql_mysql_substring_sql' ),
 			'substring' => array( 2, 3, 'get_postgresql_mysql_substring_sql' ),
 		);
-		if ( isset( $array_method_specs[ $function_name ] ) ) {
-			list( $min_args, $max_args, $method ) = $array_method_specs[ $function_name ];
+		if ( isset( $method_specs[ $function_name ] ) ) {
+			list( $min_args, $max_args, $method ) = $method_specs[ $function_name ];
 			return $count >= $min_args && ( null === $max_args || $count <= $max_args ) ? $this->$method( $argument_sql ) : null;
 		}
-
-		$single_arg_method_specs = array(
+		$single_arg_methods = array(
 			'date'       => 'get_postgresql_mysql_date_sql',
 			'json_valid' => 'get_postgresql_mysql_json_valid_sql',
 			'length'     => 'get_postgresql_mysql_text_byte_length_sql',
 		);
-		if ( isset( $single_arg_method_specs[ $function_name ] ) ) {
-			$method = $single_arg_method_specs[ $function_name ];
+		if ( isset( $single_arg_methods[ $function_name ] ) ) {
+			$method = $single_arg_methods[ $function_name ];
 			return 1 === $count ? $this->$method( $argument_sql[0] ) : null;
 		}
-
 		$zero_arg_sql = array(
 			'connection_id' => (string) self::MYSQL_CONNECTION_ID,
 			'database'      => $this->connection->quote( $this->db_name ),
@@ -40413,21 +40270,17 @@ END',
 		if ( isset( $zero_arg_sql[ $function_name ] ) ) {
 			return 0 === $count ? $zero_arg_sql[ $function_name ] : null;
 		}
-
-		if ( in_array( $function_name, array( 'current_user', 'session_user', 'system_user', 'user' ), true ) ) {
+		if ( in_array( $function_name, explode( ' ', 'current_user session_user system_user user' ), true ) ) {
 			return 0 === $count ? $this->connection->quote( self::MYSQL_SESSION_USER ) : null;
 		}
-
 		if ( 'get_lock' === $function_name || 'release_lock' === $function_name ) {
 			return ( 'get_lock' === $function_name ? 2 : 1 ) === $count ? '1' : null;
 		}
-
 		switch ( $function_name ) {
 			case 'ascii':
 				if ( 1 !== $count ) {
 					return null;
 				}
-
 				$text_sql           = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
 				$prefix_chars       = preg_match_all( '/./us', self::MYSQL_TEXT_ENCODING_PREFIX );
 				$prefix_length      = false === $prefix_chars ? strlen( self::MYSQL_TEXT_ENCODING_PREFIX ) : $prefix_chars;
@@ -40450,7 +40303,6 @@ END',
 					$hash_sql,
 					$hex_sql
 				);
-
 				return sprintf(
 					"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s THEN CASE WHEN CAST(%3\$s AS bigint) = 0 THEN 0 ELSE GET_BYTE(DECODE(SUBSTR(%4\$s, 1, 2), 'hex'), 0) END WHEN %1\$s = '' THEN 0 ELSE GET_BYTE(CONVERT_TO(%1\$s, 'UTF8'), 0) END",
 					$text_sql,
@@ -40458,12 +40310,10 @@ END',
 					$length_sql,
 					$hex_sql
 				);
-
 			case 'concat':
 				if ( 0 === $count ) {
 					return null;
 				}
-
 				return '(' . implode(
 					' || ',
 					array_map(
@@ -40473,14 +40323,11 @@ END',
 						$argument_sql
 					)
 				) . ')';
-
 			case 'find_in_set':
 				return 2 === $count ? $this->get_postgresql_mysql_find_in_set_sql( $argument_sql[0], $argument_sql[1] ) : null;
-
 			case 'curdate':
 			case 'utc_date':
 				return 0 === $count ? "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD')" : null;
-
 			case 'utc_time':
 				$fsp = $this->get_mysql_temporal_function_fractional_seconds_precision( $argument_sql );
 				if ( null === $fsp ) {
@@ -40489,13 +40336,11 @@ END',
 				if ( 0 === $fsp ) {
 					return "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'HH24:MI:SS')";
 				}
-
 				return sprintf(
 					"LEFT(TO_CHAR(CURRENT_TIMESTAMP(%1\$d) AT TIME ZONE 'UTC', 'HH24:MI:SS.US'), %2\$d)",
 					$fsp,
 					9 + $fsp
 				);
-
 			case 'current_timestamp':
 			case 'localtime':
 			case 'localtimestamp':
@@ -40503,45 +40348,36 @@ END',
 			case 'utc_timestamp':
 				$fsp = $this->get_mysql_temporal_function_fractional_seconds_precision( $argument_sql );
 				return null === $fsp ? null : $this->get_postgresql_mysql_current_timestamp_sql( $fsp );
-
 			case 'lpad':
 			case 'rpad':
 				return 3 === $count ? $this->get_postgresql_mysql_pad_sql( $function_name, $argument_sql[0], $argument_sql[1], $argument_sql[2] ) : null;
-
 			case 'is_uuid':
 				if ( 1 !== $count ) {
 					return null;
 				}
-
 				$argument_text_sql = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
 				return sprintf(
 					'CASE WHEN %1$s IS NULL THEN NULL WHEN %1$s ~* %2$s THEN 1 ELSE 0 END',
 					$argument_text_sql,
 					$this->connection->quote( '^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})$' )
 				);
-
 			case 'last_insert_id':
 				if ( 0 !== $count ) {
 					return null;
 				}
-
 				$last_insert_id = null !== $this->mysql_last_insert_id_assignment_value
 					? $this->mysql_last_insert_id_assignment_value
 					: $this->get_insert_id();
 				return is_numeric( $last_insert_id ) ? (string) (int) $last_insert_id : '0';
-
 			case 'coalesce':
 				return $count > 0 ? sprintf( 'COALESCE(%s)', implode( ', ', $argument_sql ) ) : null;
-
 			case 'if':
 				return null;
-
 			case 'least':
 			case 'greatest':
 				if ( $count < 2 ) {
 					return null;
 				}
-
 				return sprintf(
 					'CASE WHEN %1$s THEN NULL ELSE %2$s(%3$s) END',
 					implode(
@@ -40556,7 +40392,6 @@ END',
 					strtoupper( $function_name ),
 					implode( ', ', $argument_sql )
 				);
-
 			case 'from_base64':
 				return 1 === $count
 					? sprintf(
@@ -40565,40 +40400,33 @@ END',
 						$argument_sql[0]
 					)
 					: null;
-
 			case 'inet_aton':
 				if ( 1 !== $count ) {
 					return null;
 				}
-
 				$ip = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
 				return sprintf(
 					'CASE WHEN %1$s IS NULL THEN NULL ELSE ((CAST(SPLIT_PART(%1$s, \'.\', 1) AS bigint) << 24) + (CAST(SPLIT_PART(%1$s, \'.\', 2) AS bigint) << 16) + (CAST(SPLIT_PART(%1$s, \'.\', 3) AS bigint) << 8) + CAST(SPLIT_PART(%1$s, \'.\', 4) AS bigint)) END',
 					$ip
 				);
-
 			case 'inet_ntoa':
 				if ( 1 !== $count ) {
 					return null;
 				}
-
 				$number = sprintf( 'CAST(%s AS bigint)', $argument_sql[0] );
 				return sprintf(
 					'CASE WHEN %1$s IS NULL THEN NULL ELSE (((%1$s >> 24) & 255)::text || \'.\' || ((%1$s >> 16) & 255)::text || \'.\' || ((%1$s >> 8) & 255)::text || \'.\' || (%1$s & 255)::text) END',
 					$number
 				);
-
 			case 'datediff':
 				if ( 2 !== $count ) {
 					return null;
 				}
-
 				return sprintf(
 					'CAST((CAST(%1$s AS date) - CAST(%2$s AS date)) AS integer)',
 					$this->get_postgresql_zero_date_safe_timestamp_sql( $argument_sql[0] ),
 					$this->get_postgresql_zero_date_safe_timestamp_sql( $argument_sql[1] )
 				);
-
 			case 'locate':
 				if ( 2 === $count ) {
 					return sprintf( 'STRPOS(CAST(%2$s AS text), CAST(%1$s AS text))', $argument_sql[0], $argument_sql[1] );
@@ -40607,51 +40435,26 @@ END',
 					return $this->get_postgresql_mysql_locate_with_position_sql( $argument_sql[0], $argument_sql[1], $argument_sql[2] );
 				}
 				return null;
-
 			case 'dayname':
 				return 1 === $count
 					? $this->get_postgresql_mysql_temporal_name_sql(
 						'DOW',
 						$argument_sql[0],
-						array(
-							0 => 'Sunday',
-							1 => 'Monday',
-							2 => 'Tuesday',
-							3 => 'Wednesday',
-							4 => 'Thursday',
-							5 => 'Friday',
-							6 => 'Saturday',
-						)
+						explode( ' ', 'Sunday Monday Tuesday Wednesday Thursday Friday Saturday' )
 					)
 					: null;
-
 			case 'monthname':
 				return 1 === $count
 					? $this->get_postgresql_mysql_temporal_name_sql(
 						'MONTH',
 						$argument_sql[0],
-						array(
-							1  => 'January',
-							2  => 'February',
-							3  => 'March',
-							4  => 'April',
-							5  => 'May',
-							6  => 'June',
-							7  => 'July',
-							8  => 'August',
-							9  => 'September',
-							10 => 'October',
-							11 => 'November',
-							12 => 'December',
-						)
+						array_combine( range( 1, 12 ), explode( ' ', 'January February March April May June July August September October November December' ) )
 					)
 					: null;
-
 			case 'regexp':
 				if ( 2 !== $count ) {
 					return null;
 				}
-
 				$pattern = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
 				$value   = sprintf( 'CAST(%s AS text)', $argument_sql[1] );
 				return sprintf(
@@ -40659,12 +40462,10 @@ END',
 					$pattern,
 					$value
 				);
-
 			case 'from_unixtime':
 				if ( 1 === $count ) {
 					$unix_double_sql = sprintf( 'CAST(%s AS double precision)', $argument_sql[0] );
 					$timestamp_sql   = $this->get_postgresql_mysql_from_unixtime_timestamp_sql( $argument_sql[0] );
-
 					return sprintf(
 						"CASE WHEN %1\$s IS NULL THEN NULL WHEN %1\$s = FLOOR(%1\$s) THEN TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS') ELSE TO_CHAR(%2\$s, 'YYYY-MM-DD HH24:MI:SS.US') END",
 						$unix_double_sql,
@@ -40681,17 +40482,14 @@ END',
 							false
 						);
 					}
-
 					return $this->get_postgresql_mysql_dynamic_date_format_sql(
 						$argument_sql[1],
 						$timestamp_sql
 					);
 				}
 				return null;
-
 			case 'monthnum':
 				return 1 === $count ? $this->get_postgresql_zero_date_safe_extract_sql( 'MONTH', $argument_sql[0] ) : null;
-
 			case 'unix_timestamp':
 				if ( 0 === $count ) {
 					return 'CAST(FLOOR(EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)) AS bigint)';
@@ -40700,9 +40498,7 @@ END',
 					return sprintf( 'CAST(FLOOR(EXTRACT(EPOCH FROM %s)) AS bigint)', $this->get_postgresql_zero_date_safe_timestamp_sql( $argument_sql[0] ) );
 				}
 				return null;
-
 		}
-
 		return null;
 	}
 
@@ -40710,7 +40506,6 @@ END',
 		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
 		$timestamp_sql       = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
 		$branches            = array();
-
 		foreach ( $names as $value => $name ) {
 			$branches[] = sprintf(
 				'WHEN %d THEN %s',
@@ -40718,7 +40513,6 @@ END',
 				$this->connection->quote( $name )
 			);
 		}
-
 		return sprintf(
 			'CASE WHEN %1$s OR %2$s THEN NULL ELSE CASE CAST(EXTRACT(%3$s FROM %4$s) AS integer) %5$s END END',
 			$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
@@ -40733,16 +40527,13 @@ END',
 		if ( 'NULL' === strtoupper( trim( $argument_sql ) ) ) {
 			return 'NULL';
 		}
-
 		$literal_value = $this->get_mysql_sql_string_literal_value( $argument_sql );
 		if ( null !== $literal_value ) {
 			return (string) self::get_mysql_json_valid_runtime_result( $literal_value );
 		}
-
 		if ( 1 === preg_match( '/^-?(?:0|[1-9][0-9]*)(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?$/', trim( $argument_sql ) ) ) {
 			return (string) self::get_mysql_json_valid_runtime_result( trim( $argument_sql ) );
 		}
-
 		if ( 'pgsql' === $this->connection->get_driver_name() ) {
 			return sprintf(
 				'CASE WHEN %1$s IS NULL THEN NULL WHEN pg_input_is_valid(CAST(%1$s AS text), %2$s) THEN 1 ELSE 0 END',
@@ -40750,7 +40541,6 @@ END',
 				$this->connection->quote( 'json' )
 			);
 		}
-
 		return sprintf( 'CASE WHEN %1$s IS NULL THEN NULL ELSE json_valid(CAST(%1$s AS text)) END', $argument_sql );
 	}
 
@@ -40758,11 +40548,9 @@ END',
 		$timestamp_sql = sprintf( "TO_TIMESTAMP(CAST(%s AS double precision)) AT TIME ZONE 'UTC'", $unix_timestamp_sql );
 		$time_zone     = $this->get_mysql_system_variable_value( 'time_zone' );
 		$offset        = $this->get_mysql_time_zone_offset_minutes( null === $time_zone ? 'SYSTEM' : $time_zone );
-
 		if ( null === $offset || 0 === $offset ) {
 			return $timestamp_sql;
 		}
-
 		return sprintf(
 			'(%s + INTERVAL %s)',
 			$timestamp_sql,
@@ -40775,11 +40563,9 @@ END',
 		if ( '' === $time_zone || 0 === strcasecmp( $time_zone, 'SYSTEM' ) || 0 === strcasecmp( $time_zone, 'UTC' ) ) {
 			return 0;
 		}
-
 		if ( 1 !== preg_match( '/\A([+-])([0-9]{2}):([0-9]{2})\z/', $time_zone, $matches ) ) {
 			return null;
 		}
-
 		$offset = ( (int) $matches[2] * 60 ) + (int) $matches[3];
 		return '-' === $matches[1] ? -$offset : $offset;
 	}
@@ -40906,11 +40692,9 @@ $wp_mysql_%1$s_domain$',
 		if ( 0 === count( $argument_sql ) ) {
 			return 0;
 		}
-
 		if ( 1 !== count( $argument_sql ) ) {
 			return null;
 		}
-
 		$sql = trim( $argument_sql[0] );
 		return 1 === preg_match( '/^[0-6]$/', $sql ) ? (int) $sql : null;
 	}
@@ -40919,7 +40703,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $token || WP_MySQL_Lexer::INT_NUMBER !== $token->id ) {
 			return null;
 		}
-
 		$value = $token->get_value();
 		return 1 === preg_match( '/^[0-6]$/', $value ) ? (int) $value : null;
 	}
@@ -40928,7 +40711,6 @@ $wp_mysql_%1$s_domain$',
 		if ( 0 === $fsp ) {
 			return "TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
 		}
-
 		return sprintf(
 			"LEFT(TO_CHAR(CURRENT_TIMESTAMP(%1\$d) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US'), %2\$d)",
 			$fsp,
@@ -40937,14 +40719,18 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	private function get_postgresql_mysql_date_sql( string $expression_sql ): string {
-		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
+		return $this->get_postgresql_mysql_ymd_format_sql( $expression_sql );
+	}
 
+	private function get_postgresql_mysql_ymd_format_sql( string $expression_sql ): string {
+		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
 		return sprintf(
-			"CASE WHEN %1\$s THEN NULL WHEN %2\$s THEN SUBSTRING(%3\$s FROM 1 FOR 10) ELSE TO_CHAR(%4\$s, 'YYYY-MM-DD') END",
+			'CASE WHEN %1$s THEN NULL WHEN %2$s THEN SUBSTRING(%3$s FROM 1 FOR 10) ELSE TO_CHAR(%4$s, %5$s) END',
 			$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
 			$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
 			$expression_text_sql,
-			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql )
+			$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
+			$this->connection->quote( 'YYYY-MM-DD' )
 		);
 	}
 
@@ -40953,12 +40739,10 @@ $wp_mysql_%1$s_domain$',
 		if ( null !== $arguments && ( 2 === count( $arguments ) || 3 === count( $arguments ) ) ) {
 			return $arguments;
 		}
-
 		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, $start, $end );
 		if ( null === $from_position || $from_position <= $start || $from_position + 1 >= $end ) {
 			return null;
 		}
-
 		$for_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FOR_SYMBOL, $from_position + 1, $end );
 		if ( null === $for_position ) {
 			return array(
@@ -40972,11 +40756,9 @@ $wp_mysql_%1$s_domain$',
 				),
 			);
 		}
-
 		if ( $for_position <= $from_position + 1 || $for_position + 1 >= $end ) {
 			return null;
 		}
-
 		return array(
 			array(
 				'start' => $start,
@@ -41001,7 +40783,6 @@ $wp_mysql_%1$s_domain$',
 		$payload_sql   = sprintf( 'SUBSTR(%s, %d)', $text_sql, $prefix_length + 1 );
 		$separator_sql = sprintf( "STRPOS(%s, ':')", $payload_sql );
 		$length_sql    = sprintf( 'SUBSTR(%s, 1, %s - 1)', $payload_sql, $separator_sql );
-
 		return sprintf(
 			"CASE WHEN SUBSTR(%1\$s, 1, %2\$d) = %3\$s AND %4\$s > 1 AND TRANSLATE(%5\$s, '0123456789', '') = '' AND (%5\$s = '0' OR SUBSTR(%5\$s, 1, 1) <> '0') THEN CAST(%5\$s AS bigint) ELSE OCTET_LENGTH(CONVERT_TO(%1\$s, 'UTF8')) END",
 			$text_sql,
@@ -41017,7 +40798,6 @@ $wp_mysql_%1$s_domain$',
 		$value_sql      = array_slice( $argument_sql, 1 );
 		$fragments      = array();
 		$seen_value_sql = array();
-
 		foreach ( $value_sql as $index => $sql ) {
 			if ( $index > 0 ) {
 				$fragments[] = sprintf(
@@ -41027,11 +40807,9 @@ $wp_mysql_%1$s_domain$',
 					$separator_sql
 				);
 			}
-
 			$fragments[]      = sprintf( 'COALESCE(CAST(%s AS text), \'\')', $sql );
 			$seen_value_sql[] = sprintf( '%s IS NOT NULL', $sql );
 		}
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL THEN NULL ELSE (%2$s) END',
 			$separator_sql,
@@ -41044,7 +40822,6 @@ $wp_mysql_%1$s_domain$',
 		$branches  = array(
 			sprintf( 'WHEN %s IS NULL THEN NULL', $index_sql ),
 		);
-
 		for ( $i = 1; $i < count( $argument_sql ); $i++ ) {
 			$branches[] = sprintf(
 				'WHEN %1$s = %2$d THEN CAST(%3$s AS text)',
@@ -41053,14 +40830,12 @@ $wp_mysql_%1$s_domain$',
 				$argument_sql[ $i ]
 			);
 		}
-
 		return 'CASE ' . implode( ' ', $branches ) . ' ELSE NULL END';
 	}
 
 	private function get_postgresql_mysql_find_in_set_sql( string $needle_sql, string $list_sql ): string {
 		$needle_text_sql = sprintf( 'CAST(%s AS text)', $needle_sql );
 		$list_text_sql   = sprintf( 'CAST(%s AS text)', $list_sql );
-
 		return sprintf(
 			"CASE WHEN %1\$s IS NULL OR %2\$s IS NULL THEN NULL WHEN STRPOS(%1\$s, ',') > 0 THEN 0 ELSE COALESCE(ARRAY_POSITION(STRING_TO_ARRAY(%2\$s, ','), %1\$s), 0) END",
 			$needle_text_sql,
@@ -41072,10 +40847,8 @@ $wp_mysql_%1$s_domain$',
 		if ( count( $argument_sql ) > 64 ) {
 			return null;
 		}
-
 		$mask_sql   = $this->get_postgresql_mysql_integer_cast_sql( $argument_sql[0] );
 		$values_sql = array();
-
 		for ( $i = 1; $i < count( $argument_sql ); $i++ ) {
 			$bit_sql      = (string) ( 1 << ( $i - 1 ) );
 			$values_sql[] = sprintf(
@@ -41085,7 +40858,6 @@ $wp_mysql_%1$s_domain$',
 				$argument_sql[ $i ]
 			);
 		}
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL THEN NULL ELSE CONCAT_WS(\',\', %2$s) END',
 			$mask_sql,
@@ -41096,24 +40868,20 @@ $wp_mysql_%1$s_domain$',
 	private function get_postgresql_mysql_log_sql( array $argument_sql ): ?string {
 		if ( 1 === count( $argument_sql ) ) {
 			$value = sprintf( 'CAST(%s AS double precision)', $argument_sql[0] );
-
 			return sprintf(
 				'CASE WHEN %1$s IS NULL OR %1$s <= 0 THEN NULL ELSE LN(%1$s) END',
 				$value
 			);
 		}
-
 		if ( 2 === count( $argument_sql ) ) {
 			$base  = sprintf( 'CAST(%s AS double precision)', $argument_sql[0] );
 			$value = sprintf( 'CAST(%s AS double precision)', $argument_sql[1] );
-
 			return sprintf(
 				'CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %1$s <= 1 OR %2$s <= 0 THEN NULL ELSE LN(%2$s) / LN(%1$s) END',
 				$base,
 				$value
 			);
 		}
-
 		return null;
 	}
 
@@ -41121,7 +40889,6 @@ $wp_mysql_%1$s_domain$',
 		if ( 2 !== count( $argument_sql ) && 3 !== count( $argument_sql ) ) {
 			return null;
 		}
-
 		$value    = sprintf( 'CAST(%s AS text)', $argument_sql[0] );
 		$position = sprintf( 'CAST(%s AS integer)', $argument_sql[1] );
 		$start    = sprintf(
@@ -41129,7 +40896,6 @@ $wp_mysql_%1$s_domain$',
 			$position,
 			$value
 		);
-
 		if ( 2 === count( $argument_sql ) ) {
 			return sprintf(
 				'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s = 0 OR (%3$s < 1) THEN \'\' ELSE SUBSTRING(%1$s FROM %3$s) END',
@@ -41138,9 +40904,7 @@ $wp_mysql_%1$s_domain$',
 				$start
 			);
 		}
-
 		$length = sprintf( 'CAST(%s AS integer)', $argument_sql[2] );
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %3$s IS NULL THEN NULL WHEN %2$s = 0 OR %3$s < 1 OR (%4$s < 1) THEN \'\' ELSE SUBSTRING(%1$s FROM %4$s FOR %3$s) END',
 			$value,
@@ -41154,7 +40918,6 @@ $wp_mysql_%1$s_domain$',
 		if ( strlen( $sql ) < 2 || "'" !== $sql[0] || "'" !== substr( $sql, -1 ) ) {
 			return null;
 		}
-
 		return str_replace( "''", "'", substr( $sql, 1, -1 ) );
 	}
 
@@ -41169,16 +40932,13 @@ $wp_mysql_%1$s_domain$',
 				++$depth;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
 				--$depth;
 				continue;
 			}
-
 			if ( 0 !== $depth ) {
 				continue;
 			}
-
 			if (
 				in_array(
 					$tokens[ $i ]->id,
@@ -41204,7 +40964,6 @@ $wp_mysql_%1$s_domain$',
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -41213,7 +40972,6 @@ $wp_mysql_%1$s_domain$',
 		$haystack = sprintf( 'CAST(%s AS text)', $haystack_sql );
 		$position = sprintf( 'CAST(%s AS integer)', $position_sql );
 		$offset   = sprintf( 'STRPOS(SUBSTRING(%s FROM %s), %s)', $haystack, $position, $needle );
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %3$s IS NULL THEN NULL WHEN %3$s < 1 THEN 0 WHEN %4$s = 0 THEN 0 ELSE %4$s + %3$s - 1 END',
 			$needle,
@@ -41232,12 +40990,10 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
 		if ( null === $after_close ) {
 			return null;
 		}
-
 		return array(
 			'arguments_start' => $position + 2,
 			'arguments_end'   => $after_close - 1,
@@ -41249,17 +41005,14 @@ $wp_mysql_%1$s_domain$',
 		if ( $start === $end ) {
 			return array();
 		}
-
 		$arguments      = array();
 		$argument_start = $start;
 		$depth          = 0;
-
 		for ( $i = $start; $i < $end; $i++ ) {
 			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
 				++$depth;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
 				--$depth;
 				if ( $depth < 0 ) {
@@ -41267,12 +41020,10 @@ $wp_mysql_%1$s_domain$',
 				}
 				continue;
 			}
-
 			if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $i ]->id ) {
 				if ( $argument_start === $i ) {
 					return null;
 				}
-
 				$arguments[]    = array(
 					'start' => $argument_start,
 					'end'   => $i,
@@ -41280,16 +41031,13 @@ $wp_mysql_%1$s_domain$',
 				$argument_start = $i + 1;
 			}
 		}
-
 		if ( 0 !== $depth || $argument_start === $end ) {
 			return null;
 		}
-
 		$arguments[] = array(
 			'start' => $argument_start,
 			'end'   => $end,
 		);
-
 		return $arguments;
 	}
 
@@ -41298,7 +41046,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		return $this->get_postgresql_mysql_date_arithmetic_translation( $tokens, $bounds, $tokens[ $position ]->id );
 	}
 
@@ -41307,7 +41054,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		return $this->get_postgresql_mysql_date_arithmetic_translation( $tokens, $bounds, $tokens[ $position ]->id );
 	}
 
@@ -41323,7 +41069,6 @@ $wp_mysql_%1$s_domain$',
 			$bounds['interval_value_end']
 		);
 		$interval_sql   = $bounds['interval_sql'] ?? $this->get_postgresql_mysql_interval_sql( $value_sql, $bounds['interval_unit'] );
-
 		return $this->get_postgresql_mysql_expression_translation(
 			sprintf(
 				'(%1$s %2$s %3$s)',
@@ -41345,23 +41090,19 @@ $wp_mysql_%1$s_domain$',
 			if ( null === $after_close ) {
 				return null;
 			}
-
 			if ( $after_close === $end ) {
 				$inner = $this->get_mysql_infix_interval_expression_bounds( $tokens, $position + 1, $after_close - 1 );
 				if ( null === $inner || $inner['close'] !== $after_close - 2 ) {
 					return null;
 				}
-
 				$inner['close'] = $after_close - 1;
 				return $inner;
 			}
 		}
-
 		$expression = $this->get_mysql_infix_interval_left_expression_bounds( $tokens, $position, $end );
 		if ( null === $expression ) {
 			return null;
 		}
-
 		$operator_position = $expression['end'];
 		if (
 			! isset( $tokens[ $operator_position ] )
@@ -41369,12 +41110,10 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$interval = $this->get_mysql_interval_argument_bounds( $tokens, $operator_position + 1, $end );
 		if ( null === $interval ) {
 			return null;
 		}
-
 		$bounds = array(
 			'operator'             => WP_MySQL_Lexer::MINUS_OPERATOR === $tokens[ $operator_position ]->id ? '-' : '+',
 			'expression_start'     => $expression['start'],
@@ -41384,11 +41123,9 @@ $wp_mysql_%1$s_domain$',
 			'interval_unit'        => $interval['unit'],
 			'close'                => $end - 1,
 		);
-
 		if ( isset( $interval['sql'] ) ) {
 			$bounds['interval_sql'] = $interval['sql'];
 		}
-
 		return $bounds;
 	}
 
@@ -41396,13 +41133,11 @@ $wp_mysql_%1$s_domain$',
 		if ( $position >= $end || ! isset( $tokens[ $position ] ) ) {
 			return null;
 		}
-
 		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
 			if ( null === $after_close ) {
 				return null;
 			}
-
 			$inner = $this->get_mysql_infix_interval_left_expression_bounds( $tokens, $position + 1, $after_close - 1 );
 			if ( null !== $inner && $inner['start'] === $position + 1 && $inner['end'] === $after_close - 1 ) {
 				return array(
@@ -41411,7 +41146,6 @@ $wp_mysql_%1$s_domain$',
 				);
 			}
 		}
-
 		if ( WP_MySQL_Lexer::CASE_SYMBOL === $tokens[ $position ]->id ) {
 			$case_end = $this->get_mysql_case_expression_end( $tokens, $position, $end );
 			if ( null !== $case_end ) {
@@ -41421,7 +41155,6 @@ $wp_mysql_%1$s_domain$',
 				);
 			}
 		}
-
 		$common_function = $this->get_mysql_common_function_bounds( $tokens, $position, $end );
 		if ( null !== $common_function ) {
 			return array(
@@ -41429,14 +41162,12 @@ $wp_mysql_%1$s_domain$',
 				'end'   => $common_function['close'] + 1,
 			);
 		}
-
 		if ( null !== $this->translate_mysql_nonparenthesized_timestamp_function_to_postgresql( $tokens, $position, $end ) ) {
 			return array(
 				'start' => $position,
 				'end'   => $position + 1,
 			);
 		}
-
 		return null;
 	}
 
@@ -41448,17 +41179,14 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$case_depth  = 0;
 		$paren_depth = 0;
 		for ( $i = $position + 1; $i < $end; $i++ ) {
 			$token_id = $tokens[ $i ]->id;
-
 			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token_id ) {
 				++$paren_depth;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token_id ) {
 				--$paren_depth;
 				if ( $paren_depth < 0 ) {
@@ -41466,30 +41194,24 @@ $wp_mysql_%1$s_domain$',
 				}
 				continue;
 			}
-
 			if ( 0 !== $paren_depth ) {
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::CASE_SYMBOL === $token_id ) {
 				++$case_depth;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::END_SYMBOL !== $token_id ) {
 				continue;
 			}
-
 			if ( $case_depth > 0 ) {
 				--$case_depth;
 				continue;
 			}
-
 			return null === $this->get_mysql_case_expression_result_ranges( $tokens, $position, $i + 1 )
 				? null
 				: $i + 1;
 		}
-
 		return null;
 	}
 
@@ -41511,13 +41233,11 @@ $wp_mysql_%1$s_domain$',
 			) {
 				continue;
 			}
-
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $i + 1, $end );
 			if ( null === $after_close || null === $this->get_mysql_date_arithmetic_function_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -41526,10 +41246,8 @@ $wp_mysql_%1$s_domain$',
 		if ( ! isset( $tokens[0] ) ) {
 			return false;
 		}
-
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 		$end           = null === $statement_end ? count( $tokens ) : $statement_end;
-
 		return $this->contains_unsupported_mysql_date_arithmetic_function( $tokens, 0, $end )
 			|| $this->contains_unsupported_mysql_translated_common_function( $tokens, 0, $end, 'timestampadd', 'translate_mysql_timestampadd_function_to_postgresql' )
 			|| $this->contains_unsupported_mysql_translated_common_function( $tokens, 0, $end, 'timestampdiff', 'translate_mysql_timestampdiff_function_to_postgresql' );
@@ -41544,18 +41262,15 @@ $wp_mysql_%1$s_domain$',
 			) {
 				continue;
 			}
-
 			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $end );
 			if ( null === $bounds ) {
 				return true;
 			}
-
 			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 			if ( null === $arguments || null === $this->$translator_name( $tokens, $arguments, $bounds['close'] ) ) {
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -41576,17 +41291,14 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
 		if ( null === $after_close ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $position + 2, $after_close - 1 );
 		if ( null === $arguments || 2 !== count( $arguments ) ) {
 			return null;
 		}
-
 		$interval = $this->get_mysql_interval_argument_bounds( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
 		if (
 			null === $interval
@@ -41601,7 +41313,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $interval ) {
 			return null;
 		}
-
 		$bounds = array(
 			'operator'             => in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::DATE_SUB_SYMBOL, WP_MySQL_Lexer::SUBDATE_SYMBOL ), true ) ? '-' : '+',
 			'expression_start'     => $arguments[0]['start'],
@@ -41611,11 +41322,9 @@ $wp_mysql_%1$s_domain$',
 			'interval_unit'        => $interval['unit'],
 			'close'                => $after_close - 1,
 		);
-
 		if ( isset( $interval['sql'] ) ) {
 			$bounds['interval_sql'] = $interval['sql'];
 		}
-
 		return $bounds;
 	}
 
@@ -41627,7 +41336,6 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$unit_token = $tokens[ $end - 1 ];
 		$unit       = $this->get_postgresql_simple_interval_unit( $unit_token );
 		if ( null !== $unit ) {
@@ -41637,17 +41345,14 @@ $wp_mysql_%1$s_domain$',
 				'unit'        => $unit,
 			);
 		}
-
 		$part_units = $this->get_mysql_composite_interval_part_units( $unit_token );
 		if ( null === $part_units ) {
 			return null;
 		}
-
 		$sql = $this->get_postgresql_mysql_composite_interval_literal_sql( $tokens, $start + 1, $end - 1, $part_units );
 		if ( null === $sql ) {
 			return null;
 		}
-
 		return array(
 			'value_start' => $start + 1,
 			'value_end'   => $end - 1,
@@ -41668,7 +41373,6 @@ $wp_mysql_%1$s_domain$',
 			WP_MySQL_Lexer::QUARTER_SYMBOL     => '3 months',
 			WP_MySQL_Lexer::YEAR_SYMBOL        => 'year',
 		);
-
 		return $units[ $token->id ] ?? null;
 	}
 
@@ -41686,7 +41390,6 @@ $wp_mysql_%1$s_domain$',
 			WP_MySQL_Lexer::DAY_MICROSECOND_SYMBOL    => array( 'day', 'hour', 'minute', 'second', 'microsecond' ),
 			WP_MySQL_Lexer::YEAR_MONTH_SYMBOL         => array( 'year', 'month' ),
 		);
-
 		return $units[ $token->id ] ?? null;
 	}
 
@@ -41694,21 +41397,17 @@ $wp_mysql_%1$s_domain$',
 		if ( $start >= $end || ! isset( $tokens[ $start ] ) ) {
 			return null;
 		}
-
 		$value = $this->get_mysql_composite_interval_literal_value( $tokens, $start, $end );
 		if ( null === $value ) {
 			return null;
 		}
-
 		if ( $value['is_null'] ) {
 			return 'CAST(NULL AS interval)';
 		}
-
 		$components = $this->parse_mysql_composite_interval_literal_components( $value['value'], $part_units );
 		if ( null === $components ) {
 			return null;
 		}
-
 		return $this->get_postgresql_mysql_composite_interval_components_sql( $components );
 	}
 
@@ -41720,14 +41419,12 @@ $wp_mysql_%1$s_domain$',
 					'is_null' => true,
 				);
 			}
-
 			if ( $this->is_mysql_quoted_text_token( $tokens[ $start ] ) ) {
 				return array(
 					'value'   => $tokens[ $start ]->get_value(),
 					'is_null' => false,
 				);
 			}
-
 			if ( $this->is_mysql_unsigned_numeric_token( $tokens[ $start ] ) ) {
 				return array(
 					'value'   => $tokens[ $start ]->get_value(),
@@ -41735,7 +41432,6 @@ $wp_mysql_%1$s_domain$',
 				);
 			}
 		}
-
 		if (
 			$start + 2 === $end
 			&& isset( $tokens[ $start + 1 ] )
@@ -41750,7 +41446,6 @@ $wp_mysql_%1$s_domain$',
 				'is_null' => false,
 			);
 		}
-
 		return null;
 	}
 
@@ -41758,7 +41453,6 @@ $wp_mysql_%1$s_domain$',
 		if ( $this->is_mysql_unsigned_integer_token( $token ) ) {
 			return true;
 		}
-
 		if (
 			in_array(
 				$token->id,
@@ -41770,7 +41464,6 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return 1 === preg_match( '/^[0-9]+[.][0-9]+$/', $token->get_value() );
 		}
-
 		return false;
 	}
 
@@ -41780,34 +41473,28 @@ $wp_mysql_%1$s_domain$',
 		if ( '' === $value ) {
 			return null;
 		}
-
 		$sign = '';
 		if ( '-' === $value[0] || '+' === $value[0] ) {
 			$sign  = '-' === $value[0] ? '-' : '';
 			$value = trim( substr( $value, 1 ) );
 		}
-
 		if ( '' === $value || 1 !== preg_match( '/^[0-9]+(?:[^0-9]+[0-9]+)*$/', $value ) ) {
 			return null;
 		}
-
 		$parts = preg_split( '/[^0-9]+/', $value );
 		if ( false === $parts || empty( $parts ) || count( $parts ) > $part_count ) {
 			return null;
 		}
-
 		$units      = array_slice( $part_units, $part_count - count( $parts ) );
 		$components = array();
 		foreach ( $parts as $index => $part ) {
 			$unit            = $units[ $index ];
 			$component_value = 'microsecond' === $unit ? str_pad( $part, 6, '0' ) : $part;
-
-			$components[] = array(
+			$components[]    = array(
 				'value' => $sign . $component_value,
 				'unit'  => $unit,
 			);
 		}
-
 		return $components;
 	}
 
@@ -41820,7 +41507,6 @@ $wp_mysql_%1$s_domain$',
 				$this->connection->quote( '1 ' . $component['unit'] )
 			);
 		}
-
 		return '(' . implode( ' + ', $parts ) . ')';
 	}
 
@@ -41829,7 +41515,6 @@ $wp_mysql_%1$s_domain$',
 		$value_cast_sql = 'second' === $unit
 			? $this->get_postgresql_mysql_numeric_cast_sql( $value_sql )
 			: $this->get_postgresql_mysql_integer_cast_sql( $value_sql );
-
 		return sprintf(
 			'(%1$s * INTERVAL %2$s)',
 			sprintf( 'CAST(%s AS double precision)', $value_cast_sql ),
@@ -41841,7 +41526,6 @@ $wp_mysql_%1$s_domain$',
 		if ( 3 !== count( $arguments ) ) {
 			return null;
 		}
-
 		$interval = $this->get_mysql_timestampadd_interval(
 			$tokens,
 			$arguments[0]['start'],
@@ -41852,7 +41536,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $interval ) {
 			return null;
 		}
-
 		$interval_sql = $interval['sql'] ?? null;
 		if ( null === $interval_sql ) {
 			$value_sql    = $this->translate_mysql_token_sequence_to_postgresql(
@@ -41862,13 +41545,11 @@ $wp_mysql_%1$s_domain$',
 			);
 			$interval_sql = $this->get_postgresql_mysql_interval_sql( $value_sql, $interval['unit'] );
 		}
-
 		$datetime_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$arguments[2]['start'],
 			$arguments[2]['end']
 		);
-
 		return $this->get_postgresql_mysql_expression_translation(
 			sprintf(
 				'(%1$s + %2$s)',
@@ -41884,7 +41565,6 @@ $wp_mysql_%1$s_domain$',
 		if ( 3 !== count( $arguments ) ) {
 			return null;
 		}
-
 		$unit = $this->get_mysql_timestampdiff_unit(
 			$tokens,
 			$arguments[0]['start'],
@@ -41893,7 +41573,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $unit ) {
 			return null;
 		}
-
 		$start_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$arguments[1]['start'],
@@ -41904,7 +41583,6 @@ $wp_mysql_%1$s_domain$',
 			$arguments[2]['start'],
 			$arguments[2]['end']
 		);
-
 		return $this->get_postgresql_mysql_expression_translation(
 			$this->get_postgresql_mysql_timestampdiff_sql( $unit, $start_sql, $end_sql ),
 			WP_MySQL_Lexer::IDENTIFIER,
@@ -41916,26 +41594,13 @@ $wp_mysql_%1$s_domain$',
 		if ( $unit_start + 1 !== $unit_end || ! isset( $tokens[ $unit_start ] ) ) {
 			return null;
 		}
-
-		$units = array(
-			WP_MySQL_Lexer::MICROSECOND_SYMBOL => 'microsecond',
-			WP_MySQL_Lexer::SECOND_SYMBOL      => 'second',
-			WP_MySQL_Lexer::MINUTE_SYMBOL      => 'minute',
-			WP_MySQL_Lexer::HOUR_SYMBOL        => 'hour',
-			WP_MySQL_Lexer::DAY_SYMBOL         => 'day',
-			WP_MySQL_Lexer::WEEK_SYMBOL        => 'week',
-			WP_MySQL_Lexer::MONTH_SYMBOL       => 'month',
-			WP_MySQL_Lexer::QUARTER_SYMBOL     => 'quarter',
-			WP_MySQL_Lexer::YEAR_SYMBOL        => 'year',
-		);
-
-		return $units[ $tokens[ $unit_start ]->id ] ?? null;
+		$unit = $this->get_postgresql_simple_interval_unit( $tokens[ $unit_start ] );
+		return '3 months' === $unit ? 'quarter' : $unit;
 	}
 
 	private function get_postgresql_mysql_timestampdiff_sql( string $unit, string $start_sql, string $end_sql ): string {
 		$start_timestamp_sql = $this->get_postgresql_zero_date_safe_timestamp_sql( $start_sql );
 		$end_timestamp_sql   = $this->get_postgresql_zero_date_safe_timestamp_sql( $end_sql );
-
 		if ( 'microsecond' === $unit ) {
 			return sprintf(
 				'CAST(TRUNC(EXTRACT(EPOCH FROM (%2$s - %1$s)) * 1000000) AS bigint)',
@@ -41943,7 +41608,6 @@ $wp_mysql_%1$s_domain$',
 				$end_timestamp_sql
 			);
 		}
-
 		$seconds_per_unit = array_combine( explode( ' ', 'second minute hour day week' ), array( 1, 60, 3600, 86400, 604800 ) );
 		if ( isset( $seconds_per_unit[ $unit ] ) ) {
 			return sprintf(
@@ -41953,16 +41617,13 @@ $wp_mysql_%1$s_domain$',
 				$seconds_per_unit[ $unit ]
 			);
 		}
-
 		$month_sql = $this->get_postgresql_mysql_timestampdiff_month_sql( $start_timestamp_sql, $end_timestamp_sql );
 		if ( 'month' === $unit ) {
 			return $month_sql;
 		}
-
 		if ( 'quarter' === $unit ) {
 			return sprintf( 'CAST(TRUNC((%s)::numeric / 3) AS bigint)', $month_sql );
 		}
-
 		return sprintf( 'CAST(TRUNC((%s)::numeric / 12) AS bigint)', $month_sql );
 	}
 
@@ -41974,7 +41635,6 @@ $wp_mysql_%1$s_domain$',
 		);
 		$start_remainder_sql = sprintf( "TO_CHAR(%s, 'DD HH24:MI:SS.US')", $start_timestamp_sql );
 		$end_remainder_sql   = sprintf( "TO_CHAR(%s, 'DD HH24:MI:SS.US')", $end_timestamp_sql );
-
 		return sprintf(
 			'CAST(CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL WHEN %2$s >= %1$s THEN (%3$s - CASE WHEN %4$s < %5$s THEN 1 ELSE 0 END) ELSE (%3$s + CASE WHEN %4$s > %5$s THEN 1 ELSE 0 END) END AS bigint)',
 			$start_timestamp_sql,
@@ -41989,24 +41649,20 @@ $wp_mysql_%1$s_domain$',
 		if ( $unit_start + 1 !== $unit_end || ! isset( $tokens[ $unit_start ] ) ) {
 			return null;
 		}
-
 		$unit = $this->get_postgresql_simple_interval_unit( $tokens[ $unit_start ] );
 		if ( null !== $unit ) {
 			return array(
 				'unit' => $unit,
 			);
 		}
-
 		$part_units = $this->get_mysql_composite_interval_part_units( $tokens[ $unit_start ] );
 		if ( null === $part_units ) {
 			return null;
 		}
-
 		$sql = $this->get_postgresql_mysql_composite_interval_literal_sql( $tokens, $value_start, $value_end, $part_units );
 		if ( null === $sql ) {
 			return null;
 		}
-
 		return array(
 			'unit' => 'composite',
 			'sql'  => $sql,
@@ -42018,13 +41674,11 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$bounds['expression_start'],
 			$bounds['expression_end']
 		);
-
 		return $this->get_postgresql_mysql_expression_translation(
 			$this->get_postgresql_mysql_week_sql( $expression_sql, $bounds['mode'] ),
 			WP_MySQL_Lexer::CASE_SYMBOL,
@@ -42039,31 +41693,25 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$is_weekofyear = false;
 		if ( WP_MySQL_Lexer::WEEK_SYMBOL !== $tokens[ $position ]->id ) {
 			$function_name = $this->get_mysql_identifier_token_value( $tokens[ $position ] );
 			if ( null === $function_name || 0 !== strcasecmp( $function_name, 'weekofyear' ) ) {
 				return null;
 			}
-
 			$is_weekofyear = true;
 		}
-
 		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
 		if ( null === $after_close ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $position + 2, $after_close - 1 );
 		if ( null === $arguments || ! in_array( count( $arguments ), array( 1, 2 ), true ) ) {
 			return null;
 		}
-
 		if ( $is_weekofyear && 1 !== count( $arguments ) ) {
 			return null;
 		}
-
 		$mode = $is_weekofyear ? 3 : 0;
 		if ( 2 === count( $arguments ) ) {
 			$mode = $this->get_mysql_supported_week_mode_argument( $tokens, $arguments[1]['start'], $arguments[1]['end'] );
@@ -42071,7 +41719,6 @@ $wp_mysql_%1$s_domain$',
 				return null;
 			}
 		}
-
 		return array(
 			'expression_start' => $arguments[0]['start'],
 			'expression_end'   => $arguments[0]['end'],
@@ -42088,20 +41735,17 @@ $wp_mysql_%1$s_domain$',
 			) {
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::WEEK_SYMBOL !== $tokens[ $i ]->id ) {
 				$function_name = $this->get_mysql_identifier_token_value( $tokens[ $i ] );
 				if ( null === $function_name || 0 !== strcasecmp( $function_name, 'weekofyear' ) ) {
 					continue;
 				}
 			}
-
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $i + 1, $end );
 			if ( null === $after_close || null === $this->get_mysql_week_function_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -42117,12 +41761,10 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$mode = $tokens[ $start ]->get_value();
 		if ( ! in_array( $mode, array( '0', '1', '2', '3', '4', '5', '6', '7' ), true ) ) {
 			return null;
 		}
-
 		return (int) $mode;
 	}
 
@@ -42140,7 +41782,6 @@ $wp_mysql_%1$s_domain$',
 		if ( isset( $mode_methods[ $mode ] ) ) {
 			return $this->{$mode_methods[ $mode ]}( $timestamp_sql );
 		}
-
 		if ( 3 === $mode ) {
 			return sprintf(
 				'CAST(TO_CHAR(%s, %s) AS integer)',
@@ -42148,7 +41789,6 @@ $wp_mysql_%1$s_domain$',
 				$this->connection->quote( 'IW' )
 			);
 		}
-
 		throw new InvalidArgumentException( 'Unsupported MySQL WEEK() mode.' );
 	}
 
@@ -42159,7 +41799,6 @@ $wp_mysql_%1$s_domain$',
 			"(CASE WHEN EXTRACT(ISODOW FROM %1\$s) <= 4 THEN DATE_TRUNC('week', %1\$s) ELSE DATE_TRUNC('week', %1\$s) + INTERVAL '1 week' END)",
 			$year_start_sql
 		);
-
 		return $this->get_postgresql_mysql_zero_based_week_index_sql( $timestamp_sql, $week_start_sql, $first_week_start_sql );
 	}
 
@@ -42168,7 +41807,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$bounds['expression_start'],
@@ -42178,7 +41816,6 @@ $wp_mysql_%1$s_domain$',
 		$sql            = 'dayofweek' === $bounds['function']
 			? sprintf( 'CAST(EXTRACT(DOW FROM %s) AS integer) + 1', $timestamp_sql )
 			: sprintf( 'CAST(EXTRACT(ISODOW FROM %s) AS integer) - 1', $timestamp_sql );
-
 		return $this->get_postgresql_mysql_expression_translation( $sql, WP_MySQL_Lexer::CAST_SYMBOL, $bounds['close'] );
 	}
 
@@ -42187,22 +41824,18 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $function_name ) {
 			return null;
 		}
-
 		$function_name = strtolower( $function_name );
 		if ( 'dayofweek' !== $function_name && 'weekday' !== $function_name ) {
 			return null;
 		}
-
 		$bounds = $this->get_mysql_function_call_bounds( $tokens, $position, $end, $function_name );
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 		if ( null === $arguments || 1 !== count( $arguments ) ) {
 			return null;
 		}
-
 		return array(
 			'function'         => $function_name,
 			'expression_start' => $arguments[0]['start'],
@@ -42216,7 +41849,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$bounds['expression_start'],
@@ -42248,7 +41880,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $sql ) {
 			return null;
 		}
-
 		return $this->get_postgresql_mysql_expression_translation( $sql, WP_MySQL_Lexer::CASE_SYMBOL, $bounds['close'] );
 	}
 
@@ -42263,17 +41894,14 @@ $wp_mysql_%1$s_domain$',
 		if ( null !== $if_sql ) {
 			return $if_sql;
 		}
-
 		$searched_case = $this->get_mysql_case_expression_branches( $tokens, $start, $end, false );
 		if ( null !== $searched_case ) {
 			return $this->get_postgresql_mysql_finite_date_format_case_choice_sql( $tokens, $searched_case, $expression_sql, $force_string );
 		}
-
 		$simple_case = $this->get_mysql_case_expression_branches( $tokens, $start, $end, true );
 		if ( null === $simple_case ) {
 			return null;
 		}
-
 		return $this->get_postgresql_mysql_finite_date_format_case_choice_sql( $tokens, $simple_case, $expression_sql, $force_string );
 	}
 
@@ -42282,12 +41910,10 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds || $bounds['close'] + 1 !== $end || 'if' !== $bounds['function'] ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 		if ( null === $arguments || 3 !== count( $arguments ) ) {
 			return null;
 		}
-
 		$truthy_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
 			$tokens,
 			$arguments[1]['start'],
@@ -42305,7 +41931,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $truthy_sql || null === $falsy_sql ) {
 			return null;
 		}
-
 		$condition_argument_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$arguments[0]['start'],
@@ -42318,7 +41943,6 @@ $wp_mysql_%1$s_domain$',
 		)
 			? '(' . $condition_argument_sql . ')'
 			: $this->get_postgresql_mysql_truthy_expression_sql( $condition_argument_sql );
-
 		return sprintf( 'CASE WHEN %s THEN %s ELSE %s END', $condition_sql, $truthy_sql, $falsy_sql );
 	}
 
@@ -42338,7 +41962,6 @@ $wp_mysql_%1$s_domain$',
 			if ( null === $branch_sql ) {
 				return null;
 			}
-
 			if ( null === $value_sql ) {
 				$condition_argument_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $branch['condition_start'], $branch['condition_end'] );
 				$condition_sql          = $this->is_mysql_boolean_condition_expression( $tokens, $branch['condition_start'], $branch['condition_end'] )
@@ -42351,10 +41974,8 @@ $wp_mysql_%1$s_domain$',
 					$this->translate_mysql_token_sequence_to_postgresql( $tokens, $branch['compare_start'], $branch['compare_end'] )
 				);
 			}
-
 			$parts[] = sprintf( 'WHEN %s THEN %s', $condition_sql, $branch_sql );
 		}
-
 		$else_sql = 'NULL';
 		if ( null !== $case_ranges['else'] ) {
 			$else_sql = $this->get_postgresql_mysql_date_format_constant_branch_sql(
@@ -42368,10 +41989,8 @@ $wp_mysql_%1$s_domain$',
 				return null;
 			}
 		}
-
 		$parts[] = 'ELSE ' . $else_sql;
 		$parts[] = 'END';
-
 		return implode( ' ', $parts );
 	}
 
@@ -42387,7 +42006,6 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$branches                = array();
 		$case_depth              = 0;
 		$paren_depth             = 0;
@@ -42407,7 +42025,6 @@ $wp_mysql_%1$s_domain$',
 			) {
 				return false;
 			}
-
 			$branches[]   = array(
 				( $simple_case ? 'compare_start' : 'condition_start' ) => $test_start,
 				( $simple_case ? 'compare_end' : 'condition_end' ) => $test_end,
@@ -42417,18 +42034,14 @@ $wp_mysql_%1$s_domain$',
 			$test_start   = null;
 			$test_end     = null;
 			$result_start = null;
-
 			return true;
 		};
-
 		for ( $i = $start + 1; $i < $end; $i++ ) {
 			$token_id = $tokens[ $i ]->id;
-
 			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token_id ) {
 				++$paren_depth;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token_id ) {
 				--$paren_depth;
 				if ( $paren_depth < 0 ) {
@@ -42436,25 +42049,20 @@ $wp_mysql_%1$s_domain$',
 				}
 				continue;
 			}
-
 			if ( 0 !== $paren_depth ) {
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::CASE_SYMBOL === $token_id ) {
 				++$case_depth;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id && $case_depth > 0 ) {
 				--$case_depth;
 				continue;
 			}
-
 			if ( 0 !== $case_depth ) {
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::WHEN_SYMBOL === $token_id ) {
 				if ( null !== $else_start ) {
 					return null;
@@ -42470,11 +42078,9 @@ $wp_mysql_%1$s_domain$',
 				if ( null !== $test_start || null !== $test_end ) {
 					return null;
 				}
-
 				$test_start = $i + 1;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::THEN_SYMBOL === $token_id ) {
 				if (
 					( $simple_case && null === $value_end )
@@ -42486,21 +42092,17 @@ $wp_mysql_%1$s_domain$',
 				) {
 					return null;
 				}
-
 				$test_end     = $i;
 				$result_start = $i + 1;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::ELSE_SYMBOL === $token_id ) {
 				if ( null !== $else_start || null === $result_start || ! $finalize_current_branch( $i ) ) {
 					return null;
 				}
-
 				$else_start = $i + 1;
 				continue;
 			}
-
 			if ( WP_MySQL_Lexer::END_SYMBOL === $token_id ) {
 				if ( $i !== $end - 1 || ( $simple_case && null === $value_end ) ) {
 					return null;
@@ -42514,7 +42116,6 @@ $wp_mysql_%1$s_domain$',
 				if ( null !== $else_start && $else_start >= $i ) {
 					return null;
 				}
-
 				$case_ranges = array(
 					'branches' => $branches,
 					'else'     => null === $else_start ? null : array(
@@ -42526,11 +42127,9 @@ $wp_mysql_%1$s_domain$',
 					$case_ranges['value_start'] = $value_start;
 					$case_ranges['value_end']   = $value_end;
 				}
-
 				return $case_ranges;
 			}
 		}
-
 		return null;
 	}
 
@@ -42539,11 +42138,9 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $format ) {
 			return null;
 		}
-
 		if ( $format['is_null'] ) {
 			return 'NULL';
 		}
-
 		return $force_string
 			? $this->get_postgresql_mysql_generic_date_format_sql( $format['value'], $expression_sql, false )
 			: $this->get_postgresql_mysql_date_format_sql( $format['value'], $expression_sql );
@@ -42554,12 +42151,10 @@ $wp_mysql_%1$s_domain$',
 			if ( null === $this->get_mysql_function_call_bounds( $tokens, $i, $end, 'date_format' ) ) {
 				continue;
 			}
-
 			if ( null === $this->get_mysql_date_format_call_bounds( $tokens, $i, $end ) ) {
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -42568,7 +42163,6 @@ $wp_mysql_%1$s_domain$',
 		if ( ! isset( $tokens[0] ) ) {
 			return false;
 		}
-
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 		$end           = null === $statement_end ? count( $tokens ) : $statement_end;
 		foreach ( $scanner_names as $scanner_name ) {
@@ -42576,7 +42170,6 @@ $wp_mysql_%1$s_domain$',
 				return true;
 			}
 		}
-
 		return false;
 	}
 
@@ -42585,7 +42178,6 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds || null === $bounds['format'] ) {
 			return null;
 		}
-
 		return $bounds;
 	}
 
@@ -42594,19 +42186,12 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 		if ( null === $arguments || 2 !== count( $arguments ) ) {
 			return null;
 		}
-
-		$format_constant = $this->get_mysql_constant_string_expression_value(
-			$tokens,
-			$arguments[1]['start'],
-			$arguments[1]['end']
-		);
+		$format_constant = $this->get_mysql_constant_string_argument_value( $tokens, $arguments[1] );
 		$format          = null !== $format_constant && ! $format_constant['is_null'] ? $format_constant['value'] : null;
-
 		return array(
 			'format'           => $format,
 			'format_is_null'   => null !== $format_constant && $format_constant['is_null'],
@@ -42635,7 +42220,6 @@ $wp_mysql_%1$s_domain$',
 				$date_time_pattern,
 				sprintf( $numeric_format[0], $expression_text_sql )
 			);
-
 			return sprintf(
 				'CASE WHEN %1$s THEN %2$s ELSE CAST(%3$s AS double precision) END',
 				$zero_date_condition,
@@ -42647,20 +42231,9 @@ $wp_mysql_%1$s_domain$',
 				)
 			);
 		}
-
 		if ( '%Y-%m-%d' === $format ) {
-			$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
-
-			return sprintf(
-				'CASE WHEN %1$s THEN NULL WHEN %2$s THEN SUBSTRING(%3$s FROM 1 FOR 10) ELSE TO_CHAR(%4$s, %5$s) END',
-				$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
-				$this->get_postgresql_zero_date_condition_sql( $expression_text_sql ),
-				$expression_text_sql,
-				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql ),
-				$this->connection->quote( 'YYYY-MM-DD' )
-			);
+			return $this->get_postgresql_mysql_ymd_format_sql( $expression_sql );
 		}
-
 		return $this->get_postgresql_mysql_generic_date_format_sql( $format, $expression_sql );
 	}
 
@@ -42685,7 +42258,6 @@ $wp_mysql_%1$s_domain$',
 				$formatted_sql
 			);
 		}
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL OR %2$s THEN NULL WHEN %3$s THEN %4$s ELSE %5$s END',
 			$expression_text_sql,
@@ -42704,7 +42276,6 @@ $wp_mysql_%1$s_domain$',
 			},
 			true
 		);
-
 		return null === $sql ? 'NULL' : $sql;
 	}
 
@@ -42712,40 +42283,32 @@ $wp_mysql_%1$s_domain$',
 		$fragments = array();
 		$literal   = '';
 		$length    = strlen( $format );
-
 		for ( $i = 0; $i < $length; $i++ ) {
 			if ( '%' !== $format[ $i ] ) {
 				$literal .= $format[ $i ];
 				continue;
 			}
-
 			if ( $i + 1 >= $length ) {
 				$literal .= '%';
 				continue;
 			}
-
 			if ( '' !== $literal ) {
 				$fragments[] = $this->connection->quote( $literal );
 				$literal     = '';
 			}
-
 			$fragment = $specifier_callback( $format[ ++$i ] );
 			if ( null === $fragment ) {
 				if ( $null_on_known_unrenderable && $this->is_postgresql_mysql_date_format_known_specifier( $format[ $i ] ) ) {
 					return null;
 				}
-
 				$literal .= $format[ $i ];
 				continue;
 			}
-
 			$fragments[] = $fragment;
 		}
-
 		if ( '' !== $literal ) {
 			$fragments[] = $this->connection->quote( $literal );
 		}
-
 		return empty( $fragments ) ? "''" : implode( ' || ', $fragments );
 	}
 
@@ -42763,40 +42326,32 @@ $wp_mysql_%1$s_domain$',
 				return sprintf( 'SUBSTRING(%s FROM %d FOR %d)', $expression_text_sql, $range[1], $range[2] );
 			}
 		}
-
 		foreach ( array_chunk( array( 'c', 6, 2, 'e', 9, 2 ), 3 ) as $range ) {
 			if ( $range[0] === $specifier ) {
 				return sprintf( 'CAST(CAST(SUBSTRING(%s FROM %d FOR %d) AS integer) AS text)', $expression_text_sql, $range[1], $range[2] );
 			}
 		}
-
 		foreach ( array_chunk( array( 'H', 12, 'i', 15, 'S', 18, 's', 18 ), 2 ) as $range ) {
 			if ( $range[0] === $specifier ) {
 				return $this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, $range[1], 2 );
 			}
 		}
-
 		if ( '%' === $specifier ) {
 			return $this->connection->quote( '%' );
 		}
-
 		if ( 'D' === $specifier ) {
 			return $this->get_postgresql_mysql_day_with_suffix_sql( sprintf( 'CAST(SUBSTRING(%s FROM 9 FOR 2) AS integer)', $expression_text_sql ) );
 		}
-
 		$hour_12_sql = $this->get_postgresql_mysql_zero_date_hour_12_sql( $expression_text_sql );
 		if ( 'h' === $specifier || 'I' === $specifier ) {
 			return sprintf( "LPAD(CAST(%s AS text), 2, '0')", $hour_12_sql );
 		}
-
 		if ( 'k' === $specifier ) {
 			return sprintf( 'CAST(CAST(%s AS integer) AS text)', $this->get_postgresql_mysql_zero_date_time_part_sql( $expression_text_sql, 12, 2 ) );
 		}
-
 		if ( 'l' === $specifier ) {
 			return sprintf( 'CAST(%s AS text)', $hour_12_sql );
 		}
-
 		if ( 'T' === $specifier || 'r' === $specifier ) {
 			$time_sql = sprintf(
 				"%1\$s || ':' || %2\$s || ':' || %3\$s",
@@ -42806,15 +42361,12 @@ $wp_mysql_%1$s_domain$',
 			);
 			return 'T' === $specifier ? $time_sql : sprintf( "%s || ' ' || %s", $time_sql, $this->get_postgresql_mysql_zero_date_meridiem_sql( $expression_text_sql ) );
 		}
-
 		if ( 'p' === $specifier ) {
 			return $this->get_postgresql_mysql_zero_date_meridiem_sql( $expression_text_sql );
 		}
-
 		if ( 'f' === $specifier ) {
 			return $this->get_postgresql_mysql_zero_date_microsecond_sql( $expression_text_sql );
 		}
-
 		return null;
 	}
 
@@ -42849,12 +42401,11 @@ $wp_mysql_%1$s_domain$',
 	}
 
 	private function get_postgresql_mysql_dynamic_date_format_sql( string $format_sql, string $expression_sql ): string {
-		$timestamp_sql        = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
-		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
-		$format_text_sql      = sprintf( 'CAST(%s AS text)', $format_sql );
-		$empty_date_condition = $this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql );
-		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
-
+		$timestamp_sql           = $this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql );
+		$expression_text_sql     = sprintf( 'CAST(%s AS text)', $expression_sql );
+		$format_text_sql         = sprintf( 'CAST(%s AS text)', $format_sql );
+		$empty_date_condition    = $this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql );
+		$zero_date_condition     = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
 		$character_sql           = sprintf(
 			'SUBSTRING(%s FROM "__wp_pg_mysql_date_format"."position" FOR 1)',
 			$format_text_sql
@@ -42884,19 +42435,8 @@ $wp_mysql_%1$s_domain$',
 			$format_text_sql,
 			$this->get_postgresql_mysql_dynamic_zero_date_format_specifier_case_sql( $specifier_sql, $expression_text_sql )
 		);
-		$formatter_sql           = sprintf(
-			'(WITH RECURSIVE "__wp_pg_mysql_date_format"("position", "formatted") AS (SELECT 1, CAST(\'\' AS text) UNION ALL SELECT %1$s, "formatted" || %2$s FROM "__wp_pg_mysql_date_format" WHERE "position" <= CHAR_LENGTH(%3$s)) SELECT "formatted" FROM "__wp_pg_mysql_date_format" ORDER BY "position" DESC LIMIT 1)',
-			$next_position_sql,
-			$fragment_sql,
-			$format_text_sql
-		);
-		$zero_date_formatter_sql = sprintf(
-			'(WITH RECURSIVE "__wp_pg_mysql_date_format"("position", "formatted") AS (SELECT 1, CAST(\'\' AS text) UNION ALL SELECT %1$s, "formatted" || %2$s FROM "__wp_pg_mysql_date_format" WHERE "position" <= CHAR_LENGTH(%3$s)) SELECT "formatted" FROM "__wp_pg_mysql_date_format" ORDER BY "position" DESC LIMIT 1)',
-			$next_position_sql,
-			$zero_date_fragment_sql,
-			$format_text_sql
-		);
-
+		$formatter_sql           = $this->get_postgresql_mysql_dynamic_date_format_formatter_sql( $next_position_sql, $fragment_sql, $format_text_sql );
+		$zero_date_formatter_sql = $this->get_postgresql_mysql_dynamic_date_format_formatter_sql( $next_position_sql, $zero_date_fragment_sql, $format_text_sql );
 		return sprintf(
 			'CASE WHEN %1$s IS NULL OR %2$s IS NULL OR %3$s THEN NULL WHEN %4$s THEN %5$s ELSE %6$s END',
 			$expression_text_sql,
@@ -42905,6 +42445,15 @@ $wp_mysql_%1$s_domain$',
 			$zero_date_condition,
 			$zero_date_formatter_sql,
 			$formatter_sql
+		);
+	}
+
+	private function get_postgresql_mysql_dynamic_date_format_formatter_sql( string $next_position_sql, string $fragment_sql, string $format_text_sql ): string {
+		return sprintf(
+			'(WITH RECURSIVE "__wp_pg_mysql_date_format"("position", "formatted") AS (SELECT 1, CAST(\'\' AS text) UNION ALL SELECT %1$s, "formatted" || %2$s FROM "__wp_pg_mysql_date_format" WHERE "position" <= CHAR_LENGTH(%3$s)) SELECT "formatted" FROM "__wp_pg_mysql_date_format" ORDER BY "position" DESC LIMIT 1)',
+			$next_position_sql,
+			$fragment_sql,
+			$format_text_sql
 		);
 	}
 
@@ -42918,7 +42467,6 @@ $wp_mysql_%1$s_domain$',
 				$this->get_postgresql_mysql_zero_date_format_specifier_sql( $specifier, $expression_text_sql )
 			);
 		}
-
 		$null_specifiers = array_unique(
 			array_merge(
 				array_keys( $this->get_postgresql_mysql_date_format_to_char_formats() ),
@@ -42929,18 +42477,12 @@ $wp_mysql_%1$s_domain$',
 			if ( null !== $this->get_postgresql_mysql_zero_date_format_specifier_sql( $specifier, $expression_text_sql ) ) {
 				continue;
 			}
-
 			$cases[] = sprintf(
 				'WHEN %s THEN NULL',
 				$this->connection->quote( $specifier )
 			);
 		}
-
-			return sprintf(
-				'CASE %1$s %2$s ELSE %1$s END',
-				$specifier_sql,
-				implode( ' ', $cases )
-			);
+		return $this->get_postgresql_mysql_date_format_specifier_case_sql( $specifier_sql, $cases );
 	}
 
 	private function get_postgresql_mysql_dynamic_date_format_specifier_case_sql( string $specifier_sql, string $timestamp_sql ): string {
@@ -42953,61 +42495,37 @@ $wp_mysql_%1$s_domain$',
 				$this->connection->quote( $format )
 			);
 		}
-
-		$cases[] = sprintf(
-			'WHEN %s THEN %s',
-			$this->connection->quote( '%' ),
-			$this->connection->quote( '%' )
-		);
-		$cases[] = sprintf(
-			'WHEN %s THEN %s',
-			$this->connection->quote( 'D' ),
-			$this->get_postgresql_mysql_day_with_suffix_sql(
-				sprintf( 'CAST(EXTRACT(DAY FROM %s) AS integer)', $timestamp_sql )
-			)
-		);
-		$cases[] = sprintf(
-			'WHEN %s THEN CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)',
-			$this->connection->quote( 'w' ),
-			$timestamp_sql
-		);
-		foreach ( array( 'U', 'u', 'V', 'v', 'X', 'x' ) as $week_specifier ) {
+		foreach ( array( '%', 'D', 'w', 'U', 'u', 'V', 'v', 'X', 'x' ) as $specifier ) {
 			$cases[] = sprintf(
 				'WHEN %s THEN %s',
-				$this->connection->quote( $week_specifier ),
-				$this->get_postgresql_mysql_date_format_week_specifier_sql( $week_specifier, $timestamp_sql )
+				$this->connection->quote( $specifier ),
+				$this->get_postgresql_mysql_date_format_specifier_sql( $specifier, $timestamp_sql )
 			);
 		}
+		return $this->get_postgresql_mysql_date_format_specifier_case_sql( $specifier_sql, $cases );
+	}
 
-			return sprintf(
-				'CASE %1$s %2$s ELSE %1$s END',
-				$specifier_sql,
-				implode( ' ', $cases )
-			);
+	private function get_postgresql_mysql_date_format_specifier_case_sql( string $specifier_sql, array $cases ): string {
+		return sprintf( 'CASE %1$s %2$s ELSE %1$s END', $specifier_sql, implode( ' ', $cases ) );
 	}
 
 	private function get_postgresql_mysql_date_format_specifier_sql( string $specifier, string $timestamp_sql ): ?string {
 		$to_char_formats = $this->get_postgresql_mysql_date_format_to_char_formats();
-
 		if ( '%' === $specifier ) {
 			return $this->connection->quote( '%' );
 		}
-
 		if ( 'D' === $specifier ) {
 			return $this->get_postgresql_mysql_day_with_suffix_sql(
 				sprintf( 'CAST(EXTRACT(DAY FROM %s) AS integer)', $timestamp_sql )
 			);
 		}
-
 		if ( 'w' === $specifier ) {
 			return sprintf( 'CAST(CAST(EXTRACT(DOW FROM %s) AS integer) AS text)', $timestamp_sql );
 		}
-
 		$week_sql = $this->get_postgresql_mysql_date_format_week_specifier_sql( $specifier, $timestamp_sql );
 		if ( null !== $week_sql ) {
 			return $week_sql;
 		}
-
 		if ( isset( $to_char_formats[ $specifier ] ) ) {
 			return sprintf(
 				'TO_CHAR(%s, %s)',
@@ -43015,7 +42533,6 @@ $wp_mysql_%1$s_domain$',
 				$this->connection->quote( $to_char_formats[ $specifier ] )
 			);
 		}
-
 		return null;
 	}
 
@@ -43038,7 +42555,6 @@ $wp_mysql_%1$s_domain$',
 				$this->{$zero_padded_week_methods[ $specifier ]}( $timestamp_sql )
 			);
 		}
-
 		$to_char_formats = array(
 			'v' => 'IW',
 			'x' => 'IYYY',
@@ -43050,12 +42566,10 @@ $wp_mysql_%1$s_domain$',
 				$this->connection->quote( $to_char_formats[ $specifier ] )
 			);
 		}
-
 		if ( 'X' === $specifier ) {
 			$week_start_sql       = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
 			$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 			$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
-
 			return sprintf(
 				"CASE WHEN %1\$s IS NULL THEN NULL WHEN %2\$s < %3\$s THEN TO_CHAR(%4\$s - INTERVAL '1 year', 'YYYY') ELSE TO_CHAR(%4\$s, 'YYYY') END",
 				$timestamp_sql,
@@ -43064,7 +42578,6 @@ $wp_mysql_%1$s_domain$',
 				$year_start_sql
 			);
 		}
-
 		return null;
 	}
 
@@ -43072,7 +42585,6 @@ $wp_mysql_%1$s_domain$',
 		$week_start_sql       = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
 		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 		$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
-
 		return $this->get_postgresql_mysql_zero_based_week_index_sql( $timestamp_sql, $week_start_sql, $first_week_start_sql );
 	}
 
@@ -43082,7 +42594,6 @@ $wp_mysql_%1$s_domain$',
 		$first_week_start_sql    = $this->get_postgresql_mysql_first_sunday_of_year_sql( $year_start_sql );
 		$previous_year_start_sql = sprintf( "(%s - INTERVAL '1 year')", $year_start_sql );
 		$previous_first_week_sql = $this->get_postgresql_mysql_first_sunday_of_year_sql( $previous_year_start_sql );
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
 			$timestamp_sql,
@@ -43096,7 +42607,6 @@ $wp_mysql_%1$s_domain$',
 		$week_start_sql       = $this->get_postgresql_mysql_sunday_week_start_sql( $timestamp_sql );
 		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 		$first_week_start_sql = $this->get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( $year_start_sql );
-
 		return $this->get_postgresql_mysql_zero_based_week_index_sql( $timestamp_sql, $week_start_sql, $first_week_start_sql );
 	}
 
@@ -43104,7 +42614,6 @@ $wp_mysql_%1$s_domain$',
 		$week_start_sql       = sprintf( "DATE_TRUNC('week', %s)", $timestamp_sql );
 		$year_start_sql       = sprintf( "DATE_TRUNC('year', %s)", $timestamp_sql );
 		$first_week_start_sql = $this->get_postgresql_mysql_first_monday_of_year_sql( $year_start_sql );
-
 		return $this->get_postgresql_mysql_zero_based_week_index_sql( $timestamp_sql, $week_start_sql, $first_week_start_sql );
 	}
 
@@ -43125,7 +42634,6 @@ $wp_mysql_%1$s_domain$',
 		$next_year_start_sql     = sprintf( "(%s + INTERVAL '1 year')", $year_start_sql );
 		$previous_first_week_sql = $this->get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( $previous_year_start_sql );
 		$next_first_week_sql     = $this->get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( $next_year_start_sql );
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s >= %5$s THEN 1 WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
 			$timestamp_sql,
@@ -43142,7 +42650,6 @@ $wp_mysql_%1$s_domain$',
 		$first_week_start_sql    = $this->get_postgresql_mysql_first_monday_of_year_sql( $year_start_sql );
 		$previous_year_start_sql = sprintf( "(%s - INTERVAL '1 year')", $year_start_sql );
 		$previous_first_week_sql = $this->get_postgresql_mysql_first_monday_of_year_sql( $previous_year_start_sql );
-
 		return sprintf(
 			'CASE WHEN %1$s IS NULL THEN NULL WHEN %2$s < %3$s THEN CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %4$s)) / 604800) AS integer) + 1 ELSE CAST(FLOOR(EXTRACT(EPOCH FROM (%2$s - %3$s)) / 604800) AS integer) + 1 END',
 			$timestamp_sql,
@@ -43168,7 +42675,6 @@ $wp_mysql_%1$s_domain$',
 
 	private function get_postgresql_mysql_first_sunday_four_day_week_of_year_sql( string $year_start_sql ): string {
 		$week_start_sql = $this->get_postgresql_mysql_sunday_week_start_sql( $year_start_sql );
-
 		return sprintf(
 			"(CASE WHEN EXTRACT(DOW FROM %1\$s) <= 3 THEN %2\$s ELSE %2\$s + INTERVAL '1 week' END)",
 			$year_start_sql,
@@ -43195,13 +42701,11 @@ $wp_mysql_%1$s_domain$',
 		if ( null === $bounds ) {
 			return null;
 		}
-
 		$expression_sql = $this->translate_mysql_token_sequence_to_postgresql(
 			$tokens,
 			$bounds['expression_start'],
 			$bounds['expression_end']
 		);
-
 		return $this->get_postgresql_mysql_expression_translation(
 			$this->get_postgresql_zero_date_safe_extract_sql( $bounds['unit'], $expression_sql ),
 			$tokens[ $position ]->id,
@@ -43213,7 +42717,6 @@ $wp_mysql_%1$s_domain$',
 		$expression_text_sql  = sprintf( 'CAST(%s AS text)', $expression_sql );
 		$empty_date_condition = $this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql );
 		$zero_date_condition  = $this->get_postgresql_zero_date_condition_sql( $expression_text_sql );
-
 		if ( 'MICROSECOND' === $unit ) {
 			return sprintf(
 				"CASE WHEN %1\$s THEN NULL WHEN %2\$s THEN CAST(%3\$s AS integer) ELSE CAST(TO_CHAR(%4\$s, 'US') AS integer) END",
@@ -43223,7 +42726,6 @@ $wp_mysql_%1$s_domain$',
 				$this->get_postgresql_zero_date_safe_timestamp_sql( $expression_sql )
 			);
 		}
-
 		return sprintf(
 			'CASE WHEN %1$s THEN NULL WHEN %2$s THEN %3$s ELSE CAST(EXTRACT(%4$s FROM %5$s) AS integer) END',
 			$empty_date_condition,
@@ -43236,7 +42738,6 @@ $wp_mysql_%1$s_domain$',
 
 	private function get_postgresql_zero_date_safe_timestamp_sql( string $expression_sql ): string {
 		$expression_text_sql = sprintf( 'CAST(%s AS text)', $expression_sql );
-
 		return sprintf(
 			'CAST(CASE WHEN %1$s OR %2$s THEN NULL ELSE %3$s END AS timestamp)',
 			$this->get_postgresql_empty_temporal_condition_sql( $expression_text_sql ),
@@ -43251,7 +42752,6 @@ $wp_mysql_%1$s_domain$',
 
 	private function get_postgresql_zero_date_condition_sql( string $expression_text_sql ): string {
 		$date_text_pattern = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}'";
-
 		return sprintf(
 			'%1$s ~ %2$s AND (SUBSTRING(%1$s FROM 1 FOR 4) = \'0000\' OR SUBSTRING(%1$s FROM 6 FOR 2) = \'00\' OR SUBSTRING(%1$s FROM 9 FOR 2) = \'00\')',
 			$expression_text_sql,
@@ -43261,11 +42761,9 @@ $wp_mysql_%1$s_domain$',
 
 	private function get_postgresql_zero_date_extract_part_sql( string $unit, string $expression_text_sql ): string {
 		$date_time_text_pattern = "'^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'";
-
 		if ( 'DOY' === $unit ) {
 			return 'NULL';
 		}
-
 		$date_part_starts = array(
 			'YEAR'  => array( 1, 4 ),
 			'MONTH' => array( 6, 2 ),
@@ -43274,11 +42772,9 @@ $wp_mysql_%1$s_domain$',
 		if ( isset( $date_part_starts[ $unit ] ) ) {
 			return sprintf( 'CAST(SUBSTRING(%s FROM %d FOR %d) AS integer)', $expression_text_sql, $date_part_starts[ $unit ][0], $date_part_starts[ $unit ][1] );
 		}
-
 		if ( 'QUARTER' === $unit ) {
 			return sprintf( 'CAST(FLOOR((CAST(SUBSTRING(%s FROM 6 FOR 2) AS integer) + 2) / 3.0) AS integer)', $expression_text_sql );
 		}
-
 		$time_part_starts = array(
 			'HOUR'   => 12,
 			'MINUTE' => 15,
@@ -43287,7 +42783,6 @@ $wp_mysql_%1$s_domain$',
 		if ( ! isset( $time_part_starts[ $unit ] ) ) {
 			return sprintf( 'CAST(EXTRACT(%s FROM CAST(%s AS timestamp)) AS integer)', $unit, $expression_text_sql );
 		}
-
 		return sprintf(
 			'CASE WHEN %1$s ~ %2$s THEN CAST(SUBSTRING(%1$s FROM %3$d FOR 2) AS integer) ELSE 0 END',
 			$expression_text_sql,
@@ -43300,11 +42795,9 @@ $wp_mysql_%1$s_domain$',
 		if ( ! isset( $tokens[ $position ], $tokens[ $position + 1 ] ) ) {
 			return null;
 		}
-
 		if ( WP_MySQL_Lexer::EXTRACT_SYMBOL === $tokens[ $position ]->id ) {
 			return $this->get_mysql_extract_keyword_bounds( $tokens, $position, $end );
 		}
-
 		return $this->get_mysql_date_time_function_bounds( $tokens, $position, $end );
 	}
 
@@ -43316,17 +42809,14 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$unit = $this->get_mysql_date_time_extract_unit( $tokens[ $position + 2 ] );
 		if ( null === $unit ) {
 			return null;
 		}
-
 		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
 		if ( null === $after_close || $position + 4 >= $after_close - 1 ) {
 			return null;
 		}
-
 		return array(
 			'unit'             => $unit,
 			'expression_start' => $position + 4,
@@ -43344,12 +42834,10 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position + 1, $end );
 		if ( null === $after_close ) {
 			return null;
 		}
-
 		$close_position = $after_close - 1;
 		if (
 			$position + 2 >= $close_position
@@ -43362,7 +42850,6 @@ $wp_mysql_%1$s_domain$',
 		) {
 			return null;
 		}
-
 		return array(
 			'unit'             => $unit,
 			'expression_start' => $position + 2,
@@ -43386,12 +42873,10 @@ $wp_mysql_%1$s_domain$',
 		if ( isset( $units[ $token->id ] ) ) {
 			return $units[ $token->id ];
 		}
-
 		$name = $this->get_mysql_identifier_token_value( $token );
 		if ( null !== $name && 0 === strcasecmp( $name, 'dayofyear' ) ) {
 			return 'DOY';
 		}
-
 		return null;
 	}
 
