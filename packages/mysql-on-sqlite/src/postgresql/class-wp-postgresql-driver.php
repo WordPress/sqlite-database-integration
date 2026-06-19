@@ -21833,9 +21833,39 @@ ORDER BY t."TRIGGER_NAME"';
 		if ( $use_postgresql_catalog ) {
 			$sql = $this->get_show_index_postgresql_catalog_query();
 		} else {
-			$sql = $this->mysql_index_metadata_has_rows( $resolved_schema, $table_name )
-				? $this->get_show_index_metadata_query()
-				: $this->get_show_index_catalog_query();
+			if ( $this->mysql_index_metadata_has_rows( $resolved_schema, $table_name ) ) {
+				$index_metadata_table = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
+				$sql                  = sprintf(
+					'SELECT
+		%2$s
+	FROM (
+		SELECT
+			im.table_name AS "Table",
+			im.non_unique AS "Non_unique",
+			im.key_name AS "Key_name",
+			CAST(im.seq_in_index AS text) AS "Seq_in_index",
+			im.column_name AS "Column_name",
+				CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "Collation",
+			\'0\' AS "Cardinality",
+			im.sub_part AS "Sub_part",
+			NULL AS "Packed",
+			im.nullable AS "Null",
+				im.index_type AS "Index_type",
+				\'\' AS "Comment",
+				im.index_comment AS "Index_comment",
+				\'YES\' AS "Visible",
+			NULL AS "Expression",
+			im.index_ordinal AS postgresql_index_oid
+		FROM %1$s im
+	WHERE im.table_schema = ?
+		AND im.table_name = ?
+) AS show_index_rows',
+					$index_metadata_table,
+					$this->get_show_index_select_column_sql()
+				);
+			} else {
+				$sql = $this->get_show_index_catalog_query();
+			}
 		}
 		$params = array(
 			$resolved_schema,
@@ -22724,44 +22754,6 @@ show_index_rows AS (
 	 */
 	private function get_show_index_select_column_sql(): string {
 		return '"' . implode( '",' . "\n\t" . '"', $this->get_show_index_output_columns() ) . '"';
-	}
-
-	/**
-	 * Get the metadata-only query backing MySQL SHOW INDEX/SHOW INDEXES/SHOW KEYS.
-	 *
-	 * @return string SQL query.
-	 */
-	private function get_show_index_metadata_query(): string {
-		$index_metadata_table = $this->connection->quote_identifier( self::MYSQL_INDEX_METADATA_TABLE );
-
-		return sprintf(
-			'SELECT
-	%2$s
-FROM (
-	SELECT
-		im.table_name AS "Table",
-		im.non_unique AS "Non_unique",
-		im.key_name AS "Key_name",
-		CAST(im.seq_in_index AS text) AS "Seq_in_index",
-		im.column_name AS "Column_name",
-			CASE WHEN im.index_type = \'FULLTEXT\' THEN NULL ELSE COALESCE(im."collation", \'A\') END AS "Collation",
-		\'0\' AS "Cardinality",
-		im.sub_part AS "Sub_part",
-		NULL AS "Packed",
-		im.nullable AS "Null",
-			im.index_type AS "Index_type",
-			\'\' AS "Comment",
-			im.index_comment AS "Index_comment",
-			\'YES\' AS "Visible",
-		NULL AS "Expression",
-		im.index_ordinal AS postgresql_index_oid
-	FROM %1$s im
-	WHERE im.table_schema = ?
-		AND im.table_name = ?
-) AS show_index_rows',
-			$index_metadata_table,
-			$this->get_show_index_select_column_sql()
-		);
 	}
 
 	/**
