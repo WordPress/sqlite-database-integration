@@ -4571,18 +4571,7 @@ class WP_PostgreSQL_Driver {
 	 * @return bool Whether this is a metadata side table.
 	 */
 	private function is_mysql_schema_metadata_table_name( string $table_name ): bool {
-			return in_array(
-				$table_name,
-				array(
-					self::MYSQL_COLUMN_METADATA_TABLE,
-					self::MYSQL_INDEX_METADATA_TABLE,
-					self::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-					self::MYSQL_CHECK_METADATA_TABLE,
-					self::MYSQL_CHARSET_METADATA_TABLE,
-					self::MYSQL_TABLE_METADATA_TABLE,
-				),
-				true
-			);
+		return in_array( $table_name, $this->get_direct_information_schema_hidden_table_names(), true );
 	}
 
 	/**
