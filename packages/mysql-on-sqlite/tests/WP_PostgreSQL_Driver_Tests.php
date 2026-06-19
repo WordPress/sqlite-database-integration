@@ -34020,6 +34020,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'ts.spcname AS "TABLESPACE_NAME"', $sql );
 		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
+		$this->assertStringNotContainsString( 'FROM (', $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE, $sql );
 		$this->assertStringNotContainsString( WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE, $sql );
@@ -34238,6 +34239,11 @@ $wp_mysql_on_update$',
 
 			$this->assertNotNull( $sql, $relation );
 			foreach ( $metadata_tables as $metadata_table ) {
+				$this->assertStringNotContainsString(
+					$metadata_table,
+					$sql,
+					$relation . ' must not reserve ' . $metadata_table
+				);
 				$this->assertSame(
 					0,
 					preg_match( '/\b(?:FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
@@ -34449,16 +34455,19 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $columns_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "SECONDARY_ENGINE_ATTRIBUTE"', $columns_extensions_sql );
 		$this->assertStringContainsString( 'c.table_name NOT IN', $columns_extensions_sql );
+		$this->assertStringNotContainsString( 'FROM (', $columns_extensions_sql );
 
 		$table_constraints_extensions_sql = $get_sql( 'table_constraints_extensions' );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_constraint con', $table_constraints_extensions_sql );
-		$this->assertStringContainsString( 'tc."TABLE_NAME" AS "TABLE_NAME"', $table_constraints_extensions_sql );
+		$this->assertStringContainsString( 'table_class.relname AS "TABLE_NAME"', $table_constraints_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $table_constraints_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "SECONDARY_ENGINE_ATTRIBUTE"', $table_constraints_extensions_sql );
+		$this->assertStringNotContainsString( 'FROM (', $table_constraints_extensions_sql );
 
 		$schemata_extensions_sql = $get_sql( 'schemata_extensions' );
 		$this->assertStringContainsString( 'FROM information_schema.schemata s', $schemata_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "OPTIONS"', $schemata_extensions_sql );
+		$this->assertStringNotContainsString( 'FROM (', $schemata_extensions_sql );
 
 		$view_table_usage_sql = $get_sql( 'view_table_usage' );
 		$this->assertStringContainsString( 'FROM information_schema.view_table_usage vtu', $view_table_usage_sql );
@@ -34821,11 +34830,13 @@ $wp_mysql_on_update$',
 
 		$brief_sql = $get_sql( 'innodb_tablespaces_brief' );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $brief_sql );
-		$this->assertStringContainsString( 'f."FILE_NAME" AS "PATH"', $brief_sql );
+		$this->assertStringContainsString( 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"', $brief_sql );
+		$this->assertStringNotContainsString( 'FROM (', $brief_sql );
 
 		$datafiles_sql = $get_sql( 'innodb_datafiles' );
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_tablespace ts', $datafiles_sql );
-		$this->assertStringContainsString( 'ib."PATH" AS "PATH"', $datafiles_sql );
+		$this->assertStringContainsString( 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"', $datafiles_sql );
+		$this->assertStringNotContainsString( 'FROM (', $datafiles_sql );
 	}
 
 	/**

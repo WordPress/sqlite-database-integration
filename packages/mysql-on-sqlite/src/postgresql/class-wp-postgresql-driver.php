@@ -34699,7 +34699,9 @@ WHERE option_name IN (
 		}
 
 		$hidden_table_names        = $this->get_direct_information_schema_hidden_table_names();
-		$hidden_table_placeholders = implode( ', ', array_fill( 0, count( $hidden_table_names ), '?' ) );
+		$hidden_table_placeholders = empty( $hidden_table_names )
+			? $this->connection->quote( '' )
+			: implode( ', ', array_fill( 0, count( $hidden_table_names ), '?' ) );
 		$placeholders              = implode( ', ', array_fill( 0, count( $table_names ), '?' ) );
 		$stmt                      = $this->connection->query(
 			sprintf(
@@ -38310,8 +38312,10 @@ WHERE c.relkind IN (\'r\', \'p\')
 		}
 
 		if ( 'tablespaces_extensions' === $view ) {
-			return 'SELECT ts."TABLESPACE_NAME" AS "TABLESPACE_NAME", NULL AS "ENGINE_ATTRIBUTE"
-FROM (' . $this->get_direct_information_schema_relation_sql( 'tablespaces' ) . ') ts';
+			return 'SELECT
+	ts.spcname AS "TABLESPACE_NAME",
+	NULL AS "ENGINE_ATTRIBUTE"
+FROM pg_catalog.pg_tablespace ts';
 		}
 
 		if ( 'tablespaces' === $view ) {
@@ -38349,14 +38353,20 @@ FROM pg_catalog.pg_tablespace ts';
 		}
 
 		if ( 'innodb_tablespaces_brief' === $view ) {
-			return 'SELECT f."FILE_ID" AS "SPACE", f."TABLESPACE_NAME" AS "NAME", f."FILE_NAME" AS "PATH",
-	0 AS "FLAG", \'Single\' AS "SPACE_TYPE"
-FROM (' . $this->get_direct_information_schema_relation_sql( 'files' ) . ') f';
+			return 'SELECT
+	CAST(ts.oid AS bigint) AS "SPACE",
+	ts.spcname AS "NAME",
+	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH",
+	0 AS "FLAG",
+	\'Single\' AS "SPACE_TYPE"
+FROM pg_catalog.pg_tablespace ts';
 		}
 
 		if ( 'innodb_datafiles' === $view ) {
-			return 'SELECT ib."SPACE" AS "SPACE", ib."PATH" AS "PATH"
-FROM (' . $this->get_direct_information_schema_relation_sql( 'innodb_tablespaces_brief' ) . ') ib';
+			return 'SELECT
+	CAST(ts.oid AS bigint) AS "SPACE",
+	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"
+FROM pg_catalog.pg_tablespace ts';
 		}
 
 		if ( 'innodb_indexes' === $view ) {
@@ -38461,14 +38471,21 @@ WHERE c.relkind IN (\'r\', \'p\')
 		}
 
 		if ( 'columns_extensions' === $view ) {
-			return 'SELECT
-	c."TABLE_CATALOG" AS "TABLE_CATALOG",
-	c."TABLE_SCHEMA" AS "TABLE_SCHEMA",
-	c."TABLE_NAME" AS "TABLE_NAME",
-	c."COLUMN_NAME" AS "COLUMN_NAME",
+			return sprintf(
+				'SELECT
+	\'def\' AS "TABLE_CATALOG",
+	%1$s AS "TABLE_SCHEMA",
+	c.table_name AS "TABLE_NAME",
+	c.column_name AS "COLUMN_NAME",
 	NULL AS "ENGINE_ATTRIBUTE",
 	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
-FROM (' . $this->get_direct_information_schema_relation_sql( 'columns' ) . ') c';
+FROM information_schema.columns c
+WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(c.table_schema, 3) <> \'pg_\'
+	AND c.table_name NOT IN (%2$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
 		}
 
 		if ( 'table_constraints' === $view ) {
@@ -38925,23 +38942,41 @@ FROM (
 		}
 
 		if ( 'table_constraints_extensions' === $view ) {
-			return 'SELECT
-	tc."CONSTRAINT_CATALOG" AS "CONSTRAINT_CATALOG",
-	tc."CONSTRAINT_SCHEMA" AS "CONSTRAINT_SCHEMA",
-	tc."CONSTRAINT_NAME" AS "CONSTRAINT_NAME",
-	tc."TABLE_SCHEMA" AS "TABLE_SCHEMA",
-	tc."TABLE_NAME" AS "TABLE_NAME",
+			return sprintf(
+				'SELECT
+	\'def\' AS "CONSTRAINT_CATALOG",
+	%1$s AS "CONSTRAINT_SCHEMA",
+	CASE WHEN con.contype = \'p\' THEN \'PRIMARY\' ELSE con.conname END AS "CONSTRAINT_NAME",
+	%1$s AS "TABLE_SCHEMA",
+	table_class.relname AS "TABLE_NAME",
 	NULL AS "ENGINE_ATTRIBUTE",
 	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
-FROM (' . $this->get_direct_information_schema_relation_sql( 'table_constraints' ) . ') tc';
+FROM pg_catalog.pg_constraint con
+JOIN pg_catalog.pg_class table_class
+	ON table_class.oid = con.conrelid
+JOIN pg_catalog.pg_namespace table_ns
+	ON table_ns.oid = table_class.relnamespace
+WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
+	AND table_class.relkind IN (\'r\', \'p\')
+	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
+	AND table_class.relname NOT IN (%2$s)',
+				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
 		}
 
 		if ( 'schemata_extensions' === $view ) {
-			return 'SELECT
-	s."CATALOG_NAME" AS "CATALOG_NAME",
-	s."SCHEMA_NAME" AS "SCHEMA_NAME",
+			return sprintf(
+				'SELECT
+	\'def\' AS "CATALOG_NAME",
+	%1$s AS "SCHEMA_NAME",
 	NULL AS "OPTIONS"
-FROM (' . $this->get_direct_information_schema_relation_sql( 'schemata' ) . ') s';
+FROM information_schema.schemata s
+WHERE s.schema_name = \'information_schema\'
+	OR LEFT(s.schema_name, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 's.schema_name' )
+			);
 		}
 
 		if ( 'view_table_usage' === $view ) {
@@ -40170,6 +40205,10 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string[] Table names.
 	 */
 	private function get_direct_information_schema_hidden_table_names(): array {
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			return array();
+		}
+
 		return array_merge(
 			$this->get_mysql_schema_side_metadata_table_names(),
 			array( self::MYSQL_CHARSET_METADATA_TABLE )
@@ -40182,11 +40221,16 @@ WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
 	 * @return string SQL literal list.
 	 */
 	private function get_direct_information_schema_hidden_table_list_sql(): string {
+		$hidden_table_names = $this->get_direct_information_schema_hidden_table_names();
+		if ( empty( $hidden_table_names ) ) {
+			return $this->connection->quote( '' );
+		}
+
 		return implode(
 			', ',
 			array_map(
 				array( $this->connection, 'quote' ),
-				$this->get_direct_information_schema_hidden_table_names()
+				$hidden_table_names
 			)
 		);
 	}
