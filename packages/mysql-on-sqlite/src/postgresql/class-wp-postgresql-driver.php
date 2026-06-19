@@ -18854,12 +18854,6 @@ WHERE option_name IN (
 	/**
 	 * Translate supported MySQL target-list DELETE statements.
 	 *
-	 * PostgreSQL cannot delete from multiple target tables directly. First
-	 * materialize each target row ctid from the MySQL table-reference list, then
-	 * delete each target through writable CTEs and return the summed affected row
-	 * count. ORDER BY clauses are translated in the materialized source so
-	 * unsupported expressions fail closed before execution.
-	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL query, or null when unsupported.
 	 */
@@ -18906,20 +18900,12 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $table_references_start, $statement_end );
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $table_references_start, $statement_end );
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $table_references_start, $statement_end );
-		$order_end      = $limit_position ?? $statement_end;
-		if (
-			( null !== $order_position && null !== $where_position && $order_position < $where_position )
-			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
-			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
-			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
-		) {
+		$clauses = $this->get_mysql_joined_dml_clause_positions( $tokens, $table_references_start, $statement_end );
+		if ( null === $clauses ) {
 			return null;
 		}
 
-		$from_end = $where_position ?? $order_position ?? $limit_position ?? $statement_end;
+		$from_end = $clauses['body_end'];
 		if ( $table_references_start >= $from_end ) {
 			return null;
 		}
@@ -18988,9 +18974,9 @@ WHERE option_name IN (
 		}
 
 		$where_sql = '';
-		if ( null !== $where_position ) {
-			$where_end = $order_position ?? $limit_position ?? $statement_end;
-			if ( $where_position + 1 >= $where_end ) {
+		if ( null !== $clauses['where'] ) {
+			$where_end = $clauses['order'] ?? $clauses['limit'] ?? $statement_end;
+			if ( $clauses['where'] + 1 >= $where_end ) {
 				return null;
 			}
 
@@ -18998,7 +18984,7 @@ WHERE option_name IN (
 				$where = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
 					$query,
 					$tokens,
-					$where_position + 1,
+					$clauses['where'] + 1,
 					$where_end,
 					$information_schema_source_translation['context']
 				);
@@ -19007,13 +18993,13 @@ WHERE option_name IN (
 				}
 				$where_sql = ' WHERE ' . $where;
 			} else {
-				if ( ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end ) ) {
+				if ( ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $clauses['where'] + 1, $where_end ) ) {
 					return null;
 				}
 
 				$where     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 					$tokens,
-					$where_position + 1,
+					$clauses['where'] + 1,
 					$where_end,
 					$scope
 				);
@@ -19022,16 +19008,16 @@ WHERE option_name IN (
 		}
 
 		$order_sql = '';
-		if ( null !== $order_position ) {
-			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $order_end, $scope );
+		if ( null !== $clauses['order'] ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $clauses['order'], $clauses['order_end'], $scope );
 			if ( null === $order_sql ) {
 				return null;
 			}
 		}
 
 		$limit_sql = '';
-		if ( null !== $limit_position ) {
-			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+		if ( null !== $clauses['limit'] ) {
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $clauses['limit'], $statement_end, true );
 			if ( null === $limit_sql ) {
 				return null;
 			}
@@ -19651,13 +19637,6 @@ WHERE option_name IN (
 	/**
 	 * Translate supported INSERT ... ON DUPLICATE KEY UPDATE queries.
 	 *
-	 * WordPress emits MySQL upserts for a small set of VALUES inserts. Keep this
-	 * path structured and metadata-backed: explicit column-list VALUES inserts,
-	 * VALUES inserts whose missing column list can be inferred from table
-	 * metadata, simple INSERT ... SET assignments, and conservative INSERT ...
-	 * SELECT forms are supported. The conflict target must resolve to a known
-	 * primary/unique key.
-	 *
 	 * @param string $query MySQL query.
 	 * @return array|null PostgreSQL query data, or null when the query is unsupported.
 	 */
@@ -19903,7 +19882,7 @@ WHERE option_name IN (
 			}
 		}
 
-		$column_sql   = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) );
+		$column_sql   = $this->get_postgresql_dml_column_list_sql( $columns );
 		$conflict_sql = sprintf(
 			'ON CONFLICT (%s) DO UPDATE SET %s',
 			implode( ', ', $conflict_target['sql'] ),
@@ -19911,11 +19890,10 @@ WHERE option_name IN (
 		);
 		$upsert_query = array(
 			'action'               => 'upsert',
-			'sql'                  => sprintf(
-				'INSERT INTO %s (%s) %s %s',
+			'sql'                  => $this->get_postgresql_dml_insert_values_sql(
 				$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
-				$column_sql,
-				'VALUES ' . $this->get_postgresql_dml_values_rows_sql( $value_rows ),
+				$columns,
+				$value_rows,
 				$conflict_sql
 			),
 			'table_name'           => $table_name,
@@ -19934,11 +19912,10 @@ WHERE option_name IN (
 		if ( null !== $conflict_indexes && $this->has_duplicate_mysql_replace_conflict_value_rows( $value_rows, $probe_safe_rows, $conflict_indexes ) ) {
 			$statements = array();
 			foreach ( $value_rows as $values ) {
-				$statements[] = sprintf(
-					'INSERT INTO %s (%s) VALUES (%s) %s',
+				$statements[] = $this->get_postgresql_dml_insert_values_sql(
 					$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
-					$column_sql,
-					implode( ', ', $values ),
+					$columns,
+					array( $values ),
 					$conflict_sql
 				);
 			}
@@ -19963,12 +19940,6 @@ WHERE option_name IN (
 
 	/**
 	 * Translate conservative INSERT ... SELECT ... ON DUPLICATE KEY UPDATE queries.
-	 *
-	 * Single literal-row SELECTs can use the direct PostgreSQL ON CONFLICT shape.
-	 * Real SELECT sources are materialized once so duplicate incoming conflict
-	 * keys can replay one row at a time with MySQL's sequential upsert semantics.
-		 * AUTO_INCREMENT insert ID tracking uses literal rows when possible and
-		 * materialized source rows when runtime ordering is required.
 	 *
 	 * @param string           $table_name            Target table name.
 	 * @param string[]         $columns               Insert target columns.
@@ -21647,14 +21618,6 @@ WHERE option_name IN (
 	/**
 	 * Translate simple MySQL REPLACE statements to PostgreSQL.
 	 *
-	 * WordPress' wpdb::replace() emits VALUES rows with an explicit column list.
-	 * Columnless VALUES rows are supported when stored MySQL metadata can infer
-	 * the target columns. LOW_PRIORITY and DELAYED are accepted as compatibility
-	 * no-ops. For rows with a known WordPress unique key, use PostgreSQL's ON
-	 * CONFLICT update path and synthesize MySQL's affected-row count in query().
-	 * Without a known conflict column, fall back to a plain INSERT so PostgreSQL
-	 * still reports normal constraint and length errors.
-	 *
 	 * @param string $query MySQL query.
 	 * @return array|null PostgreSQL query data, or null when the query is unsupported.
 	 */
@@ -21779,11 +21742,10 @@ WHERE option_name IN (
 		);
 		$this->append_non_strict_dml_defaults_for_omitted_value_rows( $table_name, $columns, $value_rows, $column_metadata );
 
-		$sql = sprintf(
-			'INSERT INTO %s (%s) VALUES %s',
+		$sql = $this->get_postgresql_dml_insert_values_sql(
 			$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
-			implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
-			$this->get_postgresql_dml_values_rows_sql( $value_rows )
+			$columns,
+			$value_rows
 		);
 
 		$conflict_target                  = $this->get_mysql_replace_conflict_target(
@@ -21916,11 +21878,10 @@ WHERE option_name IN (
 		} elseif ( $has_duplicate_conflict_rows ) {
 			$statements = array();
 			foreach ( $value_rows as $values ) {
-				$statements[] = sprintf(
-					'INSERT INTO %s (%s) VALUES (%s) %s',
+				$statements[] = $this->get_postgresql_dml_insert_values_sql(
 					$this->get_postgresql_unqualified_dml_table_reference_sql( $table_name ),
-					implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
-					implode( ', ', $values ),
+					$columns,
+					array( $values ),
 					$conflict_sql
 				);
 			}
@@ -21933,11 +21894,6 @@ WHERE option_name IN (
 	/**
 	 * Build delete-then-insert statements for deterministic REPLACE rows.
 	 *
-	 * MySQL and SQLite REPLACE delete matching rows before inserting the new
-	 * row, which makes DELETE triggers, cascades, and omitted-column defaults
-	 * observable. Limit this emulation to conflict keys whose incoming values
-	 * are safe to evaluate in both the DELETE predicate and INSERT row.
-	 *
 	 * @param string   $table_name           Table name.
 	 * @param string[] $columns              Inserted column names.
 	 * @param array[]  $value_rows           Translated VALUES rows.
@@ -21948,7 +21904,6 @@ WHERE option_name IN (
 	 */
 	private function get_mysql_replace_delete_then_insert_statements( string $table_name, array $columns, array $value_rows, array $probe_safe_rows, array $conflict_index_groups, bool $sequential_statements ): ?array {
 		$quoted_table = $this->get_postgresql_unqualified_dml_table_reference_sql( $table_name );
-		$column_sql   = implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) );
 
 		$row_predicates = array();
 		foreach ( $value_rows as $row_index => $values ) {
@@ -21975,12 +21930,7 @@ WHERE option_name IN (
 					);
 				}
 
-				$statements[] = sprintf(
-					'INSERT INTO %s (%s) VALUES (%s)',
-					$quoted_table,
-					$column_sql,
-					implode( ', ', $values )
-				);
+				$statements[] = $this->get_postgresql_dml_insert_values_sql( $quoted_table, $columns, array( $values ) );
 			}
 
 			return $statements;
@@ -22010,14 +21960,26 @@ WHERE option_name IN (
 			);
 		}
 
-		$statements[] = sprintf(
+		$statements[] = $this->get_postgresql_dml_insert_values_sql( $quoted_table, $columns, $value_rows );
+
+		return $statements;
+	}
+
+	/** Render a PostgreSQL INSERT ... VALUES statement. */
+	private function get_postgresql_dml_insert_values_sql( string $table_sql, array $columns, array $value_rows, string $suffix = '' ): string {
+		$sql = sprintf(
 			'INSERT INTO %s (%s) VALUES %s',
-			$quoted_table,
-			$column_sql,
+			$table_sql,
+			$this->get_postgresql_dml_column_list_sql( $columns ),
 			$this->get_postgresql_dml_values_rows_sql( $value_rows )
 		);
 
-		return $statements;
+		return '' === $suffix ? $sql : $sql . ' ' . $suffix;
+	}
+
+	/** Render a PostgreSQL DML column list. */
+	private function get_postgresql_dml_column_list_sql( array $columns ): string {
+		return implode( ', ', array_map( array( $this->connection, 'quote_identifier' ), $columns ) );
 	}
 
 	/**
@@ -25358,11 +25320,6 @@ WHERE option_name IN (
 	/**
 	 * Translate supported MySQL outer-joined UPDATE statements.
 	 *
-	 * PostgreSQL UPDATE ... FROM does not preserve unmatched outer-join rows.
-	 * Select the target row ctid and computed assignment values through the
-	 * original joined table reference, then update by ctid from that derived
-	 * row set.
-	 *
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
 	 * @param int              $statement_end Final statement token, exclusive.
 	 * @return string|null PostgreSQL query, or null when unsupported.
@@ -25411,20 +25368,12 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
-		$order_end      = $limit_position ?? $statement_end;
-		if (
-			( null !== $order_position && null !== $where_position && $order_position < $where_position )
-			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
-			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
-			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
-		) {
+		$clauses = $this->get_mysql_joined_dml_clause_positions( $tokens, $set_position + 1, $statement_end );
+		if ( null === $clauses ) {
 			return null;
 		}
 
-		$set_end = $where_position ?? $order_position ?? $limit_position ?? $statement_end;
+		$set_end = $clauses['body_end'];
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -25442,18 +25391,18 @@ WHERE option_name IN (
 		}
 
 		$where_sql = '';
-		if ( null !== $where_position ) {
-			$where_end = $order_position ?? $limit_position ?? $statement_end;
+		if ( null !== $clauses['where'] ) {
+			$where_end = $clauses['order'] ?? $clauses['limit'] ?? $statement_end;
 			if (
-				$where_position + 1 >= $where_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+				$clauses['where'] + 1 >= $where_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $clauses['where'] + 1, $where_end )
 			) {
 				return null;
 			}
 
 			$where     = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
-				$where_position + 1,
+				$clauses['where'] + 1,
 				$where_end,
 				$scope
 			);
@@ -25461,76 +25410,57 @@ WHERE option_name IN (
 		}
 
 		$order_sql = '';
-		if ( null !== $order_position ) {
-			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $order_end, $scope );
+		if ( null !== $clauses['order'] ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $clauses['order'], $clauses['order_end'], $scope );
 			if ( null === $order_sql ) {
 				return null;
 			}
 		}
 
 		$limit_sql = '';
-		if ( null !== $limit_position ) {
-			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+		if ( null !== $clauses['limit'] ) {
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $clauses['limit'], $statement_end, true );
 			if ( null === $limit_sql ) {
 				return null;
 			}
 		}
 
-		$source_alias      = 'mysql_update_values';
-		$source_alias_sql  = $this->connection->quote_identifier( $source_alias );
 		$target_ctid_alias = 'mysql_update_target_ctid';
-		$target_alias_sql  = $this->connection->quote_identifier( $target_reference_alias );
-		$select_values     = array_merge(
-			array(
-				sprintf(
-					'%s.ctid AS %s',
-					$target_alias_sql,
-					$this->connection->quote_identifier( $target_ctid_alias )
-				),
-			),
-			$update_set_clause['select_sql']
-		);
-		$source_range_sql  = $this->translate_mysql_token_sequence_to_postgresql( $tokens, 1, $set_position );
-		if ( $this->mysql_scope_references_non_public_schema( $scope ) ) {
-			$source_range_sql = $this->translate_mysql_table_reference_range_to_postgresql( $tokens, 1, $set_position );
-			if ( null === $source_range_sql ) {
-				return null;
-			}
+		$source_range_sql  = $this->get_mysql_joined_update_source_range_sql( $tokens, 1, $set_position, $scope );
+		if ( null === $source_range_sql ) {
+			return null;
 		}
-		$source_sql = sprintf(
-			'(SELECT %s FROM %s%s%s%s) AS %s',
-			implode( ', ', $select_values ),
+		$source_sql = $this->get_mysql_joined_update_derived_source_sql(
 			$source_range_sql,
 			$where_sql,
 			$order_sql,
 			$limit_sql,
-			$source_alias_sql
+			$target_reference_alias,
+			$target_ctid_alias,
+			$update_set_clause['select_sql']
 		);
 
-		return sprintf(
-			'UPDATE %s SET %s FROM %s WHERE (%s = %s.%s) AND (%s)',
-			$this->get_postgresql_dml_table_reference_sql( $table_name, $alias ),
-			$update_set_clause['set_sql'],
+		return $this->get_mysql_joined_update_by_derived_source_sql(
+			$table_name,
+			$alias,
 			$source_sql,
-			$this->get_postgresql_dml_ctid_reference_sql( $alias ),
-			$source_alias_sql,
-			$this->connection->quote_identifier( $target_ctid_alias ),
-			$update_set_clause['changed_predicate_sql']
+			$target_ctid_alias,
+			$update_set_clause
 		);
 	}
 
-		/**
-		 * Translate a joined UPDATE SET clause for a derived source rewrite.
-		 *
-		 * @param string           $table_name Table name.
-		 * @param string|null      $alias      Target alias.
-		 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
-		 * @param int              $start      First SET-clause token position.
-		 * @param int              $end        Final SET-clause token position, exclusive.
-		 * @param array            $scope      Statement table scope.
-		 * @param array|null       $information_schema_context Optional direct information_schema context.
-		 * @return array{set_sql: string, select_sql: string[], changed_predicate_sql: string}|null PostgreSQL SET data, or null when unsupported.
-		 */
+	/**
+	 * Translate a joined UPDATE SET clause for a derived source rewrite.
+	 *
+	 * @param string           $table_name Table name.
+	 * @param string|null      $alias      Target alias.
+	 * @param WP_MySQL_Token[] $tokens     MySQL lexer token stream.
+	 * @param int              $start      First SET-clause token position.
+	 * @param int              $end        Final SET-clause token position, exclusive.
+	 * @param array            $scope      Statement table scope.
+	 * @param array|null       $information_schema_context Optional direct information_schema context.
+	 * @return array{set_sql: string, select_sql: string[], changed_predicate_sql: string}|null PostgreSQL SET data, or null when unsupported.
+	 */
 	private function translate_mysql_joined_update_set_clause_for_derived_source( string $table_name, ?string $alias, array $tokens, int $start, int $end, array $scope, ?array $information_schema_context = null ): ?array {
 		$column_metadata    = $this->get_mysql_dml_column_metadata_lookup( $table_name );
 		$assignments        = array();
@@ -25562,68 +25492,18 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$target_column_key   = strtolower( $target_column );
-			$target_metadata     = $column_metadata[ $target_column_key ] ?? null;
-			$coerced_default_sql = null;
-
-			if ( null !== $target_metadata ) {
-				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-			}
-
-			if (
-				null !== $target_metadata
-				&& ! $this->is_mysql_strict_sql_mode_active()
-				&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
-			) {
-				$coerced_default_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
-			}
-
-				$value_sql = $coerced_default_sql;
-			if ( null === $value_sql && null !== $target_metadata ) {
-				$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-			}
-			if ( null === $value_sql && null !== $target_metadata ) {
-				$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-			}
-			if ( null === $value_sql && null !== $information_schema_context ) {
-				$value_sql = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
-					null,
-					$tokens,
-					$value_start,
-					$assignment_end,
-					$information_schema_context
-				);
-				if ( null === $value_sql ) {
-					return null;
-				}
-			}
+			$target_column_key = strtolower( $target_column );
+			$target_metadata   = $column_metadata[ $target_column_key ] ?? null;
+			$value_sql         = $this->get_mysql_joined_update_assignment_value_sql(
+				$target_metadata,
+				$tokens,
+				$value_start,
+				$assignment_end,
+				$scope,
+				$information_schema_context
+			);
 			if ( null === $value_sql ) {
-				$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
-					$tokens,
-					$value_start,
-					$assignment_end,
-					$scope
-				);
-				$value_sql      = $expression_sql['sql'];
-				if (
-						$expression_sql['changed']
-						&& null !== $target_metadata
-						&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
-					) {
-					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
-				}
-			}
-			if ( null !== $target_metadata ) {
-				$guarded_value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
-					$target_metadata,
-					$tokens,
-					$value_start,
-					$assignment_end,
-					$value_sql
-				);
-				if ( null !== $guarded_value_sql ) {
-					$value_sql = $guarded_value_sql;
-				}
+				return null;
 			}
 
 			$value_alias     = 'mysql_update_value_' . $value_index;
@@ -25663,15 +25543,145 @@ WHERE option_name IN (
 		);
 	}
 
+	/** Translate a joined UPDATE assignment expression for a derived source. */
+	private function get_mysql_joined_update_assignment_value_sql( ?array $target_metadata, array $tokens, int $start, int $end, array $scope, ?array $information_schema_context = null ): ?string {
+		if ( null !== $target_metadata ) {
+			$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $start, $end );
+		}
+
+		$value_sql = null;
+		if (
+			null !== $target_metadata
+			&& ! $this->is_mysql_strict_sql_mode_active()
+			&& $this->is_mysql_null_token_sequence( $tokens, $start, $end )
+		) {
+			$value_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
+		}
+		if ( null === $value_sql && null !== $target_metadata ) {
+			$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $start, $end );
+		}
+		if ( null === $value_sql && null !== $target_metadata ) {
+			$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $start, $end );
+		}
+		if ( null === $value_sql && null !== $information_schema_context ) {
+			$value_sql = $this->translate_direct_information_schema_dml_predicate_to_postgresql(
+				null,
+				$tokens,
+				$start,
+				$end,
+				$information_schema_context
+			);
+			if ( null === $value_sql ) {
+				return null;
+			}
+		}
+		if ( null === $value_sql ) {
+			$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
+				$tokens,
+				$start,
+				$end,
+				$scope
+			);
+			$value_sql      = $expression_sql['sql'];
+			if (
+				$expression_sql['changed']
+				&& null !== $target_metadata
+				&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
+			) {
+				$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
+			}
+		}
+		if ( null !== $target_metadata ) {
+			$guarded_value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
+				$target_metadata,
+				$tokens,
+				$start,
+				$end,
+				$value_sql
+			);
+			if ( null !== $guarded_value_sql ) {
+				$value_sql = $guarded_value_sql;
+			}
+		}
+
+		return $value_sql;
+	}
+
+	/** Get optional WHERE, ORDER BY, and LIMIT positions for joined DML. */
+	private function get_mysql_joined_dml_clause_positions( array $tokens, int $start, int $statement_end ): ?array {
+		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $start, $statement_end );
+		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $start, $statement_end );
+		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $start, $statement_end );
+		$order_end      = $limit_position ?? $statement_end;
+		if (
+			( null !== $order_position && null !== $where_position && $order_position < $where_position )
+			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
+			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
+			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
+		) {
+			return null;
+		}
+
+		return array(
+			'where'     => $where_position,
+			'order'     => $order_position,
+			'limit'     => $limit_position,
+			'order_end' => $order_end,
+			'body_end'  => $where_position ?? $order_position ?? $limit_position ?? $statement_end,
+		);
+	}
+
+	/** Render a joined UPDATE source range. */
+	private function get_mysql_joined_update_source_range_sql( array $tokens, int $start, int $end, array $scope ): ?string {
+		if ( ! $this->mysql_scope_references_non_public_schema( $scope ) ) {
+			return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end );
+		}
+
+		return $this->translate_mysql_table_reference_range_to_postgresql( $tokens, $start, $end );
+	}
+
+	/** Render a materialized joined UPDATE source. */
+	private function get_mysql_joined_update_derived_source_sql( string $source_range_sql, string $where_sql, string $order_sql, string $limit_sql, string $target_alias, string $target_ctid_alias, array $assignment_select_sql ): string {
+		$select_values = array_merge(
+			array(
+				sprintf(
+					'%s.ctid AS %s',
+					$this->connection->quote_identifier( $target_alias ),
+					$this->connection->quote_identifier( $target_ctid_alias )
+				),
+			),
+			$assignment_select_sql
+		);
+
+		return sprintf(
+			'(SELECT %s FROM %s%s%s%s) AS %s',
+			implode( ', ', $select_values ),
+			$source_range_sql,
+			$where_sql,
+			$order_sql,
+			$limit_sql,
+			$this->connection->quote_identifier( 'mysql_update_values' )
+		);
+	}
+
+	/** Render an UPDATE that reads ctid and assignment values from a derived source. */
+	private function get_mysql_joined_update_by_derived_source_sql( string $table_name, ?string $alias, string $source_sql, string $target_ctid_alias, array $update_set_clause ): string {
+		$source_alias_sql = $this->connection->quote_identifier( 'mysql_update_values' );
+
+		return sprintf(
+			'UPDATE %s SET %s FROM %s WHERE (%s = %s.%s) AND (%s)',
+			$this->get_postgresql_dml_table_reference_sql( $table_name, $alias ),
+			$update_set_clause['set_sql'],
+			$source_sql,
+			$this->get_postgresql_dml_ctid_reference_sql( $alias ),
+			$source_alias_sql,
+			$this->connection->quote_identifier( $target_ctid_alias ),
+			$update_set_clause['changed_predicate_sql']
+		);
+	}
+
 	/**
 	 * Translate supported MySQL joined and multi-source UPDATE statements.
-	 *
-	 * PostgreSQL UPDATE ... FROM can represent MySQL single-target UPDATE
-	 * statements whose extra table references only qualify the target rows.
-	 * Assignments to any non-target table and NATURAL/RIGHT joins remain
-	 * unsupported. Bounded or ordered single-target joined updates select target
-	 * ctids through a derived source before updating so MySQL ORDER BY clauses
-	 * are translated and invalid expressions fail closed.
 	 *
 	 * @param string           $query         MySQL query.
 	 * @param WP_MySQL_Token[] $tokens        MySQL lexer token stream.
@@ -25710,75 +25720,25 @@ WHERE option_name IN (
 			);
 		}
 
-		$first_table             = $first_reference['table'];
-		$first_alias             = $first_reference['alias'];
-		$first_reference_alias   = null === $first_alias ? $first_table : $first_alias;
-		$scope                   = $this->get_mysql_single_table_scope( $first_table, $first_alias );
-		$from_parts              = array();
-		$join_predicates         = array();
-		$current_join_left_alias = $first_reference_alias;
-		$table_references        = array(
-			array(
-				'alias'     => $first_reference_alias,
-				'alias_key' => strtolower( $first_reference_alias ),
-				'table'     => $first_table,
-				'table_as'  => $first_alias,
-				'derived'   => false,
-				'sql'       => $this->get_postgresql_dml_table_reference_sql( $first_table, $first_alias ),
-			),
+		$source_plan = $this->get_mysql_joined_update_source_plan(
+			$tokens,
+			$position,
+			$set_position,
+			$first_reference
 		);
-
-		while ( $position < $set_position ) {
-			if ( WP_MySQL_Lexer::COMMA_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
-				++$position;
-				$source_alias     = null;
-				$source_reference = null;
-				if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $set_position, $scope, $from_parts, $source_alias, $source_reference ) ) {
-					return null;
-				}
-				if ( null === $source_reference ) {
-					return null;
-				}
-				$table_references[]      = $source_reference;
-				$current_join_left_alias = $source_alias;
-				continue;
-			}
-
-			if (
-				! $this->is_mysql_supported_inner_join_separator_at( $tokens, $position, $set_position )
-				|| ! $this->append_mysql_joined_update_inner_join(
-					$tokens,
-					$position,
-					$set_position,
-					$scope,
-					$from_parts,
-					$join_predicates,
-					$current_join_left_alias,
-					$table_references
-				)
-			) {
-				return null;
-			}
+		if ( null === $source_plan ) {
+			return null;
 		}
+		$scope            = $source_plan['scope'];
+		$join_predicates  = $source_plan['join_predicates'];
+		$table_references = $source_plan['table_references'];
 
-		if ( empty( $from_parts ) ) {
+		$clauses = $this->get_mysql_joined_dml_clause_positions( $tokens, $set_position + 1, $statement_end );
+		if ( null === $clauses ) {
 			return null;
 		}
 
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
-		$order_end      = $limit_position ?? $statement_end;
-		if (
-			( null !== $order_position && null !== $where_position && $order_position < $where_position )
-			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
-			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
-			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
-		) {
-			return null;
-		}
-
-		$set_end = $where_position ?? $order_position ?? $limit_position ?? $statement_end;
+		$set_end = $clauses['body_end'];
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -25808,25 +25768,25 @@ WHERE option_name IN (
 		}
 
 		$predicates = $join_predicates;
-		if ( null !== $where_position ) {
-			$where_end = $order_position ?? $limit_position ?? $statement_end;
+		if ( null !== $clauses['where'] ) {
+			$where_end = $clauses['order'] ?? $clauses['limit'] ?? $statement_end;
 			if (
-				$where_position + 1 >= $where_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+				$clauses['where'] + 1 >= $where_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $clauses['where'] + 1, $where_end )
 			) {
 				return null;
 			}
 
 			$where_sql    = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
-				$where_position + 1,
+				$clauses['where'] + 1,
 				$where_end,
 				$scope
 			);
 			$predicates[] = $where_sql['sql'];
 		}
 
-		if ( null !== $order_position || null !== $limit_position ) {
+		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
 			$update_set_clause = $this->translate_mysql_joined_update_set_clause_for_derived_source(
 				$table_name,
 				$target_reference_alias,
@@ -25840,11 +25800,11 @@ WHERE option_name IN (
 			}
 
 			$order_sql = '';
-			if ( null !== $order_position ) {
+			if ( null !== $clauses['order'] ) {
 				$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql(
 					$tokens,
-					$order_position,
-					$order_end,
+					$clauses['order'],
+					$clauses['order_end'],
 					$scope
 				);
 				if ( null === $order_sql ) {
@@ -25853,54 +25813,35 @@ WHERE option_name IN (
 			}
 
 			$limit_sql = '';
-			if ( null !== $limit_position ) {
-				$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+			if ( null !== $clauses['limit'] ) {
+				$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $clauses['limit'], $statement_end, true );
 				if ( null === $limit_sql ) {
 					return null;
 				}
 			}
 
-			$source_alias      = 'mysql_update_values';
-			$source_alias_sql  = $this->connection->quote_identifier( $source_alias );
 			$target_ctid_alias = 'mysql_update_target_ctid';
-			$target_alias_sql  = $this->connection->quote_identifier( $target_reference_alias );
-			$select_values     = array_merge(
-				array(
-					sprintf(
-						'%s.ctid AS %s',
-						$target_alias_sql,
-						$this->connection->quote_identifier( $target_ctid_alias )
-					),
-				),
-				$update_set_clause['select_sql']
-			);
 			$source_where_sql  = empty( $predicates ) ? '' : ' WHERE (' . implode( ') AND (', $predicates ) . ')';
-			$source_range_sql  = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $source_start, $set_position );
-			if ( $this->mysql_scope_references_non_public_schema( $scope ) ) {
-				$source_range_sql = $this->translate_mysql_table_reference_range_to_postgresql( $tokens, $source_start, $set_position );
-				if ( null === $source_range_sql ) {
-					return null;
-				}
+			$source_range_sql  = $this->get_mysql_joined_update_source_range_sql( $tokens, $source_start, $set_position, $scope );
+			if ( null === $source_range_sql ) {
+				return null;
 			}
-			$source_sql = sprintf(
-				'(SELECT %s FROM %s%s%s%s) AS %s',
-				implode( ', ', $select_values ),
+			$source_sql = $this->get_mysql_joined_update_derived_source_sql(
 				$source_range_sql,
 				$source_where_sql,
 				$order_sql,
 				$limit_sql,
-				$source_alias_sql
+				$target_reference_alias,
+				$target_ctid_alias,
+				$update_set_clause['select_sql']
 			);
 
-			return sprintf(
-				'UPDATE %s SET %s FROM %s WHERE (%s = %s.%s) AND (%s)',
-				$this->get_postgresql_dml_table_reference_sql( $table_name, $alias ),
-				$update_set_clause['set_sql'],
+			return $this->get_mysql_joined_update_by_derived_source_sql(
+				$table_name,
+				$alias,
 				$source_sql,
-				$this->get_postgresql_dml_ctid_reference_sql( $alias ),
-				$source_alias_sql,
-				$this->connection->quote_identifier( $target_ctid_alias ),
-				$update_set_clause['changed_predicate_sql']
+				$target_ctid_alias,
+				$update_set_clause
 			);
 		}
 
@@ -26023,38 +25964,23 @@ WHERE option_name IN (
 			}
 		}
 
-		$source_alias      = 'mysql_update_values';
-		$source_alias_sql  = $this->connection->quote_identifier( $source_alias );
 		$target_ctid_alias = 'mysql_update_target_ctid';
-		$target_alias_sql  = $this->connection->quote_identifier( $target_reference_alias );
-		$select_values     = array_merge(
-			array(
-				sprintf(
-					'%s.ctid AS %s',
-					$target_alias_sql,
-					$this->connection->quote_identifier( $target_ctid_alias )
-				),
-			),
-			$update_set_clause['select_sql']
-		);
-		$source_sql        = sprintf(
-			'(SELECT %s FROM %s%s%s) AS %s',
-			implode( ', ', $select_values ),
+		$source_sql        = $this->get_mysql_joined_update_derived_source_sql(
 			$source_translation['sql'],
 			$where_sql,
 			$order_sql,
-			$source_alias_sql
+			'',
+			$target_reference_alias,
+			$target_ctid_alias,
+			$update_set_clause['select_sql']
 		);
 
-		return sprintf(
-			'UPDATE %s SET %s FROM %s WHERE (%s = %s.%s) AND (%s)',
-			$this->get_postgresql_dml_table_reference_sql( $table_name, $alias ),
-			$update_set_clause['set_sql'],
+		return $this->get_mysql_joined_update_by_derived_source_sql(
+			$table_name,
+			$alias,
 			$source_sql,
-			$this->get_postgresql_dml_ctid_reference_sql( $alias ),
-			$source_alias_sql,
-			$this->connection->quote_identifier( $target_ctid_alias ),
-			$update_set_clause['changed_predicate_sql']
+			$target_ctid_alias,
+			$update_set_clause
 		);
 	}
 
@@ -26180,12 +26106,6 @@ WHERE option_name IN (
 	/**
 	 * Translate supported MySQL multi-target UPDATE statements.
 	 *
-	 * MySQL can update more than one table in a joined UPDATE. PostgreSQL cannot
-	 * express that as one UPDATE ... FROM, so compute the original joined row set
-	 * and assignment values once, then update each physical target by ctid.
-	 * ORDER BY clauses are translated in that source so unsupported expressions
-	 * cannot be silently discarded.
-	 *
 	 * @param string $query MySQL query.
 	 * @return string|null PostgreSQL writable-CTE query, or null when unsupported.
 	 */
@@ -26216,75 +26136,25 @@ WHERE option_name IN (
 			return null;
 		}
 
-		$first_table             = $first_reference['table'];
-		$first_alias             = $first_reference['alias'];
-		$first_reference_alias   = null === $first_alias ? $first_table : $first_alias;
-		$scope                   = $this->get_mysql_single_table_scope( $first_table, $first_alias );
-		$from_parts              = array();
-		$join_predicates         = array();
-		$current_join_left_alias = $first_reference_alias;
-		$table_references        = array(
-			array(
-				'alias'     => $first_reference_alias,
-				'alias_key' => strtolower( $first_reference_alias ),
-				'table'     => $first_table,
-				'table_as'  => $first_alias,
-				'derived'   => false,
-				'sql'       => $this->get_postgresql_dml_table_reference_sql( $first_table, $first_alias ),
-			),
+		$source_plan = $this->get_mysql_joined_update_source_plan(
+			$tokens,
+			$position,
+			$set_position,
+			$first_reference
 		);
-
-		while ( $position < $set_position ) {
-			if ( WP_MySQL_Lexer::COMMA_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
-				++$position;
-				$source_alias     = null;
-				$source_reference = null;
-				if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $set_position, $scope, $from_parts, $source_alias, $source_reference ) ) {
-					return null;
-				}
-				if ( null === $source_reference ) {
-					return null;
-				}
-				$table_references[]      = $source_reference;
-				$current_join_left_alias = $source_alias;
-				continue;
-			}
-
-			if (
-				! $this->is_mysql_supported_inner_join_separator_at( $tokens, $position, $set_position )
-				|| ! $this->append_mysql_joined_update_inner_join(
-					$tokens,
-					$position,
-					$set_position,
-					$scope,
-					$from_parts,
-					$join_predicates,
-					$current_join_left_alias,
-					$table_references
-				)
-			) {
-				return null;
-			}
+		if ( null === $source_plan ) {
+			return null;
 		}
+		$scope            = $source_plan['scope'];
+		$join_predicates  = $source_plan['join_predicates'];
+		$table_references = $source_plan['table_references'];
 
-		if ( empty( $from_parts ) ) {
+		$clauses = $this->get_mysql_joined_dml_clause_positions( $tokens, $set_position + 1, $statement_end );
+		if ( null === $clauses ) {
 			return null;
 		}
 
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $set_position + 1, $statement_end );
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $set_position + 1, $statement_end );
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, $set_position + 1, $statement_end );
-		$order_end      = $limit_position ?? $statement_end;
-		if (
-			( null !== $order_position && null !== $where_position && $order_position < $where_position )
-			|| ( null !== $limit_position && null !== $where_position && $limit_position < $where_position )
-			|| ( null !== $limit_position && null !== $order_position && $limit_position < $order_position )
-			|| ( null !== $order_position && ! $this->is_nonempty_mysql_order_by_clause( $tokens, $order_position, $order_end ) )
-		) {
-			return null;
-		}
-
-		$set_end = $where_position ?? $order_position ?? $limit_position ?? $statement_end;
+		$set_end = $clauses['body_end'];
 		if ( $set_position + 1 >= $set_end ) {
 			return null;
 		}
@@ -26301,18 +26171,18 @@ WHERE option_name IN (
 		}
 
 		$predicates = $join_predicates;
-		if ( null !== $where_position ) {
-			$where_end = $order_position ?? $limit_position ?? $statement_end;
+		if ( null !== $clauses['where'] ) {
+			$where_end = $clauses['order'] ?? $clauses['limit'] ?? $statement_end;
 			if (
-				$where_position + 1 >= $where_end
-				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $where_position + 1, $where_end )
+				$clauses['where'] + 1 >= $where_end
+				|| ! $this->is_supported_simple_mysql_expression_fragment( $tokens, $clauses['where'] + 1, $where_end )
 			) {
 				return null;
 			}
 
 			$where_sql    = $this->translate_mysql_predicate_token_sequence_to_postgresql(
 				$tokens,
-				$where_position + 1,
+				$clauses['where'] + 1,
 				$where_end,
 				$scope
 			);
@@ -26321,16 +26191,16 @@ WHERE option_name IN (
 
 		$source_where_sql = empty( $predicates ) ? '' : ' WHERE (' . implode( ') AND (', $predicates ) . ')';
 		$order_sql        = '';
-		if ( null !== $order_position ) {
-			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $order_position, $order_end, $scope );
+		if ( null !== $clauses['order'] ) {
+			$order_sql = $this->translate_mysql_joined_dml_order_by_clause_to_postgresql( $tokens, $clauses['order'], $clauses['order_end'], $scope );
 			if ( null === $order_sql ) {
 				return null;
 			}
 		}
 
 		$limit_sql = '';
-		if ( null !== $limit_position ) {
-			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $limit_position, $statement_end, true );
+		if ( null !== $clauses['limit'] ) {
+			$limit_sql = $this->translate_simple_dml_limit_clause_to_postgresql( $tokens, $clauses['limit'], $statement_end, true );
 			if ( null === $limit_sql ) {
 				return null;
 			}
@@ -26428,58 +26298,19 @@ WHERE option_name IN (
 				return null;
 			}
 
-			$table_name          = (string) $target_reference['table'];
-			$target_column       = $target['column'];
-			$column_metadata     = $this->get_mysql_dml_column_metadata_lookup( $table_name );
-			$target_metadata     = $column_metadata[ strtolower( $target_column ) ] ?? null;
-			$coerced_default_sql = null;
-
-			if ( null !== $target_metadata ) {
-				$this->validate_strict_mysql_dml_value_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-			}
-
-			if (
-				null !== $target_metadata
-				&& ! $this->is_mysql_strict_sql_mode_active()
-				&& $this->is_mysql_null_token_sequence( $tokens, $value_start, $assignment_end )
-			) {
-				$coerced_default_sql = $this->get_non_strict_dml_default_sql_for_column( $target_metadata );
-			}
-
-			$value_sql = $coerced_default_sql;
-			if ( null === $value_sql && null !== $target_metadata ) {
-				$value_sql = $this->get_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-			}
-			if ( null === $value_sql && null !== $target_metadata ) {
-				$value_sql = $this->get_non_strict_mysql_dml_value_sql_for_column( $target_metadata, $tokens, $value_start, $assignment_end );
-			}
+			$table_name      = (string) $target_reference['table'];
+			$target_column   = $target['column'];
+			$column_metadata = $this->get_mysql_dml_column_metadata_lookup( $table_name );
+			$target_metadata = $column_metadata[ strtolower( $target_column ) ] ?? null;
+			$value_sql       = $this->get_mysql_joined_update_assignment_value_sql(
+				$target_metadata,
+				$tokens,
+				$value_start,
+				$assignment_end,
+				$scope
+			);
 			if ( null === $value_sql ) {
-				$expression_sql = $this->translate_mysql_expression_token_sequence_to_postgresql(
-					$tokens,
-					$value_start,
-					$assignment_end,
-					$scope
-				);
-				$value_sql      = $expression_sql['sql'];
-				if (
-					$expression_sql['changed']
-					&& null !== $target_metadata
-					&& $this->is_mysql_text_family_column_type( (string) ( $target_metadata['column_type'] ?? '' ) )
-				) {
-					$value_sql = sprintf( 'CAST(%s AS text)', $value_sql );
-				}
-			}
-			if ( null !== $target_metadata ) {
-				$guarded_value_sql = $this->get_strict_mysql_dml_temporal_expression_sql_for_column(
-					$target_metadata,
-					$tokens,
-					$value_start,
-					$assignment_end,
-					$value_sql
-				);
-				if ( null !== $guarded_value_sql ) {
-					$value_sql = $guarded_value_sql;
-				}
+				return null;
 			}
 
 			$target_alias_key = $target_reference['alias_key'];
@@ -26537,6 +26368,67 @@ WHERE option_name IN (
 		return array(
 			'select_sql' => $select_expressions,
 			'targets'    => $targets,
+		);
+	}
+
+	/** Build the supported joined UPDATE source plan. */
+	private function get_mysql_joined_update_source_plan( array $tokens, int $position, int $end, array $first_reference ): ?array {
+		$first_table             = $first_reference['table'];
+		$first_alias             = $first_reference['alias'];
+		$first_reference_alias   = null === $first_alias ? $first_table : $first_alias;
+		$scope                   = $this->get_mysql_single_table_scope( $first_table, $first_alias );
+		$from_parts              = array();
+		$join_predicates         = array();
+		$current_join_left_alias = $first_reference_alias;
+		$table_references        = array(
+			array(
+				'alias'     => $first_reference_alias,
+				'alias_key' => strtolower( $first_reference_alias ),
+				'table'     => $first_table,
+				'table_as'  => $first_alias,
+				'derived'   => false,
+				'sql'       => $this->get_postgresql_dml_table_reference_sql( $first_table, $first_alias ),
+			),
+		);
+
+		while ( $position < $end ) {
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+				++$position;
+				$source_alias     = null;
+				$source_reference = null;
+				if ( ! $this->append_mysql_joined_update_source_table( $tokens, $position, $end, $scope, $from_parts, $source_alias, $source_reference ) || null === $source_reference ) {
+					return null;
+				}
+				$table_references[]      = $source_reference;
+				$current_join_left_alias = $source_alias;
+				continue;
+			}
+
+			if (
+				! $this->is_mysql_supported_inner_join_separator_at( $tokens, $position, $end )
+				|| ! $this->append_mysql_joined_update_inner_join(
+					$tokens,
+					$position,
+					$end,
+					$scope,
+					$from_parts,
+					$join_predicates,
+					$current_join_left_alias,
+					$table_references
+				)
+			) {
+				return null;
+			}
+		}
+
+		if ( empty( $from_parts ) ) {
+			return null;
+		}
+
+		return array(
+			'scope'            => $scope,
+			'join_predicates'  => $join_predicates,
+			'table_references' => $table_references,
 		);
 	}
 
