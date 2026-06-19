@@ -20020,9 +20020,37 @@ ORDER BY table_name';
 	 * @return mixed SHOW PLUGINS result rows.
 	 */
 	private function execute_show_plugins_query( array $show_plugins_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->should_use_postgresql_catalog_metadata()
-			? $this->get_show_plugins_catalog_rows()
-			: array();
+		$rows = array();
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$sql  = 'SELECT
+		p."PLUGIN_NAME" AS "Name",
+		p."PLUGIN_STATUS" AS "Status",
+		p."PLUGIN_TYPE" AS "Type",
+		p."PLUGIN_LIBRARY" AS "Library",
+		p."PLUGIN_LICENSE" AS "License"
+	FROM (
+' . $this->get_direct_information_schema_relation_sql( 'plugins' ) . '
+	) p
+	ORDER BY p."PLUGIN_NAME"';
+			$stmt = $this->connection->query( $sql );
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => array(),
+			);
+			$rows                            = array_map(
+				static function ( array $row ): array {
+					return array(
+						'Name'    => (string) ( $row['Name'] ?? '' ),
+						'Status'  => (string) ( $row['Status'] ?? '' ),
+						'Type'    => (string) ( $row['Type'] ?? '' ),
+						'Library' => isset( $row['Library'] ) ? (string) $row['Library'] : null,
+						'License' => (string) ( $row['License'] ?? '' ),
+					);
+				},
+				$stmt->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
 		$rows = $this->filter_mysql_static_show_rows( $rows, $show_plugins_query );
 
 		return $this->set_mysql_static_show_result(
@@ -20378,43 +20406,6 @@ ORDER BY table_name';
 			$rows,
 			$fetch_mode,
 			...$fetch_mode_args
-		);
-	}
-
-	/**
-	 * Get MySQL-shaped SHOW PLUGINS rows from PostgreSQL extension catalogs.
-	 *
-	 * @return array[] Rows keyed by SHOW PLUGINS column names.
-	 */
-	private function get_show_plugins_catalog_rows(): array {
-		$sql  = 'SELECT
-	p."PLUGIN_NAME" AS "Name",
-	p."PLUGIN_STATUS" AS "Status",
-	p."PLUGIN_TYPE" AS "Type",
-	p."PLUGIN_LIBRARY" AS "Library",
-	p."PLUGIN_LICENSE" AS "License"
-FROM (
-' . $this->get_direct_information_schema_relation_sql( 'plugins' ) . '
-) p
-ORDER BY p."PLUGIN_NAME"';
-		$stmt = $this->connection->query( $sql );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => array(),
-		);
-
-		return array_map(
-			static function ( array $row ): array {
-				return array(
-					'Name'    => (string) ( $row['Name'] ?? '' ),
-					'Status'  => (string) ( $row['Status'] ?? '' ),
-					'Type'    => (string) ( $row['Type'] ?? '' ),
-					'Library' => isset( $row['Library'] ) ? (string) $row['Library'] : null,
-					'License' => (string) ( $row['License'] ?? '' ),
-				);
-			},
-			$stmt->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
