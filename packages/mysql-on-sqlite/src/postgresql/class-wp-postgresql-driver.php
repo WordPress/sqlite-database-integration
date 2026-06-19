@@ -10169,25 +10169,7 @@ $wp_mysql_primary_index_comment$',
 		$requested_schema = $table_reference['schema'];
 
 		if ( null !== $requested_schema ) {
-			if ( 0 === strcasecmp( $requested_schema, 'information_schema' ) ) {
-				throw new InvalidArgumentException( 'Unsupported information_schema query.' );
-			}
-
-			if (
-				0 === strcasecmp( $requested_schema, $this->main_db_name )
-				|| 0 === strcasecmp( $requested_schema, 'public' )
-			) {
-				return 'public';
-			}
-
-			if (
-				$this->should_use_postgresql_catalog_metadata()
-				&& ! $this->is_postgresql_internal_schema( $requested_schema )
-			) {
-				return $requested_schema;
-			}
-
-			throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+			return $this->get_mysql_explicit_table_backend_schema( $requested_schema, $statement_type, true );
 		}
 
 		if ( 0 === strcasecmp( $this->db_name, 'information_schema' ) ) {
@@ -10230,6 +10212,18 @@ $wp_mysql_primary_index_comment$',
 			return $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
 		}
 
+		return $this->get_mysql_explicit_table_backend_schema( $requested_schema, $statement_type, false );
+	}
+
+	/**
+	 * Resolve an explicitly requested MySQL-facing schema for table DDL.
+	 *
+	 * @param string $requested_schema     Requested schema.
+	 * @param string $statement_type       Statement type for error messages.
+	 * @param bool   $allow_catalog_schema Whether pgsql catalog-backed DDL can name non-internal schemas.
+	 * @return string Backend schema name.
+	 */
+	private function get_mysql_explicit_table_backend_schema( string $requested_schema, string $statement_type, bool $allow_catalog_schema ): string {
 		if ( 0 === strcasecmp( $requested_schema, 'information_schema' ) ) {
 			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
 		}
@@ -10239,6 +10233,14 @@ $wp_mysql_primary_index_comment$',
 			|| 0 === strcasecmp( $requested_schema, 'public' )
 		) {
 			return 'public';
+		}
+
+		if (
+			$allow_catalog_schema
+			&& $this->should_use_postgresql_catalog_metadata()
+			&& ! $this->is_postgresql_internal_schema( $requested_schema )
+		) {
+			return $requested_schema;
 		}
 
 		throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
@@ -13948,25 +13950,7 @@ $wp_mysql_primary_index_comment$',
 			return $default_schema;
 		}
 
-		if ( 0 === strcasecmp( $requested_schema, 'information_schema' ) ) {
-			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
-		}
-
-		if (
-			0 === strcasecmp( $requested_schema, $this->main_db_name )
-			|| 0 === strcasecmp( $requested_schema, 'public' )
-		) {
-			return 'public';
-		}
-
-		if (
-			$this->should_use_postgresql_catalog_metadata()
-			&& ! $this->is_postgresql_internal_schema( $requested_schema )
-		) {
-			return $requested_schema;
-		}
-
-		throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
+		return $this->get_mysql_explicit_table_backend_schema( $requested_schema, $statement_type, true );
 	}
 
 	/**
