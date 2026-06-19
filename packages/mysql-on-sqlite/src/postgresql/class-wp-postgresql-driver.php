@@ -17686,20 +17686,43 @@ ORDER BY ordinal_position';
 		}
 
 		$table_column = $this->connection->quote_identifier( 'Tables_in_' . $database_name );
-		$sql          = sprintf(
-			'SELECT table_name AS %s%s
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$table_name_sql        = '"TABLE_NAME"';
+			$table_type_sql        = '"TABLE_TYPE"';
+			$table_type_filter_sql = $table_type_sql;
+			$sql                   = sprintf(
+				'SELECT %1$s AS %2$s%3$s
+		FROM (%4$s) information_schema_tables
+		WHERE "TABLE_SCHEMA" = ?
+				AND %5$s IN (\'BASE TABLE\', \'VIEW\')',
+				$table_name_sql,
+				$table_column,
+				$is_full ? ', ' . $table_type_sql . ' AS "Table_type"' : '',
+				$this->get_direct_information_schema_relation_sql( 'tables' ),
+				$table_type_sql
+			);
+			$params                = array( $this->get_direct_information_schema_display_schema( $schema_name ) );
+		} else {
+			$table_name_sql        = 'table_name';
+			$table_type_sql        = 'table_type';
+			$table_type_filter_sql = "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END";
+			$sql                   = sprintf(
+				'SELECT %1$s AS %2$s%3$s
 		FROM information_schema.tables
 		WHERE table_schema = ?
-				AND table_type IN (\'BASE TABLE\', \'VIEW\')
-				AND table_name NOT IN (%s)',
-			$table_column,
-			$is_full ? ', CASE WHEN table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "Table_type"' : '',
-			$this->get_direct_information_schema_hidden_table_list_sql()
-		);
-		$params       = array( $schema_name );
+				AND %4$s IN (\'BASE TABLE\', \'VIEW\')
+				AND %1$s NOT IN (%5$s)',
+				$table_name_sql,
+				$table_column,
+				$is_full ? ', CASE WHEN ' . $table_type_sql . ' = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "Table_type"' : '',
+				$table_type_sql,
+				$this->get_direct_information_schema_hidden_table_list_sql()
+			);
+			$params                = array( $schema_name );
+		}
 
 		if ( null !== $like ) {
-			$sql     .= " AND table_name LIKE ? ESCAPE '\\'";
+			$sql     .= sprintf( " AND %s LIKE ? ESCAPE '\\'", $table_name_sql );
 			$params[] = $like;
 		}
 
@@ -17707,9 +17730,9 @@ ORDER BY ordinal_position';
 		if ( null !== $where_filter && null === $where_expression_filter ) {
 			foreach ( $where_filter as $filter ) {
 				if ( $table_column === $this->connection->quote_identifier( $filter['column'] ) ) {
-					$filter_column = 'table_name';
+					$filter_column = $table_name_sql;
 				} elseif ( 'Table_type' === $filter['column'] ) {
-					$filter_column = "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END";
+					$filter_column = $table_type_filter_sql;
 				} else {
 					throw new InvalidArgumentException( 'Unsupported SHOW TABLES statement.' );
 				}
@@ -17726,7 +17749,7 @@ ORDER BY ordinal_position';
 		}
 
 		$sql .= '
-ORDER BY table_name';
+ORDER BY ' . $table_name_sql;
 
 		$stmt = $this->connection->query( $sql, $params );
 
@@ -30205,18 +30228,9 @@ WHERE option_name IN (
 				continue;
 			}
 
-			$values[ $index ] = $this->get_mysql_auto_increment_generated_value_sql();
+			$driver_name      = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
+			$values[ $index ] = 'sqlite' === $driver_name ? 'NULL' : 'DEFAULT';
 		}
-	}
-
-	/**
-	 * Get the SQL value that asks the backend to generate an AUTO_INCREMENT value.
-	 *
-	 * @return string Backend-compatible generated value marker.
-	 */
-	private function get_mysql_auto_increment_generated_value_sql(): string {
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		return 'sqlite' === $driver_name ? 'NULL' : 'DEFAULT';
 	}
 
 	/**
@@ -30453,30 +30467,12 @@ WHERE option_name IN (
 	}
 
 	/**
-	 * Throw a MySQL-compatible incorrect integer value error.
-	 *
-	 * @param string $value Original literal value.
-	 */
-	private function throw_mysql_incorrect_integer_value( string $value ): void {
-		throw new InvalidArgumentException( sprintf( "Incorrect integer value: '%s'", $value ) );
-	}
-
-	/**
 	 * Throw a MySQL-compatible out-of-range value error.
 	 *
 	 * @param string $value Original literal value.
 	 */
 	private function throw_mysql_out_of_range_value( string $value ): void {
 		throw new InvalidArgumentException( sprintf( "Out of range value: '%s'", $value ) );
-	}
-
-	/**
-	 * Throw a MySQL-compatible string truncation error.
-	 *
-	 * @param string $column_name Column name.
-	 */
-	private function throw_mysql_data_too_long_for_column( string $column_name ): void {
-		throw new InvalidArgumentException( sprintf( "Data too long for column '%s'", $column_name ) );
 	}
 
 	/**
@@ -30506,7 +30502,7 @@ WHERE option_name IN (
 
 		$length = function_exists( 'mb_strlen' ) ? mb_strlen( $value, 'UTF-8' ) : strlen( $value );
 		if ( $length > $max_length ) {
-			$this->throw_mysql_data_too_long_for_column( (string) ( $column_metadata['column_name'] ?? '' ) );
+			throw new InvalidArgumentException( sprintf( "Data too long for column '%s'", (string) ( $column_metadata['column_name'] ?? '' ) ) );
 		}
 	}
 
@@ -32523,7 +32519,7 @@ WHERE option_name IN (
 		$value   = trim( $literal['value'] );
 		$integer = $this->get_strict_mysql_dml_integer_literal_value( $value );
 		if ( null === $integer ) {
-			$this->throw_mysql_incorrect_integer_value( $value );
+			throw new InvalidArgumentException( sprintf( "Incorrect integer value: '%s'", $value ) );
 		}
 
 		if ( ! $this->is_mysql_integer_value_in_column_range( $integer, (string) ( $column_metadata['column_type'] ?? '' ) ) ) {
