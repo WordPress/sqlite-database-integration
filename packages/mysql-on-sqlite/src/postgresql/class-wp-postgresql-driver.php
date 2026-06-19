@@ -6669,7 +6669,27 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function mysql_index_metadata_has_rows( string $table_schema, string $table_name ): bool {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->postgresql_catalog_index_metadata_has_rows( $table_schema, $table_name );
+			try {
+				$stmt = $this->connection->query(
+					'SELECT 1
+					FROM pg_catalog.pg_class t
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					INNER JOIN pg_catalog.pg_index i
+						ON i.indrelid = t.oid
+					WHERE n.nspname = ?
+						AND t.relname = ?
+						AND t.relkind IN (\'r\', \'p\')
+						AND i.indisvalid
+						AND i.indislive
+					LIMIT 1',
+					array( $table_schema, $table_name )
+				);
+
+				return false !== $stmt->fetchColumn();
+			} catch ( PDOException $e ) {
+				return false;
+			}
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -6682,37 +6702,6 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		return false !== $stmt->fetchColumn();
-	}
-
-	/**
-	 * Check whether PostgreSQL catalogs expose any index rows for a table.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @return bool Whether any catalog index exists.
-	 */
-	private function postgresql_catalog_index_metadata_has_rows( string $table_schema, string $table_name ): bool {
-		try {
-			$stmt = $this->connection->query(
-				'SELECT 1
-				FROM pg_catalog.pg_class t
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				INNER JOIN pg_catalog.pg_index i
-					ON i.indrelid = t.oid
-				WHERE n.nspname = ?
-					AND t.relname = ?
-					AND t.relkind IN (\'r\', \'p\')
-					AND i.indisvalid
-					AND i.indislive
-				LIMIT 1',
-				array( $table_schema, $table_name )
-			);
-
-			return false !== $stmt->fetchColumn();
-		} catch ( PDOException $e ) {
-			return false;
-		}
 	}
 
 	/**
@@ -7192,7 +7181,26 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function mysql_foreign_key_metadata_exists( string $table_schema, string $table_name, string $constraint_name ): bool {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			return $this->postgresql_catalog_foreign_key_metadata_exists( $table_schema, $table_name, $constraint_name );
+			try {
+				$stmt = $this->connection->query(
+					'SELECT 1
+					FROM pg_catalog.pg_constraint con
+					INNER JOIN pg_catalog.pg_class t
+						ON t.oid = con.conrelid
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					WHERE n.nspname = ?
+						AND t.relname = ?
+						AND con.contype = \'f\'
+						AND LOWER(con.conname) = LOWER(?)
+					LIMIT 1',
+					array( $table_schema, $table_name, $constraint_name )
+				);
+
+				return false !== $stmt->fetchColumn();
+			} catch ( PDOException $e ) {
+				return false;
+			}
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -7205,37 +7213,6 @@ $wp_mysql_primary_index_comment$',
 		);
 
 		return false !== $stmt->fetchColumn();
-	}
-
-	/**
-	 * Check whether PostgreSQL catalogs expose a foreign key constraint.
-	 *
-	 * @param string $table_schema    Backend schema.
-	 * @param string $table_name      Table name.
-	 * @param string $constraint_name Constraint name.
-	 * @return bool Whether the catalog foreign key exists.
-	 */
-	private function postgresql_catalog_foreign_key_metadata_exists( string $table_schema, string $table_name, string $constraint_name ): bool {
-		try {
-			$stmt = $this->connection->query(
-				'SELECT 1
-				FROM pg_catalog.pg_constraint con
-				INNER JOIN pg_catalog.pg_class t
-					ON t.oid = con.conrelid
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				WHERE n.nspname = ?
-					AND t.relname = ?
-					AND con.contype = \'f\'
-					AND LOWER(con.conname) = LOWER(?)
-				LIMIT 1',
-				array( $table_schema, $table_name, $constraint_name )
-			);
-
-			return false !== $stmt->fetchColumn();
-		} catch ( PDOException $e ) {
-			return false;
-		}
 	}
 
 	/**
@@ -7540,8 +7517,37 @@ $wp_mysql_primary_index_comment$',
 	 */
 	private function get_mysql_column_extra_metadata( string $table_schema, string $table_name, string $column_name ): string {
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$catalog_extra = $this->get_mysql_column_catalog_extra_metadata( $table_schema, $table_name, $column_name );
-			return null === $catalog_extra ? '' : $catalog_extra;
+			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+			$extra_sql          = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );
+			$sql                = sprintf(
+				'SELECT %s AS extra
+				FROM information_schema.columns c
+				LEFT JOIN pg_catalog.pg_namespace pn
+					ON pn.nspname = c.table_schema
+				LEFT JOIN pg_catalog.pg_class pc
+					ON pc.relnamespace = pn.oid
+					AND pc.relname = c.table_name
+					AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+				LEFT JOIN pg_catalog.pg_attribute pa
+					ON pa.attrelid = pc.oid
+					AND pa.attname = c.column_name
+					AND pa.attnum > 0
+				WHERE c.table_schema = ?
+					AND c.table_name = ?
+					AND LOWER(c.column_name) = LOWER(?)
+				ORDER BY c.ordinal_position
+				LIMIT 2',
+				$extra_sql
+			);
+
+			try {
+				$stmt = $this->connection->query( $sql, array( $table_schema, $table_name, $column_name ) );
+			} catch ( PDOException $e ) {
+				return '';
+			}
+
+			$rows = $stmt->fetchAll( PDO::FETCH_COLUMN );
+			return 1 === count( $rows ) ? (string) $rows[0] : '';
 		}
 
 		$this->ensure_mysql_schema_metadata_tables();
@@ -7556,48 +7562,6 @@ $wp_mysql_primary_index_comment$',
 
 		$extra = $stmt->fetchColumn();
 		return false === $extra ? '' : (string) $extra;
-	}
-
-	/**
-	 * Get MySQL EXTRA metadata for a column from PostgreSQL catalogs.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 * @return string|null Extra metadata, or null when unavailable.
-	 */
-	private function get_mysql_column_catalog_extra_metadata( string $table_schema, string $table_name, string $column_name ): ?string {
-		$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-		$extra_sql          = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );
-		$sql                = sprintf(
-			'SELECT %s AS extra
-			FROM information_schema.columns c
-			LEFT JOIN pg_catalog.pg_namespace pn
-				ON pn.nspname = c.table_schema
-			LEFT JOIN pg_catalog.pg_class pc
-				ON pc.relnamespace = pn.oid
-				AND pc.relname = c.table_name
-				AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-			LEFT JOIN pg_catalog.pg_attribute pa
-				ON pa.attrelid = pc.oid
-				AND pa.attname = c.column_name
-				AND pa.attnum > 0
-			WHERE c.table_schema = ?
-				AND c.table_name = ?
-				AND LOWER(c.column_name) = LOWER(?)
-			ORDER BY c.ordinal_position
-			LIMIT 2',
-			$extra_sql
-		);
-
-		try {
-			$stmt = $this->connection->query( $sql, array( $table_schema, $table_name, $column_name ) );
-		} catch ( PDOException $e ) {
-			return null;
-		}
-
-		$rows = $stmt->fetchAll( PDO::FETCH_COLUMN );
-		return 1 === count( $rows ) ? (string) $rows[0] : null;
 	}
 
 	/**
@@ -7623,11 +7587,41 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ] = $this->get_mysql_table_column_catalog_type(
-				$table_schema,
-				$table_name,
-				$column_name
+			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+			$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
+				'c',
+				$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+				$column_comment_sql,
+				true
 			);
+			$stmt               = $this->connection->query(
+				sprintf(
+					'SELECT %s AS column_type
+					FROM information_schema.columns c
+					LEFT JOIN pg_catalog.pg_namespace pn
+						ON pn.nspname = c.table_schema
+					LEFT JOIN pg_catalog.pg_class pc
+						ON pc.relnamespace = pn.oid
+						AND pc.relname = c.table_name
+						AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+					LEFT JOIN pg_catalog.pg_attribute pa
+						ON pa.attrelid = pc.oid
+						AND pa.attname = c.column_name
+						AND pa.attnum > 0
+					WHERE c.table_schema = ?
+						AND c.table_name = ?
+						AND LOWER(c.column_name) = LOWER(?)
+					ORDER BY c.ordinal_position
+					LIMIT 2',
+					$column_type
+				),
+				array( $table_schema, $table_name, $column_name )
+			);
+			$rows               = $stmt->fetchAll( PDO::FETCH_COLUMN );
+
+			$this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ] = 1 === count( $rows )
+				? (string) $rows[0]
+				: null;
 			return $this->mysql_table_column_type_cache[ $table_cache_key ][ $column_cache_key ];
 		}
 
@@ -7653,57 +7647,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Get the MySQL type for a table column from PostgreSQL catalogs.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 * @return string|null MySQL column type, or null when unavailable.
-	 */
-	private function get_mysql_table_column_catalog_type( string $table_schema, string $table_name, string $column_name ): ?string {
-		$column_comment_sql = null;
-		$catalog_joins      = '';
-		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-			$catalog_joins      = '
-			LEFT JOIN pg_catalog.pg_namespace pn
-				ON pn.nspname = c.table_schema
-			LEFT JOIN pg_catalog.pg_class pc
-				ON pc.relnamespace = pn.oid
-				AND pc.relname = c.table_name
-				AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-			LEFT JOIN pg_catalog.pg_attribute pa
-				ON pa.attrelid = pc.oid
-				AND pa.attname = c.column_name
-				AND pa.attnum > 0';
-		}
-
-		$use_postgresql_catalog = $this->should_use_postgresql_catalog_metadata();
-		$column_type            = $this->get_direct_information_schema_catalog_column_type_expression(
-			'c',
-			$use_postgresql_catalog ? $this->get_postgresql_identity_sequence_comment_sql( 'c' ) : null,
-			$column_comment_sql,
-			$use_postgresql_catalog
-		);
-		$sql                    = sprintf(
-			'SELECT %s AS column_type
-			FROM information_schema.columns c
-			%s
-			WHERE c.table_schema = ?
-				AND c.table_name = ?
-				AND LOWER(c.column_name) = LOWER(?)
-			ORDER BY c.ordinal_position
-			LIMIT 2',
-			$column_type,
-			$catalog_joins
-		);
-		$stmt                   = $this->connection->query( $sql, array( $table_schema, $table_name, $column_name ) );
-		$rows                   = $stmt->fetchAll( PDO::FETCH_COLUMN );
-
-		return 1 === count( $rows ) ? (string) $rows[0] : null;
-	}
-
-	/**
 	 * Get the stored MySQL collation for a table column.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -7726,11 +7669,41 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ] = $this->get_mysql_table_column_catalog_collation(
-				$table_schema,
-				$table_name,
-				$column_name
+			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+			$column_type        = $this->get_direct_information_schema_catalog_column_type_expression( 'c', null, $column_comment_sql, true );
+			$stmt               = $this->connection->query(
+				sprintf(
+					'SELECT %s AS collation_name
+					FROM information_schema.columns c
+					LEFT JOIN pg_catalog.pg_namespace pn
+						ON pn.nspname = c.table_schema
+					LEFT JOIN pg_catalog.pg_class pc
+						ON pc.relnamespace = pn.oid
+						AND pc.relname = c.table_name
+						AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+					LEFT JOIN pg_catalog.pg_attribute pa
+						ON pa.attrelid = pc.oid
+						AND pa.attname = c.column_name
+						AND pa.attnum > 0
+					WHERE c.table_schema = ?
+						AND c.table_name = ?
+						AND LOWER(c.column_name) = LOWER(?)
+					ORDER BY c.ordinal_position
+					LIMIT 2',
+					$this->get_direct_information_schema_collation_expression(
+						$column_type,
+						'c.collation_name',
+						$column_comment_sql,
+						$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+					)
+				),
+				array( $table_schema, $table_name, $column_name )
 			);
+			$rows               = $stmt->fetchAll( PDO::FETCH_COLUMN );
+
+			$this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ] = 1 === count( $rows ) && null !== $rows[0]
+				? (string) $rows[0]
+				: null;
 			return $this->mysql_table_column_collation_cache[ $table_cache_key ][ $column_cache_key ];
 		}
 
@@ -7756,57 +7729,6 @@ $wp_mysql_primary_index_comment$',
 	}
 
 	/**
-	 * Get the MySQL collation for a table column from PostgreSQL catalogs.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @param string $column_name  Column name.
-	 * @return string|null MySQL collation, or null when unavailable.
-	 */
-	private function get_mysql_table_column_catalog_collation( string $table_schema, string $table_name, string $column_name ): ?string {
-		$column_comment_sql     = null;
-		$catalog_joins          = '';
-		$use_postgresql_catalog = $this->should_use_postgresql_catalog_metadata();
-		if ( $use_postgresql_catalog ) {
-			$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
-			$catalog_joins      = '
-			LEFT JOIN pg_catalog.pg_namespace pn
-				ON pn.nspname = c.table_schema
-			LEFT JOIN pg_catalog.pg_class pc
-				ON pc.relnamespace = pn.oid
-				AND pc.relname = c.table_name
-				AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
-			LEFT JOIN pg_catalog.pg_attribute pa
-				ON pa.attrelid = pc.oid
-				AND pa.attname = c.column_name
-				AND pa.attnum > 0';
-		}
-
-		$column_type = $this->get_direct_information_schema_catalog_column_type_expression( 'c', null, $column_comment_sql, $use_postgresql_catalog );
-		$sql         = sprintf(
-			'SELECT %s AS collation_name
-			FROM information_schema.columns c
-			%s
-			WHERE c.table_schema = ?
-				AND c.table_name = ?
-				AND LOWER(c.column_name) = LOWER(?)
-			ORDER BY c.ordinal_position
-			LIMIT 2',
-			$this->get_direct_information_schema_collation_expression(
-				$column_type,
-				'c.collation_name',
-				$column_comment_sql,
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-			),
-			$catalog_joins
-		);
-		$stmt        = $this->connection->query( $sql, array( $table_schema, $table_name, $column_name ) );
-		$rows        = $stmt->fetchAll( PDO::FETCH_COLUMN );
-
-		return 1 === count( $rows ) && null !== $rows[0] ? (string) $rows[0] : null;
-	}
-
-	/**
 	 * Check whether stored MySQL metadata exists for a table.
 	 *
 	 * @param string $table_schema Metadata schema.
@@ -7820,7 +7742,16 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( $this->should_use_postgresql_catalog_metadata() ) {
-			$this->mysql_table_has_column_metadata_cache[ $cache_key ] = $this->postgresql_catalog_table_has_columns( $table_schema, $table_name );
+			$stmt = $this->connection->query(
+				'SELECT 1
+				FROM information_schema.columns c
+				WHERE c.table_schema = ?
+					AND c.table_name = ?
+				LIMIT 1',
+				array( $table_schema, $table_name )
+			);
+
+			$this->mysql_table_has_column_metadata_cache[ $cache_key ] = false !== $stmt->fetchColumn();
 			return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
 		}
 
@@ -7836,26 +7767,6 @@ $wp_mysql_primary_index_comment$',
 
 		$this->mysql_table_has_column_metadata_cache[ $cache_key ] = false !== $stmt->fetchColumn();
 		return $this->mysql_table_has_column_metadata_cache[ $cache_key ];
-	}
-
-	/**
-	 * Check whether PostgreSQL catalogs expose columns for a table.
-	 *
-	 * @param string $table_schema Backend schema.
-	 * @param string $table_name   Table name.
-	 * @return bool Whether catalog column rows exist.
-	 */
-	private function postgresql_catalog_table_has_columns( string $table_schema, string $table_name ): bool {
-		$stmt = $this->connection->query(
-			'SELECT 1
-			FROM information_schema.columns c
-			WHERE c.table_schema = ?
-				AND c.table_name = ?
-			LIMIT 1',
-			array( $table_schema, $table_name )
-		);
-
-		return false !== $stmt->fetchColumn();
 	}
 
 	/**

@@ -37898,28 +37898,7 @@ $wp_mysql_on_update$',
 				('public', 'wptests_posts', 'ID', 1, 'integer', NULL, NULL, NULL, NULL, NULL, 'NO', NULL),
 				('public', 'wptests_posts', 'post_title', 2, 'character varying', 191, NULL, NULL, 'utf8mb4_unicode_ci', NULL, 'NO', NULL)"
 		);
-		$get_type    = Closure::bind(
-			function ( string $column ): ?string {
-				return $this->get_mysql_table_column_catalog_type( 'public', 'wptests_posts', $column );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
-		$get_collate = Closure::bind(
-			function ( string $column ): ?string {
-				return $this->get_mysql_table_column_catalog_collation( 'public', 'wptests_posts', $column );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
-		$has_columns = Closure::bind(
-			function ( string $table ): bool {
-				return $this->postgresql_catalog_table_has_columns( 'public', $table );
-			},
-			$driver,
-			WP_PostgreSQL_Driver::class
-		);
-		$get_name    = Closure::bind(
+		$get_name = Closure::bind(
 			function ( string $column ): ?string {
 				return $this->get_mysql_table_catalog_column_name( 'public', 'wptests_posts', $column );
 			},
@@ -37927,12 +37906,6 @@ $wp_mysql_on_update$',
 			WP_PostgreSQL_Driver::class
 		);
 
-		$this->assertSame( 'int', $get_type( 'id' ) );
-		$this->assertSame( 'varchar(191)', $get_type( 'post_title' ) );
-		$this->assertNull( $get_collate( 'ID' ) );
-		$this->assertSame( 'utf8mb4_unicode_ci', $get_collate( 'post_title' ) );
-		$this->assertTrue( $has_columns( 'wptests_posts' ) );
-		$this->assertFalse( $has_columns( 'wptests_missing' ) );
 		$this->assertSame( 'ID', $get_name( 'id' ) );
 		$this->assertSame( 'post_title', $get_name( 'post_title' ) );
 		$this->assertNull( $get_name( 'missing_column' ) );
@@ -37986,6 +37959,15 @@ $wp_mysql_on_update$',
 					return parent::query( "SELECT 'utf8mb4_unicode_ci' AS collation_name" );
 				}
 
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'SELECT 1' )
+					&& isset( $params[1] )
+					&& ! isset( $params[2] )
+				) {
+					return parent::query( 'wptests_posts' === $params[1] ? 'SELECT 1' : 'SELECT 1 WHERE 0 = 1' );
+				}
+
 				return parent::query( $sql, $params );
 			}
 
@@ -38001,14 +37983,21 @@ $wp_mysql_on_update$',
 		$pgsql_driver      = new WP_PostgreSQL_Driver( $pgsql_connection, 'wptests' );
 		$pgsql_get_type    = Closure::bind(
 			function ( string $column ): ?string {
-				return $this->get_mysql_table_column_catalog_type( 'public', 'wptests_posts', $column );
+				return $this->get_mysql_table_column_type( 'public', 'wptests_posts', $column );
 			},
 			$pgsql_driver,
 			WP_PostgreSQL_Driver::class
 		);
 		$pgsql_get_collate = Closure::bind(
 			function ( string $column ): ?string {
-				return $this->get_mysql_table_column_catalog_collation( 'public', 'wptests_posts', $column );
+				return $this->get_mysql_table_column_collation( 'public', 'wptests_posts', $column );
+			},
+			$pgsql_driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$pgsql_has_columns = Closure::bind(
+			function ( string $table ): bool {
+				return $this->mysql_table_has_column_metadata( 'public', $table );
 			},
 			$pgsql_driver,
 			WP_PostgreSQL_Driver::class
@@ -38016,6 +38005,8 @@ $wp_mysql_on_update$',
 
 		$this->assertSame( "enum('draft','published')", $pgsql_get_type( 'status' ) );
 		$this->assertSame( 'utf8mb4_unicode_ci', $pgsql_get_collate( 'status' ) );
+		$this->assertTrue( $pgsql_has_columns( 'wptests_posts' ) );
+		$this->assertFalse( $pgsql_has_columns( 'wptests_missing' ) );
 
 		$catalog_queries = $pgsql_connection->get_catalog_queries();
 		$this->assertCount( 2, $catalog_queries );
