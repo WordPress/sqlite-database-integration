@@ -21866,31 +21866,8 @@ ORDER BY t."TRIGGER_NAME"';
 	 */
 	private function get_mysql_global_variables(): array {
 		return array_replace(
-			$this->get_default_mysql_global_variables(),
+			$this->get_default_mysql_session_variables(),
 			$this->mysql_global_variable_values
-		);
-	}
-
-	/**
-	 * Get default MySQL-compatible global variables.
-	 *
-	 * @return array<string, string> Global variables keyed by lowercase name.
-	 */
-	private function get_default_mysql_global_variables(): array {
-		return array_replace(
-			$this->get_default_mysql_system_variable_values(),
-			$this->get_read_only_mysql_system_variable_values(),
-			array(
-				'character_set_client'     => self::DEFAULT_MYSQL_CHARSET,
-				'character_set_connection' => self::DEFAULT_MYSQL_CHARSET,
-				'character_set_results'    => self::DEFAULT_MYSQL_CHARSET,
-				'character_set_database'   => self::DEFAULT_MYSQL_CHARSET,
-				'character_set_server'     => self::DEFAULT_MYSQL_CHARSET,
-				'collation_connection'     => self::DEFAULT_MYSQL_COLLATION,
-				'collation_database'       => self::DEFAULT_MYSQL_COLLATION,
-				'collation_server'         => self::DEFAULT_MYSQL_COLLATION,
-				'sql_mode'                 => implode( ',', self::DEFAULT_MYSQL_SQL_MODES ),
-			)
 		);
 	}
 
@@ -41476,7 +41453,7 @@ WHERE c.relkind IN (\'r\', \'p\')
 	 * @return string Relation SQL.
 	 */
 	private function get_postgresql_information_schema_variables_compatibility_relation_sql( string $scope ): string {
-		$variables = 'global' === $scope ? $this->get_default_mysql_global_variables() : $this->get_default_mysql_session_variables();
+		$variables = $this->get_default_mysql_session_variables();
 		$selects   = array();
 
 		foreach ( $variables as $name => $value ) {
