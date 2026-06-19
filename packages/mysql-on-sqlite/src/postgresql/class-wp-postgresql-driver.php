@@ -37542,7 +37542,7 @@ WHERE s.schema_name = \'information_schema\'
 	%6$s AS "COLUMN_KEY",
 	%7$s AS "EXTRA",
 	\'select,insert,update,references\' AS "PRIVILEGES",
-	%10$s AS "COLUMN_COMMENT",
+	%9$s AS "COLUMN_COMMENT",
 	\'\' AS "GENERATION_EXPRESSION",
 	NULL AS "SRS_ID"
 FROM information_schema.columns c
@@ -37557,7 +37557,7 @@ LEFT JOIN pg_catalog.pg_attribute pa
 	AND pa.attname = c.column_name
 	AND pa.attnum > 0
 WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND c.table_name NOT IN (%9$s)',
+',
 					$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
 					$type_expression,
 					$charset,
@@ -37566,7 +37566,6 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 					$column_key,
 					$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
 					$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-					$this->get_direct_information_schema_hidden_table_list_sql(),
 					$this->get_postgresql_catalog_column_comment_sql( $comment_sql )
 				);
 			}
@@ -37782,7 +37781,7 @@ SELECT * FROM metadata_columns',
 	%2$s AS "TABLE_COLLATION",
 	NULL AS "CHECKSUM",
 	\'\' AS "CREATE_OPTIONS",
-	%4$s AS "TABLE_COMMENT"
+	%3$s AS "TABLE_COMMENT"
 FROM information_schema.tables t
 LEFT JOIN pg_catalog.pg_namespace pn
 	ON pn.nspname = t.table_schema
@@ -37815,12 +37814,10 @@ LEFT JOIN pg_catalog.pg_namespace seq_ns
 LEFT JOIN pg_catalog.pg_sequences ps
 	ON ps.schemaname = seq_ns.nspname
 	AND ps.sequencename = seq.relname
-				WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-		AND t.table_type IN (\'BASE TABLE\', \'VIEW\')
-		AND t.table_name NOT IN (%3$s)',
+WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
+		AND t.table_type IN (\'BASE TABLE\', \'VIEW\')',
 					$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
 					$table_collation_sql,
-					$this->get_direct_information_schema_hidden_table_list_sql(),
 					$table_comment_sql
 				);
 		}
@@ -37977,10 +37974,8 @@ WHERE n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
 	tp.is_grantable AS "IS_GRANTABLE"
 FROM information_schema.table_privileges tp
 WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(tp.table_schema, 3) <> \'pg_\'
-			AND tp.table_name NOT IN (%2$s)',
-				$this->get_direct_information_schema_display_schema_sql( 'tp.table_schema' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+	AND LEFT(tp.table_schema, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'tp.table_schema' )
 			);
 		}
 
@@ -38015,10 +38010,8 @@ WHERE tp.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	rtg.is_grantable AS "IS_GRANTABLE"
 FROM information_schema.role_table_grants rtg
 WHERE rtg.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(rtg.table_schema, 3) <> \'pg_\'
-	AND rtg.table_name NOT IN (%2$s)',
-				$this->get_direct_information_schema_display_schema_sql( 'rtg.table_schema' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+	AND LEFT(rtg.table_schema, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'rtg.table_schema' )
 			);
 		}
 
@@ -38201,10 +38194,8 @@ LEFT JOIN LATERAL (
 	ON TRUE
 WHERE c.relkind IN (\'r\', \'p\')
 	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'
-	AND c.relname NOT IN (%2$s)',
-				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+	AND LEFT(n.nspname, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'n.nspname' )
 			);
 		}
 
@@ -38257,11 +38248,10 @@ WHERE c.relkind IN (\'r\', \'p\')
 		ON TRUE
 	WHERE parent_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
 		AND LEFT(parent_ns.nspname, 3) <> \'pg_\'
-		AND parent_class.relname NOT IN (%2$s)
 	UNION ALL
 	SELECT
 		\'def\' AS "TABLE_CATALOG",
-		%3$s AS "TABLE_SCHEMA",
+		%2$s AS "TABLE_SCHEMA",
 		t.table_name AS "TABLE_NAME",
 		NULL AS "PARTITION_NAME",
 		NULL AS "SUBPARTITION_NAME",
@@ -38295,7 +38285,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 	WHERE t.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 		AND LEFT(t.table_schema, 3) <> \'pg_\'
 		AND t.table_type = \'BASE TABLE\'
-		AND t.table_name NOT IN (%2$s)
 		AND (
 			pc.oid IS NULL
 			OR NOT EXISTS (
@@ -38306,7 +38295,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 			)
 		)',
 				$this->get_direct_information_schema_display_schema_sql( 'parent_ns.nspname' ),
-				$this->get_direct_information_schema_hidden_table_list_sql(),
 				$this->get_direct_information_schema_display_schema_sql( 't.table_schema' )
 			);
 		}
@@ -38370,8 +38358,7 @@ FROM pg_catalog.pg_tablespace ts';
 		}
 
 		if ( 'innodb_indexes' === $view ) {
-			return sprintf(
-				'SELECT
+			return 'SELECT
 	CAST(idx_class.oid AS bigint) AS "INDEX_ID",
 	CASE WHEN idx.indisprimary THEN \'PRIMARY\' ELSE idx_class.relname END AS "NAME",
 	CAST(table_class.oid AS bigint) AS "TABLE_ID",
@@ -38395,15 +38382,11 @@ LEFT JOIN pg_catalog.pg_database db
 	ON db.datname = current_database()
 WHERE table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
-	AND table_class.relname NOT IN (%1$s)',
-				$this->get_direct_information_schema_hidden_table_list_sql()
-			);
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'';
 		}
 
 		if ( 'innodb_fields' === $view ) {
-			return sprintf(
-				'SELECT
+			return 'SELECT
 	CAST(idx_class.oid AS bigint) AS "INDEX_ID",
 	att.attname AS "NAME",
 	CAST(key_positions.position AS bigint) AS "POS"
@@ -38421,15 +38404,11 @@ JOIN pg_catalog.pg_attribute att
 	AND att.attnum = idx.indkey[key_positions.position]
 WHERE table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
-	AND table_class.relname NOT IN (%1$s)',
-				$this->get_direct_information_schema_hidden_table_list_sql()
-			);
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'';
 		}
 
 		if ( 'innodb_columns' === $view ) {
-			return sprintf(
-				'SELECT
+			return 'SELECT
 	CAST(c.oid AS bigint) AS "TABLE_ID",
 	a.attname AS "NAME",
 	CAST(a.attnum - 1 AS bigint) AS "POS",
@@ -38464,10 +38443,7 @@ WHERE c.relkind IN (\'r\', \'p\')
 	AND a.attnum > 0
 	AND NOT a.attisdropped
 	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'
-	AND c.relname NOT IN (%1$s)',
-				$this->get_direct_information_schema_hidden_table_list_sql()
-			);
+	AND LEFT(n.nspname, 3) <> \'pg_\'';
 		}
 
 		if ( 'columns_extensions' === $view ) {
@@ -38481,10 +38457,8 @@ WHERE c.relkind IN (\'r\', \'p\')
 	NULL AS "SECONDARY_ENGINE_ATTRIBUTE"
 FROM information_schema.columns c
 WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(c.table_schema, 3) <> \'pg_\'
-	AND c.table_name NOT IN (%2$s)',
-				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+	AND LEFT(c.table_schema, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' )
 			);
 		}
 
@@ -38506,7 +38480,7 @@ WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 		WHEN \'f\' THEN \'FOREIGN KEY\'
 		ELSE \'CHECK\'
 	END AS "CONSTRAINT_TYPE",
-	CASE WHEN con.contype = \'c\' THEN %3$s ELSE \'YES\' END AS "ENFORCED"
+	CASE WHEN con.contype = \'c\' THEN %2$s ELSE \'YES\' END AS "ENFORCED"
 FROM pg_catalog.pg_constraint con
 JOIN pg_catalog.pg_class table_class
 	ON table_class.oid = con.conrelid
@@ -38515,10 +38489,8 @@ JOIN pg_catalog.pg_namespace table_ns
 WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
 	AND table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
-	AND table_class.relname NOT IN (%2$s)',
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'',
 					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-					$this->get_direct_information_schema_hidden_table_list_sql(),
 					$enforced_sql
 				);
 			}
@@ -38651,12 +38623,10 @@ LEFT JOIN pg_catalog.pg_attribute ref_att
 WHERE con.contype IN (\'p\', \'u\', \'f\')
 	AND table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
-	AND table_class.relname NOT IN (%4$s)',
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'',
 					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
 					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' ),
-					$this->get_direct_information_schema_hidden_table_list_sql()
+					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
 				);
 			}
 
@@ -38800,11 +38770,9 @@ LEFT JOIN pg_catalog.pg_constraint ref_con
 WHERE con.contype = \'f\'
 	AND table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
-	AND table_class.relname NOT IN (%3$s)',
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'',
 					$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' ),
-					$this->get_direct_information_schema_hidden_table_list_sql()
+					$this->get_direct_information_schema_display_schema_sql( 'ref_ns.nspname' )
 				);
 			}
 
@@ -38892,11 +38860,9 @@ JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
 WHERE con.contype = \'c\'
 	AND t.relkind IN (\'r\', \'p\')
 	AND n.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(n.nspname, 3) <> \'pg_\'
-	AND t.relname NOT IN (%3$s)',
+	AND LEFT(n.nspname, 3) <> \'pg_\'',
 					$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
-					$check_clause_sql,
-					$this->get_direct_information_schema_hidden_table_list_sql()
+					$check_clause_sql
 				);
 			}
 
@@ -38959,10 +38925,8 @@ JOIN pg_catalog.pg_namespace table_ns
 WHERE con.contype IN (\'p\', \'u\', \'f\', \'c\')
 	AND table_class.relkind IN (\'r\', \'p\')
 	AND table_ns.nspname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(table_ns.nspname, 3) <> \'pg_\'
-	AND table_class.relname NOT IN (%2$s)',
-				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+	AND LEFT(table_ns.nspname, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'table_ns.nspname' )
 			);
 		}
 
@@ -38992,12 +38956,9 @@ FROM information_schema.view_table_usage vtu
 WHERE vtu.view_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND LEFT(vtu.view_schema, 3) <> \'pg_\'
 	AND vtu.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vtu.table_schema, 3) <> \'pg_\'
-	AND vtu.view_name NOT IN (%3$s)
-	AND vtu.table_name NOT IN (%3$s)',
+	AND LEFT(vtu.table_schema, 3) <> \'pg_\'',
 				$this->get_direct_information_schema_display_schema_sql( 'vtu.view_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 'vtu.table_schema' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+				$this->get_direct_information_schema_display_schema_sql( 'vtu.table_schema' )
 			);
 		}
 
@@ -39014,11 +38975,9 @@ FROM information_schema.view_routine_usage vru
 WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND LEFT(vru.table_schema, 3) <> \'pg_\'
 	AND vru.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(vru.specific_schema, 3) <> \'pg_\'
-	AND vru.table_name NOT IN (%3$s)',
+	AND LEFT(vru.specific_schema, 3) <> \'pg_\'',
 				$this->get_direct_information_schema_display_schema_sql( 'vru.table_schema' ),
-				$this->get_direct_information_schema_display_schema_sql( 'vru.specific_schema' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+				$this->get_direct_information_schema_display_schema_sql( 'vru.specific_schema' )
 			);
 		}
 
@@ -39037,12 +38996,10 @@ WHERE vru.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	%3$s AS "COLLATION_CONNECTION"
 FROM information_schema.views v
 WHERE v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(v.table_schema, 3) <> \'pg_\'
-	AND v.table_name NOT IN (%4$s)',
+	AND LEFT(v.table_schema, 3) <> \'pg_\'',
 				$this->get_direct_information_schema_display_schema_sql( 'v.table_schema' ),
 				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
 			);
 		}
 
@@ -39073,14 +39030,12 @@ WHERE v.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	%5$s AS "DATABASE_COLLATION"
 FROM information_schema.triggers t
 WHERE t.trigger_schema NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(t.trigger_schema, 3) <> \'pg_\'
-	AND t.event_object_table NOT IN (%6$s)',
+	AND LEFT(t.trigger_schema, 3) <> \'pg_\'',
 				$this->get_direct_information_schema_display_schema_sql( 't.trigger_schema' ),
 				$this->get_direct_information_schema_display_schema_sql( 't.event_object_schema' ),
 				$this->connection->quote( $this->get_sql_mode() ),
 				$this->connection->quote( self::DEFAULT_MYSQL_CHARSET ),
-				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
 			);
 		}
 
@@ -39204,11 +39159,9 @@ WHERE p.specific_schema NOT IN (\'information_schema\', \'pg_catalog\')
 FROM information_schema.columns c
 WHERE c.table_schema NOT IN (\'information_schema\', \'pg_catalog\')
 	AND LEFT(c.table_schema, 3) <> \'pg_\'
-	AND c.table_name NOT IN (%3$s)
-	AND LOWER(COALESCE(c.domain_name, c.udt_name, c.data_type)) IN (%4$s)',
+	AND LOWER(COALESCE(c.domain_name, c.udt_name, c.data_type)) IN (%3$s)',
 				$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
 				implode( "\n\t\t", $geometry_type_case ),
-				$this->get_direct_information_schema_hidden_table_list_sql(),
 				$geometry_type_list
 			);
 		}
@@ -39266,7 +39219,6 @@ FROM index_columns',
 						'',
 						array(
 							'n.nspname NOT IN (\'information_schema\', \'pg_catalog\')',
-							't.relname NOT IN (' . $this->get_direct_information_schema_hidden_table_list_sql() . ')',
 							't.relkind IN (\'r\', \'p\')',
 						)
 					),
@@ -39410,10 +39362,8 @@ SELECT * FROM catalog_index_rows',
 	) AS text) AS "HISTOGRAM"
 FROM pg_catalog.pg_stats stats
 WHERE stats.schemaname NOT IN (\'information_schema\', \'pg_catalog\')
-	AND LEFT(stats.schemaname, 3) <> \'pg_\'
-	AND stats.tablename NOT IN (%2$s)',
-				$this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' ),
-				$this->get_direct_information_schema_hidden_table_list_sql()
+	AND LEFT(stats.schemaname, 3) <> \'pg_\'',
+				$this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' )
 			);
 		}
 

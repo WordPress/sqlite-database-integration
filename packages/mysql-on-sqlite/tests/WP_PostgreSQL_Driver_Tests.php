@@ -33672,7 +33672,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'tp.privilege_type AS "PRIVILEGE_TYPE"', $sql );
 		$this->assertStringContainsString( 'tp.is_grantable AS "IS_GRANTABLE"', $sql );
 		$this->assertStringContainsString( 'CASE WHEN tp.table_schema = \'public\' THEN \'wptests\' ELSE tp.table_schema END AS "TABLE_SCHEMA"', $sql );
-		$this->assertStringContainsString( 'tp.table_name NOT IN', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
 	}
 
@@ -33703,7 +33702,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'cp.privilege_type AS "PRIVILEGE_TYPE"', $sql );
 		$this->assertStringContainsString( 'cp.is_grantable AS "IS_GRANTABLE"', $sql );
 		$this->assertStringContainsString( 'CASE WHEN cp.table_schema = \'public\' THEN \'wptests\' ELSE cp.table_schema END AS "TABLE_SCHEMA"', $sql );
-		$this->assertStringContainsString( 'cp.table_name NOT IN', $sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $sql );
 	}
 
@@ -33796,7 +33794,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'CASE WHEN rtg.table_schema = \'public\' THEN \'wptests\' ELSE rtg.table_schema END AS "TABLE_SCHEMA"', $table_sql );
 		$this->assertStringContainsString( 'rtg.table_name AS "TABLE_NAME"', $table_sql );
 		$this->assertStringContainsString( 'rtg.privilege_type AS "PRIVILEGE_TYPE"', $table_sql );
-		$this->assertStringContainsString( 'rtg.table_name NOT IN', $table_sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $table_sql );
 
 		$get_column_sql = Closure::bind(
@@ -33813,7 +33810,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'rcg.grantee AS "GRANTEE"', $column_sql );
 		$this->assertStringContainsString( 'rcg.column_name AS "COLUMN_NAME"', $column_sql );
 		$this->assertStringContainsString( 'rcg.privilege_type AS "PRIVILEGE_TYPE"', $column_sql );
-		$this->assertStringContainsString( 'rcg.table_name NOT IN', $column_sql );
 		$this->assertStringNotContainsString( 'UNION ALL', $column_sql );
 
 		$get_routine_sql = Closure::bind(
@@ -34111,7 +34107,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'stats.attname AS "COLUMN_NAME"', $sql );
 		$this->assertStringContainsString( 'pg_catalog.json_build_object', $sql );
 		$this->assertStringContainsString( 'pg_catalog.to_json(stats.histogram_bounds)', $sql );
-		$this->assertStringContainsString( 'stats.tablename NOT IN', $sql );
 	}
 
 	/**
@@ -34454,7 +34449,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'c.column_name AS "COLUMN_NAME"', $columns_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "ENGINE_ATTRIBUTE"', $columns_extensions_sql );
 		$this->assertStringContainsString( 'NULL AS "SECONDARY_ENGINE_ATTRIBUTE"', $columns_extensions_sql );
-		$this->assertStringContainsString( 'c.table_name NOT IN', $columns_extensions_sql );
 		$this->assertStringNotContainsString( 'FROM (', $columns_extensions_sql );
 
 		$table_constraints_extensions_sql = $get_sql( 'table_constraints_extensions' );
@@ -34483,7 +34477,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'FROM information_schema.columns c', $st_geometry_columns_sql );
 		$this->assertStringContainsString( '__wp_mysql_geometry', $st_geometry_columns_sql );
 		$this->assertStringContainsString( 'AS "GEOMETRY_TYPE_NAME"', $st_geometry_columns_sql );
-		$this->assertStringContainsString( 'c.table_name NOT IN', $st_geometry_columns_sql );
 	}
 
 	/**
@@ -34665,7 +34658,6 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'FROM pg_catalog.pg_attribute a', $sql );
 		$this->assertStringContainsString( 'CAST(c.oid AS bigint) AS "TABLE_ID"', $sql );
 		$this->assertStringContainsString( 'c.relname AS "NAME"', $sql );
-		$this->assertStringContainsString( 'c.relname NOT IN', $sql );
 		$this->assertStringContainsString( '\'Dynamic\' AS "ROW_FORMAT"', $sql );
 	}
 
