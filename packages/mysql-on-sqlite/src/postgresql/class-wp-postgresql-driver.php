@@ -19883,12 +19883,27 @@ ORDER BY table_name';
 	 * @return mixed SHOW DATABASES result rows.
 	 */
 	private function execute_show_databases_query( array $show_databases_query, $fetch_mode, ...$fetch_mode_args ) {
-		$rows = $this->should_use_postgresql_catalog_metadata()
-			? $this->get_mysql_databases_from_postgresql_catalog()
-			: array(
+		if ( $this->should_use_postgresql_catalog_metadata() ) {
+			$sql    = 'SELECT
+					CASE WHEN s.schema_name = \'public\' THEN ? ELSE s.schema_name END AS "Database"
+				FROM information_schema.schemata s
+				WHERE s.schema_name = \'information_schema\'
+					OR LEFT(s.schema_name, 3) <> \'pg_\'
+				ORDER BY "Database"';
+			$params = array( $this->main_db_name );
+			$stmt   = $this->connection->query( $sql, $params );
+
+			$this->last_postgresql_queries[] = array(
+				'sql'    => $sql,
+				'params' => $params,
+			);
+			$rows                            = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		} else {
+			$rows = array(
 				array( 'Database' => 'information_schema' ),
 				array( 'Database' => $this->main_db_name ),
 			);
+		}
 
 		$rows = $this->filter_mysql_static_show_rows(
 			$rows,
@@ -19901,29 +19916,6 @@ ORDER BY table_name';
 			$fetch_mode,
 			...$fetch_mode_args
 		);
-	}
-
-	/**
-	 * Get MySQL-facing database/schema names from PostgreSQL catalogs.
-	 *
-	 * @return array[] Database rows.
-	 */
-	private function get_mysql_databases_from_postgresql_catalog(): array {
-		$sql    = 'SELECT
-				CASE WHEN s.schema_name = \'public\' THEN ? ELSE s.schema_name END AS "Database"
-			FROM information_schema.schemata s
-			WHERE s.schema_name = \'information_schema\'
-				OR LEFT(s.schema_name, 3) <> \'pg_\'
-			ORDER BY "Database"';
-		$params = array( $this->main_db_name );
-		$stmt   = $this->connection->query( $sql, $params );
-
-		$this->last_postgresql_queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 
 	/**
