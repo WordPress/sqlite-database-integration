@@ -35158,11 +35158,28 @@ WHERE "TABLE_SCHEMA" = %3$s
 			if (
 				null === $replacements
 				|| array() === $replacements
-				|| ! $this->direct_information_schema_relation_references_are_covered( $tokens, 1, $statement_end, $replacements )
 				|| ! $this->direct_information_schema_nested_selects_are_covered( $tokens, 1, $statement_end, $replacements )
 				|| ! $this->is_supported_simple_mysql_expression_fragment_with_replacements( $tokens, $where_position + 1, $where_end, $replacements )
 			) {
 				return null;
+			}
+
+			for ( $reference_position = 1; $reference_position + 2 < $statement_end; $reference_position++ ) {
+				if (
+					WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $reference_position + 1 ]->id ?? null )
+					|| 0 !== strcasecmp(
+						(string) $this->get_direct_information_schema_identifier_token_value( $tokens[ $reference_position ] ?? null ),
+						'information_schema'
+					)
+					|| null === $this->get_direct_information_schema_identifier_token_value( $tokens[ $reference_position + 2 ] ?? null )
+				) {
+					continue;
+				}
+
+				$replacement_end = $this->get_covering_mysql_replacement_range_end( $reference_position, $replacements );
+				if ( null === $replacement_end || $reference_position + 2 >= $replacement_end ) {
+					return null;
+				}
 			}
 
 			$position = $where_end;
@@ -39088,7 +39105,38 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 	 * @return array[] Replacement ranges.
 	 */
 	private function get_direct_information_schema_binary_operator_replacements( array $tokens, int $start, int $end, array $protected_ranges = array() ): array {
-		$replacements = array();
+		$invalid_next_token_ids     = array(
+			WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
+			WP_MySQL_Lexer::COMMA_SYMBOL,
+			WP_MySQL_Lexer::EOF,
+			WP_MySQL_Lexer::SEMICOLON_SYMBOL,
+		);
+		$invalid_previous_token_ids = array(
+			WP_MySQL_Lexer::AS_SYMBOL,
+			WP_MySQL_Lexer::COMMA_SYMBOL,
+			WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
+			WP_MySQL_Lexer::USING_SYMBOL,
+		);
+		$valid_previous_token_ids   = array(
+			WP_MySQL_Lexer::AND_SYMBOL,
+			WP_MySQL_Lexer::BETWEEN_SYMBOL,
+			WP_MySQL_Lexer::BY_SYMBOL,
+			WP_MySQL_Lexer::EQUAL_OPERATOR,
+			WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
+			WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
+			WP_MySQL_Lexer::HAVING_SYMBOL,
+			WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
+			WP_MySQL_Lexer::LESS_THAN_OPERATOR,
+			WP_MySQL_Lexer::LIKE_SYMBOL,
+			WP_MySQL_Lexer::NOT_SYMBOL,
+			WP_MySQL_Lexer::NOT_EQUAL_OPERATOR,
+			WP_MySQL_Lexer::OR_SYMBOL,
+			WP_MySQL_Lexer::REGEXP_SYMBOL,
+			WP_MySQL_Lexer::WHERE_SYMBOL,
+			WP_MySQL_Lexer::XOR_SYMBOL,
+		);
+		$replacements               = array();
+
 		for ( $position = $start; $position < $end; $position++ ) {
 			$protected_end = $this->get_covering_mysql_replacement_range_end( $position, $protected_ranges );
 			if ( null !== $protected_end ) {
@@ -39099,9 +39147,21 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 			if (
 				! isset( $tokens[ $position ] )
 				|| WP_MySQL_Lexer::BINARY_SYMBOL !== $tokens[ $position ]->id
-				|| ! $this->is_direct_information_schema_unary_binary_operator_position( $tokens, $position, $start, $end )
+				|| $position + 1 >= $end
+				|| ! isset( $tokens[ $position + 1 ] )
+				|| in_array( $tokens[ $position + 1 ]->id, $invalid_next_token_ids, true )
 			) {
 				continue;
+			}
+
+			if ( $position > $start && isset( $tokens[ $position - 1 ] ) ) {
+				$previous_token_id = $tokens[ $position - 1 ]->id;
+				if (
+					in_array( $previous_token_id, $invalid_previous_token_ids, true )
+					|| ! in_array( $previous_token_id, $valid_previous_token_ids, true )
+				) {
+					continue;
+				}
 			}
 
 			$replacements[] = array(
@@ -39112,84 +39172,6 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 		}
 
 		return $replacements;
-	}
-
-	/**
-	 * Check whether BINARY is being used as a standalone unary operator.
-	 *
-	 * @param WP_MySQL_Token[] $tokens   MySQL lexer token stream.
-	 * @param int              $position BINARY token position.
-	 * @param int              $start    First token in the range.
-	 * @param int              $end      Final token, exclusive.
-	 * @return bool Whether the token can be stripped safely.
-	 */
-	private function is_direct_information_schema_unary_binary_operator_position( array $tokens, int $position, int $start, int $end ): bool {
-		if ( $position + 1 >= $end || ! isset( $tokens[ $position + 1 ] ) ) {
-			return false;
-		}
-
-		$next_token_id = $tokens[ $position + 1 ]->id;
-		if (
-			in_array(
-				$next_token_id,
-				array(
-					WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
-					WP_MySQL_Lexer::COMMA_SYMBOL,
-					WP_MySQL_Lexer::EOF,
-					WP_MySQL_Lexer::SEMICOLON_SYMBOL,
-				),
-				true
-			)
-		) {
-			return false;
-		}
-
-		if ( $position > $start && isset( $tokens[ $position - 1 ] ) ) {
-			$previous_token_id = $tokens[ $position - 1 ]->id;
-			if (
-				in_array(
-					$previous_token_id,
-					array(
-						WP_MySQL_Lexer::AS_SYMBOL,
-						WP_MySQL_Lexer::COMMA_SYMBOL,
-						WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
-						WP_MySQL_Lexer::USING_SYMBOL,
-					),
-					true
-				)
-			) {
-				return false;
-			}
-
-			if (
-				! in_array(
-					$previous_token_id,
-					array(
-						WP_MySQL_Lexer::AND_SYMBOL,
-						WP_MySQL_Lexer::BETWEEN_SYMBOL,
-						WP_MySQL_Lexer::BY_SYMBOL,
-						WP_MySQL_Lexer::EQUAL_OPERATOR,
-						WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
-						WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
-						WP_MySQL_Lexer::HAVING_SYMBOL,
-						WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
-						WP_MySQL_Lexer::LESS_THAN_OPERATOR,
-						WP_MySQL_Lexer::LIKE_SYMBOL,
-						WP_MySQL_Lexer::NOT_SYMBOL,
-						WP_MySQL_Lexer::NOT_EQUAL_OPERATOR,
-						WP_MySQL_Lexer::OR_SYMBOL,
-						WP_MySQL_Lexer::REGEXP_SYMBOL,
-						WP_MySQL_Lexer::WHERE_SYMBOL,
-						WP_MySQL_Lexer::XOR_SYMBOL,
-					),
-					true
-				)
-			) {
-				return false;
-			}
-		}
-
-		return true;
 	}
 
 	/**
@@ -39278,37 +39260,6 @@ WHERE stats.schemaname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
 			}
 
 			if ( null === $this->get_covering_mysql_replacement_range_end( $position, $replacements ) ) {
-				return false;
-			}
-		}
-
-		return true;
-	}
-
-	/**
-	 * Check whether every direct information_schema relation reference is inside a replacement.
-	 *
-	 * @param WP_MySQL_Token[] $tokens       MySQL lexer token stream.
-	 * @param int              $start        First token position.
-	 * @param int              $end          Final token position, exclusive.
-	 * @param array[]          $replacements Replacement ranges.
-	 * @return bool Whether direct information_schema references are fully handled.
-	 */
-	private function direct_information_schema_relation_references_are_covered( array $tokens, int $start, int $end, array $replacements ): bool {
-		for ( $position = $start; $position + 2 < $end; $position++ ) {
-			if (
-				WP_MySQL_Lexer::DOT_SYMBOL !== ( $tokens[ $position + 1 ]->id ?? null )
-				|| 0 !== strcasecmp(
-					(string) $this->get_direct_information_schema_identifier_token_value( $tokens[ $position ] ?? null ),
-					'information_schema'
-				)
-				|| null === $this->get_direct_information_schema_identifier_token_value( $tokens[ $position + 2 ] ?? null )
-			) {
-				continue;
-			}
-
-			$replacement_end = $this->get_covering_mysql_replacement_range_end( $position, $replacements );
-			if ( null === $replacement_end || $position + 2 >= $replacement_end ) {
 				return false;
 			}
 		}
