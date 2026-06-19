@@ -13467,7 +13467,7 @@ $wp_mysql_primary_index_comment$',
 				}
 
 				$drop_targets[] = array(
-					'identifier' => $this->get_temporary_drop_table_identifier( $table_name ),
+					'identifier' => $this->get_temporary_drop_table_schema_name() . '.' . $this->connection->quote_identifier( $table_name ),
 					'schema'     => null,
 					'table'      => $table_name,
 				);
@@ -14282,16 +14282,6 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		return $targets;
-	}
-
-	/**
-	 * Get the backend table identifier for a MySQL DROP TEMPORARY TABLE target.
-	 *
-	 * @param string $table_name MySQL table identifier value.
-	 * @return string PostgreSQL table identifier constrained to the temporary schema.
-	 */
-	private function get_temporary_drop_table_identifier( string $table_name ): string {
-		return $this->get_temporary_drop_table_schema_name() . '.' . $this->connection->quote_identifier( $table_name );
 	}
 
 	/**
