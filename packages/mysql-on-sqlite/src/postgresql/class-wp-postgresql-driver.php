@@ -37992,6 +37992,64 @@ WHERE option_name IN (
 			return $this->get_direct_information_schema_empty_relation_sql( $view );
 		}
 
+		if ( 'tablespaces_extensions' === $view ) {
+			return 'SELECT
+	ts.spcname AS "TABLESPACE_NAME",
+	NULL AS "ENGINE_ATTRIBUTE"
+FROM pg_catalog.pg_tablespace ts';
+		}
+
+		if ( 'tablespaces' === $view ) {
+			return 'SELECT
+	ts.spcname AS "TABLESPACE_NAME",
+	\'InnoDB\' AS "ENGINE",
+	\'General\' AS "TABLESPACE_TYPE",
+	NULL AS "LOGFILE_GROUP_NAME",
+	NULL AS "EXTENT_SIZE",
+	NULL AS "AUTOEXTEND_SIZE",
+	NULL AS "MAXIMUM_SIZE",
+	NULL AS "NODEGROUP_ID",
+	COALESCE(pg_catalog.obj_description(ts.oid, \'pg_tablespace\'), \'\') AS "TABLESPACE_COMMENT"
+FROM pg_catalog.pg_tablespace ts';
+		}
+
+		if ( 'innodb_tablespaces' === $view ) {
+			return 'SELECT
+	CAST(ts.oid AS bigint) AS "SPACE",
+	ts.spcname AS "NAME",
+	0 AS "FLAG",
+	\'Dynamic\' AS "ROW_FORMAT",
+	16384 AS "PAGE_SIZE",
+	0 AS "ZIP_PAGE_SIZE",
+	\'Single\' AS "SPACE_TYPE",
+	NULL AS "FS_BLOCK_SIZE",
+	NULL AS "FILE_SIZE",
+	NULL AS "ALLOCATED_SIZE",
+	0 AS "AUTOEXTEND_SIZE",
+	NULL AS "SERVER_VERSION",
+	1 AS "SPACE_VERSION",
+	\'N\' AS "ENCRYPTION",
+	\'normal\' AS "STATE"
+FROM pg_catalog.pg_tablespace ts';
+		}
+
+		if ( 'innodb_tablespaces_brief' === $view ) {
+			return 'SELECT
+	CAST(ts.oid AS bigint) AS "SPACE",
+	ts.spcname AS "NAME",
+	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH",
+	0 AS "FLAG",
+	\'Single\' AS "SPACE_TYPE"
+FROM pg_catalog.pg_tablespace ts';
+		}
+
+		if ( 'innodb_datafiles' === $view ) {
+			return 'SELECT
+	CAST(ts.oid AS bigint) AS "SPACE",
+	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"
+FROM pg_catalog.pg_tablespace ts';
+		}
+
 		$method = 'get_direct_information_schema_' . $view . '_relation_sql';
 		return method_exists( $this, $method ) ? $this->$method() : null;
 	}
@@ -38948,40 +39006,6 @@ WHERE s.schema_name = \'information_schema\'
 	}
 
 	/**
-	 * Build the MySQL-shaped information_schema.TABLESPACES_EXTENSIONS relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_tablespaces_extensions_relation_sql(): string {
-		return 'SELECT
-	ts.spcname AS "TABLESPACE_NAME",
-	NULL AS "ENGINE_ATTRIBUTE"
-FROM pg_catalog.pg_tablespace ts';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.TABLESPACES relation.
-	 *
-	 * MySQL 8 marks this relation unused and deprecated. Keep it explicit and
-	 * stateless rather than maintaining side metadata.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_tablespaces_relation_sql(): string {
-		return 'SELECT
-	ts.spcname AS "TABLESPACE_NAME",
-	\'InnoDB\' AS "ENGINE",
-	\'General\' AS "TABLESPACE_TYPE",
-	NULL AS "LOGFILE_GROUP_NAME",
-	NULL AS "EXTENT_SIZE",
-	NULL AS "AUTOEXTEND_SIZE",
-	NULL AS "MAXIMUM_SIZE",
-	NULL AS "NODEGROUP_ID",
-	COALESCE(pg_catalog.obj_description(ts.oid, \'pg_tablespace\'), \'\') AS "TABLESPACE_COMMENT"
-FROM pg_catalog.pg_tablespace ts';
-	}
-
-	/**
 	 * Build the MySQL-shaped information_schema.INNODB_TABLES relation.
 	 *
 	 * @return string Relation SQL.
@@ -39019,58 +39043,6 @@ WHERE c.relkind IN (\'r\', \'p\')
 			$this->get_direct_information_schema_display_schema_sql( 'n.nspname' ),
 			$this->get_direct_information_schema_hidden_table_list_sql()
 		);
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.INNODB_TABLESPACES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_innodb_tablespaces_relation_sql(): string {
-		return 'SELECT
-	CAST(ts.oid AS bigint) AS "SPACE",
-	ts.spcname AS "NAME",
-	0 AS "FLAG",
-	\'Dynamic\' AS "ROW_FORMAT",
-	16384 AS "PAGE_SIZE",
-	0 AS "ZIP_PAGE_SIZE",
-	\'Single\' AS "SPACE_TYPE",
-	NULL AS "FS_BLOCK_SIZE",
-	NULL AS "FILE_SIZE",
-	NULL AS "ALLOCATED_SIZE",
-	0 AS "AUTOEXTEND_SIZE",
-	NULL AS "SERVER_VERSION",
-	1 AS "SPACE_VERSION",
-	\'N\' AS "ENCRYPTION",
-	\'normal\' AS "STATE"
-FROM pg_catalog.pg_tablespace ts';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.INNODB_TABLESPACES_BRIEF relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_innodb_tablespaces_brief_relation_sql(): string {
-		return 'SELECT
-	CAST(ts.oid AS bigint) AS "SPACE",
-	ts.spcname AS "NAME",
-	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH",
-	0 AS "FLAG",
-	\'Single\' AS "SPACE_TYPE"
-FROM pg_catalog.pg_tablespace ts';
-	}
-
-	/**
-	 * Build the MySQL-shaped information_schema.INNODB_DATAFILES relation.
-	 *
-	 * @return string Relation SQL.
-	 */
-	private function get_direct_information_schema_innodb_datafiles_relation_sql(): string {
-		return 'SELECT
-	CAST(ts.oid AS bigint) AS "SPACE",
-	NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\') AS "PATH"
-FROM pg_catalog.pg_tablespace ts';
 	}
 
 	/**
