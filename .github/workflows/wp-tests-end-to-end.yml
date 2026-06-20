@@ -43,6 +43,7 @@ jobs:
       - name: Run WordPress end-to-end tests
         env:
           WP_TEST_DB_BACKEND: ${{ matrix.backend }}
+          WP_POSTGRESQL_E2E_REQUEST_DIAGNOSTICS: ${{ matrix.backend == 'postgresql' && '1' || '0' }}
         run: composer run wp-test-e2e
 
       - name: Dump WordPress Docker logs
