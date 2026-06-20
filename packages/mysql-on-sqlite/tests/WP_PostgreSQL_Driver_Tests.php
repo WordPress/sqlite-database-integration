@@ -849,7 +849,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( '1', $found_rows[0]->{'FOUND_ROWS()'} );
 		$this->assertSame( $after_first_posts_query, $metadata_select_count );
 
-		$count_rows = $driver->query(
+		$count_rows       = $driver->query(
 			"SELECT COUNT(*) FROM wp_term_relationships, wp_posts
 			WHERE wp_posts.ID = wp_term_relationships.object_id
 				AND post_status IN ('publish')

@@ -4419,7 +4419,47 @@ $wp_mysql_primary_index_comment$',
 		$metadata = $this->get_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
 		return null === $metadata || null === ( $metadata['collation_name'] ?? null ) ? null : (string) $metadata['collation_name'];
 	}
+	private function get_cached_mysql_table_column_type(
+		string $table_schema,
+		string $table_name,
+		string $column_name
+	): ?string {
+		$metadata = $this->get_cached_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+		return null === $metadata || ! array_key_exists( 'column_type', $metadata )
+			? null
+			: (string) $metadata['column_type'];
+	}
+	private function get_cached_mysql_table_column_collation(
+		string $table_schema,
+		string $table_name,
+		string $column_name
+	): ?string {
+		$metadata = $this->get_cached_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+		return null === $metadata || null === ( $metadata['collation_name'] ?? null ) ? null : (string) $metadata['collation_name'];
+	}
 	private function get_mysql_table_catalog_column_metadata_rows(
+		string $table_schema,
+		string $table_name,
+		?string $column_name = null,
+		bool $case_sensitive_column = false
+	): array {
+		if ( null !== $column_name ) {
+			return $this->read_mysql_table_catalog_column_metadata_rows(
+				$table_schema,
+				$table_name,
+				$column_name,
+				$case_sensitive_column
+			);
+		}
+
+		return $this->get_cached_mysql_table_catalog_column_metadata_rows(
+			$table_schema,
+			$table_name,
+			$column_name,
+			$case_sensitive_column
+		);
+	}
+	private function get_cached_mysql_table_catalog_column_metadata_rows(
 		string $table_schema,
 		string $table_name,
 		?string $column_name = null,
@@ -4434,6 +4474,16 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 
+		$rows = $this->read_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name );
+		$this->mysql_column_metadata_introspection_cache[ $cache_key ] = $rows;
+		return $this->filter_mysql_table_catalog_column_metadata_rows( $rows, $column_name, $case_sensitive_column );
+	}
+	private function read_mysql_table_catalog_column_metadata_rows(
+		string $table_schema,
+		string $table_name,
+		?string $column_name = null,
+		bool $case_sensitive_column = false
+	): array {
 		$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
 		$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
 			'c',
@@ -4460,9 +4510,13 @@ $wp_mysql_primary_index_comment$',
 				$this->get_direct_information_schema_column_default_expression( 'c', $column_comment_sql ),
 				$this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql )
 			),
-			false
+			null !== $column_name,
+			$case_sensitive_column
 		);
 		$params             = array( $table_schema, $table_name );
+		if ( null !== $column_name ) {
+			$params[] = $column_name;
+		}
 
 		try {
 			$stmt = $this->connection->query( $sql, $params );
@@ -4472,19 +4526,16 @@ $wp_mysql_primary_index_comment$',
 					$rows,
 					$table_schema,
 					$table_name,
-					null,
-					false
+					$column_name,
+					$case_sensitive_column
 				);
 			}
-			$this->mysql_column_metadata_introspection_cache[ $cache_key ] = $rows;
-			return $this->filter_mysql_table_catalog_column_metadata_rows( $rows, $column_name, $case_sensitive_column );
+			return $rows;
 		} catch ( PDOException $e ) {
 			if ( 'sqlite' !== (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
 				throw $e;
 			}
-			$rows = $this->get_sqlite_table_catalog_column_metadata_rows( $table_schema, $table_name );
-			$this->mysql_column_metadata_introspection_cache[ $cache_key ] = $rows;
-			return $this->filter_mysql_table_catalog_column_metadata_rows( $rows, $column_name, $case_sensitive_column );
+			return $this->get_sqlite_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name, $case_sensitive_column );
 		}
 	}
 	private function get_mysql_table_catalog_column_metadata_cache_key( string $table_schema, string $table_name ): string {
@@ -4597,6 +4648,14 @@ $wp_mysql_primary_index_comment$',
 		string $column_name
 	): ?array {
 		$rows = $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name );
+		return 1 === count( $rows ) ? $rows[0] : null;
+	}
+	private function get_cached_mysql_table_catalog_column_metadata_row(
+		string $table_schema,
+		string $table_name,
+		string $column_name
+	): ?array {
+		$rows = $this->get_cached_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name );
 		return 1 === count( $rows ) ? $rows[0] : null;
 	}
 	private function get_postgresql_catalog_column_metadata_sql(
@@ -17866,7 +17925,7 @@ WHERE option_name IN (
 		if ( $this->is_mysql_integer_family_column_type( $target_type ) ) {
 			if ( null !== $scope ) {
 				$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
-				if ( null !== $reference && $reference['end'] === $end && $this->is_mysql_integer_column_reference( $reference, $scope ) ) {
+				if ( null !== $reference && $reference['end'] === $end && $this->is_mysql_integer_column_reference( $reference, $scope, false ) ) {
 					return null;
 				}
 			}
@@ -17887,7 +17946,7 @@ WHERE option_name IN (
 
 		if ( null !== $scope ) {
 			$reference = $this->parse_mysql_column_reference( $tokens, $start, $end );
-			if ( null !== $reference && $reference['end'] === $end && $this->is_mysql_text_family_column_reference( $reference, $scope ) ) {
+			if ( null !== $reference && $reference['end'] === $end && $this->is_mysql_text_family_column_reference( $reference, $scope, false ) ) {
 				return null;
 			}
 		}
@@ -19923,7 +19982,7 @@ WHERE option_name IN (
 	}
 	private function mysql_table_has_column_for_translation( string $table_schema, string $table_name, string $column_name ): bool {
 		if ( $this->mysql_table_has_column_metadata( $table_schema, $table_name ) ) {
-			return null !== $this->get_mysql_table_column_type( $table_schema, $table_name, $column_name );
+			return null !== $this->get_cached_mysql_table_column_type( $table_schema, $table_name, $column_name );
 		}
 
 		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
@@ -33455,7 +33514,7 @@ END',
 					return false;
 				}
 
-				if ( null === $this->get_mysql_table_column_type( $scope_table['schema'], $scope_table['table'], $reference['column'] ) ) {
+				if ( null === $this->get_cached_mysql_table_column_type( $scope_table['schema'], $scope_table['table'], $reference['column'] ) ) {
 					continue;
 				}
 
@@ -33830,7 +33889,7 @@ END',
 			return null;
 		}
 
-		$resolved_column = $this->get_mysql_table_column_name( $table['schema'], $table['table'], $reference['column'] );
+		$resolved_column = $this->get_cached_mysql_table_column_name( $table['schema'], $table['table'], $reference['column'] );
 		if ( null === $resolved_column || $resolved_column === $reference['column'] ) {
 			return null;
 		}
@@ -33854,6 +33913,26 @@ END',
 		}
 
 		$exact_metadata = $this->get_mysql_table_catalog_column_metadata_rows(
+			$table_schema,
+			$table_name,
+			$column_name,
+			true
+		);
+		return 1 === count( $exact_metadata ) && array_key_exists( 'column_name', $exact_metadata[0] )
+			? (string) $exact_metadata[0]['column_name']
+			: null;
+	}
+	private function get_cached_mysql_table_column_name(
+		string $table_schema,
+		string $table_name,
+		string $column_name
+	): ?string {
+		$metadata = $this->get_cached_mysql_table_catalog_column_metadata_row( $table_schema, $table_name, $column_name );
+		if ( null !== $metadata && array_key_exists( 'column_name', $metadata ) ) {
+			return (string) $metadata['column_name'];
+		}
+
+		$exact_metadata = $this->get_cached_mysql_table_catalog_column_metadata_rows(
 			$table_schema,
 			$table_name,
 			$column_name,
@@ -34459,12 +34538,12 @@ END',
 			'column'    => $first_identifier,
 		);
 	}
-	private function is_mysql_integer_column_reference( array $reference, array $scope ): bool {
-		$column_type = $this->get_mysql_column_type_for_reference( $reference, $scope );
+	private function is_mysql_integer_column_reference( array $reference, array $scope, bool $use_cached_metadata = true ): bool {
+		$column_type = $this->get_mysql_column_type_for_reference( $reference, $scope, $use_cached_metadata );
 		return null !== $column_type && $this->is_mysql_integer_family_column_type( $column_type );
 	}
-	private function is_mysql_text_family_column_reference( array $reference, array $scope ): bool {
-		$column_type = $this->get_mysql_column_type_for_reference( $reference, $scope );
+	private function is_mysql_text_family_column_reference( array $reference, array $scope, bool $use_cached_metadata = true ): bool {
+		$column_type = $this->get_mysql_column_type_for_reference( $reference, $scope, $use_cached_metadata );
 		return null !== $column_type && $this->is_mysql_text_family_column_type( $column_type );
 	}
 	private function is_mysql_text_family_column_type( string $column_type ): bool {
@@ -34481,11 +34560,15 @@ END',
 			true
 		);
 	}
-	private function get_mysql_column_type_for_reference( array $reference, array $scope ): ?string {
-		return $this->get_mysql_column_metadata_for_reference( $reference, $scope, 'get_mysql_table_column_type' );
+	private function get_mysql_column_type_for_reference( array $reference, array $scope, bool $use_cached_metadata = true ): ?string {
+		return $this->get_mysql_column_metadata_for_reference(
+			$reference,
+			$scope,
+			$use_cached_metadata ? 'get_cached_mysql_table_column_type' : 'get_mysql_table_column_type'
+		);
 	}
 	private function get_mysql_column_collation_for_reference( array $reference, array $scope ): ?string {
-		return $this->get_mysql_column_metadata_for_reference( $reference, $scope, 'get_mysql_table_column_collation' );
+		return $this->get_mysql_column_metadata_for_reference( $reference, $scope, 'get_cached_mysql_table_column_collation' );
 	}
 	private function get_mysql_column_metadata_for_reference( array $reference, array $scope, string $metadata_method ): ?string {
 		if ( null !== $reference['qualifier'] ) {
