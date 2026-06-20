@@ -11136,35 +11136,25 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 
-		$cache_key              = $this->get_mysql_introspection_result_cache_key(
+		$cache_key          = $this->get_mysql_introspection_result_cache_key(
 			'show_columns',
 			$fetch_mode,
 			array( $resolved_schema, $table_name, $is_full, $like, $where_filter, $fetch_mode, $fetch_mode_args )
 		);
-			$column_expressions = array(
-				'Field'      => '"COLUMN_NAME"',
-				'Type'       => '"COLUMN_TYPE"',
-				'Collation'  => '"COLLATION_NAME"',
-				'Null'       => '"IS_NULLABLE"',
-				'Key'        => '"COLUMN_KEY"',
-				'Default'    => '"COLUMN_DEFAULT"',
-				'Extra'      => '"EXTRA"',
-				'Privileges' => '"PRIVILEGES"',
-				'Comment'    => '"COLUMN_COMMENT"',
-			);
+		$column_expressions = $this->get_direct_information_schema_native_projection_expression_map( 'Field="COLUMN_NAME"; Type="COLUMN_TYPE"; Collation="COLLATION_NAME"; Null="IS_NULLABLE"; Key="COLUMN_KEY"; Default="COLUMN_DEFAULT"; Extra="EXTRA"; Privileges="PRIVILEGES"; Comment="COLUMN_COMMENT"' );
 
-			$sql    = sprintf(
-				'SELECT
+		$sql    = sprintf(
+			'SELECT
 	%1$s
 FROM (%2$s) information_schema_columns
 WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 	AND "TABLE_NAME" = ?',
-				$this->get_mysql_show_projection_sql( $this->get_show_columns_output_columns( $is_full ), $column_expressions, "\t" ),
-				$this->get_direct_information_schema_relation_sql( 'columns' ),
-				$this->connection->quote( 'public' ),
-				$this->connection->quote( $this->main_db_name )
-			);
-			$params = array( $resolved_schema, $table_name );
+			$this->get_mysql_show_projection_sql( $this->get_show_columns_output_columns( $is_full ), $column_expressions, "\t" ),
+			$this->get_direct_information_schema_relation_sql( 'columns' ),
+			$this->connection->quote( 'public' ),
+			$this->connection->quote( $this->main_db_name )
+		);
+		$params = array( $resolved_schema, $table_name );
 
 		if ( null !== $like ) {
 			$sql     .= ' AND "COLUMN_NAME" LIKE ? ESCAPE ' . $this->get_mysql_like_default_escape_sql();
@@ -11483,31 +11473,16 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 			);
 		}
 
-		$rows = $this->get_mysql_show_query_rows(
+		$table_status_expressions = $this->get_direct_information_schema_native_projection_expression_map( 'Name="TABLE_NAME"; Engine="ENGINE"; Version=CAST("VERSION" AS text); Row_format="ROW_FORMAT"; Rows=CAST("TABLE_ROWS" AS text); Avg_row_length=CAST("AVG_ROW_LENGTH" AS text); Data_length=CAST("DATA_LENGTH" AS text); Max_data_length=CAST("MAX_DATA_LENGTH" AS text); Index_length=CAST("INDEX_LENGTH" AS text); Data_free=CAST("DATA_FREE" AS text); Auto_increment=CASE WHEN "AUTO_INCREMENT" IS NULL THEN NULL ELSE CAST("AUTO_INCREMENT" AS text) END; Create_time="CREATE_TIME"; Update_time="UPDATE_TIME"; Check_time="CHECK_TIME"; Collation="TABLE_COLLATION"; Checksum="CHECKSUM"; Create_options="CREATE_OPTIONS"; Comment="TABLE_COMMENT"' );
+		$rows                     = $this->get_mysql_show_query_rows(
 			sprintf(
 				'SELECT
-					"TABLE_NAME" AS "Name",
-					"ENGINE" AS "Engine",
-					CAST("VERSION" AS text) AS "Version",
-					"ROW_FORMAT" AS "Row_format",
-					CAST("TABLE_ROWS" AS text) AS "Rows",
-					CAST("AVG_ROW_LENGTH" AS text) AS "Avg_row_length",
-					CAST("DATA_LENGTH" AS text) AS "Data_length",
-					CAST("MAX_DATA_LENGTH" AS text) AS "Max_data_length",
-					CAST("INDEX_LENGTH" AS text) AS "Index_length",
-					CAST("DATA_FREE" AS text) AS "Data_free",
-					CASE WHEN "AUTO_INCREMENT" IS NULL THEN NULL ELSE CAST("AUTO_INCREMENT" AS text) END AS "Auto_increment",
-					"CREATE_TIME" AS "Create_time",
-					"UPDATE_TIME" AS "Update_time",
-					"CHECK_TIME" AS "Check_time",
-					"TABLE_COLLATION" AS "Collation",
-					"CHECKSUM" AS "Checksum",
-					"CREATE_OPTIONS" AS "Create_options",
-					"TABLE_COMMENT" AS "Comment"
-				FROM (%s) information_schema_tables
+					%1$s
+				FROM (%2$s) information_schema_tables
 				WHERE "TABLE_SCHEMA" = ?
 					AND "TABLE_TYPE" = ?
 				ORDER BY "TABLE_NAME"',
+				$this->get_mysql_show_projection_sql( $columns, $table_status_expressions, "\t\t\t\t\t" ),
 				$this->get_direct_information_schema_relation_sql( 'tables' )
 			),
 			array(
@@ -13106,23 +13081,7 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 			array( $resolved_schema, $table_name, $where_filter, $fetch_mode, $fetch_mode_args )
 		);
 		$index_columns     = $this->get_show_index_output_columns();
-		$index_expressions = array(
-			'Table'         => '"TABLE_NAME"',
-			'Non_unique'    => 'CAST("NON_UNIQUE" AS text)',
-			'Key_name'      => '"INDEX_NAME"',
-			'Seq_in_index'  => 'CAST("SEQ_IN_INDEX" AS text)',
-			'Column_name'   => '"COLUMN_NAME"',
-			'Collation'     => '"COLLATION"',
-			'Cardinality'   => 'CAST("CARDINALITY" AS text)',
-			'Sub_part'      => 'CAST("SUB_PART" AS text)',
-			'Packed'        => '"PACKED"',
-			'Null'          => '"NULLABLE"',
-			'Index_type'    => '"INDEX_TYPE"',
-			'Comment'       => '"COMMENT"',
-			'Index_comment' => '"INDEX_COMMENT"',
-			'Visible'       => '"IS_VISIBLE"',
-			'Expression'    => '"EXPRESSION"',
-		);
+		$index_expressions = $this->get_direct_information_schema_native_projection_expression_map( 'Table="TABLE_NAME"; Non_unique=CAST("NON_UNIQUE" AS text); Key_name="INDEX_NAME"; Seq_in_index=CAST("SEQ_IN_INDEX" AS text); Column_name="COLUMN_NAME"; Collation="COLLATION"; Cardinality=CAST("CARDINALITY" AS text); Sub_part=CAST("SUB_PART" AS text); Packed="PACKED"; Null="NULLABLE"; Index_type="INDEX_TYPE"; Comment="COMMENT"; Index_comment="INDEX_COMMENT"; Visible="IS_VISIBLE"; Expression="EXPRESSION"' );
 		$filter_columns    = array();
 		foreach ( $index_columns as $column ) {
 			$filter_columns[ $column ] = $this->connection->quote_identifier( $column );
@@ -25301,47 +25260,15 @@ RELATIONS;
 					$this->get_direct_information_schema_relation_sql( 'statistics' ),
 					$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' )
 				);
-				$column_comment  = $comment_sql;
-				for ( $i = 0; $i < 4; ++$i ) {
-					$marker_conditions = array();
-					foreach ( self::POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES as $prefix ) {
-						$prefix_sql          = $this->connection->quote( $prefix );
-						$marker_conditions[] = sprintf(
-							'LEFT(COALESCE(%1$s, \'\'), LENGTH(%2$s)) = %2$s',
-							$column_comment,
-							$prefix_sql
-						);
-					}
-
-					$column_comment = sprintf(
-						'CASE
-		WHEN %2$s THEN
-			CASE
-				WHEN POSITION(CHR(10) IN COALESCE(%1$s, \'\')) > 0 THEN SUBSTRING(COALESCE(%1$s, \'\') FROM POSITION(CHR(10) IN COALESCE(%1$s, \'\')) + 1)
-				ELSE \'\'
-		END
-		ELSE COALESCE(%1$s, \'\')
-	END',
-						$column_comment,
-						implode(
-							'
-			OR ',
-							$marker_conditions
-						)
-					);
-				}
-				return sprintf(
-					'SELECT \'def\' AS "TABLE_CATALOG", %1$s AS "TABLE_SCHEMA", c.table_name AS "TABLE_NAME", c.column_name AS "COLUMN_NAME", c.ordinal_position AS "ORDINAL_POSITION", %8$s AS "COLUMN_DEFAULT", c.is_nullable AS "IS_NULLABLE", %2$s AS "DATA_TYPE", c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH", CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH", c.numeric_precision AS "NUMERIC_PRECISION", c.numeric_scale AS "NUMERIC_SCALE", c.datetime_precision AS "DATETIME_PRECISION", %3$s AS "CHARACTER_SET_NAME", %4$s AS "COLLATION_NAME", %5$s AS "COLUMN_TYPE", %6$s AS "COLUMN_KEY", %7$s AS "EXTRA", \'select,insert,update,references\' AS "PRIVILEGES", %9$s AS "COLUMN_COMMENT", \'\' AS "GENERATION_EXPRESSION", NULL AS "SRS_ID" FROM information_schema.columns c LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name AND pa.attnum > 0 WHERE %10$s',
-					$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
-					$type_expression,
-					$charset,
-					$collation,
-					$column_type,
-					$column_key,
-					$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
-					$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-					$column_comment,
-					$this->get_postgresql_visible_schema_condition_sql( 'c.table_schema', 'pc.oid' )
+				return $this->get_direct_information_schema_native_relation_sql(
+					'columns',
+					array(
+						'alias'       => 'c',
+						'from'        => 'information_schema.columns c',
+						'join'        => 'LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name AND pa.attnum > 0',
+						'where'       => $this->get_postgresql_visible_schema_condition_sql( 'c.table_schema', 'pc.oid' ),
+						'expressions' => 'COLUMN_DEFAULT=' . $this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ) . '; DATA_TYPE=' . $type_expression . '; CHARACTER_OCTET_LENGTH=CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END; CHARACTER_SET_NAME=' . $charset . '; COLLATION_NAME=' . $collation . '; COLUMN_TYPE=' . $column_type . '; COLUMN_KEY=' . $column_key . '; EXTRA=' . $this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ) . '; PRIVILEGES=' . $this->connection->quote( 'select,insert,update,references' ) . '; COLUMN_COMMENT=' . $this->get_postgresql_catalog_comment_after_marker_lines_sql( $comment_sql, self::POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES, count( self::POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES ) ) . '; GENERATION_EXPRESSION=' . $this->connection->quote( '' ) . '; SRS_ID=NULL',
+					)
 				);
 			}
 			return $this->get_direct_information_schema_empty_relation_sql( 'columns' );
@@ -25355,18 +25282,7 @@ RELATIONS;
 			$postgresql_table_comment_sql       = "pg_catalog.obj_description(pc.oid, 'pg_class')";
 			$table_comment_prefix_sql           = $this->connection->quote( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX );
 			$table_comment_value_sql            = sprintf( 'COALESCE(%s, \'\')', $postgresql_table_comment_sql );
-			$table_comment_sql                  = sprintf(
-				'CASE
-			WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN
-				CASE
-					WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
-				ELSE \'\'
-			END
-			ELSE %1$s
-		END',
-				$table_comment_value_sql,
-				$table_comment_prefix_sql
-			);
+			$table_comment_sql                  = $this->get_postgresql_catalog_comment_after_marker_lines_sql( $postgresql_table_comment_sql, array( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) );
 			$table_collation_comment_sql        = sprintf(
 				'CASE
 			WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s
@@ -25408,12 +25324,15 @@ RELATIONS;
 				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
 				$table_collation_comment_sql
 			);
-			return sprintf(
-				'SELECT \'def\' AS "TABLE_CATALOG", %1$s AS "TABLE_SCHEMA", t.table_name AS "TABLE_NAME", CASE WHEN t.table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "TABLE_TYPE", \'InnoDB\' AS "ENGINE", 10 AS "VERSION", \'Dynamic\' AS "ROW_FORMAT", GREATEST(CAST(COALESCE(pg_stat.n_live_tup, 0) AS bigint), CAST(COALESCE(pc.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS", 0 AS "AVG_ROW_LENGTH", 0 AS "DATA_LENGTH", 0 AS "MAX_DATA_LENGTH", 0 AS "INDEX_LENGTH", 0 AS "DATA_FREE", CASE WHEN identity_column.column_name IS NULL THEN NULL ELSE CAST(COALESCE(ps.last_value + ps.increment_by, ps.start_value, 1) AS bigint) END AS "AUTO_INCREMENT", TO_CHAR(CURRENT_TIMESTAMP, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATE_TIME", NULL AS "UPDATE_TIME", NULL AS "CHECK_TIME", %2$s AS "TABLE_COLLATION", NULL AS "CHECKSUM", \'\' AS "CREATE_OPTIONS", %3$s AS "TABLE_COMMENT" FROM information_schema.tables t LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = t.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = t.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_stat_all_tables pg_stat ON pg_stat.relid = pc.oid LEFT JOIN LATERAL (SELECT c.column_name, pg_catalog.pg_get_serial_sequence(pg_catalog.format(\'%%I.%%I\', t.table_schema, t.table_name), c.column_name)::regclass AS sequence_oid FROM information_schema.columns c WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name AND (c.is_identity = \'YES\' OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\') ORDER BY c.ordinal_position LIMIT 1) identity_column ON TRUE LEFT JOIN pg_catalog.pg_class seq ON seq.oid = identity_column.sequence_oid LEFT JOIN pg_catalog.pg_namespace seq_ns ON seq_ns.oid = seq.relnamespace LEFT JOIN pg_catalog.pg_sequences ps ON ps.schemaname = seq_ns.nspname AND ps.sequencename = seq.relname WHERE %4$s AND t.table_type IN (\'BASE TABLE\', \'VIEW\')',
-				$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
-				$table_collation_sql,
-				$table_comment_sql,
-				$this->get_postgresql_visible_schema_condition_sql( 't.table_schema', 'pc.oid' )
+			return $this->get_direct_information_schema_native_relation_sql(
+				'tables',
+				array(
+					'alias'       => 't',
+					'from'        => 'information_schema.tables t',
+					'join'        => 'LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = t.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = t.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_stat_all_tables pg_stat ON pg_stat.relid = pc.oid LEFT JOIN LATERAL (SELECT c.column_name, pg_catalog.pg_get_serial_sequence(pg_catalog.format(\'%I.%I\', t.table_schema, t.table_name), c.column_name)::regclass AS sequence_oid FROM information_schema.columns c WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name AND (c.is_identity = \'YES\' OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%\') ORDER BY c.ordinal_position LIMIT 1) identity_column ON TRUE LEFT JOIN pg_catalog.pg_class seq ON seq.oid = identity_column.sequence_oid LEFT JOIN pg_catalog.pg_namespace seq_ns ON seq_ns.oid = seq.relnamespace LEFT JOIN pg_catalog.pg_sequences ps ON ps.schemaname = seq_ns.nspname AND ps.sequencename = seq.relname',
+					'where'       => $this->get_postgresql_visible_schema_condition_sql( 't.table_schema', 'pc.oid' ) . ' AND t.table_type IN (\'BASE TABLE\', \'VIEW\')',
+					'expressions' => 'TABLE_TYPE=CASE WHEN t.table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; VERSION=10; ROW_FORMAT=' . $this->connection->quote( 'Dynamic' ) . '; TABLE_ROWS=GREATEST(CAST(COALESCE(pg_stat.n_live_tup, 0) AS bigint), CAST(COALESCE(pc.reltuples, 0) AS bigint), 0); AVG_ROW_LENGTH=0; DATA_LENGTH=0; MAX_DATA_LENGTH=0; INDEX_LENGTH=0; DATA_FREE=0; AUTO_INCREMENT=CASE WHEN identity_column.column_name IS NULL THEN NULL ELSE CAST(COALESCE(ps.last_value + ps.increment_by, ps.start_value, 1) AS bigint) END; CREATE_TIME=TO_CHAR(CURRENT_TIMESTAMP, \'YYYY-MM-DD HH24:MI:SS\'); UPDATE_TIME=NULL; CHECK_TIME=NULL; TABLE_COLLATION=' . $table_collation_sql . '; CHECKSUM=NULL; CREATE_OPTIONS=' . $this->connection->quote( '' ) . '; TABLE_COMMENT=' . $table_comment_sql,
+				)
 			);
 		}
 
@@ -25484,25 +25403,22 @@ RELATIONS;
 				$this->get_postgresql_catalog_index_type_comment_sql( 'index_comment' )
 			);
 			$sub_part_sql                 = $this->get_postgresql_catalog_display_index_sub_part_sql( 'expression', 'index_comment', 'seq_in_index' );
-			$internal_sort_column_sql     = $include_internal_sort_column ? ',
-	postgresql_index_oid AS "POSTGRESQL_INDEX_OID"' : '';
-			return sprintf(
-				'WITH %7$s SELECT \'def\' AS "TABLE_CATALOG", %1$s AS "TABLE_SCHEMA", table_name AS "TABLE_NAME", CASE WHEN indisunique THEN 0 ELSE 1 END AS "NON_UNIQUE", %1$s AS "INDEX_SCHEMA", CASE WHEN indisprimary THEN \'PRIMARY\' WHEN postgresql_index_name LIKE table_name || \'__%%\' THEN SUBSTRING(postgresql_index_name FROM CHAR_LENGTH(table_name || \'__\') + 1) ELSE postgresql_index_name END AS "INDEX_NAME", CAST(seq_in_index AS integer) AS "SEQ_IN_INDEX", COALESCE(column_name, %2$s) AS "COLUMN_NAME", CASE WHEN %3$s = \'FULLTEXT\' THEN NULL ELSE CASE WHEN is_desc THEN \'D\' ELSE \'A\' END END AS "COLLATION", 0 AS "CARDINALITY", CASE WHEN %3$s = \'FULLTEXT\' THEN NULL ELSE %4$s END AS "SUB_PART", NULL AS "PACKED", CASE WHEN 0 = attnum OR attnotnull THEN \'\' ELSE \'YES\' END AS "NULLABLE", %3$s AS "INDEX_TYPE", \'\' AS "COMMENT", %5$s AS "INDEX_COMMENT", \'YES\' AS "IS_VISIBLE", %6$s AS "EXPRESSION"%8$s FROM index_columns',
-				$this->get_direct_information_schema_display_schema_sql( 'table_schema' ),
-				$column_name_sql,
-				$index_type_sql,
-				$sub_part_sql,
-				$this->get_postgresql_catalog_index_comment_sql( 'index_comment' ),
-				$this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
-				$this->get_postgresql_catalog_index_columns_cte_sql(
-					'n.nspname AS table_schema',
-					'',
-					array(
-						$this->get_postgresql_visible_schema_condition_sql( 'n.nspname', 't.oid' ),
-						't.relkind IN (\'r\', \'p\')',
-					)
-				),
-				$internal_sort_column_sql
+			return $this->get_direct_information_schema_native_relation_sql(
+				'statistics',
+				array(
+					'alias'            => 'index_columns',
+					'with'             => $this->get_postgresql_catalog_index_columns_cte_sql(
+						'n.nspname AS table_schema',
+						'',
+						array(
+							$this->get_postgresql_visible_schema_condition_sql( 'n.nspname', 't.oid' ),
+							't.relkind IN (\'r\', \'p\')',
+						)
+					),
+					'from'             => 'index_columns',
+					'expressions'      => 'TABLE_SCHEMA=' . $this->get_direct_information_schema_display_schema_sql( 'table_schema' ) . '; NON_UNIQUE=CASE WHEN indisunique THEN 0 ELSE 1 END; INDEX_SCHEMA=' . $this->get_direct_information_schema_display_schema_sql( 'table_schema' ) . '; INDEX_NAME=CASE WHEN indisprimary THEN \'PRIMARY\' WHEN postgresql_index_name LIKE table_name || \'__%\' THEN SUBSTRING(postgresql_index_name FROM CHAR_LENGTH(table_name || \'__\') + 1) ELSE postgresql_index_name END; SEQ_IN_INDEX=CAST(seq_in_index AS integer); COLUMN_NAME=COALESCE(column_name, ' . $column_name_sql . '); COLLATION=CASE WHEN ' . $index_type_sql . ' = \'FULLTEXT\' THEN NULL ELSE CASE WHEN is_desc THEN \'D\' ELSE \'A\' END END; CARDINALITY=0; SUB_PART=CASE WHEN ' . $index_type_sql . ' = \'FULLTEXT\' THEN NULL ELSE ' . $sub_part_sql . ' END; PACKED=NULL; NULLABLE=CASE WHEN 0 = attnum OR attnotnull THEN \'\' ELSE \'YES\' END; INDEX_TYPE=' . $index_type_sql . '; COMMENT=' . $this->connection->quote( '' ) . '; INDEX_COMMENT=' . $this->get_postgresql_catalog_index_comment_sql( 'index_comment' ) . '; IS_VISIBLE=' . $this->connection->quote( 'YES' ) . '; EXPRESSION=' . $this->get_postgresql_non_prefix_index_expression_sql( 'expression' ),
+					'extra_projection' => $include_internal_sort_column ? 'postgresql_index_oid AS "POSTGRESQL_INDEX_OID"' : '',
+				)
 			);
 		}
 		return null;
@@ -25544,248 +25460,47 @@ RELATIONS;
 		$check_enforced_sql   = $this->get_postgresql_mysql_check_enforced_comment_sql( $check_comment_sql );
 		$acl_grantee_sql      = 'pg_catalog.quote_literal(CASE WHEN acl.grantee = 0 THEN \'PUBLIC\' ELSE grantee_role.rolname END) || ' . $user_host_sql;
 		$tablespace_path_sql  = 'NULLIF(pg_catalog.pg_tablespace_location(ts.oid), \'\')';
-		$tablespace_relation  = array(
-			'alias'   => 'ts',
-			'from'    => 'pg_catalog.pg_tablespace ts',
-			'default' => 'NULL',
-		);
+		$tablespace_relation  = $this->get_direct_information_schema_native_relation_definition( 'ts', 'pg_catalog.pg_tablespace ts', null, null, null, 'NULL' );
 		$waiting_lock_id_sql  = 'pg_catalog.concat_ws(\':\', waiting.locktype, waiting.mode, CAST(waiting.database AS text), CAST(waiting.relation AS text), CAST(waiting.page AS text), CAST(waiting.tuple AS text), CAST(waiting.virtualxid AS text), CAST(waiting.transactionid AS text), CAST(waiting.classid AS text), CAST(waiting.objid AS text), CAST(waiting.objsubid AS text))';
 		$blocking_lock_id_sql = str_replace( 'waiting.', 'blocking.', $waiting_lock_id_sql );
 
 		$definitions = array(
-			'column_statistics'            => array(
-				'alias'       => 'stats',
-				'from'        => 'pg_catalog.pg_stats stats',
-				'where'       => 'stats.schemaname ' . $schema_filter,
-				'expressions' => 'SCHEMA_NAME=' . $this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' ) . '; TABLE_NAME=stats.tablename; COLUMN_NAME=stats.attname; HISTOGRAM=CAST(pg_catalog.json_build_object(\'buckets\', COALESCE(pg_catalog.to_json(stats.histogram_bounds), \'[]\'::json), \'null-values\', stats.null_frac, \'last-updated\', NULL) AS text)',
-			),
+			'column_statistics'            => $this->get_direct_information_schema_native_relation_definition( 'stats', 'pg_catalog.pg_stats stats', 'stats.schemaname ' . $schema_filter, 'SCHEMA_NAME=' . $this->get_direct_information_schema_display_schema_sql( 'stats.schemaname' ) . '; TABLE_NAME=stats.tablename; COLUMN_NAME=stats.attname; HISTOGRAM=CAST(pg_catalog.json_build_object(\'buckets\', COALESCE(pg_catalog.to_json(stats.histogram_bounds), \'[]\'::json), \'null-values\', stats.null_frac, \'last-updated\', NULL) AS text)' ),
 			'files'                        => $tablespace_relation + array( 'expressions' => 'FILE_ID=CAST(ts.oid AS bigint); FILE_NAME=' . $tablespace_path_sql . '; FILE_TYPE=' . $this->connection->quote( 'TABLESPACE' ) . '; TABLESPACE_NAME=ts.spcname; TABLE_CATALOG=' . $empty_sql . '; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; STATUS=' . $this->connection->quote( 'NORMAL' ) ),
-			'innodb_columns'               => array(
-				'alias'       => 'c',
-				'from'        => 'pg_catalog.pg_class c',
-				'join'        => 'JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid JOIN pg_catalog.pg_type typ ON typ.oid = a.atttypid LEFT JOIN pg_catalog.pg_attrdef def ON def.adrelid = a.attrelid AND def.adnum = a.attnum',
-				'where'       => 'c.relkind IN (\'r\', \'p\') AND a.attnum > 0 AND NOT a.attisdropped AND n.nspname ' . $schema_filter,
-				'expressions' => 'TABLE_ID=CAST(c.oid AS bigint); NAME=a.attname; POS=CAST(a.attnum - 1 AS bigint); MTYPE=CASE WHEN typ.typcategory = \'N\' THEN 6 WHEN typ.typcategory = \'S\' THEN 1 WHEN typ.typcategory = \'B\' THEN 6 WHEN typ.typcategory = \'U\' THEN 14 ELSE 12 END; PRTYPE=0; LEN=CAST(CASE WHEN a.atttypmod > 0 THEN GREATEST(a.atttypmod - 4, 0) WHEN typ.typlen > 0 THEN typ.typlen ELSE 0 END AS bigint); HAS_DEFAULT=CASE WHEN def.adbin IS NULL THEN 0 ELSE 1 END; DEFAULT_VALUE=CASE WHEN def.adbin IS NULL THEN NULL ELSE pg_catalog.pg_get_expr(def.adbin, def.adrelid) END',
-			),
-			'innodb_fields'                => array(
-				'alias'       => 'idx',
-				'from'        => 'pg_catalog.pg_index idx',
-				'join'        => 'JOIN pg_catalog.pg_class idx_class ON idx_class.oid = idx.indexrelid JOIN pg_catalog.pg_class table_class ON table_class.oid = idx.indrelid JOIN pg_catalog.pg_namespace table_ns ON table_ns.oid = table_class.relnamespace JOIN pg_catalog.generate_series(0, idx.indnkeyatts - 1) AS key_positions(position) ON TRUE JOIN pg_catalog.pg_attribute att ON att.attrelid = table_class.oid AND att.attnum = idx.indkey[key_positions.position]',
-				'where'       => 'table_class.relkind IN (\'r\', \'p\') AND table_ns.nspname ' . $schema_filter,
-				'expressions' => 'INDEX_ID=CAST(idx_class.oid AS bigint); NAME=att.attname; POS=CAST(key_positions.position AS bigint)',
-			),
-			'innodb_indexes'               => array(
-				'alias'       => 'idx',
-				'from'        => 'pg_catalog.pg_index idx',
-				'join'        => 'JOIN pg_catalog.pg_class idx_class ON idx_class.oid = idx.indexrelid JOIN pg_catalog.pg_class table_class ON table_class.oid = idx.indrelid JOIN pg_catalog.pg_namespace table_ns ON table_ns.oid = table_class.relnamespace LEFT JOIN pg_catalog.pg_database db ON db.datname = current_database()',
-				'where'       => 'table_class.relkind IN (\'r\', \'p\') AND table_ns.nspname ' . $schema_filter,
-				'expressions' => 'INDEX_ID=CAST(idx_class.oid AS bigint); NAME=CASE WHEN idx.indisprimary THEN \'PRIMARY\' ELSE idx_class.relname END; TABLE_ID=CAST(table_class.oid AS bigint); TYPE=CASE WHEN idx.indisprimary THEN 3 WHEN idx.indisunique THEN 2 ELSE 0 END; N_FIELDS=CAST(idx.indnkeyatts AS bigint); PAGE_NO=0; SPACE=CAST(COALESCE(NULLIF(table_class.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint); MERGE_THRESHOLD=50',
-			),
-			'innodb_lock_waits'            => array(
-				'alias'       => 'waiting',
-				'from'        => 'pg_catalog.pg_locks waiting',
-				'join'        => 'JOIN pg_catalog.pg_locks blocking ON blocking.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid)) AND blocking.granted AND waiting.locktype = blocking.locktype AND waiting.database IS NOT DISTINCT FROM blocking.database AND waiting.relation IS NOT DISTINCT FROM blocking.relation AND waiting.page IS NOT DISTINCT FROM blocking.page AND waiting.tuple IS NOT DISTINCT FROM blocking.tuple AND waiting.virtualxid IS NOT DISTINCT FROM blocking.virtualxid AND waiting.transactionid IS NOT DISTINCT FROM blocking.transactionid AND waiting.classid IS NOT DISTINCT FROM blocking.classid AND waiting.objid IS NOT DISTINCT FROM blocking.objid AND waiting.objsubid IS NOT DISTINCT FROM blocking.objsubid',
-				'where'       => 'NOT waiting.granted',
-				'expressions' => 'REQUESTING_TRX_ID=CAST(waiting.pid AS text); REQUESTED_LOCK_ID=' . $waiting_lock_id_sql . '; BLOCKING_TRX_ID=CAST(blocking.pid AS text); BLOCKING_LOCK_ID=' . $blocking_lock_id_sql,
-			),
-			'innodb_tables'                => array(
-				'alias'       => 'c',
-				'from'        => 'pg_catalog.pg_class c',
-				'join'        => 'JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_catalog.pg_database db ON db.datname = current_database() LEFT JOIN LATERAL (SELECT COUNT(*) AS n_cols FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) column_counts ON TRUE',
-				'where'       => 'c.relkind IN (\'r\', \'p\') AND n.nspname ' . $schema_filter,
-				'expressions' => 'TABLE_ID=CAST(c.oid AS bigint); NAME=' . $this->get_direct_information_schema_display_schema_sql( 'n.nspname' ) . ' || \'/\' || c.relname; FLAG=0; N_COLS=CAST(COALESCE(column_counts.n_cols, 0) + 3 AS bigint); SPACE=CAST(COALESCE(NULLIF(c.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint); ROW_FORMAT=' . $this->connection->quote( 'Dynamic' ) . '; ZIP_PAGE_SIZE=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ) . '; INSTANT_COLS=NULL; TOTAL_ROW_VERSIONS=0',
-			),
-			'keywords'                     => array(
-				'alias'       => 'k',
-				'from'        => 'pg_catalog.pg_get_keywords() k',
-				'expressions' => 'WORD=UPPER(k.word); RESERVED=CASE WHEN k.catcode = \'R\' THEN 1 ELSE 0 END',
-			),
-			'plugins'                      => array(
-				'alias'       => 'ae',
-				'from'        => 'pg_catalog.pg_available_extensions ae',
-				'default'     => 'NULL',
-				'expressions' => 'PLUGIN_NAME=ae.name; PLUGIN_VERSION=COALESCE(ae.installed_version, ae.default_version, \'\'); PLUGIN_STATUS=CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END; PLUGIN_TYPE=' . $this->connection->quote( 'EXTENSION' ) . '; PLUGIN_TYPE_VERSION=COALESCE(ae.default_version, \'\'); PLUGIN_AUTHOR=' . $empty_sql . '; PLUGIN_DESCRIPTION=COALESCE(ae.comment, \'\'); PLUGIN_LICENSE=' . $empty_sql . '; LOAD_OPTION=CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END',
-			),
-			'processlist'                  => array(
-				'alias'       => 'a',
-				'from'        => 'pg_catalog.pg_stat_activity a',
-				'where'       => 'a.datname IS NULL OR a.datname = current_database()',
-				'expressions' => 'ID=a.pid; USER=COALESCE(a.usename, CURRENT_USER); HOST=CASE WHEN a.client_addr IS NULL THEN \'localhost\' WHEN a.client_port IS NULL THEN CAST(a.client_addr AS text) ELSE CAST(a.client_addr AS text) || \':\' || CAST(a.client_port AS text) END; DB=COALESCE(a.datname, \'\'); COMMAND=CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END; TIME=GREATEST(CAST(FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(a.query_start, a.state_change, a.backend_start, CURRENT_TIMESTAMP)))) AS bigint), 0); STATE=COALESCE(a.wait_event_type || CASE WHEN a.wait_event IS NULL THEN \'\' ELSE \':\' || a.wait_event END, a.state, \'\'); INFO=COALESCE(a.query, \'\')',
-			),
-			'schemata'                     => array(
-				'alias'       => 's',
-				'from'        => 'information_schema.schemata s',
-				'where'       => 's.schema_name = ' . $information_schema . ' OR s.schema_name ' . $pg_schema_filter,
-				'expressions' => 'DEFAULT_CHARACTER_SET_NAME=' . $charset_sql . '; DEFAULT_COLLATION_NAME=' . $collation_sql . '; SQL_PATH=NULL; DEFAULT_ENCRYPTION=' . $no_sql,
-			),
-			'table_constraints'            => array(
-				'alias'       => 'tc',
-				'from'        => 'information_schema.table_constraints tc',
-				'join'        => 'LEFT JOIN pg_catalog.pg_namespace table_ns
-	ON table_ns.nspname = tc.table_schema
-LEFT JOIN pg_catalog.pg_class table_class
-	ON table_class.relnamespace = table_ns.oid
-	AND table_class.relname = tc.table_name
-	AND table_class.relkind IN (\'r\', \'p\')
-LEFT JOIN pg_catalog.pg_constraint con
-	ON con.conrelid = table_class.oid
-	AND con.conname = tc.constraint_name
-	AND con.contype = \'c\'',
-				'where'       => 'tc.table_schema ' . $schema_filter,
-				'expressions' => 'CONSTRAINT_NAME=CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END; ENFORCED=CASE WHEN tc.constraint_type = \'CHECK\' THEN ' . $check_enforced_sql . ' ELSE \'YES\' END',
-			),
-			'table_constraints_extensions' => array(
-				'alias'       => 'tc',
-				'from'        => 'information_schema.table_constraints tc',
-				'where'       => 'tc.table_schema ' . $schema_filter,
-				'expressions' => 'CONSTRAINT_NAME=CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END',
-			),
-			'key_column_usage'             => array(
-				'alias'       => 'kcu',
-				'from'        => 'information_schema.key_column_usage kcu',
-				'join'        => 'LEFT JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = kcu.constraint_schema
-	AND tc.constraint_name = kcu.constraint_name
-	AND tc.table_schema = kcu.table_schema
-	AND tc.table_name = kcu.table_name
-LEFT JOIN information_schema.referential_constraints rc
-	ON rc.constraint_schema = kcu.constraint_schema
-	AND rc.constraint_name = kcu.constraint_name
-LEFT JOIN information_schema.key_column_usage ref_kcu
-	ON ref_kcu.constraint_schema = rc.unique_constraint_schema
-	AND ref_kcu.constraint_name = rc.unique_constraint_name
-	AND ref_kcu.ordinal_position = kcu.position_in_unique_constraint',
-				'where'       => 'kcu.table_schema ' . $schema_filter,
-				'expressions' => 'CONSTRAINT_NAME=CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE kcu.constraint_name END; REFERENCED_TABLE_SCHEMA=' . $this->get_direct_information_schema_display_schema_sql( 'ref_kcu.table_schema' ) . '; REFERENCED_TABLE_NAME=ref_kcu.table_name; REFERENCED_COLUMN_NAME=ref_kcu.column_name',
-			),
-			'referential_constraints'      => array(
-				'alias'       => 'rc',
-				'from'        => 'information_schema.referential_constraints rc',
-				'join'        => 'JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = rc.constraint_schema
-	AND tc.constraint_name = rc.constraint_name
-LEFT JOIN information_schema.table_constraints ref_tc
-	ON ref_tc.constraint_schema = rc.unique_constraint_schema
-	AND ref_tc.constraint_name = rc.unique_constraint_name',
-				'where'       => 'tc.table_schema ' . $schema_filter,
-				'expressions' => 'UNIQUE_CONSTRAINT_NAME=CASE WHEN ref_tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE rc.unique_constraint_name END; TABLE_NAME=tc.table_name; REFERENCED_TABLE_NAME=ref_tc.table_name',
-			),
-			'check_constraints'            => array(
-				'alias'       => 'cc',
-				'from'        => 'information_schema.check_constraints cc',
-				'join'        => 'JOIN information_schema.table_constraints tc
-	ON tc.constraint_schema = cc.constraint_schema
-	AND tc.constraint_name = cc.constraint_name
-	AND tc.constraint_type = \'CHECK\'
-LEFT JOIN pg_catalog.pg_namespace table_ns
-	ON table_ns.nspname = tc.table_schema
-LEFT JOIN pg_catalog.pg_class table_class
-	ON table_class.relnamespace = table_ns.oid
-	AND table_class.relname = tc.table_name
-	AND table_class.relkind IN (\'r\', \'p\')
-LEFT JOIN pg_catalog.pg_constraint con
-	ON con.conrelid = table_class.oid
-	AND con.conname = tc.constraint_name
-	AND con.contype = \'c\'',
-				'where'       => 'tc.table_schema ' . $schema_filter,
-				'expressions' => 'CHECK_CLAUSE=' . $check_clause_sql,
-			),
-			'columns_extensions'           => array(
-				'alias' => 'c',
-				'from'  => 'information_schema.columns c',
-				'where' => 'c.table_schema ' . $schema_filter,
-			),
+			'innodb_columns'               => $this->get_direct_information_schema_native_relation_definition( 'c', 'pg_catalog.pg_class c', 'c.relkind IN (\'r\', \'p\') AND a.attnum > 0 AND NOT a.attisdropped AND n.nspname ' . $schema_filter, 'TABLE_ID=CAST(c.oid AS bigint); NAME=a.attname; POS=CAST(a.attnum - 1 AS bigint); MTYPE=CASE WHEN typ.typcategory = \'N\' THEN 6 WHEN typ.typcategory = \'S\' THEN 1 WHEN typ.typcategory = \'B\' THEN 6 WHEN typ.typcategory = \'U\' THEN 14 ELSE 12 END; PRTYPE=0; LEN=CAST(CASE WHEN a.atttypmod > 0 THEN GREATEST(a.atttypmod - 4, 0) WHEN typ.typlen > 0 THEN typ.typlen ELSE 0 END AS bigint); HAS_DEFAULT=CASE WHEN def.adbin IS NULL THEN 0 ELSE 1 END; DEFAULT_VALUE=CASE WHEN def.adbin IS NULL THEN NULL ELSE pg_catalog.pg_get_expr(def.adbin, def.adrelid) END', 'JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid JOIN pg_catalog.pg_type typ ON typ.oid = a.atttypid LEFT JOIN pg_catalog.pg_attrdef def ON def.adrelid = a.attrelid AND def.adnum = a.attnum' ),
+			'innodb_fields'                => $this->get_direct_information_schema_native_relation_definition( 'idx', 'pg_catalog.pg_index idx', 'table_class.relkind IN (\'r\', \'p\') AND table_ns.nspname ' . $schema_filter, 'INDEX_ID=CAST(idx_class.oid AS bigint); NAME=att.attname; POS=CAST(key_positions.position AS bigint)', 'JOIN pg_catalog.pg_class idx_class ON idx_class.oid = idx.indexrelid JOIN pg_catalog.pg_class table_class ON table_class.oid = idx.indrelid JOIN pg_catalog.pg_namespace table_ns ON table_ns.oid = table_class.relnamespace JOIN pg_catalog.generate_series(0, idx.indnkeyatts - 1) AS key_positions(position) ON TRUE JOIN pg_catalog.pg_attribute att ON att.attrelid = table_class.oid AND att.attnum = idx.indkey[key_positions.position]' ),
+			'innodb_indexes'               => $this->get_direct_information_schema_native_relation_definition( 'idx', 'pg_catalog.pg_index idx', 'table_class.relkind IN (\'r\', \'p\') AND table_ns.nspname ' . $schema_filter, 'INDEX_ID=CAST(idx_class.oid AS bigint); NAME=CASE WHEN idx.indisprimary THEN \'PRIMARY\' ELSE idx_class.relname END; TABLE_ID=CAST(table_class.oid AS bigint); TYPE=CASE WHEN idx.indisprimary THEN 3 WHEN idx.indisunique THEN 2 ELSE 0 END; N_FIELDS=CAST(idx.indnkeyatts AS bigint); PAGE_NO=0; SPACE=CAST(COALESCE(NULLIF(table_class.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint); MERGE_THRESHOLD=50', 'JOIN pg_catalog.pg_class idx_class ON idx_class.oid = idx.indexrelid JOIN pg_catalog.pg_class table_class ON table_class.oid = idx.indrelid JOIN pg_catalog.pg_namespace table_ns ON table_ns.oid = table_class.relnamespace LEFT JOIN pg_catalog.pg_database db ON db.datname = current_database()' ),
+			'innodb_lock_waits'            => $this->get_direct_information_schema_native_relation_definition( 'waiting', 'pg_catalog.pg_locks waiting', 'NOT waiting.granted', 'REQUESTING_TRX_ID=CAST(waiting.pid AS text); REQUESTED_LOCK_ID=' . $waiting_lock_id_sql . '; BLOCKING_TRX_ID=CAST(blocking.pid AS text); BLOCKING_LOCK_ID=' . $blocking_lock_id_sql, 'JOIN pg_catalog.pg_locks blocking ON blocking.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid)) AND blocking.granted AND waiting.locktype = blocking.locktype AND waiting.database IS NOT DISTINCT FROM blocking.database AND waiting.relation IS NOT DISTINCT FROM blocking.relation AND waiting.page IS NOT DISTINCT FROM blocking.page AND waiting.tuple IS NOT DISTINCT FROM blocking.tuple AND waiting.virtualxid IS NOT DISTINCT FROM blocking.virtualxid AND waiting.transactionid IS NOT DISTINCT FROM blocking.transactionid AND waiting.classid IS NOT DISTINCT FROM blocking.classid AND waiting.objid IS NOT DISTINCT FROM blocking.objid AND waiting.objsubid IS NOT DISTINCT FROM blocking.objsubid' ),
+			'innodb_tables'                => $this->get_direct_information_schema_native_relation_definition( 'c', 'pg_catalog.pg_class c', 'c.relkind IN (\'r\', \'p\') AND n.nspname ' . $schema_filter, 'TABLE_ID=CAST(c.oid AS bigint); NAME=' . $this->get_direct_information_schema_display_schema_sql( 'n.nspname' ) . ' || \'/\' || c.relname; FLAG=0; N_COLS=CAST(COALESCE(column_counts.n_cols, 0) + 3 AS bigint); SPACE=CAST(COALESCE(NULLIF(c.reltablespace, 0::oid), db.dattablespace, 0::oid) AS bigint); ROW_FORMAT=' . $this->connection->quote( 'Dynamic' ) . '; ZIP_PAGE_SIZE=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ) . '; INSTANT_COLS=NULL; TOTAL_ROW_VERSIONS=0', 'JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_catalog.pg_database db ON db.datname = current_database() LEFT JOIN LATERAL (SELECT COUNT(*) AS n_cols FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped) column_counts ON TRUE' ),
+			'keywords'                     => $this->get_direct_information_schema_native_relation_definition( 'k', 'pg_catalog.pg_get_keywords() k', null, 'WORD=UPPER(k.word); RESERVED=CASE WHEN k.catcode = \'R\' THEN 1 ELSE 0 END' ),
+			'plugins'                      => $this->get_direct_information_schema_native_relation_definition( 'ae', 'pg_catalog.pg_available_extensions ae', null, 'PLUGIN_NAME=ae.name; PLUGIN_VERSION=COALESCE(ae.installed_version, ae.default_version, \'\'); PLUGIN_STATUS=CASE WHEN ae.installed_version IS NULL THEN \'DISABLED\' ELSE \'ACTIVE\' END; PLUGIN_TYPE=' . $this->connection->quote( 'EXTENSION' ) . '; PLUGIN_TYPE_VERSION=COALESCE(ae.default_version, \'\'); PLUGIN_AUTHOR=' . $empty_sql . '; PLUGIN_DESCRIPTION=COALESCE(ae.comment, \'\'); PLUGIN_LICENSE=' . $empty_sql . '; LOAD_OPTION=CASE WHEN ae.installed_version IS NULL THEN \'OFF\' ELSE \'ON\' END', null, 'NULL' ),
+			'processlist'                  => $this->get_direct_information_schema_native_relation_definition( 'a', 'pg_catalog.pg_stat_activity a', 'a.datname IS NULL OR a.datname = current_database()', 'ID=a.pid; USER=COALESCE(a.usename, CURRENT_USER); HOST=CASE WHEN a.client_addr IS NULL THEN \'localhost\' WHEN a.client_port IS NULL THEN CAST(a.client_addr AS text) ELSE CAST(a.client_addr AS text) || \':\' || CAST(a.client_port AS text) END; DB=COALESCE(a.datname, \'\'); COMMAND=CASE WHEN a.state = \'idle\' THEN \'Sleep\' ELSE \'Query\' END; TIME=GREATEST(CAST(FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - COALESCE(a.query_start, a.state_change, a.backend_start, CURRENT_TIMESTAMP)))) AS bigint), 0); STATE=COALESCE(a.wait_event_type || CASE WHEN a.wait_event IS NULL THEN \'\' ELSE \':\' || a.wait_event END, a.state, \'\'); INFO=COALESCE(a.query, \'\')' ),
+			'schemata'                     => $this->get_direct_information_schema_native_relation_definition( 's', 'information_schema.schemata s', 's.schema_name = ' . $information_schema . ' OR s.schema_name ' . $pg_schema_filter, 'DEFAULT_CHARACTER_SET_NAME=' . $charset_sql . '; DEFAULT_COLLATION_NAME=' . $collation_sql . '; SQL_PATH=NULL; DEFAULT_ENCRYPTION=' . $no_sql ),
+			'table_constraints'            => $this->get_direct_information_schema_native_relation_definition( 'tc', 'information_schema.table_constraints tc', 'tc.table_schema ' . $schema_filter, 'CONSTRAINT_NAME=CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END; ENFORCED=CASE WHEN tc.constraint_type = \'CHECK\' THEN ' . $check_enforced_sql . ' ELSE \'YES\' END', 'LEFT JOIN pg_catalog.pg_namespace table_ns ON table_ns.nspname = tc.table_schema LEFT JOIN pg_catalog.pg_class table_class ON table_class.relnamespace = table_ns.oid AND table_class.relname = tc.table_name AND table_class.relkind IN (\'r\', \'p\') LEFT JOIN pg_catalog.pg_constraint con ON con.conrelid = table_class.oid AND con.conname = tc.constraint_name AND con.contype = \'c\'' ),
+			'table_constraints_extensions' => $this->get_direct_information_schema_native_relation_definition( 'tc', 'information_schema.table_constraints tc', 'tc.table_schema ' . $schema_filter, 'CONSTRAINT_NAME=CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE tc.constraint_name END' ),
+			'key_column_usage'             => $this->get_direct_information_schema_native_relation_definition( 'kcu', 'information_schema.key_column_usage kcu', 'kcu.table_schema ' . $schema_filter, 'CONSTRAINT_NAME=CASE WHEN tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE kcu.constraint_name END; REFERENCED_TABLE_SCHEMA=' . $this->get_direct_information_schema_display_schema_sql( 'ref_kcu.table_schema' ) . '; REFERENCED_TABLE_NAME=ref_kcu.table_name; REFERENCED_COLUMN_NAME=ref_kcu.column_name', 'LEFT JOIN information_schema.table_constraints tc ON tc.constraint_schema = kcu.constraint_schema AND tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema AND tc.table_name = kcu.table_name LEFT JOIN information_schema.referential_constraints rc ON rc.constraint_schema = kcu.constraint_schema AND rc.constraint_name = kcu.constraint_name LEFT JOIN information_schema.key_column_usage ref_kcu ON ref_kcu.constraint_schema = rc.unique_constraint_schema AND ref_kcu.constraint_name = rc.unique_constraint_name AND ref_kcu.ordinal_position = kcu.position_in_unique_constraint' ),
+			'referential_constraints'      => $this->get_direct_information_schema_native_relation_definition( 'rc', 'information_schema.referential_constraints rc', 'tc.table_schema ' . $schema_filter, 'UNIQUE_CONSTRAINT_NAME=CASE WHEN ref_tc.constraint_type = \'PRIMARY KEY\' THEN \'PRIMARY\' ELSE rc.unique_constraint_name END; TABLE_NAME=tc.table_name; REFERENCED_TABLE_NAME=ref_tc.table_name', 'JOIN information_schema.table_constraints tc ON tc.constraint_schema = rc.constraint_schema AND tc.constraint_name = rc.constraint_name LEFT JOIN information_schema.table_constraints ref_tc ON ref_tc.constraint_schema = rc.unique_constraint_schema AND ref_tc.constraint_name = rc.unique_constraint_name' ),
+			'check_constraints'            => $this->get_direct_information_schema_native_relation_definition( 'cc', 'information_schema.check_constraints cc', 'tc.table_schema ' . $schema_filter, 'CHECK_CLAUSE=' . $check_clause_sql, 'JOIN information_schema.table_constraints tc ON tc.constraint_schema = cc.constraint_schema AND tc.constraint_name = cc.constraint_name AND tc.constraint_type = \'CHECK\' LEFT JOIN pg_catalog.pg_namespace table_ns ON table_ns.nspname = tc.table_schema LEFT JOIN pg_catalog.pg_class table_class ON table_class.relnamespace = table_ns.oid AND table_class.relname = tc.table_name AND table_class.relkind IN (\'r\', \'p\') LEFT JOIN pg_catalog.pg_constraint con ON con.conrelid = table_class.oid AND con.conname = tc.constraint_name AND con.contype = \'c\'' ),
+			'columns_extensions'           => $this->get_direct_information_schema_native_relation_definition( 'c', 'information_schema.columns c', 'c.table_schema ' . $schema_filter ),
 			'tablespaces_extensions'       => $tablespace_relation + array( 'expressions' => 'TABLESPACE_NAME=ts.spcname' ),
 			'tablespaces'                  => $tablespace_relation + array( 'expressions' => 'TABLESPACE_NAME=ts.spcname; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; TABLESPACE_TYPE=' . $this->connection->quote( 'General' ) . '; TABLESPACE_COMMENT=COALESCE(pg_catalog.obj_description(ts.oid, \'pg_tablespace\'), \'\')' ),
 			'innodb_tablespaces'           => $tablespace_relation + array( 'expressions' => 'SPACE=CAST(ts.oid AS bigint); NAME=ts.spcname; FLAG=0; ROW_FORMAT=' . $this->connection->quote( 'Dynamic' ) . '; PAGE_SIZE=16384; ZIP_PAGE_SIZE=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ) . '; AUTOEXTEND_SIZE=0; SPACE_VERSION=1; ENCRYPTION=' . $this->connection->quote( 'N' ) . '; STATE=' . $this->connection->quote( 'normal' ) ),
 			'innodb_tablespaces_brief'     => $tablespace_relation + array( 'expressions' => 'SPACE=CAST(ts.oid AS bigint); NAME=ts.spcname; PATH=' . $tablespace_path_sql . '; FLAG=0; SPACE_TYPE=' . $this->connection->quote( 'Single' ) ),
 			'innodb_datafiles'             => $tablespace_relation + array( 'expressions' => 'SPACE=CAST(ts.oid AS bigint); PATH=' . $tablespace_path_sql ),
-			'user_privileges'              => array(
-				'alias'       => 'acl',
-				'from'        => 'pg_catalog.pg_database d
-CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(d.datacl, pg_catalog.acldefault(\'d\', d.datdba))) acl',
-				'join'        => 'LEFT JOIN pg_catalog.pg_roles grantee_role
-	ON grantee_role.oid = acl.grantee',
-				'where'       => 'd.datname = current_database()',
-				'expressions' => 'GRANTEE=' . $acl_grantee_sql . '; IS_GRANTABLE=CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END',
-			),
-			'schema_privileges'            => array(
-				'alias'       => 'acl',
-				'from'        => 'pg_catalog.pg_namespace n
-CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault(\'n\', n.nspowner))) acl',
-				'join'        => 'LEFT JOIN pg_catalog.pg_roles grantee_role
-	ON grantee_role.oid = acl.grantee',
-				'where'       => 'n.nspname ' . $schema_filter,
-				'expressions' => 'GRANTEE=' . $acl_grantee_sql . '; TABLE_SCHEMA=' . $this->get_direct_information_schema_display_schema_sql( 'n.nspname' ) . '; IS_GRANTABLE=CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END',
-			),
-			'table_privileges'             => array(
-				'alias'       => 'tp',
-				'from'        => 'information_schema.table_privileges tp',
-				'where'       => 'tp.table_schema ' . $schema_filter,
-				'expressions' => 'GRANTEE=pg_catalog.quote_literal(tp.grantee) || ' . $user_host_sql,
-			),
-			'role_table_grants'            => array(
-				'alias' => 'rtg',
-				'from'  => 'information_schema.role_table_grants rtg',
-				'where' => 'rtg.table_schema ' . $schema_filter,
-			),
-			'role_routine_grants'          => array(
-				'alias' => 'rrg',
-				'from'  => 'information_schema.role_routine_grants rrg',
-				'where' => 'rrg.specific_schema ' . $schema_filter,
-			),
-			'applicable_roles'             => array(
-				'alias'       => 'ar',
-				'from'        => 'information_schema.applicable_roles ar',
-				'expressions' => 'USER=ar.grantee; GRANTEE=ar.grantee',
-			),
-			'enabled_roles'                => array(
-				'alias' => 'er',
-				'from'  => 'information_schema.enabled_roles er',
-			),
-			'schemata_extensions'          => array(
-				'alias' => 's',
-				'from'  => 'information_schema.schemata s',
-				'where' => 's.schema_name = ' . $information_schema . ' OR s.schema_name ' . $pg_schema_filter,
-			),
-			'view_table_usage'             => array(
-				'alias' => 'vtu',
-				'from'  => 'information_schema.view_table_usage vtu',
-				'where' => 'vtu.view_schema ' . $schema_filter . "\n\tAND vtu.table_schema " . $schema_filter,
-			),
-			'view_routine_usage'           => array(
-				'alias' => 'vru',
-				'from'  => 'information_schema.view_routine_usage vru',
-				'where' => 'vru.table_schema ' . $schema_filter . "\n\tAND vru.specific_schema " . $schema_filter,
-			),
-			'views'                        => array(
-				'alias'       => 'v',
-				'from'        => 'information_schema.views v',
-				'where'       => 'v.table_schema ' . $schema_filter,
-				'expressions' => 'CHECK_OPTION=COALESCE(v.check_option, ' . $none_sql . '); IS_UPDATABLE=COALESCE(v.is_updatable, ' . $no_sql . '); SECURITY_TYPE=' . $this->connection->quote( 'DEFINER' ),
-			),
-			'triggers'                     => array(
-				'alias'       => 't',
-				'from'        => 'information_schema.triggers t',
-				'where'       => 't.trigger_schema ' . $schema_filter,
-				'expressions' => 'CREATED=TO_CHAR(t.created, ' . $datetime_format_sql . ')',
-			),
-			'routines'                     => array(
-				'alias'       => 'r',
-				'from'        => 'information_schema.routines r',
-				'where'       => 'r.routine_schema ' . $schema_filter,
-				'expressions' => 'CREATED=TO_CHAR(r.created, ' . $datetime_format_sql . '); LAST_ALTERED=TO_CHAR(r.last_altered, ' . $datetime_format_sql . ')',
-			),
-			'parameters'                   => array(
-				'alias'       => 'p',
-				'from'        => 'information_schema.parameters p',
-				'join'        => 'LEFT JOIN information_schema.routines r
-	ON r.specific_catalog = p.specific_catalog
-	AND r.specific_schema = p.specific_schema
-	AND r.specific_name = p.specific_name',
-				'where'       => 'p.specific_schema ' . $schema_filter,
-				'expressions' => 'ROUTINE_TYPE=COALESCE(r.routine_type, ' . $function_sql . ')',
-			),
+			'user_privileges'              => $this->get_direct_information_schema_native_relation_definition( 'acl', 'pg_catalog.pg_database d CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(d.datacl, pg_catalog.acldefault(\'d\', d.datdba))) acl', 'd.datname = current_database()', 'GRANTEE=' . $acl_grantee_sql . '; IS_GRANTABLE=CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END', 'LEFT JOIN pg_catalog.pg_roles grantee_role ON grantee_role.oid = acl.grantee' ),
+			'schema_privileges'            => $this->get_direct_information_schema_native_relation_definition( 'acl', 'pg_catalog.pg_namespace n CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefault(\'n\', n.nspowner))) acl', 'n.nspname ' . $schema_filter, 'GRANTEE=' . $acl_grantee_sql . '; TABLE_SCHEMA=' . $this->get_direct_information_schema_display_schema_sql( 'n.nspname' ) . '; IS_GRANTABLE=CASE WHEN acl.is_grantable THEN \'YES\' ELSE \'NO\' END', 'LEFT JOIN pg_catalog.pg_roles grantee_role ON grantee_role.oid = acl.grantee' ),
+			'table_privileges'             => $this->get_direct_information_schema_native_relation_definition( 'tp', 'information_schema.table_privileges tp', 'tp.table_schema ' . $schema_filter, 'GRANTEE=pg_catalog.quote_literal(tp.grantee) || ' . $user_host_sql ),
+			'role_table_grants'            => $this->get_direct_information_schema_native_relation_definition( 'rtg', 'information_schema.role_table_grants rtg', 'rtg.table_schema ' . $schema_filter ),
+			'role_routine_grants'          => $this->get_direct_information_schema_native_relation_definition( 'rrg', 'information_schema.role_routine_grants rrg', 'rrg.specific_schema ' . $schema_filter ),
+			'applicable_roles'             => $this->get_direct_information_schema_native_relation_definition( 'ar', 'information_schema.applicable_roles ar', null, 'USER=ar.grantee; GRANTEE=ar.grantee' ),
+			'enabled_roles'                => $this->get_direct_information_schema_native_relation_definition( 'er', 'information_schema.enabled_roles er' ),
+			'schemata_extensions'          => $this->get_direct_information_schema_native_relation_definition( 's', 'information_schema.schemata s', 's.schema_name = ' . $information_schema . ' OR s.schema_name ' . $pg_schema_filter ),
+			'view_table_usage'             => $this->get_direct_information_schema_native_relation_definition( 'vtu', 'information_schema.view_table_usage vtu', 'vtu.view_schema ' . $schema_filter . "\n\tAND vtu.table_schema " . $schema_filter ),
+			'view_routine_usage'           => $this->get_direct_information_schema_native_relation_definition( 'vru', 'information_schema.view_routine_usage vru', 'vru.table_schema ' . $schema_filter . "\n\tAND vru.specific_schema " . $schema_filter ),
+			'views'                        => $this->get_direct_information_schema_native_relation_definition( 'v', 'information_schema.views v', 'v.table_schema ' . $schema_filter, 'CHECK_OPTION=COALESCE(v.check_option, ' . $none_sql . '); IS_UPDATABLE=COALESCE(v.is_updatable, ' . $no_sql . '); SECURITY_TYPE=' . $this->connection->quote( 'DEFINER' ) ),
+			'triggers'                     => $this->get_direct_information_schema_native_relation_definition( 't', 'information_schema.triggers t', 't.trigger_schema ' . $schema_filter, 'CREATED=TO_CHAR(t.created, ' . $datetime_format_sql . ')' ),
+			'routines'                     => $this->get_direct_information_schema_native_relation_definition( 'r', 'information_schema.routines r', 'r.routine_schema ' . $schema_filter, 'CREATED=TO_CHAR(r.created, ' . $datetime_format_sql . '); LAST_ALTERED=TO_CHAR(r.last_altered, ' . $datetime_format_sql . ')' ),
+			'parameters'                   => $this->get_direct_information_schema_native_relation_definition( 'p', 'information_schema.parameters p', 'p.specific_schema ' . $schema_filter, 'ROUTINE_TYPE=COALESCE(r.routine_type, ' . $function_sql . ')', 'LEFT JOIN information_schema.routines r ON r.specific_catalog = p.specific_catalog AND r.specific_schema = p.specific_schema AND r.specific_name = p.specific_name' ),
 		);
 
 		foreach (
@@ -25832,8 +25547,11 @@ CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(n.nspacl, pg_catalog.acldefaul
 			return null;
 		}
 
-		$definition = $definitions[ $view ];
-		$sql        = 'SELECT
+		return $this->get_direct_information_schema_native_relation_sql( $view, $definitions[ $view ] );
+	}
+	private function get_direct_information_schema_native_relation_sql( string $view, array $definition ): string {
+		$sql  = empty( $definition['with'] ) ? '' : 'WITH ' . $definition['with'] . "\n";
+		$sql .= 'SELECT
 		' . $this->get_direct_information_schema_ordered_native_projection_sql( $view, $definition ) . '
 FROM ' . $definition['from'];
 
@@ -25845,6 +25563,25 @@ FROM ' . $definition['from'];
 			$sql .= "\nWHERE " . $definition['where'];
 		}
 		return $sql;
+	}
+	private function get_direct_information_schema_native_relation_definition( string $alias, string $from, ?string $where = null, $expressions = null, ?string $join = null, ?string $default_expression = null ): array {
+		$definition = array(
+			'alias' => $alias,
+			'from'  => $from,
+		);
+		foreach (
+			array(
+				'where'       => $where,
+				'expressions' => $expressions,
+				'join'        => $join,
+				'default'     => $default_expression,
+			) as $key => $value
+		) {
+			if ( null !== $value ) {
+				$definition[ $key ] = $value;
+			}
+		}
+		return $definition;
 	}
 	private function get_direct_information_schema_ordered_native_projection_sql( string $view, array $definition ): string {
 		$columns = $this->get_direct_information_schema_relation_columns( $view );
@@ -25861,6 +25598,12 @@ FROM ' . $definition['from'];
 				: $this->get_direct_information_schema_default_native_projection_expression( $column, $definition );
 
 			$projection[] = $expression . ' AS ' . $this->connection->quote_identifier( $column );
+		}
+
+		foreach ( (array) ( $definition['extra_projection'] ?? array() ) as $extra_projection ) {
+			if ( '' !== $extra_projection ) {
+				$projection[] = $extra_projection;
+			}
 		}
 		return implode( ",\n\t\t", $projection );
 	}
@@ -26425,6 +26168,34 @@ FROM ' . $definition['from'];
 			$selects[] = 'SELECT ' . implode( ', ', $select );
 		}
 		return implode( ' UNION ALL ', $selects );
+	}
+	private function get_postgresql_catalog_comment_after_marker_lines_sql( string $comment_sql, array $prefixes, int $passes = 1 ): string {
+		$stripped_comment = sprintf( 'COALESCE(%s, \'\')', $comment_sql );
+		for ( $i = 0; $i < $passes; ++$i ) {
+			$marker_conditions = array();
+			foreach ( $prefixes as $prefix ) {
+				$prefix_sql          = $this->connection->quote( $prefix );
+				$marker_conditions[] = sprintf(
+					'LEFT(%1$s, LENGTH(%2$s)) = %2$s',
+					$stripped_comment,
+					$prefix_sql
+				);
+			}
+
+			$stripped_comment = sprintf(
+				'CASE
+	WHEN %2$s THEN
+		CASE
+			WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
+			ELSE \'\'
+		END
+	ELSE %1$s
+END',
+				$stripped_comment,
+				implode( "\n\t\tOR ", $marker_conditions )
+			);
+		}
+		return $stripped_comment;
 	}
 	private function get_direct_information_schema_display_schema_sql( string $schema_sql ): string {
 		return sprintf(
