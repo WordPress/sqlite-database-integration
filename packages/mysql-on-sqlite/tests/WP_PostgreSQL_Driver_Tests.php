@@ -32949,6 +32949,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'information_schema.columns c', $describe_sql );
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $describe_sql );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $describe_sql );
+		$this->assertStringContainsString( 'FROM (WITH index_columns AS (', $describe_sql );
+		$this->assertStringNotContainsString( 'FROM (index_columns AS (', $describe_sql );
 
 		foreach ( $metadata_tables as $metadata_table ) {
 			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $describe_sql ) );
@@ -32966,6 +32968,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'information_schema.columns c', $columns_sql );
 		$this->assertStringContainsString( 'pg_catalog.col_description(pc.oid, pa.attnum)', $columns_sql );
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $columns_sql );
+		$this->assertStringContainsString( 'FROM (WITH index_columns AS (', $columns_sql );
+		$this->assertStringNotContainsString( 'FROM (index_columns AS (', $columns_sql );
 
 		foreach ( $metadata_tables as $metadata_table ) {
 			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $columns_sql ) );
