@@ -45,6 +45,25 @@ jobs:
           WP_TEST_DB_BACKEND: ${{ matrix.backend }}
         run: composer run wp-test-e2e
 
+      - name: Dump WordPress Docker logs
+        if: failure()
+        env:
+          WP_TEST_DB_BACKEND: ${{ matrix.backend }}
+          LOCAL_DB_TYPE: mysql
+          LOCAL_PHP_MEMCACHED: 'false'
+          COMPOSE_IGNORE_ORPHANS: 'true'
+        run: npm --prefix wordpress run env:logs || true
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp-e2e-${{ matrix.backend }}-artifacts
+          path: |
+            wordpress/artifacts
+            wordpress/src/wp-content/debug.log
+          if-no-files-found: ignore
+
       - name: Stop Docker containers
         if: always()
         env:
