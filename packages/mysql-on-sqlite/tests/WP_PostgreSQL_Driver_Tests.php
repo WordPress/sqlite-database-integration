@@ -33120,6 +33120,77 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Tests PostgreSQL information_schema emulation keeps the active temporary schema visible.
+	 */
+	public function test_postgresql_information_schema_relations_include_active_temporary_schema_for_wordpress_metadata(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$get_sql    = Closure::bind(
+			function ( string $view, array $options = array() ): string {
+				return $this->get_direct_information_schema_relation_sql( $view, $options );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$columns_sql    = $get_sql( 'columns' );
+		$tables_sql     = $get_sql( 'tables' );
+		$statistics_sql = $get_sql(
+			'statistics',
+			array(
+				'include_internal_sort_column' => true,
+			)
+		);
+
+		$this->assertStringContainsString( "c.table_schema ~ '^pg_temp_[0-9]+$'", $columns_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_table_is_visible(pc.oid)', $columns_sql );
+		$this->assertStringContainsString( 'c.table_schema !~', $columns_sql );
+		$this->assertStringContainsString( "t.table_schema ~ '^pg_temp_[0-9]+$'", $tables_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_table_is_visible(pc.oid)', $tables_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_stat_all_tables pg_stat', $tables_sql );
+		$this->assertStringContainsString( 'pg_stat.n_live_tup', $tables_sql );
+		$this->assertStringContainsString( "n.nspname ~ '^pg_temp_[0-9]+$'", $statistics_sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_table_is_visible(t.oid)', $statistics_sql );
+		$this->assertStringContainsString( 'n.nspname !~', $statistics_sql );
+	}
+
+	/**
+	 * Tests WordPress Site Health table-row metadata uses PostgreSQL live tuple stats.
+	 */
+	public function test_wordpress_site_health_table_rows_query_uses_postgresql_live_tuple_stats(): void {
+		$connection = new WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection(
+			array(
+				'pdo' => $this->create_pgsql_reporting_sqlite_pdo(),
+			)
+		);
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$translate  = Closure::bind(
+			function ( string $query ): ?string {
+				return $this->translate_direct_information_schema_select_query( $query );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$sql = $translate(
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) as 'bytes'
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = 'wptests'
+				AND TABLE_NAME IN ('wptests_comments','wptests_options','wptests_posts','wptests_terms','wptests_users')
+			GROUP BY TABLE_NAME"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'pg_catalog.pg_stat_all_tables pg_stat', $sql );
+		$this->assertStringContainsString( 'pg_stat.n_live_tup', $sql );
+		$this->assertStringContainsString( 'MAX("tables"."TABLE_ROWS") AS "rows"', $sql );
+	}
+
+	/**
 	 * Tests PostgreSQL-backed DESCRIBE and SHOW COLUMNS queries execute catalog SQL.
 	 */
 	public function test_describe_and_show_columns_queries_execute_postgresql_catalog_sql_without_metadata_tables(): void {

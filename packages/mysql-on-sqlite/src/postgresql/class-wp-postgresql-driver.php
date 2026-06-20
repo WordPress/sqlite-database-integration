@@ -25331,7 +25331,7 @@ RELATIONS;
 					);
 				}
 				return sprintf(
-					'SELECT \'def\' AS "TABLE_CATALOG", %1$s AS "TABLE_SCHEMA", c.table_name AS "TABLE_NAME", c.column_name AS "COLUMN_NAME", c.ordinal_position AS "ORDINAL_POSITION", %8$s AS "COLUMN_DEFAULT", c.is_nullable AS "IS_NULLABLE", %2$s AS "DATA_TYPE", c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH", CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH", c.numeric_precision AS "NUMERIC_PRECISION", c.numeric_scale AS "NUMERIC_SCALE", c.datetime_precision AS "DATETIME_PRECISION", %3$s AS "CHARACTER_SET_NAME", %4$s AS "COLLATION_NAME", %5$s AS "COLUMN_TYPE", %6$s AS "COLUMN_KEY", %7$s AS "EXTRA", \'select,insert,update,references\' AS "PRIVILEGES", %9$s AS "COLUMN_COMMENT", \'\' AS "GENERATION_EXPRESSION", NULL AS "SRS_ID" FROM information_schema.columns c LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name AND pa.attnum > 0 WHERE c.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\'',
+					'SELECT \'def\' AS "TABLE_CATALOG", %1$s AS "TABLE_SCHEMA", c.table_name AS "TABLE_NAME", c.column_name AS "COLUMN_NAME", c.ordinal_position AS "ORDINAL_POSITION", %8$s AS "COLUMN_DEFAULT", c.is_nullable AS "IS_NULLABLE", %2$s AS "DATA_TYPE", c.character_maximum_length AS "CHARACTER_MAXIMUM_LENGTH", CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END AS "CHARACTER_OCTET_LENGTH", c.numeric_precision AS "NUMERIC_PRECISION", c.numeric_scale AS "NUMERIC_SCALE", c.datetime_precision AS "DATETIME_PRECISION", %3$s AS "CHARACTER_SET_NAME", %4$s AS "COLLATION_NAME", %5$s AS "COLUMN_TYPE", %6$s AS "COLUMN_KEY", %7$s AS "EXTRA", \'select,insert,update,references\' AS "PRIVILEGES", %9$s AS "COLUMN_COMMENT", \'\' AS "GENERATION_EXPRESSION", NULL AS "SRS_ID" FROM information_schema.columns c LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name AND pa.attnum > 0 WHERE %10$s',
 					$this->get_direct_information_schema_display_schema_sql( 'c.table_schema' ),
 					$type_expression,
 					$charset,
@@ -25340,7 +25340,8 @@ RELATIONS;
 					$column_key,
 					$this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ),
 					$this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ),
-					$column_comment
+					$column_comment,
+					$this->get_postgresql_visible_schema_condition_sql( 'c.table_schema', 'pc.oid' )
 				);
 			}
 			return $this->get_direct_information_schema_empty_relation_sql( 'columns' );
@@ -25351,43 +25352,43 @@ RELATIONS;
 				return $this->get_direct_information_schema_empty_relation_sql( 'tables' );
 			}
 
-				$postgresql_table_comment_sql       = "pg_catalog.obj_description(pc.oid, 'pg_class')";
-				$table_comment_prefix_sql           = $this->connection->quote( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX );
-				$table_comment_value_sql            = sprintf( 'COALESCE(%s, \'\')', $postgresql_table_comment_sql );
-				$table_comment_sql                  = sprintf(
-					'CASE
-		WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN
-			CASE
-				WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
+			$postgresql_table_comment_sql       = "pg_catalog.obj_description(pc.oid, 'pg_class')";
+			$table_comment_prefix_sql           = $this->connection->quote( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX );
+			$table_comment_value_sql            = sprintf( 'COALESCE(%s, \'\')', $postgresql_table_comment_sql );
+			$table_comment_sql                  = sprintf(
+				'CASE
+			WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN
+				CASE
+					WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
 				ELSE \'\'
 			END
-		ELSE %1$s
-	END',
-					$table_comment_value_sql,
-					$table_comment_prefix_sql
-				);
-				$table_collation_comment_sql        = sprintf(
-					'CASE
-		WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s
-		ELSE NULL
-	END',
-					$table_comment_value_sql,
-					$table_comment_prefix_sql,
-					$this->get_postgresql_catalog_column_comment_marker_decode_sql( $table_comment_value_sql, $table_comment_prefix_sql )
-				);
-				$table_collation_column_comment_sql = 'pg_catalog.col_description(table_collation_pc.oid, table_collation_pa.attnum)';
-				$table_collation_column_type_sql    = $this->get_direct_information_schema_catalog_column_type_expression( 'table_collation_columns', null, $table_collation_column_comment_sql );
-				$table_collation_column_sql         = $this->get_direct_information_schema_collation_expression(
-					$table_collation_column_type_sql,
-					'table_collation_columns.collation_name',
-					$table_collation_column_comment_sql,
-					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
-				);
-				$table_collation_sql                = sprintf(
-					'COALESCE(%3$s, (
-		SELECT %1$s
-		FROM information_schema.columns table_collation_columns
-		LEFT JOIN pg_catalog.pg_namespace table_collation_pn
+			ELSE %1$s
+		END',
+				$table_comment_value_sql,
+				$table_comment_prefix_sql
+			);
+			$table_collation_comment_sql        = sprintf(
+				'CASE
+			WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s
+			ELSE NULL
+		END',
+				$table_comment_value_sql,
+				$table_comment_prefix_sql,
+				$this->get_postgresql_catalog_column_comment_marker_decode_sql( $table_comment_value_sql, $table_comment_prefix_sql )
+			);
+			$table_collation_column_comment_sql = 'pg_catalog.col_description(table_collation_pc.oid, table_collation_pa.attnum)';
+			$table_collation_column_type_sql    = $this->get_direct_information_schema_catalog_column_type_expression( 'table_collation_columns', null, $table_collation_column_comment_sql );
+			$table_collation_column_sql         = $this->get_direct_information_schema_collation_expression(
+				$table_collation_column_type_sql,
+				'table_collation_columns.collation_name',
+				$table_collation_column_comment_sql,
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+			);
+			$table_collation_sql                = sprintf(
+				'COALESCE(%3$s, (
+			SELECT %1$s
+			FROM information_schema.columns table_collation_columns
+			LEFT JOIN pg_catalog.pg_namespace table_collation_pn
 			ON table_collation_pn.nspname = table_collation_columns.table_schema
 		LEFT JOIN pg_catalog.pg_class table_collation_pc
 			ON table_collation_pc.relnamespace = table_collation_pn.oid
@@ -25400,19 +25401,20 @@ RELATIONS;
 		WHERE table_collation_columns.table_schema = t.table_schema
 			AND table_collation_columns.table_name = t.table_name
 			AND %1$s IS NOT NULL
-		ORDER BY table_collation_columns.ordinal_position
-		LIMIT 1
-	), %2$s)',
-					$table_collation_column_sql,
-					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
-					$table_collation_comment_sql
-				);
-				return sprintf(
-					'SELECT \'def\' AS "TABLE_CATALOG", %1$s AS "TABLE_SCHEMA", t.table_name AS "TABLE_NAME", CASE WHEN t.table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "TABLE_TYPE", \'InnoDB\' AS "ENGINE", 10 AS "VERSION", \'Dynamic\' AS "ROW_FORMAT", GREATEST(CAST(COALESCE(pc.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS", 0 AS "AVG_ROW_LENGTH", 0 AS "DATA_LENGTH", 0 AS "MAX_DATA_LENGTH", 0 AS "INDEX_LENGTH", 0 AS "DATA_FREE", CASE WHEN identity_column.column_name IS NULL THEN NULL ELSE CAST(COALESCE(ps.last_value + ps.increment_by, ps.start_value, 1) AS bigint) END AS "AUTO_INCREMENT", TO_CHAR(CURRENT_TIMESTAMP, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATE_TIME", NULL AS "UPDATE_TIME", NULL AS "CHECK_TIME", %2$s AS "TABLE_COLLATION", NULL AS "CHECKSUM", \'\' AS "CREATE_OPTIONS", %3$s AS "TABLE_COMMENT" FROM information_schema.tables t LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = t.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = t.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN LATERAL (SELECT c.column_name, pg_catalog.pg_get_serial_sequence(pg_catalog.format(\'%%I.%%I\', t.table_schema, t.table_name), c.column_name)::regclass AS sequence_oid FROM information_schema.columns c WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name AND (c.is_identity = \'YES\' OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\') ORDER BY c.ordinal_position LIMIT 1) identity_column ON TRUE LEFT JOIN pg_catalog.pg_class seq ON seq.oid = identity_column.sequence_oid LEFT JOIN pg_catalog.pg_namespace seq_ns ON seq_ns.oid = seq.relnamespace LEFT JOIN pg_catalog.pg_sequences ps ON ps.schemaname = seq_ns.nspname AND ps.sequencename = seq.relname WHERE t.table_schema !~ \'^(pg_|information_schema$|pg_catalog$)\' AND t.table_type IN (\'BASE TABLE\', \'VIEW\')',
-					$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
-					$table_collation_sql,
-					$table_comment_sql
-				);
+			ORDER BY table_collation_columns.ordinal_position
+			LIMIT 1
+		), %2$s)',
+				$table_collation_column_sql,
+				$this->connection->quote( self::DEFAULT_MYSQL_COLLATION ),
+				$table_collation_comment_sql
+			);
+			return sprintf(
+				'SELECT \'def\' AS "TABLE_CATALOG", %1$s AS "TABLE_SCHEMA", t.table_name AS "TABLE_NAME", CASE WHEN t.table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "TABLE_TYPE", \'InnoDB\' AS "ENGINE", 10 AS "VERSION", \'Dynamic\' AS "ROW_FORMAT", GREATEST(CAST(COALESCE(pg_stat.n_live_tup, 0) AS bigint), CAST(COALESCE(pc.reltuples, 0) AS bigint), 0) AS "TABLE_ROWS", 0 AS "AVG_ROW_LENGTH", 0 AS "DATA_LENGTH", 0 AS "MAX_DATA_LENGTH", 0 AS "INDEX_LENGTH", 0 AS "DATA_FREE", CASE WHEN identity_column.column_name IS NULL THEN NULL ELSE CAST(COALESCE(ps.last_value + ps.increment_by, ps.start_value, 1) AS bigint) END AS "AUTO_INCREMENT", TO_CHAR(CURRENT_TIMESTAMP, \'YYYY-MM-DD HH24:MI:SS\') AS "CREATE_TIME", NULL AS "UPDATE_TIME", NULL AS "CHECK_TIME", %2$s AS "TABLE_COLLATION", NULL AS "CHECKSUM", \'\' AS "CREATE_OPTIONS", %3$s AS "TABLE_COMMENT" FROM information_schema.tables t LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = t.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = t.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_stat_all_tables pg_stat ON pg_stat.relid = pc.oid LEFT JOIN LATERAL (SELECT c.column_name, pg_catalog.pg_get_serial_sequence(pg_catalog.format(\'%%I.%%I\', t.table_schema, t.table_name), c.column_name)::regclass AS sequence_oid FROM information_schema.columns c WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name AND (c.is_identity = \'YES\' OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%%\') ORDER BY c.ordinal_position LIMIT 1) identity_column ON TRUE LEFT JOIN pg_catalog.pg_class seq ON seq.oid = identity_column.sequence_oid LEFT JOIN pg_catalog.pg_namespace seq_ns ON seq_ns.oid = seq.relnamespace LEFT JOIN pg_catalog.pg_sequences ps ON ps.schemaname = seq_ns.nspname AND ps.sequencename = seq.relname WHERE %4$s AND t.table_type IN (\'BASE TABLE\', \'VIEW\')',
+				$this->get_direct_information_schema_display_schema_sql( 't.table_schema' ),
+				$table_collation_sql,
+				$table_comment_sql,
+				$this->get_postgresql_visible_schema_condition_sql( 't.table_schema', 'pc.oid' )
+			);
 		}
 
 		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) ) {
@@ -25496,7 +25498,7 @@ RELATIONS;
 					'n.nspname AS table_schema',
 					'',
 					array(
-						'n.nspname !~ \'^(pg_|information_schema$|pg_catalog$)\'',
+						$this->get_postgresql_visible_schema_condition_sql( 'n.nspname', 't.oid' ),
 						't.relkind IN (\'r\', \'p\')',
 					)
 				),
@@ -25505,6 +25507,26 @@ RELATIONS;
 		}
 		return null;
 	}
+
+	private function get_postgresql_visible_schema_condition_sql( string $schema_sql, ?string $relation_oid_sql = null ): string {
+		$schema_condition = sprintf(
+			'%1$s !~ %2$s',
+			$schema_sql,
+			$this->connection->quote( '^(pg_|information_schema$|pg_catalog$)' )
+		);
+		if ( null === $relation_oid_sql ) {
+			return $schema_condition;
+		}
+
+		return sprintf(
+			'(%1$s OR (%2$s ~ %3$s AND %4$s IS NOT NULL AND pg_catalog.pg_table_is_visible(%4$s)))',
+			$schema_condition,
+			$schema_sql,
+			$this->connection->quote( '^pg_temp_[0-9]+$' ),
+			$relation_oid_sql
+		);
+	}
+
 	private function get_direct_information_schema_simple_native_relation_sql( string $view ): ?string {
 		$empty_sql            = $this->connection->quote( '' );
 		$function_sql         = $this->connection->quote( 'FUNCTION' );
