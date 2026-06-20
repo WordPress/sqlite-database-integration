@@ -11076,7 +11076,7 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 			$params = array( $resolved_schema, $table_name );
 
 		if ( null !== $like ) {
-			$sql     .= ' AND "COLUMN_NAME" LIKE ? ESCAPE \'\\\'';
+			$sql     .= ' AND "COLUMN_NAME" LIKE ? ESCAPE ' . $this->get_mysql_like_default_escape_sql();
 			$params[] = $like;
 		}
 		return $this->execute_mysql_catalog_show_result(
@@ -11182,7 +11182,7 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 				}
 
 				$conditions[] = sprintf(
-					'like' === ( $filter['operator'] ?? '=' ) ? "%s LIKE ? ESCAPE '\\'" : '%s = ?',
+					'like' === ( $filter['operator'] ?? '=' ) ? '%s LIKE ? ESCAPE ' . $this->get_mysql_like_default_escape_sql() : '%s = ?',
 					$filter_columns[ $filter['column'] ]
 				);
 				$params[]     = $filter['value'];
@@ -11301,12 +11301,13 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 		FROM (%4$s) information_schema_tables
 		WHERE "TABLE_SCHEMA" = ?
 				AND %5$s IN (\'BASE TABLE\', \'VIEW\')
-					AND "TABLE_NAME" NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE \'\\\'',
+					AND "TABLE_NAME" NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE %6$s',
 				$table_name_sql,
 				$table_column_sql,
 				$is_full ? ', ' . $table_type_sql . ' AS "Table_type"' : '',
 				$this->get_direct_information_schema_relation_sql( 'tables' ),
-				$table_type_sql
+				$table_type_sql,
+				$this->get_mysql_like_default_escape_sql()
 			);
 			$params                = array( $this->get_direct_information_schema_display_schema( $schema_name ) );
 		} else {
@@ -11318,17 +11319,18 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 		FROM information_schema.tables
 		WHERE table_schema = ?
 				AND %4$s IN (\'BASE TABLE\', \'VIEW\')
-					AND table_name NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE \'\\\'',
+					AND table_name NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE %5$s',
 				$table_name_sql,
 				$table_column_sql,
 				$is_full ? ', CASE WHEN ' . $table_type_sql . ' = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END AS "Table_type"' : '',
-				$table_type_sql
+				$table_type_sql,
+				$this->get_mysql_like_default_escape_sql()
 			);
 			$params                = array( $schema_name );
 		}
 
 		if ( null !== $like ) {
-			$sql     .= sprintf( " AND %s LIKE ? ESCAPE '\\'", $table_name_sql );
+			$sql     .= sprintf( ' AND %s LIKE ? ESCAPE %s', $table_name_sql, $this->get_mysql_like_default_escape_sql() );
 			$params[] = $like;
 		}
 		return $this->execute_mysql_catalog_show_result(
@@ -11346,6 +11348,9 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 			$fetch_mode,
 			...$fetch_mode_args
 		);
+	}
+	private function get_mysql_like_default_escape_sql(): string {
+		return $this->connection->quote( '\\' );
 	}
 	private function execute_show_table_status_query( array $show_table_status_query, $fetch_mode, ...$fetch_mode_args ) {
 		$columns = $this->get_mysql_show_output_columns( 'table_status' );

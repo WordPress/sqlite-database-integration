@@ -26287,6 +26287,33 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Tests SHOW TABLES LIKE honors escaped underscore patterns.
+	 */
+	public function test_show_tables_like_honors_escaped_underscore_patterns(): void {
+		$driver = $this->create_driver();
+		$this->install_information_schema_fixture( $driver );
+
+		$driver->get_connection()->get_pdo()->exec(
+			"INSERT INTO information_schema.tables
+				(table_schema, table_name, table_type)
+			VALUES
+				('public', 'wp_e2e_users', 'BASE TABLE'),
+				('public', 'wpx_e2e_users', 'BASE TABLE'),
+				('public', 'wp_e2eXusers', 'BASE TABLE')"
+		);
+
+		$tables = $driver->query( "SHOW TABLES LIKE 'wp\\\\_e2e\\\\_users'" );
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'wp_e2e_users', $tables[0]->Tables_in_wptests );
+
+		$queries = $driver->get_last_postgresql_queries();
+		$this->assertCount( 1, $queries );
+		$this->assertStringContainsString( "table_name LIKE ? ESCAPE '\\'", $queries[0]['sql'] );
+		$this->assertSame( array( 'public', 'wp\\_e2e\\_users' ), $queries[0]['params'] );
+	}
+
+	/**
 	 * Tests SHOW TABLES accepts current database qualification forms.
 	 */
 	public function test_show_tables_accepts_current_database_qualification_forms(): void {
@@ -26374,6 +26401,63 @@ $wp_mysql_on_update$',
 			$this->assertSame( 'Unsupported SHOW TABLES statement.', $e->getMessage() );
 			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
 		}
+	}
+
+	/**
+	 * Tests SHOW TABLES LIKE uses PostgreSQL-safe escape literals for pgsql connections.
+	 */
+	public function test_show_tables_like_uses_postgresql_safe_escape_literal_for_pgsql_connections(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Captured SHOW TABLES catalog queries.
+			 *
+			 * @var array[]
+			 */
+			private $catalog_queries = array();
+
+			/**
+			 * Execute fixture-backed SHOW TABLES catalog queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if ( false !== strpos( $sql, 'information_schema_tables' ) ) {
+					$this->catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+
+					return parent::query( 'SELECT ? AS "Tables_in_wptests"', array( 'wp_e2e_users' ) );
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured SHOW TABLES catalog queries.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_catalog_queries(): array {
+				return $this->catalog_queries;
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+		$tables = $driver->query( "SHOW TABLES LIKE 'wp\\\\_e2e\\\\_users'" );
+
+		$this->assertCount( 1, $tables );
+		$this->assertSame( 'wp_e2e_users', $tables[0]->Tables_in_wptests );
+
+		$catalog_queries = $connection->get_catalog_queries();
+		$this->assertCount( 1, $catalog_queries );
+
+		$escape_sql = $connection->quote( '\\' );
+		$this->assertStringContainsString( 'LIKE ? ESCAPE ' . $escape_sql, $catalog_queries[0]['sql'] );
+		$this->assertStringNotContainsString( "ESCAPE '\\'", $catalog_queries[0]['sql'] );
+		$this->assertSame( array( 'wptests', 'wp\\_e2e\\_users' ), $catalog_queries[0]['params'] );
 	}
 
 	/**
@@ -35487,7 +35571,7 @@ $wp_mysql_on_update$',
 
 		$queries = $driver->get_last_postgresql_queries();
 		$this->assertCount( 1, $queries );
-		$this->assertStringContainsString( 'WHERE "Key_name" LIKE ? ESCAPE \'\\\' AND "Non_unique" = ?', $queries[0]['sql'] );
+		$this->assertStringContainsString( 'WHERE "Key_name" LIKE ? ESCAPE ' . $driver->get_connection()->quote( '\\' ) . ' AND "Non_unique" = ?', $queries[0]['sql'] );
 		$this->assertStringNotContainsString( 'SHOW INDEX', $queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_options', 'auto%', '1' ), $queries[0]['params'] );
 	}
