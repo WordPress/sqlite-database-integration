@@ -33035,6 +33035,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $describe_sql );
 		$this->assertStringContainsString( 'FROM (WITH index_columns AS (', $describe_sql );
 		$this->assertStringNotContainsString( 'FROM (index_columns AS (', $describe_sql );
+		$this->assertStringContainsString( 'ORDER BY "ORDINAL_POSITION"', $describe_sql );
+		$this->assertStringNotContainsString( 'ORDER BY ordinal_position', $describe_sql );
 
 		foreach ( $metadata_tables as $metadata_table ) {
 			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $describe_sql ) );
@@ -33054,6 +33056,8 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'pg_catalog.pg_index i', $columns_sql );
 		$this->assertStringContainsString( 'FROM (WITH index_columns AS (', $columns_sql );
 		$this->assertStringNotContainsString( 'FROM (index_columns AS (', $columns_sql );
+		$this->assertStringContainsString( 'ORDER BY "ORDINAL_POSITION"', $columns_sql );
+		$this->assertStringNotContainsString( 'ORDER BY ordinal_position', $columns_sql );
 
 		foreach ( $metadata_tables as $metadata_table ) {
 			$this->assertSame( 0, preg_match( '/\b(?:FROM|JOIN)\s+"?' . preg_quote( $metadata_table, '/' ) . '"?/i', $columns_sql ) );

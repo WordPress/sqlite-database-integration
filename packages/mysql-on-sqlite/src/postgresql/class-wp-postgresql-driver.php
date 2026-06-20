@@ -11085,7 +11085,7 @@ WHERE "TABLE_SCHEMA" = COALESCE(NULLIF(?, %3$s), %4$s)
 			$where_filter,
 			$column_expressions,
 			'AND ',
-			'ORDER BY ordinal_position',
+			'ORDER BY "ORDINAL_POSITION"',
 			$cache_key,
 			'Unsupported SHOW COLUMNS statement.',
 			$fetch_mode,
