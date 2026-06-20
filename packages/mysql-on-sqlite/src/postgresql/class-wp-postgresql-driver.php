@@ -339,6 +339,13 @@ class WP_PostgreSQL_Driver {
 	private $mysql_introspection_result_cache = array();
 
 	/**
+	 * Cached MySQL column metadata rows keyed by backend schema and table.
+	 *
+	 * @var array<string, array>
+	 */
+	private $mysql_column_metadata_introspection_cache = array();
+
+	/**
 	 * Cached exact MySQL SELECT translations keyed by query hash.
 	 *
 	 * @var array<string, array{query: string, sql: string, translated: bool}>
@@ -3325,6 +3332,7 @@ class WP_PostgreSQL_Driver {
 		$this->mysql_table_schema_introspection_cache      = array();
 		$this->mysql_upsert_conflict_target_cache          = array();
 		$this->mysql_introspection_result_cache            = array();
+		$this->mysql_column_metadata_introspection_cache   = array();
 		$this->mysql_select_translation_cache              = array();
 		$this->mysql_sql_calc_found_rows_count_query_cache = array();
 	}
@@ -4417,6 +4425,15 @@ $wp_mysql_primary_index_comment$',
 		?string $column_name = null,
 		bool $case_sensitive_column = false
 	): array {
+		$cache_key = $this->get_mysql_table_catalog_column_metadata_cache_key( $table_schema, $table_name );
+		if ( array_key_exists( $cache_key, $this->mysql_column_metadata_introspection_cache ) ) {
+			return $this->filter_mysql_table_catalog_column_metadata_rows(
+				$this->mysql_column_metadata_introspection_cache[ $cache_key ],
+				$column_name,
+				$case_sensitive_column
+			);
+		}
+
 		$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
 		$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
 			'c',
@@ -4443,13 +4460,9 @@ $wp_mysql_primary_index_comment$',
 				$this->get_direct_information_schema_column_default_expression( 'c', $column_comment_sql ),
 				$this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql )
 			),
-			null !== $column_name,
-			$case_sensitive_column
+			false
 		);
 		$params             = array( $table_schema, $table_name );
-		if ( null !== $column_name ) {
-			$params[] = $column_name;
-		}
 
 		try {
 			$stmt = $this->connection->query( $sql, $params );
@@ -4459,17 +4472,44 @@ $wp_mysql_primary_index_comment$',
 					$rows,
 					$table_schema,
 					$table_name,
-					$column_name,
-					$case_sensitive_column
+					null,
+					false
 				);
 			}
-			return $rows;
+			$this->mysql_column_metadata_introspection_cache[ $cache_key ] = $rows;
+			return $this->filter_mysql_table_catalog_column_metadata_rows( $rows, $column_name, $case_sensitive_column );
 		} catch ( PDOException $e ) {
 			if ( 'sqlite' !== (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
 				throw $e;
 			}
-			return $this->get_sqlite_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name, $case_sensitive_column );
+			$rows = $this->get_sqlite_table_catalog_column_metadata_rows( $table_schema, $table_name );
+			$this->mysql_column_metadata_introspection_cache[ $cache_key ] = $rows;
+			return $this->filter_mysql_table_catalog_column_metadata_rows( $rows, $column_name, $case_sensitive_column );
 		}
+	}
+	private function get_mysql_table_catalog_column_metadata_cache_key( string $table_schema, string $table_name ): string {
+		return $table_schema . "\0" . $table_name;
+	}
+	private function filter_mysql_table_catalog_column_metadata_rows(
+		array $rows,
+		?string $column_name,
+		bool $case_sensitive_column
+	): array {
+		if ( null === $column_name ) {
+			return $rows;
+		}
+
+		$filtered = array();
+		foreach ( $rows as $row ) {
+			$name = (string) ( $row['column_name'] ?? '' );
+			if ( $case_sensitive_column ? $name === $column_name : 0 === strcasecmp( $name, $column_name ) ) {
+				$filtered[] = $row;
+				if ( 2 === count( $filtered ) ) {
+					break;
+				}
+			}
+		}
+		return $filtered;
 	}
 	private function normalize_mysql_table_catalog_column_metadata_rows( array $rows ): array {
 		foreach ( $rows as &$row ) {
@@ -4592,15 +4632,7 @@ $wp_mysql_primary_index_comment$',
 		);
 	}
 	private function mysql_table_has_column_metadata( string $table_schema, string $table_name ): bool {
-		$stmt = $this->connection->query(
-			'SELECT 1
-			FROM information_schema.columns c
-			WHERE c.table_schema = ?
-				AND c.table_name = ?
-			LIMIT 1',
-			array( $table_schema, $table_name )
-		);
-		return false !== $stmt->fetchColumn();
+		return array() !== $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name );
 	}
 	private function translate_mysql_create_table_select_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );

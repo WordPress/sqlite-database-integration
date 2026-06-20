@@ -676,9 +676,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests DML column metadata is read fresh after metadata changes.
+	 * Tests DML column metadata is cached until metadata changes.
 	 */
-	public function test_dml_column_metadata_reads_fresh_rows_after_metadata_changes(): void {
+	public function test_dml_column_metadata_cache_reuses_rows_until_metadata_changes(): void {
 		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
 		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
 		$driver->set_sql_mode( '' );
@@ -718,7 +718,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (2)' ) );
 		$after_second_insert = $metadata_select_count;
-		$this->assertGreaterThan( $after_first_insert, $after_second_insert );
+		$this->assertSame( $after_first_insert, $after_second_insert );
 
 		$driver->query( "ALTER TABLE wptests_cache_dml ALTER COLUMN status SET DEFAULT 'published'" );
 		$this->assertSame( 1, $driver->query( 'INSERT INTO `wptests_cache_dml` (`id`) VALUES (3)' ) );
@@ -738,6 +738,127 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$rows
 			)
 		);
+	}
+
+	/**
+	 * Tests WordPress publish query shapes reuse per-table column metadata.
+	 */
+	public function test_wordpress_publish_query_shapes_reuse_column_metadata_cache(): void {
+		$connection = new WP_PostgreSQL_Catalog_Metadata_SQLite_Connection();
+		$driver     = new WP_PostgreSQL_Catalog_Metadata_Fixture_Driver( $connection, 'wptests' );
+		$driver->set_sql_mode( '' );
+
+		$connection->query(
+			'CREATE TABLE wp_posts (
+				ID INTEGER PRIMARY KEY,
+				post_name TEXT NOT NULL,
+				post_type TEXT NOT NULL,
+				post_status TEXT NOT NULL,
+				post_date TEXT NOT NULL,
+				post_parent INTEGER NOT NULL
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wp_posts (
+				`ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				`post_name` varchar(200) NOT NULL DEFAULT "",
+				`post_type` varchar(20) NOT NULL DEFAULT "post",
+				`post_status` varchar(20) NOT NULL DEFAULT "publish",
+				`post_date` datetime NOT NULL DEFAULT "0000-00-00 00:00:00",
+				`post_parent` bigint(20) unsigned NOT NULL DEFAULT 0,
+				PRIMARY KEY (`ID`),
+				KEY post_name (`post_name`),
+				KEY type_status_date (`post_type`, `post_status`, `post_date`, `ID`),
+				KEY post_parent (`post_parent`)
+			)'
+		);
+		$connection->query(
+			'CREATE TABLE wp_term_relationships (
+				object_id INTEGER NOT NULL,
+				term_taxonomy_id INTEGER NOT NULL,
+				term_order INTEGER NOT NULL,
+				PRIMARY KEY (object_id, term_taxonomy_id)
+			)'
+		);
+		$driver->store_mysql_schema_metadata(
+			'CREATE TABLE wp_term_relationships (
+				`object_id` bigint(20) unsigned NOT NULL DEFAULT 0,
+				`term_taxonomy_id` bigint(20) unsigned NOT NULL DEFAULT 0,
+				`term_order` int(11) NOT NULL DEFAULT 0,
+				PRIMARY KEY (`object_id`, `term_taxonomy_id`)
+			)'
+		);
+
+		$connection->query(
+			"INSERT INTO wp_posts (ID, post_name, post_type, post_status, post_date, post_parent)
+			VALUES
+				(5, 'hello-world', 'post', 'publish', '2026-06-20 05:00:00', 0),
+				(7, 'hello-world-revision', 'revision', 'inherit', '2026-06-20 05:01:00', 5),
+				(9, 'other-post', 'post', 'draft', '2026-06-20 05:02:00', 0)"
+		);
+		$connection->query( 'INSERT INTO wp_term_relationships (object_id, term_taxonomy_id, term_order) VALUES (5, 1, 0)' );
+
+		$metadata_select_count = 0;
+		$connection->set_query_logger(
+			static function ( string $sql, array $params ) use ( &$metadata_select_count ): void {
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'c.column_name' )
+					&& false !== strpos( $sql, 'c.ordinal_position' )
+				) {
+					++$metadata_select_count;
+				}
+			}
+		);
+
+		$driver->query(
+			"SELECT wp_posts.* FROM wp_posts
+			WHERE 1=1
+				AND wp_posts.post_name = 'hello-world'
+				AND wp_posts.ID NOT IN (9)
+				AND wp_posts.post_type IN ('post', 'page', 'attachment')
+				AND ((wp_posts.post_status = 'publish'))
+			ORDER BY wp_posts.post_date DESC"
+		);
+		$after_first_posts_query = $metadata_select_count;
+		$this->assertSame( 1, $after_first_posts_query );
+
+		$driver->query(
+			"SELECT post_name FROM wp_posts
+			WHERE post_name = 'hello-world'
+				AND post_type = 'post'
+				AND ID != 5
+			LIMIT 1"
+		);
+		$this->assertSame( $after_first_posts_query, $metadata_select_count );
+
+		$rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wp_posts.ID FROM wp_posts
+			WHERE 1=1
+				AND wp_posts.post_parent = 5
+				AND wp_posts.post_type = 'revision'
+				AND ((wp_posts.post_status = 'inherit'))
+			ORDER BY wp_posts.post_date DESC, wp_posts.ID DESC
+			LIMIT 0, 1"
+		);
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '7', $rows[0]->ID );
+		$this->assertSame( $after_first_posts_query, $metadata_select_count );
+
+		$found_rows = $driver->query( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '1', $found_rows[0]->{'FOUND_ROWS()'} );
+		$this->assertSame( $after_first_posts_query, $metadata_select_count );
+
+		$count_rows = $driver->query(
+			"SELECT COUNT(*) FROM wp_term_relationships, wp_posts
+			WHERE wp_posts.ID = wp_term_relationships.object_id
+				AND post_status IN ('publish')
+				AND post_type IN ('post')
+				AND term_taxonomy_id = 1"
+		);
+		$count_row_values = array_values( (array) $count_rows[0] );
+		$this->assertSame( '1', $count_row_values[0] );
+		$this->assertSame( $after_first_posts_query + 1, $metadata_select_count );
 	}
 
 	/**
