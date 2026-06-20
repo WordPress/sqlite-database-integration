@@ -32681,6 +32681,69 @@ $wp_mysql_on_update$',
 	}
 
 	/**
+	 * Tests Site Health's grouped information_schema.TABLES query works with PostgreSQL catalog rows.
+	 */
+	public function test_direct_information_schema_tables_site_health_grouped_table_rows_executes_postgresql_catalog_sql(): void {
+		$connection = new class( array( 'pdo' => $this->create_pgsql_reporting_sqlite_pdo() ) ) extends WP_PostgreSQL_Connection_Pgsql_Quote_SQLite_Connection {
+			/**
+			 * Execute fixture-backed direct information_schema.TABLES queries.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if (
+					0 === strpos( $sql, 'DO ' )
+					|| 0 === strpos( $sql, 'CREATE OR REPLACE FUNCTION ' )
+				) {
+					return parent::query( 'SELECT 1' );
+				}
+
+				if (
+					false !== strpos( $sql, 'FROM information_schema.tables t' )
+					&& false !== strpos( $sql, 'pg_catalog.obj_description(pc.oid, \'pg_class\')' )
+				) {
+					if (
+						false !== strpos( $sql, '"TABLE_ROWS" AS "rows"' )
+						&& false !== strpos( $sql, 'GROUP BY "TABLE_NAME"' )
+					) {
+						throw new RuntimeException( 'SQLSTATE[42803]: Grouping error: column "tables.TABLE_ROWS" must appear in the GROUP BY clause or be used in an aggregate function' );
+					}
+
+					return parent::query( "SELECT 'wptests_posts' AS \"table\", '7' AS \"rows\", '0' AS \"bytes\"" );
+				}
+
+				return parent::query( $sql, $params );
+			}
+		};
+		$driver     = new WP_PostgreSQL_Driver( $connection, 'wordpress_develop_tests' );
+
+		$rows = $driver->query(
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', SUM(data_length + index_length) as 'bytes'
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+			AND TABLE_NAME IN ('wptests_comments','wptests_options','wptests_posts','wptests_terms','wptests_users')
+			GROUP BY TABLE_NAME"
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wptests_posts', $rows[0]->table );
+		$this->assertSame( '7', $rows[0]->rows );
+		$this->assertSame( '0', $rows[0]->bytes );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $sql );
+		$this->assertStringContainsString( 'AS "table"', $sql );
+		$this->assertStringContainsString( 'AS "rows"', $sql );
+		$this->assertStringContainsString( 'as "bytes"', $sql );
+		$this->assertStringContainsString( 'GROUP BY "TABLE_NAME"', $sql );
+		$this->assertStringContainsString( 'SUM ( "DATA_LENGTH" + "INDEX_LENGTH" ) as "bytes"', $sql );
+		$this->assertRegExp( '/MAX\(\s*"tables"\."TABLE_ROWS"\s*\) AS "rows"/', $sql );
+		$this->assertStringNotContainsString( '"TABLE_ROWS" AS "rows"', $sql );
+	}
+
+	/**
 	 * Tests PostgreSQL-backed information_schema.COLUMNS uses native catalog rows.
 	 */
 	public function test_direct_information_schema_columns_uses_postgresql_catalog_for_pgsql_connections(): void {

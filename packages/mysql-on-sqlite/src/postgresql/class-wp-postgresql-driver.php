@@ -23461,6 +23461,21 @@ WHERE option_name IN (
 				continue;
 			}
 
+			$grouped_tables_table_rows_sql = $this->get_direct_information_schema_grouped_tables_table_rows_projection_sql(
+				$tokens,
+				$expression_bounds['start'],
+				$expression_bounds['end'],
+				$context
+			);
+			if ( null !== $grouped_tables_table_rows_sql ) {
+				$replacements[] = array(
+					'start' => $expression_bounds['start'],
+					'end'   => $expression_bounds['end'],
+					'sql'   => $grouped_tables_table_rows_sql,
+				);
+				continue;
+			}
+
 			$expression_replacements = $this->get_direct_information_schema_select_expression_replacements(
 				$tokens,
 				$expression_bounds['start'],
@@ -23519,6 +23534,119 @@ WHERE option_name IN (
 			$statement_end,
 			$replacements
 		);
+	}
+	private function get_direct_information_schema_grouped_tables_table_rows_projection_sql( array $tokens, int $start, int $end, array $context ): ?string {
+		$reference = $this->get_direct_information_schema_column_reference_for_expression( $tokens, $start, $end, $context );
+		if (
+			null === $reference
+			|| 0 !== strcasecmp( $reference['column'], 'TABLE_ROWS' )
+			|| ! isset( $reference['source']['view'] )
+			|| 'tables' !== $reference['source']['view']
+			|| ! $this->direct_information_schema_select_groups_by_table_name_for_source( $tokens, $context, $reference['source'] )
+		) {
+			return null;
+		}
+
+		return 'MAX(' . $reference['sql'] . ')';
+	}
+	private function direct_information_schema_select_groups_by_table_name_for_source( array $tokens, array $context, array $source ): bool {
+		foreach ( $context['clause_ranges'] as $range ) {
+			if (
+				! isset( $tokens[ $range['start'] ], $tokens[ $range['start'] + 1 ] )
+				|| WP_MySQL_Lexer::GROUP_SYMBOL !== $tokens[ $range['start'] ]->id
+				|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $range['start'] + 1 ]->id
+			) {
+				continue;
+			}
+
+			$group_items = $this->split_top_level_mysql_arguments( $tokens, $range['start'] + 2, $range['end'] );
+			if ( null === $group_items ) {
+				return false;
+			}
+
+			foreach ( $group_items as $group_item ) {
+				$reference = $this->get_direct_information_schema_column_reference_for_expression(
+					$tokens,
+					$group_item['start'],
+					$group_item['end'],
+					$context
+				);
+				if (
+					null !== $reference
+					&& 0 === strcasecmp( $reference['column'], 'TABLE_NAME' )
+					&& $this->direct_information_schema_column_sources_are_same( $reference['source'], $source )
+				) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+	private function get_direct_information_schema_column_reference_for_expression( array $tokens, int $start, int $end, array $context ): ?array {
+		$source = null;
+		$column = null;
+
+		if ( $start + 1 === $end && isset( $tokens[ $start ] ) ) {
+			$value = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			if ( null === $value ) {
+				return null;
+			}
+
+			$matches = array();
+			$key     = strtolower( $value );
+			foreach ( $context['sources'] as $candidate_source ) {
+				if ( isset( $candidate_source['column_map'][ $key ] ) ) {
+					$matches[] = array(
+						'source' => $candidate_source,
+						'column' => $candidate_source['column_map'][ $key ],
+					);
+				}
+			}
+
+			if ( 1 !== count( $matches ) ) {
+				return null;
+			}
+
+			$source = $matches[0]['source'];
+			$column = $matches[0]['column'];
+		} elseif (
+			$start + 3 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+		) {
+			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			$column    = null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 2 ], $source['column_map'] );
+		} elseif (
+			$start + 5 === $end
+			&& isset( $tokens[ $start ], $tokens[ $start + 1 ], $tokens[ $start + 2 ], $tokens[ $start + 3 ], $tokens[ $start + 4 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 1 ]->id
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $start + 3 ]->id
+		) {
+			$schema = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start ] );
+			if ( null === $schema || 0 !== strcasecmp( $schema, 'information_schema' ) ) {
+				return null;
+			}
+
+			$qualifier = $this->get_direct_information_schema_identifier_token_value( $tokens[ $start + 2 ] );
+			$source    = null === $qualifier ? null : $this->get_direct_information_schema_source_for_qualifier( $qualifier, $context );
+			$column    = null === $source ? null : $this->get_direct_information_schema_column_name_for_token( $tokens[ $start + 4 ], $source['column_map'] );
+		}
+
+		if ( null === $source || null === $column ) {
+			return null;
+		}
+
+		return array(
+			'source' => $source,
+			'column' => $column,
+			'sql'    => $this->get_direct_information_schema_qualified_column_sql( $source, $column ),
+		);
+	}
+	private function direct_information_schema_column_sources_are_same( array $left, array $right ): bool {
+		return $left['source_start'] === $right['source_start']
+			&& $left['source_end'] === $right['source_end']
+			&& 0 === strcasecmp( $left['alias'], $right['alias'] );
 	}
 	private function translate_direct_information_schema_no_from_select_query( string $query, array $tokens, int $statement_end ): ?string {
 		if (
