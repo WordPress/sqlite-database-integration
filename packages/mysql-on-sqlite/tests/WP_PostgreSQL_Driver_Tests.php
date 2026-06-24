@@ -7501,7 +7501,13 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$unique_index_metadata_queries = 0;
 		$driver->get_connection()->set_query_logger(
 			static function ( string $sql ) use ( &$unique_index_metadata_queries ): void {
-				if ( false !== strpos( $sql, 'pg_catalog.pg_index' ) ) {
+				if (
+					false !== strpos( $sql, 'pg_catalog.pg_index' )
+					|| (
+						false !== strpos( $sql, 'index_list' )
+						&& false !== strpos( $sql, 'wptests_options' )
+					)
+				) {
 					++$unique_index_metadata_queries;
 				}
 			}
@@ -7562,12 +7568,15 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)'
 		);
 
-		$this->assertNull(
-			$this->translate_driver_query_with_private_method(
-				$driver,
-				'translate_mysql_on_duplicate_key_update_query',
-				$update
-			)
+		$translated_update = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_on_duplicate_key_update_query',
+			$update
+		);
+		$this->assertIsArray( $translated_update );
+		$this->assertSame(
+			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			$translated_update['sql']
 		);
 		$this->assertSame( 2, $unique_index_metadata_queries );
 	}
@@ -20654,9 +20663,9 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				}
 
 				if ( false !== strpos( $sql, 'FROM information_schema.columns' ) && isset( $params[2] ) ) {
-					if ( in_array( (string) $params[2], array( 'a', 'b' ), true ) ) {
+					if ( in_array( (string) $params[2], array( 'a', 'b', 'c' ), true ) ) {
 						if ( false !== strpos( $sql, ' AS column_type' ) ) {
-							return parent::query( 'SELECT ? AS column_type', array( 'integer' ) );
+							return parent::query( 'SELECT ? AS column_type', array( 'a' === (string) $params[2] ? 'integer' : 'varchar(255)' ) );
 						}
 
 						return parent::query( 'SELECT ? AS column_name', array( (string) $params[2] ) );
@@ -20672,6 +20681,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				if (
 					0 === strpos( $sql, 'ALTER TABLE "catalog_change_inline_keys" ' )
 					|| 'CREATE UNIQUE INDEX "catalog_change_inline_keys__b" ON "catalog_change_inline_keys" ("b")' === $sql
+					|| 'CREATE INDEX "catalog_change_inline_keys__c" ON "catalog_change_inline_keys" (SUBSTR(CAST("c" AS text), 1, 191))' === $sql
 				) {
 					return parent::query( 'SELECT 1' );
 				}
@@ -20694,7 +20704,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		};
 		$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
 
-		$pdo->exec( 'CREATE TABLE catalog_change_inline_keys (a INTEGER, b INTEGER)' );
+		$pdo->exec( 'CREATE TABLE catalog_change_inline_keys (a INTEGER, b TEXT, c TEXT)' );
 
 		$this->assertSame(
 			0,
@@ -20728,12 +20738,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame(
 			0,
-			$driver->query( 'ALTER TABLE catalog_change_inline_keys MODIFY COLUMN b INT UNIQUE' )
+			$driver->query( 'ALTER TABLE catalog_change_inline_keys MODIFY COLUMN b varchar(255) UNIQUE' )
 		);
 		$this->assertSame(
 			array(
 				array(
-					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "b" TYPE integer',
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "b" TYPE varchar(255)',
 					'params' => array(),
 				),
 				array(
@@ -20750,6 +20760,36 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				),
 				array(
 					'sql'    => 'COMMENT ON COLUMN "public"."catalog_change_inline_keys"."b" IS NULL',
+					'params' => array(),
+				),
+			),
+			$driver->get_last_postgresql_queries()
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE catalog_change_inline_keys MODIFY COLUMN c varchar(255) KEY' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "c" TYPE varchar(255)',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "c" DROP NOT NULL',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'ALTER TABLE "catalog_change_inline_keys" ALTER COLUMN "c" DROP DEFAULT',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'CREATE INDEX "catalog_change_inline_keys__c" ON "catalog_change_inline_keys" (SUBSTR(CAST("c" AS text), 1, 191))',
+					'params' => array(),
+				),
+				array(
+					'sql'    => 'COMMENT ON COLUMN "public"."catalog_change_inline_keys"."c" IS NULL',
 					'params' => array(),
 				),
 			),
@@ -26728,14 +26768,22 @@ $wp_mysql_on_update$',
 	 * Tests unsupported SHOW TABLES database qualifiers fail before backend execution.
 	 */
 	public function test_show_tables_unsupported_database_qualification_does_not_reach_backend(): void {
-		$driver = $this->create_driver();
+		$queries = array(
+			'SHOW TABLES FROM other_db',
+			'SHOW TABLES FROM other_db LIKE 1',
+			'SHOW TABLES FROM other_db EXTRA',
+		);
 
-		try {
-			$driver->query( 'SHOW TABLES FROM other_db' );
-			$this->fail( 'Expected unsupported SHOW TABLES statement to throw.' );
-		} catch ( InvalidArgumentException $e ) {
-			$this->assertSame( 'Unsupported SHOW TABLES statement.', $e->getMessage() );
-			$this->assertSame( array(), $driver->get_last_postgresql_queries() );
+		foreach ( $queries as $query ) {
+			$driver = $this->create_driver();
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported SHOW TABLES statement to throw.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported SHOW TABLES statement.', $e->getMessage(), $query );
+				$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+			}
 		}
 	}
 
@@ -35396,7 +35444,7 @@ $wp_mysql_on_update$',
 		$this->assertStringContainsString( 'i.indisunique', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'pg_catalog.pg_get_indexdef(i.indexrelid', $catalog_queries[0]['sql'] );
 		$this->assertStringContainsString( 'COALESCE(column_name, NULLIF(REPLACE(COALESCE(', $catalog_queries[0]['sql'] );
-		$this->assertStringContainsString( 'AS sub_part', $catalog_queries[0]['sql'] );
+		$this->assertStringContainsString( '"SUB_PART" AS "sub_part"', $catalog_queries[0]['sql'] );
 		$this->assertSame( array( 'public', 'wptests_plugin_lookup' ), $catalog_queries[0]['params'] );
 	}
 
@@ -35429,6 +35477,43 @@ $wp_mysql_on_update$',
 
 			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
 		}
+	}
+
+	/**
+	 * Tests ambiguous unqualified information_schema columns are unresolved.
+	 */
+	public function test_direct_information_schema_ambiguous_unqualified_column_reference_returns_null(): void {
+		$driver        = ( new ReflectionClass( WP_PostgreSQL_Driver::class ) )->newInstanceWithoutConstructor();
+		$get_reference = Closure::bind(
+			function ( array $tokens, array $context ): ?array {
+				return $this->get_direct_information_schema_column_reference_for_expression( $tokens, 0, 1, $context );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		$tokens  = array(
+			new WP_MySQL_Token( WP_MySQL_Lexer::NAME_SYMBOL, 0, 10, 'TABLE_NAME', false ),
+		);
+		$context = array(
+			'sources'       => array(
+				array(
+					'alias'        => 't',
+					'column_map'   => array( 'table_name' => 'TABLE_NAME' ),
+					'source_start' => 0,
+					'source_end'   => 1,
+				),
+				array(
+					'alias'        => 'c',
+					'column_map'   => array( 'table_name' => 'TABLE_NAME' ),
+					'source_start' => 2,
+					'source_end'   => 3,
+				),
+			),
+			'using_columns' => array(),
+		);
+
+		$this->assertNull( $get_reference( $tokens, $context ) );
 	}
 
 	/**

@@ -8,7 +8,17 @@
 if ( ! class_exists( 'WP_PostgreSQL_Driver', false ) ) {
 	require_once __DIR__ . '/../database/postgresql/class-wp-postgresql-connection.php';
 	require_once __DIR__ . '/../database/postgresql/class-wp-postgresql-create-table-translator.php';
+	require_once __DIR__ . '/../database/postgresql/trait-wp-postgresql-driver-rewrite-rules.php';
 	require_once __DIR__ . '/../database/postgresql/class-wp-postgresql-driver.php';
+}
+
+if ( ! class_exists( 'wpdb', false ) ) {
+	$wpdb_class_file = defined( 'ABSPATH' ) && defined( 'WPINC' )
+		? ABSPATH . WPINC . '/class-wpdb.php'
+		: __DIR__ . '/../../../../wordpress/src/wp-includes/class-wpdb.php';
+	if ( is_readable( $wpdb_class_file ) ) {
+		require_once $wpdb_class_file;
+	}
 }
 
 /*
