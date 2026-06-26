@@ -22,6 +22,9 @@ class WP_DuckDB_Driver {
 	const INDEX_METADATA_TABLE                = '__wp_duckdb_index_metadata';
 	const COLUMN_METADATA_TABLE               = '__wp_duckdb_column_metadata';
 	const TABLE_METADATA_TABLE                = '__wp_duckdb_table_metadata';
+	const TEMP_INDEX_METADATA_TABLE           = '__wp_duckdb_temp_index_metadata';
+	const TEMP_COLUMN_METADATA_TABLE          = '__wp_duckdb_temp_column_metadata';
+	const TEMP_TABLE_METADATA_TABLE           = '__wp_duckdb_temp_table_metadata';
 	const INFO_SCHEMA_TABLES_TABLE            = '__wp_duckdb_information_schema_tables';
 	const INFO_SCHEMA_COLUMNS_TABLE           = '__wp_duckdb_information_schema_columns';
 	const INFO_SCHEMA_STATISTICS_TABLE        = '__wp_duckdb_information_schema_statistics';
@@ -357,6 +360,14 @@ class WP_DuckDB_Driver {
 			return $this->execute_create_table( $tokens );
 		}
 
+		if (
+			isset( $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id
+		) {
+			return $this->execute_create_table( $tokens );
+		}
+
 		if ( $this->is_create_index_statement( $tokens ) ) {
 			return $this->execute_create_index( $tokens );
 		}
@@ -376,6 +387,13 @@ class WP_DuckDB_Driver {
 		$index = 0;
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CREATE_SYMBOL, 'Expected CREATE.' );
 		++$index;
+
+		$temporary = false;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[ $index ]->id ) {
+			$temporary = true;
+			++$index;
+		}
+
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TABLE_SYMBOL, 'Only CREATE TABLE is supported by the DuckDB driver.' );
 		++$index;
 
@@ -417,7 +435,7 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( $this->is_create_table_index_item( $item ) ) {
-				$indexes[] = $this->translate_create_table_index( $table_name, $item );
+				$indexes[] = $this->translate_create_table_index( $table_name, $item, $temporary );
 				continue;
 			}
 
@@ -425,7 +443,7 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE constraint in DuckDB driver: ' . $item[0]->get_bytes() . '.' );
 			}
 
-			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata ) = $this->translate_create_table_column( $table_name, $item );
+			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata ) = $this->translate_create_table_column( $table_name, $item, true, false, $temporary );
 			$columns[]  = $column_sql;
 			$metadata[] = $column_metadata;
 			if ( null !== $sequence_sql ) {
@@ -444,7 +462,7 @@ class WP_DuckDB_Driver {
 			$this->execute_duckdb_query( $sequence_sql, 'Failed to create DuckDB AUTO_INCREMENT sequence' );
 		}
 
-		$table_sql = 'CREATE TABLE ';
+		$table_sql = $temporary ? 'CREATE TEMPORARY TABLE ' : 'CREATE TABLE ';
 		if ( $if_not_exists ) {
 			$table_sql .= 'IF NOT EXISTS ';
 		}
@@ -458,8 +476,8 @@ class WP_DuckDB_Driver {
 			$this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
 			$this->record_index_metadata( $index_definition );
 		}
-		$this->record_column_metadata( $table_name, $this->apply_column_key_metadata( $metadata, $primary_key, $indexes ) );
-		$this->record_table_metadata( $table_name, $table_metadata );
+		$this->record_column_metadata( $table_name, $this->apply_column_key_metadata( $metadata, $primary_key, $indexes ), $temporary );
+		$this->record_table_metadata( $table_name, $table_metadata, $temporary );
 
 		return $result;
 	}
@@ -500,12 +518,17 @@ class WP_DuckDB_Driver {
 
 		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		if ( null === $table_reference ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in CREATE INDEX statement." );
+		}
+		$table_name = $table_reference['table_name'];
 
 		$index                                     = $this->skip_optional_index_type( $tokens, $index );
 		list( $columns, $column_metadata, $index ) = $this->translate_index_column_list( $tokens, $index );
 		$this->assert_supported_index_options( $tokens, $index );
 
-		$index_definition = $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata );
+		$index_definition = $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata, $table_reference['temporary'] );
 		$result           = $this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
 		$this->record_index_metadata( $index_definition );
 
@@ -649,7 +672,7 @@ class WP_DuckDB_Driver {
 			. $this->translate_update_assignment_tokens_to_duckdb_sql( $update_tokens, $reference );
 
 		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
-			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'UPDATE' );
+			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'UPDATE', $reference['temporary'] );
 			$sql .= ' WHERE rowid IN ( '
 				. $this->dml_rowid_subquery_sql( $tokens, $clauses, $reference )
 				. ' )';
@@ -774,7 +797,7 @@ class WP_DuckDB_Driver {
 		$clauses   = $this->dml_clause_indexes( $tokens, $reference['next_index'] );
 
 		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
-			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE' );
+			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE', $reference['temporary'] );
 			$sql = 'DELETE FROM ' . $this->connection->quote_identifier( $reference['table_name'] )
 				. ' WHERE rowid IN ( '
 				. $this->dml_rowid_subquery_sql( $tokens, $clauses, $reference )
@@ -850,11 +873,12 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( "Unknown DELETE target alias '{$target_alias}' in DuckDB driver." );
 			}
 			$reference = $references['by_alias'][ $key ];
-			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE' );
+			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE', $reference['temporary'] );
 			$targets[] = array(
 				'alias'      => $reference['alias'],
 				'column'     => '__target_' . $offset . '_rowid',
 				'table_name' => $reference['table_name'],
+				'temporary'  => $reference['temporary'],
 			);
 		}
 
@@ -981,6 +1005,7 @@ class WP_DuckDB_Driver {
 			$by_alias[ $key ] = array(
 				'alias'      => $reference['alias'],
 				'table_name' => $reference['table_name'],
+				'temporary'  => $reference['temporary'],
 			);
 			$sql_items[]      = $this->connection->quote_identifier( $reference['table_name'] )
 				. ' AS '
@@ -997,7 +1022,7 @@ class WP_DuckDB_Driver {
 	 * Parse one base table reference for multi-table DELETE.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
-	 * @return array{alias:string,table_name:string}
+	 * @return array{alias:string,table_name:string,temporary:bool}
 	 */
 	private function parse_multi_delete_table_reference( array $tokens ): array {
 		$index      = 0;
@@ -1024,8 +1049,8 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Internal DuckDB metadata tables cannot be modified.' );
 		}
 
-		$resolved_table_name = $this->resolve_user_table_name( $table_name );
-		if ( null === $resolved_table_name ) {
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		if ( null === $table_reference ) {
 			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in DELETE statement." );
 		}
 
@@ -1045,7 +1070,8 @@ class WP_DuckDB_Driver {
 
 		return array(
 			'alias'      => $alias,
-			'table_name' => $resolved_table_name,
+			'table_name' => $table_reference['table_name'],
+			'temporary'  => $table_reference['temporary'],
 		);
 	}
 
@@ -1078,6 +1104,7 @@ class WP_DuckDB_Driver {
 			'target'          => array(
 				'alias'                => $target['alias'],
 				'table_name'           => $target['table_name'],
+				'temporary'            => $target['temporary'],
 				'requested_table_name' => $target['requested_table_name'],
 			),
 			'sources'         => $sources,
@@ -1128,6 +1155,7 @@ class WP_DuckDB_Driver {
 						. ' ) AS '
 						. $this->connection->quote_identifier( $alias ),
 					'table_name'           => null,
+					'temporary'            => false,
 					'requested_table_name' => $alias,
 				),
 				'next_index' => $index,
@@ -1157,8 +1185,8 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Internal DuckDB metadata tables cannot be modified.' );
 		}
 
-		$resolved_table_name = $this->resolve_user_table_name( $table_name );
-		if ( null === $resolved_table_name ) {
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		if ( null === $table_reference ) {
 			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in UPDATE statement." );
 		}
 
@@ -1175,10 +1203,11 @@ class WP_DuckDB_Driver {
 		return array(
 			'reference'  => array(
 				'alias'                => $alias,
-				'sql'                  => $this->connection->quote_identifier( $resolved_table_name )
+				'sql'                  => $this->connection->quote_identifier( $table_reference['table_name'] )
 					. ' AS '
 					. $this->connection->quote_identifier( $alias ),
-				'table_name'           => $resolved_table_name,
+				'table_name'           => $table_reference['table_name'],
+				'temporary'            => $table_reference['temporary'],
 				'requested_table_name' => $table_name,
 			),
 			'next_index' => $index,
@@ -1368,8 +1397,12 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_drop( array $tokens ): WP_DuckDB_Result_Statement {
-		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP TABLE statement in DuckDB driver. Temporary tables are not supported.' );
+		if (
+			isset( $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id
+		) {
+			return $this->execute_drop_table( $tokens, true );
 		}
 
 		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id ) {
@@ -1396,10 +1429,14 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_drop_table( array $tokens ): WP_DuckDB_Result_Statement {
+	private function execute_drop_table( array $tokens, bool $temporary_only = false ): WP_DuckDB_Result_Statement {
 		$index = 0;
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP.' );
 		++$index;
+		if ( $temporary_only ) {
+			$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TEMPORARY_SYMBOL, 'Expected TEMPORARY in DROP TEMPORARY TABLE statement.' );
+			++$index;
+		}
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TABLE_SYMBOL, 'Expected TABLE in DROP TABLE statement.' );
 		++$index;
 
@@ -1434,22 +1471,26 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->execute_schema_lifecycle_change(
-			function () use ( $targets, $if_exists ): WP_DuckDB_Result_Statement {
+			function () use ( $targets, $if_exists, $temporary_only ): WP_DuckDB_Result_Statement {
 				foreach ( $targets as $requested_table_name ) {
-					$table_name = $this->resolve_user_table_name( $requested_table_name );
-					if ( null === $table_name ) {
+					$table_reference = $temporary_only
+						? $this->resolve_temporary_user_table_reference( $requested_table_name )
+						: $this->resolve_visible_user_table_reference( $requested_table_name );
+					if ( null === $table_reference ) {
 						if ( $if_exists ) {
 							continue;
 						}
 						throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$requested_table_name}' in DROP TABLE statement." );
 					}
+					$table_name = $table_reference['table_name'];
+					$temporary  = $table_reference['temporary'];
 
-					$sequence_names = $this->auto_increment_sequences_for_table( $table_name );
+					$sequence_names = $this->auto_increment_sequences_for_table( $table_name, $temporary );
 					$index_names    = array_map(
 						function ( array $index_definition ): string {
 							return $index_definition['index_name'];
 						},
-						$this->secondary_index_definitions_for_table( $table_name )
+						$this->secondary_index_definitions_for_table( $table_name, $temporary )
 					);
 
 					$this->execute_duckdb_query(
@@ -1458,10 +1499,10 @@ class WP_DuckDB_Driver {
 					);
 
 					foreach ( $index_names as $index_name ) {
-						$this->drop_physical_secondary_index( $table_name, $index_name, true );
+						$this->drop_physical_secondary_index( $table_name, $index_name, true, $temporary );
 					}
 					$this->drop_auto_increment_sequences( $sequence_names );
-					$this->delete_table_lifecycle_metadata( $table_name );
+					$this->delete_table_lifecycle_metadata( $table_name, $temporary );
 				}
 
 				$this->invalidate_information_schema_compatibility_tables();
@@ -1491,14 +1532,16 @@ class WP_DuckDB_Driver {
 
 		return $this->execute_schema_lifecycle_change(
 			function () use ( $reference ): WP_DuckDB_Result_Statement {
-				$table_name = $this->resolve_required_lifecycle_table_name( $reference['requested_table_name'], 'TRUNCATE' );
-				if ( null === $this->auto_increment_metadata_for_table( $table_name ) ) {
+				$table_reference = $this->resolve_required_lifecycle_table( $reference['requested_table_name'], 'TRUNCATE' );
+				$table_name      = $table_reference['table_name'];
+				$temporary       = $table_reference['temporary'];
+				if ( null === $this->auto_increment_metadata_for_table( $table_name, $temporary ) ) {
 					$this->execute_duckdb_query(
 						'DELETE FROM ' . $this->connection->quote_identifier( $table_name ),
 						'Failed to truncate DuckDB table'
 					);
 				} else {
-					$this->rebuild_empty_auto_increment_table( $table_name );
+					$this->rebuild_empty_auto_increment_table( $table_name, $temporary );
 				}
 
 				$this->invalidate_information_schema_compatibility_tables();
@@ -1541,8 +1584,8 @@ class WP_DuckDB_Driver {
 
 		return $this->execute_schema_lifecycle_change(
 			function () use ( $reference, $index_name ): WP_DuckDB_Result_Statement {
-				$table_name = $this->resolve_required_lifecycle_table_name( $reference['requested_table_name'], 'DROP INDEX' );
-				$this->drop_secondary_index( $table_name, $index_name );
+				$table_reference = $this->resolve_required_lifecycle_table( $reference['requested_table_name'], 'DROP INDEX' );
+				$this->drop_secondary_index( $table_reference['table_name'], $index_name, $table_reference['temporary'] );
 				$this->invalidate_information_schema_compatibility_tables();
 				return $this->empty_ddl_result();
 			}
@@ -1587,8 +1630,11 @@ class WP_DuckDB_Driver {
 			++$index;
 		}
 
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+
 		return array(
-			'table_name'           => $this->resolve_user_table_name( $table_name ) ?? $table_name,
+			'table_name'           => null === $table_reference ? $table_name : $table_reference['table_name'],
+			'temporary'            => null !== $table_reference && $table_reference['temporary'],
 			'requested_table_name' => $table_name,
 			'alias'                => $alias,
 			'next_index'           => $index,
@@ -1598,7 +1644,7 @@ class WP_DuckDB_Driver {
 	/**
 	 * Build a DuckDB SQL table reference for a DML target.
 	 *
-	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int} $reference Parsed table reference.
+	 * @param array{table_name:string,temporary?:bool,requested_table_name:string,alias:string|null,next_index:int} $reference Parsed table reference.
 	 * @return string DuckDB table reference.
 	 */
 	private function dml_table_reference_sql( array $reference ): string {
@@ -1656,12 +1702,24 @@ class WP_DuckDB_Driver {
 	 * @return string Resolved table name.
 	 */
 	private function resolve_required_lifecycle_table_name( string $requested_table_name, string $statement ): string {
-		$table_name = $this->resolve_user_table_name( $requested_table_name );
-		if ( null === $table_name ) {
+		$table_reference = $this->resolve_required_lifecycle_table( $requested_table_name, $statement );
+		return $table_reference['table_name'];
+	}
+
+	/**
+	 * Resolve a lifecycle table target or throw a stable missing-table error.
+	 *
+	 * @param string $requested_table_name Requested table name.
+	 * @param string $statement            Statement name.
+	 * @return array{table_name:string,temporary:bool} Resolved table reference.
+	 */
+	private function resolve_required_lifecycle_table( string $requested_table_name, string $statement ): array {
+		$table_reference = $this->resolve_visible_user_table_reference( $requested_table_name );
+		if ( null === $table_reference ) {
 			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$requested_table_name}' in {$statement} statement." );
 		}
 
-		return $table_name;
+		return $table_reference;
 	}
 
 	/**
@@ -1880,11 +1938,11 @@ class WP_DuckDB_Driver {
 
 			if ( 1 === count( $left_tokens ) ) {
 				$column = $this->identifier_value( $left_tokens[0] );
-				if ( ! $this->table_has_column( $target['table_name'], $column ) ) {
+				if ( ! $this->table_has_column( $target['table_name'], $column, $target['temporary'] ) ) {
 					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
 				}
 				foreach ( $sources as $source ) {
-					if ( null !== $source['table_name'] && $this->table_has_column( $source['table_name'], $column ) ) {
+					if ( null !== $source['table_name'] && $this->table_has_column( $source['table_name'], $column, $source['temporary'] ) ) {
 						throw new WP_DuckDB_Driver_Exception( "Ambiguous unqualified UPDATE target column '{$column}' in DuckDB driver." );
 					}
 				}
@@ -1900,7 +1958,7 @@ class WP_DuckDB_Driver {
 					}
 					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target qualifier '{$this->identifier_value( $left_tokens[0] )}' in DuckDB driver." );
 				}
-				if ( ! $this->table_has_column( $target['table_name'], $column ) ) {
+				if ( ! $this->table_has_column( $target['table_name'], $column, $target['temporary'] ) ) {
 					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
 				}
 			} else {
@@ -1922,8 +1980,8 @@ class WP_DuckDB_Driver {
 	 * @param string $column_name Column name.
 	 * @return bool Whether the column exists.
 	 */
-	private function table_has_column( string $table_name, string $column_name ): bool {
-		$metadata_rows = $this->column_metadata_rows( $table_name );
+	private function table_has_column( string $table_name, string $column_name, bool $temporary = false ): bool {
+		$metadata_rows = $this->column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata_rows ) === 0 ) {
 			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
 		}
@@ -1975,8 +2033,8 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @param string $statement  Statement name.
 	 */
-	private function assert_dml_rowid_rewrite_supported( string $table_name, string $statement ): void {
-		$metadata_rows = $this->column_metadata_rows( $table_name );
+	private function assert_dml_rowid_rewrite_supported( string $table_name, string $statement, bool $temporary = false ): void {
+		$metadata_rows = $this->column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata_rows ) === 0 ) {
 			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
 		}
@@ -2081,9 +2139,11 @@ class WP_DuckDB_Driver {
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TABLE_SYMBOL, 'Only ALTER TABLE is supported by the DuckDB driver.' );
 		++$index;
 
-		$reference  = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'ALTER TABLE' );
-		$table_name = $this->resolve_user_table_name( $reference['requested_table_name'] ) ?? $reference['requested_table_name'];
-		$index      = $reference['next_index'];
+		$reference       = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'ALTER TABLE' );
+		$table_reference = $this->resolve_required_lifecycle_table( $reference['requested_table_name'], 'ALTER TABLE' );
+		$table_name      = $table_reference['table_name'];
+		$temporary       = $table_reference['temporary'];
+		$index           = $reference['next_index'];
 
 		$actions = $this->split_top_level_comma_items( array_slice( $tokens, $index ) );
 		if ( count( $actions ) === 0 ) {
@@ -2097,7 +2157,7 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( WP_MySQL_Lexer::DROP_SYMBOL === $action[0]->id ) {
-				$result = $this->execute_alter_table_drop_index( $table_name, $action );
+				$result = $this->execute_alter_table_drop_index( $table_name, $action, $temporary );
 				continue;
 			}
 
@@ -2105,8 +2165,8 @@ class WP_DuckDB_Driver {
 			$alter_item = array_slice( $action, 1 );
 
 			$result = $this->is_create_table_index_item( $alter_item )
-				? $this->execute_alter_table_add_index( $table_name, $alter_item )
-				: $this->execute_alter_table_add_column( $table_name, $alter_item );
+				? $this->execute_alter_table_add_index( $table_name, $alter_item, $temporary )
+				: $this->execute_alter_table_add_column( $table_name, $alter_item, $temporary );
 		}
 
 		return $result ?? new WP_DuckDB_Result_Statement( array(), array(), 0 );
@@ -2119,7 +2179,7 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens     Action tokens starting at DROP.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_alter_table_drop_index( string $table_name, array $tokens ): WP_DuckDB_Result_Statement {
+	private function execute_alter_table_drop_index( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
 		$index = 0;
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP in ALTER TABLE action.' );
 		++$index;
@@ -2143,9 +2203,8 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->execute_schema_lifecycle_change(
-			function () use ( $table_name, $index_name ): WP_DuckDB_Result_Statement {
-				$resolved_table_name = $this->resolve_required_lifecycle_table_name( $table_name, 'ALTER TABLE' );
-				$this->drop_secondary_index( $resolved_table_name, $index_name );
+			function () use ( $table_name, $index_name, $temporary ): WP_DuckDB_Result_Statement {
+				$this->drop_secondary_index( $table_name, $index_name, $temporary );
 				$this->invalidate_information_schema_compatibility_tables();
 				return $this->empty_ddl_result();
 			}
@@ -2159,8 +2218,8 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens     Index definition tokens after ADD.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_alter_table_add_index( string $table_name, array $tokens ): WP_DuckDB_Result_Statement {
-		$index_definition = $this->translate_create_table_index( $table_name, $tokens );
+	private function execute_alter_table_add_index( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$index_definition = $this->translate_create_table_index( $table_name, $tokens, $temporary );
 		$result           = $this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
 		$this->record_index_metadata( $index_definition );
 
@@ -2174,7 +2233,7 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens     Tokens after ADD.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_alter_table_add_column( string $table_name, array $tokens ): WP_DuckDB_Result_Statement {
+	private function execute_alter_table_add_column( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
 		if ( isset( $tokens[0] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[0]->id ) {
 			$tokens = array_slice( $tokens, 1 );
 		}
@@ -2191,7 +2250,7 @@ class WP_DuckDB_Driver {
 			$tokens = $items[0];
 		}
 
-		list( $column_sql, $sequence_sql, $indexes, $metadata ) = $this->translate_create_table_column( $table_name, $tokens, false, true );
+		list( $column_sql, $sequence_sql, $indexes, $metadata ) = $this->translate_create_table_column( $table_name, $tokens, false, true, $temporary );
 		if ( 'PRI' === $metadata['column_key'] ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN PRIMARY KEY is not supported.' );
 		}
@@ -2232,7 +2291,8 @@ class WP_DuckDB_Driver {
 							. ' SET NOT NULL',
 						'Failed to apply DuckDB NOT NULL column constraint'
 					);
-				}
+				},
+				$temporary
 			);
 		}
 
@@ -2240,7 +2300,7 @@ class WP_DuckDB_Driver {
 			$this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
 			$this->record_index_metadata( $index_definition );
 		}
-		$this->append_column_metadata( $table_name, $metadata );
+		$this->append_column_metadata( $table_name, $metadata, $temporary );
 
 		return $result;
 	}
@@ -2332,8 +2392,8 @@ class WP_DuckDB_Driver {
 			}
 		}
 
-		$resolved_table_name = $this->resolve_user_table_name( $table_name );
-		if ( null === $resolved_table_name ) {
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		if ( null === $table_reference ) {
 			return new WP_DuckDB_Result_Statement(
 				array( 'Table', 'Create Table' ),
 				array()
@@ -2345,7 +2405,7 @@ class WP_DuckDB_Driver {
 			array(
 				array(
 					$table_name,
-					$this->mysql_create_table_statement( $resolved_table_name, $table_name ),
+					$this->mysql_create_table_statement( $table_reference['table_name'], $table_name, $table_reference['temporary'] ),
 				),
 			)
 		);
@@ -2358,11 +2418,11 @@ class WP_DuckDB_Driver {
 	 * @param string $requested_table_name Requested MySQL table name.
 	 * @return string MySQL CREATE TABLE statement.
 	 */
-	private function mysql_create_table_statement( string $table_name, string $requested_table_name ): string {
-		$metadata_by_table  = $this->table_metadata_by_table();
+	private function mysql_create_table_statement( string $table_name, string $requested_table_name, bool $temporary = false ): string {
+		$metadata_by_table  = $this->table_metadata_by_table( $temporary );
 		$table_metadata     = $metadata_by_table[ $table_name ] ?? $this->fallback_table_metadata( $table_name );
-		$table_info         = $this->information_schema_table_row( $table_name, $table_metadata );
-		$column_rows        = $this->show_create_table_column_rows( $table_name );
+		$table_info         = $this->information_schema_table_row( $table_name, $table_metadata, $temporary );
+		$column_rows        = $this->show_create_table_column_rows( $table_name, $temporary );
 		$rows               = array();
 		$has_auto_increment = false;
 
@@ -2370,11 +2430,11 @@ class WP_DuckDB_Driver {
 			$rows[] = $this->format_show_create_table_column( $column, $has_auto_increment );
 		}
 
-		foreach ( $this->show_create_table_index_groups( $table_name ) as $index_group ) {
+		foreach ( $this->show_create_table_index_groups( $table_name, $temporary ) as $index_group ) {
 			$rows[] = $this->format_show_create_table_index( $index_group );
 		}
 
-		$sql  = 'CREATE TABLE ' . $this->quote_mysql_identifier( $requested_table_name ) . " (\n";
+		$sql  = 'CREATE ' . ( $temporary ? 'TEMPORARY ' : '' ) . 'TABLE ' . $this->quote_mysql_identifier( $requested_table_name ) . " (\n";
 		$sql .= implode( ",\n", $rows );
 		$sql .= "\n)";
 		$sql .= ' ENGINE=' . (string) $table_info['ENGINE'];
@@ -2537,8 +2597,13 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW COLUMNS statement in DuckDB driver. Only optional LIKE is supported.' );
 		}
 
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		if ( null === $table_reference ) {
+			throw new WP_DuckDB_Driver_Exception( 'DuckDB table does not exist: ' . $table_name . '.' );
+		}
+
 		if ( ! $full ) {
-			$rows = $this->describe_column_rows( $table_name );
+			$rows = $this->describe_column_rows( $table_reference['table_name'], $table_reference['temporary'] );
 			if ( null !== $like_pattern ) {
 				$rows = $this->filter_column_rows_by_like( $rows, $like_pattern );
 			}
@@ -2549,7 +2614,7 @@ class WP_DuckDB_Driver {
 			);
 		}
 
-		$full_rows = $this->full_describe_column_rows( $table_name );
+		$full_rows = $this->full_describe_column_rows( $table_reference['table_name'], $table_reference['temporary'] );
 		if ( null !== $like_pattern ) {
 			$full_rows = $this->filter_column_rows_by_like( $full_rows, $like_pattern );
 		}
@@ -2604,9 +2669,9 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW INDEX statement in DuckDB driver. Use SHOW INDEX FROM table.' );
 		}
 
-		$table_name          = $this->identifier_value( $tokens[3] );
-		$resolved_table_name = $this->resolve_user_table_name( $table_name );
-		$rows                = null === $resolved_table_name ? array() : $this->index_rows_for_table( $resolved_table_name );
+		$table_name      = $this->identifier_value( $tokens[3] );
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		$rows            = null === $table_reference ? array() : $this->index_rows_for_table( $table_reference['table_name'], $table_reference['temporary'] );
 
 		return new WP_DuckDB_Result_Statement(
 			array(
@@ -2636,10 +2701,10 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array<int,mixed>>
 	 */
-	private function index_rows_for_table( string $table_name ): array {
+	private function index_rows_for_table( string $table_name, bool $temporary = false ): array {
 		return array_merge(
 			$this->primary_key_index_rows( $table_name ),
-			$this->secondary_index_rows( $table_name )
+			$this->secondary_index_rows( $table_name, $temporary )
 		);
 	}
 
@@ -2649,8 +2714,8 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function show_create_table_column_rows( string $table_name ): array {
-		$metadata_rows = $this->column_metadata_rows( $table_name );
+	private function show_create_table_column_rows( string $table_name, bool $temporary = false ): array {
+		$metadata_rows = $this->column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata_rows ) === 0 ) {
 			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
 		}
@@ -2732,10 +2797,10 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array{name:string,non_unique:int,index_type:string,index_comment:string,columns:array<int,array{name:string,sub_part:int|null,collation:string}>}>
 	 */
-	private function show_create_table_index_groups( string $table_name ): array {
+	private function show_create_table_index_groups( string $table_name, bool $temporary = false ): array {
 		$groups = array();
 
-		foreach ( $this->index_rows_for_table( $table_name ) as $row ) {
+		foreach ( $this->index_rows_for_table( $table_name, $temporary ) as $row ) {
 			$index_name = (string) $row[2];
 			if ( ! isset( $groups[ $index_name ] ) ) {
 				$groups[ $index_name ] = array(
@@ -2843,12 +2908,12 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array<int,mixed>>
 	 */
-	private function secondary_index_rows( string $table_name ): array {
-		$this->ensure_index_metadata_table();
+	private function secondary_index_rows( string $table_name, bool $temporary = false ): array {
+		$this->ensure_index_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
 			'SELECT index_name, non_unique, seq_in_index, column_name, sub_part FROM '
-				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. ' ORDER BY index_name, seq_in_index',
@@ -2914,8 +2979,23 @@ class WP_DuckDB_Driver {
 
 		return new WP_DuckDB_Result_Statement(
 			array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
-			$this->describe_column_rows( $this->identifier_value( $tokens[1] ) )
+			$this->describe_column_rows_for_request( $this->identifier_value( $tokens[1] ) )
 		);
+	}
+
+	/**
+	 * Build DESCRIBE rows for a requested table name, resolving temporary tables first.
+	 *
+	 * @param string $table_name Requested table name.
+	 * @return array<int,array<int,mixed>>
+	 */
+	private function describe_column_rows_for_request( string $table_name ): array {
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		if ( null === $table_reference ) {
+			throw new WP_DuckDB_Driver_Exception( 'DuckDB table does not exist: ' . $table_name . '.' );
+		}
+
+		return $this->describe_column_rows( $table_reference['table_name'], $table_reference['temporary'] );
 	}
 
 	/**
@@ -2924,8 +3004,8 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array<int,mixed>>
 	 */
-	private function describe_column_rows( string $table_name ): array {
-		$metadata_rows = $this->column_metadata_rows( $table_name );
+	private function describe_column_rows( string $table_name, bool $temporary = false ): array {
+		$metadata_rows = $this->column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata_rows ) > 0 ) {
 			return array_map(
 				function ( array $row ): array {
@@ -2977,8 +3057,8 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array<int,mixed>>
 	 */
-	private function full_describe_column_rows( string $table_name ): array {
-		$metadata_rows = $this->column_metadata_rows( $table_name );
+	private function full_describe_column_rows( string $table_name, bool $temporary = false ): array {
+		$metadata_rows = $this->column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata_rows ) > 0 ) {
 			return array_map(
 				function ( array $row ): array {
@@ -2999,7 +3079,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$full_rows = array();
-		foreach ( $this->describe_column_rows( $table_name ) as $row ) {
+		foreach ( $this->describe_column_rows( $table_name, $temporary ) as $row ) {
 			$full_rows[] = array(
 				$row[0],
 				$row[1],
@@ -3173,7 +3253,7 @@ class WP_DuckDB_Driver {
 	 * @param bool              $allow_position_options     Whether to accept FIRST/AFTER position hints.
 	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>,3:array<string,mixed>}
 	 */
-	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false ): array {
+	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false ): array {
 		$index       = 0;
 		$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
@@ -3280,8 +3360,8 @@ class WP_DuckDB_Driver {
 		$sequence   = null;
 
 		if ( $auto_increment ) {
-			$sequence_name = $this->sequence_name( $table_name, $column_name );
-			$sequence      = 'CREATE SEQUENCE IF NOT EXISTS ' . $this->connection->quote_identifier( $sequence_name ) . ' START 1';
+			$sequence_name = $this->sequence_name( $table_name, $column_name, $temporary );
+			$sequence      = 'CREATE ' . ( $temporary ? 'TEMP ' : '' ) . 'SEQUENCE IF NOT EXISTS ' . $this->connection->quote_identifier( $sequence_name ) . ' START 1';
 			$column_sql   .= ' DEFAULT nextval(' . $this->connection->quote( $sequence_name ) . ')';
 		} elseif ( null !== $default_sql ) {
 			$column_sql .= ' DEFAULT ' . $default_sql;
@@ -3306,7 +3386,8 @@ class WP_DuckDB_Driver {
 						'name'     => $column_name,
 						'sub_part' => null,
 					),
-				)
+				),
+				$temporary
 			);
 		}
 
@@ -3610,7 +3691,7 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens     Index definition tokens.
 	 * @return array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}
 	 */
-	private function translate_create_table_index( string $table_name, array $tokens ): array {
+	private function translate_create_table_index( string $table_name, array $tokens, bool $temporary = false ): array {
 		$index  = 0;
 		$unique = false;
 
@@ -3650,7 +3731,7 @@ class WP_DuckDB_Driver {
 			$mysql_index_name = 'unnamed_' . substr( hash( 'sha256', serialize( $column_metadata ) ), 0, 8 );
 		}
 
-		return $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata );
+		return $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata, $temporary );
 	}
 
 	/**
@@ -3661,14 +3742,14 @@ class WP_DuckDB_Driver {
 	 * @param bool                                                                   $unique           Whether the index is unique.
 	 * @param string[]                                                               $columns          DuckDB column SQL fragments.
 	 * @param array<int,array{name:string,sub_part:int|null}>                        $column_metadata  MySQL column metadata.
-	 * @return array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}
+	 * @return array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}
 	 */
-	private function build_secondary_index_definition( string $table_name, string $mysql_index_name, bool $unique, array $columns, array $column_metadata ): array {
+	private function build_secondary_index_definition( string $table_name, string $mysql_index_name, bool $unique, array $columns, array $column_metadata, bool $temporary = false ): array {
 		return array(
 			'sql'        => 'CREATE '
 				. ( $unique ? 'UNIQUE ' : '' )
 				. 'INDEX IF NOT EXISTS '
-				. $this->connection->quote_identifier( $this->index_name( $table_name, $mysql_index_name ) )
+				. $this->connection->quote_identifier( $this->index_name( $table_name, $mysql_index_name, $temporary ) )
 				. ' ON '
 				. $this->connection->quote_identifier( $table_name )
 				. ' ('
@@ -3677,6 +3758,7 @@ class WP_DuckDB_Driver {
 			'table_name' => $table_name,
 			'index_name' => $mysql_index_name,
 			'unique'     => $unique,
+			'temporary'  => $temporary,
 			'columns'    => $column_metadata,
 		);
 	}
@@ -4777,7 +4859,8 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_auto_increment_write( string $table_name, string $sql, string $context, array $tokens = array(), ?int $table_index = null ): WP_DuckDB_Result_Statement {
-		$metadata           = $this->auto_increment_metadata_for_table( $table_name );
+		$table_reference    = $this->resolve_visible_user_table_reference( $table_name );
+		$metadata           = null === $table_reference ? null : $this->auto_increment_metadata_for_table( $table_reference['table_name'], $table_reference['temporary'] );
 		$sequence_name      = null === $metadata ? null : $metadata['sequence_name'];
 		$explicit_insert_id = null === $metadata || null === $table_index
 			? null
@@ -4803,11 +4886,11 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array{column_name:string,sequence_name:string}|null Metadata, or null when no AUTO_INCREMENT column is known.
 	 */
-	private function auto_increment_metadata_for_table( string $table_name ): ?array {
+	private function auto_increment_metadata_for_table( string $table_name, bool $temporary = false ): ?array {
 		try {
 			$stmt = $this->connection->query(
 				'SELECT column_name FROM '
-					. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+					. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 					. ' WHERE table_name = '
 					. $this->connection->quote( $table_name )
 					. " AND extra = 'auto_increment' ORDER BY ordinal_position LIMIT 1"
@@ -4824,7 +4907,7 @@ class WP_DuckDB_Driver {
 		$column_name = (string) $column_name;
 		return array(
 			'column_name'   => $column_name,
-			'sequence_name' => $this->sequence_name( $table_name, $column_name ),
+			'sequence_name' => $this->sequence_name( $table_name, $column_name, $temporary ),
 		);
 	}
 
@@ -4834,12 +4917,12 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return string[] Sequence names.
 	 */
-	private function auto_increment_sequences_for_table( string $table_name ): array {
-		$this->ensure_column_metadata_table();
+	private function auto_increment_sequences_for_table( string $table_name, bool $temporary = false ): array {
+		$this->ensure_column_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
 			'SELECT column_name FROM '
-				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. " AND extra = 'auto_increment' ORDER BY ordinal_position",
@@ -4848,7 +4931,7 @@ class WP_DuckDB_Driver {
 
 		$sequence_names = array();
 		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN ) as $column_name ) {
-			$sequence_names[] = $this->sequence_name( $table_name, (string) $column_name );
+			$sequence_names[] = $this->sequence_name( $table_name, (string) $column_name, $temporary );
 		}
 
 		return $sequence_names;
@@ -5056,10 +5139,12 @@ class WP_DuckDB_Driver {
 	/**
 	 * Ensure the internal index metadata table exists.
 	 */
-	private function ensure_index_metadata_table(): void {
+	private function ensure_index_metadata_table( bool $temporary = false ): void {
 		$this->execute_duckdb_query(
-			'CREATE TABLE IF NOT EXISTS '
-				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+			'CREATE '
+				. ( $temporary ? 'TEMP ' : '' )
+				. 'TABLE IF NOT EXISTS '
+				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 				. ' (table_name VARCHAR, index_name VARCHAR, non_unique INTEGER, seq_in_index INTEGER, column_name VARCHAR, sub_part INTEGER)',
 			'Failed to initialize DuckDB index metadata'
 		);
@@ -5068,10 +5153,12 @@ class WP_DuckDB_Driver {
 	/**
 	 * Ensure the internal column metadata table exists.
 	 */
-	private function ensure_column_metadata_table(): void {
+	private function ensure_column_metadata_table( bool $temporary = false ): void {
 		$this->execute_duckdb_query(
-			'CREATE TABLE IF NOT EXISTS '
-				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+			'CREATE '
+				. ( $temporary ? 'TEMP ' : '' )
+				. 'TABLE IF NOT EXISTS '
+				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' (table_name VARCHAR, ordinal_position INTEGER, column_name VARCHAR, column_type VARCHAR, is_nullable VARCHAR, column_key VARCHAR, column_default VARCHAR, extra VARCHAR, collation_name VARCHAR, comment VARCHAR)',
 			'Failed to initialize DuckDB column metadata'
 		);
@@ -5080,29 +5167,62 @@ class WP_DuckDB_Driver {
 	/**
 	 * Ensure the internal table metadata table exists.
 	 */
-	private function ensure_table_metadata_table(): void {
+	private function ensure_table_metadata_table( bool $temporary = false ): void {
 		$this->execute_duckdb_query(
-			'CREATE TABLE IF NOT EXISTS '
-				. $this->connection->quote_identifier( self::TABLE_METADATA_TABLE )
+			'CREATE '
+				. ( $temporary ? 'TEMP ' : '' )
+				. 'TABLE IF NOT EXISTS '
+				. $this->connection->quote_identifier( $this->table_metadata_table_name( $temporary ) )
 				. ' (table_name VARCHAR, engine VARCHAR, row_format VARCHAR, table_collation VARCHAR, table_comment VARCHAR, create_options VARCHAR, create_time VARCHAR)',
 			'Failed to initialize DuckDB table metadata'
 		);
 	}
 
 	/**
+	 * Return the metadata table that stores secondary index rows.
+	 *
+	 * @param bool $temporary Whether to use session-local temporary metadata.
+	 * @return string Metadata table name.
+	 */
+	private function index_metadata_table_name( bool $temporary ): string {
+		return $temporary ? self::TEMP_INDEX_METADATA_TABLE : self::INDEX_METADATA_TABLE;
+	}
+
+	/**
+	 * Return the metadata table that stores column rows.
+	 *
+	 * @param bool $temporary Whether to use session-local temporary metadata.
+	 * @return string Metadata table name.
+	 */
+	private function column_metadata_table_name( bool $temporary ): string {
+		return $temporary ? self::TEMP_COLUMN_METADATA_TABLE : self::COLUMN_METADATA_TABLE;
+	}
+
+	/**
+	 * Return the metadata table that stores table rows.
+	 *
+	 * @param bool $temporary Whether to use session-local temporary metadata.
+	 * @return string Metadata table name.
+	 */
+	private function table_metadata_table_name( bool $temporary ): string {
+		return $temporary ? self::TEMP_TABLE_METADATA_TABLE : self::TABLE_METADATA_TABLE;
+	}
+
+	/**
 	 * Record MySQL index metadata for SHOW INDEX.
 	 *
-	 * @param array{table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Index definition.
+	 * @param array{table_name:string,index_name:string,unique:bool,temporary?:bool,columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Index definition.
 	 */
 	private function record_index_metadata( array $index_definition ): void {
-		$this->ensure_index_metadata_table();
+		$temporary = isset( $index_definition['temporary'] ) && (bool) $index_definition['temporary'];
+		$this->ensure_index_metadata_table( $temporary );
 
 		$table_name = $index_definition['table_name'];
 		$index_name = $index_definition['index_name'];
 
 		$this->execute_duckdb_query(
 			'DELETE FROM '
-				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. ' AND index_name = '
@@ -5113,7 +5233,7 @@ class WP_DuckDB_Driver {
 		foreach ( $index_definition['columns'] as $offset => $column ) {
 			$this->execute_duckdb_query(
 				'INSERT INTO '
-					. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+					. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 					. ' (table_name, index_name, non_unique, seq_in_index, column_name, sub_part) VALUES ('
 					. $this->connection->quote( $table_name )
 					. ', '
@@ -5138,11 +5258,11 @@ class WP_DuckDB_Driver {
 	 * @param string   $table_name Table name.
 	 * @param callable $callback   Schema change callback.
 	 */
-	private function execute_with_secondary_indexes_rebuilt( string $table_name, callable $callback ): void {
-		$index_definitions = $this->secondary_index_definitions_for_table( $table_name );
+	private function execute_with_secondary_indexes_rebuilt( string $table_name, callable $callback, bool $temporary = false ): void {
+		$index_definitions = $this->secondary_index_definitions_for_table( $table_name, $temporary );
 		foreach ( $index_definitions as $index_definition ) {
 			$this->execute_duckdb_query(
-				'DROP INDEX IF EXISTS ' . $this->connection->quote_identifier( $this->index_name( $table_name, $index_definition['index_name'] ) ),
+				'DROP INDEX IF EXISTS ' . $this->connection->quote_identifier( $this->index_name( $table_name, $index_definition['index_name'], $temporary ) ),
 				'Failed to drop DuckDB index before schema change'
 			);
 		}
@@ -5170,12 +5290,12 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>
 	 */
-	private function secondary_index_definitions_for_table( string $table_name ): array {
-		$this->ensure_index_metadata_table();
+	private function secondary_index_definitions_for_table( string $table_name, bool $temporary = false ): array {
+		$this->ensure_index_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
 			'SELECT index_name, non_unique, seq_in_index, column_name, sub_part FROM '
-				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. ' ORDER BY index_name, seq_in_index',
@@ -5209,7 +5329,8 @@ class WP_DuckDB_Driver {
 					},
 					$definition['columns']
 				),
-				$definition['columns']
+				$definition['columns'],
+				$temporary
 			);
 		}
 
@@ -5222,12 +5343,12 @@ class WP_DuckDB_Driver {
 	 * @param string                         $table_name Table name.
 	 * @param array<int,array<string,mixed>> $metadata   Column metadata.
 	 */
-	private function record_column_metadata( string $table_name, array $metadata ): void {
-		$this->ensure_column_metadata_table();
+	private function record_column_metadata( string $table_name, array $metadata, bool $temporary = false ): void {
+		$this->ensure_column_metadata_table( $temporary );
 
 		$this->execute_duckdb_query(
 			'DELETE FROM '
-				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name ),
 			'Failed to reset DuckDB column metadata'
@@ -5236,7 +5357,7 @@ class WP_DuckDB_Driver {
 		foreach ( $metadata as $offset => $column ) {
 			$this->execute_duckdb_query(
 				'INSERT INTO '
-					. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+					. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 					. ' (table_name, ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment) VALUES ('
 					. $this->connection->quote( $table_name )
 					. ', '
@@ -5269,12 +5390,12 @@ class WP_DuckDB_Driver {
 	 * @param string              $table_name Table name.
 	 * @param array<string,mixed> $metadata   Table metadata.
 	 */
-	private function record_table_metadata( string $table_name, array $metadata ): void {
-		$this->ensure_table_metadata_table();
+	private function record_table_metadata( string $table_name, array $metadata, bool $temporary = false ): void {
+		$this->ensure_table_metadata_table( $temporary );
 
 		$this->execute_duckdb_query(
 			'DELETE FROM '
-				. $this->connection->quote_identifier( self::TABLE_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->table_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name ),
 			'Failed to reset DuckDB table metadata'
@@ -5282,7 +5403,7 @@ class WP_DuckDB_Driver {
 
 		$this->execute_duckdb_query(
 			'INSERT INTO '
-				. $this->connection->quote_identifier( self::TABLE_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->table_metadata_table_name( $temporary ) )
 				. ' (table_name, engine, row_format, table_collation, table_comment, create_options, create_time) VALUES ('
 				. $this->connection->quote( $table_name )
 				. ', '
@@ -5308,12 +5429,12 @@ class WP_DuckDB_Driver {
 	 * @param string              $table_name Table name.
 	 * @param array<string,mixed> $column     Column metadata.
 	 */
-	private function append_column_metadata( string $table_name, array $column ): void {
-		$this->ensure_column_metadata_table();
+	private function append_column_metadata( string $table_name, array $column, bool $temporary = false ): void {
+		$this->ensure_column_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
 			'SELECT COUNT(*) AS column_count, COALESCE(MAX(ordinal_position), 0) AS max_ordinal FROM '
-				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name ),
 			'Failed to inspect DuckDB column metadata'
@@ -5325,7 +5446,7 @@ class WP_DuckDB_Driver {
 
 		$this->execute_duckdb_query(
 			'INSERT INTO '
-				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' (table_name, ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment) VALUES ('
 				. $this->connection->quote( $table_name )
 				. ', '
@@ -5357,19 +5478,19 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name       Table name.
 	 * @param string $mysql_index_name MySQL-facing index name.
 	 */
-	private function drop_secondary_index( string $table_name, string $mysql_index_name ): void {
+	private function drop_secondary_index( string $table_name, string $mysql_index_name, bool $temporary = false ): void {
 		if ( 0 === strcasecmp( $mysql_index_name, 'PRIMARY' ) ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP INDEX statement in DuckDB driver. Dropping PRIMARY requires a table rebuild.' );
 		}
 
-		$resolved_index_name = $this->resolve_secondary_index_name( $table_name, $mysql_index_name );
+		$resolved_index_name = $this->resolve_secondary_index_name( $table_name, $mysql_index_name, $temporary );
 		if ( null === $resolved_index_name ) {
 			throw new WP_DuckDB_Driver_Exception( "Unknown index '{$mysql_index_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
 		}
 
-		$this->drop_physical_secondary_index( $table_name, $resolved_index_name, false );
-		$this->delete_index_metadata( $table_name, $resolved_index_name );
-		$this->refresh_column_key_metadata( $table_name );
+		$this->drop_physical_secondary_index( $table_name, $resolved_index_name, false, $temporary );
+		$this->delete_index_metadata( $table_name, $resolved_index_name, $temporary );
+		$this->refresh_column_key_metadata( $table_name, $temporary );
 	}
 
 	/**
@@ -5379,8 +5500,8 @@ class WP_DuckDB_Driver {
 	 * @param string $mysql_index_name Requested index name.
 	 * @return string|null Resolved index name.
 	 */
-	private function resolve_secondary_index_name( string $table_name, string $mysql_index_name ): ?string {
-		foreach ( $this->secondary_index_definitions_for_table( $table_name ) as $index_definition ) {
+	private function resolve_secondary_index_name( string $table_name, string $mysql_index_name, bool $temporary = false ): ?string {
+		foreach ( $this->secondary_index_definitions_for_table( $table_name, $temporary ) as $index_definition ) {
 			if ( 0 === strcasecmp( $index_definition['index_name'], $mysql_index_name ) ) {
 				return $index_definition['index_name'];
 			}
@@ -5396,11 +5517,11 @@ class WP_DuckDB_Driver {
 	 * @param string $mysql_index_name MySQL-facing index name.
 	 * @param bool   $if_exists        Whether to use IF EXISTS.
 	 */
-	private function drop_physical_secondary_index( string $table_name, string $mysql_index_name, bool $if_exists ): void {
+	private function drop_physical_secondary_index( string $table_name, string $mysql_index_name, bool $if_exists, bool $temporary = false ): void {
 		$this->execute_duckdb_query(
 			'DROP INDEX '
 				. ( $if_exists ? 'IF EXISTS ' : '' )
-				. $this->connection->quote_identifier( $this->index_name( $table_name, $mysql_index_name ) ),
+				. $this->connection->quote_identifier( $this->index_name( $table_name, $mysql_index_name, $temporary ) ),
 			'Failed to drop DuckDB index'
 		);
 	}
@@ -5411,12 +5532,12 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @param string $index_name Index name.
 	 */
-	private function delete_index_metadata( string $table_name, string $index_name ): void {
-		$this->ensure_index_metadata_table();
+	private function delete_index_metadata( string $table_name, string $index_name, bool $temporary = false ): void {
+		$this->ensure_index_metadata_table( $temporary );
 
 		$this->execute_duckdb_query(
 			'DELETE FROM '
-				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. ' AND index_name = '
@@ -5430,16 +5551,16 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string $table_name Table name.
 	 */
-	private function delete_table_lifecycle_metadata( string $table_name ): void {
-		$this->ensure_index_metadata_table();
-		$this->ensure_column_metadata_table();
-		$this->ensure_table_metadata_table();
+	private function delete_table_lifecycle_metadata( string $table_name, bool $temporary = false ): void {
+		$this->ensure_index_metadata_table( $temporary );
+		$this->ensure_column_metadata_table( $temporary );
+		$this->ensure_table_metadata_table( $temporary );
 
 		foreach (
 			array(
-				self::INDEX_METADATA_TABLE  => 'index',
-				self::COLUMN_METADATA_TABLE => 'column',
-				self::TABLE_METADATA_TABLE  => 'table',
+				$this->index_metadata_table_name( $temporary )  => 'index',
+				$this->column_metadata_table_name( $temporary ) => 'column',
+				$this->table_metadata_table_name( $temporary )  => 'table',
 			) as $metadata_table => $label
 		) {
 			$this->execute_duckdb_query(
@@ -5457,8 +5578,8 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string $table_name Table name.
 	 */
-	private function refresh_column_key_metadata( string $table_name ): void {
-		$metadata = $this->column_metadata_rows( $table_name );
+	private function refresh_column_key_metadata( string $table_name, bool $temporary = false ): void {
+		$metadata = $this->column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata ) === 0 ) {
 			return;
 		}
@@ -5477,7 +5598,8 @@ class WP_DuckDB_Driver {
 
 		$this->record_column_metadata(
 			$table_name,
-			$this->apply_column_key_metadata( $metadata, $primary_key, $this->secondary_index_definitions_for_table( $table_name ) )
+			$this->apply_column_key_metadata( $metadata, $primary_key, $this->secondary_index_definitions_for_table( $table_name, $temporary ) ),
+			$temporary
 		);
 	}
 
@@ -5488,9 +5610,9 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string $table_name Table name.
 	 */
-	private function rebuild_empty_auto_increment_table( string $table_name ): void {
-		$create_sql     = $this->mysql_create_table_statement( $table_name, $table_name );
-		$sequence_names = $this->auto_increment_sequences_for_table( $table_name );
+	private function rebuild_empty_auto_increment_table( string $table_name, bool $temporary = false ): void {
+		$create_sql     = $this->mysql_create_table_statement( $table_name, $table_name, $temporary );
+		$sequence_names = $this->auto_increment_sequences_for_table( $table_name, $temporary );
 
 		$this->execute_duckdb_query(
 			'DROP TABLE ' . $this->connection->quote_identifier( $table_name ),
@@ -5526,12 +5648,12 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function column_metadata_rows( string $table_name ): array {
-		$this->ensure_column_metadata_table();
+	private function column_metadata_rows( string $table_name, bool $temporary = false ): array {
+		$this->ensure_column_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
 			'SELECT ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment FROM '
-				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. ' ORDER BY ordinal_position',
@@ -5801,7 +5923,7 @@ class WP_DuckDB_Driver {
 	 * @param array<string,mixed> $metadata   Table metadata.
 	 * @return array<string,mixed>
 	 */
-	private function information_schema_table_row( string $table_name, array $metadata ): array {
+	private function information_schema_table_row( string $table_name, array $metadata, bool $temporary = false ): array {
 		return array(
 			'TABLE_CATALOG'   => 'def',
 			'TABLE_SCHEMA'    => $this->database,
@@ -5816,7 +5938,7 @@ class WP_DuckDB_Driver {
 			'MAX_DATA_LENGTH' => 0,
 			'INDEX_LENGTH'    => 0,
 			'DATA_FREE'       => 0,
-			'AUTO_INCREMENT'  => $this->table_auto_increment_value( $table_name ),
+			'AUTO_INCREMENT'  => $this->table_auto_increment_value( $table_name, $temporary ),
 			'CREATE_TIME'     => $metadata['create_time'],
 			'UPDATE_TIME'     => null,
 			'CHECK_TIME'      => null,
@@ -5832,12 +5954,12 @@ class WP_DuckDB_Driver {
 	 *
 	 * @return array<string,array<string,mixed>> Metadata keyed by table name.
 	 */
-	private function table_metadata_by_table(): array {
-		$this->ensure_table_metadata_table();
+	private function table_metadata_by_table( bool $temporary = false ): array {
+		$this->ensure_table_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
 			'SELECT table_name, engine, row_format, table_collation, table_comment, create_options, create_time FROM '
-				. $this->connection->quote_identifier( self::TABLE_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->table_metadata_table_name( $temporary ) )
 				. ' ORDER BY table_name',
 			'Failed to inspect DuckDB table metadata'
 		);
@@ -5874,8 +5996,8 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return int|null Next generated value, or null when there is no auto-increment column.
 	 */
-	private function table_auto_increment_value( string $table_name ): ?int {
-		$metadata = $this->auto_increment_metadata_for_table( $table_name );
+	private function table_auto_increment_value( string $table_name, bool $temporary = false ): ?int {
+		$metadata = $this->auto_increment_metadata_for_table( $table_name, $temporary );
 		if ( null === $metadata ) {
 			return null;
 		}
@@ -6533,6 +6655,74 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * List non-internal DuckDB temporary tables visible in this session.
+	 *
+	 * @return string[] Table names.
+	 */
+	private function temporary_user_table_names(): array {
+		$stmt = $this->execute_duckdb_query(
+			"SELECT table_name FROM information_schema.tables WHERE table_type = 'LOCAL TEMPORARY'"
+				. ' AND table_name NOT LIKE '
+				. $this->connection->quote( '\_\_wp\_duckdb\_%' )
+				. " ESCAPE '\\'"
+				. ' ORDER BY table_name',
+			'Failed to inspect DuckDB temporary tables'
+		);
+
+		return array_map(
+			'strval',
+			$stmt->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Resolve a requested table name to the visible DuckDB table, preferring temporary tables.
+	 *
+	 * @param string $table_name Requested table name.
+	 * @return array{table_name:string,temporary:bool}|null Resolved table reference, or null when no table matches.
+	 */
+	private function resolve_visible_user_table_reference( string $table_name ): ?array {
+		foreach ( $this->temporary_user_table_names() as $candidate ) {
+			if ( 0 === strcasecmp( $candidate, $table_name ) ) {
+				return array(
+					'table_name' => $candidate,
+					'temporary'  => true,
+				);
+			}
+		}
+
+		foreach ( $this->user_table_names() as $candidate ) {
+			if ( 0 === strcasecmp( $candidate, $table_name ) ) {
+				return array(
+					'table_name' => $candidate,
+					'temporary'  => false,
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Resolve a requested table name to a temporary table in the current session.
+	 *
+	 * @param string $table_name Requested table name.
+	 * @return array{table_name:string,temporary:bool}|null Resolved table reference, or null when no temp table matches.
+	 */
+	private function resolve_temporary_user_table_reference( string $table_name ): ?array {
+		foreach ( $this->temporary_user_table_names() as $candidate ) {
+			if ( 0 === strcasecmp( $candidate, $table_name ) ) {
+				return array(
+					'table_name' => $candidate,
+					'temporary'  => true,
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
 	 * Resolve a requested MySQL table name to a visible DuckDB table name.
 	 *
 	 * @param string $table_name Requested table name.
@@ -6952,8 +7142,8 @@ class WP_DuckDB_Driver {
 	 * @param string $column_name Column name.
 	 * @return string Sequence name.
 	 */
-	private function sequence_name( string $table_name, string $column_name ): string {
-		return self::SEQUENCE_PREFIX . substr( hash( 'sha256', $table_name . "\0" . $column_name ), 0, 16 );
+	private function sequence_name( string $table_name, string $column_name, bool $temporary = false ): string {
+		return self::SEQUENCE_PREFIX . substr( hash( 'sha256', $this->table_namespace_key( $table_name, $temporary ) . "\0" . $column_name ), 0, 16 );
 	}
 
 	/**
@@ -6963,8 +7153,19 @@ class WP_DuckDB_Driver {
 	 * @param string $mysql_index_name MySQL index name.
 	 * @return string DuckDB index name.
 	 */
-	private function index_name( string $table_name, string $mysql_index_name ): string {
-		return self::INDEX_PREFIX . substr( hash( 'sha256', $table_name ), 0, 8 ) . '_' . $mysql_index_name;
+	private function index_name( string $table_name, string $mysql_index_name, bool $temporary = false ): string {
+		return self::INDEX_PREFIX . substr( hash( 'sha256', $this->table_namespace_key( $table_name, $temporary ) ), 0, 8 ) . '_' . $mysql_index_name;
+	}
+
+	/**
+	 * Build a stable namespace key for physical helper objects.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the table is temporary.
+	 * @return string Namespace key.
+	 */
+	private function table_namespace_key( string $table_name, bool $temporary ): string {
+		return ( $temporary ? 'temporary' : 'persistent' ) . "\0" . $table_name;
 	}
 
 	/**

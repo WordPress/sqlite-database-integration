@@ -116,6 +116,7 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 				$result['client_queries'],
 				function ( string $sql ): bool {
 					return false === strpos( $sql, '__wp_duckdb_' )
+						&& false === strpos( $sql, 'information_schema.tables' )
 						&& false === strpos( $sql, 'currval(' );
 				}
 			)

@@ -991,7 +991,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$result = $driver->query( 'CREATE INDEX post_name ON wp_posts (post_name(191))' );
 
 		$this->assertSame( 0, $result->rowCount() );
-		$this->assertStringStartsWith( 'CREATE INDEX IF NOT EXISTS "wp_duckdb_idx_', $driver->get_last_duckdb_queries()[0] );
+		$this->assertNotEmpty(
+			array_filter(
+				$driver->get_last_duckdb_queries(),
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'CREATE INDEX IF NOT EXISTS "wp_duckdb_idx_' );
+				}
+			)
+		);
 
 		$indexes = $driver->query( 'SHOW INDEX FROM wp_posts' )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( 'PRIMARY', 'post_name' ), array_column( $indexes, 'Key_name' ) );
@@ -1749,6 +1756,167 @@ SQL,
 
 		$other_database_rows = $driver->query( 'SHOW CREATE TABLE other_database.metadata' )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array(), $other_database_rows );
+	}
+
+	public function test_temporary_table_lifecycle_uses_session_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$create = $driver->query(
+			"CREATE TEMPORARY TABLE temp_items (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(100) NOT NULL DEFAULT '',
+				KEY name_key (name)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+		);
+		$this->assertSame( 0, $create->rowCount() );
+
+		$driver->query( "INSERT INTO temp_items (name) VALUES ('first'), ('second')" );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'first',
+				),
+				array(
+					'id'   => 2,
+					'name' => 'second',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM temp_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( array(), $driver->query( "SHOW TABLE STATUS LIKE 'temp_items'" )->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame(
+			array( 'PRIMARY', 'name_key' ),
+			array_column( $driver->query( 'SHOW INDEX FROM temp_items' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' )
+		);
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE temp_items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringStartsWith( 'CREATE TEMPORARY TABLE `temp_items`', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'AUTO_INCREMENT=3', $create_rows[0]['Create Table'] );
+
+		$drop = $driver->query( 'DROP TEMPORARY TABLE temp_items' );
+		$this->assertSame( 0, $drop->rowCount() );
+		$this->assertSame( array(), $driver->query( 'SHOW CREATE TABLE temp_items' )->fetchAll( PDO::FETCH_ASSOC ) );
+	}
+
+	public function test_temporary_table_takes_precedence_over_persistent_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE t (a INT, INDEX ia(a))' );
+		$driver->query( 'INSERT INTO t VALUES (1)' );
+		$driver->query( 'CREATE TEMPORARY TABLE t (b INT, INDEX ib(b))' );
+		$driver->query( 'INSERT INTO t VALUES (2)' );
+
+		$this->assertSame(
+			array( array( 'b' => 2 ) ),
+			$driver->query( 'SELECT * FROM t' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 'b' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array( 'b' ),
+			array_column( $driver->query( 'DESCRIBE t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array( 'ib' ),
+			array_column( $driver->query( 'SHOW INDEX FROM t' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' )
+		);
+		$this->assertStringStartsWith(
+			'CREATE TEMPORARY TABLE `t`',
+			$driver->query( 'SHOW CREATE TABLE t' )->fetch( PDO::FETCH_ASSOC )['Create Table']
+		);
+
+		$driver->query( 'ALTER TABLE t ADD COLUMN c INT' );
+		$this->assertSame(
+			array( 'b', 'c' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array( array( 'COLUMN_NAME' => 'a' ) ),
+			$driver->query(
+				"SELECT COLUMN_NAME
+				FROM information_schema.columns
+				WHERE table_name = 't'
+				ORDER BY ORDINAL_POSITION"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 't' ),
+			array_column( $driver->query( "SHOW TABLE STATUS LIKE 't'" )->fetchAll( PDO::FETCH_ASSOC ), 'Name' )
+		);
+
+		$driver->query( 'DROP TABLE t' );
+		$this->assertSame(
+			array( 'a' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array( array( 'a' => 1 ) ),
+			$driver->query( 'SELECT * FROM t' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_temporary_tables_are_connection_scoped(): void {
+		$this->requireDuckDBRuntime();
+
+		$path = tempnam( sys_get_temp_dir(), 'wp-duckdb-temp-scope-' );
+		if ( false === $path ) {
+			$this->fail( 'Failed to allocate a temporary DuckDB path.' );
+		}
+		unlink( $path );
+
+		try {
+			$first = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$first->query( 'CREATE TABLE persistent_items (id INT)' );
+			$first->query( 'CREATE TEMPORARY TABLE session_items (id INT)' );
+
+			$second = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$this->assertSame(
+				array(
+					array(
+						'Field'   => 'id',
+						'Type'    => 'int',
+						'Null'    => 'YES',
+						'Key'     => '',
+						'Default' => null,
+						'Extra'   => '',
+					),
+				),
+				$second->query( 'SHOW COLUMNS FROM persistent_items' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->expectException( WP_DuckDB_Driver_Exception::class );
+			$this->expectExceptionMessage( 'DuckDB table does not exist: session_items.' );
+			$second->query( 'SHOW COLUMNS FROM session_items' );
+		} finally {
+			@unlink( $path );
+		}
 	}
 
 	public function test_truncate_table_preserves_schema_and_resets_auto_increment(): void {
