@@ -470,6 +470,17 @@ class WP_DuckDB_Driver {
 		}
 		$this->assert_values_write_statement( $tokens, $index, 'INSERT' );
 
+		$on_duplicate_index = $this->find_on_duplicate_key_update_index( $tokens );
+		if ( null !== $on_duplicate_index ) {
+			if ( $ignore ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT statement in DuckDB driver. INSERT IGNORE ... ON DUPLICATE KEY UPDATE is not supported.' );
+			}
+			return $this->execute_duckdb_query(
+				$this->translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( $tokens, $index, $on_duplicate_index ),
+				'Failed to execute DuckDB INSERT'
+			);
+		}
+
 		return $this->execute_duckdb_query(
 			$ignore
 				? $this->translate_insert_ignore_tokens_to_duckdb_sql( $tokens, $index )
@@ -560,6 +571,27 @@ class WP_DuckDB_Driver {
 		if ( ! $has_values ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only ' . $statement . ' ... VALUES is supported.' );
 		}
+	}
+
+	/**
+	 * Find the ON DUPLICATE KEY UPDATE clause in an INSERT statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return int|null Index of the ON token, or null when absent.
+	 */
+	private function find_on_duplicate_key_update_index( array $tokens ): ?int {
+		for ( $index = 0; $index < count( $tokens ) - 3; ++$index ) {
+			if (
+				WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $index ]->id
+				&& WP_MySQL_Lexer::DUPLICATE_SYMBOL === $tokens[ $index + 1 ]->id
+				&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $index + 2 ]->id
+				&& WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $index + 3 ]->id
+			) {
+				return $index;
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -1632,6 +1664,242 @@ class WP_DuckDB_Driver {
 	 */
 	private function translate_insert_ignore_tokens_to_duckdb_sql( array $tokens, int $table_index ): string {
 		return 'INSERT OR IGNORE INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $table_index ) );
+	}
+
+	/**
+	 * Translate a bounded MySQL INSERT ... ON DUPLICATE KEY UPDATE statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
+	 * @param int               $table_index        Index of the table token.
+	 * @param int               $on_duplicate_index Index of the ON token.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( array $tokens, int $table_index, int $on_duplicate_index ): string {
+		$insert_shape = $this->parse_on_duplicate_insert_shape( $tokens, $table_index, $on_duplicate_index );
+		$target       = $this->select_on_duplicate_conflict_target( $insert_shape['table_name'], $insert_shape['values_by_column'] );
+		$update_sql   = $this->translate_on_duplicate_update_tokens_to_duckdb_sql( array_slice( $tokens, $on_duplicate_index + 4 ) );
+
+		if ( '' === $update_sql ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. UPDATE list is required.' );
+		}
+
+		return 'INSERT INTO '
+			. $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $table_index, $on_duplicate_index - $table_index ) )
+			. ' ON CONFLICT ('
+			. implode(
+				', ',
+				array_map(
+					function ( string $column_name ): string {
+						return $this->connection->quote_identifier( $column_name );
+					},
+					$target
+				)
+			)
+			. ') DO UPDATE SET '
+			. $update_sql;
+	}
+
+	/**
+	 * Parse the supported INSERT ... VALUES shape needed for ODKU target selection.
+	 *
+	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
+	 * @param int               $table_index        Index of the table token.
+	 * @param int               $on_duplicate_index Index of the ON token.
+	 * @return array{table_name:string,values_by_column:array<string,string>}
+	 */
+	private function parse_on_duplicate_insert_shape( array $tokens, int $table_index, int $on_duplicate_index ): array {
+		$table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
+		$index      = $table_index + 1;
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Explicit column list is required.' );
+		++$index;
+
+		$columns = array();
+		while ( $index < count( $tokens ) ) {
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				break;
+			}
+			$columns[] = $this->identifier_value( $tokens[ $index ] );
+			++$index;
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				continue;
+			}
+			if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $index ]->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Explicit column list is required.' );
+			}
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::VALUES_SYMBOL, 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only INSERT ... VALUES is supported.' );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. A single VALUES row is required.' );
+		++$index;
+
+		list( $value_items, $index ) = $this->collect_parenthesized_items( $tokens, $index );
+		if ( $index !== $on_duplicate_index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only a single VALUES row is supported.' );
+		}
+		if ( count( $columns ) !== count( $value_items ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'INSERT ... ON DUPLICATE KEY UPDATE column count does not match value count in DuckDB driver.' );
+		}
+
+		$values_by_column = array();
+		foreach ( $columns as $offset => $column_name ) {
+			$values_by_column[ strtolower( $column_name ) ] = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
+		}
+
+		return array(
+			'table_name'       => $table_name,
+			'values_by_column' => $values_by_column,
+		);
+	}
+
+	/**
+	 * Select the conflict target that MySQL would hit for a single inserted row.
+	 *
+	 * @param string               $table_name       Table name.
+	 * @param array<string,string> $values_by_column Inserted values keyed by lowercase column name.
+	 * @return string[] Conflict target columns.
+	 */
+	private function select_on_duplicate_conflict_target( string $table_name, array $values_by_column ): array {
+		$eligible_targets = array();
+		$matched_targets  = array();
+
+		foreach ( $this->unique_key_column_sets( $table_name ) as $column_set ) {
+			$has_all_values = true;
+			foreach ( $column_set as $column_name ) {
+				if ( ! array_key_exists( strtolower( $column_name ), $values_by_column ) ) {
+					$has_all_values = false;
+					break;
+				}
+			}
+
+			if ( ! $has_all_values ) {
+				continue;
+			}
+
+			$eligible_targets[] = $column_set;
+			if ( $this->insert_values_conflict_with_target( $table_name, $column_set, $values_by_column ) ) {
+				$matched_targets[] = $column_set;
+			}
+		}
+
+		if ( 1 === count( $matched_targets ) ) {
+			return $matched_targets[0];
+		}
+		if ( count( $matched_targets ) > 1 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values match multiple unique key targets.' );
+		}
+
+		if ( count( $eligible_targets ) > 0 ) {
+			return $eligible_targets[0];
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values do not include a unique key target.' );
+	}
+
+	/**
+	 * Read primary and unique secondary key column sets.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,string[]>
+	 */
+	private function unique_key_column_sets( string $table_name ): array {
+		$sets = array();
+
+		$primary = $this->execute_duckdb_query(
+			'SELECT name FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') WHERE pk > 0 ORDER BY pk',
+			'Failed to inspect DuckDB primary key'
+		)->fetchAll( PDO::FETCH_ASSOC );
+		if ( count( $primary ) > 0 ) {
+			$sets[] = array_map(
+				function ( array $row ): string {
+					return (string) $row['name'];
+				},
+				$primary
+			);
+		}
+
+		$this->ensure_index_metadata_table();
+		$secondary = $this->execute_duckdb_query(
+			'SELECT index_name, column_name FROM '
+				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. ' AND non_unique = 0 ORDER BY index_name, seq_in_index',
+			'Failed to inspect DuckDB unique indexes'
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$secondary_sets = array();
+		foreach ( $secondary as $row ) {
+			$index_name                      = (string) $row['index_name'];
+			$secondary_sets[ $index_name ][] = (string) $row['column_name'];
+		}
+
+		foreach ( $secondary_sets as $columns ) {
+			$sets[] = $columns;
+		}
+
+		return $sets;
+	}
+
+	/**
+	 * Determine whether the inserted row conflicts with a unique target.
+	 *
+	 * @param string               $table_name       Table name.
+	 * @param string[]             $column_set       Unique key columns.
+	 * @param array<string,string> $values_by_column Inserted values keyed by lowercase column name.
+	 * @return bool Whether an existing row matches the target values.
+	 */
+	private function insert_values_conflict_with_target( string $table_name, array $column_set, array $values_by_column ): bool {
+		$where = array();
+		foreach ( $column_set as $column_name ) {
+			$where[] = $this->connection->quote_identifier( $column_name )
+				. ' IS NOT DISTINCT FROM ('
+				. $values_by_column[ strtolower( $column_name ) ]
+				. ')';
+		}
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT 1 FROM '
+				. $this->connection->quote_identifier( $table_name )
+				. ' WHERE '
+				. implode( ' AND ', $where )
+				. ' LIMIT 1',
+			'Failed to inspect DuckDB duplicate key target'
+		);
+
+		return false !== $stmt->fetch( PDO::FETCH_NUM );
+	}
+
+	/**
+	 * Translate an ODKU update list, rewriting MySQL VALUES(col) references.
+	 *
+	 * @param WP_Parser_Token[] $tokens Update-list tokens after ON DUPLICATE KEY UPDATE.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_on_duplicate_update_tokens_to_duckdb_sql( array $tokens ): string {
+		$pieces = array();
+
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if (
+				isset( $tokens[ $index + 3 ] )
+				&& WP_MySQL_Lexer::VALUES_SYMBOL === $tokens[ $index ]->id
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index + 1 ]->id
+				&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index + 3 ]->id
+			) {
+				$pieces[] = 'excluded';
+				$pieces[] = '.';
+				$pieces[] = $this->connection->quote_identifier( $this->identifier_value( $tokens[ $index + 2 ] ) );
+				$index   += 3;
+				continue;
+			}
+
+			$pieces[] = $this->translate_tokens_to_duckdb_sql( array( $tokens[ $index ] ) );
+		}
+
+		return $this->join_sql_pieces( $pieces );
 	}
 
 	/**

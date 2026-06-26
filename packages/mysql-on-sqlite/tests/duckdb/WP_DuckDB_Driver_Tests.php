@@ -272,6 +272,62 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_insert_on_duplicate_key_update_values_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE items (
+				id INTEGER PRIMARY KEY,
+				name VARCHAR(100) UNIQUE,
+				hits INTEGER NOT NULL DEFAULT 0
+			)'
+		);
+		$driver->query( "INSERT INTO items (id, name, hits) VALUES (1, 'old', 1)" );
+
+		$duplicate_primary = $driver->query(
+			"INSERT INTO items (id, name, hits) VALUES (1, 'renamed', 7)
+			ON DUPLICATE KEY UPDATE name = VALUES(name), hits = VALUES(hits)"
+		);
+		$this->assertSame( 1, $duplicate_primary->rowCount() );
+		$this->assertSame(
+			'INSERT INTO items(id, name, hits) VALUES (1, \'renamed\', 7) ON CONFLICT ("id") DO UPDATE SET name = excluded."name", hits = excluded."hits"',
+			$this->lastDuckDBQuery( $driver )
+		);
+
+		$duplicate_unique = $driver->query(
+			"INSERT INTO items (id, name, hits) VALUES (2, 'renamed', 11)
+			ON DUPLICATE KEY UPDATE hits = hits + VALUES(hits)"
+		);
+		$this->assertSame( 1, $duplicate_unique->rowCount() );
+		$this->assertSame(
+			'INSERT INTO items(id, name, hits) VALUES (2, \'renamed\', 11) ON CONFLICT ("name") DO UPDATE SET hits = hits + excluded."hits"',
+			$this->lastDuckDBQuery( $driver )
+		);
+
+		$inserted = $driver->query(
+			"INSERT INTO items (id, name, hits) VALUES (3, 'third', 3)
+			ON DUPLICATE KEY UPDATE hits = VALUES(hits)"
+		);
+		$this->assertSame( 1, $inserted->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'renamed',
+					'hits' => 18,
+				),
+				array(
+					'id'   => 3,
+					'name' => 'third',
+					'hits' => 3,
+				),
+			),
+			$driver->query( 'SELECT id, name, hits FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_wordpress_style_schema_can_be_created(): void {
 		$this->requireDuckDBRuntime();
 
