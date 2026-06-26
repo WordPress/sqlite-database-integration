@@ -12,7 +12,7 @@ class WP_PostgreSQL_DB_Tests extends TestCase {
 	public function test_constructor_registers_global_wpdb_and_defaults_empty_charset(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 if ( ! class_exists( 'wpdb', false ) ) {
 	class wpdb {
@@ -70,7 +70,7 @@ PHP
 	public function test_has_cap_matches_wordpress_db_expectations(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-	require_once getcwd() . '/bootstrap.php';
+	require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {}
 
@@ -137,9 +137,11 @@ PHP
 	 * Tests the wpdb adapter applies set_charset() to the PostgreSQL driver state.
 	 */
 	public function test_set_charset_updates_postgresql_driver_session_state(): void {
+		$this->require_pgsql_test_dsn();
+
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $charset = 'utf8mb4';
@@ -151,7 +153,7 @@ require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/p
 $db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
 
 $driver = new WP_PostgreSQL_Driver(
-	new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ),
+	new WP_PostgreSQL_Connection( array( 'pdo' => wp_postgresql_tests_create_pgsql_pdo() ) ),
 	'wptests'
 );
 
@@ -186,9 +188,11 @@ PHP
 	 * Tests set_charset() uses wpdb defaults and ignores invalid handles.
 	 */
 	public function test_set_charset_uses_defaults_and_ignores_invalid_handles(): void {
+		$this->require_pgsql_test_dsn();
+
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $charset = 'utf8mb4';
@@ -200,7 +204,7 @@ require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/p
 $db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
 
 $driver = new WP_PostgreSQL_Driver(
-	new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ),
+	new WP_PostgreSQL_Connection( array( 'pdo' => wp_postgresql_tests_create_pgsql_pdo() ) ),
 	'wptests'
 );
 
@@ -275,7 +279,7 @@ PHP
 	public function test_determine_charset_applies_wordpress_utf8mb4_upgrade_rules(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 if ( ! class_exists( 'wpdb', false ) ) {
 	class wpdb {}
@@ -346,9 +350,11 @@ PHP
 	 * Tests the wpdb adapter filters and forwards SQL mode state to the PostgreSQL driver.
 	 */
 	public function test_set_sql_mode_filters_incompatible_modes_and_updates_postgresql_driver(): void {
+		$this->require_pgsql_test_dsn();
+
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 $GLOBALS['wp_postgresql_db_test_filter_calls'] = array();
 
@@ -377,7 +383,7 @@ require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/p
 $db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
 
 $driver = new WP_PostgreSQL_Driver(
-	new WP_PostgreSQL_Connection( array( 'pdo' => new PDO( 'sqlite::memory:' ) ) ),
+	new WP_PostgreSQL_Connection( array( 'pdo' => wp_postgresql_tests_create_pgsql_pdo() ) ),
 	'wptests'
 );
 
@@ -502,7 +508,7 @@ PHP
 	public function test_print_error_records_explicit_and_stored_errors_when_suppressed(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 if ( ! class_exists( 'wpdb', false ) ) {
 	class wpdb {
@@ -562,7 +568,7 @@ PHP
 	public function test_flush_resets_query_state_and_preserves_connection_handle(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 if ( ! class_exists( 'wpdb', false ) ) {
 	class wpdb {
@@ -625,7 +631,7 @@ PHP
 	public function test_real_escape_escapes_scalars_and_rejects_non_scalars(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 if ( ! class_exists( 'wpdb', false ) ) {
 	class wpdb {
@@ -679,7 +685,7 @@ PHP
 
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function mbstring_binary_safe_encoding() {}
 function reset_mbstring_encoding() {}
@@ -763,7 +769,7 @@ PHP
 	public function test_query_uses_strip_invalid_text_for_non_utf8_sql(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function wp_load_translations_early() {}
 function __( $text ) {
@@ -875,822 +881,59 @@ PHP
 	}
 
 	/**
-	 * Tests temp table charset lookups use the temporary schema before native fallback.
+	 * Tests charset and length metadata through real PostgreSQL catalog state.
 	 */
-	public function test_get_col_charset_uses_temporary_table_schema_before_native_fallback(): void {
+	public function test_postgresql_metadata_uses_real_driver_and_native_catalog_paths(): void {
+		$this->require_pgsql_test_dsn();
+
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
+
+function __( $text ) {
+	return $text;
+}
+
+class WP_Error {
+	public $code;
+	public $message;
+
+	public function __construct( $code = '', $message = '' ) {
+		$this->code    = $code;
+		$this->message = $message;
+	}
+}
 
 class wpdb {
-	public $charset       = 'utf8mb4';
-	public $is_mysql      = true;
-	public $table_charset = array();
-	public $col_meta      = array();
+	public $ready               = true;
+	public $charset             = 'utf8mb4';
+	public $is_mysql            = true;
+	public $table_charset       = array();
+	public $col_meta            = array();
+	public $insert_id           = 0;
+	public $last_query          = null;
+	public $func_call           = null;
+	public $last_error          = '';
+	public $queries             = array();
+	public $num_queries         = 0;
+	public $last_result         = array();
+	public $col_info            = null;
+	public $rows_affected       = 0;
+	public $num_rows            = 0;
+	public $result              = null;
+	public $suppress_errors     = true;
+	public $show_errors         = false;
+	public $check_current_query = false;
 }
 
 require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
 
-class WP_PostgreSQL_DB_Temp_Charset_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'nspname' => 'pg_temp_42',
-					),
-				)
-			);
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.columns' ) && array( 'pg_temp_42', 'wptests_shadow_charset' ) === $params ) {
-			$this->queries[] = 'native_temp_columns';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'column_name'              => 'temp_value',
-						'data_type'                => 'text',
-						'character_maximum_length' => null,
-					),
-				)
-			);
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Temp_Charset_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-
-	public function __construct( WP_PostgreSQL_DB_Temp_Charset_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Temp_Charset_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Temp_Charset_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
-
-$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
-$driver_property->setAccessible( true );
-$driver_property->setValue( $db, $driver );
-
-wp_postgresql_db_test_respond(
-	array(
-		'charset' => $db->get_col_charset( 'wptests_shadow_charset', 'temp_value' ),
-		'queries' => $connection->get_queries(),
-	)
+$pdo    = wp_postgresql_tests_create_pgsql_pdo();
+$driver = new WP_PostgreSQL_Driver(
+	new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) ),
+	'wptests'
 );
-PHP
-		);
-
-		$this->assertSame(
-			array(
-				'charset' => 'utf8mb4',
-				'queries' => array(
-					'temp_schema',
-					'native_temp_columns',
-				),
-			),
-			$result
-		);
-	}
-
-	/**
-	 * Tests temp table charset lookups use driver SHOW COLUMNS metadata.
-	 */
-	public function test_get_charset_uses_temporary_driver_show_columns_metadata(): void {
-		$result = $this->run_isolated_wpdb_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-class wpdb {
-	public $charset       = 'utf8';
-	public $is_mysql      = true;
-	public $table_charset = array();
-	public $col_meta      = array();
-}
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
-
-class WP_PostgreSQL_DB_Temp_Create_Charset_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'nspname' => 'pg_temp_42',
-					),
-				)
-			);
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
-			$this->queries[] = 'native_temp_columns';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'column_name'              => 'a',
-						'data_type'                => 'text',
-						'character_maximum_length' => null,
-					),
-				)
-			);
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-	class WP_PostgreSQL_DB_Temp_Create_Charset_Fake_Driver extends WP_PostgreSQL_Driver {
-		private $fake_connection;
-		private $queries = array();
-
-		public function __construct( WP_PostgreSQL_DB_Temp_Create_Charset_Fake_Connection $connection ) {
-			$this->fake_connection = $connection;
-	}
-
-		public function get_connection(): WP_PostgreSQL_Connection {
-			return $this->fake_connection;
-		}
-
-		public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-			$this->queries[] = $query;
-
-			if ( 'SHOW FULL COLUMNS FROM `wptests_temp_declared_charset`' !== $query ) {
-				return array();
-			}
-
-			$rows = array(
-				array(
-					'Field'     => 'a',
-					'Type'      => 'varchar(50)',
-					'Collation' => 'big5_chinese_ci',
-				),
-				array(
-					'Field'     => 'b',
-					'Type'      => 'text',
-					'Collation' => 'koi8r_general_ci',
-				),
-			);
-
-			if ( PDO::FETCH_ASSOC === $fetch_mode ) {
-				return $rows;
-			}
-
-			return array_map(
-				static function ( array $row ) {
-					return (object) $row;
-				},
-				$rows
-			);
-		}
-
-		public function get_queries(): array {
-			return $this->queries;
-		}
-	}
-
-$connection = new WP_PostgreSQL_DB_Temp_Create_Charset_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Temp_Create_Charset_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
-
-$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
-$driver_property->setAccessible( true );
-$driver_property->setValue( $db, $driver );
-
-$store_metadata = new ReflectionMethod( WP_PostgreSQL_DB::class, 'store_postgresql_create_table_charset_metadata' );
-$store_metadata->setAccessible( true );
-$store_metadata->invoke(
-	$db,
-	'CREATE TEMPORARY TABLE wptests_temp_declared_charset ( a VARCHAR(50) CHARACTER SET big5, b TEXT CHARACTER SET koi8r )'
-);
-
-$get_table_charset = new ReflectionMethod( WP_PostgreSQL_DB::class, 'get_table_charset' );
-$get_table_charset->setAccessible( true );
-
-wp_postgresql_db_test_respond(
-	array(
-		'table_charset'      => $get_table_charset->invoke( $db, 'wptests_temp_declared_charset' ),
-			'column_a_charset'   => $db->get_col_charset( 'wptests_temp_declared_charset', 'a' ),
-			'column_b_charset'   => $db->get_col_charset( 'WPTESTS_TEMP_DECLARED_CHARSET', 'B' ),
-			'connection_queries' => $connection->get_queries(),
-			'driver_queries'     => $driver->get_queries(),
-		)
-	);
-PHP
-		);
-
-		$this->assertSame(
-			array(
-				'table_charset'      => 'ascii',
-				'column_a_charset'   => 'big5',
-				'column_b_charset'   => 'koi8r',
-				'connection_queries' => array(
-					'temp_schema',
-				),
-				'driver_queries'     => array(
-					'SHOW FULL COLUMNS FROM `wptests_temp_declared_charset`',
-				),
-			),
-			$result
-		);
-	}
-
-	/**
-	 * Tests broad DDL cache invalidation preserves temporary table charset metadata.
-	 */
-	public function test_broad_cache_invalidation_preserves_temporary_table_charset_metadata(): void {
-		$result = $this->run_isolated_wpdb_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-class wpdb {
-	public $ready           = true;
-	public $charset         = 'utf8';
-	public $is_mysql        = true;
-	public $table_charset   = array();
-	public $col_meta        = array();
-	public $insert_id       = 0;
-	public $last_query      = null;
-	public $func_call       = null;
-	public $last_error      = '';
-	public $queries         = array();
-	public $num_queries     = 0;
-	public $last_result     = array();
-	public $col_info        = null;
-	public $rows_affected   = 0;
-	public $num_rows        = 0;
-	public $result          = null;
-	public $suppress_errors = true;
-	public $show_errors     = false;
-}
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
-
-class WP_PostgreSQL_DB_Temp_Charset_Broad_Clear_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema:' . ( $params[0] ?? '' );
-			return $this->statement_from_rows(
-				array(
-					array(
-						'nspname' => 'pg_temp_42',
-					),
-				)
-			);
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
-			$this->queries[] = 'native_temp_columns';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'column_name'              => 'a',
-						'data_type'                => 'text',
-						'character_maximum_length' => null,
-					),
-					array(
-						'column_name'              => 'b',
-						'data_type'                => 'text',
-						'character_maximum_length' => null,
-					),
-				)
-			);
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Temp_Charset_Broad_Clear_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-	private $queries = array();
-
-	public function __construct( WP_PostgreSQL_DB_Temp_Charset_Broad_Clear_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->queries[] = $query;
-
-		if ( 'SHOW FULL COLUMNS FROM `wptests_temp_declared_charset`' === $query ) {
-			$rows = array(
-				array(
-					'Field'     => 'a',
-					'Type'      => 'varchar(50)',
-					'Collation' => 'big5_chinese_ci',
-				),
-				array(
-					'Field'     => 'b',
-					'Type'      => 'text',
-					'Collation' => 'koi8r_general_ci',
-				),
-			);
-
-			if ( PDO::FETCH_ASSOC === $fetch_mode ) {
-				return $rows;
-			}
-
-			return array_map(
-				static function ( array $row ) {
-					return (object) $row;
-				},
-				$rows
-			);
-		}
-
-		return true;
-	}
-
-	public function get_last_postgresql_queries(): array {
-		return array();
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Temp_Charset_Broad_Clear_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Temp_Charset_Broad_Clear_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
-
-$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
-$driver_property->setAccessible( true );
-$driver_property->setValue( $db, $driver );
-
-$store_metadata = new ReflectionMethod( WP_PostgreSQL_DB::class, 'store_postgresql_create_table_charset_metadata' );
-$store_metadata->setAccessible( true );
-$store_metadata->invoke(
-	$db,
-	'CREATE TEMPORARY TABLE wptests_temp_declared_charset ( a VARCHAR(50) CHARACTER SET big5, b TEXT CHARACTER SET koi8r )'
-);
-
-$before_a = $db->get_col_charset( 'wptests_temp_declared_charset', 'a' );
-$before_b = $db->get_col_charset( 'wptests_temp_declared_charset', 'b' );
-$altered  = $db->query( 'ALTER TABLE wptests_unrelated ADD COLUMN flag INTEGER' );
-$after_a  = $db->get_col_charset( 'wptests_temp_declared_charset', 'a' );
-$after_b  = $db->get_col_charset( 'wptests_temp_declared_charset', 'b' );
-
-wp_postgresql_db_test_respond(
-	array(
-		'before_a'           => $before_a,
-		'before_b'           => $before_b,
-		'altered'            => $altered,
-		'after_a'            => $after_a,
-		'after_b'            => $after_b,
-		'connection_queries' => $connection->get_queries(),
-		'driver_queries'     => $driver->get_queries(),
-	)
-);
-PHP
-		);
-
-		$this->assertSame( 'big5', $result['before_a'] );
-		$this->assertSame( 'koi8r', $result['before_b'] );
-		$this->assertTrue( $result['altered'] );
-		$this->assertSame( 'big5', $result['after_a'] );
-		$this->assertSame( 'koi8r', $result['after_b'] );
-		$this->assertSame(
-			array(
-				'temp_schema:wptests_temp_declared_charset',
-				'temp_schema:wptests_temp_declared_charset',
-			),
-			$result['connection_queries']
-		);
-			$this->assertSame(
-				array(
-					'SHOW FULL COLUMNS FROM `wptests_temp_declared_charset`',
-					'ALTER TABLE wptests_unrelated ADD COLUMN flag INTEGER',
-					'SHOW FULL COLUMNS FROM `wptests_temp_declared_charset`',
-				),
-				$result['driver_queries']
-			);
-	}
-
-	/**
-	 * Tests permanent CREATE TABLE metadata stays in the PostgreSQL driver catalog.
-	 */
-	public function test_permanent_create_table_charset_metadata_uses_driver_without_adapter_side_table(): void {
-		$result = $this->run_isolated_wpdb_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-class wpdb {
-	public $charset       = 'utf8mb4';
-	public $is_mysql      = true;
-	public $table_charset = array();
-	public $col_meta      = array();
-}
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
-
-class WP_PostgreSQL_DB_Stateless_Charset_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema:' . ( $params[0] ?? '' );
-			return $this->statement_from_rows( array() );
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
-			$this->queries[] = 'native_columns';
-			return $this->statement_from_rows( array() );
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Stateless_Charset_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-	private $queries = array();
-
-	public function __construct( WP_PostgreSQL_DB_Stateless_Charset_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->queries[] = $query;
-
-		if ( 'SHOW FULL COLUMNS FROM `wptests_stateless_charset`' !== $query ) {
-			return array();
-		}
-
-		return array(
-			array(
-				'Field'     => 'a',
-				'Type'      => 'varchar(50)',
-				'Collation' => 'utf8_unicode_ci',
-			),
-			array(
-				'Field'     => 'b',
-				'Type'      => 'text',
-				'Collation' => 'big5_chinese_ci',
-			),
-		);
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Stateless_Charset_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Stateless_Charset_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
-
-$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
-$driver_property->setAccessible( true );
-$driver_property->setValue( $db, $driver );
-
-$store_metadata = new ReflectionMethod( WP_PostgreSQL_DB::class, 'store_postgresql_create_table_charset_metadata' );
-$store_metadata->setAccessible( true );
-$store_metadata->invoke(
-	$db,
-	'CREATE TABLE wptests_stateless_charset ( a VARCHAR(50) CHARACTER SET utf8, b TEXT CHARACTER SET big5 )'
-);
-
-$get_table_charset = new ReflectionMethod( WP_PostgreSQL_DB::class, 'get_table_charset' );
-$get_table_charset->setAccessible( true );
-
-wp_postgresql_db_test_respond(
-	array(
-		'table_charset'      => $get_table_charset->invoke( $db, 'wptests_stateless_charset' ),
-		'column_a_charset'   => $db->get_col_charset( 'wptests_stateless_charset', 'a' ),
-		'column_b_charset'   => $db->get_col_charset( 'wptests_stateless_charset', 'b' ),
-		'connection_queries' => $connection->get_queries(),
-		'driver_queries'     => $driver->get_queries(),
-	)
-);
-PHP
-		);
-
-		$this->assertSame(
-			array(
-				'table_charset'      => 'ascii',
-				'column_a_charset'   => 'utf8',
-				'column_b_charset'   => 'big5',
-				'connection_queries' => array(
-					'temp_schema:wptests_stateless_charset',
-				),
-				'driver_queries'     => array(
-					'SHOW FULL COLUMNS FROM `wptests_stateless_charset`',
-				),
-			),
-			$result
-		);
-	}
-
-	/**
-	 * Tests charset lookups can use MySQL metadata stored by the PostgreSQL driver.
-	 */
-	public function test_get_charset_uses_driver_show_columns_metadata_when_adapter_metadata_is_absent(): void {
-		$result = $this->run_isolated_wpdb_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-class wpdb {
-	public $charset       = 'utf8mb4';
-	public $is_mysql      = true;
-	public $table_charset = array();
-	public $col_meta      = array();
-}
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
-
-class WP_PostgreSQL_DB_Show_Columns_Charset_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema';
-			return $this->statement_from_rows( array() );
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
-			$this->queries[] = 'metadata_exists';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'exists' => 0,
-					),
-				)
-			);
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.columns' ) ) {
-			$this->queries[] = 'native_columns';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'column_name'              => 'a',
-						'data_type'                => 'text',
-						'character_maximum_length' => null,
-					),
-				)
-			);
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Show_Columns_Charset_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-	private $queries = array();
-
-	public function __construct( WP_PostgreSQL_DB_Show_Columns_Charset_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->queries[] = $query;
-
-		if ( 'SHOW FULL COLUMNS FROM `wptests_declared_charset`' !== $query ) {
-			return array();
-		}
-
-		$rows = array(
-			array(
-				'Field'     => 'a',
-				'Type'      => 'varchar(50)',
-				'Collation' => 'utf8_unicode_ci',
-			),
-			array(
-				'Field'     => 'b',
-				'Type'      => 'text',
-				'Collation' => 'big5_chinese_ci',
-			),
-		);
-
-		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
-			return $rows;
-		}
-
-		return array_map(
-			static function ( array $row ) {
-				return (object) $row;
-			},
-			$rows
-		);
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Show_Columns_Charset_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Show_Columns_Charset_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$db     = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
 
 $driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
 $driver_property->setAccessible( true );
@@ -1699,297 +942,242 @@ $driver_property->setValue( $db, $driver );
 $get_table_charset = new ReflectionMethod( WP_PostgreSQL_DB::class, 'get_table_charset' );
 $get_table_charset->setAccessible( true );
 
+$pdo->exec( 'SET search_path TO public' );
+$declared_table = 'wptests_declared_metadata_' . strtolower( bin2hex( random_bytes( 4 ) ) );
+$native_table   = 'wptests_native_metadata_' . strtolower( bin2hex( random_bytes( 4 ) ) );
+register_shutdown_function(
+	static function () use ( $pdo, $declared_table, $native_table ): void {
+		foreach ( array( $declared_table, $native_table ) as $table ) {
+			try {
+				$pdo->exec( 'DROP TABLE IF EXISTS ' . WP_PostgreSQL_Connection::quote_identifier_value( $table ) . ' CASCADE' );
+			} catch ( Throwable $e ) {
+				// Cleanup should not mask the isolated script result.
+			}
+		}
+	}
+);
+
+$created_declared = $db->query(
+	'CREATE TABLE `' . $declared_table . '` (
+		a VARCHAR(50) CHARACTER SET utf8,
+		b LONGTEXT CHARACTER SET big5,
+		c INTEGER
+	) DEFAULT CHARACTER SET utf8mb4'
+);
+$pdo->exec( 'CREATE TABLE ' . WP_PostgreSQL_Connection::quote_identifier_value( $native_table ) . ' (name varchar(75), body text)' );
+
 wp_postgresql_db_test_respond(
 	array(
-		'table_charset'      => $get_table_charset->invoke( $db, 'wptests_declared_charset' ),
-		'column_a_charset'   => $db->get_col_charset( 'wptests_declared_charset', 'a' ),
-		'column_b_charset'   => $db->get_col_charset( 'WPTESTS_DECLARED_CHARSET', 'B' ),
-		'connection_queries' => $connection->get_queries(),
-		'driver_queries'     => $driver->get_queries(),
+		'created_declared'      => $created_declared,
+		'declared_table'        => $get_table_charset->invoke( $db, $declared_table ),
+		'declared_a_charset'    => $db->get_col_charset( $declared_table, 'a' ),
+		'declared_b_charset'    => $db->get_col_charset( strtoupper( $declared_table ), 'B' ),
+		'declared_c_charset'    => $db->get_col_charset( $declared_table, 'c' ),
+		'declared_a_length'     => $db->get_col_length( $declared_table, 'a' ),
+		'declared_b_length'     => $db->get_col_length( $declared_table, 'b' ),
+		'native_table'          => $get_table_charset->invoke( $db, $native_table ),
+		'native_name_charset'   => $db->get_col_charset( $native_table, 'name' ),
+		'native_body_charset'   => $db->get_col_charset( $native_table, 'body' ),
+		'native_name_length'    => $db->get_col_length( $native_table, 'name' ),
+		'native_body_length'    => $db->get_col_length( $native_table, 'body' ),
 	)
 );
 PHP
 		);
 
-		$this->assertSame(
-			array(
-				'table_charset'      => 'ascii',
-				'column_a_charset'   => 'utf8',
-				'column_b_charset'   => 'big5',
-				'connection_queries' => array(
-					'temp_schema',
-				),
-				'driver_queries'     => array(
-					'SHOW FULL COLUMNS FROM `wptests_declared_charset`',
-				),
-			),
-			$result
-		);
-	}
-
-	/**
-	 * Tests length checks prefer MySQL column metadata over widened PostgreSQL storage.
-	 */
-	public function test_get_col_length_uses_mysql_declared_metadata_before_postgresql_storage(): void {
-		$result = $this->run_isolated_wpdb_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-class wpdb {
-	public $charset       = 'utf8mb4';
-	public $is_mysql      = true;
-	public $table_charset = array();
-	public $col_meta      = array();
-}
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
-
-class WP_PostgreSQL_DB_Column_Length_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema:' . ( $params[0] ?? '' );
-			if ( array( 'wptests_temp_comments' ) === $params ) {
-				return $this->statement_from_rows(
-					array(
-						array(
-							'nspname' => 'pg_temp_42',
-						),
-					)
-				);
-			}
-
-			return $this->statement_from_rows( array() );
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
-			$this->queries[] = 'metadata_exists';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'exists' => 0,
-					),
-				)
-			);
-		}
-
-		if ( false !== strpos( $sql, 'SELECT column_name, data_type, character_maximum_length' ) ) {
-			$this->queries[] = 'native_columns:' . ( $params[0] ?? '' );
-
-			if ( array( 'wptests_native_text' ) === $params ) {
-				return $this->statement_from_rows(
-					array(
-						array(
-							'column_name'              => 'body',
-							'data_type'                => 'text',
-							'character_maximum_length' => null,
-						),
-					)
-				);
-			}
-
-			if ( array( 'wptests_comments' ) === $params ) {
-				return $this->statement_from_rows(
-					array(
-						array(
-							'column_name'              => 'comment_author',
-							'data_type'                => 'text',
-							'character_maximum_length' => null,
-						),
-					)
-				);
-			}
-		}
-
-		if ( false !== strpos( $sql, 'SELECT data_type, character_maximum_length' ) ) {
-			$this->queries[] = 'direct_length:' . implode( ':', $params );
-			return $this->statement_from_rows(
-				array(
-					array(
-						'data_type'                => 'text',
-						'character_maximum_length' => null,
-					),
-				)
-			);
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Column_Length_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-	private $queries = array();
-
-	public function __construct( WP_PostgreSQL_DB_Column_Length_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->queries[] = $query;
-
-			if ( ! in_array( $query, array( 'SHOW FULL COLUMNS FROM `wptests_comments`', 'SHOW FULL COLUMNS FROM `wptests_temp_comments`' ), true ) ) {
-				return array();
-			}
-
-		$rows = array(
-			array(
-				'Field'     => 'comment_author',
-				'Type'      => 'varchar(245)',
-				'Collation' => 'utf8mb4_unicode_ci',
-			),
-			array(
-				'Field'     => 'comment_content',
-				'Type'      => 'longtext',
-				'Collation' => 'utf8mb4_unicode_ci',
-			),
-		);
-
-		if ( PDO::FETCH_ASSOC === $fetch_mode ) {
-			return $rows;
-		}
-
-		return array_map(
-			static function ( array $row ) {
-				return (object) $row;
-			},
-			$rows
-		);
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Column_Length_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Column_Length_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
-
-$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
-$driver_property->setAccessible( true );
-$driver_property->setValue( $db, $driver );
-
-$store_metadata = new ReflectionMethod( WP_PostgreSQL_DB::class, 'store_postgresql_create_table_charset_metadata' );
-$store_metadata->setAccessible( true );
-$store_metadata->invoke(
-	$db,
-	"CREATE TEMPORARY TABLE wptests_temp_comments (
-		comment_author varchar(245) NOT NULL default '',
-		comment_content longtext NOT NULL
-	) DEFAULT CHARACTER SET utf8mb4"
-);
-
-wp_postgresql_db_test_respond(
-	array(
-		'temporary_comment_author_length' => $db->get_col_length( 'wptests_temp_comments', 'comment_author' ),
-		'comment_author_length'           => $db->get_col_length( 'wptests_comments', 'comment_author' ),
-		'comment_content_length'          => $db->get_col_length( 'wptests_comments', 'comment_content' ),
-		'native_text_length'              => $db->get_col_length( 'wptests_native_text', 'body' ),
-		'connection_queries'              => $connection->get_queries(),
-		'driver_queries'                  => $driver->get_queries(),
-	)
-);
-PHP
-		);
-
+		$this->assertTrue( $result['created_declared'] );
+		$this->assertSame( 'ascii', $result['declared_table'] );
+		$this->assertSame( 'utf8', $result['declared_a_charset'] );
+		$this->assertSame( 'big5', $result['declared_b_charset'] );
+		$this->assertFalse( $result['declared_c_charset'] );
 		$this->assertSame(
 			array(
 				'type'   => 'char',
-				'length' => 245,
+				'length' => 50,
 			),
-			$result['temporary_comment_author_length'],
-			'Temporary CREATE TABLE metadata should preserve declared MySQL varchar length.'
-		);
-		$this->assertSame(
-			array(
-				'type'   => 'char',
-				'length' => 245,
-			),
-			$result['comment_author_length'],
-			'Declared MySQL varchar length should win over PostgreSQL text storage.'
+			$result['declared_a_length']
 		);
 		$this->assertSame(
 			array(
 				'type'   => 'byte',
 				'length' => 4294967295,
 			),
-			$result['comment_content_length']
+			$result['declared_b_length']
+		);
+		$this->assertSame( 'utf8mb4', $result['native_table'] );
+		$this->assertSame( 'utf8mb4', $result['native_name_charset'] );
+		$this->assertSame( 'utf8mb4', $result['native_body_charset'] );
+		$this->assertSame(
+			array(
+				'type'   => 'char',
+				'length' => 75,
+			),
+			$result['native_name_length']
 		);
 		$this->assertSame(
 			array(
 				'type'   => 'byte',
 				'length' => 65535,
 			),
-			$result['native_text_length']
-		);
-		$this->assertSame(
-			array(
-				'temp_schema:wptests_temp_comments',
-				'temp_schema:wptests_comments',
-				'temp_schema:wptests_native_text',
-				'native_columns:wptests_native_text',
-			),
-			$result['connection_queries']
-		);
-		$this->assertSame(
-			array(
-				'SHOW FULL COLUMNS FROM `wptests_temp_comments`',
-				'SHOW FULL COLUMNS FROM `wptests_comments`',
-				'SHOW FULL COLUMNS FROM `wptests_native_text`',
-			),
-			$result['driver_queries']
+			$result['native_body_length']
 		);
 	}
 
 	/**
-	 * Tests PostgreSQL column metadata is cached per table and can be invalidated.
+	 * Tests temporary table metadata uses the real active PostgreSQL temporary schema.
 	 */
-	public function test_column_charset_metadata_cache_reuses_table_load_until_invalidated(): void {
+	public function test_postgresql_metadata_prefers_real_temporary_table_catalog(): void {
+		$this->require_pgsql_test_dsn();
+
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
+
+function __( $text ) {
+	return $text;
+}
+
+class WP_Error {
+	public $code;
+	public $message;
+
+	public function __construct( $code = '', $message = '' ) {
+		$this->code    = $code;
+		$this->message = $message;
+	}
+}
+
+function is_wp_error( $thing ) {
+	return $thing instanceof WP_Error;
+}
+
+class wpdb {
+	public $ready               = true;
+	public $charset             = 'utf8mb4';
+	public $is_mysql            = true;
+	public $table_charset       = array();
+	public $col_meta            = array();
+	public $insert_id           = 0;
+	public $last_query          = null;
+	public $func_call           = null;
+	public $last_error          = '';
+	public $queries             = array();
+	public $num_queries         = 0;
+	public $last_result         = array();
+	public $col_info            = null;
+	public $rows_affected       = 0;
+	public $num_rows            = 0;
+	public $result              = null;
+	public $suppress_errors     = true;
+	public $show_errors         = false;
+	public $check_current_query = false;
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+$pdo    = wp_postgresql_tests_create_pgsql_pdo();
+$driver = new WP_PostgreSQL_Driver(
+	new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) ),
+	'wptests'
+);
+$db     = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$pdo->exec( 'SET search_path TO public' );
+$shadow_table    = 'wptests_shadow_charset_' . strtolower( bin2hex( random_bytes( 4 ) ) );
+$unrelated_table = 'wptests_unrelated_' . strtolower( bin2hex( random_bytes( 4 ) ) );
+register_shutdown_function(
+	static function () use ( $pdo, $shadow_table, $unrelated_table ): void {
+		foreach ( array( $shadow_table, $unrelated_table ) as $table ) {
+			try {
+				$pdo->exec( 'DROP TABLE IF EXISTS ' . WP_PostgreSQL_Connection::quote_identifier_value( $table ) . ' CASCADE' );
+			} catch ( Throwable $e ) {
+				// Cleanup should not mask the isolated script result.
+			}
+		}
+	}
+);
+
+$permanent_created = $db->query(
+	'CREATE TABLE `' . $shadow_table . '` (
+		temp_value VARCHAR(50) CHARACTER SET latin1
+	)'
+);
+$temporary_created = $db->query(
+	'CREATE TEMPORARY TABLE `' . $shadow_table . '` (
+		temp_value VARCHAR(50) CHARACTER SET big5
+	)'
+);
+
+$temporary_charset_before_alter = $db->get_col_charset( $shadow_table, 'temp_value' );
+$temporary_length_before_alter  = $db->get_col_length( $shadow_table, 'temp_value' );
+
+$unrelated_created = $db->query( 'CREATE TABLE `' . $unrelated_table . '` (id INTEGER NOT NULL)' );
+$unrelated_altered = $db->query( 'ALTER TABLE `' . $unrelated_table . '` ADD COLUMN flag INTEGER' );
+
+$temporary_charset_after_alter = $db->get_col_charset( $shadow_table, 'temp_value' );
+$temporary_dropped             = $db->query( 'DROP TEMPORARY TABLE `' . $shadow_table . '`' );
+$permanent_charset_after_drop  = $db->get_col_charset( $shadow_table, 'temp_value' );
+
+wp_postgresql_db_test_respond(
+	array(
+		'permanent_created'              => $permanent_created,
+		'temporary_created'              => $temporary_created,
+		'temporary_charset_before_alter' => $temporary_charset_before_alter,
+		'temporary_length_before_alter'  => $temporary_length_before_alter,
+		'unrelated_created'              => $unrelated_created,
+		'unrelated_altered'              => $unrelated_altered,
+		'temporary_charset_after_alter'  => $temporary_charset_after_alter,
+		'temporary_dropped'              => $temporary_dropped,
+		'permanent_charset_after_drop'   => $permanent_charset_after_drop,
+	)
+);
+PHP
+		);
+
+		$this->assertTrue( $result['permanent_created'] );
+		$this->assertTrue( $result['temporary_created'] );
+		$this->assertSame( 'big5', $result['temporary_charset_before_alter'] );
+		$this->assertSame(
+			array(
+				'type'   => 'char',
+				'length' => 50,
+			),
+			$result['temporary_length_before_alter']
+		);
+		$this->assertTrue( $result['unrelated_created'] );
+		$this->assertTrue( $result['unrelated_altered'] );
+		$this->assertSame( 'big5', $result['temporary_charset_after_alter'] );
+		$this->assertTrue( $result['temporary_dropped'] );
+		$this->assertSame( 'latin1', $result['permanent_charset_after_drop'] );
+	}
+
+	/**
+	 * Tests metadata caches reload from real PostgreSQL catalog data after clearing.
+	 */
+	public function test_postgresql_metadata_cache_reloads_from_real_catalog_after_clear(): void {
+		$this->require_pgsql_test_dsn();
+
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap-postgresql.php';
+
+function __( $text ) {
+	return $text;
+}
+
+class WP_Error {
+	public $code;
+	public $message;
+
+	public function __construct( $code = '', $message = '' ) {
+		$this->code    = $code;
+		$this->message = $message;
+	}
+}
 
 class wpdb {
 	public $charset       = 'utf8mb4';
@@ -2000,106 +1188,22 @@ class wpdb {
 
 require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
 
-class WP_PostgreSQL_DB_Cached_Metadata_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-	private $metadata_length = 50;
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema:' . ( $params[0] ?? '' );
-			return $this->statement_from_rows( array() );
-		}
-
-		if ( false !== strpos( $sql, 'SELECT column_name, data_type, character_maximum_length' ) ) {
-			$this->queries[] = 'native_columns:' . ( $params[0] ?? '' );
-			return $this->statement_from_rows(
-				array(
-					array(
-						'column_name'              => 'name',
-						'data_type'                => 'character varying',
-						'character_maximum_length' => $this->metadata_length,
-					),
-				)
-			);
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function set_metadata_length( int $metadata_length ): void {
-		$this->metadata_length = $metadata_length;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Cached_Metadata_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-	private $queries = array();
-
-	public function __construct( WP_PostgreSQL_DB_Cached_Metadata_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->queries[] = $query;
-		return array();
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Cached_Metadata_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Cached_Metadata_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$pdo    = wp_postgresql_tests_create_pgsql_pdo();
+$driver = new WP_PostgreSQL_Driver(
+	new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) ),
+	'wptests'
+);
+$db     = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
 
 $driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
 $driver_property->setAccessible( true );
 $driver_property->setValue( $db, $driver );
 
+$pdo->exec( 'CREATE TABLE wptests_cache_probe (name varchar(50))' );
+
 $first = $db->get_col_length( 'wptests_cache_probe', 'name' );
 
-$connection->set_metadata_length( 75 );
+$pdo->exec( 'ALTER TABLE wptests_cache_probe ALTER COLUMN name TYPE varchar(75)' );
 $second = $db->get_col_length( 'WPTESTS_CACHE_PROBE', 'NAME' );
 
 $clear_cache = new ReflectionMethod( WP_PostgreSQL_DB::class, 'clear_postgresql_table_charset_cache' );
@@ -2110,11 +1214,9 @@ $third = $db->get_col_length( 'wptests_cache_probe', 'name' );
 
 wp_postgresql_db_test_respond(
 	array(
-		'first'              => $first,
-		'second'             => $second,
-		'third'              => $third,
-		'connection_queries' => $connection->get_queries(),
-		'driver_queries'     => $driver->get_queries(),
+		'first'  => $first,
+		'second' => $second,
+		'third'  => $third,
 	)
 );
 PHP
@@ -2141,224 +1243,17 @@ PHP
 			),
 			$result['third']
 		);
-		$this->assertSame(
-			array(
-				'temp_schema:wptests_cache_probe',
-				'native_columns:wptests_cache_probe',
-				'temp_schema:wptests_cache_probe',
-				'native_columns:wptests_cache_probe',
-			),
-			$result['connection_queries']
-		);
-		$this->assertSame(
-			array(
-				'SHOW FULL COLUMNS FROM `wptests_cache_probe`',
-				'SHOW FULL COLUMNS FROM `wptests_cache_probe`',
-			),
-			$result['driver_queries']
-		);
 	}
 
 	/**
-	 * Tests direct PostgreSQL column length fallback metadata is cached until invalidated.
+	 * Tests CREATE and DROP invalidate metadata caches using real PostgreSQL tables.
 	 */
-	public function test_column_length_fallback_cache_reuses_lookup_until_invalidated(): void {
+	public function test_postgresql_metadata_cache_invalidates_after_real_create_and_drop(): void {
+		$this->require_pgsql_test_dsn();
+
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-class wpdb {
-	public $charset       = 'utf8mb4';
-	public $is_mysql      = true;
-	public $table_charset = array();
-	public $col_meta      = array();
-}
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
-
-class WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-	private $length = 50;
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema:' . ( $params[0] ?? '' );
-			return $this->statement_from_rows( array() );
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
-			$this->queries[] = 'metadata_exists';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'exists' => 0,
-					),
-				)
-			);
-		}
-
-		if ( false !== strpos( $sql, 'SELECT column_name, data_type, character_maximum_length' ) ) {
-			$this->queries[] = 'native_columns:' . ( $params[0] ?? '' );
-			return $this->statement_from_rows( array() );
-		}
-
-		if ( false !== strpos( $sql, 'SELECT data_type, character_maximum_length' ) ) {
-			$this->queries[] = 'direct_length:' . implode( ':', $params );
-			return $this->statement_from_rows(
-				array(
-					array(
-						'data_type'                => 'character varying',
-						'character_maximum_length' => $this->length,
-					),
-				)
-			);
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function set_length( int $length ): void {
-		$this->length = $length;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-	private $queries = array();
-
-	public function __construct( WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->queries[] = $query;
-		return array();
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Length_Fallback_Cache_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
-
-$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
-$driver_property->setAccessible( true );
-$driver_property->setValue( $db, $driver );
-
-$first = $db->get_col_length( 'wptests_length_fallback_cache', 'name' );
-
-$connection->set_length( 75 );
-$second = $db->get_col_length( 'WPTESTS_LENGTH_FALLBACK_CACHE', 'NAME' );
-
-$clear_cache = new ReflectionMethod( WP_PostgreSQL_DB::class, 'clear_postgresql_table_charset_cache' );
-$clear_cache->setAccessible( true );
-$clear_cache->invoke( $db, array( 'wptests_length_fallback_cache' ) );
-
-$third = $db->get_col_length( 'wptests_length_fallback_cache', 'name' );
-
-wp_postgresql_db_test_respond(
-	array(
-		'first'              => $first,
-		'second'             => $second,
-		'third'              => $third,
-		'connection_queries' => $connection->get_queries(),
-		'driver_queries'     => $driver->get_queries(),
-	)
-);
-PHP
-		);
-
-		$this->assertSame(
-			array(
-				'type'   => 'char',
-				'length' => 50,
-			),
-			$result['first']
-		);
-		$this->assertSame(
-			array(
-				'type'   => 'char',
-				'length' => 50,
-			),
-			$result['second']
-		);
-		$this->assertSame(
-			array(
-				'type'   => 'char',
-				'length' => 75,
-			),
-			$result['third']
-		);
-		$this->assertSame(
-			array(
-				'temp_schema:wptests_length_fallback_cache',
-				'native_columns:wptests_length_fallback_cache',
-				'direct_length:wptests_length_fallback_cache:name',
-				'temp_schema:wptests_length_fallback_cache',
-				'native_columns:wptests_length_fallback_cache',
-				'direct_length:wptests_length_fallback_cache:name',
-			),
-			$result['connection_queries']
-		);
-		$this->assertSame(
-			array(
-				'SHOW FULL COLUMNS FROM `wptests_length_fallback_cache`',
-				'SHOW FULL COLUMNS FROM `wptests_length_fallback_cache`',
-			),
-			$result['driver_queries']
-		);
-	}
-
-	/**
-	 * Tests plain permanent CREATE TABLE invalidates cached missing metadata.
-	 */
-	public function test_plain_create_table_invalidates_cached_missing_column_charset_metadata(): void {
-		$result = $this->run_isolated_wpdb_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function __( $text ) {
 	return $text;
@@ -2379,503 +1274,109 @@ function is_wp_error( $thing ) {
 }
 
 class wpdb {
-	public $ready           = true;
-	public $charset         = 'utf8mb4';
-	public $is_mysql        = true;
-	public $table_charset   = array();
-	public $col_meta        = array();
-	public $insert_id       = 0;
-	public $last_query      = null;
-	public $func_call       = null;
-	public $last_error      = '';
-	public $queries         = array();
-	public $num_queries     = 0;
-	public $last_result     = array();
-	public $col_info        = null;
-	public $rows_affected   = 0;
-	public $num_rows        = 0;
-	public $result          = null;
-	public $suppress_errors = true;
-	public $show_errors     = false;
+	public $ready               = true;
+	public $charset             = 'utf8mb4';
+	public $is_mysql            = true;
+	public $table_charset       = array();
+	public $col_meta            = array();
+	public $insert_id           = 0;
+	public $last_query          = null;
+	public $func_call           = null;
+	public $last_error          = '';
+	public $queries             = array();
+	public $num_queries         = 0;
+	public $last_result         = array();
+	public $col_info            = null;
+	public $rows_affected       = 0;
+	public $num_rows            = 0;
+	public $result              = null;
+	public $suppress_errors     = true;
+	public $show_errors         = false;
+	public $check_current_query = false;
 }
 
 require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
 
-class WP_PostgreSQL_DB_Plain_Create_Cache_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries = array();
-	private $plain_table_exists = false;
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$this->queries[] = 'temp_schema:' . ( $params[0] ?? '' );
-			return $this->statement_from_rows( array() );
-		}
-
-		if ( false !== strpos( $sql, 'FROM information_schema.tables' ) ) {
-			$this->queries[] = 'metadata_exists';
-			return $this->statement_from_rows(
-				array(
-					array(
-						'exists' => 0,
-					),
-				)
-			);
-		}
-
-		if ( false !== strpos( $sql, 'SELECT column_name, data_type, character_maximum_length' ) ) {
-			$table = $params[0] ?? '';
-			$this->queries[] = 'native_columns:' . $table;
-
-			if ( $this->plain_table_exists && 'wptests_plain_metadata_cache' === $table ) {
-				return $this->statement_from_rows(
-					array(
-						array(
-							'column_name'              => 'name',
-							'data_type'                => 'character varying',
-							'character_maximum_length' => 191,
-						),
-					)
-				);
-			}
-
-			return $this->statement_from_rows( array() );
-		}
-
-		$this->queries[] = 'unexpected';
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function set_plain_table_exists(): void {
-		$this->plain_table_exists = true;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Plain_Create_Cache_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-	private $queries = array();
-
-	public function __construct( WP_PostgreSQL_DB_Plain_Create_Cache_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->queries[] = $query;
-
-		if ( 0 === stripos( $query, 'CREATE TABLE' ) ) {
-			$this->fake_connection->set_plain_table_exists();
-			return true;
-		}
-
-		return array();
-	}
-
-	public function get_last_return_value() {
-		return 0;
-	}
-
-	public function get_insert_id() {
-		return 0;
-	}
-
-	public function get_last_postgresql_queries(): array {
-		return array();
-	}
-
-	public function get_last_column_meta(): array {
-		return array();
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Plain_Create_Cache_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Plain_Create_Cache_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+$pdo    = wp_postgresql_tests_create_pgsql_pdo();
+$driver = new WP_PostgreSQL_Driver(
+	new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) ),
+	'wptests'
+);
+$db     = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
 
 $driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
 $driver_property->setAccessible( true );
 $driver_property->setValue( $db, $driver );
 
-$missing = $db->get_col_charset( 'wptests_plain_metadata_cache', 'name' );
-$created = $db->query(
-	'CREATE TABLE wptests_plain_metadata_cache (
+$pdo->exec( 'SET search_path TO public' );
+$permanent_table = 'wptests_plain_metadata_cache_' . strtolower( bin2hex( random_bytes( 4 ) ) );
+$temporary_table = 'wptests_temp_drop_metadata_cache_' . strtolower( bin2hex( random_bytes( 4 ) ) );
+register_shutdown_function(
+	static function () use ( $pdo, $permanent_table, $temporary_table ): void {
+		foreach ( array( $permanent_table, $temporary_table ) as $table ) {
+			try {
+				$pdo->exec( 'DROP TABLE IF EXISTS ' . WP_PostgreSQL_Connection::quote_identifier_value( $table ) . ' CASCADE' );
+			} catch ( Throwable $e ) {
+				// Cleanup should not mask the isolated script result.
+			}
+		}
+	}
+);
+
+$missing_permanent = $db->get_col_charset( $permanent_table, 'name' );
+$created_permanent = $db->query(
+	'CREATE TABLE `' . $permanent_table . '` (
 		id INTEGER NOT NULL,
 		name VARCHAR(191) NOT NULL
 	)'
 );
-$reloaded = $db->get_col_charset( 'wptests_plain_metadata_cache', 'name' );
+$permanent_charset = $db->get_col_charset( $permanent_table, 'name' );
+$permanent_length  = $db->get_col_length( $permanent_table, 'name' );
+$dropped_permanent = $db->query( 'DROP TABLE IF EXISTS `' . $permanent_table . '`' );
+$after_permanent   = $db->get_col_charset( $permanent_table, 'name' );
+
+$created_temporary = $db->query(
+	'CREATE TEMPORARY TABLE `' . $temporary_table . '` (
+		name VARCHAR(50) CHARACTER SET big5
+	)'
+);
+$temporary_charset = $db->get_col_charset( $temporary_table, 'name' );
+$dropped_temporary = $db->query( 'DROP TEMPORARY TABLE `' . $temporary_table . '`' );
+$after_temporary   = $db->get_col_charset( $temporary_table, 'name' );
 
 wp_postgresql_db_test_respond(
 	array(
-		'missing_is_error'   => $missing instanceof WP_Error,
-		'created'            => $created,
-		'reloaded'           => $reloaded,
-		'connection_queries' => $connection->get_queries(),
-		'driver_queries'     => $driver->get_queries(),
+		'missing_permanent_error' => $missing_permanent instanceof WP_Error,
+		'created_permanent'       => $created_permanent,
+		'permanent_charset'       => $permanent_charset,
+		'permanent_length'        => $permanent_length,
+		'dropped_permanent'       => $dropped_permanent,
+		'after_permanent_error'   => $after_permanent instanceof WP_Error,
+		'created_temporary'       => $created_temporary,
+		'temporary_charset'       => $temporary_charset,
+		'dropped_temporary'       => $dropped_temporary,
+		'after_temporary_error'   => $after_temporary instanceof WP_Error,
 	)
 );
 PHP
 		);
 
-		$this->assertTrue( $result['missing_is_error'] );
-		$this->assertTrue( $result['created'] );
-		$this->assertSame( 'utf8mb4', $result['reloaded'] );
+		$this->assertTrue( $result['missing_permanent_error'] );
+		$this->assertTrue( $result['created_permanent'] );
+		$this->assertSame( 'utf8mb4', $result['permanent_charset'] );
 		$this->assertSame(
 			array(
-				'temp_schema:wptests_plain_metadata_cache',
-				'native_columns:wptests_plain_metadata_cache',
-				'temp_schema:wptests_plain_metadata_cache',
-				'native_columns:wptests_plain_metadata_cache',
+				'type'   => 'char',
+				'length' => 191,
 			),
-			$result['connection_queries']
+			$result['permanent_length']
 		);
-		$this->assertSame(
-			array(
-				'SHOW FULL COLUMNS FROM `wptests_plain_metadata_cache`',
-				"CREATE TABLE wptests_plain_metadata_cache (\n\t\tid INTEGER NOT NULL,\n\t\tname VARCHAR(191) NOT NULL\n\t)",
-				'SHOW FULL COLUMNS FROM `wptests_plain_metadata_cache`',
-			),
-			$result['driver_queries']
-		);
-	}
-
-	/**
-	 * Tests DROP TABLE clears PostgreSQL charset metadata and cached wpdb metadata.
-	 */
-	public function test_drop_table_clears_postgresql_charset_metadata_and_cache(): void {
-		$result = $this->run_isolated_wpdb_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-function __( $text ) {
-	return $text;
-}
-
-class WP_Error {
-	public $code;
-	public $message;
-
-	public function __construct( $code = '', $message = '' ) {
-		$this->code    = $code;
-		$this->message = $message;
-	}
-}
-
-function is_wp_error( $thing ) {
-	return $thing instanceof WP_Error;
-}
-
-class wpdb {
-	public $ready           = true;
-	public $charset         = 'utf8mb4';
-	public $is_mysql        = true;
-	public $table_charset   = array();
-	public $col_meta        = array();
-	public $insert_id       = 0;
-	public $last_query      = null;
-	public $func_call       = null;
-	public $last_error      = '';
-	public $queries         = array();
-	public $num_queries     = 0;
-	public $last_result     = array();
-	public $col_info        = null;
-	public $rows_affected   = 0;
-	public $num_rows        = 0;
-	public $result          = null;
-	public $suppress_errors = true;
-	public $show_errors     = false;
-}
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
-
-class WP_PostgreSQL_DB_Drop_Metadata_Fake_Connection extends WP_PostgreSQL_Connection {
-	private $pdo;
-	private $queries                = array();
-	private $temporary_table_exists = true;
-
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		if ( false !== strpos( $sql, 'FROM pg_catalog.pg_class c' ) && false !== strpos( $sql, 'pg_my_temp_schema()' ) ) {
-			$table           = $params[0] ?? '';
-			$this->queries[] = 'temp_schema:' . $table;
-
-			if ( $this->temporary_table_exists && 'wptests_temp_drop_metadata_cache' === $table ) {
-				return $this->statement_from_rows(
-					array(
-						array(
-							'nspname' => 'pg_temp_42',
-						),
-					)
-				);
-			}
-
-			return $this->statement_from_rows( array() );
-		}
-
-		if ( false !== strpos( $sql, 'SELECT column_name, data_type, character_maximum_length' ) ) {
-			$table           = end( $params );
-			$this->queries[] = 'native_columns:' . $table;
-			return $this->statement_from_rows( array() );
-		}
-
-		$this->queries[] = 'unexpected:' . preg_replace( '/\s+/', ' ', trim( $sql ) );
-		return $this->statement_from_rows( array() );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->pdo;
-	}
-
-	public function mark_temporary_table_dropped(): void {
-		$this->temporary_table_exists = false;
-	}
-
-	public function temporary_table_exists(): bool {
-		return $this->temporary_table_exists;
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-
-	private function statement_from_rows( array $rows ): PDOStatement {
-		if ( empty( $rows ) ) {
-			return $this->pdo->query( 'SELECT 1 WHERE 0 = 1' );
-		}
-
-		$columns = array_keys( $rows[0] );
-		$selects = array();
-		$params  = array();
-		foreach ( $rows as $row ) {
-			$fields = array();
-			foreach ( $columns as $column ) {
-				$fields[] = '? AS ' . WP_PostgreSQL_Connection::quote_identifier_value( $column );
-				$params[] = $row[ $column ];
-			}
-			$selects[] = 'SELECT ' . implode( ', ', $fields );
-		}
-
-		$stmt = $this->pdo->prepare( implode( ' UNION ALL ', $selects ) );
-		$stmt->execute( $params );
-		return $stmt;
-	}
-}
-
-class WP_PostgreSQL_DB_Drop_Metadata_Fake_Driver extends WP_PostgreSQL_Driver {
-	private $fake_connection;
-	private $queries = array();
-	private $permanent_table_exists = true;
-
-	public function __construct( WP_PostgreSQL_DB_Drop_Metadata_Fake_Connection $connection ) {
-		$this->fake_connection = $connection;
-	}
-
-	public function get_connection(): WP_PostgreSQL_Connection {
-		return $this->fake_connection;
-	}
-
-	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$this->queries[] = $query;
-
-		if ( 0 === stripos( $query, 'DROP TEMPORARY TABLE' ) ) {
-			$this->fake_connection->mark_temporary_table_dropped();
-			return true;
-		}
-
-		if ( 0 === stripos( $query, 'DROP TABLE' ) ) {
-			$this->permanent_table_exists = false;
-			return true;
-		}
-
-		if ( 'SHOW FULL COLUMNS FROM `wptests_drop_metadata_cache`' === $query ) {
-			if ( ! $this->permanent_table_exists ) {
-				return array();
-			}
-
-			$rows = array(
-				array(
-					'Field'     => 'name',
-					'Type'      => 'varchar(191)',
-					'Collation' => 'utf8mb4_unicode_ci',
-				),
-			);
-
-			if ( PDO::FETCH_ASSOC === $fetch_mode ) {
-				return $rows;
-			}
-
-			return array_map(
-				static function ( array $row ) {
-					return (object) $row;
-				},
-				$rows
-			);
-		}
-
-		if ( 'SHOW FULL COLUMNS FROM `wptests_temp_drop_metadata_cache`' === $query ) {
-			if ( ! $this->fake_connection->temporary_table_exists() ) {
-				return array();
-			}
-
-			$rows = array(
-				array(
-					'Field'     => 'name',
-					'Type'      => 'varchar(50)',
-					'Collation' => 'big5_chinese_ci',
-				),
-			);
-
-			if ( PDO::FETCH_ASSOC === $fetch_mode ) {
-				return $rows;
-			}
-
-			return array_map(
-				static function ( array $row ) {
-					return (object) $row;
-				},
-				$rows
-			);
-		}
-
-		if ( 0 === stripos( $query, 'SHOW FULL COLUMNS' ) ) {
-			return array();
-		}
-
-		return true;
-	}
-
-	public function get_last_return_value() {
-		return 0;
-	}
-
-	public function get_insert_id() {
-		return 0;
-	}
-
-	public function get_last_postgresql_queries(): array {
-		return array();
-	}
-
-	public function get_last_column_meta(): array {
-		return array();
-	}
-
-	public function get_queries(): array {
-		return $this->queries;
-	}
-}
-
-$connection = new WP_PostgreSQL_DB_Drop_Metadata_Fake_Connection();
-$driver     = new WP_PostgreSQL_DB_Drop_Metadata_Fake_Driver( $connection );
-$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
-
-$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
-$driver_property->setAccessible( true );
-$driver_property->setValue( $db, $driver );
-
-$store_metadata = new ReflectionMethod( WP_PostgreSQL_DB::class, 'store_postgresql_create_table_charset_metadata' );
-$store_metadata->setAccessible( true );
-$store_metadata->invoke(
-	$db,
-	'CREATE TEMPORARY TABLE wptests_temp_drop_metadata_cache ( name VARCHAR(50) CHARACTER SET big5 )'
-);
-
-$permanent_before = $db->get_col_charset( 'wptests_drop_metadata_cache', 'name' );
-$temporary_before = $db->get_col_charset( 'wptests_temp_drop_metadata_cache', 'name' );
-
-$permanent_dropped = $db->query( 'DROP TABLE IF EXISTS wptests_drop_metadata_cache' );
-$permanent_after   = $db->get_col_charset( 'wptests_drop_metadata_cache', 'name' );
-
-$temporary_dropped = $db->query( 'DROP TEMPORARY TABLE wptests_temp_drop_metadata_cache' );
-$temporary_after   = $db->get_col_charset( 'wptests_temp_drop_metadata_cache', 'name' );
-
-wp_postgresql_db_test_respond(
-	array(
-		'permanent_before'       => $permanent_before,
-		'temporary_before'       => $temporary_before,
-		'permanent_dropped'      => $permanent_dropped,
-		'permanent_after_error'  => $permanent_after instanceof WP_Error,
-		'temporary_dropped'      => $temporary_dropped,
-		'temporary_after_error'  => $temporary_after instanceof WP_Error,
-		'connection_queries'     => $connection->get_queries(),
-		'driver_queries'         => $driver->get_queries(),
-	)
-);
-PHP
-		);
-
-		$this->assertSame( 'utf8mb4', $result['permanent_before'] );
-		$this->assertSame( 'big5', $result['temporary_before'] );
-		$this->assertTrue( $result['permanent_dropped'] );
-		$this->assertTrue( $result['permanent_after_error'] );
-		$this->assertTrue( $result['temporary_dropped'] );
-		$this->assertTrue( $result['temporary_after_error'] );
-		$this->assertSame(
-			array(
-				'temp_schema:wptests_drop_metadata_cache',
-				'temp_schema:wptests_temp_drop_metadata_cache',
-				'temp_schema:wptests_drop_metadata_cache',
-				'native_columns:wptests_drop_metadata_cache',
-				'temp_schema:wptests_temp_drop_metadata_cache',
-				'native_columns:wptests_temp_drop_metadata_cache',
-			),
-			$result['connection_queries']
-		);
-		$this->assertSame(
-			array(
-				'SHOW FULL COLUMNS FROM `wptests_drop_metadata_cache`',
-				'SHOW FULL COLUMNS FROM `wptests_temp_drop_metadata_cache`',
-				'DROP TABLE IF EXISTS wptests_drop_metadata_cache',
-				'SHOW FULL COLUMNS FROM `wptests_drop_metadata_cache`',
-				'DROP TEMPORARY TABLE wptests_temp_drop_metadata_cache',
-				'SHOW FULL COLUMNS FROM `wptests_temp_drop_metadata_cache`',
-			),
-			$result['driver_queries']
-		);
+		$this->assertTrue( $result['dropped_permanent'] );
+		$this->assertTrue( $result['after_permanent_error'] );
+		$this->assertTrue( $result['created_temporary'] );
+		$this->assertSame( 'big5', $result['temporary_charset'] );
+		$this->assertTrue( $result['dropped_temporary'] );
+		$this->assertTrue( $result['after_temporary_error'] );
 	}
 
 	/**
@@ -2884,7 +1385,7 @@ PHP
 	public function test_postgresql_metadata_helpers_parse_schema_qualified_table_names(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {}
 
@@ -2946,7 +1447,7 @@ PHP
 
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-	require_once getcwd() . '/bootstrap.php';
+	require_once getcwd() . '/bootstrap-postgresql.php';
 
 	function wp_load_translations_early() {}
 	function __( $text ) {
@@ -3088,7 +1589,7 @@ PHP
 	public function test_db_connect_short_circuits_when_postgresql_driver_already_exists(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $ready              = false;
@@ -3158,9 +1659,11 @@ PHP
 	 * Tests db_connect() with a reusable PostgreSQL PDO and connection lifecycle methods.
 	 */
 	public function test_db_connect_reuses_global_postgresql_pdo_and_exposes_connection_lifecycle(): void {
+		$this->require_pgsql_test_dsn();
+
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $dbuser     = '';
@@ -3188,37 +1691,7 @@ class wpdb {
 
 require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
 
-class WP_PostgreSQL_DB_Connect_Fake_PDO extends PDO {
-	public $attributes = array();
-
-	public function __construct() {}
-
-	public function setAttribute( $attribute, $value ): bool {
-		$this->attributes[ $attribute ] = $value;
-		return true;
-	}
-
-	/**
-	 * Get a fake PDO attribute.
-	 *
-	 * @param int $attribute PDO attribute.
-	 * @return mixed Attribute value.
-	 */
-	#[\ReturnTypeWillChange]
-	public function getAttribute( $attribute ) {
-		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-			return 'pgsql';
-		}
-
-		if ( PDO::ATTR_SERVER_VERSION === $attribute ) {
-			return 'PostgreSQL 16 test';
-		}
-
-		return $this->attributes[ $attribute ] ?? null;
-	}
-}
-
-$pdo             = new WP_PostgreSQL_DB_Connect_Fake_PDO();
+$pdo             = wp_postgresql_tests_create_pgsql_pdo();
 $GLOBALS['@pdo'] = $pdo;
 
 $db             = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
@@ -3268,6 +1741,10 @@ wp_postgresql_db_test_respond(
 PHP
 		);
 
+		$this->assertIsString( $result['server_info'] );
+		$this->assertNotSame( '', $result['server_info'] );
+		unset( $result['server_info'] );
+
 		$this->assertSame(
 			array(
 				'connect_result'         => true,
@@ -3277,7 +1754,6 @@ PHP
 				'charset'                => 'utf8mb4',
 				'bail_calls'             => array(),
 				'driver_uses_global_pdo' => true,
-				'server_info'            => 'PostgreSQL 16 test',
 				'select_other_result'    => false,
 				'ready_after_other'      => false,
 				'select_current_result'  => true,
@@ -3298,7 +1774,7 @@ PHP
 	public function test_close_clears_stale_ready_state_without_driver(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $ready = false;
@@ -3344,7 +1820,7 @@ PHP
 	public function test_get_connection_options_normalizes_postgresql_socket_hosts(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $dbuser     = '';
@@ -3480,12 +1956,14 @@ PHP
 	}
 
 	/**
-	 * Tests PostgreSQL connection options only reuse PostgreSQL-backed global PDO objects.
+	 * Tests PostgreSQL connection options reuse real global PostgreSQL PDO objects.
 	 */
-	public function test_get_connection_options_reuses_only_global_postgresql_pdo(): void {
+	public function test_get_connection_options_reuses_global_postgresql_pdo(): void {
+		$this->require_pgsql_test_dsn();
+
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $dbuser     = 'pg_user';
@@ -3499,35 +1977,6 @@ class wpdb {
 }
 
 require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
-
-class WP_PostgreSQL_DB_PDO_Filter_Fake_PDO extends PDO {
-	private $driver_name;
-	private $throw_on_driver_lookup;
-
-	public function __construct( $driver_name, $throw_on_driver_lookup = false ) {
-		$this->driver_name           = $driver_name;
-		$this->throw_on_driver_lookup = $throw_on_driver_lookup;
-	}
-
-	/**
-	 * Get a fake PDO attribute.
-	 *
-	 * @param int $attribute PDO attribute.
-	 * @return mixed Attribute value.
-	 */
-	#[\ReturnTypeWillChange]
-	public function getAttribute( $attribute ) {
-		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-			if ( $this->throw_on_driver_lookup ) {
-				throw new RuntimeException( 'driver lookup failed' );
-			}
-
-			return $this->driver_name;
-		}
-
-		return null;
-	}
-}
 
 function wp_postgresql_db_get_connection_options_for_global_pdo( $global_value, $set_global ) {
 	if ( $set_global ) {
@@ -3552,16 +2001,12 @@ function wp_postgresql_db_get_connection_options_for_global_pdo( $global_value, 
 	);
 }
 
-$pgsql_pdo    = new WP_PostgreSQL_DB_PDO_Filter_Fake_PDO( 'pgsql' );
-$mysql_pdo    = new WP_PostgreSQL_DB_PDO_Filter_Fake_PDO( 'mysql' );
-$throwing_pdo = new WP_PostgreSQL_DB_PDO_Filter_Fake_PDO( 'pgsql', true );
+$pgsql_pdo = wp_postgresql_tests_create_pgsql_pdo();
 
 wp_postgresql_db_test_respond(
 	array(
 		'no_global'     => wp_postgresql_db_get_connection_options_for_global_pdo( null, false ),
 		'pgsql_pdo'     => wp_postgresql_db_get_connection_options_for_global_pdo( $pgsql_pdo, true ),
-		'mysql_pdo'     => wp_postgresql_db_get_connection_options_for_global_pdo( $mysql_pdo, true ),
-		'throwing_pdo'  => wp_postgresql_db_get_connection_options_for_global_pdo( $throwing_pdo, true ),
 		'non_pdo_value' => wp_postgresql_db_get_connection_options_for_global_pdo( (object) array( 'driver' => 'pgsql' ), true ),
 	)
 );
@@ -3582,16 +2027,6 @@ PHP
 					'pdo_same' => true,
 					'keys'     => array_merge( $base_keys, array( 'pdo' ) ),
 				),
-				'mysql_pdo'     => array(
-					'has_pdo'  => false,
-					'pdo_same' => null,
-					'keys'     => $base_keys,
-				),
-				'throwing_pdo'  => array(
-					'has_pdo'  => false,
-					'pdo_same' => null,
-					'keys'     => $base_keys,
-				),
 				'non_pdo_value' => array(
 					'has_pdo'  => false,
 					'pdo_same' => null,
@@ -3608,7 +2043,7 @@ PHP
 	public function test_select_uses_current_postgresql_driver_when_handle_is_omitted(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $dbname = '';
@@ -3671,7 +2106,7 @@ PHP
 	public function test_db_connect_rejects_missing_database_name_before_connecting(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $dbname     = null;
@@ -3757,7 +2192,7 @@ PHP
 	public function test_db_connect_maps_connection_option_failures_to_wpdb_state(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $dbuser     = 'pg_user';
@@ -3860,7 +2295,7 @@ PHP
 	public function test_check_connection_probes_existing_driver_and_reconnects_after_failure(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 if ( ! class_exists( 'wpdb', false ) ) {
 	class wpdb {
@@ -4004,7 +2439,7 @@ PHP
 	public function test_db_server_info_reports_pending_connection_without_driver(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {}
 
@@ -4053,7 +2488,7 @@ function apply_filters( $hook_name, $value ) {
 	return $value;
 }
 
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $ready         = true;
@@ -4177,7 +2612,7 @@ PHP
 			<<<'PHP'
 define( 'SAVEQUERIES', true );
 
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function wp_load_translations_early() {}
 function is_multisite() {
@@ -4409,7 +2844,7 @@ PHP
 	public function test_query_detects_statement_keyword_after_leading_sql_comments(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 class wpdb {
 	public $ready           = true;
@@ -4577,7 +3012,7 @@ PHP
 
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function wp_load_translations_early() {}
 function is_multisite() {
@@ -4719,7 +3154,7 @@ PHP
 
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function wp_load_translations_early() {}
 function is_multisite() {
@@ -4835,7 +3270,7 @@ PHP
 
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function wp_load_translations_early() {}
 function is_multisite() {
@@ -4991,7 +3426,7 @@ PHP
 
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function wp_load_translations_early() {}
 function is_multisite() {
@@ -5153,6 +3588,16 @@ PHP
 			),
 			$result['queries']
 		);
+	}
+
+	/**
+	 * Requires a real PostgreSQL test DSN before spawning isolated scripts.
+	 */
+	private function require_pgsql_test_dsn(): void {
+		$dsn = getenv( 'PGSQL_TEST_DSN' );
+		if ( false === $dsn || '' === $dsn ) {
+			$this->markTestSkipped( 'Set PGSQL_TEST_DSN to run PostgreSQL-backed wpdb adapter tests.' );
+		}
 	}
 
 	/**

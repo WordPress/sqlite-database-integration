@@ -12,7 +12,7 @@ class WP_PostgreSQL_Install_Functions_Tests extends TestCase {
 	public function test_postgresql_make_db_current_silent_translates_schema(): void {
 		$result = $this->run_isolated_install_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 $root = sys_get_temp_dir() . '/wp-pg-install-' . str_replace( '.', '-', uniqid( '', true ) ) . '/';
 register_shutdown_function( 'wp_pg_install_test_remove_tree', $root );
@@ -77,66 +77,16 @@ PHP
 	public function test_postgresql_make_db_current_silent_routes_schema_through_driver(): void {
 		$result = $this->run_isolated_install_script(
 			<<<'PHP'
-	require_once getcwd() . '/bootstrap.php';
-
-	class WP_PostgreSQL_Install_Test_PDO extends PDO {
-		#[\ReturnTypeWillChange]
-		public function getAttribute( $attribute ) {
-			if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-				return 'pgsql';
-			}
-
-			return parent::getAttribute( $attribute );
-		}
-	}
-
-	class WP_PostgreSQL_Install_Test_Connection extends WP_PostgreSQL_Connection {
-		public $queries        = array();
-		public $domain_queries = array();
-		private $test_pdo;
-
-		public function __construct() {
-			$this->test_pdo = new WP_PostgreSQL_Install_Test_PDO( 'sqlite::memory:' );
-		}
-
-		public function get_pdo(): PDO {
-			return $this->test_pdo;
-		}
-
-		public function get_driver_name(): string {
-			return 'pgsql';
-		}
-
-		public function quote( $value, int $type = PDO::PARAM_STR ): string {
-			return $this->test_pdo->quote( $value, $type );
-		}
-
-		public function query( string $sql, array $params = array() ): PDOStatement {
-			if ( 0 === strpos( $sql, 'DO $wp_mysql_' ) ) {
-				$this->domain_queries[] = $sql;
-				return $this->test_pdo->query( 'SELECT 1' );
-			}
-
-			$this->queries[] = array(
-				'sql'    => $sql,
-				'params' => $params,
-			);
-
-			return $this->test_pdo->query( 'SELECT 1' );
-		}
-	}
+	require_once getcwd() . '/bootstrap-postgresql.php';
 
 	class WP_PostgreSQL_Install_Test_Driver extends WP_PostgreSQL_Driver {
-		public $queries       = array();
-		public $stored_schema = '';
+		public $queries = array();
+
+		public function __construct() {}
 
 		public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
 			$this->queries[] = $query;
 			return 0;
-		}
-
-		public function sync_postgresql_catalog_schema_metadata( string $query ): void {
-			$this->stored_schema = $query;
 		}
 	}
 
@@ -161,8 +111,7 @@ PHP
 
 	define( 'ABSPATH', $root );
 
-	$connection       = new WP_PostgreSQL_Install_Test_Connection();
-	$driver           = new WP_PostgreSQL_Install_Test_Driver( $connection, 'WordPress' );
+	$driver           = new WP_PostgreSQL_Install_Test_Driver();
 	$GLOBALS['wpdb'] = new class( $driver ) {
 		public $dbh;
 		public $last_error = '';
@@ -187,10 +136,7 @@ PHP
 			array(
 				'result'                => $result,
 				'queries'               => $driver->queries,
-				'connection_queries'    => array_column( $connection->queries, 'sql' ),
-				'domain_queries'        => $connection->domain_queries,
 				'fallback_query_called' => $GLOBALS['wpdb']->fallback_query_called,
-				'stored_schema'         => $driver->stored_schema,
 			)
 		);
 	PHP
@@ -198,157 +144,9 @@ PHP
 
 		$this->assertTrue( $result['result'] );
 		$this->assertFalse( $result['fallback_query_called'] );
-		$this->assertSame( array(), $result['domain_queries'] );
-		$this->assertSame( '', $result['stored_schema'] );
 		$this->assertCount( 1, $result['queries'] );
 		$this->assertStringStartsWith( 'CREATE TABLE wp_options', $result['queries'][0] );
 		$this->assertStringContainsString( 'UNIQUE KEY option_name (option_name)', $result['queries'][0] );
-		$this->assertSame( array(), $result['connection_queries'] );
-	}
-
-	/**
-	 * Tests driver-backed schema installation uses PostgreSQL catalog metadata, not hidden side tables.
-	 */
-	public function test_postgresql_make_db_current_silent_uses_catalog_metadata_with_driver(): void {
-		$result = $this->run_isolated_install_script(
-			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
-
-class WP_PostgreSQL_Install_Catalog_Test_PDO extends PDO {
-	#[\ReturnTypeWillChange]
-	public function getAttribute( $attribute ) {
-		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
-			return 'pgsql';
-		}
-
-		if ( PDO::ATTR_SERVER_VERSION === $attribute ) {
-			return '16.0';
-		}
-
-		return parent::getAttribute( $attribute );
-	}
-}
-
-class WP_PostgreSQL_Install_Catalog_Test_Connection extends WP_PostgreSQL_Connection {
-	public $queries = array();
-	private $test_pdo;
-
-	public function __construct() {
-		$this->test_pdo = new WP_PostgreSQL_Install_Catalog_Test_PDO( 'sqlite::memory:' );
-	}
-
-	public function get_pdo(): PDO {
-		return $this->test_pdo;
-	}
-
-	public function get_driver_name(): string {
-		return 'pgsql';
-	}
-
-	public function quote( $value, int $type = PDO::PARAM_STR ): string {
-		return $this->test_pdo->quote( $value, $type );
-	}
-
-	public function query( string $sql, array $params = array() ): PDOStatement {
-		foreach (
-			array(
-				WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
-			) as $metadata_table
-		) {
-			if ( 1 === preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ) ) {
-				throw new RuntimeException( 'Hidden metadata table SQL was not expected during PostgreSQL install.' );
-			}
-		}
-
-		$this->queries[] = array(
-			'sql'    => $sql,
-			'params' => $params,
-		);
-
-		return $this->test_pdo->query( 'SELECT 1' );
-	}
-}
-
-$root = sys_get_temp_dir() . '/wp-pg-install-' . str_replace( '.', '-', uniqid( '', true ) ) . '/';
-register_shutdown_function( 'wp_pg_install_test_remove_tree', $root );
-mkdir( $root . 'wp-admin/includes', 0777, true );
-file_put_contents(
-	$root . 'wp-admin/includes/schema.php',
-	'<?php
-function wp_get_db_schema() {
-	return "CREATE TABLE wp_options (
-		option_id bigint(20) unsigned NOT NULL auto_increment,
-		option_name varchar(191) NOT NULL default \'\',
-		option_value longtext NOT NULL,
-		autoload varchar(20) NOT NULL default \'yes\',
-		PRIMARY KEY (option_id),
-		UNIQUE KEY option_name (option_name)
-	) DEFAULT CHARACTER SET utf8mb4";
-}
-'
-);
-
-define( 'ABSPATH', $root );
-
-$connection       = new WP_PostgreSQL_Install_Catalog_Test_Connection();
-$GLOBALS['wpdb'] = new class( $connection ) {
-	public $dbh;
-	public $last_error = '';
-
-	public function __construct( $connection ) {
-		$this->dbh = new WP_PostgreSQL_Driver( $connection, 'WordPress' );
-	}
-
-	public function query( $statement ) {
-		throw new RuntimeException( '$wpdb->query() should not receive translated PostgreSQL DDL.' );
-	}
-};
-
-require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/install-functions.php';
-
-$result = postgresql_make_db_current_silent();
-
-wp_pg_install_test_remove_tree( $root );
-wp_pg_install_test_respond(
-	array(
-		'result'  => $result,
-		'queries' => array_column( $connection->queries, 'sql' ),
-		'params'  => array_column( $connection->queries, 'params' ),
-	)
-);
-PHP
-		);
-
-		$sql = implode( "\n", $result['queries'] );
-
-		$this->assertTrue( $result['result'] );
-		$this->assertStringContainsString( 'DO $wp_mysql_text_domain$', $sql );
-		$this->assertStringContainsString( 'CREATE TABLE "wp_options"', $sql );
-		$this->assertStringContainsString( 'DO $wp_mysql_identity_sequence_comment$', $sql );
-		$this->assertStringNotContainsString( '__wp_mysql_information_schema', $sql );
-		$this->assertStringNotContainsString( 'CREATE OR REPLACE VIEW', $sql );
-
-		foreach (
-			array(
-				WP_PostgreSQL_Driver::MYSQL_TABLE_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_COLUMN_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_INDEX_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_FOREIGN_KEY_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHECK_METADATA_TABLE,
-				WP_PostgreSQL_Driver::MYSQL_CHARSET_METADATA_TABLE,
-			) as $metadata_table
-		) {
-			$this->assertSame(
-				0,
-				preg_match( '/\b(?:CREATE|ALTER|INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+(?:(?:"?[A-Za-z0-9_]+"?)\.)?"?' . preg_quote( $metadata_table, '/' ) . '"?\b/i', $sql ),
-				$metadata_table
-			);
-		}
 	}
 
 	/**
@@ -361,7 +159,7 @@ function do_action( $hook, ...$args ) {
 	wp_pg_install_test_event( array( 'do_action', $hook ) );
 }
 
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 function wp_pg_install_test_event( $event ) {
 	$GLOBALS['wp_pg_install_test_events'][] = $event;
@@ -540,7 +338,7 @@ PHP
 	public function test_install_network_creates_postgresql_global_schema(): void {
 		$result = $this->run_isolated_install_script(
 			<<<'PHP'
-require_once getcwd() . '/bootstrap.php';
+require_once getcwd() . '/bootstrap-postgresql.php';
 
 $root = sys_get_temp_dir() . '/wp-pg-install-' . str_replace( '.', '-', uniqid( '', true ) ) . '/';
 register_shutdown_function( 'wp_pg_install_test_remove_tree', $root );

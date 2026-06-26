@@ -5,6 +5,14 @@
     "license": "GPL-2.0-or-later",
 	"scripts": {
 		"test": "phpunit",
+		"test-postgresql": [
+			"phpunit -c phpunit-postgresql.xml.dist tests/WP_PostgreSQL_Connection_Tests.php",
+			"phpunit -c phpunit-postgresql.xml.dist tests/WP_PostgreSQL_Create_Table_Translator_Tests.php",
+			"phpunit -c phpunit-postgresql.xml.dist tests/WP_PostgreSQL_DB_Tests.php",
+			"phpunit -c phpunit-postgresql.xml.dist tests/WP_PostgreSQL_Driver_RegExp_Tests.php",
+			"phpunit -c phpunit-postgresql.xml.dist --filter test_real_pgsql tests/WP_PostgreSQL_Driver_Tests.php",
+			"phpunit -c phpunit-postgresql.xml.dist tests/WP_PostgreSQL_Install_Functions_Tests.php"
+		],
 		"bench-lexer": [
 			"@php tests/tools/run-lexer-benchmark.php",
 			"@php -d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing tests/tools/run-lexer-benchmark.php"

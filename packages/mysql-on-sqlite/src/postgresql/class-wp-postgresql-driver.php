@@ -15,16 +15,8 @@
 class WP_PostgreSQL_Driver {
 	use WP_PostgreSQL_Driver_Rewrite_Rules;
 
-	const MYSQL_COLUMN_METADATA_TABLE      = '__wp_postgresql_mysql_column_metadata';
-	const MYSQL_INDEX_METADATA_TABLE       = '__wp_postgresql_mysql_index_metadata';
-	const MYSQL_FOREIGN_KEY_METADATA_TABLE = '__wp_postgresql_mysql_foreign_key_metadata';
-	const MYSQL_CHECK_METADATA_TABLE       = '__wp_postgresql_mysql_check_metadata';
-	const MYSQL_CHARSET_METADATA_TABLE     = '__wp_postgresql_mysql_charset_metadata';
-	const MYSQL_TABLE_METADATA_TABLE       = '__wp_postgresql_mysql_table_metadata';
-	const DEFAULT_MYSQL_CHARSET            = 'utf8mb4';
-	const DEFAULT_MYSQL_COLLATION          = 'utf8mb4_unicode_ci';
-
-	private const MYSQL_DEFAULT_CHARSET_COLLATIONS = array( 'ascii' => 'ascii_general_ci' ) + array( 'big5' => 'big5_chinese_ci' ) + array( 'binary' => 'binary' ) + array( 'cp1251' => 'cp1251_general_ci' ) + array( 'hebrew' => 'hebrew_general_ci' ) + array( 'koi8r' => 'koi8r_general_ci' ) + array( 'latin1' => 'latin1_swedish_ci' ) + array( 'tis620' => 'tis620_thai_ci' ) + array( 'ujis' => 'ujis_japanese_ci' ) + array( 'utf8' => 'utf8_general_ci' ) + array( 'utf8mb4' => 'utf8mb4_unicode_ci' );
+	const DEFAULT_MYSQL_CHARSET   = 'utf8mb4';
+	const DEFAULT_MYSQL_COLLATION = 'utf8mb4_unicode_ci';
 
 	private const DEFAULT_MYSQL_SQL_MODES = array(
 		'ERROR_FOR_DIVISION_BY_ZERO',
@@ -81,8 +73,24 @@ class WP_PostgreSQL_Driver {
 	private const MYSQL_DML_VALUES_ROW_LIST_KEYWORD_TOKENS            = array( WP_MySQL_Lexer::VALUES_SYMBOL, WP_MySQL_Lexer::VALUE_SYMBOL );
 	private const MYSQL_DML_SELECT_SOURCE_TOKENS                      = array( WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::OPEN_PAR_SYMBOL );
 	private const MYSQL_UPSERT_CONFLICT_PROBE_LITERAL_TOKENS          = array( WP_MySQL_Lexer::BIN_NUMBER, WP_MySQL_Lexer::DECIMAL_NUMBER, WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT, WP_MySQL_Lexer::FALSE_SYMBOL, WP_MySQL_Lexer::FLOAT_NUMBER, WP_MySQL_Lexer::HEX_NUMBER, WP_MySQL_Lexer::INT_NUMBER, WP_MySQL_Lexer::LONG_NUMBER, WP_MySQL_Lexer::NULL_SYMBOL, WP_MySQL_Lexer::SINGLE_QUOTED_TEXT, WP_MySQL_Lexer::TRUE_SYMBOL, WP_MySQL_Lexer::ULONGLONG_NUMBER );
-	private const MYSQL_SHOW_OUTPUT_COLUMNS                           = array( 'character_set' => 'Charset,Description,Default collation,Maxlen' ) + array( 'collation' => 'Collation,Charset,Id,Default,Compiled,Sortlen,Pad_attribute' ) + array( 'columns' => 'Field,Type,Null,Key,Default,Extra' ) + array( 'columns_full' => 'Field,Type,Collation,Null,Key,Default,Extra,Privileges,Comment' ) + array( 'databases' => 'Database' ) + array( 'engines' => 'Engine,Support,Comment,Transactions,XA,Savepoints' ) + array( 'events' => 'Db,Name,Definer,Time zone,Type,Execute at,Interval value,Interval field,Starts,Ends,Status,Originator,character_set_client,collation_connection,Database Collation' ) + array( 'index' => 'Table,Non_unique,Key_name,Seq_in_index,Column_name,Collation,Cardinality,Sub_part,Packed,Null,Index_type,Comment,Index_comment,Visible,Expression' ) + array( 'name_value' => 'Variable_name,Value' ) + array( 'open_tables' => 'Database,Table,In_use,Name_locked' ) + array( 'plugins' => 'Name,Status,Type,Library,License' ) + array( 'processlist' => 'Id,User,Host,db,Command,Time,State,Info' ) + array( 'routine_status' => 'Db,Name,Type,Definer,Modified,Created,Security_type,Comment,character_set_client,collation_connection,Database Collation' ) + array( 'table_status' => 'Name,Engine,Version,Row_format,Rows,Avg_row_length,Data_length,Max_data_length,Index_length,Data_free,Auto_increment,Create_time,Update_time,Check_time,Collation,Checksum,Create_options,Comment' ) + array( 'triggers' => 'Trigger,Event,Table,Statement,Timing,Created,sql_mode,Definer,character_set_client,collation_connection,Database Collation' );
-	private const MYSQL_SHOW_TABLE_STATUS_NUMERIC_COLUMNS             = 'Version,Rows,Avg_row_length,Data_length,Max_data_length,Index_length,Data_free,Auto_increment,Checksum';
+	private const MYSQL_SHOW_OUTPUT_COLUMNS                           = array(
+		'character_set'  => array( 'Charset', 'Description', 'Default collation', 'Maxlen' ),
+		'collation'      => array( 'Collation', 'Charset', 'Id', 'Default', 'Compiled', 'Sortlen', 'Pad_attribute' ),
+		'columns'        => array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+		'columns_full'   => array( 'Field', 'Type', 'Collation', 'Null', 'Key', 'Default', 'Extra', 'Privileges', 'Comment' ),
+		'databases'      => array( 'Database' ),
+		'engines'        => array( 'Engine', 'Support', 'Comment', 'Transactions', 'XA', 'Savepoints' ),
+		'events'         => array( 'Db', 'Name', 'Definer', 'Time zone', 'Type', 'Execute at', 'Interval value', 'Interval field', 'Starts', 'Ends', 'Status', 'Originator', 'character_set_client', 'collation_connection', 'Database Collation' ),
+		'index'          => array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Collation', 'Cardinality', 'Sub_part', 'Packed', 'Null', 'Index_type', 'Comment', 'Index_comment', 'Visible', 'Expression' ),
+		'name_value'     => array( 'Variable_name', 'Value' ),
+		'open_tables'    => array( 'Database', 'Table', 'In_use', 'Name_locked' ),
+		'plugins'        => array( 'Name', 'Status', 'Type', 'Library', 'License' ),
+		'processlist'    => array( 'Id', 'User', 'Host', 'db', 'Command', 'Time', 'State', 'Info' ),
+		'routine_status' => array( 'Db', 'Name', 'Type', 'Definer', 'Modified', 'Created', 'Security_type', 'Comment', 'character_set_client', 'collation_connection', 'Database Collation' ),
+		'table_status'   => array( 'Name', 'Engine', 'Version', 'Row_format', 'Rows', 'Avg_row_length', 'Data_length', 'Max_data_length', 'Index_length', 'Data_free', 'Auto_increment', 'Create_time', 'Update_time', 'Check_time', 'Collation', 'Checksum', 'Create_options', 'Comment' ),
+		'triggers'       => array( 'Trigger', 'Event', 'Table', 'Statement', 'Timing', 'Created', 'sql_mode', 'Definer', 'character_set_client', 'collation_connection', 'Database Collation' ),
+	);
+	private const MYSQL_SHOW_TABLE_STATUS_NUMERIC_COLUMNS             = array( 'Version', 'Rows', 'Avg_row_length', 'Data_length', 'Max_data_length', 'Index_length', 'Data_free', 'Auto_increment', 'Checksum' );
 	private const MYSQL_SHOW_WHERE_COMPARISON_OPERATORS               = array( WP_MySQL_Lexer::EQUAL_OPERATOR => '=' ) + array( WP_MySQL_Lexer::NOT_EQUAL_OPERATOR => '<>' ) + array( WP_MySQL_Lexer::GREATER_THAN_OPERATOR => '>' ) + array( WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR => '>=' ) + array( WP_MySQL_Lexer::LESS_THAN_OPERATOR => '<' ) + array( WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR => '<=' ) + array( WP_MySQL_Lexer::NULL_SAFE_EQUAL_OPERATOR => '<=>' );
 	private const MYSQL_SHOW_WHERE_ADDITIVE_OPERATORS                 = array( WP_MySQL_Lexer::PLUS_OPERATOR => '+' ) + array( WP_MySQL_Lexer::MINUS_OPERATOR => '-' );
 	private const MYSQL_SHOW_WHERE_MULTIPLICATIVE_OPERATORS           = array( WP_MySQL_Lexer::MULT_OPERATOR => '*' ) + array( WP_MySQL_Lexer::DIV_OPERATOR => '/' ) + array( WP_MySQL_Lexer::DIV_SYMBOL => '/' ) + array( WP_MySQL_Lexer::MOD_OPERATOR => '%' ) + array( WP_MySQL_Lexer::MOD_SYMBOL => '%' );
@@ -135,7 +143,7 @@ class WP_PostgreSQL_Driver {
 
 	private const MYSQL_TOKEN_SEQUENCE_TRANSLATION_RULES                 = array( 'translate_mysql_dual_table_reference_to_postgresql', 'translate_mysql_index_hint_to_postgresql', 'translate_mysql_limit_offset_count_to_postgresql', 'translate_mysql_field_function_to_postgresql', 'translate_mysql_typed_cast_or_convert_to_postgresql', 'translate_mysql_regexp_operator_to_postgresql', 'translate_mysql_group_concat_function_to_postgresql', 'translate_mysql_rand_function_to_postgresql', 'translate_mysql_session_user_function_to_postgresql', 'translate_mysql_infix_interval_expression_to_postgresql', 'translate_mysql_date_arithmetic_to_postgresql', 'translate_mysql_nonparenthesized_timestamp_function_to_postgresql', 'translate_mysql_common_function_to_postgresql', 'translate_mysql_week_function_to_postgresql', 'translate_mysql_weekday_index_function_to_postgresql', 'translate_mysql_date_format_to_postgresql', 'translate_mysql_date_time_extract_to_postgresql', 'translate_mysql_convert_using_to_postgresql', 'translate_mysql_variable_reference_to_postgresql:without_end', 'translate_mysql_select_row_locking_clause_to_empty_postgresql' );
 	private const MYSQL_COMPATIBLE_REWRITE_STATEMENT_TOKENS              = array( WP_MySQL_Lexer::DELETE_SYMBOL, WP_MySQL_Lexer::INSERT_SYMBOL, WP_MySQL_Lexer::REPLACE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::UPDATE_SYMBOL );
-	private const MYSQL_COMPATIBLE_REWRITE_UNSUPPORTED_FUNCTION_SCANNERS = array( 'contains_unsupported_mysql_date_arithmetic_function', 'contains_unsupported_mysql_date_format_function', 'contains_unsupported_mysql_rand_function', 'contains_unsupported_mysql_week_function', 'contains_unsupported_mysql_convert_function', 'contains_unsupported_mysql_common_function' );
+	private const MYSQL_COMPATIBLE_REWRITE_UNSUPPORTED_FUNCTION_SCANNERS = array( 'contains_unsupported_mysql_date_arithmetic_function', 'contains_unsupported_mysql_timestampadd_function', 'contains_unsupported_mysql_date_format_function', 'contains_unsupported_mysql_rand_function', 'contains_unsupported_mysql_week_function', 'contains_unsupported_mysql_extract_function', 'contains_unsupported_mysql_convert_function', 'contains_unsupported_mysql_common_function' );
 
 	private const MYSQL_SELECT_PROJECTION_BOUNDARY_TOKENS = array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::FROM_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::LIMIT_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL, WP_MySQL_Lexer::WHERE_SYMBOL );
 	private const MYSQL_SELECT_CLAUSE_POSITION_TOKENS     = array( 'from' => WP_MySQL_Lexer::FROM_SYMBOL ) + array( 'group' => WP_MySQL_Lexer::GROUP_SYMBOL ) + array( 'having' => WP_MySQL_Lexer::HAVING_SYMBOL ) + array( 'order' => WP_MySQL_Lexer::ORDER_SYMBOL ) + array( 'where' => WP_MySQL_Lexer::WHERE_SYMBOL );
@@ -149,9 +157,27 @@ class WP_PostgreSQL_Driver {
 	private const MYSQL_SIMPLE_SELECT_UNSUPPORTED_TOKENS  = array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::JOIN_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL );
 	private const MYSQL_AGGREGATE_CALL_TOKEN_IDS          = array( WP_MySQL_Lexer::AVG_SYMBOL, WP_MySQL_Lexer::BIT_AND_SYMBOL, WP_MySQL_Lexer::BIT_OR_SYMBOL, WP_MySQL_Lexer::BIT_XOR_SYMBOL, WP_MySQL_Lexer::COUNT_SYMBOL, WP_MySQL_Lexer::GROUP_CONCAT_SYMBOL, WP_MySQL_Lexer::MAX_SYMBOL, WP_MySQL_Lexer::MIN_SYMBOL, WP_MySQL_Lexer::STD_SYMBOL, WP_MySQL_Lexer::STDDEV_POP_SYMBOL, WP_MySQL_Lexer::STDDEV_SAMP_SYMBOL, WP_MySQL_Lexer::STDDEV_SYMBOL, WP_MySQL_Lexer::SUM_SYMBOL, WP_MySQL_Lexer::VAR_POP_SYMBOL, WP_MySQL_Lexer::VAR_SAMP_SYMBOL, WP_MySQL_Lexer::VARIANCE_SYMBOL );
 
-	private const MYSQL_CONSTANT_STRING_FUNCTION_DESCRIPTORS = 'lcase lower|1|1|ascii_unary|strtolower;ucase upper|1|1|ascii_unary|strtoupper;ltrim|1|1|ascii_unary|ltrim;rtrim|1|1|ascii_unary|rtrim;reverse|1|1|ascii_unary|strrev;coalesce|1||coalesce;ifnull|2|2|ifnull;elt|2||elt;concat|1||strings|concat;concat_ws|2||strings|concat_ws;nullif|2|2|strings|nullif;replace|3|3|strings|replace;left right|2|2|side;lpad rpad|3|3|pad;repeat|2|2|repeat;space|1|1|space;substr substring|2|3|substring';
+	private const MYSQL_CONSTANT_STRING_FUNCTION_DESCRIPTORS = array(
+		array( 'lcase lower', 1, 1, 'ascii_unary', 'strtolower' ),
+		array( 'ucase upper', 1, 1, 'ascii_unary', 'strtoupper' ),
+		array( 'ltrim', 1, 1, 'ascii_unary', 'ltrim' ),
+		array( 'rtrim', 1, 1, 'ascii_unary', 'rtrim' ),
+		array( 'reverse', 1, 1, 'ascii_unary', 'strrev' ),
+		array( 'coalesce', 1, null, 'coalesce', null ),
+		array( 'ifnull', 2, 2, 'ifnull', null ),
+		array( 'elt', 2, null, 'elt', null ),
+		array( 'concat', 1, null, 'strings', 'concat' ),
+		array( 'concat_ws', 2, null, 'strings', 'concat_ws' ),
+		array( 'nullif', 2, 2, 'strings', 'nullif' ),
+		array( 'replace', 3, 3, 'strings', 'replace' ),
+		array( 'left right', 2, 2, 'side', null ),
+		array( 'lpad rpad', 3, 3, 'pad', null ),
+		array( 'repeat', 2, 2, 'repeat', null ),
+		array( 'space', 1, 1, 'space', null ),
+		array( 'substr substring', 2, 3, 'substring', null ),
+	);
 
-	private const MYSQL_VIEW_SELECT_VALIDATION_SCANNERS = array( array( 'contains_mysql_index_hint_syntax' ), array( 'contains_unsupported_mysql_date_arithmetic_function_query' ), array( 'contains_unsupported_mysql_fulltext_search_query' ), array( 'contains_unsupported_mysql_range_scanner_query', array( array( 'contains_unsupported_mysql_common_function' ) ) ), array( 'contains_unsupported_mysql_group_concat_function_query' ), array( 'contains_unsupported_mysql_week_function_query' ) );
+	private const MYSQL_VIEW_SELECT_VALIDATION_SCANNERS = array( array( 'contains_mysql_index_hint_syntax' ), array( 'contains_unsupported_mysql_date_arithmetic_function_query' ), array( 'contains_unsupported_mysql_fulltext_search_query' ), array( 'contains_unsupported_mysql_range_scanner_query', array( array( 'contains_unsupported_mysql_common_function' ) ) ), array( 'contains_unsupported_mysql_group_concat_function_query' ), array( 'contains_unsupported_mysql_week_function_query' ), array( 'contains_unsupported_mysql_extract_function_query' ) );
 
 	private const MYSQL_TYPED_CAST_OR_CONVERT_REWRITE_TYPES = array( 'cast' => array( 'integer', 'date_time', 'date', 'binary' ) ) + array( 'convert' => array( 'integer', 'character', 'binary', 'decimal', 'date' ) );
 
@@ -190,7 +216,7 @@ class WP_PostgreSQL_Driver {
 	/**
 	 * Prefix for MySQL column type metadata stored on PostgreSQL column comments.
 	 */
-	private const MYSQL_COLUMN_COMMENT_TYPE_PREFIX = '__wp_mysql_column_type:';
+	private const MYSQL_COLUMN_COMMENT_TYPE_PREFIX = WP_PostgreSQL_Create_Table_Translator::MYSQL_COLUMN_COMMENT_TYPE_PREFIX;
 
 	/**
 	 * Prefix for MySQL column charset metadata stored on PostgreSQL column comments.
@@ -202,12 +228,15 @@ class WP_PostgreSQL_Driver {
 	 */
 	private const MYSQL_COLUMN_COMMENT_COLLATION_PREFIX = '__wp_mysql_column_collation:';
 
-	private const POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES = array(
+	private const POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES    = array(
 		self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX,
 		self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX,
 		self::MYSQL_COLUMN_COMMENT_CHARSET_PREFIX,
 		self::MYSQL_COLUMN_COMMENT_COLLATION_PREFIX,
 	);
+	private const POSTGRESQL_CATALOG_BASE64_MARKER_PAYLOAD_PATTERN     = '/^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/';
+	private const POSTGRESQL_CATALOG_BASE64_MARKER_PAYLOAD_SQL_PATTERN = '^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$';
+	private const POSTGRESQL_CATALOG_USER_COMMENT_ESCAPE_PREFIX        = 'WP_MYSQL_COMMENT_ESCAPE:';
 
 	/**
 	 * Prefix for MySQL index type metadata stored on PostgreSQL index comments.
@@ -218,6 +247,19 @@ class WP_PostgreSQL_Driver {
 	 * Prefix for MySQL index prefix lengths stored in PostgreSQL index comments.
 	 */
 	private const MYSQL_INDEX_COMMENT_SUB_PART_PREFIX = '__wp_mysql_index_sub_part:';
+
+	private const POSTGRESQL_CATALOG_COMMENT_MARKER_PREFIXES = array(
+		self::MYSQL_IDENTITY_SEQUENCE_COMMENT_TYPE_PREFIX,
+		self::MYSQL_CHECK_CONSTRAINT_COMMENT_CLAUSE_PREFIX,
+		self::MYSQL_CHECK_CONSTRAINT_COMMENT_ENFORCED_PREFIX,
+		self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX,
+		self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX,
+		self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX,
+		self::MYSQL_COLUMN_COMMENT_CHARSET_PREFIX,
+		self::MYSQL_COLUMN_COMMENT_COLLATION_PREFIX,
+		self::MYSQL_INDEX_COMMENT_TYPE_PREFIX,
+		self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX,
+	);
 
 	private const MYSQL_SPATIAL_COLUMN_TYPES = array( 'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon', 'geomcollection', 'geometrycollection' );
 
@@ -524,13 +566,6 @@ class WP_PostgreSQL_Driver {
 	private $mysql_user_variables = array();
 
 	/**
-	 * Narrow in-memory procedure registry for WordPress mysqli compatibility tests.
-	 *
-	 * @var array<string, string>
-	 */
-	private $procedures = array();
-
-	/**
 	 * Constructor.
 	 *
 	 * @param WP_PostgreSQL_Connection $connection    PostgreSQL connection.
@@ -681,7 +716,7 @@ class WP_PostgreSQL_Driver {
 
 		$this->charset   = $this->normalize_mysql_charset_name( $charset );
 		$this->collation = null === $collation || '' === $collation
-			? ( self::MYSQL_DEFAULT_CHARSET_COLLATIONS[ $this->charset ] ?? $this->charset . '_general_ci' )
+			? ( WP_PostgreSQL_Create_Table_Translator::CHARSET_DEFAULT_COLLATION_MAP[ $this->charset ] ?? $this->charset . '_general_ci' )
 			: strtolower( trim( $collation, "'\"` \t\n\r\0\x0B" ) );
 		if ( 0 === strpos( $this->collation, 'utf8mb3_' ) ) {
 			$this->collation = 'utf8_' . substr( $this->collation, strlen( 'utf8mb3_' ) );
@@ -696,15 +731,6 @@ class WP_PostgreSQL_Driver {
 	 */
 	public function get_charset(): string {
 		return $this->charset;
-	}
-
-	/**
-	 * Get the emulated MySQL session collation.
-	 *
-	 * @return string MySQL collation.
-	 */
-	public function get_collation(): string {
-		return $this->collation;
 	}
 
 	/**
@@ -798,8 +824,11 @@ class WP_PostgreSQL_Driver {
 
 		$column_count = $stmt->columnCount();
 		if ( $column_count > 0 ) {
-			$this->set_lazy_last_column_meta( $stmt, $column_count );
-			$this->last_result = $this->decode_postgresql_text_for_mysql_in_result(
+			$this->last_column_meta                = array();
+			$this->last_column_count               = $column_count;
+			$this->last_column_meta_statement      = $stmt;
+			$this->last_column_meta_excluded_names = array();
+			$this->last_result                     = $this->decode_postgresql_text_for_mysql_in_result(
 				$stmt->fetchAll( $fetch_mode, ...$fetch_mode_args )
 			);
 			if ( $sql_calc_found_rows_window ) {
@@ -1026,6 +1055,10 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
+		if ( WP_MySQL_Lexer::CALL_SYMBOL === $tokens[0]->id ) {
+			return 'Unsupported CALL statement.';
+		}
+
 		$message = $this->get_mysql_unsupported_statement_message( 'administration', $tokens[0]->id );
 		if ( null !== $message ) {
 			return $message;
@@ -1045,11 +1078,6 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		if ( null === $statement_end ) {
-			return 'Unsupported CREATE statement.';
-		}
-
 		$position = 1;
 		if ( WP_MySQL_Lexer::OR_SYMBOL === ( $tokens[ $position ]->id ?? null ) && WP_MySQL_Lexer::REPLACE_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null ) ) {
 			$position += 2;
@@ -1064,11 +1092,21 @@ class WP_PostgreSQL_Driver {
 		}
 
 		$statement_token = $tokens[ $position ] ?? null;
+		$known_message   = $this->get_mysql_unsupported_statement_message( 'create', $statement_token->id ?? null );
+		if ( null !== $known_message ) {
+			return $known_message;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			return 'Unsupported CREATE statement.';
+		}
+
 		if ( null !== $this->consume_mysql_table_administration_token_sequence( $tokens, $position, self::MYSQL_SPATIAL_REFERENCE_SYSTEM_STATEMENT_TOKENS ) ) {
 			return 'Unsupported CREATE SPATIAL REFERENCE SYSTEM statement.';
 		}
 
-		return $this->get_mysql_unsupported_statement_message( 'create', $statement_token->id ?? null, 'Unsupported CREATE statement.' );
+		return 'Unsupported CREATE statement.';
 	}
 	private function get_unsupported_mysql_create_table_statement_message( array $tokens, int $position ): ?string {
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
@@ -1129,6 +1167,18 @@ class WP_PostgreSQL_Driver {
 		if (
 			null === $statement_end
 			|| ! $this->contains_unsupported_mysql_column_attribute_tokens( $tokens, 0, $statement_end )
+		) {
+			return false;
+		}
+
+		++$position;
+		$this->consume_mysql_if_not_exists_sequence( $tokens, $position );
+
+		$target_position = $position;
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $target_position, true );
+		if (
+			null === $table_reference
+			|| ! $this->is_mysql_create_table_target_boundary( $tokens, $target_position, $statement_end )
 		) {
 			return false;
 		}
@@ -1845,7 +1895,7 @@ class WP_PostgreSQL_Driver {
 		$rows_alias   = $this->connection->quote_identifier( '__wp_pg_upsert_rows' );
 		$source_alias = $this->connection->quote_identifier( '__wp_pg_upsert_source' );
 		$ordinal      = $this->connection->quote_identifier( '__wp_pg_upsert_insert_id_ordinal' );
-		$predicate    = $this->get_materialized_mysql_upsert_select_conflict_predicate_sql(
+		$predicate    = $this->get_materialized_mysql_dml_conflict_group_predicate_sql(
 			$target_alias,
 			$rows_alias,
 			$upsert_query['conflict_parts']
@@ -1961,7 +2011,7 @@ class WP_PostgreSQL_Driver {
 
 		$matching_targets = array();
 		foreach ( $conflict_targets as $conflict_target ) {
-			$predicate_sql = $this->get_materialized_mysql_upsert_select_conflict_predicate_sql(
+			$predicate_sql = $this->get_materialized_mysql_dml_conflict_group_predicate_sql(
 				$target_alias,
 				$rows_alias,
 				$conflict_target['parts'] ?? array()
@@ -1992,9 +2042,6 @@ class WP_PostgreSQL_Driver {
 			}
 		}
 		return $matching_targets[0] ?? $conflict_targets[0];
-	}
-	private function get_materialized_mysql_upsert_select_conflict_predicate_sql( string $target_alias, string $rows_alias, array $conflict_parts ): ?string {
-		return $this->get_materialized_mysql_dml_conflict_group_predicate_sql( $target_alias, $rows_alias, $conflict_parts );
 	}
 	private function get_materialized_mysql_dml_conflict_group_predicate_sql( ?string $target_alias, string $rows_alias, array $conflict_parts ): ?string {
 		$where = array();
@@ -2797,36 +2844,19 @@ class WP_PostgreSQL_Driver {
 		$requested_schema = $truncate_table_query['schema'];
 		$table_name       = $truncate_table_query['table'];
 
-		if (
-			( null === $requested_schema && 0 === strcasecmp( $this->db_name, 'information_schema' ) )
-			|| ( null !== $requested_schema && 0 !== strcasecmp( $requested_schema, $this->main_db_name ) )
-		) {
+		$targets_unsupported_schema = ( null === $requested_schema && 0 === strcasecmp( $this->db_name, 'information_schema' ) )
+			|| ( null !== $requested_schema && 0 !== strcasecmp( $requested_schema, $this->main_db_name ) );
+		if ( $targets_unsupported_schema ) {
 			throw new InvalidArgumentException( 'Unsupported TRUNCATE TABLE statement.' );
 		}
 
 		$statement = 'TRUNCATE TABLE ' . $this->connection->quote_identifier( $table_name ) . ' RESTART IDENTITY';
-		if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
-			$statement = 'DELETE FROM ' . $this->connection->quote_identifier( $table_name );
-		}
 
 		$this->connection->query( $statement );
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $statement,
 			'params' => array(),
 		);
-
-		if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
-			try {
-				$this->connection->query(
-					'DELETE FROM sqlite_sequence WHERE name = ?',
-					array( $table_name )
-				);
-			} catch ( PDOException $e ) {
-				if ( false === strpos( $e->getMessage(), 'no such table' ) ) {
-					throw $e;
-				}
-			}
-		}
 
 		$this->mysql_introspection_result_cache = array();
 		$this->last_result                      = 0;
@@ -2842,27 +2872,6 @@ class WP_PostgreSQL_Driver {
 		$this->mysql_sql_calc_found_rows_count_query_cache = array();
 	}
 
-	/**
-	 * Store MySQL-facing schema metadata for translated CREATE TABLE statements.
-	 *
-	 * @param string $query MySQL CREATE TABLE query.
-	 */
-	public function store_mysql_schema_metadata( string $query ): void {
-		$tokens = $this->get_mysql_tokens( $query );
-		if (
-			isset( $tokens[0], $tokens[1], $tokens[2] )
-			&& WP_MySQL_Lexer::CREATE_SYMBOL === $tokens[0]->id
-			&& WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id
-			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id
-		) {
-			return;
-		}
-
-		$this->sync_mysql_schema_catalog_side_effects_for_schema(
-			$this->get_postgresql_catalog_mysql_schema_metadata_or_fail( $query ),
-			'public'
-		);
-	}
 	private function get_postgresql_catalog_mysql_schema_metadata_or_fail( string $query ): array {
 		$metadata_tables = ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->extract_schema_metadata( $query, true );
 		if ( empty( $metadata_tables ) ) {
@@ -2963,10 +2972,7 @@ class WP_PostgreSQL_Driver {
 		return true;
 	}
 	private function assert_postgresql_catalog_recoverable_mysql_index_metadata( array $index ): void {
-		if (
-			$this->should_use_postgresql_catalog_metadata()
-			&& ! $this->is_postgresql_catalog_recoverable_mysql_index_metadata( $index )
-		) {
+		if ( ! $this->is_postgresql_catalog_recoverable_mysql_index_metadata( $index ) ) {
 			throw new InvalidArgumentException( 'Unsupported PostgreSQL catalog metadata for index statement.' );
 		}
 	}
@@ -3041,10 +3047,6 @@ class WP_PostgreSQL_Driver {
 		return null !== $extra && false !== stripos( $extra, 'DEFAULT_GENERATED' );
 	}
 	private function get_postgresql_on_update_current_timestamp_create_statements( string $table_schema, string $table_name, string $column_name ): array {
-		if ( 'pgsql' !== $this->connection->get_driver_name() ) {
-			return array();
-		}
-
 		$trigger_name  = $this->get_postgresql_on_update_current_timestamp_trigger_name( $table_schema, $table_name, $column_name );
 		$function_name = $this->get_postgresql_on_update_current_timestamp_function_name( $table_schema, $table_name, $column_name );
 		$table_sql     = $this->get_postgresql_schema_identifier( $table_schema, $table_name );
@@ -3086,10 +3088,6 @@ $wp_mysql_on_update$',
 		);
 	}
 	private function get_postgresql_on_update_current_timestamp_drop_statements( string $table_schema, string $table_name, string $column_name ): array {
-		if ( 'pgsql' !== $this->connection->get_driver_name() ) {
-			return array();
-		}
-
 		$trigger_name  = $this->get_postgresql_on_update_current_timestamp_trigger_name( $table_schema, $table_name, $column_name );
 		$function_name = $this->get_postgresql_on_update_current_timestamp_function_name( $table_schema, $table_name, $column_name );
 		return array(
@@ -3105,33 +3103,25 @@ $wp_mysql_on_update$',
 		);
 	}
 	private function postgresql_on_update_current_timestamp_trigger_exists( string $table_schema, string $table_name, string $column_name ): bool {
-		if ( 'pgsql' !== $this->connection->get_driver_name() ) {
-			return false;
-		}
-
-		try {
-			$stmt = $this->connection->query(
-				'SELECT 1
-				FROM pg_catalog.pg_trigger tr
-				INNER JOIN pg_catalog.pg_class c
-					ON c.oid = tr.tgrelid
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = c.relnamespace
-				WHERE n.nspname = ?
-					AND c.relname = ?
-					AND tr.tgname = ?
-					AND NOT tr.tgisinternal
-				LIMIT 1',
-				array(
-					$table_schema,
-					$table_name,
-					$this->get_postgresql_on_update_current_timestamp_trigger_name( $table_schema, $table_name, $column_name ),
-				)
-			);
-			return false !== $stmt->fetchColumn();
-		} catch ( PDOException $e ) {
-			return false;
-		}
+		$stmt = $this->connection->query(
+			'SELECT 1
+			FROM pg_catalog.pg_trigger tr
+			INNER JOIN pg_catalog.pg_class c
+				ON c.oid = tr.tgrelid
+			INNER JOIN pg_catalog.pg_namespace n
+				ON n.oid = c.relnamespace
+			WHERE n.nspname = ?
+				AND c.relname = ?
+				AND tr.tgname = ?
+				AND NOT tr.tgisinternal
+			LIMIT 1',
+			array(
+				$table_schema,
+				$table_name,
+				$this->get_postgresql_on_update_current_timestamp_trigger_name( $table_schema, $table_name, $column_name ),
+			)
+		);
+		return false !== $stmt->fetchColumn();
 	}
 	private function get_postgresql_on_update_current_timestamp_trigger_name( string $table_schema, string $table_name, string $column_name ): string {
 		return '__wp_pg_on_update_' . md5( $table_schema . "\0" . $table_name . "\0" . $column_name );
@@ -3195,16 +3185,14 @@ $wp_mysql_on_update$',
 				return;
 
 			case 'set_table_comment':
-				$table_comment   = (string) ( $metadata['comment'] ?? '' );
-				$logged_queries  = $this->last_postgresql_queries;
-				$table_collation = '';
+				$table_comment  = (string) ( $metadata['comment'] ?? '' );
+				$logged_queries = $this->last_postgresql_queries;
 				try {
-					$table_metadata  = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
-					$table_collation = (string) ( $table_metadata['collation'] ?? '' );
-				} catch ( PDOException $e ) {
-					$table_collation = '';
+					$table_metadata = $this->get_show_create_table_table_metadata( $table_schema, $table_name );
+				} finally {
+					$this->last_postgresql_queries = $logged_queries;
 				}
-				$this->last_postgresql_queries = $logged_queries;
+				$table_collation = (string) ( $table_metadata['collation'] ?? '' );
 				$this->sync_postgresql_catalog_table_comment( $table_schema, $table_name, $table_comment, $table_collation );
 				$this->clear_mysql_metadata_caches();
 				return;
@@ -3395,12 +3383,7 @@ $wp_mysql_on_update$',
 			LIMIT 1';
 		$params = array( $table_schema, $table_name, $column_name );
 
-		try {
-			$stmt = $this->connection->query( $sql, $params );
-		} catch ( PDOException $e ) {
-			$this->clear_mysql_metadata_caches();
-			return;
-		}
+		$stmt = $this->connection->query( $sql, $params );
 
 		$this->last_postgresql_queries[] = array(
 			'sql'    => $sql,
@@ -3413,7 +3396,7 @@ $wp_mysql_on_update$',
 			foreach ( array( 0, 1 ) as $offset ) {
 				if (
 					isset( $lines[ $offset ] )
-					&& 0 === strpos( $lines[ $offset ], self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX )
+					&& $this->is_postgresql_catalog_base64_marker_line( $lines[ $offset ], self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX )
 				) {
 					unset( $lines[ $offset ] );
 					break;
@@ -3487,7 +3470,7 @@ $wp_mysql_on_update$',
 		}
 
 		if ( '' !== $comment ) {
-			$metadata_lines[] = $comment;
+			$metadata_lines[] = $this->get_postgresql_catalog_escaped_user_comment( $comment );
 		}
 		return implode( "\n", $metadata_lines );
 	}
@@ -3562,9 +3545,38 @@ $wp_mysql_identity_sequence_comment$',
 		}
 
 		if ( '' !== $table_comment ) {
-			$metadata_lines[] = $table_comment;
+			$metadata_lines[] = $this->get_postgresql_catalog_escaped_user_comment( $table_comment );
 		}
 		return implode( "\n", $metadata_lines );
+	}
+	private function get_postgresql_catalog_escaped_user_comment( string $comment ): string {
+		$lines = explode( "\n", $comment );
+		foreach ( $lines as $index => $line ) {
+			if ( $this->is_postgresql_catalog_user_comment_escape_required( $line ) ) {
+				$line = self::POSTGRESQL_CATALOG_USER_COMMENT_ESCAPE_PREFIX . $line;
+			}
+			$lines[ $index ] = $line;
+		}
+		return implode( "\n", $lines );
+	}
+	private function is_postgresql_catalog_user_comment_escape_required( string $line ): bool {
+		foreach ( array_merge( array( self::POSTGRESQL_CATALOG_USER_COMMENT_ESCAPE_PREFIX ), self::POSTGRESQL_CATALOG_COMMENT_MARKER_PREFIXES ) as $prefix ) {
+			if ( 0 === strpos( $line, $prefix ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+	private function is_postgresql_catalog_base64_marker_line( string $line, string $prefix ): bool {
+		if ( 0 !== strpos( $line, $prefix ) ) {
+			return false;
+		}
+
+		$payload = substr( $line, strlen( $prefix ) );
+		if ( '' === $payload || 1 !== preg_match( self::POSTGRESQL_CATALOG_BASE64_MARKER_PAYLOAD_PATTERN, $payload ) ) {
+			return false;
+		}
+		return false !== base64_decode( $payload, true );
 	}
 	private function get_postgresql_catalog_comment_literal( string $comment ): string {
 		return '' === $comment ? 'NULL' : $this->connection->quote( $comment );
@@ -3624,7 +3636,7 @@ END',
 			array_unshift( $comment_lines, self::MYSQL_INDEX_COMMENT_TYPE_PREFIX . base64_encode( $index_type ) );
 		}
 		if ( ! $is_primary && '' !== $index_comment ) {
-			$comment_lines[] = $index_comment;
+			$comment_lines[] = $this->get_postgresql_catalog_escaped_user_comment( $index_comment );
 		}
 		if ( $is_primary || ! empty( $comment_lines ) ) {
 			$index_comment = implode( "\n", $comment_lines );
@@ -3675,76 +3687,68 @@ $wp_mysql_primary_index_comment$',
 		$this->execute_postgresql_side_effect_statements( array( $statement ) );
 	}
 	private function mysql_index_metadata_exists( string $table_schema, string $table_name, string $index_name, bool $unique_only = false ): bool {
-		try {
-			$stmt = $this->connection->query(
-				'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
-					'',
-					'',
-					array_merge(
-						array(
-							'n.nspname = ?',
-							't.relname = ?',
-							't.relkind IN (\'r\', \'p\')',
-						),
-						$unique_only ? array( 'i.indisunique' ) : array()
+		$stmt = $this->connection->query(
+			'WITH ' . $this->get_postgresql_catalog_index_columns_cte_sql(
+				'',
+				'',
+				array_merge(
+					array(
+						'n.nspname = ?',
+						't.relname = ?',
+						't.relkind IN (\'r\', \'p\')',
+					),
+					$unique_only ? array( 'i.indisunique' ) : array()
+				)
+			) . '
+			SELECT 1
+			FROM index_columns
+			WHERE (indisprimary AND LOWER(?) = \'primary\')
+				OR (
+					NOT indisprimary
+					AND (
+						LOWER(postgresql_index_name) = LOWER(?)
+						OR LOWER(postgresql_index_name) = LOWER(table_name || \'__\' || ?)
 					)
-				) . '
-				SELECT 1
-				FROM index_columns
-				WHERE (indisprimary AND LOWER(?) = \'primary\')
-					OR (
-						NOT indisprimary
-						AND (
-							LOWER(postgresql_index_name) = LOWER(?)
-							OR LOWER(postgresql_index_name) = LOWER(table_name || \'__\' || ?)
-						)
-					)
-				LIMIT 1',
-				array( $table_schema, $table_name, $index_name, $index_name, $index_name )
-			);
-			return false !== $stmt->fetchColumn();
-		} catch ( PDOException $e ) {
-			return false;
-		}
+				)
+			LIMIT 1',
+			array( $table_schema, $table_name, $index_name, $index_name, $index_name )
+		);
+		return false !== $stmt->fetchColumn();
 	}
 	private function get_mysql_check_metadata( string $table_schema, string $table_name, string $constraint_name ): ?array {
-		try {
-			$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
-				'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
-				'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
-			);
-			$enforced_sql     = $this->get_postgresql_mysql_check_enforced_comment_sql(
-				'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
-			);
-			$stmt             = $this->connection->query(
-				sprintf(
-					'SELECT
-						con.conname AS constraint_name,
-						%1$s AS check_clause,
-						%2$s AS enforced,
-						\'catalog\' AS metadata_source
-					FROM pg_catalog.pg_constraint con
-					INNER JOIN pg_catalog.pg_class t
-						ON t.oid = con.conrelid
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					WHERE n.nspname = ?
-						AND t.relname = ?
-						AND t.relkind IN (\'r\', \'p\')
-						AND con.contype = \'c\'
-						AND LOWER(con.conname) = LOWER(?)
-					LIMIT 1',
-					$check_clause_sql,
-					$enforced_sql
-				),
-				array( $table_schema, $table_name, $constraint_name )
-			);
+		$check_clause_sql = $this->get_postgresql_mysql_check_clause_comment_sql(
+			'pg_catalog.obj_description(con.oid, \'pg_constraint\')',
+			'pg_catalog.pg_get_expr(con.conbin, con.conrelid)'
+		);
+		$enforced_sql     = $this->get_postgresql_mysql_check_enforced_comment_sql(
+			'pg_catalog.obj_description(con.oid, \'pg_constraint\')'
+		);
+		$stmt             = $this->connection->query(
+			sprintf(
+				'SELECT
+					con.conname AS constraint_name,
+					%1$s AS check_clause,
+					%2$s AS enforced,
+					\'catalog\' AS metadata_source
+				FROM pg_catalog.pg_constraint con
+				INNER JOIN pg_catalog.pg_class t
+					ON t.oid = con.conrelid
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = t.relnamespace
+				WHERE n.nspname = ?
+					AND t.relname = ?
+					AND t.relkind IN (\'r\', \'p\')
+					AND con.contype = \'c\'
+					AND LOWER(con.conname) = LOWER(?)
+				LIMIT 1',
+				$check_clause_sql,
+				$enforced_sql
+			),
+			array( $table_schema, $table_name, $constraint_name )
+		);
 
-			$row = $stmt->fetch( PDO::FETCH_ASSOC );
-			return false === $row ? null : $row;
-		} catch ( PDOException $e ) {
-			return null;
-		}
+		$row = $stmt->fetch( PDO::FETCH_ASSOC );
+		return false === $row ? null : $row;
 	}
 	private function get_next_mysql_foreign_key_constraint_name( string $table_schema, string $table_name, array $reserved = array() ): string {
 		$constraint_names = array_merge(
@@ -3763,27 +3767,23 @@ $wp_mysql_primary_index_comment$',
 	private function get_postgresql_catalog_foreign_key_constraint_names( string $table_schema, string $table_name ): array {
 		$constraint_name_sql = $this->get_postgresql_catalog_foreign_key_constraint_name_sql( 'con.conname', 't.relname' );
 
-		try {
-			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT %s AS constraint_name
-					FROM pg_catalog.pg_constraint con
-					INNER JOIN pg_catalog.pg_class t
-						ON t.oid = con.conrelid
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					WHERE n.nspname = ?
-						AND t.relname = ?
-						AND t.relkind IN (\'r\', \'p\')
-						AND con.contype = \'f\'',
-					$constraint_name_sql
-				),
-				array( $table_schema, $table_name )
-			);
-			return array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
-		} catch ( PDOException $e ) {
-			return array();
-		}
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT %s AS constraint_name
+				FROM pg_catalog.pg_constraint con
+				INNER JOIN pg_catalog.pg_class t
+					ON t.oid = con.conrelid
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = t.relnamespace
+				WHERE n.nspname = ?
+					AND t.relname = ?
+					AND t.relkind IN (\'r\', \'p\')
+					AND con.contype = \'f\'',
+				$constraint_name_sql
+			),
+			array( $table_schema, $table_name )
+		);
+		return array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
 	}
 	private function get_postgresql_catalog_foreign_key_constraint_name_sql( string $constraint_name_sql, string $table_name_sql ): string {
 		return sprintf(
@@ -3799,29 +3799,25 @@ $wp_mysql_primary_index_comment$',
 	private function mysql_foreign_key_metadata_exists( string $table_schema, string $table_name, string $constraint_name ): bool {
 		$constraint_name_sql = $this->get_postgresql_catalog_foreign_key_constraint_name_sql( 'con.conname', 't.relname' );
 
-		try {
-			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT 1
-					FROM pg_catalog.pg_constraint con
-					INNER JOIN pg_catalog.pg_class t
-						ON t.oid = con.conrelid
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					WHERE n.nspname = ?
-						AND t.relname = ?
-						AND t.relkind IN (\'r\', \'p\')
-						AND con.contype = \'f\'
-						AND LOWER(%s) = LOWER(?)
-					LIMIT 1',
-					$constraint_name_sql
-				),
-				array( $table_schema, $table_name, $constraint_name )
-			);
-			return false !== $stmt->fetchColumn();
-		} catch ( PDOException $e ) {
-			return false;
-		}
+		$stmt = $this->connection->query(
+			sprintf(
+				'SELECT 1
+				FROM pg_catalog.pg_constraint con
+				INNER JOIN pg_catalog.pg_class t
+					ON t.oid = con.conrelid
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = t.relnamespace
+				WHERE n.nspname = ?
+					AND t.relname = ?
+					AND t.relkind IN (\'r\', \'p\')
+					AND con.contype = \'f\'
+					AND LOWER(%s) = LOWER(?)
+				LIMIT 1',
+				$constraint_name_sql
+			),
+			array( $table_schema, $table_name, $constraint_name )
+		);
+		return false !== $stmt->fetchColumn();
 	}
 	private function get_next_mysql_check_constraint_name( string $table_schema, string $table_name, array $reserved = array() ): string {
 		$constraint_names = array_merge(
@@ -3839,32 +3835,27 @@ $wp_mysql_primary_index_comment$',
 		return $prefix . ( $max + 1 );
 	}
 	private function get_postgresql_catalog_check_constraint_names( string $table_schema, string $table_name ): array {
-		try {
-			$stmt = $this->connection->query(
-				'SELECT con.conname
+		$stmt = $this->connection->query(
+			'SELECT con.conname
 					FROM pg_catalog.pg_constraint con
 					INNER JOIN pg_catalog.pg_class t
 						ON t.oid = con.conrelid
-					INNER JOIN pg_catalog.pg_namespace n
-						ON n.oid = t.relnamespace
-					WHERE n.nspname = ?
-						AND t.relname = ?
+				INNER JOIN pg_catalog.pg_namespace n
+					ON n.oid = t.relnamespace
+				WHERE n.nspname = ?
+					AND t.relname = ?
 						AND t.relkind IN (\'r\', \'p\')
 						AND con.contype = \'c\'',
-				array( $table_schema, $table_name )
-			);
-			return array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
-		} catch ( PDOException $e ) {
-			return array();
-		}
+			array( $table_schema, $table_name )
+		);
+		return array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
 	}
-	private function get_postgresql_primary_key_constraint_name( string $table_schema, string $table_name ): string {
-		try {
-			$stmt = $this->connection->query(
-				'SELECT con.conname
-				FROM pg_catalog.pg_constraint con
-				INNER JOIN pg_catalog.pg_class t
-					ON t.oid = con.conrelid
+	private function get_postgresql_primary_key_constraint_name( string $table_schema, string $table_name ): ?string {
+		$stmt = $this->connection->query(
+			'SELECT con.conname
+					FROM pg_catalog.pg_constraint con
+					INNER JOIN pg_catalog.pg_class t
+						ON t.oid = con.conrelid
 				INNER JOIN pg_catalog.pg_namespace n
 					ON n.oid = t.relnamespace
 				WHERE n.nspname = ?
@@ -3873,17 +3864,14 @@ $wp_mysql_primary_index_comment$',
 					AND con.contype = \'p\'
 				ORDER BY con.conname
 				LIMIT 1',
-				array( $table_schema, $table_name )
-			);
+			array( $table_schema, $table_name )
+		);
 
-			$constraint_name = $stmt->fetchColumn();
-			if ( false !== $constraint_name && '' !== (string) $constraint_name ) {
-				return (string) $constraint_name;
-			}
-		} catch ( PDOException $e ) {
-			// Test fixtures and SQLite-backed connections may not expose PostgreSQL catalogs.
+		$constraint_name = $stmt->fetchColumn();
+		if ( false !== $constraint_name && '' !== (string) $constraint_name ) {
+			return (string) $constraint_name;
 		}
-		return $table_name . '_pkey';
+		return null;
 	}
 	private function get_mysql_table_column_type(
 		string $table_schema,
@@ -3994,25 +3982,8 @@ $wp_mysql_primary_index_comment$',
 			$params[] = $column_name;
 		}
 
-		try {
-			$stmt = $this->connection->query( $sql, $params );
-			$rows = $this->normalize_mysql_table_catalog_column_metadata_rows( $stmt->fetchAll( PDO::FETCH_ASSOC ) );
-			if ( 'sqlite' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
-				$rows = $this->merge_sqlite_table_catalog_column_metadata_rows(
-					$rows,
-					$table_schema,
-					$table_name,
-					$column_name,
-					$case_sensitive_column
-				);
-			}
-			return $rows;
-		} catch ( PDOException $e ) {
-			if ( 'sqlite' !== (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
-				throw $e;
-			}
-			return $this->get_sqlite_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name, $case_sensitive_column );
-		}
+		$stmt = $this->connection->query( $sql, $params );
+		return $this->normalize_mysql_table_catalog_column_metadata_rows( $stmt->fetchAll( PDO::FETCH_ASSOC ) );
 	}
 	private function filter_mysql_table_catalog_column_metadata_rows(
 		array $rows,
@@ -4048,75 +4019,6 @@ $wp_mysql_primary_index_comment$',
 			}
 		}
 		unset( $row );
-		return $rows;
-	}
-	private function merge_sqlite_table_catalog_column_metadata_rows(
-		array $rows,
-		string $table_schema,
-		string $table_name,
-		?string $column_name,
-		bool $case_sensitive_column
-	): array {
-		$seen = array();
-		foreach ( $rows as $row ) {
-			$name = (string) ( $row['column_name'] ?? '' );
-			if ( '' !== $name ) {
-				$seen[ strtolower( $name ) ] = true;
-			}
-		}
-
-		foreach ( $this->get_sqlite_table_catalog_column_metadata_rows( $table_schema, $table_name, $column_name, $case_sensitive_column ) as $fallback_row ) {
-			$name = (string) ( $fallback_row['column_name'] ?? '' );
-			if ( '' === $name || isset( $seen[ strtolower( $name ) ] ) ) {
-				continue;
-			}
-
-			$rows[]                      = $fallback_row;
-			$seen[ strtolower( $name ) ] = true;
-		}
-
-		usort(
-			$rows,
-			static function ( array $left, array $right ): int {
-				return (int) ( $left['ordinal_position'] ?? 0 ) <=> (int) ( $right['ordinal_position'] ?? 0 );
-			}
-		);
-		return $rows;
-	}
-	private function get_sqlite_table_catalog_column_metadata_rows(
-		string $table_schema,
-		string $table_name,
-		?string $column_name = null,
-		bool $case_sensitive_column = false
-	): array {
-		$stmt = $this->connection->query(
-			$this->get_sqlite_pragma_statement_sql( 'table_info', $table_schema, $table_name )
-		);
-		$rows = array();
-		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
-			$name = (string) ( $column['name'] ?? '' );
-			if ( null !== $column_name ) {
-				$matches = $case_sensitive_column ? $name === $column_name : 0 === strcasecmp( $name, $column_name );
-				if ( ! $matches ) {
-					continue;
-				}
-			}
-
-			$column_type = $this->get_mysql_column_type_from_sqlite_type( (string) ( $column['type'] ?? '' ) );
-			$rows[]      = array(
-				'column_name'      => $name,
-				'ordinal_position' => (int) ( $column['cid'] ?? 0 ) + 1,
-				'column_type'      => $column_type,
-				'collation_name'   => (
-					0 === strpos( $column_type, 'char' )
-					|| 0 === strpos( $column_type, 'varchar' )
-					|| false !== strpos( $column_type, 'text' )
-				) ? $this->collation : null,
-				'is_nullable'      => ! empty( $column['notnull'] ) ? 'NO' : 'YES',
-				'column_default'   => null === ( $column['dflt_value'] ?? null ) ? null : (string) $column['dflt_value'],
-				'extra'            => '',
-			);
-		}
 		return $rows;
 	}
 	private function get_mysql_table_catalog_column_metadata_row(
@@ -4170,6 +4072,53 @@ $wp_mysql_primary_index_comment$',
 	private function mysql_table_has_column_metadata( string $table_schema, string $table_name ): bool {
 		return array() !== $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name );
 	}
+	private function is_create_table_query( string $query ): bool {
+		return null !== $this->get_mysql_create_table_prefix( $this->get_mysql_tokens( $query ) );
+	}
+	private function get_mysql_create_table_target( string $query ): ?array {
+		$tokens = $this->get_mysql_tokens( $query );
+		$prefix = $this->get_mysql_create_table_prefix( $tokens );
+		if ( null === $prefix ) {
+			return null;
+		}
+
+		$position        = $prefix['position'];
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		if (
+			null === $table_reference
+			|| ! $this->is_mysql_create_table_target_boundary( $tokens, $position, $prefix['statement_end'] )
+		) {
+			return null;
+		}
+
+		return array(
+			'schema'    => $this->get_mysql_create_table_select_backend_schema( $table_reference, $prefix['temporary'] ),
+			'table'     => $table_reference['table'],
+			'temporary' => $prefix['temporary'],
+		);
+	}
+	private function mysql_create_table_if_not_exists_target_exists( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		$prefix = $this->get_mysql_create_table_prefix( $tokens );
+		if ( null === $prefix || ! $prefix['if_not_exists'] ) {
+			return false;
+		}
+
+		$position        = $prefix['position'];
+		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
+		if (
+			null === $table_reference
+			|| ! $this->is_mysql_create_table_target_boundary( $tokens, $position, $prefix['statement_end'] )
+		) {
+			return false;
+		}
+
+		return $this->mysql_create_table_target_exists(
+			$this->get_mysql_create_table_select_backend_schema( $table_reference, $prefix['temporary'] ),
+			$table_reference['table'],
+			$prefix['temporary']
+		);
+	}
 	private function translate_mysql_create_table_select_query( string $query ): ?array {
 		$tokens = $this->get_mysql_tokens( $query );
 		$prefix = $this->get_mysql_create_table_prefix( $tokens );
@@ -4181,7 +4130,10 @@ $wp_mysql_primary_index_comment$',
 		$is_temporary    = $prefix['temporary'];
 		$if_not_exists   = $prefix['if_not_exists'];
 		$table_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
-		if ( null === $table_reference ) {
+		if (
+			null === $table_reference
+			|| ! $this->is_mysql_create_table_target_boundary( $tokens, $position, $statement_end )
+		) {
 			return null;
 		}
 		$definition_start = null;
@@ -4389,7 +4341,7 @@ $wp_mysql_primary_index_comment$',
 			return 'public';
 		}
 
-		if ( $this->should_use_postgresql_catalog_metadata() && ! $this->is_postgresql_internal_schema( $backend_schema ) ) {
+		if ( ! $this->is_postgresql_internal_schema( $backend_schema ) ) {
 			return $backend_schema;
 		}
 		if ( $uses_current_schema ) {
@@ -4402,9 +4354,8 @@ $wp_mysql_primary_index_comment$',
 			return $statements;
 		}
 
-		$quoted_schema = $this->connection->quote_identifier( $schema_name );
-		$quoted_table  = $this->connection->quote_identifier( $table_name );
-		$table_sql     = $this->get_postgresql_schema_identifier( $schema_name, $table_name );
+		$quoted_table = $this->connection->quote_identifier( $table_name );
+		$table_sql    = $this->get_postgresql_schema_identifier( $schema_name, $table_name );
 
 		foreach ( $statements as $index => $statement ) {
 			$statement = (string) preg_replace(
@@ -4416,8 +4367,8 @@ $wp_mysql_primary_index_comment$',
 
 			$statements[ $index ] = (string) preg_replace_callback(
 				'/^(CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?)(\"(?:[^\"]|\"\")+\")\s+ON\s+' . preg_quote( $quoted_table, '/' ) . '(\s*\()/i',
-				static function ( array $matches ) use ( $quoted_schema, $table_sql ): string {
-					return $matches[1] . $quoted_schema . '.' . $matches[2] . ' ON ' . $table_sql . $matches[3];
+				static function ( array $matches ) use ( $table_sql ): string {
+					return $matches[1] . $matches[2] . ' ON ' . $table_sql . $matches[3];
 				},
 				$statement,
 				1
@@ -4445,7 +4396,10 @@ $wp_mysql_primary_index_comment$',
 	}
 	private function get_mysql_create_table_like_references( array $tokens, int $position, int $statement_end ): ?array {
 		$target_reference = $this->get_mysql_table_administration_table_reference( $tokens, $position, true );
-		if ( null === $target_reference ) {
+		if (
+			null === $target_reference
+			|| ! $this->is_mysql_create_table_target_boundary( $tokens, $position, $statement_end )
+		) {
 			return null;
 		}
 
@@ -4469,6 +4423,24 @@ $wp_mysql_primary_index_comment$',
 			'source' => $source_reference,
 		);
 	}
+	private function is_mysql_create_table_target_boundary( array $tokens, int $position, int $statement_end ): bool {
+		if ( $position >= $statement_end || ! isset( $tokens[ $position ] ) ) {
+			return true;
+		}
+
+		if ( WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id ) {
+			return false;
+		}
+
+		if ( in_array( $tokens[ $position ]->id, array( WP_MySQL_Lexer::OPEN_PAR_SYMBOL, WP_MySQL_Lexer::LIKE_SYMBOL, WP_MySQL_Lexer::AS_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::EOF, WP_MySQL_Lexer::SEMICOLON_SYMBOL ), true ) ) {
+			return true;
+		}
+
+		$option_position = $position;
+		$table_comment   = '';
+		return $this->consume_mysql_create_table_select_options( $tokens, $option_position, $statement_end, $table_comment )
+			&& $option_position !== $position;
+	}
 	private function get_mysql_create_table_like_translation( array $target_reference, array $source_reference, string $target_schema, bool $is_temporary, bool $if_not_exists ): array {
 		$source_schema = $this->get_mysql_read_table_backend_schema( $source_reference['schema'] );
 		if ( 0 === strcasecmp( $source_schema, 'information_schema' ) ) {
@@ -4483,24 +4455,16 @@ $wp_mysql_primary_index_comment$',
 
 		$metadata_query = $this->get_mysql_create_table_statement_from_metadata( $target_reference['table'], $metadata['columns'], $metadata['indexes'], array(), $metadata['checks'], $metadata['table']['comment'], $is_temporary, $metadata['table']['collation'] );
 		if ( $if_not_exists ) {
-			$metadata_query = $this->inject_mysql_create_table_like_if_not_exists( $metadata_query, $is_temporary );
+			$prefix         = $is_temporary ? 'CREATE TEMPORARY TABLE ' : 'CREATE TABLE ';
+			$replacement    = $is_temporary ? 'CREATE TEMPORARY TABLE IF NOT EXISTS ' : 'CREATE TABLE IF NOT EXISTS ';
+			$metadata_query = 0 === strpos( $metadata_query, $prefix ) ? $replacement . substr( $metadata_query, strlen( $prefix ) ) : $metadata_query;
 		}
 		$statements = $this->qualify_translated_create_table_statements( ( new WP_PostgreSQL_Create_Table_Translator( $this->active_sql_modes ) )->translate_schema( $metadata_query ), $target_schema, $target_reference['table'], $is_temporary );
 		return $this->get_mysql_create_table_translation( $statements, $target_schema, $target_reference['table'], $is_temporary, $metadata_query, false );
 	}
-	private function inject_mysql_create_table_like_if_not_exists( string $metadata_query, bool $is_temporary ): string {
-		$prefix      = $is_temporary ? 'CREATE TEMPORARY TABLE ' : 'CREATE TABLE ';
-		$replacement = $is_temporary ? 'CREATE TEMPORARY TABLE IF NOT EXISTS ' : 'CREATE TABLE IF NOT EXISTS ';
-		return 0 === strpos( $metadata_query, $prefix ) ? $replacement . substr( $metadata_query, strlen( $prefix ) ) : $metadata_query;
-	}
 	private function get_mysql_create_table_prefix( array $tokens ): ?array {
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::CREATE_SYMBOL !== $tokens[0]->id ) {
 			return null;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		if ( null === $statement_end ) {
-			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
 		}
 
 		$position     = 1;
@@ -4512,6 +4476,11 @@ $wp_mysql_primary_index_comment$',
 
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE TABLE statement.' );
 		}
 
 		++$position;
@@ -4537,29 +4506,6 @@ $wp_mysql_primary_index_comment$',
 		}
 		return false;
 	}
-	private function get_mysql_column_type_from_sqlite_type( string $sqlite_type ): string {
-		$type = strtoupper( $sqlite_type );
-		if ( '' === $type ) {
-			return 'text';
-		}
-
-		foreach (
-			array(
-				'INT'            => 'int',
-				'CHAR|CLOB|TEXT' => 'text',
-				'BLOB'           => 'blob',
-				'REAL|FLOA|DOUB' => 'double',
-				'NUM|DEC'        => 'decimal',
-			) as $markers => $mysql_type
-		) {
-			foreach ( explode( '|', $markers ) as $marker ) {
-				if ( false !== strpos( $type, $marker ) ) {
-					return $mysql_type;
-				}
-			}
-		}
-		return strtolower( $sqlite_type );
-	}
 	private function is_mysql_spatial_column_type( string $column_type ): bool {
 		$column_type = preg_replace( '/[\s(].*$/', '', strtolower( trim( $column_type ) ) );
 		return in_array( $column_type, self::MYSQL_SPATIAL_COLUMN_TYPES, true );
@@ -4570,15 +4516,15 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
-		if ( null === $statement_end ) {
-			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
-		}
-
 		$position = 1;
 		$prefix   = $this->get_mysql_create_index_prefix( $tokens, $position );
 		if ( null === $prefix ) {
 			return null;
+		}
+
+		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		if ( null === $statement_end ) {
+			throw new InvalidArgumentException( 'Unsupported CREATE INDEX statement.' );
 		}
 
 		$is_unique     = $prefix[0];
@@ -4658,7 +4604,7 @@ $wp_mysql_primary_index_comment$',
 
 		$postgresql_table = $this->get_postgresql_schema_identifier( $table_schema, $table_name );
 		$index            = $this->get_mysql_key_value_array( 'name', $metadata_index_name, 'non_unique', $is_unique ? '0' : '1', 'index_type', $index_type, 'comment', $index_comment, 'columns', $key_parts['metadata'] );
-		$statement        = $this->get_postgresql_mysql_index_create_statement( $table_name, $index, $postgresql_table, true, $table_schema, $this->should_use_postgresql_catalog_metadata(), $if_not_exists, $postgresql_index_name );
+		$statement        = $this->get_postgresql_mysql_index_create_statement( $table_name, $index, $postgresql_table, true, $table_schema, $if_not_exists, $postgresql_index_name );
 		$statements       = null === $statement ? array() : array( $statement );
 		return $this->get_mysql_ddl_translation(
 			$statements,
@@ -4915,7 +4861,7 @@ $wp_mysql_primary_index_comment$',
 		}
 		return $this->connection->quote_identifier( $column_name );
 	}
-	private function get_postgresql_mysql_index_create_statement( string $table_name, array $index, string $postgresql_table, bool $use_sub_parts = true, ?string $table_schema = null, bool $create_metadata_only = false, bool $if_not_exists = false, ?string $postgresql_index_name = null ): ?string {
+	private function get_postgresql_mysql_index_create_statement( string $table_name, array $index, string $postgresql_table, bool $use_sub_parts = true, ?string $table_schema = null, bool $if_not_exists = false, ?string $postgresql_index_name = null ): ?string {
 		$index_name = (string) ( $index['name'] ?? '' );
 		if ( 'PRIMARY' === strtoupper( $index_name ) ) {
 			$column_list = $this->get_mysql_index_column_list_sql( $index['columns'] ?? array(), $use_sub_parts );
@@ -4924,7 +4870,7 @@ $wp_mysql_primary_index_comment$',
 
 		$index_type = (string) ( $index['index_type'] ?? 'BTREE' );
 		if ( $this->is_mysql_metadata_only_index_type( $index_type ) ) {
-			return $create_metadata_only ? $this->get_postgresql_catalog_metadata_only_index_create_statement( $table_schema, $table_name, $index, $if_not_exists ) : null;
+			return $this->get_postgresql_catalog_metadata_only_index_create_statement( $table_schema, $table_name, $index, $if_not_exists );
 		}
 
 		$column_list = $this->get_mysql_index_column_list_sql( $index['columns'] ?? array(), $use_sub_parts );
@@ -4960,10 +4906,9 @@ $wp_mysql_primary_index_comment$',
 		array $index,
 		bool $if_not_exists = false
 	): ?string {
-		if (
-			'PRIMARY' === strtoupper( (string) ( $index['name'] ?? '' ) )
-			|| ! $this->is_mysql_metadata_only_index_type( (string) ( $index['index_type'] ?? 'BTREE' ) )
-		) {
+		$cannot_create_metadata_only_index = 'PRIMARY' === strtoupper( (string) ( $index['name'] ?? '' ) )
+			|| ! $this->is_mysql_metadata_only_index_type( (string) ( $index['index_type'] ?? 'BTREE' ) );
+		if ( $cannot_create_metadata_only_index ) {
 			return null;
 		}
 
@@ -5073,12 +5018,10 @@ $wp_mysql_primary_index_comment$',
 			return $resolved_schema;
 		}
 
-		if (
-			$this->should_use_postgresql_catalog_metadata()
-			&& 0 !== strcasecmp( $this->db_name, $this->main_db_name )
+		$uses_current_catalog_schema = 0 !== strcasecmp( $this->db_name, $this->main_db_name )
 			&& 0 !== strcasecmp( $this->db_name, 'public' )
-			&& ! $this->is_postgresql_internal_schema( $this->db_name )
-		) {
+			&& ! $this->is_postgresql_internal_schema( $this->db_name );
+		if ( $uses_current_catalog_schema ) {
 			return $this->db_name;
 		}
 		return $resolved_schema;
@@ -5091,7 +5034,17 @@ $wp_mysql_primary_index_comment$',
 			if ( 0 === strcasecmp( $this->db_name, 'information_schema' ) ) {
 				throw new InvalidArgumentException( 'Unsupported information_schema query.' );
 			}
-			return $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+			$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+			if ( 'public' !== $resolved_schema ) {
+				return $resolved_schema;
+			}
+			$uses_current_catalog_schema = 0 !== strcasecmp( $this->db_name, $this->main_db_name )
+				&& 0 !== strcasecmp( $this->db_name, 'public' )
+				&& ! $this->is_postgresql_internal_schema( $this->db_name );
+			if ( $uses_current_catalog_schema ) {
+				return $this->db_name;
+			}
+			return $resolved_schema;
 		}
 		return $this->get_mysql_explicit_table_backend_schema( $requested_schema, $statement_type, false );
 	}
@@ -5100,18 +5053,14 @@ $wp_mysql_primary_index_comment$',
 			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
 		}
 
-		if (
-			0 === strcasecmp( $requested_schema, $this->main_db_name )
-			|| 0 === strcasecmp( $requested_schema, 'public' )
-		) {
+		$is_main_schema = 0 === strcasecmp( $requested_schema, $this->main_db_name ) || 0 === strcasecmp( $requested_schema, 'public' );
+		if ( $is_main_schema ) {
 			return 'public';
 		}
 
-		if (
-			$allow_catalog_schema
-			&& $this->should_use_postgresql_catalog_metadata()
-			&& ! $this->is_postgresql_internal_schema( $requested_schema )
-		) {
+		$allows_requested_catalog_schema = $allow_catalog_schema
+			&& ! $this->is_postgresql_internal_schema( $requested_schema );
+		if ( $allows_requested_catalog_schema ) {
 			return $requested_schema;
 		}
 		throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
@@ -5122,20 +5071,15 @@ $wp_mysql_primary_index_comment$',
 				return 'information_schema';
 			}
 
-			if (
-				0 === strcasecmp( $this->db_name, $this->main_db_name )
-				|| 0 === strcasecmp( $this->db_name, 'public' )
-				|| ! $this->should_use_postgresql_catalog_metadata()
-			) {
+			$is_current_main_schema = 0 === strcasecmp( $this->db_name, $this->main_db_name ) || 0 === strcasecmp( $this->db_name, 'public' );
+			if ( $is_current_main_schema ) {
 				return 'public';
 			}
 			return $this->db_name;
 		}
 
-		if (
-			0 === strcasecmp( $requested_schema, $this->main_db_name )
-			|| 0 === strcasecmp( $requested_schema, 'public' )
-		) {
+		$is_main_schema = 0 === strcasecmp( $requested_schema, $this->main_db_name ) || 0 === strcasecmp( $requested_schema, 'public' );
+		if ( $is_main_schema ) {
 			return 'public';
 		}
 
@@ -5145,16 +5089,6 @@ $wp_mysql_primary_index_comment$',
 		return $requested_schema;
 	}
 	private function get_postgresql_schema_identifier( string $schema_name, string $object_name ): string {
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		if (
-			'sqlite' === $driver_name
-			&& (
-				'main' === $schema_name
-				|| ( 'public' === $schema_name && ! $this->sqlite_database_schema_exists( 'public' ) )
-			)
-		) {
-			return $this->connection->quote_identifier( $object_name );
-		}
 		return $this->connection->quote_identifier( $schema_name ) . '.' . $this->connection->quote_identifier( $object_name );
 	}
 	private function translate_mysql_dbdelta_alter_table_query( string $query ): ?array {
@@ -5384,11 +5318,7 @@ $wp_mysql_primary_index_comment$',
 			return array();
 		}
 
-		try {
-			$rows = $this->get_show_create_table_metadata_rows( 'indexes', $table_schema, $table_name );
-		} catch ( PDOException $e ) {
-			return array();
-		}
+		$rows = $this->get_show_create_table_metadata_rows( 'indexes', $table_schema, $table_name );
 
 		$dropped_column_lookup = array_fill_keys( $dropped_column_keys, true );
 		$indexes               = array();
@@ -5483,6 +5413,7 @@ $wp_mysql_primary_index_comment$',
 			throw new InvalidArgumentException( sprintf( "Duplicate key name '%s'.", $index_name ) );
 		}
 
+		$this->assert_postgresql_catalog_recoverable_mysql_index_metadata( $index );
 		$added_indexes[ $index_key ] = true;
 	}
 	private function get_mysql_dbdelta_alter_table_target_reference( array $tokens, int &$position ): ?array {
@@ -5612,7 +5543,7 @@ $wp_mysql_primary_index_comment$',
 				return null;
 		}
 
-		return $this->translate_mysql_dbdelta_table_option_alter_action( $table_name, $clause, $tokens, $start, $end );
+		return $this->translate_mysql_dbdelta_table_option_alter_action( $table_schema, $table_name, $clause, $tokens, $start, $end );
 	}
 	private function translate_mysql_dbdelta_column_change_or_modify_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
 		$position   = $this->get_mysql_dbdelta_column_action_position( $tokens, $start + 1 );
@@ -5690,15 +5621,14 @@ $wp_mysql_primary_index_comment$',
 		}
 		return null;
 	}
-	private function translate_mysql_dbdelta_table_option_alter_action( string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_table_option_alter_action( string $table_schema, string $table_name, string $clause, array $tokens, int $start, int $end ): ?array {
 		if ( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL === $tokens[ $start ]->id ) {
-			return $this->translate_mysql_dbdelta_auto_increment_alter_action( $table_name, $tokens, $start, $end );
+			return $this->translate_mysql_dbdelta_auto_increment_alter_action( $table_schema, $table_name, $tokens, $start, $end );
 		}
 
-		if (
-			$this->is_mysql_dbdelta_token_id_sequence( $tokens, $start, $end, array( WP_MySQL_Lexer::DISABLE_SYMBOL, WP_MySQL_Lexer::KEYS_SYMBOL ) )
-			|| $this->is_mysql_dbdelta_token_id_sequence( $tokens, $start, $end, array( WP_MySQL_Lexer::ENABLE_SYMBOL, WP_MySQL_Lexer::KEYS_SYMBOL ) )
-		) {
+		$toggles_mysql_keys = $this->is_mysql_dbdelta_token_id_sequence( $tokens, $start, $end, array( WP_MySQL_Lexer::DISABLE_SYMBOL, WP_MySQL_Lexer::KEYS_SYMBOL ) )
+			|| $this->is_mysql_dbdelta_token_id_sequence( $tokens, $start, $end, array( WP_MySQL_Lexer::ENABLE_SYMBOL, WP_MySQL_Lexer::KEYS_SYMBOL ) );
+		if ( $toggles_mysql_keys ) {
 			return $this->get_mysql_dbdelta_noop_translation();
 		}
 
@@ -5719,7 +5649,7 @@ $wp_mysql_primary_index_comment$',
 		}
 		return null;
 	}
-	private function translate_mysql_dbdelta_auto_increment_alter_action( string $table_name, array $tokens, int $start, int $end ): ?array {
+	private function translate_mysql_dbdelta_auto_increment_alter_action( string $table_schema, string $table_name, array $tokens, int $start, int $end ): ?array {
 		$position = $start + 1;
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $position ]->id ) {
 			++$position;
@@ -5741,11 +5671,7 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$minimum_sequence_value = max( 0, $auto_increment_value - 1 );
-		$table_schema           = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
-		$statements             = $this->get_postgresql_auto_increment_alter_statements( $table_name, $auto_increment_column, $minimum_sequence_value );
-		if ( empty( $statements ) && 'sqlite' === $this->connection->get_driver_name() ) {
-			$statements = $this->get_sqlite_auto_increment_alter_statements( $table_schema, $table_name, $auto_increment_column, $minimum_sequence_value );
-		}
+		$statements             = $this->get_postgresql_auto_increment_alter_statements( $table_schema, $table_name, $auto_increment_column, $minimum_sequence_value );
 		return $this->get_mysql_ddl_translation( $statements, $this->get_mysql_metadata( 'set_auto_increment' ) );
 	}
 	private function translate_mysql_dbdelta_table_comment_alter_action( array $tokens, int $start, int $end ): ?array {
@@ -5820,16 +5746,13 @@ $wp_mysql_primary_index_comment$',
 			return null;
 		}
 
-		$index_type = $this->get_stored_mysql_index_type( $table_schema, $table_name, $old_index_name );
-
-		$statements = array();
-		if ( null === $index_type || ! $this->is_mysql_metadata_only_index_type( $index_type ) ) {
-			$statements[] = sprintf(
+		$statements = array(
+			sprintf(
 				'ALTER INDEX %s RENAME TO %s',
 				$this->get_postgresql_schema_identifier( $table_schema, $table_name . '__' . $old_index_name ),
 				$this->connection->quote_identifier( $table_name . '__' . $new_index_name )
-			);
-		}
+			),
+		);
 		return $this->get_mysql_ddl_translation(
 			$statements,
 			$this->get_mysql_metadata( 'rename_index', 'old_index', $old_index_name, 'new_index', $new_index_name )
@@ -6034,7 +5957,12 @@ $wp_mysql_primary_index_comment$',
 				&& $index['metadata']['name'] === $index['metadata']['columns'][0]['column_name']
 			) {
 				$index['metadata']['name'] = $constraint_name;
-				$statement                 = $this->get_postgresql_mysql_index_create_statement( $table_name, $index['metadata'], $this->connection->quote_identifier( $table_name ), false );
+				$statement                 = $this->get_postgresql_mysql_index_create_statement(
+					$table_name,
+					$index['metadata'],
+					$this->get_postgresql_table_identifier_sql( $table_schema, $table_name ),
+					false
+				);
 				if ( null === $statement ) {
 					return null;
 				}
@@ -6438,14 +6366,16 @@ $wp_mysql_primary_index_comment$',
 		return $drop_index_query;
 	}
 	private function translate_mysql_dbdelta_drop_primary_key_alter_action( string $table_schema, string $table_name ): array {
+		$constraint_name = $this->get_postgresql_primary_key_constraint_name( $table_schema, $table_name );
+		if ( null === $constraint_name ) {
+			throw new InvalidArgumentException( 'Unsupported ALTER TABLE statement.' );
+		}
 		return $this->get_mysql_ddl_translation(
 			array(
 				sprintf(
 					'ALTER TABLE %s DROP CONSTRAINT %s',
 					$this->connection->quote_identifier( $table_name ),
-					$this->connection->quote_identifier(
-						$this->get_postgresql_primary_key_constraint_name( $table_schema, $table_name )
-					)
+					$this->connection->quote_identifier( $constraint_name )
 				),
 			),
 			$this->get_mysql_metadata( 'drop_index', 'schema', $table_schema, 'table', $table_name, 'index', 'PRIMARY' )
@@ -6692,9 +6622,6 @@ $wp_mysql_primary_index_comment$',
 		return $statements;
 	}
 	private function prepend_mysql_column_helper_type_statements( array $statements, array $column ): array {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return $statements;
-		}
 		return array_merge( $column['helper_type_statements'] ?? array(), $statements );
 	}
 	private function get_mysql_alter_column_definition_end_without_placement( array $tokens, int $start, int $end ): ?int {
@@ -6791,25 +6718,21 @@ $wp_mysql_primary_index_comment$',
 		);
 		$extra              = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );
 
-		try {
-			$stmt = $this->connection->query(
-				$this->get_postgresql_catalog_column_metadata_sql(
-					sprintf(
-						'c.data_type,
-						c.is_identity,
-						c.column_default,
-						%1$s AS mysql_column_type,
-						%2$s AS mysql_extra',
-						$column_type,
-						$extra
-					),
-					true
+		$stmt = $this->connection->query(
+			$this->get_postgresql_catalog_column_metadata_sql(
+				sprintf(
+					'c.data_type,
+					c.is_identity,
+					c.column_default,
+					%1$s AS mysql_column_type,
+					%2$s AS mysql_extra',
+					$column_type,
+					$extra
 				),
-				array( $table_schema, $table_name, $column_name )
-			);
-		} catch ( PDOException $e ) {
-			return null;
-		}
+				true
+			),
+			array( $table_schema, $table_name, $column_name )
+		);
 
 		$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
 		return 1 === count( $rows ) ? $rows[0] : null;
@@ -6924,8 +6847,8 @@ $wp_mysql_primary_index_comment$',
 	private function get_postgresql_drop_table_or_view_statements( string $statement_type, array $drop_query ): array {
 		$statements = array();
 		foreach ( $drop_query['targets'] as $drop_target ) {
-			if ( 'DROP TABLE' === $statement_type && null !== $drop_target['schema'] && $this->should_use_postgresql_catalog_metadata() ) {
-				$on_update_columns = (array) $this->get_postgresql_catalog_on_update_current_timestamp_column_names( $drop_target['schema'], $drop_target['table'] );
+			if ( 'DROP TABLE' === $statement_type && null !== $drop_target['schema'] ) {
+				$on_update_columns = $this->get_postgresql_catalog_on_update_current_timestamp_column_names( $drop_target['schema'], $drop_target['table'] );
 				foreach ( $on_update_columns as $column_name ) {
 					$statements = array_merge(
 						$statements,
@@ -6956,9 +6879,12 @@ $wp_mysql_primary_index_comment$',
 			$table_schema     = $this->get_mysql_writable_table_backend_schema( $table_reference, 'DROP INDEX' );
 			$table_name       = $table_reference['table'];
 			$table_identifier = null === $table_reference['schema'] ? $this->connection->quote_identifier( $table_name ) : $this->get_postgresql_schema_identifier( $table_schema, $table_name );
-			$constraint_name  = $this->connection->quote_identifier( $this->get_postgresql_primary_key_constraint_name( $table_schema, $table_name ) );
+			$constraint_name  = $this->get_postgresql_primary_key_constraint_name( $table_schema, $table_name );
+			if ( null === $constraint_name ) {
+				throw new InvalidArgumentException( 'Unsupported DROP INDEX statement.' );
+			}
 			return array(
-				'statements' => array( sprintf( 'ALTER TABLE %s DROP CONSTRAINT %s', $table_identifier, $constraint_name ) ),
+				'statements' => array( sprintf( 'ALTER TABLE %s DROP CONSTRAINT %s', $table_identifier, $this->connection->quote_identifier( $constraint_name ) ) ),
 				'metadata'   => array(
 					'schema' => $table_schema,
 					'table'  => $table_name,
@@ -7010,14 +6936,10 @@ $wp_mysql_primary_index_comment$',
 			? $this->get_mysql_schema_aware_table_backend_schema( $table_reference, $statement_type )
 			: $table_schema;
 		$table_name   = $table_reference['table'];
-		$index_type   = $this->get_stored_mysql_index_type( $table_schema, $table_name, $index_name );
-
-		$statements = array();
-		if ( null === $index_type || ! $this->is_mysql_metadata_only_index_type( $index_type ) ) {
-			$statements[] = 'DROP INDEX ' . $this->get_postgresql_schema_identifier( $table_schema, $table_name . '__' . $index_name );
-		}
 		return array(
-			'statements' => $statements,
+			'statements' => array(
+				'DROP INDEX ' . $this->get_postgresql_schema_identifier( $table_schema, $table_name . '__' . $index_name ),
+			),
 			'metadata'   => array(
 				'schema' => $table_schema,
 				'table'  => $table_name,
@@ -7096,9 +7018,6 @@ $wp_mysql_primary_index_comment$',
 	}
 	private function get_mysql_rename_table_on_update_current_timestamp_statements( string $table_schema, string $old_table_name, string $new_table_name, string $metadata_table_name ): array {
 		$columns = $this->get_postgresql_catalog_on_update_current_timestamp_column_names( $table_schema, $metadata_table_name );
-		if ( null === $columns ) {
-			return array();
-		}
 
 		$statements = array();
 		foreach ( $columns as $column_name ) {
@@ -7122,57 +7041,49 @@ $wp_mysql_primary_index_comment$',
 		}
 		return $statements;
 	}
-	private function get_postgresql_catalog_on_update_current_timestamp_column_names( string $table_schema, string $table_name ): ?array {
-		try {
-			$stmt = $this->connection->query(
-				'SELECT a.attname
-				FROM pg_catalog.pg_class t
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				INNER JOIN pg_catalog.pg_attribute a
-					ON a.attrelid = t.oid
-				INNER JOIN pg_catalog.pg_trigger tr
+	private function get_postgresql_catalog_on_update_current_timestamp_column_names( string $table_schema, string $table_name ): array {
+		$stmt = $this->connection->query(
+			'SELECT a.attname
+					FROM pg_catalog.pg_class t
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					INNER JOIN pg_catalog.pg_attribute a
+						ON a.attrelid = t.oid
+					INNER JOIN pg_catalog.pg_trigger tr
 					ON tr.tgrelid = t.oid
 					AND tr.tgname = \'__wp_pg_on_update_\' || ' . $this->get_postgresql_on_update_current_timestamp_trigger_hash_sql( 'n.nspname', 't.relname', 'a.attname' ) . '
 				WHERE n.nspname = ?
 					AND t.relname = ?
-					AND t.relkind IN (\'r\', \'p\')
-					AND a.attnum > 0
-					AND NOT a.attisdropped
-					AND NOT tr.tgisinternal
-				ORDER BY a.attnum',
-				array( $table_schema, $table_name )
-			);
-		} catch ( PDOException $e ) {
-			return null;
-		}
+						AND t.relkind IN (\'r\', \'p\')
+						AND a.attnum > 0
+						AND NOT a.attisdropped
+						AND NOT tr.tgisinternal
+					ORDER BY a.attnum',
+			array( $table_schema, $table_name )
+		);
 		return array_map( 'strval', $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) );
 	}
 	private function get_mysql_rename_table_index_statements( string $table_schema, string $old_table_name, string $new_table_name, string $metadata_table_name ): array {
 		$index_prefix = $metadata_table_name . '__';
-		try {
-			$stmt = $this->connection->query(
-				'SELECT idx.relname
-				FROM pg_catalog.pg_class t
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = t.relnamespace
-				INNER JOIN pg_catalog.pg_index i
-					ON i.indrelid = t.oid
-				INNER JOIN pg_catalog.pg_class idx
+		$stmt         = $this->connection->query(
+			'SELECT idx.relname
+					FROM pg_catalog.pg_class t
+					INNER JOIN pg_catalog.pg_namespace n
+						ON n.oid = t.relnamespace
+					INNER JOIN pg_catalog.pg_index i
+						ON i.indrelid = t.oid
+					INNER JOIN pg_catalog.pg_class idx
 					ON idx.oid = i.indexrelid
 				WHERE n.nspname = ?
 					AND t.relname = ?
 					AND t.relkind IN (\'r\', \'p\')
-					AND i.indisvalid
-					AND i.indislive
-					AND NOT i.indisprimary
-					AND LEFT(idx.relname, CHAR_LENGTH(?)) = ?
-				ORDER BY idx.relname',
-				array( $table_schema, $metadata_table_name, $index_prefix, $index_prefix )
-			);
-		} catch ( PDOException $e ) {
-			return array();
-		}
+						AND i.indisvalid
+						AND i.indislive
+						AND NOT i.indisprimary
+						AND LEFT(idx.relname, CHAR_LENGTH(?)) = ?
+					ORDER BY idx.relname',
+			array( $table_schema, $metadata_table_name, $index_prefix, $index_prefix )
+		);
 
 		$key_names = array();
 		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN, 0 ) as $index_name ) {
@@ -7192,36 +7103,7 @@ $wp_mysql_primary_index_comment$',
 		}
 		return $statements;
 	}
-	private function get_stored_mysql_index_type( string $table_schema, string $table_name, string $index_name ): ?string {
-		try {
-			$rows = $this->get_show_create_table_metadata_rows( 'indexes', $table_schema, $table_name, false );
-		} catch ( PDOException $e ) {
-			return null;
-		}
-
-		foreach ( $rows as $row ) {
-			$key_name = (string) ( $row['key_name'] ?? '' );
-			if (
-				0 !== strcasecmp( $key_name, $index_name )
-				&& ! ( 'PRIMARY' === strtoupper( $key_name ) && 0 === strcasecmp( 'primary', $index_name ) )
-				&& 0 !== strcasecmp( $table_name . '__' . $key_name, $index_name )
-			) {
-				continue;
-			}
-
-			$index_type = $row['index_type'] ?? null;
-			return null === $index_type || '' === (string) $index_type
-				? null
-				: strtoupper( (string) $index_type );
-		}
-		return null;
-	}
 	private function get_temporary_drop_table_schema_name(): string {
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-
-		if ( 'sqlite' === $driver_name ) {
-			return 'temp';
-		}
 		return 'pg_temp';
 	}
 	private function get_mysql_token_range_bytes( string $query, array $tokens, int $start, int $end ): string {
@@ -7244,7 +7126,7 @@ $wp_mysql_primary_index_comment$',
 		if ( ! isset( $metadata[0]['columns'][0] ) ) {
 			return null;
 		}
-		return array(
+		$column = array(
 			'sql'                    => $this->get_first_translated_create_table_definition( $statements[0] ),
 			'metadata'               => $metadata[0]['columns'][0],
 			'indexes'                => $metadata[0]['indexes'] ?? array(),
@@ -7252,6 +7134,72 @@ $wp_mysql_primary_index_comment$',
 			'checks'                 => $metadata[0]['checks'] ?? array(),
 			'helper_type_statements' => $translator->get_postgresql_mysql_helper_type_statements( $wrapper ),
 		);
+		$this->maybe_append_mysql_inline_key_column_metadata( $definition, $column );
+		return $column;
+	}
+	private function maybe_append_mysql_inline_key_column_metadata( string $definition, array &$column ): void {
+		if ( ! empty( $column['indexes'] ) || ! $this->column_definition_fragment_has_inline_secondary_key( $definition ) ) {
+			return;
+		}
+
+		$column_name         = (string) ( $column['metadata']['name'] ?? '' );
+		$column_type         = (string) ( $column['metadata']['type'] ?? '' );
+		$column['indexes'][] = array(
+			'name'       => $column_name,
+			'ordinal'    => 1,
+			'non_unique' => '1',
+			'index_type' => 'BTREE',
+			'comment'    => '',
+			'columns'    => array(
+				array(
+					'column_name'  => $column_name,
+					'seq_in_index' => 1,
+					'sub_part'     => $this->get_mysql_implicit_index_sub_part( $column_type ),
+				),
+			),
+		);
+	}
+	private function column_definition_fragment_has_inline_secondary_key( string $definition ): bool {
+		$tokens            = $this->get_mysql_tokens( $definition );
+		$depth             = 0;
+		$previous_token_id = null;
+		foreach ( $tokens as $position => $token ) {
+			if ( WP_MySQL_Lexer::EOF === $token->id ) {
+				break;
+			}
+
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+				++$depth;
+				$previous_token_id = $token->id;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+				$depth             = max( 0, $depth - 1 );
+				$previous_token_id = $token->id;
+				continue;
+			}
+
+			if (
+				0 < $position
+				&& 0 === $depth
+				&& in_array( $token->id, array( WP_MySQL_Lexer::KEY_SYMBOL, WP_MySQL_Lexer::INDEX_SYMBOL ), true )
+				&& ! in_array( $previous_token_id, array( WP_MySQL_Lexer::PRIMARY_SYMBOL, WP_MySQL_Lexer::UNIQUE_SYMBOL, WP_MySQL_Lexer::FOREIGN_SYMBOL ), true )
+			) {
+				return true;
+			}
+
+			$previous_token_id = $token->id;
+		}
+		return false;
+	}
+	private function get_mysql_implicit_index_sub_part( string $column_type ): ?int {
+		if ( ! preg_match( '/^(?:var)?char\((\d+)\)$/i', $column_type, $matches ) ) {
+			return null;
+		}
+
+		$length = (int) $matches[1];
+		return $length > 191 ? 191 : null;
 	}
 	private function replace_mysql_column_fragment_constraint_name( string $sql, string $old_name, string $new_name ): string {
 		$old_sql = 'CONSTRAINT ' . $this->connection->quote_identifier( $old_name );
@@ -7282,10 +7230,36 @@ $wp_mysql_primary_index_comment$',
 				);
 			}
 			unset( $column );
+
+			if ( 'BTREE' === strtoupper( (string) ( $index['index_type'] ?? 'BTREE' ) ) && isset( $index['columns'][0]['column_name'] ) ) {
+				$column_type = $this->get_mysql_table_column_type( $table_schema, $table_name, (string) $index['columns'][0]['column_name'] );
+				if ( is_string( $column_type ) && $this->is_mysql_spatial_column_type( $column_type ) ) {
+					$index['index_type'] = 'SPATIAL';
+				}
+			}
+			if ( 'SPATIAL' === strtoupper( (string) ( $index['index_type'] ?? 'BTREE' ) ) ) {
+				foreach ( $index['columns'] as &$column ) {
+					if ( null === $column['sub_part'] ) {
+						$column['sub_part'] = $this->get_mysql_metadata_only_index_sql_sub_part( 'SPATIAL', null );
+					}
+				}
+				unset( $column );
+			}
 		}
 
-		$statement  = $this->get_postgresql_mysql_index_create_statement( $table_name, $index, $this->connection->quote_identifier( $table_name ), 'PRIMARY' !== strtoupper( (string) $index['name'] ), null, $this->should_use_postgresql_catalog_metadata() );
-		$statements = null === $statement ? array() : array( $statement );
+		$index_table_schema = null !== $table_schema && 'public' !== $table_schema ? $table_schema : null;
+		$postgresql_table   = null === $index_table_schema
+			? $this->connection->quote_identifier( $table_name )
+			: $this->get_postgresql_table_identifier_sql( $index_table_schema, $table_name );
+		$use_sub_parts      = 'PRIMARY' !== strtoupper( (string) $index['name'] );
+		$statement          = $this->get_postgresql_mysql_index_create_statement(
+			$table_name,
+			$index,
+			$postgresql_table,
+			$use_sub_parts,
+			$index_table_schema
+		);
+		$statements         = null === $statement ? array() : array( $statement );
 		return array(
 			'statements' => $statements,
 			'metadata'   => $index,
@@ -7443,45 +7417,6 @@ $wp_mysql_primary_index_comment$',
 	private function trim_mysql_statement_fragment( string $fragment ): string {
 		return rtrim( trim( $fragment ), "; \t\n\r\0\x0B" );
 	}
-	private function handle_mysql_procedure_query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		if ( preg_match( '/^\s*DROP\s+PROCEDURE\s+IF\s+EXISTS\s+`?([A-Za-z0-9_]+)`?\s*;?\s*$/i', $query, $matches ) ) {
-			unset( $this->procedures[ strtolower( $matches[1] ) ] );
-			return $this->execute_mysql_admin_noop_query();
-		}
-
-		if ( preg_match( '/^\s*CREATE\s+PROCEDURE\s+`?([A-Za-z0-9_]+)`?\s*\(\s*\)\s+BEGIN\s+(.*?)\s*;\s*END\s*;?\s*$/is', $query, $matches ) ) {
-			$this->procedures[ strtolower( $matches[1] ) ] = trim( $matches[2] );
-			return $this->execute_mysql_admin_noop_query();
-		}
-
-		if ( preg_match( '/^\s*SHOW\s+CREATE\s+PROCEDURE\s+`?([A-Za-z0-9_]+)`?\s*;?\s*$/i', $query, $matches ) ) {
-			$name = strtolower( $matches[1] );
-			if ( ! isset( $this->procedures[ $name ] ) ) {
-				$this->last_result      = array();
-				$this->last_column_meta = array();
-				return $this->last_result;
-			}
-
-			$this->last_result      = array(
-				(object) array(
-					'Procedure'        => $matches[1],
-					'sql_mode'         => $this->get_sql_mode(),
-					'Create Procedure' => 'CREATE PROCEDURE `' . $matches[1] . '`() BEGIN ' . $this->procedures[ $name ] . '; END',
-				),
-			);
-			$this->last_column_meta = array();
-			return $this->last_result;
-		}
-
-		if ( preg_match( '/^\s*CALL\s+`?([A-Za-z0-9_]+)`?\s*(?:\(\s*\))?\s*;?\s*$/i', $query, $matches ) ) {
-			$name = strtolower( $matches[1] );
-			if ( ! isset( $this->procedures[ $name ] ) ) {
-				return null;
-			}
-			return $this->query( $this->procedures[ $name ], $fetch_mode, ...$fetch_mode_args );
-		}
-		return null;
-	}
 	private function get_mysql_use_database_name( string $query ): ?string {
 		$tokens = $this->get_mysql_tokens( $query );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::USE_SYMBOL !== $tokens[0]->id ) {
@@ -7545,7 +7480,7 @@ $wp_mysql_primary_index_comment$',
 		$database_name       = $this->get_mysql_show_database_name( $tokens, $position, $unsupported_message );
 		$schema_name         = $this->get_mysql_show_database_backend_schema( $database_name, $statement_type );
 		if ( ! $is_tables ) {
-			return array_combine( array( 'database', 'schema', 'filter' ), array( $database_name, $schema_name, $this->get_mysql_show_result_filter( $tokens, $position, 'Name', $this->get_mysql_show_output_columns( 'table_status' ), $unsupported_message, explode( ',', self::MYSQL_SHOW_TABLE_STATUS_NUMERIC_COLUMNS ) ) ) );
+				return array_combine( array( 'database', 'schema', 'filter' ), array( $database_name, $schema_name, $this->get_mysql_show_result_filter( $tokens, $position, 'Name', $this->get_mysql_show_output_columns( 'table_status' ), $unsupported_message, self::MYSQL_SHOW_TABLE_STATUS_NUMERIC_COLUMNS ) ) );
 		}
 		$filter = $this->get_mysql_metadata_show_like_where_clause( $tokens, $position, $this->get_mysql_show_column_map( $this->get_show_tables_output_columns( $database_name, $is_full ) ), $unsupported_message, array(), true, true );
 		if ( null === $filter || ! $this->is_at_mysql_query_end( $tokens, $position ) ) {
@@ -7580,14 +7515,12 @@ $wp_mysql_primary_index_comment$',
 			if ( null !== $like ) {
 				throw new InvalidArgumentException( $unsupported_message );
 			}
-			$where = $this->get_mysql_show_where_filters( $tokens, $position, $allowed_columns, $numeric_columns );
+			$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
+			$where         = null === $statement_end ? null : $this->get_mysql_show_where_expression_filter_until( $tokens, $position, $statement_end, $allowed_columns, $numeric_columns );
 			if ( null === $where ) {
-				$where = $this->get_mysql_show_where_expression_filter( $tokens, $position, $allowed_columns, $numeric_columns );
-			}
-			$position = null === $where ? null : $this->get_mysql_statement_end_position( $tokens, $position );
-			if ( null === $position ) {
 				throw new InvalidArgumentException( $unsupported_message );
 			}
+			$position = $statement_end;
 		}
 		return array_combine( array( 'like', 'where' ), array( $like, $where ) );
 	}
@@ -7609,7 +7542,7 @@ $wp_mysql_primary_index_comment$',
 		if ( 0 === strcasecmp( $database_name, $this->main_db_name ) || 0 === strcasecmp( $database_name, 'public' ) ) {
 			return 'public';
 		}
-		if ( $this->should_use_postgresql_catalog_metadata() && ! $this->is_postgresql_internal_schema( $database_name ) ) {
+		if ( ! $this->is_postgresql_internal_schema( $database_name ) ) {
 			return $database_name;
 		}
 		throw new InvalidArgumentException( sprintf( 'Unsupported %s statement.', $statement_type ) );
@@ -7642,13 +7575,6 @@ $wp_mysql_primary_index_comment$',
 			throw new InvalidArgumentException( 'Unsupported SHOW CREATE TABLE statement.' );
 		}
 
-		if (
-			! $this->should_use_postgresql_catalog_metadata()
-			&& ! in_array( $schema_name, array( 'public', 'information_schema' ), true )
-			&& 0 !== strcasecmp( $schema_name, $this->main_db_name )
-		) {
-			throw new InvalidArgumentException( 'Unsupported SHOW CREATE TABLE statement.' );
-		}
 		return array(
 			'schema' => $schema_name,
 			'table'  => $table_reference['table'],
@@ -7972,27 +7898,10 @@ $wp_mysql_primary_index_comment$',
 		return $filter['where'];
 	}
 	private function get_mysql_show_output_columns( string $result_type ): array {
-		return explode( ',', self::MYSQL_SHOW_OUTPUT_COLUMNS[ $result_type ] );
+		return self::MYSQL_SHOW_OUTPUT_COLUMNS[ $result_type ];
 	}
 	private function get_mysql_show_column_map( array $columns ): array {
 		return $columns ? array_combine( array_map( 'strtolower', $columns ), $columns ) : array();
-	}
-	private function get_mysql_show_where_expression_filter( array $tokens, int $position, array $allowed_columns, array $numeric_columns = array() ): ?array {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
-		if ( null === $statement_end || $position + 1 >= $statement_end ) {
-			return null;
-		}
-		return $this->get_mysql_show_where_expression_filter_until(
-			$tokens,
-			$position,
-			$statement_end,
-			$allowed_columns,
-			$numeric_columns
-		);
 	}
 	private function get_mysql_show_where_expression_filter_until( array $tokens, int $position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id || $position + 1 >= $end ) {
@@ -8004,7 +7913,10 @@ $wp_mysql_primary_index_comment$',
 		if ( null === $predicate || $expression_position !== $end ) {
 			return null;
 		}
-		return $this->get_mysql_show_where_predicate_filter( $predicate );
+		return $this->get_mysql_show_where_predicate_filter(
+			$predicate,
+			$this->get_mysql_show_where_pushdown_conditions( $predicate, $numeric_columns )
+		);
 	}
 	private function is_mysql_show_where_expression_filter( ?array $where_filter ): bool {
 		return is_array( $where_filter ) && 'where_expression' === ( $where_filter['type'] ?? null );
@@ -8033,6 +7945,99 @@ $wp_mysql_primary_index_comment$',
 			),
 		);
 		return '=' === $operator ? $predicate + array( 'string_compare' => true ) : $predicate;
+	}
+	private function get_mysql_show_where_pushdown_conditions( array $predicate, array $numeric_columns ): array {
+		$conditions = $this->get_mysql_show_where_pushdown_condition_list( $predicate, $numeric_columns );
+		return null === $conditions ? array() : $conditions;
+	}
+	private function get_mysql_show_where_pushdown_condition_list( array $predicate, array $numeric_columns ): ?array {
+		if ( 'and' === ( $predicate['type'] ?? null ) ) {
+			if ( ! isset( $predicate['left'], $predicate['right'] ) || ! is_array( $predicate['left'] ) || ! is_array( $predicate['right'] ) ) {
+				return null;
+			}
+
+			$left_conditions  = $this->get_mysql_show_where_pushdown_condition_list( $predicate['left'], $numeric_columns );
+			$right_conditions = $this->get_mysql_show_where_pushdown_condition_list( $predicate['right'], $numeric_columns );
+			return null === $left_conditions || null === $right_conditions ? null : array_merge( $left_conditions, $right_conditions );
+		}
+
+		$condition = $this->get_mysql_show_where_pushdown_condition( $predicate, $numeric_columns );
+		return null === $condition ? null : array( $condition );
+	}
+	private function get_mysql_show_where_pushdown_condition( array $predicate, array $numeric_columns ): ?array {
+		$operator = $predicate['operator'] ?? null;
+		if ( 'comparison' !== ( $predicate['type'] ?? null ) || ! in_array( $operator, array( '=', 'like' ), true ) ) {
+			return null;
+		}
+
+		$left  = $predicate['left'] ?? null;
+		$right = $predicate['right'] ?? null;
+		if (
+			! is_array( $left )
+			|| ! is_array( $right )
+			|| 'column' !== ( $left['type'] ?? null )
+			|| ! is_string( $left['column'] ?? null )
+		) {
+			return null;
+		}
+
+		$column = $left['column'];
+		if ( 'like' === $operator ) {
+			if (
+				null !== ( $predicate['escape'] ?? null )
+				|| 'literal' !== ( $right['type'] ?? null )
+				|| ! is_string( $right['value'] ?? null )
+				|| ! $this->is_mysql_show_where_like_pushdown_pattern_safe( $right['value'] )
+			) {
+				return null;
+			}
+			return array(
+				'column'   => $column,
+				'operator' => 'like',
+				'value'    => $right['value'],
+			);
+		}
+
+		if ( 'literal' === ( $right['type'] ?? null ) && is_string( $right['value'] ?? null ) ) {
+			return array(
+				'column'   => $column,
+				'operator' => '=',
+				'value'    => $right['value'],
+			);
+		}
+
+		if (
+			'number' === ( $right['type'] ?? null )
+			&& is_string( $right['value'] ?? null )
+			&& in_array( $column, $numeric_columns, true )
+			&& ctype_digit( $right['value'] )
+		) {
+			return array(
+				'column'   => $column,
+				'operator' => '=',
+				'value'    => $right['value'],
+			);
+		}
+
+		return null;
+	}
+	private function is_mysql_show_where_like_pushdown_pattern_safe( string $pattern ): bool {
+		$length = strlen( $pattern );
+		for ( $i = 0; $i < $length; $i++ ) {
+			$char = $pattern[ $i ];
+			if ( '\\' === $char ) {
+				if ( $i + 1 >= $length ) {
+					return false;
+				}
+				++$i;
+				continue;
+			}
+
+			if ( '_' === $char || '%' === $char ) {
+				return false;
+			}
+		}
+		return true;
 	}
 	private function parse_mysql_show_where_or_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		return $this->parse_mysql_show_where_boolean_binary_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns, 'parse_mysql_show_where_and_expression', WP_MySQL_Lexer::OR_SYMBOL, 'or' );
@@ -8079,12 +8084,15 @@ $wp_mysql_primary_index_comment$',
 		if ( isset( $tokens[ $position ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $position ]->id ) {
 			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $position, $end );
 			if ( null !== $after_close ) {
-				if (
-					isset( $tokens[ $after_close ] )
-					&& $after_close < $end
-					&& $this->is_mysql_show_where_comparison_continuation_token( $tokens[ $after_close ] )
-				) {
-					return $this->parse_mysql_show_where_comparison_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+				$continues_as_comparison = false;
+				if ( isset( $tokens[ $after_close ] ) && $after_close < $end ) {
+					$token_id                = $tokens[ $after_close ]->id;
+					$continues_as_comparison = isset( self::MYSQL_SHOW_WHERE_COMPARISON_OPERATORS[ $token_id ] )
+						|| in_array( $token_id, array( WP_MySQL_Lexer::BETWEEN_SYMBOL, WP_MySQL_Lexer::IN_SYMBOL, WP_MySQL_Lexer::IS_SYMBOL, WP_MySQL_Lexer::LIKE_SYMBOL, WP_MySQL_Lexer::NOT_SYMBOL ), true );
+				}
+				if ( $continues_as_comparison ) {
+					$left = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+					return null === $left ? null : $this->parse_mysql_show_where_comparison_suffix( $tokens, $position, $end, $allowed_columns, $numeric_columns, $left );
 				}
 
 				$inner_position = $position + 1;
@@ -8095,21 +8103,16 @@ $wp_mysql_primary_index_comment$',
 				}
 			}
 		}
-		return $this->parse_mysql_show_where_comparison_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
-	}
-	private function is_mysql_show_where_comparison_continuation_token( WP_MySQL_Token $token ): bool {
-		return isset( self::MYSQL_SHOW_WHERE_COMPARISON_OPERATORS[ $token->id ] )
-			|| in_array( $token->id, array( WP_MySQL_Lexer::BETWEEN_SYMBOL, WP_MySQL_Lexer::IN_SYMBOL, WP_MySQL_Lexer::IS_SYMBOL, WP_MySQL_Lexer::LIKE_SYMBOL, WP_MySQL_Lexer::NOT_SYMBOL ), true );
-	}
-	private function parse_mysql_show_where_comparison_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		$left = $this->parse_mysql_show_where_value_expression( $tokens, $position, $end, $allowed_columns, $numeric_columns );
 		return null === $left ? null : $this->parse_mysql_show_where_comparison_suffix( $tokens, $position, $end, $allowed_columns, $numeric_columns, $left );
 	}
 	private function parse_mysql_show_where_comparison_suffix( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns, array $left ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || $position >= $end ) {
-			return $this->get_mysql_show_where_truthy_predicate( $left );
+			return array(
+				'type' => 'truthy',
+				'expr' => $left,
+			);
 		}
-
 		$operator = self::MYSQL_SHOW_WHERE_COMPARISON_OPERATORS[ $tokens[ $position ]->id ] ?? null;
 		if ( null === $operator ) {
 			$token_id = $tokens[ $position ]->id;
@@ -8126,24 +8129,27 @@ $wp_mysql_primary_index_comment$',
 				$not  = $is_not;
 				return compact( 'type', 'expr', 'not' );
 			}
-
 			$is_not    = WP_MySQL_Lexer::NOT_SYMBOL === $token_id;
 			$position += $is_not ? 1 : 0;
 			if ( ! isset( $tokens[ $position ] ) || $position >= $end ) {
-				return $is_not ? null : $this->get_mysql_show_where_truthy_predicate( $left );
+				return $is_not ? null : array(
+					'type' => 'truthy',
+					'expr' => $left,
+				);
 			}
-
 			$expr = $left;
 			$not  = $is_not;
 			if ( WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $position ]->id ) {
 				$operator = $is_not ? 'not_like' : 'like';
 			} elseif ( WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $position ]->id ) {
 				++$position;
-				$values = $this->parse_mysql_show_where_value_list( $tokens, $position, $end, $allowed_columns, $numeric_columns );
-				if ( null === $values ) {
+				$parsed = $this->parse_mysql_show_where_parenthesized_value_arguments( $tokens, $position, $end, $allowed_columns, $numeric_columns );
+				if ( null === $parsed || empty( $parsed['arguments'] ) ) {
 					return null;
 				}
-				$type = 'in';
+				$position = $parsed['after_close'];
+				$values   = $parsed['arguments'];
+				$type     = 'in';
 				return compact( 'type', 'expr', 'values', 'not' );
 			} elseif ( WP_MySQL_Lexer::BETWEEN_SYMBOL === $tokens[ $position ]->id ) {
 				++$position;
@@ -8165,7 +8171,10 @@ $wp_mysql_primary_index_comment$',
 				$type = 'between';
 				return compact( 'type', 'expr', 'lower', 'upper', 'not' );
 			} else {
-				return $is_not ? null : $this->get_mysql_show_where_truthy_predicate( $left );
+				return $is_not ? null : array(
+					'type' => 'truthy',
+					'expr' => $left,
+				);
 			}
 		}
 
@@ -8177,39 +8186,27 @@ $wp_mysql_primary_index_comment$',
 		$type       = 'comparison';
 		$comparison = compact( 'type', 'operator', 'left', 'right' );
 		if ( 'like' === $operator || 'not_like' === $operator ) {
-			$comparison['escape'] = $this->parse_mysql_show_where_like_escape( $tokens, $position, $end );
-			if ( false === $comparison['escape'] ) {
-				return null;
+			if ( ! isset( $tokens[ $position ] ) || $position >= $end || WP_MySQL_Lexer::ESCAPE_SYMBOL !== $tokens[ $position ]->id ) {
+				$comparison['escape'] = null;
+			} else {
+				if (
+					! isset( $tokens[ $position + 1 ] )
+					|| $position + 1 >= $end
+					|| ! $this->is_mysql_string_literal_token( $tokens[ $position + 1 ] )
+				) {
+					return null;
+				}
+
+				$escape = $tokens[ $position + 1 ]->get_value();
+				if ( 1 !== strlen( $escape ) ) {
+					return null;
+				}
+
+				$comparison['escape'] = $escape;
+				$position            += 2;
 			}
 		}
 		return $comparison;
-	}
-	private function get_mysql_show_where_truthy_predicate( array $expression ): array {
-		return array(
-			'type' => 'truthy',
-			'expr' => $expression,
-		);
-	}
-	private function parse_mysql_show_where_like_escape( array $tokens, int &$position, int $end ) {
-		if ( ! isset( $tokens[ $position ] ) || $position >= $end || WP_MySQL_Lexer::ESCAPE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		if (
-			! isset( $tokens[ $position + 1 ] )
-			|| $position + 1 >= $end
-			|| ! $this->is_mysql_string_literal_token( $tokens[ $position + 1 ] )
-		) {
-			return false;
-		}
-
-		$escape = $tokens[ $position + 1 ]->get_value();
-		if ( 1 !== strlen( $escape ) ) {
-			return false;
-		}
-
-		$position += 2;
-		return $escape;
 	}
 	private function parse_mysql_show_where_value_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
 		return $this->parse_mysql_show_where_arithmetic_value_expression(
@@ -8311,16 +8308,9 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 
-		$expression = $this->get_mysql_show_where_scalar_value_expression( $token, $allowed_columns );
-		if ( null !== $expression ) {
-			++$position;
-			return $expression;
-		}
-		return null;
-	}
-	private function get_mysql_show_where_scalar_value_expression( WP_MySQL_Token $token, array $allowed_columns ): ?array {
 		$column = $this->get_mysql_show_output_column_name( $token, $allowed_columns );
 		if ( null !== $column ) {
+			++$position;
 			return array(
 				'type'   => 'column',
 				'column' => $column,
@@ -8328,6 +8318,7 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( $this->is_mysql_string_literal_token( $token ) ) {
+			++$position;
 			return array(
 				'type'  => 'literal',
 				'value' => $token->get_value(),
@@ -8335,6 +8326,7 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( WP_MySQL_Lexer::TRUE_SYMBOL === $token->id || WP_MySQL_Lexer::FALSE_SYMBOL === $token->id ) {
+			++$position;
 			return array(
 				'type'  => 'number',
 				'value' => WP_MySQL_Lexer::TRUE_SYMBOL === $token->id ? '1' : '0',
@@ -8342,14 +8334,18 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		if ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id ) {
+			++$position;
 			return array( 'type' => 'null' );
 		}
-		return $this->is_mysql_numeric_literal_token( $token )
-			? array(
+
+		if ( $this->is_mysql_numeric_literal_token( $token ) ) {
+			++$position;
+			return array(
 				'type'  => 'number',
 				'value' => $token->get_value(),
-			)
-			: null;
+			);
+		}
+		return null;
 	}
 	private function is_mysql_show_where_numeric_value_expression( array $expression, array $numeric_columns ): bool {
 		$type = $expression['type'] ?? null;
@@ -8366,7 +8362,15 @@ $wp_mysql_primary_index_comment$',
 			&& $this->is_mysql_show_where_numeric_value_expression( $expression['expr'], $numeric_columns );
 	}
 	private function parse_mysql_show_where_function_value_expression( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
-		$function = $this->get_mysql_show_where_function_descriptor( $tokens[ $position ] ?? null );
+		$function_token = $tokens[ $position ] ?? null;
+		$function_name  = null;
+		if ( null !== $function_token ) {
+			$function_name = self::MYSQL_SHOW_WHERE_KEYWORD_FUNCTIONS[ $function_token->id ] ?? $this->get_mysql_identifier_token_value( $function_token );
+		}
+
+		$function = null === $function_name
+			? null
+			: $this->get_mysql_show_where_function_descriptors()[ strtolower( $function_name ) ] ?? null;
 		if ( null === $function ) {
 			return null;
 		}
@@ -8377,11 +8381,16 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$arguments = $parsed['arguments'];
-		if (
-			! in_array( count( $arguments ), $function['arity'], true )
-			|| ( ! empty( $function['numeric_arguments'] ) && ! $this->mysql_show_where_value_expressions_are_numeric( $arguments, $numeric_columns ) )
-		) {
+		if ( ! in_array( count( $arguments ), $function['arity'], true ) ) {
 			return null;
+		}
+
+		if ( ! empty( $function['numeric_arguments'] ) ) {
+			foreach ( $arguments as $argument ) {
+				if ( ! $this->is_mysql_show_where_numeric_value_expression( $argument, $numeric_columns ) ) {
+					return null;
+				}
+			}
 		}
 
 		$position = $parsed['after_close'];
@@ -8391,17 +8400,6 @@ $wp_mysql_primary_index_comment$',
 			'arguments' => $arguments,
 		);
 	}
-	private function get_mysql_show_where_function_descriptor( ?WP_MySQL_Token $token ): ?array {
-		if ( null === $token ) {
-			return null;
-		}
-
-		$name = self::MYSQL_SHOW_WHERE_KEYWORD_FUNCTIONS[ $token->id ] ?? $this->get_mysql_identifier_token_value( $token );
-		if ( null === $name ) {
-			return null;
-		}
-		return $this->get_mysql_show_where_function_descriptors()[ strtolower( $name ) ] ?? null;
-	}
 	private function get_mysql_show_where_function_descriptors(): array {
 		static $descriptors = null;
 		if ( null !== $descriptors ) {
@@ -8409,35 +8407,30 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		$descriptors = array();
-		foreach ( explode( ';', 'lower|1||lcase lower;upper|1||ucase upper;left|2||left;right|2||right;substring|2,3|substring|substr substring mid;length|1||length;char_length|1||char_length character_length;mod|2|numeric|mod' ) as $definition ) {
-			list( $function, $arity, $flags, $aliases ) = explode( '|', $definition );
-			$descriptor                                 = array(
+		foreach (
+			array(
+				array( 'lower', array( 1 ), false, false, array( 'lcase', 'lower' ) ),
+				array( 'upper', array( 1 ), false, false, array( 'ucase', 'upper' ) ),
+				array( 'left', array( 2 ), false, false, array( 'left' ) ),
+				array( 'right', array( 2 ), false, false, array( 'right' ) ),
+				array( 'substring', array( 2, 3 ), false, true, array( 'substr', 'substring', 'mid' ) ),
+				array( 'length', array( 1 ), false, false, array( 'length' ) ),
+				array( 'char_length', array( 1 ), false, false, array( 'char_length', 'character_length' ) ),
+				array( 'mod', array( 2 ), true, false, array( 'mod' ) ),
+			) as $definition
+		) {
+			list( $function, $arity, $numeric_arguments, $substring_arguments, $aliases ) = $definition;
+			$descriptor = array(
 				'function'            => $function,
-				'arity'               => array_map( 'intval', explode( ',', $arity ) ),
-				'numeric_arguments'   => false !== strpos( $flags, 'numeric' ),
-				'substring_arguments' => false !== strpos( $flags, 'substring' ),
+				'arity'               => $arity,
+				'numeric_arguments'   => $numeric_arguments,
+				'substring_arguments' => $substring_arguments,
 			);
-			foreach ( explode( ' ', $aliases ) as $alias ) {
+			foreach ( $aliases as $alias ) {
 				$descriptors[ $alias ] = $descriptor;
 			}
 		}
 		return $descriptors;
-	}
-	private function mysql_show_where_value_expressions_are_numeric( array $expressions, array $numeric_columns ): bool {
-		foreach ( $expressions as $expression ) {
-			if ( ! $this->is_mysql_show_where_numeric_value_expression( $expression, $numeric_columns ) ) {
-				return false;
-			}
-		}
-		return true;
-	}
-	private function parse_mysql_show_where_value_list( array $tokens, int &$position, int $end, array $allowed_columns, array $numeric_columns = array() ): ?array {
-		$parsed = $this->parse_mysql_show_where_parenthesized_value_arguments( $tokens, $position, $end, $allowed_columns, $numeric_columns );
-		if ( null === $parsed || empty( $parsed['arguments'] ) ) {
-			return null;
-		}
-		$position = $parsed['after_close'];
-		return $parsed['arguments'];
 	}
 	private function parse_mysql_show_where_parenthesized_value_arguments( array $tokens, int $position, int $end, array $allowed_columns, array $numeric_columns, bool $substring_arguments = false ): ?array {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
@@ -8466,75 +8459,6 @@ $wp_mysql_primary_index_comment$',
 			$arguments[] = $argument;
 		}
 		return compact( 'arguments', 'after_close' );
-	}
-	private function get_mysql_show_where_filters( array $tokens, int $position, array $allowed_columns, array $numeric_columns = array() ): ?array {
-		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[ $position ]->id ) {
-			return null;
-		}
-
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, $position );
-		if ( null === $statement_end ) {
-			return null;
-		}
-
-		$predicate           = null;
-		$pushdown_conditions = array();
-		$position            = $position + 1;
-		while ( $position < $statement_end ) {
-			if ( ! isset( $tokens[ $position ], $tokens[ $position + 1 ], $tokens[ $position + 2 ] ) ) {
-				return null;
-			}
-
-			$column = $this->get_mysql_show_output_column_name( $tokens[ $position ], $allowed_columns );
-			if ( null === $column ) {
-				return null;
-			}
-
-			$operator_token = $tokens[ $position + 1 ];
-			$value_token    = $tokens[ $position + 2 ];
-			if ( WP_MySQL_Lexer::EQUAL_OPERATOR === $operator_token->id ) {
-				if ( $this->is_mysql_string_literal_token( $value_token ) ) {
-					$value = $value_token->get_value();
-				} elseif (
-					in_array( $column, $numeric_columns, true )
-					&& $this->is_mysql_unsigned_integer_token( $value_token )
-				) {
-					$value = $value_token->get_value();
-				} else {
-					return null;
-				}
-
-				$operator = '=';
-			} elseif ( WP_MySQL_Lexer::LIKE_SYMBOL === $operator_token->id && $this->is_mysql_string_literal_token( $value_token ) ) {
-				$operator = 'like';
-				$value    = $value_token->get_value();
-			} else {
-				return null;
-			}
-
-			$comparison            = $this->get_mysql_show_simple_comparison_predicate( $column, $operator, $value );
-			$predicate             = null === $predicate ? $comparison : array(
-				'type'  => 'and',
-				'left'  => $predicate,
-				'right' => $comparison,
-			);
-			$pushdown_conditions[] = array(
-				'column'   => $column,
-				'operator' => $operator,
-				'value'    => $value,
-			);
-
-			$position += 3;
-			if ( $position === $statement_end ) {
-				break;
-			}
-
-			if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $position ]->id ) {
-				return null;
-			}
-			++$position;
-		}
-		return null === $predicate ? null : $this->get_mysql_show_where_predicate_filter( $predicate, $pushdown_conditions );
 	}
 	private function get_mysql_show_output_column_name( WP_MySQL_Token $token, array $allowed_columns ): ?string {
 		$column = $this->get_mysql_identifier_token_value( $token );
@@ -8912,12 +8836,11 @@ $wp_mysql_primary_index_comment$',
 		}
 
 		foreach ( $lock_tables_query['tables'] as $table_reference ) {
-			$requested_schema = $table_reference['schema'];
-			$table_name       = $table_reference['table'];
-			if (
-				( null === $requested_schema && 0 === strcasecmp( $this->db_name, 'information_schema' ) )
-				|| ( null !== $requested_schema && 0 === strcasecmp( $requested_schema, 'information_schema' ) )
-			) {
+			$requested_schema           = $table_reference['schema'];
+			$table_name                 = $table_reference['table'];
+			$targets_information_schema = ( null === $requested_schema && 0 === strcasecmp( $this->db_name, 'information_schema' ) )
+				|| ( null !== $requested_schema && 0 === strcasecmp( $requested_schema, 'information_schema' ) );
+			if ( $targets_information_schema ) {
 				throw new InvalidArgumentException( 'Unsupported LOCK TABLES statement.' );
 			}
 
@@ -9009,11 +8932,6 @@ $wp_mysql_primary_index_comment$',
 	}
 	private function mysql_table_administration_table_exists( ?string $requested_schema, string $table_name ): bool {
 		$schema_name = $this->get_mysql_table_administration_backend_schema( $requested_schema, $table_name );
-		$driver_name = $this->connection->get_driver_name();
-
-		if ( 'sqlite' === $driver_name ) {
-			return $this->sqlite_table_administration_table_exists( $schema_name, $table_name );
-		}
 
 		$stmt = $this->connection->query(
 			'SELECT 1
@@ -9029,64 +8947,14 @@ $wp_mysql_primary_index_comment$',
 		return false !== $stmt->fetchColumn();
 	}
 	private function get_mysql_table_administration_backend_schema( ?string $requested_schema, string $table_name ): string {
-		if (
-			null === $requested_schema
+		$targets_default_schema = null === $requested_schema
 			|| 0 === strcasecmp( $requested_schema, $this->db_name )
 			|| 0 === strcasecmp( $requested_schema, $this->main_db_name )
-			|| 0 === strcasecmp( $requested_schema, 'public' )
-		) {
+			|| 0 === strcasecmp( $requested_schema, 'public' );
+		if ( $targets_default_schema ) {
 			return $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
 		}
 		return $this->resolve_mysql_table_schema_for_introspection( $requested_schema, $table_name );
-	}
-	private function sqlite_table_administration_table_exists( string $schema_name, string $table_name ): bool {
-		if ( 'temp' === $schema_name ) {
-			return $this->sqlite_table_administration_table_exists_in_catalog( 'sqlite_temp_master', $table_name );
-		}
-
-		if ( 'public' === $schema_name ) {
-			if (
-				$this->sqlite_database_schema_exists( 'public' )
-				&& $this->sqlite_table_administration_table_exists_in_catalog(
-					$this->connection->quote_identifier( 'public' ) . '.sqlite_master',
-					$table_name
-				)
-			) {
-				return true;
-			}
-			return $this->sqlite_table_administration_table_exists_in_catalog( 'sqlite_master', $table_name );
-		}
-
-		if ( 'main' === $schema_name ) {
-			return $this->sqlite_table_administration_table_exists_in_catalog( 'sqlite_master', $table_name );
-		}
-
-		if ( ! $this->sqlite_database_schema_exists( $schema_name ) ) {
-			return false;
-		}
-		return $this->sqlite_table_administration_table_exists_in_catalog(
-			$this->connection->quote_identifier( $schema_name ) . '.sqlite_master',
-			$table_name
-		);
-	}
-	private function sqlite_table_administration_table_exists_in_catalog( string $catalog_sql, string $table_name ): bool {
-		$stmt = $this->connection->query(
-			sprintf(
-				'SELECT name FROM %s WHERE type = \'table\' AND name = ? LIMIT 1',
-				$catalog_sql
-			),
-			array( $table_name )
-		);
-		return false !== $stmt->fetchColumn();
-	}
-	private function sqlite_database_schema_exists( string $schema_name ): bool {
-		$stmt = $this->connection->query( 'PRAGMA database_list' );
-		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $database ) {
-			if ( isset( $database['name'] ) && $schema_name === (string) $database['name'] ) {
-				return true;
-			}
-		}
-		return false;
 	}
 	private function execute_show_columns_query( string $schema_name, string $table_name, bool $is_full, ?string $like, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ) {
 		$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $schema_name, $table_name );
@@ -9100,7 +8968,7 @@ $wp_mysql_primary_index_comment$',
 		$output_columns = $this->get_mysql_show_output_columns( $is_full ? 'columns_full' : 'columns' );
 		$descriptors    = $this->get_direct_information_schema_column_descriptors( $table_name, $output_columns, $is_full );
 		if ( null === $descriptors ) {
-			return $this->set_mysql_static_show_result( $output_columns, array(), $fetch_mode, ...$fetch_mode_args );
+			throw new InvalidArgumentException( 'Unsupported information_schema query.' );
 		}
 
 		return $this->execute_mysql_static_show_result_with_filters(
@@ -9134,22 +9002,100 @@ $wp_mysql_primary_index_comment$',
 	}
 	private function get_mysql_catalog_projected_show_statement_descriptor( string $type, array $context ): array {
 		if ( 'columns' === $type ) {
-			return $this->get_mysql_catalog_projected_show_descriptor( $this->get_mysql_show_output_columns( $context['is_full'] ? 'columns_full' : 'columns' ), 'Field="COLUMN_NAME"; Type="COLUMN_TYPE"; Collation="COLLATION_NAME"; Null="IS_NULLABLE"; Key="COLUMN_KEY"; Default="COLUMN_DEFAULT"; Extra="EXTRA"; Privileges="PRIVILEGES"; Comment="COLUMN_COMMENT"', '(' . $this->get_direct_information_schema_relation_sql( 'columns' ) . ') information_schema_columns', sprintf( '"TABLE_SCHEMA" = COALESCE(NULLIF(?, %s), %s)' . "\n\t" . 'AND "TABLE_NAME" = ?', $this->connection->quote( 'public' ), $this->connection->quote( $this->main_db_name ) ), array( $context['resolved_schema'], $context['table_name'] ), 'ORDER BY "ORDINAL_POSITION"', $this->get_mysql_key_value_array( 'filter', $context['where_filter'], 'like', $context['like'], 'like_expression', '"COLUMN_NAME"', 'cache_key', $this->get_mysql_introspection_result_cache_key( 'show_columns', $context['fetch_mode'], array( $context['resolved_schema'], $context['table_name'], $context['is_full'], $context['like'], $context['where_filter'], $context['fetch_mode'], $context['fetch_mode_args'] ) ), 'unsupported_message', 'Unsupported SHOW COLUMNS statement.' ) );
+			return $this->get_mysql_catalog_projected_show_descriptor(
+				$this->get_mysql_show_output_columns( $context['is_full'] ? 'columns_full' : 'columns' ),
+				array(
+					'Field'      => '"COLUMN_NAME"',
+					'Type'       => '"COLUMN_TYPE"',
+					'Collation'  => '"COLLATION_NAME"',
+					'Null'       => '"IS_NULLABLE"',
+					'Key'        => '"COLUMN_KEY"',
+					'Default'    => '"COLUMN_DEFAULT"',
+					'Extra'      => '"EXTRA"',
+					'Privileges' => '"PRIVILEGES"',
+					'Comment'    => '"COLUMN_COMMENT"',
+				),
+				'(' . $this->get_direct_information_schema_relation_sql( 'columns' ) . ') information_schema_columns',
+				sprintf( '"TABLE_SCHEMA" = COALESCE(NULLIF(?, %s), %s)' . "\n\t" . 'AND "TABLE_NAME" = ?', $this->connection->quote( 'public' ), $this->connection->quote( $this->main_db_name ) ),
+				array( $context['resolved_schema'], $context['table_name'] ),
+				'ORDER BY "ORDINAL_POSITION"',
+				$this->get_mysql_key_value_array( 'filter', $context['where_filter'], 'like', $context['like'], 'like_expression', '"COLUMN_NAME"', 'cache_key', $this->get_mysql_introspection_result_cache_key( 'show_columns', $context['fetch_mode'], array( $context['resolved_schema'], $context['table_name'], $context['is_full'], $context['like'], $context['where_filter'], $context['fetch_mode'], $context['fetch_mode_args'] ) ), 'unsupported_message', 'Unsupported SHOW COLUMNS statement.' )
+			);
 		}
 		if ( 'tables' === $type ) {
-			$columns        = $this->get_show_tables_output_columns( $context['database_name'], $context['is_full'] );
-			$catalog_source = $this->should_use_postgresql_catalog_metadata() ? array( '"TABLE_SCHEMA"', '"TABLE_NAME"', '"TABLE_TYPE"', '"TABLE_TYPE"', '(' . $this->get_direct_information_schema_relation_sql( 'tables' ) . ') information_schema_tables', $this->get_direct_information_schema_display_schema( $context['schema_name'] ) ) : array( 'table_schema', 'table_name', "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END", 'table_type', 'information_schema.tables', $context['schema_name'] );
-			list( $schema_column, $table_name_sql, $table_type_sql, $table_type_filter_sql, $from, $schema_param ) = $catalog_source;
+			$columns = $this->get_show_tables_output_columns( $context['database_name'], $context['is_full'] );
+			list( $schema_column, $table_name_sql, $table_type_sql, $table_type_filter_sql, $from, $schema_param ) = array( '"TABLE_SCHEMA"', '"TABLE_NAME"', '"TABLE_TYPE"', '"TABLE_TYPE"', '(' . $this->get_direct_information_schema_relation_sql( 'tables' ) . ') information_schema_tables', $this->get_direct_information_schema_display_schema( $context['schema_name'] ) );
 			$expressions = $this->get_mysql_key_value_array( $columns[0], $table_name_sql, 'Table_type', $table_type_sql );
 			return $this->get_mysql_catalog_projected_show_descriptor( $columns, $expressions, $from, sprintf( '%1$s = ?' . "\n\t" . 'AND %2$s IN (\'BASE TABLE\', \'VIEW\')' . "\n\t" . 'AND %3$s NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE %4$s', $schema_column, $table_type_filter_sql, $table_name_sql, $this->get_mysql_like_default_escape_sql() ), array( $schema_param ), 'ORDER BY ' . $table_name_sql, $this->get_mysql_key_value_array( 'filter', $context['where_filter'], 'like', $context['like'], 'like_expression', $table_name_sql, 'filter_columns', $expressions, 'unsupported_message', 'Unsupported SHOW TABLES statement.' ) );
 		}
 		if ( 'table_status' === $type ) {
 			$columns = $this->get_mysql_show_output_columns( 'table_status' );
-			return $this->get_mysql_catalog_projected_show_descriptor( $columns, 'Name="TABLE_NAME"; Engine="ENGINE"; Version=CAST("VERSION" AS text); Row_format="ROW_FORMAT"; Rows=CAST("TABLE_ROWS" AS text); Avg_row_length=CAST("AVG_ROW_LENGTH" AS text); Data_length=CAST("DATA_LENGTH" AS text); Max_data_length=CAST("MAX_DATA_LENGTH" AS text); Index_length=CAST("INDEX_LENGTH" AS text); Data_free=CAST("DATA_FREE" AS text); Auto_increment=CASE WHEN "AUTO_INCREMENT" IS NULL THEN NULL ELSE CAST("AUTO_INCREMENT" AS text) END; Create_time="CREATE_TIME"; Update_time="UPDATE_TIME"; Check_time="CHECK_TIME"; Collation="TABLE_COLLATION"; Checksum="CHECKSUM"; Create_options="CREATE_OPTIONS"; Comment="TABLE_COMMENT"', '(' . $this->get_direct_information_schema_relation_sql( 'tables' ) . ') information_schema_tables', "\"TABLE_SCHEMA\" = ?\n\tAND \"TABLE_TYPE\" = ?", array( $this->get_direct_information_schema_display_schema( $context['show_table_status_query']['schema'] ), 'BASE TABLE' ), 'ORDER BY "TABLE_NAME"', $this->get_mysql_key_value_array( 'filter', $context['show_table_status_query']['filter'], 'filter_in_php', true ) );
+			return $this->get_mysql_catalog_projected_show_descriptor(
+				$columns,
+				array(
+					'Name'            => '"TABLE_NAME"',
+					'Engine'          => '"ENGINE"',
+					'Version'         => 'CAST("VERSION" AS text)',
+					'Row_format'      => '"ROW_FORMAT"',
+					'Rows'            => 'CAST("TABLE_ROWS" AS text)',
+					'Avg_row_length'  => 'CAST("AVG_ROW_LENGTH" AS text)',
+					'Data_length'     => 'CAST("DATA_LENGTH" AS text)',
+					'Max_data_length' => 'CAST("MAX_DATA_LENGTH" AS text)',
+					'Index_length'    => 'CAST("INDEX_LENGTH" AS text)',
+					'Data_free'       => 'CAST("DATA_FREE" AS text)',
+					'Auto_increment'  => 'CASE WHEN "AUTO_INCREMENT" IS NULL THEN NULL ELSE CAST("AUTO_INCREMENT" AS text) END',
+					'Create_time'     => '"CREATE_TIME"',
+					'Update_time'     => '"UPDATE_TIME"',
+					'Check_time'      => '"CHECK_TIME"',
+					'Collation'       => '"TABLE_COLLATION"',
+					'Checksum'        => '"CHECKSUM"',
+					'Create_options'  => '"CREATE_OPTIONS"',
+					'Comment'         => '"TABLE_COMMENT"',
+				),
+				'(' . $this->get_direct_information_schema_relation_sql( 'tables' ) . ') information_schema_tables',
+				"\"TABLE_SCHEMA\" = ?\n\tAND \"TABLE_TYPE\" = ?",
+				array( $this->get_direct_information_schema_display_schema( $context['show_table_status_query']['schema'] ), 'BASE TABLE' ),
+				'ORDER BY "TABLE_NAME"',
+				$this->get_mysql_key_value_array( 'filter', $context['show_table_status_query']['filter'], 'filter_in_php', true )
+			);
 		}
 		if ( 'index' === $type ) {
 			$columns = $this->get_mysql_show_output_columns( 'index' );
-			return $this->get_mysql_catalog_projected_show_descriptor( $columns, array_combine( $columns, array_map( array( $this->connection, 'quote_identifier' ), $columns ) ), sprintf( "(\n\tSELECT\n\t\t%1\$s,\n\t\t\"POSTGRESQL_INDEX_OID\" AS postgresql_index_oid\n\tFROM (%2\$s) information_schema_statistics\n\tWHERE \"TABLE_SCHEMA\" = COALESCE(NULLIF(?, %3\$s), %4\$s)\n\t\tAND \"TABLE_NAME\" = ?\n) AS show_index_rows", $this->get_mysql_show_projection_sql( $columns, $this->get_direct_information_schema_native_projection_expression_map( 'Table="TABLE_NAME"; Non_unique=CAST("NON_UNIQUE" AS text); Key_name="INDEX_NAME"; Seq_in_index=CAST("SEQ_IN_INDEX" AS text); Column_name="COLUMN_NAME"; Collation="COLLATION"; Cardinality=CAST("CARDINALITY" AS text); Sub_part=CAST("SUB_PART" AS text); Packed="PACKED"; Null="NULLABLE"; Index_type="INDEX_TYPE"; Comment="COMMENT"; Index_comment="INDEX_COMMENT"; Visible="IS_VISIBLE"; Expression="EXPRESSION"' ), "\t\t" ), $this->get_direct_information_schema_relation_sql( 'statistics', array( 'include_internal_sort_column' => true ) ), $this->connection->quote( 'public' ), $this->connection->quote( $this->main_db_name ) ), '', array( $context['resolved_schema'], $context['table_name'] ), "ORDER BY\n\t\"Key_name\" = 'PRIMARY' DESC,\n\t\"Non_unique\" = '0' DESC,\n\t\"Index_type\" = 'SPATIAL' DESC,\n\t\"Index_type\" = 'BTREE' DESC,\n\t\"Index_type\" = 'FULLTEXT' DESC,\n\tpostgresql_index_oid,\n\tCAST(\"Seq_in_index\" AS integer)", $this->get_mysql_key_value_array( 'filter', $context['where_filter'], 'filter_prefix', 'WHERE ', 'cache_key', $this->get_mysql_introspection_result_cache_key( 'show_index', $context['fetch_mode'], array( $context['resolved_schema'], $context['table_name'], $context['where_filter'], $context['fetch_mode'], $context['fetch_mode_args'] ) ), 'unsupported_message', 'Unsupported SHOW INDEX statement.' ) );
+			return $this->get_mysql_catalog_projected_show_descriptor(
+				$columns,
+				array_combine( $columns, array_map( array( $this->connection, 'quote_identifier' ), $columns ) ),
+				sprintf(
+					"(\n\tSELECT\n\t\t%1\$s,\n\t\t\"POSTGRESQL_INDEX_OID\" AS postgresql_index_oid\n\tFROM (%2\$s) information_schema_statistics\n\tWHERE \"TABLE_SCHEMA\" = COALESCE(NULLIF(?, %3\$s), %4\$s)\n\t\tAND \"TABLE_NAME\" = ?\n) AS show_index_rows",
+					$this->get_mysql_show_projection_sql(
+						$columns,
+						array(
+							'Table'         => '"TABLE_NAME"',
+							'Non_unique'    => 'CAST("NON_UNIQUE" AS text)',
+							'Key_name'      => '"INDEX_NAME"',
+							'Seq_in_index'  => 'CAST("SEQ_IN_INDEX" AS text)',
+							'Column_name'   => '"COLUMN_NAME"',
+							'Collation'     => '"COLLATION"',
+							'Cardinality'   => 'CAST("CARDINALITY" AS text)',
+							'Sub_part'      => 'CAST("SUB_PART" AS text)',
+							'Packed'        => '"PACKED"',
+							'Null'          => '"NULLABLE"',
+							'Index_type'    => '"INDEX_TYPE"',
+							'Comment'       => '"COMMENT"',
+							'Index_comment' => '"INDEX_COMMENT"',
+							'Visible'       => '"IS_VISIBLE"',
+							'Expression'    => '"EXPRESSION"',
+						),
+						"\t\t"
+					),
+					$this->get_direct_information_schema_relation_sql( 'statistics', array( 'include_internal_sort_column' => true ) ),
+					$this->connection->quote( 'public' ),
+					$this->connection->quote( $this->main_db_name )
+				),
+				'',
+				array( $context['resolved_schema'], $context['table_name'] ),
+				"ORDER BY\n\t\"Key_name\" = 'PRIMARY' DESC,\n\t\"Non_unique\" = '0' DESC,\n\t\"Index_type\" = 'SPATIAL' DESC,\n\t\"Index_type\" = 'BTREE' DESC,\n\t\"Index_type\" = 'FULLTEXT' DESC,\n\tpostgresql_index_oid,\n\tCAST(\"Seq_in_index\" AS integer)",
+				$this->get_mysql_key_value_array( 'filter', $context['where_filter'], 'filter_prefix', 'WHERE ', 'cache_key', $this->get_mysql_introspection_result_cache_key( 'show_index', $context['fetch_mode'], array( $context['resolved_schema'], $context['table_name'], $context['where_filter'], $context['fetch_mode'], $context['fetch_mode_args'] ) ), 'unsupported_message', 'Unsupported SHOW INDEX statement.' )
+			);
 		}
 		throw new LogicException( 'Unsupported catalog projected SHOW descriptor.' );
 	}
@@ -9163,15 +9109,7 @@ $wp_mysql_primary_index_comment$',
 		if ( ! empty( $pushdown_conditions ) ) {
 			$conditions = array();
 			foreach ( $pushdown_conditions as $filter ) {
-				if ( ! isset( $filter_columns[ $filter['column'] ] ) ) {
-					throw new InvalidArgumentException( $unsupported_message );
-				}
-
-				$conditions[] = sprintf(
-					'like' === ( $filter['operator'] ?? '=' ) ? '%s LIKE ? ESCAPE ' . $this->get_mysql_like_default_escape_sql() : '%s = ?',
-					$filter_columns[ $filter['column'] ]
-				);
-				$params[]     = $filter['value'];
+				$conditions[] = $this->get_mysql_catalog_show_pushdown_condition_sql( $filter, $filter_columns, $params, $unsupported_message );
 			}
 
 			$sql                    .= "\n" . $filter_prefix . implode( ' AND ', $conditions );
@@ -9187,9 +9125,10 @@ $wp_mysql_primary_index_comment$',
 		);
 		$this->last_column_meta          = $this->normalize_column_meta( $stmt );
 		if ( null !== $where_expression_filter ) {
-			$rows = $stmt->fetchAll( PDO::FETCH_ASSOC );
-			$rows = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
-			$this->set_mysql_associative_result_rows( $rows, $fetch_mode, ...$fetch_mode_args );
+			$rows                  = $stmt->fetchAll( PDO::FETCH_ASSOC );
+			$rows                  = $this->filter_mysql_static_show_rows( $rows, $where_expression_filter );
+			$this->last_found_rows = count( $rows );
+			$this->set_mysql_associative_rows_fetch_result( $rows, $fetch_mode, ...$fetch_mode_args );
 		} else {
 			$this->last_result     = $stmt->fetchAll( $fetch_mode, ...$fetch_mode_args );
 			$this->last_found_rows = count( $this->last_result );
@@ -9197,6 +9136,49 @@ $wp_mysql_primary_index_comment$',
 
 		$this->store_mysql_introspection_result_in_cache( $cache_key );
 		return $this->last_result;
+	}
+	private function get_mysql_catalog_show_pushdown_condition_sql( array $filter, array $filter_columns, array &$params, string $unsupported_message ): string {
+		if ( ! isset( $filter_columns[ $filter['column'] ] ) ) {
+			throw new InvalidArgumentException( $unsupported_message );
+		}
+
+		$expression = $filter_columns[ $filter['column'] ];
+		$value      = $filter['value'];
+		if ( 'like' === ( $filter['operator'] ?? '=' ) ) {
+			$params[] = $value;
+			return sprintf(
+				'%s LIKE %s ESCAPE %s',
+				$this->get_mysql_show_pushdown_case_fold_sql( $expression ),
+				$this->get_mysql_show_pushdown_case_fold_sql( '?' ),
+				$this->get_mysql_like_default_escape_sql()
+			);
+		}
+
+		$params[] = $value;
+		$params[] = $value;
+		$params[] = $value;
+		return sprintf(
+			'CASE WHEN %1$s ~ %2$s AND %3$s ~ %2$s THEN CAST(%1$s AS double precision) = CAST(%3$s AS double precision) ELSE %4$s = %5$s END',
+			$this->get_mysql_show_pushdown_text_sql( $expression ),
+			$this->connection->quote( $this->get_mysql_show_pushdown_numeric_regex() ),
+			$this->get_mysql_show_pushdown_text_sql( '?' ),
+			$this->get_mysql_show_pushdown_case_fold_sql( $expression ),
+			$this->get_mysql_show_pushdown_case_fold_sql( '?' )
+		);
+	}
+	private function get_mysql_show_pushdown_case_fold_sql( string $expression ): string {
+		return sprintf(
+			'translate(%s, %s, %s)',
+			$this->get_mysql_show_pushdown_text_sql( $expression ),
+			$this->connection->quote( 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' ),
+			$this->connection->quote( 'abcdefghijklmnopqrstuvwxyz' )
+		);
+	}
+	private function get_mysql_show_pushdown_text_sql( string $expression ): string {
+		return sprintf( 'CAST(%s AS text)', $expression );
+	}
+	private function get_mysql_show_pushdown_numeric_regex(): string {
+		return '^[[:space:]]*[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:[eE][+-]?[0-9]+)?[[:space:]]*$';
 	}
 	private function execute_mysql_catalog_projected_show_result( array $descriptor, $fetch_mode, ...$fetch_mode_args ) {
 		$sql = $this->get_mysql_catalog_projected_show_sql(
@@ -9260,10 +9242,8 @@ FROM ' . $descriptor['from'];
 		return $sql;
 	}
 	private function execute_mysql_use_statement( string $database_name ): int {
-		if (
-			0 === strcasecmp( $database_name, $this->main_db_name )
-			|| 0 === strcasecmp( $database_name, 'public' )
-		) {
+		$is_main_schema = 0 === strcasecmp( $database_name, $this->main_db_name ) || 0 === strcasecmp( $database_name, 'public' );
+		if ( $is_main_schema ) {
 			return $this->execute_mysql_use_statement_success( $this->main_db_name );
 		}
 
@@ -9271,11 +9251,9 @@ FROM ' . $descriptor['from'];
 			return $this->execute_mysql_use_statement_success( 'information_schema' );
 		}
 
-		if (
-			$this->should_use_postgresql_catalog_metadata()
-			&& ! $this->is_postgresql_internal_schema( $database_name )
-			&& $this->mysql_database_exists_in_postgresql_catalog( $database_name )
-		) {
+		$can_use_catalog_database = ! $this->is_postgresql_internal_schema( $database_name )
+			&& $this->mysql_database_exists_in_postgresql_catalog( $database_name );
+		if ( $can_use_catalog_database ) {
 			return $this->execute_mysql_use_statement_success( $database_name );
 		}
 		throw new InvalidArgumentException( 'Unsupported USE statement.' );
@@ -9426,11 +9404,79 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 	AND rc."CONSTRAINT_NAME" = kcu."CONSTRAINT_NAME"
 	AND rc."TABLE_NAME" = kcu."TABLE_NAME"';
 		$descriptors    = array(
-			'columns'      => array( 'column_name="COLUMN_NAME"; ordinal_position="ORDINAL_POSITION"; column_type="COLUMN_TYPE"; character_set_name="CHARACTER_SET_NAME"; collation_name="COLLATION_NAME"; is_nullable="IS_NULLABLE"; column_default="COLUMN_DEFAULT"; extra="EXTRA"; column_comment="COLUMN_COMMENT"', '(' . $this->get_direct_information_schema_relation_sql( 'columns' ) . ') columns', "\"TABLE_SCHEMA\" = ?\n\t\tAND \"TABLE_NAME\" = ?", array( $display_schema, $table_name ), 'ORDER BY "ORDINAL_POSITION"' ),
-			'indexes'      => array( 'key_name="INDEX_NAME"; index_ordinal="POSTGRESQL_INDEX_OID"; seq_in_index="SEQ_IN_INDEX"; column_name="COLUMN_NAME"; non_unique=CAST("NON_UNIQUE" AS text); index_type="INDEX_TYPE"; collation="COLLATION"; sub_part="SUB_PART"; index_comment="INDEX_COMMENT"', '(' . $this->get_direct_information_schema_relation_sql( 'statistics', array( 'include_show_create_table_sort_columns' => true ) ) . ') statistics', sprintf( "\"TABLE_SCHEMA\" = COALESCE(NULLIF(?, %s), %s)\n\t\tAND \"TABLE_NAME\" = ?\n\t\tAND \"COLUMN_NAME\" IS NOT NULL", $this->connection->quote( 'public' ), $this->connection->quote( $this->main_db_name ) ), array( $schema_name, $table_name ), "ORDER BY\n\t\t\"INDEX_NAME\" = 'PRIMARY' DESC,\n\t\t\"NON_UNIQUE\" = 0 DESC,\n\t\t\"POSTGRESQL_ACCESS_METHOD\" = 'btree' DESC,\n\t\t\"POSTGRESQL_INDEX_OID\",\n\t\t\"SEQ_IN_INDEX\"" ),
-			'foreign_keys' => array( 'constraint_name=kcu."CONSTRAINT_NAME"; constraint_ordinal=DENSE_RANK() OVER (ORDER BY kcu."CONSTRAINT_NAME"); seq_in_index=kcu."ORDINAL_POSITION"; column_name=kcu."COLUMN_NAME"; referenced_table_schema=kcu."REFERENCED_TABLE_SCHEMA"; referenced_table_name=kcu."REFERENCED_TABLE_NAME"; referenced_column_name=kcu."REFERENCED_COLUMN_NAME"; update_rule=rc."UPDATE_RULE"; delete_rule=rc."DELETE_RULE"', $foreign_join, "kcu.\"TABLE_SCHEMA\" = ?\n\t\tAND kcu.\"TABLE_NAME\" = ?\n\t\tAND kcu.\"REFERENCED_TABLE_NAME\" IS NOT NULL", array( $display_schema, $table_name ), 'ORDER BY constraint_ordinal, seq_in_index' ),
-			'checks'       => array( 'constraint_name=con.conname; constraint_ordinal=ROW_NUMBER() OVER (ORDER BY con.conname); check_clause=' . $this->get_postgresql_mysql_check_clause_comment_sql( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)' ) . '; enforced=' . $this->get_postgresql_mysql_check_enforced_comment_sql( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')' ), "pg_catalog.pg_constraint con\nINNER JOIN pg_catalog.pg_class t ON t.oid = con.conrelid\nINNER JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace", "n.nspname = ?\n\t\tAND t.relname = ?\n\t\tAND t.relkind IN ('r', 'p')\n\t\tAND con.contype = 'c'", array( $schema_name, $table_name ), 'ORDER BY constraint_ordinal, constraint_name' ),
-			'table'        => array( 'table_comment="TABLE_COMMENT"; table_collation="TABLE_COLLATION"', '(' . $this->get_direct_information_schema_relation_sql( 'tables' ) . ') tables', "\"TABLE_SCHEMA\" = ?\n\t\tAND \"TABLE_NAME\" = ?", array( $display_schema, $table_name ), 'LIMIT 1' ),
+			'columns'      => array(
+				array(
+					'column_name'        => '"COLUMN_NAME"',
+					'ordinal_position'   => '"ORDINAL_POSITION"',
+					'column_type'        => '"COLUMN_TYPE"',
+					'character_set_name' => '"CHARACTER_SET_NAME"',
+					'collation_name'     => '"COLLATION_NAME"',
+					'is_nullable'        => '"IS_NULLABLE"',
+					'column_default'     => '"COLUMN_DEFAULT"',
+					'extra'              => '"EXTRA"',
+					'column_comment'     => '"COLUMN_COMMENT"',
+				),
+				'(' . $this->get_direct_information_schema_relation_sql( 'columns' ) . ') columns',
+				"\"TABLE_SCHEMA\" = ?\n\t\tAND \"TABLE_NAME\" = ?",
+				array( $display_schema, $table_name ),
+				'ORDER BY "ORDINAL_POSITION"',
+			),
+			'indexes'      => array(
+				array(
+					'key_name'      => '"INDEX_NAME"',
+					'index_ordinal' => '"POSTGRESQL_INDEX_OID"',
+					'seq_in_index'  => '"SEQ_IN_INDEX"',
+					'column_name'   => '"COLUMN_NAME"',
+					'non_unique'    => 'CAST("NON_UNIQUE" AS text)',
+					'index_type'    => '"INDEX_TYPE"',
+					'collation'     => '"COLLATION"',
+					'sub_part'      => '"SUB_PART"',
+					'index_comment' => '"INDEX_COMMENT"',
+				),
+				'(' . $this->get_direct_information_schema_relation_sql( 'statistics', array( 'include_show_create_table_sort_columns' => true ) ) . ') statistics',
+				sprintf( "\"TABLE_SCHEMA\" = COALESCE(NULLIF(?, %s), %s)\n\t\tAND \"TABLE_NAME\" = ?\n\t\tAND \"COLUMN_NAME\" IS NOT NULL", $this->connection->quote( 'public' ), $this->connection->quote( $this->main_db_name ) ),
+				array( $schema_name, $table_name ),
+				"ORDER BY\n\t\t\"INDEX_NAME\" = 'PRIMARY' DESC,\n\t\t\"NON_UNIQUE\" = 0 DESC,\n\t\t\"POSTGRESQL_ACCESS_METHOD\" = 'btree' DESC,\n\t\t\"POSTGRESQL_INDEX_OID\",\n\t\t\"SEQ_IN_INDEX\"",
+			),
+			'foreign_keys' => array(
+				array(
+					'constraint_name'         => 'kcu."CONSTRAINT_NAME"',
+					'constraint_ordinal'      => 'DENSE_RANK() OVER (ORDER BY kcu."CONSTRAINT_NAME")',
+					'seq_in_index'            => 'kcu."ORDINAL_POSITION"',
+					'column_name'             => 'kcu."COLUMN_NAME"',
+					'referenced_table_schema' => 'kcu."REFERENCED_TABLE_SCHEMA"',
+					'referenced_table_name'   => 'kcu."REFERENCED_TABLE_NAME"',
+					'referenced_column_name'  => 'kcu."REFERENCED_COLUMN_NAME"',
+					'update_rule'             => 'rc."UPDATE_RULE"',
+					'delete_rule'             => 'rc."DELETE_RULE"',
+				),
+				$foreign_join,
+				"kcu.\"TABLE_SCHEMA\" = ?\n\t\tAND kcu.\"TABLE_NAME\" = ?\n\t\tAND kcu.\"REFERENCED_TABLE_NAME\" IS NOT NULL",
+				array( $display_schema, $table_name ),
+				'ORDER BY constraint_ordinal, seq_in_index',
+			),
+			'checks'       => array(
+				array(
+					'constraint_name'    => 'con.conname',
+					'constraint_ordinal' => 'ROW_NUMBER() OVER (ORDER BY con.conname)',
+					'check_clause'       => $this->get_postgresql_mysql_check_clause_comment_sql( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')', 'pg_catalog.pg_get_expr(con.conbin, con.conrelid)' ),
+					'enforced'           => $this->get_postgresql_mysql_check_enforced_comment_sql( 'pg_catalog.obj_description(con.oid, \'pg_constraint\')' ),
+				),
+				"pg_catalog.pg_constraint con\nINNER JOIN pg_catalog.pg_class t ON t.oid = con.conrelid\nINNER JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace",
+				"n.nspname = ?\n\t\tAND t.relname = ?\n\t\tAND t.relkind IN ('r', 'p')\n\t\tAND con.contype = 'c'",
+				array( $schema_name, $table_name ),
+				'ORDER BY constraint_ordinal, constraint_name',
+			),
+			'table'        => array(
+				array(
+					'table_comment'   => '"TABLE_COMMENT"',
+					'table_collation' => '"TABLE_COLLATION"',
+				),
+				'(' . $this->get_direct_information_schema_relation_sql( 'tables' ) . ') tables',
+				"\"TABLE_SCHEMA\" = ?\n\t\tAND \"TABLE_NAME\" = ?",
+				array( $display_schema, $table_name ),
+				'LIMIT 1',
+			),
 		);
 		if ( ! isset( $descriptors[ $type ] ) ) {
 			throw new LogicException( 'Unsupported SHOW CREATE TABLE metadata descriptor.' );
@@ -9438,9 +9484,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		return $this->get_mysql_catalog_projected_show_descriptor( array(), ...$descriptors[ $type ] );
 	}
 	private function get_show_create_table_metadata_rows( string $type, string $schema_name, string $table_name, bool $log_query = true ): array {
-		if ( 'indexes' === $type && ! $this->should_use_postgresql_catalog_metadata() ) {
-			throw new PDOException( 'PostgreSQL catalog metadata unavailable.' );
-		}
 		$descriptor                = $this->get_show_create_table_metadata_descriptor( $type, $schema_name, $table_name );
 		$descriptor['expressions'] = $this->get_direct_information_schema_native_projection_expression_map( $descriptor['expressions'] );
 		$descriptor['columns']     = array_keys( $descriptor['expressions'] );
@@ -9552,64 +9595,206 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		throw new LogicException( 'Unsupported SHOW result descriptor.' );
 	}
 	private function get_mysql_dynamic_show_result_descriptor( string $result_type, array $show_query, ?array $filter ): ?array {
-		$descriptors = array_combine(
-			explode( '|', 'databases|create_database|plugins|routine_status|triggers|processlist|open_tables' ),
-			array( array( 'databases', array( array( 'Database' => 'information_schema' ), array( 'Database' => $this->main_db_name ) ), array( 'schemata', 's', 'Database=s."SCHEMA_NAME"', null, null, null, 'ORDER BY "Database"' ), true ), array( array( 'Database', 'Create Database' ), null, 'get_mysql_show_create_database_rows' ), array( 'plugins', array(), array( 'plugins', 'p', 'Name=p."PLUGIN_NAME"; Status=p."PLUGIN_STATUS"; Type=p."PLUGIN_TYPE"; Library=p."PLUGIN_LIBRARY"; License=p."PLUGIN_LICENSE"', null, null, null, 'ORDER BY p."PLUGIN_NAME"', "\t\t" ), true ), array( 'routine_status', array(), array( 'routines', 'r', 'Db=r."ROUTINE_SCHEMA"; Name=r."ROUTINE_NAME"; Type=r."ROUTINE_TYPE"; Definer=r."DEFINER"; Modified=r."LAST_ALTERED"; Created=r."CREATED"; Security_type=r."SECURITY_TYPE"; Comment=r."ROUTINE_COMMENT"; character_set_client=r."CHARACTER_SET_CLIENT"; collation_connection=r."COLLATION_CONNECTION"; Database Collation=r."DATABASE_COLLATION"', null, 'r."ROUTINE_TYPE" = ?', 'routine_type', 'ORDER BY r."ROUTINE_SCHEMA", r."ROUTINE_NAME"', "\t\t\t" ) ), array( 'triggers', array(), array( 'triggers', 't', 'Trigger=t."TRIGGER_NAME"; Event=t."EVENT_MANIPULATION"; Table=t."EVENT_OBJECT_TABLE"; Statement=t."ACTION_STATEMENT"; Timing=t."ACTION_TIMING"; Created=t."CREATED"; sql_mode=t."SQL_MODE"; Definer=t."DEFINER"; character_set_client=t."CHARACTER_SET_CLIENT"; collation_connection=t."COLLATION_CONNECTION"; Database Collation=t."DATABASE_COLLATION"', null, 't."TRIGGER_SCHEMA" = ?', 'schema', 'ORDER BY t."TRIGGER_NAME"', "\t\t" ) ), array( 'processlist', null, 'get_mysql_show_processlist_rows' ), array( 'open_tables', array(), array( null, null, 'Database=' . $this->get_direct_information_schema_display_schema_sql( 'n.nspname' ) . '; Table=c.relname; In_use=CASE WHEN COALESCE(SUM(CASE WHEN l.granted AND l.pid <> pg_catalog.pg_backend_pid() THEN 1 ELSE 0 END), 0) > 0 THEN \'1\' ELSE \'0\' END; Name_locked=CASE WHEN COALESCE(SUM(CASE WHEN NOT l.granted THEN 1 ELSE 0 END), 0) > 0 THEN \'1\' ELSE \'0\' END', "pg_catalog.pg_class c\nINNER JOIN pg_catalog.pg_namespace n\n\tON n.oid = c.relnamespace\nLEFT JOIN pg_catalog.pg_locks l\n\tON l.relation = c.oid", "n.nspname = ?\n\tAND c.relkind IN ('r', 'p', 'v', 'm', 'f')\nGROUP BY n.nspname, c.relname", 'schema', 'ORDER BY c.relname' ), true ) )
+		$descriptors = array(
+			'databases'       => array(
+				'columns'    => 'databases',
+				'row_source' => array(
+					'relation'    => 'schemata',
+					'alias'       => 's',
+					'expressions' => 'Database=s."SCHEMA_NAME"',
+					'order_by'    => 'ORDER BY "Database"',
+				),
+			),
+			'create_database' => array(
+				'columns'    => array( 'Database', 'Create Database' ),
+				'row_source' => 'get_mysql_show_create_database_rows',
+			),
+			'plugins'         => array(
+				'columns'    => 'plugins',
+				'row_source' => array(
+					'relation'    => 'plugins',
+					'alias'       => 'p',
+					'expressions' => 'Name=p."PLUGIN_NAME"; Status=p."PLUGIN_STATUS"; Type=p."PLUGIN_TYPE"; Library=p."PLUGIN_LIBRARY"; License=p."PLUGIN_LICENSE"',
+					'order_by'    => 'ORDER BY p."PLUGIN_NAME"',
+					'from_close'  => "\t\t",
+				),
+			),
+			'routine_status'  => array(
+				'columns'    => 'routine_status',
+				'row_source' => array(
+					'relation'    => 'routines',
+					'alias'       => 'r',
+					'expressions' => 'Db=r."ROUTINE_SCHEMA"; Name=r."ROUTINE_NAME"; Type=r."ROUTINE_TYPE"; Definer=r."DEFINER"; Modified=r."LAST_ALTERED"; Created=r."CREATED"; Security_type=r."SECURITY_TYPE"; Comment=r."ROUTINE_COMMENT"; character_set_client=r."CHARACTER_SET_CLIENT"; collation_connection=r."COLLATION_CONNECTION"; Database Collation=r."DATABASE_COLLATION"',
+					'where'       => 'r."ROUTINE_TYPE" = ?',
+					'param_key'   => 'routine_type',
+					'order_by'    => 'ORDER BY r."ROUTINE_SCHEMA", r."ROUTINE_NAME"',
+					'from_close'  => "\t\t\t",
+				),
+			),
+			'triggers'        => array(
+				'columns'    => 'triggers',
+				'row_source' => array(
+					'relation'    => 'triggers',
+					'alias'       => 't',
+					'expressions' => 'Trigger=t."TRIGGER_NAME"; Event=t."EVENT_MANIPULATION"; Table=t."EVENT_OBJECT_TABLE"; Statement=t."ACTION_STATEMENT"; Timing=t."ACTION_TIMING"; Created=t."CREATED"; sql_mode=t."SQL_MODE"; Definer=t."DEFINER"; character_set_client=t."CHARACTER_SET_CLIENT"; collation_connection=t."COLLATION_CONNECTION"; Database Collation=t."DATABASE_COLLATION"',
+					'where'       => 't."TRIGGER_SCHEMA" = ?',
+					'param_key'   => 'schema',
+					'order_by'    => 'ORDER BY t."TRIGGER_NAME"',
+					'from_close'  => "\t\t",
+				),
+			),
+			'processlist'     => array(
+				'columns'    => 'processlist',
+				'row_source' => 'get_mysql_show_processlist_rows',
+			),
+			'open_tables'     => array(
+				'columns'    => 'open_tables',
+				'row_source' => array(
+					'expressions' => 'Database=' . $this->get_direct_information_schema_display_schema_sql( 'n.nspname' ) . '; Table=c.relname; In_use=CASE WHEN COALESCE(SUM(CASE WHEN l.granted AND l.pid <> pg_catalog.pg_backend_pid() THEN 1 ELSE 0 END), 0) > 0 THEN \'1\' ELSE \'0\' END; Name_locked=CASE WHEN COALESCE(SUM(CASE WHEN NOT l.granted THEN 1 ELSE 0 END), 0) > 0 THEN \'1\' ELSE \'0\' END',
+					'from'        => "pg_catalog.pg_class c\nINNER JOIN pg_catalog.pg_namespace n\n\tON n.oid = c.relnamespace\nLEFT JOIN pg_catalog.pg_locks l\n\tON l.relation = c.oid",
+					'where'       => "n.nspname = ?\n\tAND c.relkind IN ('r', 'p', 'v', 'm', 'f')\nGROUP BY n.nspname, c.relname",
+					'param_key'   => 'schema',
+					'order_by'    => 'ORDER BY c.relname',
+				),
+			),
 		);
 		if ( ! isset( $descriptors[ $result_type ] ) ) {
 			return null;
 		}
-		list( $columns, $fallback_rows, $row_source, $catalog_metadata_only ) = array_pad( $descriptors[ $result_type ], 4, null );
-		$columns = is_string( $columns ) ? $this->get_mysql_show_output_columns( $columns ) : $columns;
-		return $this->get_mysql_show_result_descriptor_array( $columns, is_string( $row_source ) ? $this->{$row_source}( $show_query, $columns ) : ( true !== $catalog_metadata_only || $this->should_use_postgresql_catalog_metadata() ? $this->get_mysql_dynamic_show_catalog_rows( $row_source, $columns, $show_query ) : $fallback_rows ), is_string( $row_source ) ? null : $filter );
+		$descriptor = $descriptors[ $result_type ];
+		$columns    = $this->get_mysql_show_descriptor_columns( $descriptor['columns'] );
+		$row_source = $descriptor['row_source'];
+		$rows       = is_string( $row_source )
+			? $this->{$row_source}( $show_query, $columns )
+			: $this->get_mysql_dynamic_show_catalog_rows( $row_source, $columns, $show_query );
+		return $this->get_mysql_show_result_descriptor_array( $columns, $rows, is_string( $row_source ) ? null : $filter );
 	}
 	private function get_mysql_dynamic_show_catalog_rows( array $row_source, array $columns, array $show_query ): array {
-		list( $relation, $alias, $expressions, $from, $where, $param_key, $order_by, $from_close ) = array_pad( $row_source, 8, "\t" );
-		return $this->get_mysql_catalog_projected_show_rows( $this->get_mysql_catalog_projected_show_descriptor( $columns, $expressions, null === $relation ? $from : "(\n" . $this->get_direct_information_schema_relation_sql( $relation ) . "\n" . $from_close . ') ' . $alias, $where, null === $param_key ? array() : array( $show_query[ $param_key ] ), $order_by ) );
+		$relation  = $row_source['relation'] ?? null;
+		$param_key = $row_source['param_key'] ?? null;
+		$from      = null === $relation
+			? $row_source['from']
+			: "(\n" . $this->get_direct_information_schema_relation_sql( $relation ) . "\n" . ( $row_source['from_close'] ?? "\t" ) . ') ' . $row_source['alias'];
+		return $this->get_mysql_catalog_projected_show_rows( $this->get_mysql_catalog_projected_show_descriptor( $columns, $row_source['expressions'], $from, $row_source['where'] ?? null, null === $param_key ? array() : array( $show_query[ $param_key ] ), $row_source['order_by'] ?? '' ) );
 	}
 	private function get_mysql_static_show_result_descriptor( string $result_type, array $show_query, ?array $filter ): ?array {
 		$descriptors = array(
-			'variables'     => array( array( array( 'Variable_name', 64 ), 'Value' ), 'global' === ( $show_query['scope'] ?? 'session' ) ? 'get_mysql_global_variables' : 'get_mysql_session_variables', $filter, array( 'reset_found_rows' => true ), 'name_value' ),
-			'status'        => array( 'name_value', 'get_mysql_status_variables', $filter, array(), 'name_value' ),
-			'diagnostics'   => array( 'count' === ( $show_query['type'] ?? null ) ? array( $show_query['count_column'] ?? null ) : array( 'Level', 'Code', 'Message' ), 'count' === ( $show_query['type'] ?? null ) ? array( array( $show_query['count_column'] ?? null => '0' ) ) : array(), null ),
-			'grants'        => array( array( array( self::MYSQL_SHOW_GRANTS_COLUMN, 4096 ) ), array( array( self::MYSQL_SHOW_GRANTS_COLUMN => self::MYSQL_SHOW_GRANTS_VALUE ) ), null ),
-			'events'        => array( 'events', array(), $filter ),
-			'character_set' => array( 'CHARACTER_SET_NAME|DEFAULT_COLLATE_NAME|DESCRIPTION|MAXLEN', "binary|binary|Binary pseudo charset|1\nutf8|utf8_general_ci|UTF-8 Unicode|3\nutf8mb4|utf8mb4_0900_ai_ci|UTF-8 Unicode|4", $filter, array(), 'projected', 'Charset=CHARACTER_SET_NAME; Description=DESCRIPTION; Default collation=DEFAULT_COLLATE_NAME; Maxlen=MAXLEN' ),
-			'collation'     => array( 'COLLATION_NAME|CHARACTER_SET_NAME|ID|IS_DEFAULT|IS_COMPILED|SORTLEN|PAD_ATTRIBUTE', "binary|binary|63|Yes|Yes|1|NO PAD\nutf8_bin|utf8|83||Yes|1|PAD SPACE\nutf8_general_ci|utf8|33|Yes|Yes|1|PAD SPACE\nutf8_unicode_ci|utf8|192||Yes|8|PAD SPACE\nutf8mb4_bin|utf8mb4|46||Yes|1|PAD SPACE\nutf8mb4_unicode_ci|utf8mb4|224||Yes|8|PAD SPACE\nutf8mb4_0900_ai_ci|utf8mb4|255|Yes|Yes|0|NO PAD", $filter, array(), 'projected', 'Collation=COLLATION_NAME; Charset=CHARACTER_SET_NAME; Id=ID; Default=IS_DEFAULT; Compiled=IS_COMPILED; Sortlen=SORTLEN; Pad_attribute=PAD_ATTRIBUTE' ),
-			'engines'       => array( 'Engine|Support|Comment|Transactions|XA|Savepoints', "InnoDB|DEFAULT|Supports transactions, row-level locking, and foreign keys|YES|YES|YES\nMEMORY|YES|Hash based, stored in memory, useful for temporary tables|NO|NO|NO\nMyISAM|YES|MyISAM storage engine|NO|NO|NO", $filter, array(), 'static_rows' ),
+			'variables'     => array(
+				'columns'     => array( array( 'Variable_name', 64 ), 'Value' ),
+				'rows'        => 'global' === ( $show_query['scope'] ?? 'session' ) ? 'get_mysql_global_variables' : 'get_mysql_session_variables',
+				'filter'      => $filter,
+				'extra'       => array( 'reset_found_rows' => true ),
+				'row_decoder' => 'name_value',
+			),
+			'status'        => array(
+				'columns'     => 'name_value',
+				'rows'        => 'get_mysql_status_variables',
+				'filter'      => $filter,
+				'row_decoder' => 'name_value',
+			),
+			'diagnostics'   => array(
+				'columns' => 'count' === ( $show_query['type'] ?? null ) ? array( $show_query['count_column'] ?? null ) : array( 'Level', 'Code', 'Message' ),
+				'rows'    => 'count' === ( $show_query['type'] ?? null ) ? array( array( $show_query['count_column'] ?? null => '0' ) ) : array(),
+				'filter'  => null,
+			),
+			'grants'        => array(
+				'columns' => array( array( self::MYSQL_SHOW_GRANTS_COLUMN, 4096 ) ),
+				'rows'    => array( array( self::MYSQL_SHOW_GRANTS_COLUMN => self::MYSQL_SHOW_GRANTS_VALUE ) ),
+				'filter'  => null,
+			),
+			'events'        => array(
+				'columns' => 'events',
+				'rows'    => array(),
+				'filter'  => $filter,
+			),
+			'character_set' => array(
+				'columns'     => array( 'CHARACTER_SET_NAME', 'DEFAULT_COLLATE_NAME', 'DESCRIPTION', 'MAXLEN' ),
+				'rows'        => array(
+					array( 'binary', 'binary', 'Binary pseudo charset', '1' ),
+					array( 'utf8', 'utf8_general_ci', 'UTF-8 Unicode', '3' ),
+					array( 'utf8mb4', 'utf8mb4_0900_ai_ci', 'UTF-8 Unicode', '4' ),
+				),
+				'filter'      => $filter,
+				'row_decoder' => 'projected',
+				'projection'  => array(
+					'Charset'           => 'CHARACTER_SET_NAME',
+					'Description'       => 'DESCRIPTION',
+					'Default collation' => 'DEFAULT_COLLATE_NAME',
+					'Maxlen'            => 'MAXLEN',
+				),
+			),
+			'collation'     => array(
+				'columns'     => array( 'COLLATION_NAME', 'CHARACTER_SET_NAME', 'ID', 'IS_DEFAULT', 'IS_COMPILED', 'SORTLEN', 'PAD_ATTRIBUTE' ),
+				'rows'        => array(
+					array( 'binary', 'binary', '63', 'Yes', 'Yes', '1', 'NO PAD' ),
+					array( 'utf8_bin', 'utf8', '83', '', 'Yes', '1', 'PAD SPACE' ),
+					array( 'utf8_general_ci', 'utf8', '33', 'Yes', 'Yes', '1', 'PAD SPACE' ),
+					array( 'utf8_unicode_ci', 'utf8', '192', '', 'Yes', '8', 'PAD SPACE' ),
+					array( 'utf8mb4_bin', 'utf8mb4', '46', '', 'Yes', '1', 'PAD SPACE' ),
+					array( 'utf8mb4_unicode_ci', 'utf8mb4', '224', '', 'Yes', '8', 'PAD SPACE' ),
+					array( 'utf8mb4_0900_ai_ci', 'utf8mb4', '255', 'Yes', 'Yes', '0', 'NO PAD' ),
+				),
+				'filter'      => $filter,
+				'row_decoder' => 'projected',
+				'projection'  => array(
+					'Collation'     => 'COLLATION_NAME',
+					'Charset'       => 'CHARACTER_SET_NAME',
+					'Id'            => 'ID',
+					'Default'       => 'IS_DEFAULT',
+					'Compiled'      => 'IS_COMPILED',
+					'Sortlen'       => 'SORTLEN',
+					'Pad_attribute' => 'PAD_ATTRIBUTE',
+				),
+			),
+			'engines'       => array(
+				'columns'     => array( 'Engine', 'Support', 'Comment', 'Transactions', 'XA', 'Savepoints' ),
+				'rows'        => array(
+					array( 'InnoDB', 'DEFAULT', 'Supports transactions, row-level locking, and foreign keys', 'YES', 'YES', 'YES' ),
+					array( 'MEMORY', 'YES', 'Hash based, stored in memory, useful for temporary tables', 'NO', 'NO', 'NO' ),
+					array( 'MyISAM', 'YES', 'MyISAM storage engine', 'NO', 'NO', 'NO' ),
+				),
+				'filter'      => $filter,
+				'row_decoder' => 'static_rows',
+			),
 		);
 		if ( ! isset( $descriptors[ $result_type ] ) ) {
 			return null;
 		}
-		list( $columns, $rows, $descriptor_filter, $extra, $row_decoder, $projection ) = array_pad( $descriptors[ $result_type ], 6, array() );
+		$descriptor        = $descriptors[ $result_type ];
+		$columns           = $descriptor['columns'];
+		$rows              = $descriptor['rows'];
+		$descriptor_filter = $descriptor['filter'] ?? null;
+		$extra             = $descriptor['extra'] ?? array();
+		$row_decoder       = $descriptor['row_decoder'] ?? null;
 		if ( 'name_value' === $row_decoder ) {
 			$rows = $this->get_mysql_show_name_value_rows( $this->{$rows}() );
 		} elseif ( in_array( $row_decoder, array( 'projected', 'static_rows' ), true ) ) {
 			$rows = $this->get_mysql_static_show_rows( $columns, $rows );
 			if ( 'projected' === $row_decoder ) {
-				$rows = $this->project_mysql_static_show_rows( $rows, $this->get_direct_information_schema_native_projection_expression_map( $projection ) );
+				$rows = $this->project_mysql_static_show_rows( $rows, $this->get_direct_information_schema_native_projection_expression_map( $descriptor['projection'] ) );
 			}
 			$columns = $result_type;
 		}
 		return $this->get_mysql_show_result_descriptor_array( $columns, $rows, $descriptor_filter, $extra );
 	}
+	private function get_mysql_show_descriptor_columns( $columns ): array {
+		return is_string( $columns ) ? $this->get_mysql_show_output_columns( $columns ) : $columns;
+	}
 	private function get_mysql_show_result_descriptor_array( $columns, array $rows, ?array $filter, array $extra = array() ): array {
 		return array_merge(
-			array_combine( array( 'columns', 'rows', 'filter' ), array( is_string( $columns ) ? $this->get_mysql_show_output_columns( $columns ) : $columns, $rows, $filter ) ),
+			array_combine( array( 'columns', 'rows', 'filter' ), array( $this->get_mysql_show_descriptor_columns( $columns ), $rows, $filter ) ),
 			$extra
 		);
 	}
 	private function get_mysql_show_create_database_rows( array $show_query, array $columns ): array {
 		$database = (string) $show_query['database'];
-		$exists   = $this->should_use_postgresql_catalog_metadata() ? $this->mysql_database_exists_in_postgresql_catalog( $database ) : ( 0 === strcasecmp( $database, $this->main_db_name ) || 0 === strcasecmp( $database, 'information_schema' ) );
+		$exists   = $this->mysql_database_exists_in_postgresql_catalog( $database );
 		return $exists ? array( array_combine( $columns, array( $database, sprintf( 'CREATE DATABASE %s%s DEFAULT CHARACTER SET %s COLLATE %s', ! empty( $show_query['if_not_exists'] ) ? 'IF NOT EXISTS ' : '', $this->quote_mysql_identifier( $database ), $this->charset, $this->collation ) ) ) ) : array();
 	}
 	private function get_mysql_show_processlist_rows( array $show_processlist_query, array $columns ): array {
-		$rows = $this->should_use_postgresql_catalog_metadata()
-			? $this->get_mysql_catalog_projected_show_rows(
-				$this->get_mysql_catalog_projected_show_descriptor( $columns, 'Id=p."ID"; User=p."USER"; Host=p."HOST"; db=p."DB"; Command=p."COMMAND"; Time=p."TIME"; State=p."STATE"; Info=p."INFO"', "(\n" . $this->get_direct_information_schema_relation_sql( 'processlist' ) . "\n\t) p", null, array(), 'ORDER BY p."ID"' )
-			)
-			: array( array_combine( $columns, array( '1', 'root', 'localhost', $this->db_name, 'Query', '0', '', (string) $this->last_mysql_query ) ) );
+		$rows = $this->get_mysql_catalog_projected_show_rows(
+			$this->get_mysql_catalog_projected_show_descriptor( $columns, 'Id=p."ID"; User=p."USER"; Host=p."HOST"; db=p."DB"; Command=p."COMMAND"; Time=p."TIME"; State=p."STATE"; Info=p."INFO"', "(\n" . $this->get_direct_information_schema_relation_sql( 'processlist' ) . "\n\t) p", null, array(), 'ORDER BY p."ID"' )
+		);
 
 		foreach ( $rows as $index => $row ) {
 			$info           = (string) ( $row['Info'] ?? '' );
@@ -9641,12 +9826,10 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			$rows
 		);
 	}
-	private function get_mysql_static_show_rows( $columns, $rows ): array {
-		$columns = is_string( $columns ) ? explode( '|', $columns ) : $columns;
-		$rows    = is_string( $rows ) ? explode( "\n", $rows ) : $rows;
+	private function get_mysql_static_show_rows( array $columns, array $rows ): array {
 		return array_map(
-			static function ( $row ) use ( $columns ): array {
-				return array_combine( $columns, is_string( $row ) ? explode( '|', $row ) : $row );
+			static function ( array $row ) use ( $columns ): array {
+				return array_combine( $columns, $row );
 			},
 			$rows
 		);
@@ -9654,9 +9837,9 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 	private function mysql_database_exists_in_postgresql_catalog( string $database ): bool {
 		$sql    = 'SELECT 1
 			FROM (' . $this->get_direct_information_schema_relation_sql( 'schemata' ) . ') s
-			WHERE ? IS NOT NULL AND s."SCHEMA_NAME" = ?
+			WHERE s."SCHEMA_NAME" = ?
 			LIMIT 1';
-		$params = array( $this->main_db_name, $database );
+		$params = array( $database );
 		$stmt   = $this->connection->query( $sql, $params );
 
 		$this->last_postgresql_queries[] = array(
@@ -9689,7 +9872,24 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 				return ! $this->evaluate_mysql_show_where_predicate( $predicate['expr'], $row );
 
 			case 'truthy':
-				return $this->is_mysql_show_where_truthy( $this->evaluate_mysql_show_where_value( $predicate['expr'], $row ) );
+				$value = $this->evaluate_mysql_show_where_value( $predicate['expr'], $row );
+				if ( null === $value ) {
+					return false;
+				}
+
+				if ( is_bool( $value ) ) {
+					return $value;
+				}
+
+				if ( is_int( $value ) || is_float( $value ) || ( is_string( $value ) && 'number' === ( $predicate['expr']['type'] ?? null ) ) ) {
+					return 0.0 !== (float) $value;
+				}
+
+				if ( is_string( $value ) ) {
+					return '' !== $value;
+				}
+
+				return (bool) $value;
 
 			case 'is_null':
 				$is_null = null === $this->evaluate_mysql_show_where_value( $predicate['expr'], $row );
@@ -9879,16 +10079,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		}
 		return false;
 	}
-	private function is_mysql_show_where_truthy( $value ): bool {
-		if ( null === $value ) {
-			return false;
-		}
-
-		if ( is_bool( $value ) ) {
-			return $value;
-		}
-		return ( is_int( $value ) || is_float( $value ) || is_string( $value ) ) && 0.0 !== (float) $value;
-	}
 	private function compare_mysql_show_where_values( $left, $right, bool $binary = false, bool $string_compare = false ): int {
 		if ( ! $binary && ! $string_compare && is_numeric( $left ) && is_numeric( $right ) ) {
 			$left_number  = (float) $left;
@@ -9919,10 +10109,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			);
 		}
 		$this->last_column_count = count( $this->last_column_meta );
-		return $this->set_mysql_associative_rows_fetch_result( $rows, $fetch_mode, ...$fetch_mode_args );
-	}
-	private function set_mysql_associative_result_rows( array $rows, $fetch_mode, ...$fetch_mode_args ) {
-		$this->last_found_rows = count( $rows );
 		return $this->set_mysql_associative_rows_fetch_result( $rows, $fetch_mode, ...$fetch_mode_args );
 	}
 	private function set_mysql_associative_rows_fetch_result( array $rows, $fetch_mode, ...$fetch_mode_args ) {
@@ -10327,45 +10513,20 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		return $resolved_schema;
 	}
 	private function get_active_temporary_table_schema( string $table_name ): ?string {
-		$driver_name     = $this->connection->get_driver_name();
-		$pdo_driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-
-		if ( 'sqlite' === $driver_name ) {
-			return $this->get_active_sqlite_temporary_table_schema( $table_name );
-		}
-
-		try {
-			$stmt = $this->connection->query(
-				'SELECT n.nspname
-				FROM pg_catalog.pg_class c
-				INNER JOIN pg_catalog.pg_namespace n
-					ON n.oid = c.relnamespace
-				WHERE n.oid = pg_my_temp_schema()
-					AND lower(c.relname) = lower(?)
-					AND c.relkind IN (\'r\', \'p\')
-				LIMIT 1',
-				array( $table_name )
-			);
-		} catch ( PDOException $e ) {
-			if ( 'sqlite' !== $pdo_driver_name ) {
-				throw $e;
-			}
-			return $this->get_active_sqlite_temporary_table_schema( $table_name );
-		}
+		$stmt = $this->connection->query(
+			'SELECT n.nspname
+			FROM pg_catalog.pg_class c
+			INNER JOIN pg_catalog.pg_namespace n
+				ON n.oid = c.relnamespace
+			WHERE n.oid = pg_my_temp_schema()
+				AND lower(c.relname) = lower(?)
+				AND c.relkind IN (\'r\', \'p\')
+			LIMIT 1',
+			array( $table_name )
+		);
 
 		$schema_name = $stmt->fetchColumn();
 		return false === $schema_name ? null : (string) $schema_name;
-	}
-	private function get_active_sqlite_temporary_table_schema( string $table_name ): ?string {
-		$stmt = $this->connection->query(
-			"SELECT name FROM sqlite_temp_master WHERE type = 'table' AND LOWER(name) = LOWER(?) LIMIT 1",
-			array( $table_name )
-		);
-		return false === $stmt->fetchColumn() ? null : 'temp';
-	}
-	private function should_use_postgresql_catalog_metadata(): bool {
-		return 'pgsql' === $this->connection->get_driver_name()
-			&& 'pgsql' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
 	}
 	private function get_mysql_show_projection_sql( array $columns, array $expressions, string $indent ): string {
 		$fields = array();
@@ -10421,15 +10582,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 	}
 
 	/**
-	 * Get results of the last query.
-	 *
-	 * @return mixed
-	 */
-	public function get_query_results() {
-		return $this->last_result;
-	}
-
-	/**
 	 * Get return value of the last query() function call.
 	 *
 	 * @return mixed
@@ -10469,15 +10621,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 	}
 
 	/**
-	 * A temporary alias for back compatibility.
-	 *
-	 * @see self::beginTransaction()
-	 */
-	public function begin_transaction(): void {
-		$this->beginTransaction();
-	}
-
-	/**
 	 * Commit the current transaction.
 	 */
 	public function commit(): void {
@@ -10486,12 +10629,13 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 	}
 
 	/**
-	 * Rollback the current transaction.
+	 * Roll back the current transaction.
 	 */
-	public function rollback(): void {
+	public function rollBack(): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 		$this->connection->get_pdo()->rollBack();
 		$this->connection->reset_statement_savepoint_state();
 	}
+
 	private function reset_query_state(): void {
 		$this->last_result                     = null;
 		$this->last_column_meta                = array();
@@ -10508,12 +10652,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		$this->last_column_meta                = array();
 		$this->last_column_count               = 0;
 		$this->last_column_meta_statement      = null;
-		$this->last_column_meta_excluded_names = array();
-	}
-	private function set_lazy_last_column_meta( PDOStatement $stmt, int $column_count ): void {
-		$this->last_column_meta                = array();
-		$this->last_column_count               = $column_count;
-		$this->last_column_meta_statement      = $stmt;
 		$this->last_column_meta_excluded_names = array();
 	}
 	private function materialize_last_column_meta(): void {
@@ -10570,6 +10708,10 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 	private function is_mysql_parenthesized_select_source( array $tokens, int $position ): bool {
 		return WP_MySQL_Lexer::OPEN_PAR_SYMBOL === ( $tokens[ $position ]->id ?? null )
 			&& WP_MySQL_Lexer::SELECT_SYMBOL === ( $tokens[ $position + 1 ]->id ?? null );
+	}
+	private function is_mysql_dml_select_source_token( ?WP_MySQL_Token $token ): bool {
+		return null !== $token
+			&& in_array( $token->id, array( WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::WITH_SYMBOL, WP_MySQL_Lexer::OPEN_PAR_SYMBOL ), true );
 	}
 	private function get_mysql_dml_all_columns( string $table_name, ?array &$column_metadata = null ): ?array {
 		$column_metadata = $this->get_mysql_dml_column_metadata( $table_name );
@@ -10680,6 +10822,10 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			'source_aliases'     => $source_aliases,
 			'insert_column_list' => $insert_column_list,
 		);
+	}
+	private function is_mysql_replace_query( string $query ): bool {
+		$tokens = $this->get_mysql_tokens( $query );
+		return isset( $tokens[0] ) && WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[0]->id;
 	}
 	private function is_unsupported_mysql_insert_set_query( string $query ): bool {
 		$tokens = $this->get_mysql_tokens( $query );
@@ -11204,11 +11350,18 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		$this->validate_strict_mysql_dml_value_for_column( $column_metadata, $tokens, $start, $end );
 
 		if (
-			! $this->is_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' )
-			&& $this->is_mysql_auto_increment_column_metadata( $column_metadata )
-			&& $this->is_mysql_zero_literal_range( $tokens, $start, $end )
+			$this->is_mysql_auto_increment_column_metadata( $column_metadata )
 		) {
-			return $this->get_mysql_insert_select_auto_increment_generated_value_sql( $table_name, $column_metadata );
+			if ( $this->is_mysql_generated_auto_increment_value_sql( $projection_sql ) ) {
+				return $this->get_mysql_insert_select_auto_increment_generated_value_sql( $table_name, $column_metadata );
+			}
+
+			if (
+				! $this->is_sql_mode_active( 'NO_AUTO_VALUE_ON_ZERO' )
+				&& $this->is_mysql_zero_literal_range( $tokens, $start, $end )
+			) {
+				return $this->get_mysql_insert_select_auto_increment_generated_value_sql( $table_name, $column_metadata );
+			}
 		}
 
 		$target_type = (string) ( $column_metadata['column_type'] ?? '' );
@@ -11521,25 +11674,7 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			return;
 		}
 
-		$pdo_driver_name                       = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		$has_sqlite_information_schema_columns = false;
-		if ( 'sqlite' === $pdo_driver_name ) {
-			$stmt = $this->connection->query( 'PRAGMA database_list' );
-			foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $database ) {
-				if ( isset( $database['name'] ) && 'information_schema' === $database['name'] ) {
-					$tables                                = $this->connection->query(
-						"SELECT 1 FROM information_schema.sqlite_master WHERE type = 'table' AND name = 'columns' LIMIT 1"
-					);
-					$has_sqlite_information_schema_columns = false !== $tables->fetchColumn();
-					break;
-				}
-			}
-		}
-
-		if (
-			empty( $explicit_identity_columns )
-			|| ( 'pgsql' !== $pdo_driver_name && ! $has_sqlite_information_schema_columns )
-		) {
+		if ( empty( $explicit_identity_columns ) ) {
 			return;
 		}
 
@@ -11576,7 +11711,14 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		$explicit_columns = array();
 
 		foreach ( $columns as $index => $column ) {
-			if ( ! isset( $values[ $index ] ) || ! $this->is_explicit_dml_identity_value( (string) $values[ $index ] ) ) {
+			$is_explicit_identity_value = false;
+			if ( isset( $values[ $index ] ) ) {
+				$value_sql                  = trim( (string) $values[ $index ] );
+				$is_explicit_identity_value = '' !== $value_sql
+					&& ! in_array( strtoupper( $value_sql ), array( 'DEFAULT', 'NULL' ), true );
+			}
+
+			if ( ! $is_explicit_identity_value ) {
 				continue;
 			}
 
@@ -11598,23 +11740,15 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		}
 		return $explicit_columns;
 	}
-	private function is_explicit_dml_identity_value( string $value_sql ): bool {
-		$value_sql = trim( $value_sql );
-		if ( '' === $value_sql ) {
-			return false;
-		}
-		return ! in_array( strtoupper( $value_sql ), array( 'DEFAULT', 'NULL' ), true );
-	}
 	private function get_dml_identity_column_metadata( string $table_schema, string $table_name ): array {
 		$column_type = $this->get_direct_information_schema_catalog_column_type_expression(
 			'c',
 			'pg_catalog.obj_description(seq.oid, \'pg_class\')'
 		);
 		$extra       = $this->get_direct_information_schema_column_extra_expression( 'c', true );
-		try {
-			$stmt = $this->connection->query(
-				sprintf(
-					'SELECT
+		$stmt        = $this->connection->query(
+			sprintf(
+				'SELECT
 					c.column_name,
 					c.data_type,
 					c.is_identity,
@@ -11634,18 +11768,12 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 				WHERE c.table_schema = ?
 					AND c.table_name = ?
 					ORDER BY c.ordinal_position',
-					$column_type,
-					$extra
-				),
-				array( $table_schema, $table_name )
-			);
-				return $stmt->fetchAll( PDO::FETCH_ASSOC );
-		} catch ( PDOException $e ) {
-			if ( 'pgsql' === (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
-				throw $e;
-			}
-			return array();
-		}
+				$column_type,
+				$extra
+			),
+			array( $table_schema, $table_name )
+		);
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 	private function repair_postgresql_identity_sequence(
 		string $table_schema,
@@ -11665,9 +11793,8 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		$this->connection->query( $sequence_query['sql'], $sequence_query['params'] );
 		$this->last_postgresql_queries[] = $sequence_query;
 	}
-	private function get_postgresql_auto_increment_alter_statements( string $table_name, string $auto_increment_column, int $minimum_sequence_value ): array {
-		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
-		$metadata     = $this->get_dml_identity_column_metadata( $table_schema, $table_name );
+	private function get_postgresql_auto_increment_alter_statements( string $table_schema, string $table_name, string $auto_increment_column, int $minimum_sequence_value ): array {
+		$metadata = $this->get_dml_identity_column_metadata( $table_schema, $table_name );
 
 		foreach ( $metadata as $column_metadata ) {
 			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
@@ -11702,33 +11829,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			);
 		}
 		return array();
-	}
-	private function get_sqlite_auto_increment_alter_statements( string $table_schema, string $table_name, string $auto_increment_column, int $minimum_sequence_value ): array {
-		$is_temporary     = $this->is_mysql_temporary_schema_name( $table_schema );
-		$table_identifier = $is_temporary
-			? 'temp.' . $this->connection->quote_identifier( $table_name )
-			: $this->connection->quote_identifier( $table_name );
-		$sequence_table   = $is_temporary ? 'temp.sqlite_sequence' : 'sqlite_sequence';
-
-		$sequence_value_sql = sprintf(
-			'MAX(%d, COALESCE((SELECT MAX(%s) FROM %s), 0))',
-			$minimum_sequence_value,
-			$this->connection->quote_identifier( $auto_increment_column ),
-			$table_identifier
-		);
-		return array(
-			sprintf(
-				'DELETE FROM %s WHERE name = %s',
-				$sequence_table,
-				$this->connection->quote( $table_name )
-			),
-			sprintf(
-				'INSERT INTO %s (name, seq) VALUES (%s, (SELECT %s))',
-				$sequence_table,
-				$this->connection->quote( $table_name ),
-				$sequence_value_sql
-			),
-		);
 	}
 	private function get_postgresql_identity_sequence_repair_query(
 		string $table_schema,
@@ -11975,7 +12075,8 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		if ( null === $statement_end ) {
 			return false;
 		}
-		return $this->consume_mysql_dml_modifiers( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL, WP_MySQL_Lexer::IGNORE_SYMBOL ), WP_MySQL_Lexer::IGNORE_SYMBOL );
+		$position = 1;
+		return $this->consume_mysql_dml_modifiers( $tokens, $position, $statement_end, array( WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL, WP_MySQL_Lexer::IGNORE_SYMBOL ), WP_MySQL_Lexer::IGNORE_SYMBOL );
 	}
 	private function is_mysql_update_ignore_constraint_exception( PDOException $exception ): bool {
 		$sqlstate = (string) $exception->getCode();
@@ -12287,14 +12388,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		);
 	}
 
-	/** Render a joined UPDATE source range. */
-	private function get_mysql_joined_update_source_range_sql( array $tokens, int $start, int $end, array $scope ): ?string {
-		if ( ! $this->mysql_scope_references_non_public_schema( $scope ) ) {
-			return $this->translate_mysql_token_sequence_to_postgresql( $tokens, $start, $end );
-		}
-		return $this->translate_mysql_table_reference_range_to_postgresql( $tokens, $start, $end );
-	}
-
 	private function get_mysql_joined_update_source_clause_sql( string $query, array $tokens, array $clauses, int $statement_end, array $scope, ?array $information_schema_context, bool $require_supported_expression, array $predicates = array(), bool $wrap_single_predicate = true ): ?array {
 		$predicates = $this->get_mysql_joined_dml_predicates_from_clauses( $query, $tokens, $clauses, $statement_end, $scope, $information_schema_context, $require_supported_expression, $predicates );
 		if ( null === $predicates ) {
@@ -12304,11 +12397,8 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		if ( null === $tail ) {
 			return null;
 		}
-		return array_combine( array( 'where', 'order', 'limit' ), array( $this->get_mysql_joined_update_source_where_sql( $predicates, $wrap_single_predicate ), $tail['order'], $tail['limit'] ) );
-	}
-
-	private function get_mysql_joined_update_source_where_sql( array $predicates, bool $wrap_single_predicate ): string {
-		return empty( $predicates ) ? '' : ( ( $wrap_single_predicate || count( $predicates ) > 1 ) ? ' WHERE (' . implode( ') AND (', $predicates ) . ')' : ' WHERE ' . $predicates[0] );
+		$where_sql = empty( $predicates ) ? '' : ( ( $wrap_single_predicate || count( $predicates ) > 1 ) ? ' WHERE (' . implode( ') AND (', $predicates ) . ')' : ' WHERE ' . $predicates[0] );
+		return array_combine( array( 'where', 'order', 'limit' ), array( $where_sql, $tail['order'], $tail['limit'] ) );
 	}
 
 	private function get_mysql_joined_update_derived_source_update_sql_from_statement( string $query, array $tokens, int $statement_end, array $statement_parts, array $target_reference, array $scope, ?array $information_schema_context = null, array $predicates = array(), bool $wrap_single_predicate = true ): ?string {
@@ -12317,7 +12407,11 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			return null;
 		}
 
-		$source_range_sql = $this->get_mysql_joined_update_source_range_sql( $tokens, $statement_parts['source_start'], $statement_parts['set_position'], $scope );
+		if ( ! $this->mysql_scope_references_non_public_schema( $scope ) ) {
+			$source_range_sql = $this->translate_mysql_token_sequence_to_postgresql( $tokens, $statement_parts['source_start'], $statement_parts['set_position'] );
+		} else {
+			$source_range_sql = $this->translate_mysql_table_reference_range_to_postgresql( $tokens, $statement_parts['source_start'], $statement_parts['set_position'] );
+		}
 		if ( null === $source_range_sql ) {
 			return null;
 		}
@@ -12990,25 +13084,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			return null !== $this->get_cached_mysql_table_column_type( $table_schema, $table_name, $column_name );
 		}
 
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		if ( 'sqlite' === $driver_name ) {
-			$schema_prefix = 'temp' === $table_schema ? 'temp.' : '';
-			$stmt          = $this->connection->query(
-				sprintf(
-					'PRAGMA %stable_info(%s)',
-					$schema_prefix,
-					$this->connection->quote_identifier( $table_name )
-				)
-			);
-
-			foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $column ) {
-				if ( 0 === strcasecmp( $column_name, (string) ( $column['name'] ?? '' ) ) ) {
-					return true;
-				}
-			}
-			return false;
-		}
-
 		$stmt = $this->connection->query(
 			'SELECT 1
 			FROM information_schema.columns
@@ -13363,19 +13438,12 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 				continue;
 			}
 
-			$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-
-			$values[ $value_column['index'] ] = 'sqlite' === $driver_name ? 'NULL' : 'DEFAULT';
+			$values[ $value_column['index'] ] = 'DEFAULT';
 		}
 	}
 	private function get_mysql_insert_select_auto_increment_generated_value_sql( string $table_name, array $column_metadata ): string {
-		$driver_name = (string) $this->connection->get_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME );
-		if ( 'sqlite' === $driver_name ) {
-			return 'NULL';
-		}
-
 		$column_name  = (string) ( $column_metadata['column_name'] ?? '' );
-		$table_schema = $this->resolve_mysql_table_schema_for_introspection( 'public', $table_name );
+		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
 		return sprintf(
 			'nextval(pg_get_serial_sequence(%s, %s))',
 			$this->connection->quote( $table_schema . '.' . $table_name ),
@@ -13650,15 +13718,12 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			return $known_valid_value_sql === $value_sql ? null : $known_valid_value_sql;
 		}
 
-		if ( 'pgsql' === $this->connection->get_driver_name() ) {
-			return $this->get_postgresql_mysql_inline_validate_temporal_sql(
-				$value_sql,
-				$base_type,
-				$this->is_sql_mode_active( 'NO_ZERO_DATE' ),
-				$this->is_sql_mode_active( 'NO_ZERO_IN_DATE' )
-			);
-		}
-		return null;
+		return $this->get_postgresql_mysql_inline_validate_temporal_sql(
+			$value_sql,
+			$base_type,
+			$this->is_sql_mode_active( 'NO_ZERO_DATE' ),
+			$this->is_sql_mode_active( 'NO_ZERO_IN_DATE' )
+		);
 	}
 	private function get_postgresql_mysql_inline_validate_temporal_sql( string $value_sql, string $mysql_type, bool $reject_zero_date, bool $reject_zero_in_date ): string {
 		$value_sql_alias = '"__wp_pg_mysql_temporal_value"."value"';
@@ -14319,26 +14384,27 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 	private function get_mysql_constant_string_function_value( array $tokens, array $arguments, string $function_name ): ?array {
 		$count      = count( $arguments );
 		$descriptor = null;
-		foreach ( explode( ';', self::MYSQL_CONSTANT_STRING_FUNCTION_DESCRIPTORS ) as $descriptor_string ) {
-			$descriptor = explode( '|', $descriptor_string );
-			if ( $this->is_mysql_common_function_descriptor_match( $function_name, $count, $descriptor[0], (int) $descriptor[1], '' === $descriptor[2] ? null : (int) $descriptor[2] ) ) {
+		foreach ( self::MYSQL_CONSTANT_STRING_FUNCTION_DESCRIPTORS as $constant_string_function_descriptor ) {
+			if ( $this->is_mysql_common_function_descriptor_match( $function_name, $count, $constant_string_function_descriptor[0], $constant_string_function_descriptor[1], $constant_string_function_descriptor[2] ) ) {
+				$descriptor = $constant_string_function_descriptor;
 				break;
 			}
-			$descriptor = null;
 		}
 		if ( null === $descriptor ) {
 			return null;
 		}
-		switch ( $descriptor[3] ) {
+		$operation = $descriptor[3];
+		$handler   = $descriptor[4];
+		switch ( $operation ) {
 			case 'ascii_unary':
 				$value = $this->get_mysql_ascii_constant_string_argument_value( $tokens, $arguments[0] );
 				if ( null === $value || $value['is_null'] ) {
 					return $value;
 				}
-				if ( 'ltrim' === $descriptor[4] || 'rtrim' === $descriptor[4] ) {
-					return $this->get_mysql_constant_string_value( $descriptor[4]( $value['value'], ' ' ) );
+				if ( 'ltrim' === $handler || 'rtrim' === $handler ) {
+					return $this->get_mysql_constant_string_value( $handler( $value['value'], ' ' ) );
 				}
-				return $this->get_mysql_constant_string_value( $descriptor[4]( $value['value'] ) );
+				return $this->get_mysql_constant_string_value( $handler( $value['value'] ) );
 			case 'coalesce':
 				foreach ( $arguments as $argument ) {
 					$value = $this->get_mysql_constant_string_argument_value( $tokens, $argument );
@@ -14358,7 +14424,7 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 				if ( null === $values ) {
 					return null;
 				}
-				if ( 'concat_ws' === $descriptor[4] ) {
+				if ( 'concat_ws' === $handler ) {
 					$separator = array_shift( $values );
 					if ( $separator['is_null'] ) {
 						return $this->get_mysql_null_constant_string_value();
@@ -14371,14 +14437,14 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 					}
 					return $this->get_mysql_constant_string_value( implode( $separator['value'], $parts ) );
 				}
-				if ( 'nullif' === $descriptor[4] ) {
+				if ( 'nullif' === $handler ) {
 					return ! $values[0]['is_null'] && ! $values[1]['is_null'] && $values[0]['value'] === $values[1]['value'] ? $this->get_mysql_null_constant_string_value() : $values[0];
 				}
 				if ( in_array( true, array_column( $values, 'is_null' ), true ) ) {
 					return $this->get_mysql_null_constant_string_value();
 				}
 				$strings = array_column( $values, 'value' );
-				return 'replace' === $descriptor[4]
+				return 'replace' === $handler
 					? $this->get_mysql_constant_string_value( str_replace( $strings[1], $strings[2], $strings[0] ) )
 					: $this->get_mysql_constant_string_value( implode( '', $strings ) );
 			case 'side':
@@ -14388,15 +14454,15 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 				if ( null === $value || $value['is_null'] ) {
 					return $value;
 				}
-				if ( 'repeat' === $descriptor[3] ) {
+				if ( 'repeat' === $operation ) {
 					$count_value = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[1] );
 					return null === $count_value ? null : $this->get_mysql_constant_string_value( $count_value <= 0 ? '' : str_repeat( $value['value'], $count_value ) );
 				}
 				$position = $this->get_mysql_constant_php_integer_argument_value( $tokens, $arguments[1] );
-				if ( null === $position || ( 'substring' === $descriptor[3] && $position < 1 ) ) {
+				if ( null === $position || ( 'substring' === $operation && $position < 1 ) ) {
 					return null;
 				}
-				if ( 'side' === $descriptor[3] ) {
+				if ( 'side' === $operation ) {
 					return $this->get_mysql_constant_substring_value( $value['value'], 'left' === $function_name || $position <= 0 ? 0 : -$position, max( $position, 0 ) );
 				}
 				if ( 2 === $count ) {
@@ -15062,8 +15128,7 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		}
 
 		if (
-			$this->should_use_postgresql_catalog_metadata()
-			&& 0 !== strcasecmp( $this->db_name, $this->main_db_name )
+			0 !== strcasecmp( $this->db_name, $this->main_db_name )
 			&& 0 !== strcasecmp( $this->db_name, 'public' )
 			&& 0 !== strcasecmp( $this->db_name, 'information_schema' )
 			&& ! $this->is_postgresql_internal_schema( $this->db_name )
@@ -15970,11 +16035,15 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			}
 
 			foreach ( $group_items as $group_item ) {
-				$reference = $this->get_direct_information_schema_column_reference_for_expression( $tokens, $group_item['start'], $group_item['end'], $context );
+				$reference          = $this->get_direct_information_schema_column_reference_for_expression( $tokens, $group_item['start'], $group_item['end'], $context );
+				$same_column_source = null !== $reference
+					&& $reference['source']['source_start'] === $source['source_start']
+					&& $reference['source']['source_end'] === $source['source_end']
+					&& 0 === strcasecmp( $reference['source']['alias'], $source['alias'] );
 				if (
 					null !== $reference
 					&& 0 === strcasecmp( $reference['column'], 'TABLE_NAME' )
-					&& $this->direct_information_schema_column_sources_are_same( $reference['source'], $source )
+					&& $same_column_source
 				) {
 					return true;
 				}
@@ -16069,11 +16138,6 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			'member_position' => $member_position,
 			'end'             => $member_position + 1,
 		);
-	}
-	private function direct_information_schema_column_sources_are_same( array $left, array $right ): bool {
-		return $left['source_start'] === $right['source_start']
-			&& $left['source_end'] === $right['source_end']
-			&& 0 === strcasecmp( $left['alias'], $right['alias'] );
 	}
 	private function translate_direct_information_schema_no_from_select_query( string $query, array $tokens, int $statement_end ): ?string {
 		if (
@@ -16662,10 +16726,8 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $position ]->id
 		) {
 			if ( 0 !== strcasecmp( $first, 'information_schema' ) ) {
-				if (
-					0 === strcasecmp( $first, $this->main_db_name )
-					|| 0 === strcasecmp( $first, 'public' )
-				) {
+				$is_main_schema = 0 === strcasecmp( $first, $this->main_db_name ) || 0 === strcasecmp( $first, 'public' );
+				if ( $is_main_schema ) {
 					return $this->parse_direct_information_schema_main_table_source( $tokens, $source_start, $end );
 				}
 				return null;
@@ -16688,14 +16750,13 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		return $this->get_direct_information_schema_aliased_select_source( array( 'view' => $view ), $tokens, $position, $end, $view );
 	}
 	private function parse_direct_information_schema_main_table_source( array $tokens, int $position, int $end ): ?array {
-		$reference = $this->parse_mysql_table_reference( $tokens, $position, $end );
-		if (
-			null === $reference
+		$reference                      = $this->parse_mysql_table_reference( $tokens, $position, $end );
+		$cannot_parse_main_table_source = null === $reference
 			|| (
 				0 !== strcasecmp( $reference['schema'], $this->main_db_name )
 				&& 0 !== strcasecmp( $reference['schema'], 'public' )
-			)
-		) {
+			);
+		if ( $cannot_parse_main_table_source ) {
 			return null;
 		}
 
@@ -17194,7 +17255,7 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		$columns = array();
 		$raw     = <<<'RELATIONS'
 schemata|CATALOG_NAME SCHEMA_NAME DEFAULT_CHARACTER_SET_NAME DEFAULT_COLLATION_NAME SQL_PATH DEFAULT_ENCRYPTION;tables|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME TABLE_TYPE ENGINE VERSION ROW_FORMAT TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE AUTO_INCREMENT CREATE_TIME UPDATE_TIME CHECK_TIME TABLE_COLLATION CHECKSUM CREATE_OPTIONS TABLE_COMMENT;columns|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ORDINAL_POSITION COLUMN_DEFAULT IS_NULLABLE DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME COLUMN_TYPE COLUMN_KEY EXTRA PRIVILEGES COLUMN_COMMENT GENERATION_EXPRESSION SRS_ID;columns_extensions|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ENGINE_ATTRIBUTE SECONDARY_ENGINE_ATTRIBUTE;statistics|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME NON_UNIQUE INDEX_SCHEMA INDEX_NAME SEQ_IN_INDEX COLUMN_NAME COLLATION CARDINALITY SUB_PART PACKED NULLABLE INDEX_TYPE COMMENT INDEX_COMMENT IS_VISIBLE EXPRESSION;column_statistics|SCHEMA_NAME TABLE_NAME COLUMN_NAME HISTOGRAM;table_constraints|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_SCHEMA TABLE_NAME CONSTRAINT_TYPE ENFORCED;table_constraints_extensions|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_SCHEMA TABLE_NAME ENGINE_ATTRIBUTE SECONDARY_ENGINE_ATTRIBUTE;key_column_usage|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME ORDINAL_POSITION POSITION_IN_UNIQUE_CONSTRAINT REFERENCED_TABLE_SCHEMA REFERENCED_TABLE_NAME REFERENCED_COLUMN_NAME;referential_constraints|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME UNIQUE_CONSTRAINT_CATALOG UNIQUE_CONSTRAINT_SCHEMA UNIQUE_CONSTRAINT_NAME MATCH_OPTION UPDATE_RULE DELETE_RULE TABLE_NAME REFERENCED_TABLE_NAME;check_constraints|CONSTRAINT_CATALOG CONSTRAINT_SCHEMA CONSTRAINT_NAME CHECK_CLAUSE;character_sets|CHARACTER_SET_NAME DEFAULT_COLLATE_NAME DESCRIPTION MAXLEN;collations|COLLATION_NAME CHARACTER_SET_NAME ID IS_DEFAULT IS_COMPILED SORTLEN PAD_ATTRIBUTE;collation_character_set_applicability|COLLATION_NAME CHARACTER_SET_NAME;engines|ENGINE SUPPORT COMMENT TRANSACTIONS XA SAVEPOINTS;events|EVENT_CATALOG EVENT_SCHEMA EVENT_NAME DEFINER TIME_ZONE EVENT_BODY EVENT_DEFINITION EVENT_TYPE EXECUTE_AT INTERVAL_VALUE INTERVAL_FIELD SQL_MODE STARTS ENDS STATUS ON_COMPLETION CREATED LAST_ALTERED LAST_EXECUTED EVENT_COMMENT ORIGINATOR CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION;files|FILE_ID FILE_NAME FILE_TYPE TABLESPACE_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME LOGFILE_GROUP_NAME LOGFILE_GROUP_NUMBER ENGINE FULLTEXT_KEYS DELETED_ROWS UPDATE_COUNT FREE_EXTENTS TOTAL_EXTENTS EXTENT_SIZE INITIAL_SIZE MAXIMUM_SIZE AUTOEXTEND_SIZE CREATION_TIME LAST_UPDATE_TIME LAST_ACCESS_TIME RECOVER_TIME TRANSACTION_COUNTER VERSION ROW_FORMAT TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE CREATE_TIME UPDATE_TIME CHECK_TIME CHECKSUM STATUS EXTRA;partitions|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PARTITION_NAME SUBPARTITION_NAME PARTITION_ORDINAL_POSITION SUBPARTITION_ORDINAL_POSITION PARTITION_METHOD SUBPARTITION_METHOD PARTITION_EXPRESSION SUBPARTITION_EXPRESSION PARTITION_DESCRIPTION TABLE_ROWS AVG_ROW_LENGTH DATA_LENGTH MAX_DATA_LENGTH INDEX_LENGTH DATA_FREE CREATE_TIME UPDATE_TIME CHECK_TIME CHECKSUM PARTITION_COMMENT NODEGROUP TABLESPACE_NAME;tablespaces_extensions|TABLESPACE_NAME ENGINE_ATTRIBUTE;tablespaces|TABLESPACE_NAME ENGINE TABLESPACE_TYPE LOGFILE_GROUP_NAME EXTENT_SIZE AUTOEXTEND_SIZE MAXIMUM_SIZE NODEGROUP_ID TABLESPACE_COMMENT;innodb_tables|TABLE_ID NAME FLAG N_COLS SPACE ROW_FORMAT ZIP_PAGE_SIZE SPACE_TYPE INSTANT_COLS TOTAL_ROW_VERSIONS;innodb_tablespaces|SPACE NAME FLAG ROW_FORMAT PAGE_SIZE ZIP_PAGE_SIZE SPACE_TYPE FS_BLOCK_SIZE FILE_SIZE ALLOCATED_SIZE AUTOEXTEND_SIZE SERVER_VERSION SPACE_VERSION ENCRYPTION STATE;innodb_tablespaces_brief|SPACE NAME PATH FLAG SPACE_TYPE;innodb_datafiles|SPACE PATH;innodb_indexes|INDEX_ID NAME TABLE_ID TYPE N_FIELDS PAGE_NO SPACE MERGE_THRESHOLD;innodb_fields|INDEX_ID NAME POS;innodb_columns|TABLE_ID NAME POS MTYPE PRTYPE LEN HAS_DEFAULT DEFAULT_VALUE;innodb_lock_waits|REQUESTING_TRX_ID REQUESTED_LOCK_ID BLOCKING_TRX_ID BLOCKING_LOCK_ID
-session_variables|VARIABLE_NAME VARIABLE_VALUE;global_variables|VARIABLE_NAME VARIABLE_VALUE;server_status|VARIABLE_NAME VARIABLE_VALUE;session_status|VARIABLE_NAME VARIABLE_VALUE;global_status|VARIABLE_NAME VARIABLE_VALUE;processlist|ID USER HOST DB COMMAND TIME STATE INFO;optimizer_trace|QUERY TRACE MISSING_BYTES_BEYOND_MAX_MEM_SIZE INSUFFICIENT_PRIVILEGES;profiling|QUERY_ID SEQ STATE DURATION CPU_USER CPU_SYSTEM CONTEXT_VOLUNTARY CONTEXT_INVOLUNTARY BLOCK_OPS_IN BLOCK_OPS_OUT MESSAGES_SENT MESSAGES_RECEIVED PAGE_FAULTS_MAJOR PAGE_FAULTS_MINOR SWAPS SOURCE_FUNCTION SOURCE_FILE SOURCE_LINE;keywords|WORD RESERVED;plugins|PLUGIN_NAME PLUGIN_VERSION PLUGIN_STATUS PLUGIN_TYPE PLUGIN_TYPE_VERSION PLUGIN_LIBRARY PLUGIN_LIBRARY_VERSION PLUGIN_AUTHOR PLUGIN_DESCRIPTION PLUGIN_LICENSE LOAD_OPTION;user_attributes|USER HOST ATTRIBUTE;user_privileges|GRANTEE TABLE_CATALOG PRIVILEGE_TYPE IS_GRANTABLE;schema_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA PRIVILEGE_TYPE IS_GRANTABLE;table_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PRIVILEGE_TYPE IS_GRANTABLE;column_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME PRIVILEGE_TYPE IS_GRANTABLE;resource_groups|RESOURCE_GROUP_NAME RESOURCE_GROUP_TYPE RESOURCE_GROUP_ENABLED VCPU_IDS THREAD_PRIORITY;applicable_roles|USER HOST GRANTEE GRANTEE_HOST ROLE_NAME ROLE_HOST IS_GRANTABLE IS_DEFAULT IS_MANDATORY;administrable_role_authorizations|USER HOST GRANTEE GRANTEE_HOST ROLE_NAME ROLE_HOST IS_GRANTABLE IS_DEFAULT IS_MANDATORY;enabled_roles|ROLE_NAME ROLE_HOST IS_DEFAULT IS_MANDATORY;role_table_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PRIVILEGE_TYPE IS_GRANTABLE;role_column_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME PRIVILEGE_TYPE IS_GRANTABLE;role_routine_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME ROUTINE_CATALOG ROUTINE_SCHEMA ROUTINE_NAME PRIVILEGE_TYPE IS_GRANTABLE;views|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME VIEW_DEFINITION CHECK_OPTION IS_UPDATABLE DEFINER SECURITY_TYPE CHARACTER_SET_CLIENT COLLATION_CONNECTION;schemata_extensions|CATALOG_NAME SCHEMA_NAME OPTIONS;view_table_usage|VIEW_CATALOG VIEW_SCHEMA VIEW_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME;view_routine_usage|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME;triggers|TRIGGER_CATALOG TRIGGER_SCHEMA TRIGGER_NAME EVENT_MANIPULATION EVENT_OBJECT_CATALOG EVENT_OBJECT_SCHEMA EVENT_OBJECT_TABLE ACTION_ORDER ACTION_CONDITION ACTION_STATEMENT ACTION_ORIENTATION ACTION_TIMING ACTION_REFERENCE_OLD_TABLE ACTION_REFERENCE_NEW_TABLE ACTION_REFERENCE_OLD_ROW ACTION_REFERENCE_NEW_ROW CREATED SQL_MODE DEFINER CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION;st_geometry_columns|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME SRS_NAME SRS_ID GEOMETRY_TYPE_NAME;routines|SPECIFIC_NAME ROUTINE_CATALOG ROUTINE_SCHEMA ROUTINE_NAME ROUTINE_TYPE DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME DTD_IDENTIFIER ROUTINE_BODY ROUTINE_DEFINITION EXTERNAL_NAME EXTERNAL_LANGUAGE PARAMETER_STYLE IS_DETERMINISTIC SQL_DATA_ACCESS SQL_PATH SECURITY_TYPE CREATED LAST_ALTERED SQL_MODE ROUTINE_COMMENT DEFINER CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION;parameters|SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME ORDINAL_POSITION PARAMETER_MODE PARAMETER_NAME DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME DTD_IDENTIFIER ROUTINE_TYPE
+processlist|ID USER HOST DB COMMAND TIME STATE INFO;optimizer_trace|QUERY TRACE MISSING_BYTES_BEYOND_MAX_MEM_SIZE INSUFFICIENT_PRIVILEGES;profiling|QUERY_ID SEQ STATE DURATION CPU_USER CPU_SYSTEM CONTEXT_VOLUNTARY CONTEXT_INVOLUNTARY BLOCK_OPS_IN BLOCK_OPS_OUT MESSAGES_SENT MESSAGES_RECEIVED PAGE_FAULTS_MAJOR PAGE_FAULTS_MINOR SWAPS SOURCE_FUNCTION SOURCE_FILE SOURCE_LINE;keywords|WORD RESERVED;plugins|PLUGIN_NAME PLUGIN_VERSION PLUGIN_STATUS PLUGIN_TYPE PLUGIN_TYPE_VERSION PLUGIN_LIBRARY PLUGIN_LIBRARY_VERSION PLUGIN_AUTHOR PLUGIN_DESCRIPTION PLUGIN_LICENSE LOAD_OPTION;user_attributes|USER HOST ATTRIBUTE;user_privileges|GRANTEE TABLE_CATALOG PRIVILEGE_TYPE IS_GRANTABLE;schema_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA PRIVILEGE_TYPE IS_GRANTABLE;table_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PRIVILEGE_TYPE IS_GRANTABLE;column_privileges|GRANTEE TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME PRIVILEGE_TYPE IS_GRANTABLE;resource_groups|RESOURCE_GROUP_NAME RESOURCE_GROUP_TYPE RESOURCE_GROUP_ENABLED VCPU_IDS THREAD_PRIORITY;applicable_roles|USER HOST GRANTEE GRANTEE_HOST ROLE_NAME ROLE_HOST IS_GRANTABLE IS_DEFAULT IS_MANDATORY;administrable_role_authorizations|USER HOST GRANTEE GRANTEE_HOST ROLE_NAME ROLE_HOST IS_GRANTABLE IS_DEFAULT IS_MANDATORY;enabled_roles|ROLE_NAME ROLE_HOST IS_DEFAULT IS_MANDATORY;role_table_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST TABLE_CATALOG TABLE_SCHEMA TABLE_NAME PRIVILEGE_TYPE IS_GRANTABLE;role_column_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME PRIVILEGE_TYPE IS_GRANTABLE;role_routine_grants|GRANTOR GRANTOR_HOST GRANTEE GRANTEE_HOST SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME ROUTINE_CATALOG ROUTINE_SCHEMA ROUTINE_NAME PRIVILEGE_TYPE IS_GRANTABLE;views|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME VIEW_DEFINITION CHECK_OPTION IS_UPDATABLE DEFINER SECURITY_TYPE CHARACTER_SET_CLIENT COLLATION_CONNECTION;schemata_extensions|CATALOG_NAME SCHEMA_NAME OPTIONS;view_table_usage|VIEW_CATALOG VIEW_SCHEMA VIEW_NAME TABLE_CATALOG TABLE_SCHEMA TABLE_NAME;view_routine_usage|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME;triggers|TRIGGER_CATALOG TRIGGER_SCHEMA TRIGGER_NAME EVENT_MANIPULATION EVENT_OBJECT_CATALOG EVENT_OBJECT_SCHEMA EVENT_OBJECT_TABLE ACTION_ORDER ACTION_CONDITION ACTION_STATEMENT ACTION_ORIENTATION ACTION_TIMING ACTION_REFERENCE_OLD_TABLE ACTION_REFERENCE_NEW_TABLE ACTION_REFERENCE_OLD_ROW ACTION_REFERENCE_NEW_ROW CREATED SQL_MODE DEFINER CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION;st_geometry_columns|TABLE_CATALOG TABLE_SCHEMA TABLE_NAME COLUMN_NAME SRS_NAME SRS_ID GEOMETRY_TYPE_NAME;routines|SPECIFIC_NAME ROUTINE_CATALOG ROUTINE_SCHEMA ROUTINE_NAME ROUTINE_TYPE DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME DTD_IDENTIFIER ROUTINE_BODY ROUTINE_DEFINITION EXTERNAL_NAME EXTERNAL_LANGUAGE PARAMETER_STYLE IS_DETERMINISTIC SQL_DATA_ACCESS SQL_PATH SECURITY_TYPE CREATED LAST_ALTERED SQL_MODE ROUTINE_COMMENT DEFINER CHARACTER_SET_CLIENT COLLATION_CONNECTION DATABASE_COLLATION;parameters|SPECIFIC_CATALOG SPECIFIC_SCHEMA SPECIFIC_NAME ORDINAL_POSITION PARAMETER_MODE PARAMETER_NAME DATA_TYPE CHARACTER_MAXIMUM_LENGTH CHARACTER_OCTET_LENGTH NUMERIC_PRECISION NUMERIC_SCALE DATETIME_PRECISION CHARACTER_SET_NAME COLLATION_NAME DTD_IDENTIFIER ROUTINE_TYPE
 RELATIONS;
 		foreach ( explode( ';', str_replace( "\n", ';', trim( $raw ) ) ) as $definition ) {
 			list( $relation, $relation_columns ) = explode( '|', $definition, 2 );
@@ -17216,32 +17277,60 @@ RELATIONS;
 		return $type_by_column[ $column ] ?? 'varchar(512) DEFAULT NULL';
 	}
 	private function get_direct_information_schema_static_literal_relation_sql( string $view ): ?string {
-		$raw = <<<'RELATIONS'
-name_value|global_variables|session_variables|get_mysql_global_variables~name_value|session_variables|session_variables|get_mysql_session_variables~name_value|global_status|session_status|get_mysql_status_variables~name_value|server_status|session_status|get_mysql_status_variables~name_value|session_status|session_status|get_mysql_status_variables~show|character_sets|character_set|CHARACTER_SET_NAME=Charset; DEFAULT_COLLATE_NAME=Default collation; DESCRIPTION=Description; MAXLEN=Maxlen~show|collations|collation|COLLATION_NAME=Collation; CHARACTER_SET_NAME=Charset; ID=Id; IS_DEFAULT=Default; IS_COMPILED=Compiled; SORTLEN=Sortlen; PAD_ATTRIBUTE=Pad_attribute~show|collation_character_set_applicability|collation|COLLATION_NAME=Collation; CHARACTER_SET_NAME=Charset~show|engines|engines|ENGINE=Engine; SUPPORT=Support; COMMENT=Comment; TRANSACTIONS=Transactions; XA=XA; SAVEPOINTS=Savepoints
-RELATIONS;
-		foreach ( explode( '~', str_replace( "\n", '~', $raw ) ) as $descriptor ) {
-			$parts = array_pad( explode( '|', $descriptor, 4 ), 4, '' );
-			if ( $view !== $parts[1] ) {
+		$descriptors = array(
+			array(
+				'view'             => 'character_sets',
+				'show_result_type' => 'character_set',
+				'projection'       => array(
+					'CHARACTER_SET_NAME'   => 'Charset',
+					'DEFAULT_COLLATE_NAME' => 'Default collation',
+					'DESCRIPTION'          => 'Description',
+					'MAXLEN'               => 'Maxlen',
+				),
+			),
+			array(
+				'view'             => 'collations',
+				'show_result_type' => 'collation',
+				'projection'       => array(
+					'COLLATION_NAME'     => 'Collation',
+					'CHARACTER_SET_NAME' => 'Charset',
+					'ID'                 => 'Id',
+					'IS_DEFAULT'         => 'Default',
+					'IS_COMPILED'        => 'Compiled',
+					'SORTLEN'            => 'Sortlen',
+					'PAD_ATTRIBUTE'      => 'Pad_attribute',
+				),
+			),
+			array(
+				'view'             => 'collation_character_set_applicability',
+				'show_result_type' => 'collation',
+				'projection'       => array(
+					'COLLATION_NAME'     => 'Collation',
+					'CHARACTER_SET_NAME' => 'Charset',
+				),
+			),
+			array(
+				'view'             => 'engines',
+				'show_result_type' => 'engines',
+				'projection'       => array(
+					'ENGINE'       => 'Engine',
+					'SUPPORT'      => 'Support',
+					'COMMENT'      => 'Comment',
+					'TRANSACTIONS' => 'Transactions',
+					'XA'           => 'XA',
+					'SAVEPOINTS'   => 'Savepoints',
+				),
+			),
+		);
+		foreach ( $descriptors as $descriptor ) {
+			if ( $view !== $descriptor['view'] ) {
 				continue;
 			}
-			if ( 'name_value' === $parts[0] ) {
-				return $this->get_direct_information_schema_literal_relation_sql( $this->get_direct_information_schema_relation_columns( $parts[2] ), $this->get_mysql_show_name_value_rows( $this->{$parts[3]}(), array( 'VARIABLE_NAME', 'VARIABLE_VALUE' ) ) );
-			}
-			$show_descriptor = $this->get_mysql_static_show_result_descriptor( $parts[2], array(), null );
-			return $this->get_direct_information_schema_literal_relation_sql( $this->get_direct_information_schema_relation_columns( $view ), $this->project_mysql_static_show_rows( $show_descriptor['rows'], $this->get_direct_information_schema_native_projection_expression_map( $parts[3] ) ) );
+			$show_descriptor = $this->get_mysql_static_show_result_descriptor( $descriptor['show_result_type'], array(), null );
+			return $this->get_direct_information_schema_literal_relation_sql( $this->get_direct_information_schema_relation_columns( $view ), $this->project_mysql_static_show_rows( $show_descriptor['rows'], $descriptor['projection'] ) );
 		}
 
-		if ( $this->should_use_postgresql_catalog_metadata() || ! in_array( $view, array( 'processlist', 'keywords', 'schemata' ), true ) ) {
-			return null;
-		}
-
-		$rows    = array(
-			'processlist' => array( array( '1', 'root', 'localhost', $this->db_name, 'Query', '0', '', (string) $this->last_mysql_query ) ),
-			'keywords'    => array( array( 'SELECT', 1 ), array( 'FROM', 1 ), array( 'WHERE', 1 ), array( 'VALUE', 0 ) ),
-			'schemata'    => array( array( 'def', 'information_schema', self::DEFAULT_MYSQL_CHARSET, self::DEFAULT_MYSQL_COLLATION, null, 'NO' ), array( 'def', $this->main_db_name, self::DEFAULT_MYSQL_CHARSET, self::DEFAULT_MYSQL_COLLATION, null, 'NO' ) ),
-		);
-		$columns = $this->get_direct_information_schema_relation_columns( $view );
-		return $this->get_direct_information_schema_literal_relation_sql( $columns, $this->get_mysql_static_show_rows( $columns, $rows[ $view ] ) );
+		return null;
 	}
 	private function get_direct_information_schema_relation_sql( string $view, array $options = array() ): ?string {
 		$view = strtolower( $view );
@@ -17255,10 +17344,6 @@ RELATIONS;
 		}
 
 		if ( 'columns' === $view ) {
-			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-				return $this->get_direct_information_schema_literal_relation_sql( $this->get_direct_information_schema_relation_columns( $view ), array() );
-			}
-
 			$comment_sql     = 'pg_catalog.col_description(pc.oid, pa.attnum)';
 			$type_expression = $this->get_direct_information_schema_catalog_data_type_expression( 'c', true, $comment_sql );
 			$column_type     = $this->get_direct_information_schema_catalog_column_type_expression( 'c', $this->get_postgresql_identity_sequence_comment_sql( 'c' ), $comment_sql );
@@ -17268,15 +17353,15 @@ RELATIONS;
 			return $this->get_direct_information_schema_native_relation_sql( 'columns', $this->get_mysql_key_value_array( 'alias', 'c', 'from', 'information_schema.columns c', 'where', $this->get_postgresql_visible_schema_condition_sql( 'c.table_schema', 'pc.oid' ), 'expressions', 'COLUMN_DEFAULT=' . $this->get_direct_information_schema_column_default_expression( 'c', $comment_sql ) . '; DATA_TYPE=' . $type_expression . '; CHARACTER_OCTET_LENGTH=CASE WHEN c.character_maximum_length IS NULL THEN NULL ELSE c.character_maximum_length * 4 END; CHARACTER_SET_NAME=' . $charset . '; COLLATION_NAME=' . $collation . '; COLUMN_TYPE=' . $column_type . '; COLUMN_KEY=' . $column_key . '; EXTRA=' . $this->get_direct_information_schema_column_extra_expression( 'c', true, $comment_sql ) . '; PRIVILEGES=' . $this->connection->quote( 'select,insert,update,references' ) . '; COLUMN_COMMENT=' . $this->get_postgresql_catalog_comment_after_marker_lines_sql( $comment_sql, self::POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES, count( self::POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES ) ) . '; GENERATION_EXPRESSION=' . $this->connection->quote( '' ) . '; SRS_ID=NULL', 'join', 'LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = c.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = c.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_attribute pa ON pa.attrelid = pc.oid AND pa.attname = c.column_name AND pa.attnum > 0' ) );
 		}
 		if ( 'tables' === $view ) {
-			if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-				return $this->get_direct_information_schema_literal_relation_sql( $this->get_direct_information_schema_relation_columns( $view ), array() );
-			}
-
 			$postgresql_table_comment_sql       = "pg_catalog.obj_description(pc.oid, 'pg_class')";
 			$table_comment_prefix_sql           = $this->connection->quote( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX );
 			$table_comment_value_sql            = sprintf( 'COALESCE(%s, \'\')', $postgresql_table_comment_sql );
 			$table_comment_sql                  = $this->get_postgresql_catalog_comment_after_marker_lines_sql( $postgresql_table_comment_sql, array( self::MYSQL_TABLE_COMMENT_COLLATION_PREFIX ) );
-			$table_collation_comment_sql        = sprintf( 'CASE WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s ELSE NULL END', $table_comment_value_sql, $table_comment_prefix_sql, $this->get_postgresql_catalog_column_comment_marker_decode_sql( $table_comment_value_sql, $table_comment_prefix_sql ) );
+			$table_collation_comment_sql        = sprintf(
+				'CASE WHEN %1$s THEN %2$s ELSE NULL END',
+				$this->get_postgresql_catalog_base64_marker_condition_sql( $table_comment_value_sql, $table_comment_prefix_sql ),
+				$this->get_postgresql_catalog_base64_marker_decode_sql( $table_comment_value_sql, $table_comment_prefix_sql )
+			);
 			$table_collation_column_comment_sql = 'pg_catalog.col_description(table_collation_pc.oid, table_collation_pa.attnum)';
 			$table_collation_column_type_sql    = $this->get_direct_information_schema_catalog_column_type_expression( 'table_collation_columns', null, $table_collation_column_comment_sql );
 			$table_collation_column_sql         = $this->get_direct_information_schema_collation_expression( $table_collation_column_type_sql, 'table_collation_columns.collation_name', $table_collation_column_comment_sql, $this->connection->quote( self::DEFAULT_MYSQL_COLLATION ) );
@@ -17284,7 +17369,7 @@ RELATIONS;
 			return $this->get_direct_information_schema_native_relation_sql( 'tables', $this->get_mysql_key_value_array( 'alias', 't', 'from', 'information_schema.tables t', 'where', $this->get_postgresql_visible_schema_condition_sql( 't.table_schema', 'pc.oid' ) . ' AND t.table_type IN (\'BASE TABLE\', \'VIEW\')', 'expressions', 'TABLE_TYPE=CASE WHEN t.table_type = \'VIEW\' THEN \'VIEW\' ELSE \'BASE TABLE\' END; ENGINE=' . $this->connection->quote( 'InnoDB' ) . '; VERSION=10; ROW_FORMAT=' . $this->connection->quote( 'Dynamic' ) . '; TABLE_ROWS=GREATEST(CAST(COALESCE(pg_stat.n_live_tup, 0) AS bigint), CAST(COALESCE(pc.reltuples, 0) AS bigint), 0); AVG_ROW_LENGTH=0; DATA_LENGTH=0; MAX_DATA_LENGTH=0; INDEX_LENGTH=0; DATA_FREE=0; AUTO_INCREMENT=CASE WHEN identity_column.column_name IS NULL THEN NULL ELSE CAST(COALESCE(ps.last_value + ps.increment_by, ps.start_value, 1) AS bigint) END; CREATE_TIME=TO_CHAR(CURRENT_TIMESTAMP, \'YYYY-MM-DD HH24:MI:SS\'); UPDATE_TIME=NULL; CHECK_TIME=NULL; TABLE_COLLATION=' . $table_collation_sql . '; CHECKSUM=NULL; CREATE_OPTIONS=' . $this->connection->quote( '' ) . '; TABLE_COMMENT=' . $table_comment_sql, 'join', 'LEFT JOIN pg_catalog.pg_namespace pn ON pn.nspname = t.table_schema LEFT JOIN pg_catalog.pg_class pc ON pc.relnamespace = pn.oid AND pc.relname = t.table_name AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\') LEFT JOIN pg_catalog.pg_stat_all_tables pg_stat ON pg_stat.relid = pc.oid LEFT JOIN LATERAL (SELECT c.column_name, pg_catalog.pg_get_serial_sequence(pg_catalog.format(\'%I.%I\', t.table_schema, t.table_name), c.column_name)::regclass AS sequence_oid FROM information_schema.columns c WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name AND (c.is_identity = \'YES\' OR LOWER(COALESCE(c.column_default, \'\')) LIKE \'nextval(%\') ORDER BY c.ordinal_position LIMIT 1) identity_column ON TRUE LEFT JOIN pg_catalog.pg_class seq ON seq.oid = identity_column.sequence_oid LEFT JOIN pg_catalog.pg_namespace seq_ns ON seq_ns.oid = seq.relnamespace LEFT JOIN pg_catalog.pg_sequences ps ON ps.schemaname = seq_ns.nspname AND ps.sequencename = seq.relname' ) );
 		}
 
-		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) || ! $this->should_use_postgresql_catalog_metadata() ) {
+		if ( in_array( $view, explode( ' ', 'events optimizer_trace profiling resource_groups user_attributes' ), true ) ) {
 			return $this->get_direct_information_schema_literal_relation_sql( $this->get_direct_information_schema_relation_columns( $view ), array() );
 		}
 
@@ -17858,12 +17943,7 @@ FROM ' . $definition['from'];
 		for ( $i = 0; $i < $passes; ++$i ) {
 			$marker_conditions = array();
 			foreach ( $prefixes as $prefix ) {
-				$prefix_sql          = $this->connection->quote( $prefix );
-				$marker_conditions[] = sprintf(
-					'LEFT(%1$s, LENGTH(%2$s)) = %2$s',
-					$stripped_comment,
-					$prefix_sql
-				);
+				$marker_conditions[] = $this->get_postgresql_catalog_marker_condition_sql( $stripped_comment, $prefix );
 			}
 
 			$stripped_comment = sprintf(
@@ -17874,12 +17954,12 @@ FROM ' . $definition['from'];
 			ELSE \'\'
 		END
 	ELSE %1$s
-END',
+				END',
 				$stripped_comment,
 				implode( "\n\t\tOR ", $marker_conditions )
 			);
 		}
-		return $stripped_comment;
+		return $this->get_postgresql_catalog_user_comment_unescape_sql( $stripped_comment );
 	}
 	private function get_direct_information_schema_display_schema_sql( string $schema_sql ): string {
 		return sprintf(
@@ -18091,7 +18171,7 @@ END',
 	}
 	private function get_direct_information_schema_column_default_expression( string $catalog_alias, ?string $column_comment_sql = null ): string {
 		$fractional_timestamp_default_pattern = $this->connection->quote( "^\\s*left\\s*\\(\\s*to_char\\s*\\(\\s*\\(?\\s*current_timestamp\\(([0-6])\\)\\s+at\\s+time\\s+zone\\s+'UTC'(::text)?\\s*\\)?\\s*,\\s*'YYYY-MM-DD HH24:MI:SS\\.US'(::text)?\\s*\\)\\s*,\\s*2[1-6]\\s*\\)\\s*$" );
-		$quoted_literal_default_pattern       = $this->connection->quote( '^\'(.*)\'::(character varying|character|text|bpchar|timestamp without time zone|timestamp with time zone|date|time without time zone|time with time zone|integer|bigint|smallint|numeric|decimal|double precision|real|boolean)$' );
+		$quoted_literal_default_pattern       = $this->connection->quote( '^\'(.*)\'::((?:[a-z_][a-z0-9_]*\\.)?__wp_mysql_[a-z0-9_]+|character varying|character|text|bpchar|timestamp without time zone|timestamp with time zone|date|time without time zone|time with time zone|integer|bigint|smallint|numeric|decimal|double precision|real|boolean)$' );
 		$column_default_comment_sql           = null === $column_comment_sql
 			? 'NULL'
 			: $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX );
@@ -18112,6 +18192,94 @@ END',
 			$column_default_comment_sql
 		);
 	}
+	private function get_postgresql_catalog_marker_condition_sql( string $comment_sql, string $prefix ): string {
+		$prefix_sql = $this->connection->quote( $prefix );
+		if ( self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX === $prefix ) {
+			return sprintf(
+				'%1$s ~ (\'^\' || %2$s || \'[0-9]+:[0-9]+($|\' || CHR(10) || \')\')',
+				$comment_sql,
+				$prefix_sql
+			);
+		}
+
+		return $this->get_postgresql_catalog_base64_marker_condition_sql( $comment_sql, $prefix_sql );
+	}
+	private function get_postgresql_catalog_base64_marker_condition_sql( string $comment_sql, string $prefix_sql ): string {
+		$payload_sql = $this->get_postgresql_catalog_base64_marker_payload_sql( $comment_sql, $prefix_sql );
+		return sprintf(
+			'LEFT(%1$s, LENGTH(%2$s)) = %2$s
+		AND %3$s <> \'\'
+		AND %3$s ~ %4$s',
+			$comment_sql,
+			$prefix_sql,
+			$payload_sql,
+			$this->connection->quote( self::POSTGRESQL_CATALOG_BASE64_MARKER_PAYLOAD_SQL_PATTERN )
+		);
+	}
+	private function get_postgresql_catalog_base64_marker_payload_sql( string $comment_sql, string $prefix_sql ): string {
+		return sprintf(
+			'split_part(SUBSTRING(%1$s FROM LENGTH(%2$s) + 1), CHR(10), 1)',
+			$comment_sql,
+			$prefix_sql
+		);
+	}
+	private function get_postgresql_catalog_base64_marker_decode_sql( string $comment_sql, string $prefix_sql ): string {
+		return sprintf(
+			'convert_from(
+			decode(
+				%1$s,
+				\'base64\'
+			),
+			\'UTF8\'
+		)',
+			$this->get_postgresql_catalog_base64_marker_payload_sql( $comment_sql, $prefix_sql )
+		);
+	}
+	private function get_postgresql_catalog_user_comment_unescape_sql( string $comment_sql ): string {
+		$escaped_prefixes = array_merge(
+			array( self::POSTGRESQL_CATALOG_USER_COMMENT_ESCAPE_PREFIX ),
+			self::POSTGRESQL_CATALOG_COMMENT_MARKER_PREFIXES
+		);
+		$prefix_pattern   = implode(
+			'|',
+			array_map(
+				array( $this, 'get_postgresql_catalog_regex_literal' ),
+				$escaped_prefixes
+			)
+		);
+		return sprintf(
+			'pg_catalog.regexp_replace(
+		%1$s,
+		%2$s || \'((\' || %3$s || \')[^\' || CHR(10) || \']*)\',
+		\'\1\2\',
+		\'g\'
+	)',
+			$comment_sql,
+			$this->connection->quote( '(^|' . "\n" . ')' . $this->get_postgresql_catalog_regex_literal( self::POSTGRESQL_CATALOG_USER_COMMENT_ESCAPE_PREFIX ) ),
+			$this->connection->quote( $prefix_pattern )
+		);
+	}
+	private function get_postgresql_catalog_regex_literal( string $literal ): string {
+		return strtr(
+			$literal,
+			array(
+				'\\' => '\\\\',
+				'.'  => '\\.',
+				'^'  => '\\^',
+				'$'  => '\\$',
+				'*'  => '\\*',
+				'+'  => '\\+',
+				'?'  => '\\?',
+				'('  => '\\(',
+				')'  => '\\)',
+				'['  => '\\[',
+				']'  => '\\]',
+				'{'  => '\\{',
+				'}'  => '\\}',
+				'|'  => '\\|',
+			)
+		);
+	}
 	private function get_postgresql_catalog_column_comment_marker_sql( string $column_comment_sql, string $prefix ): string {
 		$prefix_sql  = $this->connection->quote( $prefix );
 		$comment_sql = sprintf( 'COALESCE(%s, \'\')', $column_comment_sql );
@@ -18119,10 +18287,9 @@ END',
 		for ( $line_number = 1; $line_number <= count( self::POSTGRESQL_CATALOG_COLUMN_COMMENT_MARKER_PREFIXES ); ++$line_number ) {
 			$line_sql = sprintf( 'split_part(%s, CHR(10), %d)', $comment_sql, $line_number );
 			$cases[]  = sprintf(
-				'WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s',
-				$line_sql,
-				$prefix_sql,
-				$this->get_postgresql_catalog_column_comment_marker_decode_sql( $line_sql, $prefix_sql )
+				'WHEN %1$s THEN %2$s',
+				$this->get_postgresql_catalog_base64_marker_condition_sql( $line_sql, $prefix_sql ),
+				$this->get_postgresql_catalog_base64_marker_decode_sql( $line_sql, $prefix_sql )
 			);
 		}
 		return sprintf(
@@ -18134,53 +18301,43 @@ END',
 		);
 	}
 	private function get_postgresql_catalog_column_comment_marker_decode_sql( string $comment_sql, string $prefix_sql ): string {
-		return sprintf(
-			'convert_from(
-	decode(
-		NULLIF(split_part(SUBSTRING(%1$s FROM LENGTH(%2$s) + 1), CHR(10), 1), \'\'),
-		\'base64\'
-	),
-	\'UTF8\'
-)',
-			$comment_sql,
-			$prefix_sql
-		);
+		return $this->get_postgresql_catalog_base64_marker_decode_sql( $comment_sql, $prefix_sql );
 	}
 	private function get_postgresql_catalog_index_comment_sql( string $index_comment_sql ): string {
 		$type_prefix_sql     = $this->connection->quote( self::MYSQL_INDEX_COMMENT_TYPE_PREFIX );
 		$sub_part_prefix_sql = $this->connection->quote( self::MYSQL_INDEX_COMMENT_SUB_PART_PREFIX );
 		$comment_sql         = sprintf( 'COALESCE(%s, \'\')', $index_comment_sql );
-		return sprintf(
+		$stripped_comment    = sprintf(
 			'CASE
-	WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN
-		CASE
-			WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
-			ELSE \'\'
-		END
-	WHEN LEFT(%1$s, LENGTH(%3$s)) = %3$s THEN
-		pg_catalog.regexp_replace(
-			%1$s,
-			\'^(\' || %3$s || \'[0-9]+:[0-9]+\' || CHR(10) || \')*\' || %3$s || \'[0-9]+:[0-9]+(\' || CHR(10) || \')?\',
+		WHEN %2$s THEN
+			CASE
+				WHEN POSITION(CHR(10) IN %1$s) > 0 THEN SUBSTRING(%1$s FROM POSITION(CHR(10) IN %1$s) + 1)
+				ELSE \'\'
+			END
+		WHEN %1$s ~ (\'^\' || %3$s || \'[0-9]+:[0-9]+($|\' || CHR(10) || \')\') THEN
+			pg_catalog.regexp_replace(
+				%1$s,
+				\'^(\' || %3$s || \'[0-9]+:[0-9]+\' || CHR(10) || \')*\' || %3$s || \'[0-9]+:[0-9]+(\' || CHR(10) || \')?\',
 			\'\'
 		)
-	ELSE %1$s
-END',
+		ELSE %1$s
+	END',
 			$comment_sql,
-			$type_prefix_sql,
+			$this->get_postgresql_catalog_base64_marker_condition_sql( $comment_sql, $type_prefix_sql ),
 			$sub_part_prefix_sql
 		);
+		return $this->get_postgresql_catalog_user_comment_unescape_sql( $stripped_comment );
 	}
 	private function get_postgresql_catalog_index_type_comment_sql( string $index_comment_sql ): string {
 		$prefix_sql  = $this->connection->quote( self::MYSQL_INDEX_COMMENT_TYPE_PREFIX );
 		$comment_sql = sprintf( 'COALESCE(%s, \'\')', $index_comment_sql );
 		return sprintf(
 			'CASE
-	WHEN LEFT(%1$s, LENGTH(%2$s)) = %2$s THEN %3$s
-	ELSE NULL
-END',
-			$comment_sql,
-			$prefix_sql,
-			$this->get_postgresql_catalog_column_comment_marker_decode_sql( $comment_sql, $prefix_sql )
+		WHEN %1$s THEN %2$s
+		ELSE NULL
+	END',
+			$this->get_postgresql_catalog_base64_marker_condition_sql( $comment_sql, $prefix_sql ),
+			$this->get_postgresql_catalog_base64_marker_decode_sql( $comment_sql, $prefix_sql )
 		);
 	}
 	private function get_postgresql_catalog_display_index_sub_part_sql( string $expression_sql, string $index_comment_sql, string $seq_in_index_sql ): string {
@@ -18849,9 +19006,9 @@ END',
 
 			$inner_projection_sql[] = sprintf(
 				'%s(%s) AS %s',
-				$this->get_mysql_order_item_aggregate_function( $order_item ),
+				'DESC' === $order_item['direction'] ? 'MAX' : 'MIN',
 				$order_item['sql'],
-				$this->connection->quote_identifier( $this->get_distinct_order_by_hidden_alias( $index ) )
+				$this->connection->quote_identifier( '__wp_pg_order_' . $index )
 			);
 		}
 
@@ -18871,9 +19028,6 @@ END',
 		}
 		return $sql;
 	}
-	private function get_distinct_order_by_hidden_alias( int $index ): string {
-		return '__wp_pg_order_' . $index;
-	}
 	private function get_distinct_order_by_outer_order_sql( array $projection_items, array $order_items, string $quoted_derived_table_alias ): string {
 		$order_sql = array();
 
@@ -18881,7 +19035,7 @@ END',
 			if ( null !== $order_item['projection_index'] ) {
 				$order_alias = $projection_items[ $order_item['projection_index'] ]['alias'];
 			} else {
-				$order_alias = $this->get_distinct_order_by_hidden_alias( $index );
+				$order_alias = '__wp_pg_order_' . $index;
 			}
 
 			$order_sql[] = sprintf(
@@ -19064,7 +19218,7 @@ END',
 				( null !== $archive_date_expression && $this->is_mysql_archive_post_date_order_expression( $tokens, $order_item, $archive_date_expression ) )
 				|| ( null !== $wordpress_id_group && $this->is_mysql_wordpress_grouped_id_order_expression( $tokens, $order_item, $wordpress_id_group ) )
 			) {
-					$order_sql[] = $this->get_strict_grouped_aggregate_order_sql( $order_item );
+					$order_sql[] = sprintf( '%s(%s) %s', 'DESC' === $order_item['direction'] ? 'MAX' : 'MIN', $order_item['sql'], $order_item['direction'] );
 					$rewritten   = true;
 				continue;
 			}
@@ -19776,6 +19930,9 @@ END',
 		return $table_base === $table_name
 			|| substr( $table_name, -strlen( '_' . $table_base ) ) === '_' . $table_base;
 	}
+	private function is_wordpress_options_table_name( string $table_name ): bool {
+		return $this->is_mysql_wordpress_table_name( $table_name, 'options' );
+	}
 	private function is_mysql_wordpress_term_split_column_equality_pair( array $pair ): bool {
 		return (
 			't.term_id' === $pair['left']['key']
@@ -20470,12 +20627,6 @@ END',
 			&& $reference['end'] === $end
 			&& null !== $reference['qualifier']
 			&& $this->is_mysql_qualified_column_reference_expression( $tokens, $reference['start'], $reference['end'], 'meta_value' );
-	}
-	private function get_strict_grouped_aggregate_order_sql( array $order_item ): string {
-		return sprintf( '%s(%s) %s', $this->get_mysql_order_item_aggregate_function( $order_item ), $order_item['sql'], $order_item['direction'] );
-	}
-	private function get_mysql_order_item_aggregate_function( array $order_item ): string {
-		return 'DESC' === $order_item['direction'] ? 'MAX' : 'MIN';
 	}
 	private function get_strict_grouped_posts_post_date_desc_order_id_tiebreaker_sql(
 		array $tokens,
@@ -21519,7 +21670,12 @@ END',
 			return array( 'sql' => $this->get_mysql_dml_default_assignment_sql_for_column( $target_metadata ) );
 		}
 
-		$value_sql = $this->get_mysql_dml_default_function_assignment_sql( $tokens, $start, $end, $table_column_lookup );
+		$default_column = $this->parse_mysql_upsert_column_function( $tokens, $start, $end, WP_MySQL_Lexer::DEFAULT_SYMBOL, $table_column_lookup );
+		if ( is_array( $default_column ) && $default_column['end'] === $end ) {
+			$value_sql = $this->get_mysql_dml_default_assignment_sql_for_column( $default_column['lookup_value'] );
+		} else {
+			$value_sql = null;
+		}
 		if ( null === $value_sql ) {
 			$source_column = $this->get_mysql_upsert_values_assignment_source_column( $tokens, $start, $end, $values_column_lookup, $source_aliases );
 			$value_sql     = null === $source_column ? null : $this->get_postgresql_upsert_excluded_column_sql( $source_column );
@@ -21658,14 +21814,6 @@ END',
 			'column' => $second_identifier,
 			'end'    => $position + 3,
 		);
-	}
-	private function get_mysql_dml_default_function_assignment_sql( array $tokens, int $start, int $end, array $table_column_lookup ): ?string {
-		$default_column = $this->parse_mysql_upsert_column_function( $tokens, $start, $end, WP_MySQL_Lexer::DEFAULT_SYMBOL, $table_column_lookup );
-		if ( ! is_array( $default_column ) || $default_column['end'] !== $end ) {
-			return null;
-		}
-
-		return $this->get_mysql_dml_default_assignment_sql_for_column( $default_column['lookup_value'] );
 	}
 	private function get_mysql_dml_default_assignment_sql_for_column( array $column_metadata ): string {
 		$default_sql = $this->get_mysql_dml_default_sql_from_metadata( $column_metadata );
@@ -21972,7 +22120,12 @@ END',
 		if ( null === $source_column && $start + 4 === $end ) {
 			return null;
 		}
-		return $this->get_mysql_upsert_alias_assignment_source_column( $tokens, $start, $end, $source_aliases );
+
+		$alias_assignment_reference = $this->get_mysql_upsert_alias_expression_reference( $tokens, $start, $start, $end, $source_aliases );
+		if ( ! is_array( $alias_assignment_reference ) || $alias_assignment_reference['end'] !== $end ) {
+			return null;
+		}
+		return $alias_assignment_reference['column'];
 	}
 	private function get_postgresql_upsert_excluded_column_sql( string $column_name ): string {
 		return sprintf( 'excluded.%s', $this->connection->quote_identifier( $column_name ) );
@@ -22354,13 +22507,6 @@ END',
 			}
 		}
 		return false;
-	}
-	private function get_mysql_upsert_alias_assignment_source_column( array $tokens, int $start, int $end, array $source_aliases ): ?string {
-		$reference = $this->get_mysql_upsert_alias_expression_reference( $tokens, $start, $start, $end, $source_aliases );
-		if ( ! is_array( $reference ) || $reference['end'] !== $end ) {
-			return null;
-		}
-		return $reference['column'];
 	}
 	private function get_mysql_upsert_alias_expression_reference( array $tokens, int $position, int $start, int $end, array $source_aliases ) {
 		if ( empty( $source_aliases ) || ! isset( $tokens[ $position ] ) ) {
@@ -25737,9 +25883,6 @@ END',
 		return implode( ' || ', $parts );
 	}
 	private function get_mysql_group_concat_aggregate_sql( array $tokens, array $parsed, string $expression_sql, string $order_sql ): ?string {
-		if ( $parsed['distinct'] && 'sqlite' === $this->connection->get_driver_name() ) {
-			return null === $parsed['separator_start'] ? sprintf( 'GROUP_CONCAT(DISTINCT CAST(%s AS text))', $expression_sql ) : null;
-		}
 		$separator_sql = null === $parsed['separator_start'] ? $this->connection->quote( ',' ) : $this->translate_mysql_token_sequence_to_postgresql( $tokens, $parsed['separator_start'], $parsed['separator_end'] );
 		return sprintf(
 			$parsed['distinct'] ? 'STRING_AGG(DISTINCT CAST(%1$s AS text), CAST(%2$s AS text)%3$s)' : 'STRING_AGG(CAST(%1$s AS text), CAST(%2$s AS text)%3$s)',
@@ -25885,18 +26028,7 @@ END',
 				: (int) $value;
 		}
 
-		if ( 'sqlite' === $this->connection->get_driver_name() ) {
-			return sprintf(
-				'CAST(SUBSTR(CAST(%1$s AS BLOB), 1, %2$d) AS TEXT)',
-				$aggregate_sql,
-				$limit
-			);
-		}
-
-		if ( 'pgsql' === $this->connection->get_driver_name() ) {
-			return $this->get_postgresql_mysql_utf8_safe_byte_prefix_sql( $aggregate_sql, $limit );
-		}
-		return sprintf( 'SUBSTR(%1$s, 1, %2$d)', $aggregate_sql, $limit );
+		return $this->get_postgresql_mysql_utf8_safe_byte_prefix_sql( $aggregate_sql, $limit );
 	}
 	private function get_postgresql_mysql_utf8_safe_byte_prefix_sql( string $expression_sql, int $limit ): string {
 		if ( 0 === $limit ) {
@@ -26957,14 +27089,11 @@ END',
 		if ( 1 === preg_match( '/^-?(?:0|[1-9][0-9]*)(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?$/', trim( $argument_sql ) ) ) {
 			return (string) self::get_mysql_json_valid_runtime_result( trim( $argument_sql ) );
 		}
-		if ( 'pgsql' === $this->connection->get_driver_name() ) {
-			return sprintf(
-				'CASE WHEN %1$s IS NULL THEN NULL WHEN pg_input_is_valid(CAST(%1$s AS text), %2$s) THEN 1 ELSE 0 END',
-				$argument_sql,
-				$this->connection->quote( 'json' )
-			);
-		}
-		return sprintf( 'CASE WHEN %1$s IS NULL THEN NULL ELSE json_valid(CAST(%1$s AS text)) END', $argument_sql );
+		return sprintf(
+			'CASE WHEN %1$s IS NULL THEN NULL WHEN pg_input_is_valid(CAST(%1$s AS text), %2$s) THEN 1 ELSE 0 END',
+			$argument_sql,
+			$this->connection->quote( 'json' )
+		);
 	}
 	private function get_postgresql_mysql_from_unixtime_timestamp_sql( string $unix_timestamp_sql ): string {
 		$timestamp_sql = sprintf( "TO_TIMESTAMP(CAST(%s AS double precision)) AT TIME ZONE 'UTC'", $unix_timestamp_sql );
@@ -26983,10 +27112,6 @@ END',
 		);
 	}
 	private function ensure_postgresql_runtime_helpers_for_query( string $query ): void {
-		if ( ! $this->should_use_postgresql_catalog_metadata() ) {
-			return;
-		}
-
 		$this->ensure_postgresql_mysql_domains( 'text', $this->get_postgresql_mysql_text_domain_definitions_for_query( $query ) );
 		$this->ensure_postgresql_mysql_domains( 'binary', $this->get_postgresql_mysql_binary_domain_definitions_for_query( $query ) );
 		$this->ensure_postgresql_mysql_domains( 'integer', $this->get_postgresql_mysql_integer_domain_definitions_for_query( $query ) );
@@ -27443,8 +27568,56 @@ $wp_mysql_%1$s_domain$',
 		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
 		$end           = null === $statement_end ? count( $tokens ) : $statement_end;
 		return $this->contains_unsupported_mysql_date_arithmetic_function( $tokens, 0, $end )
-			|| $this->contains_unsupported_mysql_translated_common_function( $tokens, 0, $end, 'timestampadd', 'translate_mysql_timestampadd_function_to_postgresql' )
+			|| $this->contains_unsupported_mysql_timestampadd_function( $tokens, 0, $end )
 			|| $this->contains_unsupported_mysql_translated_common_function( $tokens, 0, $end, 'timestampdiff', 'translate_mysql_timestampdiff_function_to_postgresql' );
+	}
+	private function contains_unsupported_mysql_timestampadd_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if (
+				'timestampadd' !== $this->get_mysql_common_function_name( $tokens[ $i ] ?? null )
+				|| ! isset( $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+
+			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $end );
+			if ( null === $bounds ) {
+				return true;
+			}
+			$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
+			if (
+				null === $arguments
+				|| 3 !== count( $arguments )
+				|| ! $this->is_supported_mysql_timestampadd_interval(
+					$tokens,
+					$arguments[0]['start'],
+					$arguments[0]['end'],
+					$arguments[1]['start'],
+					$arguments[1]['end']
+				)
+			) {
+				return true;
+			}
+		}
+		return false;
+	}
+	private function is_supported_mysql_timestampadd_interval( array $tokens, int $unit_start, int $unit_end, int $value_start, int $value_end ): bool {
+		if ( $unit_start + 1 !== $unit_end || ! isset( $tokens[ $unit_start ] ) ) {
+			return false;
+		}
+		if ( null !== $this->get_postgresql_simple_interval_unit( $tokens[ $unit_start ] ) ) {
+			return true;
+		}
+		$part_units = $this->get_mysql_composite_interval_part_units( $tokens[ $unit_start ] );
+		if ( null === $part_units ) {
+			return false;
+		}
+		$value = $this->get_mysql_composite_interval_literal_value( $tokens, $value_start, $value_end );
+		if ( null === $value ) {
+			return false;
+		}
+		return $value['is_null'] || null !== $this->parse_mysql_composite_interval_literal_components( $value['value'], $part_units );
 	}
 	private function contains_unsupported_mysql_translated_common_function( array $tokens, int $start, int $end, string $function_name, string $translator_name ): bool {
 		for ( $i = $start; $i < $end; $i++ ) {
@@ -27661,7 +27834,10 @@ $wp_mysql_%1$s_domain$',
 		$units      = array_slice( $part_units, $part_count - count( $parts ) );
 		$components = array();
 		foreach ( $parts as $index => $part ) {
-			$unit            = $units[ $index ];
+			$unit = $units[ $index ];
+			if ( 'microsecond' === $unit && strlen( $part ) > 6 ) {
+				return null;
+			}
 			$component_value = 'microsecond' === $unit ? str_pad( $part, 6, '0' ) : $part;
 			$components[]    = array(
 				'value' => $sign . $component_value,
@@ -28443,6 +28619,25 @@ $wp_mysql_%1$s_domain$',
 	private function get_postgresql_mysql_sunday_week_start_sql( string $timestamp_sql ): string {
 		return sprintf( "(DATE_TRUNC('day', %1\$s) - (CAST(EXTRACT(DOW FROM %1\$s) AS integer) * INTERVAL '1 day'))", $timestamp_sql );
 	}
+	private function contains_unsupported_mysql_extract_function( array $tokens, int $start, int $end ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			if (
+				! isset( $tokens[ $i ], $tokens[ $i + 1 ] )
+				|| WP_MySQL_Lexer::EXTRACT_SYMBOL !== $tokens[ $i ]->id
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $i + 1 ]->id
+			) {
+				continue;
+			}
+			$after_close = $this->get_mysql_parenthesized_sequence_end( $tokens, $i + 1, $end );
+			if ( null === $after_close || null === $this->get_mysql_extract_function_bounds( $tokens, $i, $end ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+	private function contains_unsupported_mysql_extract_function_query( string $query ): bool {
+		return $this->contains_unsupported_mysql_range_scanner_query( $query, array( 'contains_unsupported_mysql_extract_function' ) );
+	}
 	private function translate_mysql_date_time_extract_to_postgresql( array $tokens, int $position, int $end ): ?array {
 		$bounds = $this->get_mysql_extract_function_bounds( $tokens, $position, $end );
 		if ( null === $bounds ) {
@@ -28828,10 +29023,6 @@ $wp_mysql_%1$s_domain$',
 	private function mysql_create_table_target_exists( string $schema_name, string $table_name, bool $is_temporary ): bool {
 		if ( $is_temporary ) {
 			return null !== $this->get_active_temporary_table_schema( $table_name );
-		}
-
-		if ( 'sqlite' === $this->connection->get_driver_name() ) {
-			return $this->sqlite_table_administration_table_exists( $schema_name, $table_name );
 		}
 
 		$stmt = $this->connection->query(

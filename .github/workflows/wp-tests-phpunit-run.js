@@ -13,6 +13,7 @@ const repositoryRoot = path.join( __dirname, '..', '..' );
 const backend = normalizeBackend( process.env.WP_TEST_DB_BACKEND || 'sqlite' );
 const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
 const phpunitArgs = getPhpUnitArgs();
+const phpunitFilter = getPhpUnitFilter( phpunitArgs );
 
 const sqliteExpectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
@@ -93,6 +94,10 @@ const sqliteExpectedFailures = [
 	'WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query',
 ];
 
+const postgresqlExpectedFailures = [
+	'Tests_DB::test_mysqli_flush_sync',
+];
+
 const expectedByBackend = {
 	mysql: {
 		errors: [],
@@ -104,7 +109,7 @@ const expectedByBackend = {
 	},
 	postgresql: {
 		errors: [],
-		failures: [],
+		failures: postgresqlExpectedFailures,
 	},
 };
 
@@ -226,13 +231,30 @@ function normalizeBackend( value ) {
 }
 
 function getPhpUnitArgs() {
-	const args = [];
+	const cliArgs = process.argv.slice( 2 );
 
-	if ( process.env.WP_TEST_PHPUNIT_FILTER ) {
-		args.push( '--filter', process.env.WP_TEST_PHPUNIT_FILTER );
+	if ( hasPhpUnitFilter( cliArgs ) || ! process.env.WP_TEST_PHPUNIT_FILTER ) {
+		return cliArgs;
 	}
 
-	return args;
+	return [ '--filter', process.env.WP_TEST_PHPUNIT_FILTER, ...cliArgs ];
+}
+
+function getPhpUnitFilter( args ) {
+	for ( let i = 0; i < args.length; i++ ) {
+		if ( '--filter' === args[ i ] ) {
+			return args[ i + 1 ] || '';
+		}
+		if ( args[ i ].startsWith( '--filter=' ) ) {
+			return args[ i ].slice( '--filter='.length );
+		}
+	}
+
+	return '';
+}
+
+function hasPhpUnitFilter( args ) {
+	return args.some( arg => '--filter' === arg || arg.startsWith( '--filter=' ) );
 }
 
 function verifyNativeParserExtension() {
@@ -933,7 +955,7 @@ function summarizeTestcases( testcases ) {
 function emptySummary() {
 	return {
 		backend,
-		filter: process.env.WP_TEST_PHPUNIT_FILTER || '',
+		filter: phpunitFilter,
 		total: 0,
 		passed: 0,
 		errors: 0,

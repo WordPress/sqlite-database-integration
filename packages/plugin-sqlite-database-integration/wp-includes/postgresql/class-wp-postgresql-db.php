@@ -2044,7 +2044,7 @@ class WP_PostgreSQL_DB extends wpdb {
 			'password' => $this->dbpassword,
 		);
 
-		if ( isset( $GLOBALS['@pdo'] ) && $GLOBALS['@pdo'] instanceof PDO && $this->is_postgresql_pdo( $GLOBALS['@pdo'] ) ) {
+		if ( isset( $GLOBALS['@pdo'] ) && $GLOBALS['@pdo'] instanceof PDO ) {
 			$options['pdo'] = $GLOBALS['@pdo'];
 		}
 
@@ -2080,20 +2080,6 @@ class WP_PostgreSQL_DB extends wpdb {
 
 		$port = substr( $socket_file, strlen( $prefix ) );
 		return ctype_digit( $port ) ? (int) $port : null;
-	}
-
-	/**
-	 * Checks whether a reusable PDO object is PostgreSQL-backed.
-	 *
-	 * @param PDO $pdo PDO instance.
-	 * @return bool Whether the PDO driver is PostgreSQL.
-	 */
-	private function is_postgresql_pdo( PDO $pdo ) {
-		try {
-			return 'pgsql' === $pdo->getAttribute( PDO::ATTR_DRIVER_NAME );
-		} catch ( Throwable $e ) {
-			return false;
-		}
 	}
 
 	/**

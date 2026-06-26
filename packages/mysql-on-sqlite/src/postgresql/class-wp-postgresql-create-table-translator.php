@@ -10,7 +10,7 @@
 class WP_PostgreSQL_Create_Table_Translator {
 	const MYSQL_GRAMMAR_PATH = __DIR__ . '/../mysql/mysql-grammar.php';
 
-	private const MYSQL_HELPER_TYPE_COMMENT_PREFIX = '__wp_mysql_column_type:';
+	const MYSQL_COLUMN_COMMENT_TYPE_PREFIX = '__wp_mysql_column_type:';
 
 	const CHARSET_DEFAULT_COLLATION_MAP = array(
 		'ascii'   => 'ascii_general_ci',
@@ -163,7 +163,7 @@ $wp_mysql_set_domain$',
 						sprintf(
 							'COMMENT ON DOMAIN %s IS %s',
 							$this->quote_identifier( $type_name ),
-							$this->quote_string_literal( self::MYSQL_HELPER_TYPE_COMMENT_PREFIX . base64_encode( $column_type ) )
+							$this->quote_string_literal( self::MYSQL_COLUMN_COMMENT_TYPE_PREFIX . base64_encode( $column_type ) )
 						),
 					);
 				}
@@ -2132,8 +2132,8 @@ $wp_mysql_set_domain$',
 	/**
 	 * Check whether a MySQL index type maps to a PostgreSQL btree index.
 	 *
-	 * InnoDB reports HASH declarations as BTREE, matching the SQLite backend's
-	 * metadata normalization.
+	 * InnoDB reports HASH declarations as BTREE, so HASH is accepted for
+	 * MySQL-compatible metadata normalization.
 	 *
 	 * @param WP_Parser_Node $index_type Index type node.
 	 * @return bool Whether the index type is supported as a btree index.

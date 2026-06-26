@@ -9,9 +9,7 @@
  * PostgreSQL connection.
  *
  * This class configures and encapsulates the connection to a PostgreSQL
- * database. It intentionally mirrors the small surface currently exposed by
- * WP_SQLite_Connection so a PostgreSQL MySQL-emulation driver can be built
- * without reusing SQLite-specific file, PRAGMA, and journal-mode handling.
+ * database for the PostgreSQL MySQL-emulation driver.
  */
 class WP_PostgreSQL_Connection {
 	/**
@@ -93,6 +91,10 @@ class WP_PostgreSQL_Connection {
 			$pdo_class = PHP_VERSION_ID >= 80400 && class_exists( 'PDO\Pgsql' ) ? PDO\Pgsql::class : PDO::class;
 
 			$this->pdo = new $pdo_class( $dsn, $user, $password );
+		}
+
+		if ( 'pgsql' !== $this->pdo->getAttribute( PDO::ATTR_DRIVER_NAME ) ) {
+			throw new InvalidArgumentException( 'WP_PostgreSQL_Connection requires a pgsql PDO driver.' );
 		}
 
 		$this->pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
@@ -216,7 +218,6 @@ class WP_PostgreSQL_Connection {
 		if (
 			PDO::PARAM_STR === $type
 			&& is_string( $value )
-			&& 'pgsql' === $this->get_driver_name()
 		) {
 			$value = self::encode_mysql_text_for_postgresql( $value );
 			if ( self::requires_postgresql_escape_string_syntax( $value ) ) {
@@ -225,15 +226,6 @@ class WP_PostgreSQL_Connection {
 		}
 
 		return $this->pdo->quote( $value, $type );
-	}
-
-	/**
-	 * Get the backing PDO driver name.
-	 *
-	 * @return string PDO driver name.
-	 */
-	public function get_driver_name(): string {
-		return (string) $this->pdo->getAttribute( PDO::ATTR_DRIVER_NAME );
 	}
 
 	/**
@@ -293,11 +285,7 @@ class WP_PostgreSQL_Connection {
 		$release_savepoint_on_success = false;
 		$savepoint_exists             = false;
 
-		if (
-			'pgsql' !== $this->get_driver_name()
-			|| ! $this->pdo->inTransaction()
-			|| $this->is_postgresql_transaction_control_statement( $sql )
-		) {
+		if ( ! $this->pdo->inTransaction() || $this->is_postgresql_transaction_control_statement( $sql ) ) {
 			return null;
 		}
 

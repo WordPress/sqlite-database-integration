@@ -53,8 +53,6 @@ jobs:
           - { php: '8.3', sqlite: '3.46.1', extension: false, testsuite: default } # Debian 13 (Trixie)
           - { php: '8.4', sqlite: '3.51.2', extension: false, testsuite: default } # First 2026 release
           - { php: '8.5', sqlite: 'latest', extension: false, testsuite: default }
-          # PostgreSQL adapter tests run once in a bounded package lane.
-          - { php: '8.3', sqlite: '3.46.1', extension: false, testsuite: postgresql }
           # Native Rust parser extension (requires PHP 8.0+).
           - { php: '8.0', sqlite: '3.37.0', extension: true, testsuite: default }
           - { php: '8.1', sqlite: '3.40.1', extension: true, testsuite: default }
@@ -68,6 +66,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up SQLite
+        if: ${{ matrix.testsuite == 'default' }}
         run: |
           VERSION='${{ matrix.sqlite }}'
           if [ "$VERSION" = 'latest' ]; then
@@ -111,9 +110,11 @@ jobs:
         with:
           php-version: ${{ matrix.php }}
           coverage: none
+          extensions: pdo_sqlite
           tools: phpunit-polyfills
 
       - name: Verify SQLite version in PHP
+        if: ${{ matrix.testsuite == 'default' }}
         run: |
           EXPECTED='${{ matrix.sqlite }}'
           if [ "$EXPECTED" = 'latest' ]; then
@@ -190,7 +191,50 @@ jobs:
         run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist --testsuite default
         working-directory: packages/mysql-on-sqlite
 
+  postgresql-test:
+    name: PHP 8.3 / PostgreSQL / postgresql
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # Required to clone the repo.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: wordpress_develop
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U root -d wordpress_develop"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          extensions: pdo_pgsql
+          tools: phpunit-polyfills
+
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
       - name: Run PostgreSQL PHPUnit suite
-        if: ${{ matrix.testsuite == 'postgresql' }}
-        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist --testsuite postgresql
+        env:
+          PGSQL_TEST_DSN: pgsql:host=127.0.0.1;port=5432;dbname=wordpress_develop
+          PGSQL_TEST_USER: root
+          PGSQL_TEST_PASSWORD: password
+        run: composer run test-postgresql
         working-directory: packages/mysql-on-sqlite

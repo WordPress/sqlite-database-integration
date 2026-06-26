@@ -26,6 +26,10 @@ cp -R "$DIR/packages/plugin-sqlite-database-integration" "$PLUGIN_DIR"
 rm "$PLUGIN_DIR/wp-includes/database"
 cp -R "$DIR/packages/mysql-on-sqlite/src" "$PLUGIN_DIR/wp-includes/database"
 
+# Verify the copied driver payload can load before packaging.
+PLUGIN_DRIVER_LOAD="$PLUGIN_DIR/wp-includes/database/load.php"
+php -r 'require $argv[1]; if ( ! class_exists( "WP_PostgreSQL_Driver", false ) ) { fwrite( STDERR, "PostgreSQL driver failed to load.\n" ); exit( 1 ); }' "$PLUGIN_DRIVER_LOAD"
+
 # Remove dev-only files.
 rm -rf "$PLUGIN_DIR/composer.json"
 rm -rf "$PLUGIN_DIR/vendor"

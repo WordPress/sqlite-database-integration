@@ -363,7 +363,7 @@ class WP_PostgreSQL_Create_Table_Translator_Tests extends TestCase {
 	}
 
 	/**
-	 * Tests HASH index declarations are normalized to BTREE like the SQLite backend.
+	 * Tests HASH index declarations are accepted as MySQL-compatible BTREE metadata.
 	 */
 	public function test_translate_accepts_hash_indexes_as_btree(): void {
 		$sql = 'CREATE TABLE wp_hash_index (

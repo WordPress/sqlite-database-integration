@@ -1,9 +1,9 @@
 <?php
 
 /**
- * PDO-like fixture that records statement savepoint commands.
+ * PDO-like proxy backed by real PostgreSQL that records statement savepoint commands.
  */
-class WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO {
+class WP_PostgreSQL_Connection_Statement_Savepoint_Recording_PDO {
 	/**
 	 * Recorded exec() SQL.
 	 *
@@ -19,7 +19,7 @@ class WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO {
 	public $prepared_sql = array();
 
 	/**
-	 * SQLite PDO used for real statement execution.
+	 * PostgreSQL PDO used for real statement execution.
 	 *
 	 * @var PDO
 	 */
@@ -28,8 +28,8 @@ class WP_PostgreSQL_Connection_Statement_Savepoint_Fake_PDO {
 	/**
 	 * Constructor.
 	 */
-	public function __construct() {
-		$this->pdo = new PDO( 'sqlite::memory:' );
+	public function __construct( PDO $pdo ) {
+		$this->pdo = $pdo;
 		$this->pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
 		$this->pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}

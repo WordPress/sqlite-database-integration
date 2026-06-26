@@ -7,6 +7,7 @@ const path = require( 'path' );
 const root = path.resolve( __dirname, '..' );
 const workflowDir = path.join( root, '.github', 'workflows' );
 const failures = [];
+const missingJobs = new Set();
 
 function readWorkflow( filename ) {
 	return fs.readFileSync( path.join( workflowDir, filename ), 'utf8' );
@@ -90,6 +91,50 @@ function getJobBlock( contents, jobName ) {
 	return lines.slice( start, end ).join( '\n' );
 }
 
+function getRequiredJobBlock( filename, jobName ) {
+	const block = getJobBlock( readWorkflow( filename ), jobName );
+	if ( block ) {
+		return block;
+	}
+
+	const key = `${ filename }:${ jobName }`;
+	if ( ! missingJobs.has( key ) ) {
+		fail( filename, `missing ${ jobName } job.` );
+		missingJobs.add( key );
+	}
+
+	return '';
+}
+
+function getStepBlockContaining( jobBlock, needle ) {
+	const lines = jobBlock.split( /\r?\n/ );
+	const needleIndex = lines.findIndex( ( line ) => line.includes( needle ) );
+	if ( -1 === needleIndex ) {
+		return '';
+	}
+
+	let start = needleIndex;
+	for ( ; start >= 0; start-- ) {
+		if ( /^      - /.test( lines[ start ] ) ) {
+			break;
+		}
+	}
+
+	if ( start < 0 ) {
+		return lines[ needleIndex ];
+	}
+
+	let end = lines.length;
+	for ( let i = start + 1; i < lines.length; i++ ) {
+		if ( /^      - /.test( lines[ i ] ) ) {
+			end = i;
+			break;
+		}
+	}
+
+	return lines.slice( start, end ).join( '\n' );
+}
+
 function assertNoContinueOnError( filename ) {
 	const contents = readWorkflow( filename );
 	if ( contents.includes( 'continue-on-error' ) ) {
@@ -112,14 +157,41 @@ function assertDefaultBranchPush( filename ) {
 }
 
 function assertJobHasNoTopLevelIf( filename, jobName ) {
-	const block = getJobBlock( readWorkflow( filename ), jobName );
+	const block = getRequiredJobBlock( filename, jobName );
 	if ( ! block ) {
-		fail( filename, `missing ${ jobName } job.` );
 		return;
 	}
 
 	if ( /^    if:/m.test( block ) ) {
 		fail( filename, `${ jobName } job must not have a job-level if gate.` );
+	}
+}
+
+function assertJobIncludes( filename, jobName, needle, message ) {
+	const block = getRequiredJobBlock( filename, jobName );
+	if ( ! block ) {
+		return;
+	}
+
+	if ( ! block.includes( needle ) ) {
+		fail( filename, message );
+	}
+}
+
+function assertJobRunStepHasNoIf( filename, jobName, command, message ) {
+	const block = getRequiredJobBlock( filename, jobName );
+	if ( ! block ) {
+		return;
+	}
+
+	const stepBlock = getStepBlockContaining( block, command );
+	if ( ! stepBlock || ! /^(      - run:|        run:)/m.test( stepBlock ) ) {
+		fail( filename, message );
+		return;
+	}
+
+	if ( /^(      - if:|        if:)/m.test( stepBlock ) ) {
+		fail( filename, `${ jobName } run step for "${ command }" must not have a step-level if gate.` );
 	}
 }
 
@@ -142,26 +214,43 @@ for ( const filename of [
 	assertDefaultBranchPush( filename );
 }
 
-assertIncludes(
+assertJobHasNoTopLevelIf( 'phpunit-tests.yml', 'postgresql-test' );
+assertJobIncludes(
 	'phpunit-tests.yml',
-	'testsuite: postgresql',
-	'package PHPUnit matrix must include the PostgreSQL testsuite lane.'
+	'postgresql-test',
+	'image: postgres:16',
+	'package PostgreSQL PHPUnit job must define a PostgreSQL service.'
 );
-assertIncludes(
+assertJobIncludes(
 	'phpunit-tests.yml',
-	'--testsuite postgresql',
-	'package PHPUnit workflow must run the PostgreSQL testsuite.'
+	'postgresql-test',
+	'extensions: pdo_pgsql',
+	'package PostgreSQL PHPUnit job must install the pdo_pgsql extension.'
+);
+assertJobIncludes(
+	'phpunit-tests.yml',
+	'postgresql-test',
+	'PGSQL_TEST_DSN: pgsql:host=127.0.0.1;port=5432;dbname=wordpress_develop',
+	'package PostgreSQL PHPUnit job must set PGSQL_TEST_DSN.'
+);
+assertJobRunStepHasNoIf(
+	'phpunit-tests.yml',
+	'postgresql-test',
+	'composer run test-postgresql',
+	'package PostgreSQL PHPUnit job must run composer run test-postgresql.'
 );
 
 assertJobHasNoTopLevelIf( 'wp-tests-phpunit.yml', 'postgresql-test' );
-assertIncludes(
+assertJobIncludes(
 	'wp-tests-phpunit.yml',
+	'postgresql-test',
 	'WP_TEST_DB_BACKEND: postgresql',
 	'WordPress PostgreSQL PHPUnit job must set WP_TEST_DB_BACKEND=postgresql.'
 );
-assertIncludes(
+assertJobRunStepHasNoIf(
 	'wp-tests-phpunit.yml',
-	'run: node .github/workflows/wp-tests-phpunit-run.js',
+	'postgresql-test',
+	'node .github/workflows/wp-tests-phpunit-run.js',
 	'WordPress PostgreSQL PHPUnit job must run the PHPUnit helper.'
 );
 
