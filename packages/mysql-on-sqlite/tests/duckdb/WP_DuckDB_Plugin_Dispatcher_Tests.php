@@ -11,6 +11,18 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 	 */
 	private $temp_dirs = array();
 
+	public static function setUpBeforeClass(): void {
+		parent::setUpBeforeClass();
+
+		foreach ( array( 'WP_DUCKDB_AUTOLOAD', 'DUCKDB_PHP_AUTOLOAD' ) as $environment_key ) {
+			$autoload = getenv( $environment_key );
+			if ( is_string( $autoload ) && '' !== $autoload && file_exists( $autoload ) ) {
+				require_once $autoload;
+				return;
+			}
+		}
+	}
+
 	protected function tearDown(): void {
 		foreach ( array_reverse( $this->temp_dirs ) as $temp_dir ) {
 			$this->remove_temp_dir( $temp_dir );
@@ -480,7 +492,14 @@ PHP;
 	}
 
 	private function get_wordpress_stub_code(): string {
-		$temp_dir = $this->create_temp_dir();
+		$temp_dir        = $this->create_temp_dir();
+		$duckdb_autoload = getenv( 'DUCKDB_PHP_AUTOLOAD' );
+		if ( ! is_string( $duckdb_autoload ) || '' === $duckdb_autoload || ! file_exists( $duckdb_autoload ) ) {
+			$duckdb_autoload = getenv( 'WP_DUCKDB_AUTOLOAD' );
+		}
+		$duckdb_autoload_constant = is_string( $duckdb_autoload ) && '' !== $duckdb_autoload && file_exists( $duckdb_autoload )
+			? "define( 'DUCKDB_PHP_AUTOLOAD', " . var_export( $duckdb_autoload, true ) . " );\n"
+			: '';
 
 		return "<?php\n"
 			. "define( 'ABSPATH', " . var_export( $temp_dir . '/', true ) . " );\n"
@@ -489,6 +508,7 @@ PHP;
 			. "define( 'FQDBDIR', " . var_export( $temp_dir . '/database/', true ) . " );\n"
 			. "define( 'FQDB', FQDBDIR . '.ht.sqlite' );\n"
 			. "define( 'FQDUCKDB', FQDBDIR . '.ht.duckdb' );\n"
+			. $duckdb_autoload_constant
 			. <<<'PHP'
 
 class WP_Error {
@@ -662,7 +682,11 @@ PHP;
 		$script_file = $this->create_temp_file( $code );
 		$output      = array();
 		$exit_code   = 0;
-		$command     = escapeshellarg( PHP_BINARY ) . ' ' . escapeshellarg( $script_file ) . ' 2>&1';
+		$ffi_enable  = ini_get( 'ffi.enable' );
+		$php_args    = is_string( $ffi_enable ) && '' !== $ffi_enable
+			? ' -d ' . escapeshellarg( 'ffi.enable=' . $ffi_enable )
+			: '';
+		$command     = escapeshellarg( PHP_BINARY ) . $php_args . ' ' . escapeshellarg( $script_file ) . ' 2>&1';
 
 		try {
 			exec( $command, $output, $exit_code ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.system_calls_exec
