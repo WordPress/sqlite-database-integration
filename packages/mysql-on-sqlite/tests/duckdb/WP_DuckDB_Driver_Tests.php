@@ -740,6 +740,95 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal );
 	}
 
+	public function test_information_schema_statistics_exposes_mysql_shaped_index_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE metadata (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				nullable_value VARCHAR(191),
+				UNIQUE KEY option_name (option_name),
+				KEY autoload (autoload),
+				KEY nullable_value (nullable_value),
+				KEY option_value_prefix (option_value(12))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+
+		$rows = $driver->query(
+			"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, NON_UNIQUE, INDEX_SCHEMA, INDEX_NAME,
+				SEQ_IN_INDEX, COLUMN_NAME, COLLATION, CARDINALITY, SUB_PART, PACKED, NULLABLE,
+				INDEX_TYPE, COMMENT, INDEX_COMMENT, IS_VISIBLE, EXPRESSION
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'metadata'
+			ORDER BY index_name, seq_in_index"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'TABLE_CATALOG',
+				'TABLE_SCHEMA',
+				'TABLE_NAME',
+				'NON_UNIQUE',
+				'INDEX_SCHEMA',
+				'INDEX_NAME',
+				'SEQ_IN_INDEX',
+				'COLUMN_NAME',
+				'COLLATION',
+				'CARDINALITY',
+				'SUB_PART',
+				'PACKED',
+				'NULLABLE',
+				'INDEX_TYPE',
+				'COMMENT',
+				'INDEX_COMMENT',
+				'IS_VISIBLE',
+				'EXPRESSION',
+			),
+			array_keys( $rows[0] )
+		);
+		$this->assertSame( array( 'autoload', 'nullable_value', 'option_name', 'option_value_prefix', 'PRIMARY' ), array_column( $rows, 'INDEX_NAME' ) );
+		$this->assertSame( array( 'autoload', 'nullable_value', 'option_name', 'option_value', 'id' ), array_column( $rows, 'COLUMN_NAME' ) );
+		$this->assertSame( array( 1, 1, 0, 1, 0 ), array_map( 'intval', array_column( $rows, 'NON_UNIQUE' ) ) );
+		$this->assertSame( array( null, null, null, 12, null ), array_column( $rows, 'SUB_PART' ) );
+		$this->assertSame( array( '', 'YES', '', '', '' ), array_column( $rows, 'NULLABLE' ) );
+		$this->assertSame( array( 0, 0, 0, 0, 0 ), array_map( 'intval', array_column( $rows, 'CARDINALITY' ) ) );
+		$this->assertSame( array( 'BTREE', 'BTREE', 'BTREE', 'BTREE', 'BTREE' ), array_column( $rows, 'INDEX_TYPE' ) );
+		$this->assertSame( array( 'YES', 'YES', 'YES', 'YES', 'YES' ), array_column( $rows, 'IS_VISIBLE' ) );
+
+		$aliased = $driver->query(
+			"SELECT s.INDEX_NAME, s.COLUMN_NAME, s.SUB_PART
+			FROM information_schema.statistics s
+			WHERE s.TABLE_SCHEMA = 'wp' AND s.TABLE_NAME = 'metadata'
+			ORDER BY s.INDEX_NAME, s.SEQ_IN_INDEX"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'autoload', 'nullable_value', 'option_name', 'option_value_prefix', 'PRIMARY' ), array_column( $aliased, 'INDEX_NAME' ) );
+
+		$quoted = $driver->query(
+			"SELECT `INDEX_NAME`, `COLLATION`, `COMMENT`
+			FROM information_schema.statistics
+			WHERE `TABLE_SCHEMA` = 'wp' AND `TABLE_NAME` = 'metadata'
+			ORDER BY `INDEX_NAME`, `SEQ_IN_INDEX`"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( 'A', $quoted[0]['COLLATION'] );
+		$this->assertSame( '', $quoted[0]['COMMENT'] );
+
+		$internal = $driver->query(
+			"SELECT table_name
+			FROM information_schema.statistics
+			WHERE table_name LIKE '__wp_duckdb_%'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $internal );
+	}
+
 	public function test_unsupported_alter_table_add_column_constraints_throw_driver_exception(): void {
 		$this->requireDuckDBRuntime();
 

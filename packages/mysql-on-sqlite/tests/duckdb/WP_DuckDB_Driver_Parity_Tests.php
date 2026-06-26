@@ -202,4 +202,37 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			ORDER BY c.ORDINAL_POSITION"
 		);
 	}
+
+	public function test_information_schema_statistics_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL,
+					autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+					nullable_value VARCHAR(191),
+					UNIQUE KEY option_name (option_name),
+					KEY autoload (autoload),
+					KEY nullable_value (nullable_value),
+					KEY option_value_prefix (option_value(12))
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, NON_UNIQUE, INDEX_SCHEMA, INDEX_NAME,
+				SEQ_IN_INDEX, COLUMN_NAME, COLLATION, CARDINALITY, SUB_PART, PACKED, NULLABLE,
+				INDEX_TYPE, COMMENT, INDEX_COMMENT, IS_VISIBLE, EXPRESSION
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'metadata'
+			ORDER BY index_name, seq_in_index"
+		);
+		$this->assertParityRows(
+			"SELECT s.INDEX_NAME, s.COLUMN_NAME, s.SUB_PART
+			FROM information_schema.statistics s
+			WHERE s.TABLE_SCHEMA = 'wp' AND s.TABLE_NAME = 'metadata'
+			ORDER BY s.INDEX_NAME, s.SEQ_IN_INDEX"
+		);
+	}
 }

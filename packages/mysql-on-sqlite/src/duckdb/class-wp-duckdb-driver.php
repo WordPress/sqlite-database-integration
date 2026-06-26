@@ -14,14 +14,15 @@
  * throws WP_DuckDB_Driver_Exception for statements outside that subset.
  */
 class WP_DuckDB_Driver {
-	const MYSQL_GRAMMAR_PATH        = __DIR__ . '/../mysql/mysql-grammar.php';
-	const DEFAULT_DATABASE          = 'wp';
-	const DEFAULT_MYSQL_VERSION     = 80038;
-	const SEQUENCE_PREFIX           = 'wp_duckdb_ai_';
-	const INDEX_PREFIX              = 'wp_duckdb_idx_';
-	const INDEX_METADATA_TABLE      = '__wp_duckdb_index_metadata';
-	const COLUMN_METADATA_TABLE     = '__wp_duckdb_column_metadata';
-	const INFO_SCHEMA_COLUMNS_TABLE = '__wp_duckdb_information_schema_columns';
+	const MYSQL_GRAMMAR_PATH           = __DIR__ . '/../mysql/mysql-grammar.php';
+	const DEFAULT_DATABASE             = 'wp';
+	const DEFAULT_MYSQL_VERSION        = 80038;
+	const SEQUENCE_PREFIX              = 'wp_duckdb_ai_';
+	const INDEX_PREFIX                 = 'wp_duckdb_idx_';
+	const INDEX_METADATA_TABLE         = '__wp_duckdb_index_metadata';
+	const COLUMN_METADATA_TABLE        = '__wp_duckdb_column_metadata';
+	const INFO_SCHEMA_COLUMNS_TABLE    = '__wp_duckdb_information_schema_columns';
+	const INFO_SCHEMA_STATISTICS_TABLE = '__wp_duckdb_information_schema_statistics';
 
 	const DATA_TYPE_MAP = array(
 		WP_MySQL_Lexer::BOOL_SYMBOL       => 'BOOLEAN',
@@ -303,13 +304,21 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_select( array $tokens ): WP_DuckDB_Result_Statement {
-		$rewrite_information_schema_columns = $this->uses_information_schema_columns( $tokens );
+		$rewrite_information_schema_columns    = $this->uses_information_schema_columns( $tokens );
+		$rewrite_information_schema_statistics = $this->uses_information_schema_statistics( $tokens );
 		if ( $rewrite_information_schema_columns ) {
 			$this->refresh_information_schema_columns_table();
 		}
+		if ( $rewrite_information_schema_statistics ) {
+			$this->refresh_information_schema_statistics_table();
+		}
 
 		return $this->execute_duckdb_query(
-			$this->translate_tokens_to_duckdb_sql( $tokens, $rewrite_information_schema_columns ),
+			$this->translate_tokens_to_duckdb_sql(
+				$tokens,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics
+			),
 			'Unsupported DuckDB MySQL-emulation SELECT statement'
 		);
 	}
@@ -951,6 +960,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_STATISTICS_TABLE )
 				. ' ORDER BY table_name',
 			'Failed to execute SHOW TABLES'
 		);
@@ -990,10 +1001,20 @@ class WP_DuckDB_Driver {
 				'Visible',
 				'Expression',
 			),
-			array_merge(
-				$this->primary_key_index_rows( $table_name ),
-				$this->secondary_index_rows( $table_name )
-			)
+			$this->index_rows_for_table( $table_name )
+		);
+	}
+
+	/**
+	 * Build SHOW INDEX-compatible rows for all indexes on a table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array<int,mixed>>
+	 */
+	private function index_rows_for_table( string $table_name ): array {
+		return array_merge(
+			$this->primary_key_index_rows( $table_name ),
+			$this->secondary_index_rows( $table_name )
 		);
 	}
 
@@ -2075,7 +2096,11 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return string DuckDB SQL.
 	 */
-	private function translate_tokens_to_duckdb_sql( array $tokens, bool $rewrite_information_schema_columns = false ): string {
+	private function translate_tokens_to_duckdb_sql(
+		array $tokens,
+		bool $rewrite_information_schema_columns = false,
+		bool $rewrite_information_schema_statistics = false
+	): string {
 		$pieces = array();
 
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
@@ -2083,6 +2108,11 @@ class WP_DuckDB_Driver {
 
 			if ( $rewrite_information_schema_columns && $this->is_information_schema_columns_reference( $tokens, $index ) ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_COLUMNS_TABLE );
+				$index   += 2;
+				continue;
+			}
+			if ( $rewrite_information_schema_statistics && $this->is_information_schema_statistics_reference( $tokens, $index ) ) {
+				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_STATISTICS_TABLE );
 				$index   += 2;
 				continue;
 			}
@@ -2140,13 +2170,24 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
-				$pieces[] = $this->connection->quote_identifier( $token->get_value() );
+				$identifier = $rewrite_information_schema_statistics
+					? $this->information_schema_statistics_column_name( $token->get_value() )
+					: null;
+				$pieces[]   = $this->connection->quote_identifier( $identifier ?? $token->get_value() );
 				continue;
 			}
 
 			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
 				$pieces[] = $this->connection->quote( $token->get_value() );
 				continue;
+			}
+
+			if ( $rewrite_information_schema_statistics ) {
+				$identifier = $this->information_schema_statistics_column_name( $token->get_value() );
+				if ( null !== $identifier ) {
+					$pieces[] = $this->connection->quote_identifier( $identifier );
+					continue;
+				}
 			}
 
 			$pieces[] = $token->get_bytes();
@@ -3212,6 +3253,36 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a SELECT references information_schema.statistics.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether the query needs the compatibility table.
+	 */
+	private function uses_information_schema_statistics( array $tokens ): bool {
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( $this->is_information_schema_statistics_reference( $tokens, $index ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token offset starts information_schema.statistics.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return bool Whether the sequence is information_schema.statistics.
+	 */
+	private function is_information_schema_statistics_reference( array $tokens, int $index ): bool {
+		return isset( $tokens[ $index + 2 ] )
+			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'statistics' );
+	}
+
+	/**
 	 * Refresh a temporary MySQL-shaped information_schema.columns table.
 	 */
 	private function refresh_information_schema_columns_table(): void {
@@ -3299,6 +3370,195 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Refresh a temporary MySQL-shaped information_schema.statistics table.
+	 */
+	private function refresh_information_schema_statistics_table(): void {
+		$rows        = $this->information_schema_statistics_rows();
+		$definitions = $this->information_schema_statistics_definitions();
+		$columns     = array_keys( $definitions );
+
+		$column_sql = array();
+		foreach ( $definitions as $column_name => $type ) {
+			$column_sql[] = $this->connection->quote_identifier( $column_name ) . ' ' . $type;
+		}
+
+		$this->execute_duckdb_query(
+			'CREATE OR REPLACE TEMP TABLE '
+				. $this->connection->quote_identifier( self::INFO_SCHEMA_STATISTICS_TABLE )
+				. ' ('
+				. implode( ', ', $column_sql )
+				. ')',
+			'Failed to initialize DuckDB information_schema.statistics compatibility table'
+		);
+
+		if ( count( $rows ) === 0 ) {
+			return;
+		}
+
+		$quoted_columns = implode(
+			', ',
+			array_map(
+				function ( string $column_name ): string {
+					return $this->connection->quote_identifier( $column_name );
+				},
+				$columns
+			)
+		);
+
+		foreach ( $rows as $row ) {
+			$values = array();
+			foreach ( $columns as $column_name ) {
+				$values[] = $this->connection->quote( $row[ $column_name ] );
+			}
+
+			$this->execute_duckdb_query(
+				'INSERT INTO '
+					. $this->connection->quote_identifier( self::INFO_SCHEMA_STATISTICS_TABLE )
+					. ' ('
+					. $quoted_columns
+					. ') VALUES ('
+					. implode( ', ', $values )
+					. ')',
+				'Failed to populate DuckDB information_schema.statistics compatibility table'
+			);
+		}
+	}
+
+	/**
+	 * MySQL-shaped information_schema.statistics definitions.
+	 *
+	 * @return array<string,string> Column name to DuckDB type.
+	 */
+	private function information_schema_statistics_definitions(): array {
+		return array(
+			'TABLE_CATALOG' => 'VARCHAR COLLATE NOCASE',
+			'TABLE_SCHEMA'  => 'VARCHAR COLLATE NOCASE',
+			'TABLE_NAME'    => 'VARCHAR COLLATE NOCASE',
+			'NON_UNIQUE'    => 'INTEGER',
+			'INDEX_SCHEMA'  => 'VARCHAR COLLATE NOCASE',
+			'INDEX_NAME'    => 'VARCHAR COLLATE NOCASE',
+			'SEQ_IN_INDEX'  => 'INTEGER',
+			'COLUMN_NAME'   => 'VARCHAR COLLATE NOCASE',
+			'COLLATION'     => 'VARCHAR COLLATE NOCASE',
+			'CARDINALITY'   => 'INTEGER',
+			'SUB_PART'      => 'INTEGER',
+			'PACKED'        => 'VARCHAR',
+			'NULLABLE'      => 'VARCHAR COLLATE NOCASE',
+			'INDEX_TYPE'    => 'VARCHAR',
+			'COMMENT'       => 'VARCHAR COLLATE NOCASE',
+			'INDEX_COMMENT' => 'VARCHAR',
+			'IS_VISIBLE'    => 'VARCHAR COLLATE NOCASE',
+			'EXPRESSION'    => 'VARCHAR',
+		);
+	}
+
+	/**
+	 * Build MySQL-shaped information_schema.statistics rows.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function information_schema_statistics_rows(): array {
+		$rows = array();
+		foreach ( $this->user_table_names() as $table_name ) {
+			$nullable_by_column = $this->statistics_nullable_by_column( $table_name );
+			foreach ( $this->index_rows_for_table( $table_name ) as $index_row ) {
+				$rows[] = $this->information_schema_statistics_row( $index_row, $nullable_by_column );
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Build one MySQL-shaped information_schema.statistics row.
+	 *
+	 * @param array<int,mixed>     $index_row          SHOW INDEX-compatible row.
+	 * @param array<string,string> $nullable_by_column Nullability keyed by lowercase column name.
+	 * @return array<string,mixed>
+	 */
+	private function information_schema_statistics_row( array $index_row, array $nullable_by_column ): array {
+		$key_name    = (string) $index_row[2];
+		$column_name = null === $index_row[4] ? null : (string) $index_row[4];
+		$nullable    = '';
+		if ( 'PRIMARY' !== $key_name && null !== $column_name ) {
+			$nullable = $nullable_by_column[ strtolower( $column_name ) ] ?? '';
+		}
+
+		return array(
+			'TABLE_CATALOG' => 'def',
+			'TABLE_SCHEMA'  => $this->database,
+			'TABLE_NAME'    => $index_row[0],
+			'NON_UNIQUE'    => (int) $index_row[1],
+			'INDEX_SCHEMA'  => $this->database,
+			'INDEX_NAME'    => $key_name,
+			'SEQ_IN_INDEX'  => (int) $index_row[3],
+			'COLUMN_NAME'   => $column_name,
+			'COLLATION'     => $index_row[5],
+			'CARDINALITY'   => 0,
+			'SUB_PART'      => $index_row[7],
+			'PACKED'        => $index_row[8],
+			'NULLABLE'      => $nullable,
+			'INDEX_TYPE'    => $index_row[10],
+			'COMMENT'       => $index_row[11],
+			'INDEX_COMMENT' => $index_row[12],
+			'IS_VISIBLE'    => $index_row[13],
+			'EXPRESSION'    => $index_row[14],
+		);
+	}
+
+	/**
+	 * Read statistics nullability values for a table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<string,string> Nullability keyed by lowercase column name.
+	 */
+	private function statistics_nullable_by_column( string $table_name ): array {
+		$metadata_rows = $this->column_metadata_rows( $table_name );
+		if ( count( $metadata_rows ) === 0 ) {
+			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
+		}
+
+		$nullable = array();
+		foreach ( $metadata_rows as $metadata ) {
+			$nullable[ strtolower( (string) $metadata['column_name'] ) ] = 'YES' === strtoupper( (string) $metadata['is_nullable'] ) ? 'YES' : '';
+		}
+
+		return $nullable;
+	}
+
+	/**
+	 * Return the canonical statistics column name for a token value.
+	 *
+	 * @param string $identifier Identifier token value.
+	 * @return string|null Canonical column name, or null when not a statistics column.
+	 */
+	private function information_schema_statistics_column_name( string $identifier ): ?string {
+		$columns = array(
+			'table_catalog' => 'TABLE_CATALOG',
+			'table_schema'  => 'TABLE_SCHEMA',
+			'table_name'    => 'TABLE_NAME',
+			'non_unique'    => 'NON_UNIQUE',
+			'index_schema'  => 'INDEX_SCHEMA',
+			'index_name'    => 'INDEX_NAME',
+			'seq_in_index'  => 'SEQ_IN_INDEX',
+			'column_name'   => 'COLUMN_NAME',
+			'collation'     => 'COLLATION',
+			'cardinality'   => 'CARDINALITY',
+			'sub_part'      => 'SUB_PART',
+			'packed'        => 'PACKED',
+			'nullable'      => 'NULLABLE',
+			'index_type'    => 'INDEX_TYPE',
+			'comment'       => 'COMMENT',
+			'index_comment' => 'INDEX_COMMENT',
+			'is_visible'    => 'IS_VISIBLE',
+			'expression'    => 'EXPRESSION',
+		);
+		$key     = strtolower( $identifier );
+
+		return $columns[ $key ] ?? null;
+	}
+
+	/**
 	 * Build MySQL-shaped information_schema.columns rows.
 	 *
 	 * @return array<int,array<string,mixed>>
@@ -3334,6 +3594,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_STATISTICS_TABLE )
 				. ' ORDER BY table_name',
 			'Failed to inspect DuckDB tables'
 		);
