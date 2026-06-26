@@ -235,4 +235,35 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			ORDER BY s.INDEX_NAME, s.SEQ_IN_INDEX"
 		);
 	}
+
+	public function test_information_schema_tables_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL
+				) ENGINE=MyISAM CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Options table'",
+				'CREATE TABLE plain (id INT, name TEXT)',
+				"INSERT INTO metadata (option_name, option_value)
+				VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ENGINE, VERSION,
+				ROW_FORMAT, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, MAX_DATA_LENGTH,
+				INDEX_LENGTH, DATA_FREE, `AUTO_INCREMENT`, UPDATE_TIME, CHECK_TIME,
+				TABLE_COLLATION, CHECKSUM, CREATE_OPTIONS, TABLE_COMMENT
+			FROM information_schema.tables
+			WHERE table_schema = 'wp'
+			ORDER BY table_name"
+		);
+		$this->assertParityRows(
+			"SELECT t.TABLE_NAME, t.ENGINE, t.`AUTO_INCREMENT`
+			FROM information_schema.tables t
+			WHERE t.TABLE_SCHEMA = 'wp'
+			ORDER BY t.TABLE_NAME"
+		);
+	}
 }

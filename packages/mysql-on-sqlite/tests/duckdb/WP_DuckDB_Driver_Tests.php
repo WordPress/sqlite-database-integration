@@ -829,6 +829,92 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal );
 	}
 
+	public function test_information_schema_tables_exposes_mysql_shaped_table_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE metadata (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL
+			) ENGINE=MyISAM CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Options table'"
+		);
+		$driver->query( 'CREATE TABLE plain (id INT, name TEXT)' );
+		$driver->query(
+			"INSERT INTO metadata (option_name, option_value)
+			VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')"
+		);
+
+		$rows = $driver->query(
+			"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ENGINE, VERSION,
+				ROW_FORMAT, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, MAX_DATA_LENGTH,
+				INDEX_LENGTH, DATA_FREE, AUTO_INCREMENT, CREATE_TIME, UPDATE_TIME,
+				CHECK_TIME, TABLE_COLLATION, CHECKSUM, CREATE_OPTIONS, TABLE_COMMENT
+			FROM information_schema.tables
+			WHERE table_schema = 'wp'
+			ORDER BY table_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'TABLE_CATALOG',
+				'TABLE_SCHEMA',
+				'TABLE_NAME',
+				'TABLE_TYPE',
+				'ENGINE',
+				'VERSION',
+				'ROW_FORMAT',
+				'TABLE_ROWS',
+				'AVG_ROW_LENGTH',
+				'DATA_LENGTH',
+				'MAX_DATA_LENGTH',
+				'INDEX_LENGTH',
+				'DATA_FREE',
+				'AUTO_INCREMENT',
+				'CREATE_TIME',
+				'UPDATE_TIME',
+				'CHECK_TIME',
+				'TABLE_COLLATION',
+				'CHECKSUM',
+				'CREATE_OPTIONS',
+				'TABLE_COMMENT',
+			),
+			array_keys( $rows[0] )
+		);
+		$this->assertSame( array( 'metadata', 'plain' ), array_column( $rows, 'TABLE_NAME' ) );
+		$this->assertSame( 'MyISAM', $rows[0]['ENGINE'] );
+		$this->assertSame( 'Fixed', $rows[0]['ROW_FORMAT'] );
+		$this->assertSame( 'utf8mb4_unicode_ci', $rows[0]['TABLE_COLLATION'] );
+		$this->assertSame( 'Options table', $rows[0]['TABLE_COMMENT'] );
+		$this->assertSame( 3, $rows[0]['AUTO_INCREMENT'] );
+		$this->assertRegExp( '/^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d$/', $rows[0]['CREATE_TIME'] );
+		$this->assertSame( 'InnoDB', $rows[1]['ENGINE'] );
+		$this->assertSame( 'Dynamic', $rows[1]['ROW_FORMAT'] );
+		$this->assertSame( null, $rows[1]['AUTO_INCREMENT'] );
+
+		$aliased = $driver->query(
+			"SELECT t.TABLE_NAME, t.ENGINE, t.`AUTO_INCREMENT`
+			FROM information_schema.tables t
+			WHERE t.TABLE_SCHEMA = 'wp'
+			ORDER BY t.TABLE_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'metadata', 'plain' ), array_column( $aliased, 'TABLE_NAME' ) );
+		$this->assertSame( 3, $aliased[0]['AUTO_INCREMENT'] );
+
+		$internal = $driver->query(
+			"SELECT table_name
+			FROM information_schema.tables
+			WHERE table_name LIKE '__wp_duckdb_%'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $internal );
+	}
+
 	public function test_unsupported_alter_table_add_column_constraints_throw_driver_exception(): void {
 		$this->requireDuckDBRuntime();
 

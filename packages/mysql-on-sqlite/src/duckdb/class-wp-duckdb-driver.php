@@ -21,6 +21,8 @@ class WP_DuckDB_Driver {
 	const INDEX_PREFIX                 = 'wp_duckdb_idx_';
 	const INDEX_METADATA_TABLE         = '__wp_duckdb_index_metadata';
 	const COLUMN_METADATA_TABLE        = '__wp_duckdb_column_metadata';
+	const TABLE_METADATA_TABLE         = '__wp_duckdb_table_metadata';
+	const INFO_SCHEMA_TABLES_TABLE     = '__wp_duckdb_information_schema_tables';
 	const INFO_SCHEMA_COLUMNS_TABLE    = '__wp_duckdb_information_schema_columns';
 	const INFO_SCHEMA_STATISTICS_TABLE = '__wp_duckdb_information_schema_statistics';
 
@@ -304,8 +306,12 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_select( array $tokens ): WP_DuckDB_Result_Statement {
+		$rewrite_information_schema_tables     = $this->uses_information_schema_tables( $tokens );
 		$rewrite_information_schema_columns    = $this->uses_information_schema_columns( $tokens );
 		$rewrite_information_schema_statistics = $this->uses_information_schema_statistics( $tokens );
+		if ( $rewrite_information_schema_tables ) {
+			$this->refresh_information_schema_tables_table();
+		}
 		if ( $rewrite_information_schema_columns ) {
 			$this->refresh_information_schema_columns_table();
 		}
@@ -316,6 +322,7 @@ class WP_DuckDB_Driver {
 		return $this->execute_duckdb_query(
 			$this->translate_tokens_to_duckdb_sql(
 				$tokens,
+				$rewrite_information_schema_tables,
 				$rewrite_information_schema_columns,
 				$rewrite_information_schema_statistics
 			),
@@ -373,7 +380,7 @@ class WP_DuckDB_Driver {
 		++$index;
 
 		list( $items, $index ) = $this->collect_parenthesized_items( $tokens, $index );
-		$this->assert_supported_create_table_options( array_slice( $tokens, $index ) );
+		$table_metadata        = $this->parse_create_table_options( array_slice( $tokens, $index ) );
 
 		$columns     = array();
 		$constraints = array();
@@ -436,6 +443,7 @@ class WP_DuckDB_Driver {
 			$this->record_index_metadata( $index_definition );
 		}
 		$this->record_column_metadata( $table_name, $this->apply_column_key_metadata( $metadata, $primary_key, $indexes ) );
+		$this->record_table_metadata( $table_name, $table_metadata );
 
 		return $result;
 	}
@@ -958,6 +966,10 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::INDEX_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::TABLE_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
 				. ' AND table_name <> '
@@ -2015,29 +2027,50 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Assert supported CREATE TABLE tail options.
+	 * Parse supported CREATE TABLE tail options into MySQL-facing metadata.
 	 *
 	 * @param WP_Parser_Token[] $tokens Tail tokens after the column list.
+	 * @return array{engine:string,row_format:string,table_collation:string,table_comment:string,create_options:string}
 	 */
-	private function assert_supported_create_table_options( array $tokens ): void {
-		$index = 0;
+	private function parse_create_table_options( array $tokens ): array {
+		$engine          = 'InnoDB';
+		$table_collation = 'utf8mb4_0900_ai_ci';
+		$table_comment   = '';
+		$index           = 0;
 		while ( $index < count( $tokens ) ) {
 			$token = $tokens[ $index ];
 			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $token->id ) {
 				++$index;
 				continue;
 			}
+
+			if ( WP_MySQL_Lexer::ENGINE_SYMBOL === $token->id ) {
+				$engine = $this->normalize_table_engine( (string) $this->option_value( $tokens, $index + 1 ) );
+				$index  = $this->skip_option_value( $tokens, $index + 1 );
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::COLLATE_SYMBOL === $token->id ) {
+				$table_collation = strtolower( (string) $this->option_value( $tokens, $index + 1 ) );
+				$index           = $this->skip_option_value( $tokens, $index + 1 );
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::COMMENT_SYMBOL === $token->id ) {
+				$table_comment = (string) $this->option_value( $tokens, $index + 1 );
+				$index         = $this->skip_option_value( $tokens, $index + 1 );
+				continue;
+			}
+
 			if (
-				WP_MySQL_Lexer::ENGINE_SYMBOL === $token->id
-				|| WP_MySQL_Lexer::CHARSET_SYMBOL === $token->id
-				|| WP_MySQL_Lexer::COLLATE_SYMBOL === $token->id
+				WP_MySQL_Lexer::CHARSET_SYMBOL === $token->id
 				|| WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL === $token->id
-				|| WP_MySQL_Lexer::COMMENT_SYMBOL === $token->id
 				|| WP_MySQL_Lexer::ROW_FORMAT_SYMBOL === $token->id
 			) {
 				$index = $this->skip_option_value( $tokens, $index + 1 );
 				continue;
 			}
+
 			if ( WP_MySQL_Lexer::CHAR_SYMBOL === $token->id || WP_MySQL_Lexer::CHARACTER_SYMBOL === $token->id ) {
 				if ( ! isset( $tokens[ $index + 1 ] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[ $index + 1 ]->id ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE option in DuckDB driver: ' . $token->get_bytes() . '.' );
@@ -2047,6 +2080,32 @@ class WP_DuckDB_Driver {
 			}
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE option in DuckDB driver: ' . $token->get_bytes() . '.' );
 		}
+
+		return array(
+			'engine'          => $engine,
+			'row_format'      => 'MyISAM' === $engine ? 'Fixed' : 'Dynamic',
+			'table_collation' => $table_collation,
+			'table_comment'   => $table_comment,
+			'create_options'  => '',
+		);
+	}
+
+	/**
+	 * Normalize a MySQL storage engine value for information_schema.tables.
+	 *
+	 * @param string $engine Storage engine option value.
+	 * @return string Normalized storage engine.
+	 */
+	private function normalize_table_engine( string $engine ): string {
+		$upper = strtoupper( $engine );
+		if ( 'INNODB' === $upper ) {
+			return 'InnoDB';
+		}
+		if ( 'MYISAM' === $upper ) {
+			return 'MyISAM';
+		}
+
+		return $upper;
 	}
 
 	/**
@@ -2098,6 +2157,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function translate_tokens_to_duckdb_sql(
 		array $tokens,
+		bool $rewrite_information_schema_tables = false,
 		bool $rewrite_information_schema_columns = false,
 		bool $rewrite_information_schema_statistics = false
 	): string {
@@ -2106,6 +2166,11 @@ class WP_DuckDB_Driver {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
 			$token = $tokens[ $index ];
 
+			if ( $rewrite_information_schema_tables && $this->is_information_schema_tables_reference( $tokens, $index ) ) {
+				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_TABLES_TABLE );
+				$index   += 2;
+				continue;
+			}
 			if ( $rewrite_information_schema_columns && $this->is_information_schema_columns_reference( $tokens, $index ) ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_COLUMNS_TABLE );
 				$index   += 2;
@@ -2170,16 +2235,28 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
-				$identifier = $rewrite_information_schema_statistics
-					? $this->information_schema_statistics_column_name( $token->get_value() )
-					: null;
-				$pieces[]   = $this->connection->quote_identifier( $identifier ?? $token->get_value() );
+				$identifier = null;
+				if ( $rewrite_information_schema_tables ) {
+					$identifier = $this->information_schema_tables_column_name( $token->get_value() );
+				}
+				if ( null === $identifier && $rewrite_information_schema_statistics ) {
+					$identifier = $this->information_schema_statistics_column_name( $token->get_value() );
+				}
+				$pieces[] = $this->connection->quote_identifier( $identifier ?? $token->get_value() );
 				continue;
 			}
 
 			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
 				$pieces[] = $this->connection->quote( $token->get_value() );
 				continue;
+			}
+
+			if ( $rewrite_information_schema_tables ) {
+				$identifier = $this->information_schema_tables_column_name( $token->get_value() );
+				if ( null !== $identifier ) {
+					$pieces[] = $this->connection->quote_identifier( $identifier );
+					continue;
+				}
 			}
 
 			if ( $rewrite_information_schema_statistics ) {
@@ -2979,6 +3056,18 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Ensure the internal table metadata table exists.
+	 */
+	private function ensure_table_metadata_table(): void {
+		$this->execute_duckdb_query(
+			'CREATE TABLE IF NOT EXISTS '
+				. $this->connection->quote_identifier( self::TABLE_METADATA_TABLE )
+				. ' (table_name VARCHAR, engine VARCHAR, row_format VARCHAR, table_collation VARCHAR, table_comment VARCHAR, create_options VARCHAR, create_time VARCHAR)',
+			'Failed to initialize DuckDB table metadata'
+		);
+	}
+
+	/**
 	 * Record MySQL index metadata for SHOW INDEX.
 	 *
 	 * @param array{table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Index definition.
@@ -3153,6 +3242,45 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Record MySQL table metadata for information_schema.tables.
+	 *
+	 * @param string              $table_name Table name.
+	 * @param array<string,mixed> $metadata   Table metadata.
+	 */
+	private function record_table_metadata( string $table_name, array $metadata ): void {
+		$this->ensure_table_metadata_table();
+
+		$this->execute_duckdb_query(
+			'DELETE FROM '
+				. $this->connection->quote_identifier( self::TABLE_METADATA_TABLE )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name ),
+			'Failed to reset DuckDB table metadata'
+		);
+
+		$this->execute_duckdb_query(
+			'INSERT INTO '
+				. $this->connection->quote_identifier( self::TABLE_METADATA_TABLE )
+				. ' (table_name, engine, row_format, table_collation, table_comment, create_options, create_time) VALUES ('
+				. $this->connection->quote( $table_name )
+				. ', '
+				. $this->connection->quote( $metadata['engine'] )
+				. ', '
+				. $this->connection->quote( $metadata['row_format'] )
+				. ', '
+				. $this->connection->quote( $metadata['table_collation'] )
+				. ', '
+				. $this->connection->quote( $metadata['table_comment'] )
+				. ', '
+				. $this->connection->quote( $metadata['create_options'] )
+				. ', '
+				. $this->connection->quote( gmdate( 'Y-m-d H:i:s' ) )
+				. ')',
+			'Failed to store DuckDB table metadata'
+		);
+	}
+
+	/**
 	 * Append one MySQL column metadata row when full table metadata is already recorded.
 	 *
 	 * @param string              $table_name Table name.
@@ -3223,6 +3351,36 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a SELECT references information_schema.tables.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether the query needs the compatibility table.
+	 */
+	private function uses_information_schema_tables( array $tokens ): bool {
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( $this->is_information_schema_tables_reference( $tokens, $index ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token offset starts information_schema.tables.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return bool Whether the sequence is information_schema.tables.
+	 */
+	private function is_information_schema_tables_reference( array $tokens, int $index ): bool {
+		return isset( $tokens[ $index + 2 ] )
+			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'tables' );
+	}
+
+	/**
 	 * Check whether a SELECT references information_schema.columns.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
@@ -3280,6 +3438,234 @@ class WP_DuckDB_Driver {
 			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
 			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'statistics' );
+	}
+
+	/**
+	 * Refresh a temporary MySQL-shaped information_schema.tables table.
+	 */
+	private function refresh_information_schema_tables_table(): void {
+		$rows        = $this->information_schema_table_rows();
+		$definitions = $this->information_schema_table_definitions();
+		$columns     = array_keys( $definitions );
+
+		$column_sql = array();
+		foreach ( $definitions as $column_name => $type ) {
+			$column_sql[] = $this->connection->quote_identifier( $column_name ) . ' ' . $type;
+		}
+
+		$this->execute_duckdb_query(
+			'CREATE OR REPLACE TEMP TABLE '
+				. $this->connection->quote_identifier( self::INFO_SCHEMA_TABLES_TABLE )
+				. ' ('
+				. implode( ', ', $column_sql )
+				. ')',
+			'Failed to initialize DuckDB information_schema.tables compatibility table'
+		);
+
+		if ( count( $rows ) === 0 ) {
+			return;
+		}
+
+		$quoted_columns = implode(
+			', ',
+			array_map(
+				function ( string $column_name ): string {
+					return $this->connection->quote_identifier( $column_name );
+				},
+				$columns
+			)
+		);
+
+		foreach ( $rows as $row ) {
+			$values = array();
+			foreach ( $columns as $column_name ) {
+				$values[] = $this->connection->quote( $row[ $column_name ] );
+			}
+
+			$this->execute_duckdb_query(
+				'INSERT INTO '
+					. $this->connection->quote_identifier( self::INFO_SCHEMA_TABLES_TABLE )
+					. ' ('
+					. $quoted_columns
+					. ') VALUES ('
+					. implode( ', ', $values )
+					. ')',
+				'Failed to populate DuckDB information_schema.tables compatibility table'
+			);
+		}
+	}
+
+	/**
+	 * MySQL-shaped information_schema.tables definitions.
+	 *
+	 * @return array<string,string> Column name to DuckDB type.
+	 */
+	private function information_schema_table_definitions(): array {
+		return array(
+			'TABLE_CATALOG'   => 'VARCHAR COLLATE NOCASE',
+			'TABLE_SCHEMA'    => 'VARCHAR COLLATE NOCASE',
+			'TABLE_NAME'      => 'VARCHAR COLLATE NOCASE',
+			'TABLE_TYPE'      => 'VARCHAR',
+			'ENGINE'          => 'VARCHAR COLLATE NOCASE',
+			'VERSION'         => 'INTEGER',
+			'ROW_FORMAT'      => 'VARCHAR',
+			'TABLE_ROWS'      => 'BIGINT',
+			'AVG_ROW_LENGTH'  => 'BIGINT',
+			'DATA_LENGTH'     => 'BIGINT',
+			'MAX_DATA_LENGTH' => 'BIGINT',
+			'INDEX_LENGTH'    => 'BIGINT',
+			'DATA_FREE'       => 'BIGINT',
+			'AUTO_INCREMENT'  => 'BIGINT',
+			'CREATE_TIME'     => 'VARCHAR',
+			'UPDATE_TIME'     => 'VARCHAR',
+			'CHECK_TIME'      => 'VARCHAR',
+			'TABLE_COLLATION' => 'VARCHAR COLLATE NOCASE',
+			'CHECKSUM'        => 'BIGINT',
+			'CREATE_OPTIONS'  => 'VARCHAR COLLATE NOCASE',
+			'TABLE_COMMENT'   => 'VARCHAR COLLATE NOCASE',
+		);
+	}
+
+	/**
+	 * Build MySQL-shaped information_schema.tables rows.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function information_schema_table_rows(): array {
+		$metadata_by_table = $this->table_metadata_by_table();
+		$rows              = array();
+
+		foreach ( $this->user_table_names() as $table_name ) {
+			$metadata = $metadata_by_table[ $table_name ] ?? $this->fallback_table_metadata( $table_name );
+			$rows[]   = $this->information_schema_table_row( $table_name, $metadata );
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Build one MySQL-shaped information_schema.tables row.
+	 *
+	 * @param string              $table_name Table name.
+	 * @param array<string,mixed> $metadata   Table metadata.
+	 * @return array<string,mixed>
+	 */
+	private function information_schema_table_row( string $table_name, array $metadata ): array {
+		return array(
+			'TABLE_CATALOG'   => 'def',
+			'TABLE_SCHEMA'    => $this->database,
+			'TABLE_NAME'      => $table_name,
+			'TABLE_TYPE'      => 'BASE TABLE',
+			'ENGINE'          => $metadata['engine'],
+			'VERSION'         => 10,
+			'ROW_FORMAT'      => $metadata['row_format'],
+			'TABLE_ROWS'      => 0,
+			'AVG_ROW_LENGTH'  => 0,
+			'DATA_LENGTH'     => 0,
+			'MAX_DATA_LENGTH' => 0,
+			'INDEX_LENGTH'    => 0,
+			'DATA_FREE'       => 0,
+			'AUTO_INCREMENT'  => $this->table_auto_increment_value( $table_name ),
+			'CREATE_TIME'     => $metadata['create_time'],
+			'UPDATE_TIME'     => null,
+			'CHECK_TIME'      => null,
+			'TABLE_COLLATION' => $metadata['table_collation'],
+			'CHECKSUM'        => null,
+			'CREATE_OPTIONS'  => $metadata['create_options'],
+			'TABLE_COMMENT'   => $metadata['table_comment'],
+		);
+	}
+
+	/**
+	 * Read recorded table metadata.
+	 *
+	 * @return array<string,array<string,mixed>> Metadata keyed by table name.
+	 */
+	private function table_metadata_by_table(): array {
+		$this->ensure_table_metadata_table();
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT table_name, engine, row_format, table_collation, table_comment, create_options, create_time FROM '
+				. $this->connection->quote_identifier( self::TABLE_METADATA_TABLE )
+				. ' ORDER BY table_name',
+			'Failed to inspect DuckDB table metadata'
+		);
+
+		$metadata = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$metadata[ (string) $row['table_name'] ] = $row;
+		}
+
+		return $metadata;
+	}
+
+	/**
+	 * Fallback table metadata for tables created outside the MySQL-emulation path.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<string,mixed>
+	 */
+	private function fallback_table_metadata( string $table_name ): array {
+		return array(
+			'table_name'      => $table_name,
+			'engine'          => 'InnoDB',
+			'row_format'      => 'Dynamic',
+			'table_collation' => 'utf8mb4_0900_ai_ci',
+			'table_comment'   => '',
+			'create_options'  => '',
+			'create_time'     => gmdate( 'Y-m-d H:i:s' ),
+		);
+	}
+
+	/**
+	 * Compute the MySQL-facing AUTO_INCREMENT value for a table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return int|null Next generated value, or null when there is no auto-increment column.
+	 */
+	private function table_auto_increment_value( string $table_name ): ?int {
+		$metadata = $this->auto_increment_metadata_for_table( $table_name );
+		if ( null === $metadata ) {
+			return null;
+		}
+
+		$current = $this->sequence_currval( $metadata['sequence_name'] );
+		return null === $current ? 1 : $current + 1;
+	}
+
+	/**
+	 * Return the canonical tables column name for a token value.
+	 *
+	 * @param string $identifier Identifier token value.
+	 * @return string|null Canonical column name, or null when not a tables column.
+	 */
+	private function information_schema_tables_column_name( string $identifier ): ?string {
+		$columns = array(
+			'table_catalog'   => 'TABLE_CATALOG',
+			'table_schema'    => 'TABLE_SCHEMA',
+			'table_name'      => 'TABLE_NAME',
+			'table_type'      => 'TABLE_TYPE',
+			'engine'          => 'ENGINE',
+			'version'         => 'VERSION',
+			'row_format'      => 'ROW_FORMAT',
+			'table_rows'      => 'TABLE_ROWS',
+			'avg_row_length'  => 'AVG_ROW_LENGTH',
+			'data_length'     => 'DATA_LENGTH',
+			'max_data_length' => 'MAX_DATA_LENGTH',
+			'index_length'    => 'INDEX_LENGTH',
+			'data_free'       => 'DATA_FREE',
+			'auto_increment'  => 'AUTO_INCREMENT',
+			'create_time'     => 'CREATE_TIME',
+			'update_time'     => 'UPDATE_TIME',
+			'check_time'      => 'CHECK_TIME',
+			'table_collation' => 'TABLE_COLLATION',
+			'checksum'        => 'CHECKSUM',
+			'create_options'  => 'CREATE_OPTIONS',
+			'table_comment'   => 'TABLE_COMMENT',
+		);
+		$key     = strtolower( $identifier );
+
+		return $columns[ $key ] ?? null;
 	}
 
 	/**
@@ -3592,6 +3978,10 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::INDEX_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::TABLE_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
 				. ' AND table_name <> '
