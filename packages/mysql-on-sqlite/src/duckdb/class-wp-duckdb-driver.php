@@ -101,6 +101,13 @@ class WP_DuckDB_Driver {
 	private $last_insert_id = 0;
 
 	/**
+	 * Whether a MySQL LOCK TABLES statement opened the current transaction.
+	 *
+	 * @var bool
+	 */
+	private $table_lock_active = false;
+
+	/**
 	 * MySQL-compatible server version string.
 	 *
 	 * @var string
@@ -166,6 +173,10 @@ class WP_DuckDB_Driver {
 				return $this->execute_commit_statement( $tokens );
 			case WP_MySQL_Lexer::ROLLBACK_SYMBOL:
 				return $this->execute_rollback_statement( $tokens );
+			case WP_MySQL_Lexer::LOCK_SYMBOL:
+				return $this->execute_lock_tables_statement( $tokens );
+			case WP_MySQL_Lexer::UNLOCK_SYMBOL:
+				return $this->execute_unlock_tables_statement( $tokens );
 			case WP_MySQL_Lexer::SELECT_SYMBOL:
 				return $this->execute_select( $tokens );
 			case WP_MySQL_Lexer::CREATE_SYMBOL:
@@ -1786,6 +1797,105 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute LOCK TABLE[S] ... READ|WRITE.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_lock_tables_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::LOCK_SYMBOL, 'Expected LOCK.' );
+		++$index;
+		if (
+			! isset( $tokens[ $index ] )
+			|| ( WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $index ]->id && WP_MySQL_Lexer::TABLES_SYMBOL !== $tokens[ $index ]->id )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported LOCK statement in DuckDB driver. Only LOCK TABLES ... READ|WRITE is supported.' );
+		}
+		++$index;
+
+		if ( ! isset( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'LOCK TABLES requires at least one table name.' );
+		}
+
+		$requested_table_names = array();
+		while ( $index < count( $tokens ) ) {
+			$reference               = $this->parse_lock_table_reference( $tokens, $index );
+			$requested_table_names[] = $reference['requested_table_name'];
+			$index                   = $reference['next_index'];
+
+			if ( $index >= count( $tokens ) ) {
+				break;
+			}
+			$this->expect_token( $tokens, $index, WP_MySQL_Lexer::COMMA_SYMBOL, 'Expected comma between LOCK TABLES table references.' );
+			++$index;
+			if ( $index >= count( $tokens ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Expected table name after comma in LOCK TABLES statement.' );
+			}
+		}
+
+		foreach ( $requested_table_names as $requested_table_name ) {
+			if ( null === $this->resolve_visible_user_table_reference( $requested_table_name ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Table '{$this->database}.{$requested_table_name}' doesn't exist" );
+			}
+		}
+
+		$this->begin_user_transaction();
+		$this->table_lock_active = true;
+
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Parse one LOCK TABLES table reference and lock type.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index of the table reference.
+	 * @return array{requested_table_name:string,next_index:int}
+	 */
+	private function parse_lock_table_reference( array $tokens, int $index ): array {
+		$reference = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'LOCK TABLES' );
+		$index     = $reference['next_index'];
+
+		if (
+			! isset( $tokens[ $index ] )
+			|| ( WP_MySQL_Lexer::READ_SYMBOL !== $tokens[ $index ]->id && WP_MySQL_Lexer::WRITE_SYMBOL !== $tokens[ $index ]->id )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported LOCK TABLES statement in DuckDB driver. Each table must specify READ or WRITE.' );
+		}
+		++$index;
+
+		return array(
+			'requested_table_name' => $reference['requested_table_name'],
+			'next_index'           => $index,
+		);
+	}
+
+	/**
+	 * Execute UNLOCK TABLE[S].
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_unlock_tables_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		if (
+			2 !== count( $tokens )
+			|| WP_MySQL_Lexer::UNLOCK_SYMBOL !== $tokens[0]->id
+			|| ( WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[1]->id && WP_MySQL_Lexer::TABLES_SYMBOL !== $tokens[1]->id )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UNLOCK statement in DuckDB driver. Only UNLOCK TABLES is supported.' );
+		}
+
+		if ( $this->table_lock_active && $this->connection->inTransaction() ) {
+			$this->last_duckdb_queries[] = 'COMMIT';
+			$this->connection->commit();
+		}
+		$this->table_lock_active = false;
+
+		return $this->empty_ddl_result();
+	}
+
+	/**
 	 * Execute BEGIN [WORK].
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
@@ -1824,6 +1934,7 @@ class WP_DuckDB_Driver {
 			$this->last_duckdb_queries[] = 'COMMIT';
 			$this->connection->commit();
 		}
+		$this->table_lock_active = false;
 		return $this->empty_ddl_result();
 	}
 
@@ -1839,6 +1950,7 @@ class WP_DuckDB_Driver {
 			$this->last_duckdb_queries[] = 'ROLLBACK';
 			$this->connection->rollback();
 		}
+		$this->table_lock_active = false;
 		return $this->empty_ddl_result();
 	}
 
@@ -1851,6 +1963,7 @@ class WP_DuckDB_Driver {
 		if ( $this->connection->inTransaction() ) {
 			$this->last_duckdb_queries[] = 'COMMIT';
 			$this->connection->commit();
+			$this->table_lock_active = false;
 		}
 
 		$this->last_duckdb_queries[] = 'BEGIN TRANSACTION';
@@ -8203,7 +8316,7 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the table is internal to the driver.
 	 */
 	private function is_duckdb_internal_table_name( string $table_name ): bool {
-		return 0 === strpos( $table_name, '__wp_duckdb_' );
+		return 0 === stripos( $table_name, '__wp_duckdb_' );
 	}
 
 	/**

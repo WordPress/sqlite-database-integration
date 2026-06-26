@@ -75,6 +75,52 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id FROM tx_items ORDER BY id' );
 	}
 
+	public function test_lock_unlock_sql_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE lock_items (id INT)',
+				'CREATE TEMPORARY TABLE lock_temp (id INT)',
+			)
+		);
+
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLES lock_items READ' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLES wp.lock_items WRITE' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLE lock_items READ' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLES lock_temp READ, lock_items WRITE' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+
+		$this->runParitySetup(
+			array(
+				'BEGIN',
+				'INSERT INTO lock_items (id) VALUES (1)',
+				'LOCK TABLES lock_items WRITE',
+				'INSERT INTO lock_items (id) VALUES (2)',
+				'UNLOCK TABLES',
+				'ROLLBACK',
+			)
+		);
+		$this->assertParityRows( 'SELECT id FROM lock_items ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'LOCK TABLES lock_items WRITE',
+				'BEGIN',
+				'INSERT INTO lock_items (id) VALUES (3)',
+				'COMMIT',
+				'UNLOCK TABLES',
+			)
+		);
+		$this->assertParityRows( 'SELECT id FROM lock_items ORDER BY id' );
+
+		$this->assertParityErrorContains( 'LOCK TABLES missing_lock_item READ', "Table 'wp.missing_lock_item' doesn't exist" );
+		$this->assertParityErrorContains( 'LOCK TABLES lock_items READ, missing_lock_item WRITE', "Table 'wp.missing_lock_item' doesn't exist" );
+		$this->assertParityErrorContains( 'LOCK TABLES information_schema.tables READ', "to database 'information_schema'" );
+	}
+
 	public function test_update_delete_alias_order_limit_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

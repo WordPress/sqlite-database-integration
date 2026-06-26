@@ -149,6 +149,137 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_lock_unlock_table_statements_update_transaction_state(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE lock_items (id INT)' );
+		$driver->query( 'CREATE TEMPORARY TABLE lock_temp (id INT)' );
+
+		$unlock = $driver->query( 'UNLOCK TABLES' );
+		$this->assertSame( 0, $unlock->rowCount() );
+		$this->assertSame( 0, $unlock->columnCount() );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$lock = $driver->query( 'LOCK TABLES lock_items READ' );
+		$this->assertSame( 0, $lock->rowCount() );
+		$this->assertSame( 0, $lock->columnCount() );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( 'BEGIN TRANSACTION', $this->lastDuckDBQuery( $driver ) );
+
+		$unlock = $driver->query( 'UNLOCK TABLES' );
+		$this->assertSame( 0, $unlock->rowCount() );
+		$this->assertSame( 0, $unlock->columnCount() );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'COMMIT' ), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'LOCK TABLES wp.lock_items WRITE' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( 'BEGIN TRANSACTION', $this->lastDuckDBQuery( $driver ) );
+		$driver->query( 'UNLOCK TABLE' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+
+		$driver->query( 'LOCK TABLE lock_items READ' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( 'BEGIN TRANSACTION', $this->lastDuckDBQuery( $driver ) );
+		$driver->query( 'UNLOCK TABLES' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+
+		$driver->query( 'LOCK TABLES lock_temp READ, lock_items WRITE' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( 'BEGIN TRANSACTION', $this->lastDuckDBQuery( $driver ) );
+		$driver->query( 'UNLOCK TABLES' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+
+		$driver->query( 'BEGIN' );
+		$driver->query( 'INSERT INTO lock_items (id) VALUES (1)' );
+		$driver->query( 'LOCK TABLES lock_items WRITE' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'COMMIT', 'BEGIN TRANSACTION' ), array_slice( $driver->get_last_duckdb_queries(), -2 ) );
+		$driver->query( 'INSERT INTO lock_items (id) VALUES (2)' );
+		$driver->query( 'UNLOCK TABLES' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$driver->query( 'ROLLBACK' );
+		$this->assertSame(
+			array(
+				array( 'id' => 1 ),
+				array( 'id' => 2 ),
+			),
+			$driver->query( 'SELECT id FROM lock_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'LOCK TABLES lock_items WRITE' );
+		$driver->query( 'BEGIN' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'COMMIT', 'BEGIN TRANSACTION' ), $driver->get_last_duckdb_queries() );
+		$driver->query( 'COMMIT' );
+		$driver->query( 'UNLOCK TABLES' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+
+		$driver->query( 'LOCK TABLES lock_items WRITE' );
+		$driver->query( 'COMMIT' );
+		$driver->query( 'BEGIN' );
+		$driver->query( 'INSERT INTO lock_items (id) VALUES (4)' );
+		$driver->query( 'UNLOCK TABLES' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$driver->query( 'ROLLBACK' );
+		$this->assertSame(
+			array(
+				array( 'id' => 1 ),
+				array( 'id' => 2 ),
+			),
+			$driver->query( 'SELECT id FROM lock_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_lock_table_validation_matches_mysql_shaped_errors(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE lock_one (id INT)' );
+		$driver->query( 'CREATE TABLE lock_three (id INT)' );
+		$driver->query( 'BEGIN' );
+		$driver->query( 'INSERT INTO lock_one (id) VALUES (1)' );
+
+		try {
+			$driver->query( 'LOCK TABLES lock_one READ, missing_table READ, lock_three WRITE' );
+			$this->fail( 'Expected LOCK TABLES to reject a missing table.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Table 'wp.missing_table' doesn't exist", $e->getMessage() );
+		}
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$driver->query( 'ROLLBACK' );
+		$this->assertSame( array(), $driver->query( 'SELECT id FROM lock_one' )->fetchAll( PDO::FETCH_ASSOC ) );
+
+		foreach (
+			array(
+				'LOCK TABLES information_schema.tables READ' => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
+				'LOCK TABLES __wp_duckdb_column_metadata READ' => 'Internal DuckDB metadata tables cannot be modified',
+				'LOCK TABLES __WP_DUCKDB_COLUMN_METADATA READ' => 'Internal DuckDB metadata tables cannot be modified',
+				'LOCK TABLES other_database.lock_one READ' => 'Only the current database is supported',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected LOCK TABLES to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+			$this->assertFalse( $driver->get_connection()->inTransaction() );
+		}
+	}
+
 	public function test_update_delete_alias_order_limit_are_rewritten(): void {
 		$this->requireDuckDBRuntime();
 
