@@ -120,6 +120,60 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'anonymous', $describe[1]['Default'] );
 	}
 
+	public function test_show_full_tables_reports_table_type_and_like_filter(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( 'CREATE TABLE _tmp_table (id INT)' );
+		$driver->query( 'CREATE TABLE _tmp_table_2 (id INT)' );
+
+		$full = $driver->query( 'SHOW FULL TABLES' );
+		$this->assertSame( 2, $full->columnCount() );
+		$this->assertSame( array( 'name' => 'Tables_in_wp' ), $full->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => 'Table_type' ), $full->getColumnMeta( 1 ) );
+		$this->assertSame(
+			array(
+				array(
+					'Tables_in_wp' => '_tmp_table',
+					'Table_type'   => 'BASE TABLE',
+				),
+				array(
+					'Tables_in_wp' => '_tmp_table_2',
+					'Table_type'   => 'BASE TABLE',
+				),
+			),
+			$full->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Tables_in_wp' => '_tmp_table',
+					'Table_type'   => 'BASE TABLE',
+				),
+			),
+			$driver->query( "SHOW FULL TABLES LIKE '_tmp_table'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'Tables_in_wp' => '_tmp_table' ) ),
+			$driver->query( "SHOW TABLES LIKE '_tmp_table'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query( "SHOW FULL TABLES LIKE '__wp_duckdb_%'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query( 'SHOW FULL TABLES FROM other_database' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_sql_transaction_statements_update_connection_state_and_query_log(): void {
 		$this->requireDuckDBRuntime();
 
@@ -3029,6 +3083,8 @@ SQL,
 			$driver->query( 'SELECT id, name FROM temp_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame( array(), $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( array(), $driver->query( 'SHOW FULL TABLES' )->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( array(), $driver->query( "SHOW FULL TABLES LIKE 'temp_items'" )->fetchAll( PDO::FETCH_ASSOC ) );
 		$this->assertSame( array(), $driver->query( "SHOW TABLE STATUS LIKE 'temp_items'" )->fetchAll( PDO::FETCH_ASSOC ) );
 		$this->assertSame(
 			array( 'PRIMARY', 'name_key' ),
@@ -3096,6 +3152,15 @@ SQL,
 		$this->assertSame(
 			array( 't' ),
 			array_column( $driver->query( "SHOW TABLE STATUS LIKE 't'" )->fetchAll( PDO::FETCH_ASSOC ), 'Name' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'Tables_in_wp' => 't',
+					'Table_type'   => 'BASE TABLE',
+				),
+			),
+			$driver->query( "SHOW FULL TABLES LIKE 't'" )->fetchAll( PDO::FETCH_ASSOC )
 		);
 
 		$driver->query( 'DROP TABLE t' );

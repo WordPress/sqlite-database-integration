@@ -4741,8 +4741,18 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_show( array $tokens ): WP_DuckDB_Result_Statement {
-		if ( 2 === count( $tokens ) && WP_MySQL_Lexer::TABLES_SYMBOL === $tokens[1]->id ) {
-			return $this->execute_show_tables();
+		if (
+			isset( $tokens[1] )
+			&& (
+				WP_MySQL_Lexer::TABLES_SYMBOL === $tokens[1]->id
+				|| (
+					isset( $tokens[2] )
+					&& WP_MySQL_Lexer::FULL_SYMBOL === $tokens[1]->id
+					&& WP_MySQL_Lexer::TABLES_SYMBOL === $tokens[2]->id
+				)
+			)
+		) {
+			return $this->execute_show_tables( $tokens );
 		}
 
 		if (
@@ -5153,37 +5163,73 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Execute SHOW TABLES.
+	 * Execute SHOW [FULL] TABLES.
 	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_show_tables(): WP_DuckDB_Result_Statement {
-		$column = 'Tables_in_' . $this->database;
-		return $this->execute_duckdb_query(
-			'SELECT table_name AS ' . $this->connection->quote_identifier( $column )
-				. " FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name <> "
-				. $this->connection->quote( self::INDEX_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::TABLE_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::CHECK_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::FOREIGN_KEY_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_STATISTICS_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE )
-				. ' ORDER BY table_name',
-			'Failed to execute SHOW TABLES'
-		);
+	private function execute_show_tables( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 1;
+		$full  = false;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::FULL_SYMBOL === $tokens[ $index ]->id ) {
+			$full = true;
+			++$index;
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TABLES_SYMBOL, 'Expected TABLES in SHOW TABLES statement.' );
+		++$index;
+
+		$database = $this->database;
+		if (
+			isset( $tokens[ $index ] )
+			&& ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $index ]->id )
+		) {
+			++$index;
+			$database = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+		}
+
+		$like_pattern = null;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $index ]->id ) {
+			if (
+				! isset( $tokens[ $index + 1 ] )
+				|| (
+					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
+					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
+				)
+			) {
+				throw new WP_DuckDB_Driver_Exception( 'SHOW TABLES LIKE requires a string pattern in the DuckDB driver.' );
+			}
+			$like_pattern = $tokens[ $index + 1 ]->get_value();
+			$index       += 2;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW TABLES statement in DuckDB driver. Only optional FULL, FROM/IN, and LIKE are supported.' );
+		}
+
+		$columns = array( 'Tables_in_' . $database );
+		if ( $full ) {
+			$columns[] = 'Table_type';
+		}
+
+		$rows = array();
+		if ( 0 === strcasecmp( $database, $this->database ) ) {
+			foreach ( $this->user_table_names() as $table_name ) {
+				if ( null !== $like_pattern && ! $this->mysql_like_matches( $table_name, $like_pattern ) ) {
+					continue;
+				}
+
+				$row = array( $table_name );
+				if ( $full ) {
+					$row[] = 'BASE TABLE';
+				}
+				$rows[] = $row;
+			}
+		}
+
+		return new WP_DuckDB_Result_Statement( $columns, $rows );
 	}
 
 	/**

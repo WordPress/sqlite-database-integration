@@ -33,6 +33,25 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_show_full_tables_sql_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE _tmp_table (id INT)',
+				'CREATE TABLE _tmp_table_2 (id INT)',
+				'CREATE TABLE shadow_show (id INT)',
+				'CREATE TEMPORARY TABLE shadow_show (temp_id INT)',
+				'CREATE TEMPORARY TABLE temp_only_show (id INT)',
+			)
+		);
+
+		$this->assertParityRows( 'SHOW TABLES' );
+		$this->assertParityRows( "SHOW TABLES LIKE '_tmp_table'" );
+		$this->assertParityRows( 'SHOW FULL TABLES' );
+		$this->assertParityRows( "SHOW FULL TABLES LIKE '_tmp_table'" );
+		$this->assertParityRows( "SHOW FULL TABLES LIKE 'shadow_show'" );
+		$this->assertParityRows( "SHOW FULL TABLES LIKE 'temp_only_show'" );
+	}
+
 	public function test_transaction_sql_matches_sqlite(): void {
 		$this->runParitySetup( array( 'CREATE TABLE tx_items (id INT)' ) );
 
