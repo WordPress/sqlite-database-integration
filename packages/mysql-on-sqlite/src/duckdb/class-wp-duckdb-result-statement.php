@@ -22,6 +22,11 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	private $columns;
 
 	/**
+	 * @var array<int,array<string,mixed>>
+	 */
+	private $column_meta = array();
+
+	/**
 	 * @var array<int,array<int,mixed>>
 	 */
 	private $rows;
@@ -42,11 +47,12 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	private $default_fetch_mode = PDO::FETCH_BOTH;
 
 	/**
-	 * @param string[]               $columns       Column names.
-	 * @param array<int,array<mixed>> $rows          Numeric rows.
-	 * @param int                    $affected_rows Affected row count.
+	 * @param string[]                         $columns       Column names.
+	 * @param array<int,array<mixed>>           $rows          Numeric rows.
+	 * @param int                              $affected_rows Affected row count.
+	 * @param array<int,array<string,mixed>>    $column_meta   Optional column metadata.
 	 */
-	public function __construct( array $columns, array $rows, int $affected_rows = 0 ) {
+	public function __construct( array $columns, array $rows, int $affected_rows = 0, array $column_meta = array() ) {
 		$this->columns       = array_values( $columns );
 		$this->rows          = array_values(
 			array_map(
@@ -57,6 +63,25 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 			)
 		);
 		$this->affected_rows = $affected_rows;
+		$this->setColumnMeta( $column_meta );
+	}
+
+	/**
+	 * Set column metadata.
+	 *
+	 * @param array<int,array<string,mixed>> $column_meta Column metadata keyed by zero-based column offset.
+	 */
+	public function setColumnMeta( array $column_meta ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$this->column_meta = array();
+		foreach ( $this->columns as $index => $name ) {
+			$meta = isset( $column_meta[ $index ] ) && is_array( $column_meta[ $index ] )
+				? $column_meta[ $index ]
+				: array();
+			if ( ! isset( $meta['name'] ) ) {
+				$meta['name'] = $name;
+			}
+			$this->column_meta[ $index ] = $meta;
+		}
 	}
 
 	/**
@@ -169,9 +194,7 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 			return false;
 		}
 
-		return array(
-			'name' => $this->columns[ $column ],
-		);
+		return $this->column_meta[ $column ];
 	}
 
 	/**

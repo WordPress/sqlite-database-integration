@@ -172,6 +172,34 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( array(), $result['after_flush_column_names'] );
 	}
 
+	public function test_duckdb_wpdb_col_info_uses_statement_metadata(): void {
+		$result = $this->run_col_info_state_script();
+
+		$this->assertTrue( $result['connected'] );
+		$this->assertSame( 0, $result['select_return'] );
+		$this->assertCount( 2, $result['select_col_info'] );
+
+		$this->assertSame( 'ID', $result['select_col_info'][0]['name'] );
+		$this->assertSame( 'ID', $result['select_col_info'][0]['orgname'] );
+		$this->assertSame( 'wp_posts', $result['select_col_info'][0]['table'] );
+		$this->assertSame( 'wp_posts', $result['select_col_info'][0]['orgtable'] );
+		$this->assertSame( 'wordpress_test', $result['select_col_info'][0]['db'] );
+		$this->assertSame( 20, $result['select_col_info'][0]['length'] );
+		$this->assertSame( 63, $result['select_col_info'][0]['charsetnr'] );
+		$this->assertSame( 8, $result['select_col_info'][0]['type'] );
+		$this->assertSame( 0, $result['select_col_info'][0]['decimals'] );
+
+		$this->assertSame( 'post_title', $result['select_col_info'][1]['name'] );
+		$this->assertSame( 'post_title', $result['select_col_info'][1]['orgname'] );
+		$this->assertSame( 'wp_posts', $result['select_col_info'][1]['table'] );
+		$this->assertSame( 'wp_posts', $result['select_col_info'][1]['orgtable'] );
+		$this->assertSame( 764, $result['select_col_info'][1]['length'] );
+		$this->assertSame( 255, $result['select_col_info'][1]['charsetnr'] );
+		$this->assertSame( 253, $result['select_col_info'][1]['type'] );
+		$this->assertSame( 0, $result['update_return'] );
+		$this->assertSame( array(), $result['update_col_info'] );
+	}
+
 	public function test_duckdb_wpdb_db_connect_sets_filtered_sql_mode(): void {
 		$result = $this->run_sql_mode_boot_state_script( false );
 
@@ -578,6 +606,110 @@ echo json_encode(
 		'last_error_after_flush'     => $state_after_flush['last_error'],
 		'result_after_flush'         => $state_after_flush['result'],
 		'after_flush_column_names'   => $after_columns,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_col_info_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_Col_Info_Test_Driver extends WP_DuckDB_Driver {
+	public function __construct() {}
+
+	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		if ( 'SELECT @@SESSION.sql_mode' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( '@@SESSION.sql_mode' ),
+				array(
+					array( 'NO_ENGINE_SUBSTITUTION' ),
+				),
+				0
+			);
+		}
+
+		if ( "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		if ( 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'ID', 'post_title' ),
+				array(),
+				0,
+				array(
+					array(
+						'name'             => 'ID',
+						'native_type'      => 'LONGLONG',
+						'table'            => 'wp_posts',
+						'len'              => 20,
+						'precision'        => 0,
+						'mysqli:orgname'   => 'ID',
+						'mysqli:orgtable'  => 'wp_posts',
+						'mysqli:db'        => 'wordpress_test',
+						'mysqli:charsetnr' => 63,
+						'mysqli:flags'     => 0,
+						'mysqli:type'      => 8,
+					),
+					array(
+						'name'             => 'post_title',
+						'native_type'      => 'VAR_STRING',
+						'table'            => 'wp_posts',
+						'len'              => 764,
+						'precision'        => 0,
+						'mysqli:orgname'   => 'post_title',
+						'mysqli:orgtable'  => 'wp_posts',
+						'mysqli:db'        => 'wordpress_test',
+						'mysqli:charsetnr' => 255,
+						'mysqli:flags'     => 0,
+						'mysqli:type'      => 253,
+					),
+				)
+			);
+		}
+
+		if ( 'UPDATE wp_posts SET ID = ID WHERE ID = 0' === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		throw new RuntimeException( 'Unexpected query: ' . $sql );
+	}
+}
+
+class WP_DuckDB_Plugin_Col_Info_Test_DB extends WP_DuckDB_DB {
+	public function exported_col_info() {
+		$this->load_col_info();
+		return array_map(
+			function ( $column ) {
+				return (array) $column;
+			},
+			$this->col_info
+		);
+	}
+}
+
+$GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Col_Info_Test_Driver();
+$db                        = new WP_DuckDB_Plugin_Col_Info_Test_DB( 'wordpress_test' );
+$connected                 = $db->db_connect( false );
+$select_return             = $db->query( 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' );
+$select_col_info           = $db->exported_col_info();
+$update_return             = $db->query( 'UPDATE wp_posts SET ID = ID WHERE ID = 0' );
+$update_col_info           = $db->exported_col_info();
+
+echo json_encode(
+	array(
+		'connected'       => $connected,
+		'select_return'   => $select_return,
+		'select_col_info' => $select_col_info,
+		'update_return'   => $update_return,
+		'update_col_info' => $update_col_info,
 	)
 );
 PHP;

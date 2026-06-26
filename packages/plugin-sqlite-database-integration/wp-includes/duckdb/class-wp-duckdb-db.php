@@ -320,21 +320,26 @@ class WP_DuckDB_DB extends wpdb {
 		}
 
 		for ( $i = 0; $i < $this->last_statement->columnCount(); ++$i ) {
-			$meta             = $this->last_statement->getColumnMeta( $i );
+			$meta = $this->last_statement->getColumnMeta( $i );
+			if ( ! is_array( $meta ) ) {
+				continue;
+			}
+
+			$name             = isset( $meta['name'] ) ? $meta['name'] : '';
 			$this->col_info[] = (object) array(
-				'name'       => $meta['name'],
-				'orgname'    => $meta['name'],
-				'table'      => '',
-				'orgtable'   => '',
+				'name'       => $name,
+				'orgname'    => isset( $meta['mysqli:orgname'] ) ? $meta['mysqli:orgname'] : $name,
+				'table'      => isset( $meta['table'] ) ? $meta['table'] : '',
+				'orgtable'   => isset( $meta['mysqli:orgtable'] ) ? $meta['mysqli:orgtable'] : ( isset( $meta['table'] ) ? $meta['table'] : '' ),
 				'def'        => '',
-				'db'         => $this->dbname,
+				'db'         => isset( $meta['mysqli:db'] ) ? $meta['mysqli:db'] : $this->dbname,
 				'catalog'    => 'def',
 				'max_length' => 0,
-				'length'     => 0,
-				'charsetnr'  => 224,
-				'flags'      => 0,
-				'type'       => 253,
-				'decimals'   => 0,
+				'length'     => isset( $meta['len'] ) ? $meta['len'] : 0,
+				'charsetnr'  => isset( $meta['mysqli:charsetnr'] ) ? $meta['mysqli:charsetnr'] : 224,
+				'flags'      => isset( $meta['mysqli:flags'] ) ? $meta['mysqli:flags'] : 0,
+				'type'       => isset( $meta['mysqli:type'] ) ? $meta['mysqli:type'] : 253,
+				'decimals'   => isset( $meta['precision'] ) ? $meta['precision'] : 0,
 			);
 		}
 	}

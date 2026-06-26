@@ -1396,6 +1396,56 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_simple_select_result_metadata_uses_recorded_table_columns(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wordpress_test',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE `wp_posts` (
+				`ID` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				`post_title` VARCHAR(191) NOT NULL DEFAULT '',
+				`post_content` LONGTEXT,
+				PRIMARY KEY (`ID`)
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+
+		$result = $driver->query( 'SELECT p.ID AS post_id, p.post_title FROM wp_posts AS p WHERE p.ID = 0' );
+
+		$this->assertSame( 2, $result->columnCount() );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+
+		$id_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( 'post_id', $id_meta['name'] );
+		$this->assertSame( 'p', $id_meta['table'] );
+		$this->assertSame( 'ID', $id_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_posts', $id_meta['mysqli:orgtable'] );
+		$this->assertSame( 'wordpress_test', $id_meta['mysqli:db'] );
+		$this->assertSame( 20, $id_meta['len'] );
+		$this->assertSame( 63, $id_meta['mysqli:charsetnr'] );
+		$this->assertSame( 8, $id_meta['mysqli:type'] );
+
+		$title_meta = $result->getColumnMeta( 1 );
+		$this->assertSame( 'post_title', $title_meta['name'] );
+		$this->assertSame( 'p', $title_meta['table'] );
+		$this->assertSame( 'post_title', $title_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_posts', $title_meta['mysqli:orgtable'] );
+		$this->assertSame( 764, $title_meta['len'] );
+		$this->assertSame( 255, $title_meta['mysqli:charsetnr'] );
+		$this->assertSame( 253, $title_meta['mysqli:type'] );
+
+		$expression = $driver->query( 'SELECT COUNT(*) AS post_count FROM wp_posts' );
+		$this->assertSame( array( 'name' => 'post_count' ), $expression->getColumnMeta( 0 ) );
+
+		$update = $driver->query( "UPDATE wp_posts SET post_title = 'draft' WHERE ID = 0" );
+		$this->assertSame( 0, $update->columnCount() );
+		$this->assertFalse( $update->getColumnMeta( 0 ) );
+	}
+
 	public function test_regexp_predicates_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

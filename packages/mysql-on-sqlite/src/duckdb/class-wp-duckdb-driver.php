@@ -446,6 +446,7 @@ class WP_DuckDB_Driver {
 
 		$has_sql_calc_found_rows = $this->has_top_level_sql_calc_found_rows( $tokens );
 		$tokens                  = $this->normalize_select_helper_tokens( $tokens );
+		$column_meta             = $this->simple_select_column_metadata( $tokens );
 
 		$rewrite_information_schema_tables            = $this->uses_information_schema_tables( $tokens );
 		$rewrite_information_schema_columns           = $this->uses_information_schema_columns( $tokens );
@@ -487,7 +488,8 @@ class WP_DuckDB_Driver {
 					$rewrite_information_schema_table_constraints,
 					$rewrite_information_schema_key_column_usage
 				);
-				return $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+				$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+				return $this->apply_result_column_metadata( $result, $column_meta );
 			} catch ( Throwable $e ) {
 				$this->found_rows = 0;
 				throw $e;
@@ -496,7 +498,445 @@ class WP_DuckDB_Driver {
 
 		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 		$this->found_rows = $sql;
+		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
+	 * Attach optional column metadata when it matches the result shape.
+	 *
+	 * @param WP_DuckDB_Result_Statement       $result      Query result.
+	 * @param array<int,array<string,mixed>>|null $column_meta Optional column metadata.
+	 * @return WP_DuckDB_Result_Statement Result with metadata attached when available.
+	 */
+	private function apply_result_column_metadata( WP_DuckDB_Result_Statement $result, ?array $column_meta ): WP_DuckDB_Result_Statement {
+		if ( null !== $column_meta && count( $column_meta ) === $result->columnCount() ) {
+			$result->setColumnMeta( $column_meta );
+		}
+
 		return $result;
+	}
+
+	/**
+	 * Derive bounded result metadata for SELECT column_list FROM single_table.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array<int,array<string,mixed>>|null Column metadata, or null when the shape is outside the supported slice.
+	 */
+	private function simple_select_column_metadata( array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$from_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::FROM_SYMBOL );
+		if ( null === $from_index || 1 === $from_index ) {
+			return null;
+		}
+
+		$select_items = $this->split_top_level_comma_items( array_slice( $tokens, 1, $from_index - 1 ) );
+		if ( count( $select_items ) === 0 ) {
+			return null;
+		}
+
+		$columns = array();
+		foreach ( $select_items as $item ) {
+			$column = $this->parse_simple_select_column_reference( $item );
+			if ( null === $column ) {
+				return null;
+			}
+			$columns[] = $column;
+		}
+
+		$table_tokens = array_slice(
+			$tokens,
+			$from_index + 1,
+			$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
+		);
+		$table        = $this->parse_simple_select_table_reference( $table_tokens );
+		if ( null === $table ) {
+			return null;
+		}
+
+		foreach ( $columns as $column ) {
+			if (
+				null !== $column['qualifier']
+				&& 0 !== strcasecmp( $column['qualifier'], $table['alias'] )
+				&& 0 !== strcasecmp( $column['qualifier'], $table['table_name'] )
+			) {
+				return null;
+			}
+		}
+
+		$metadata_by_column = array();
+		foreach ( $this->table_column_metadata_rows( $table['table_name'], $table['temporary'] ) as $metadata ) {
+			$metadata_by_column[ strtolower( (string) $metadata['column_name'] ) ] = $metadata;
+		}
+
+		$column_meta = array();
+		foreach ( $columns as $column ) {
+			$key = strtolower( $column['column_name'] );
+			if ( ! isset( $metadata_by_column[ $key ] ) ) {
+				return null;
+			}
+
+			$column_meta[] = $this->mysql_result_column_metadata(
+				$table['table_name'],
+				$table['alias'],
+				$metadata_by_column[ $key ],
+				$column['name']
+			);
+		}
+
+		return $column_meta;
+	}
+
+	/**
+	 * Find the end of a simple SELECT FROM clause.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $start  First token after FROM.
+	 * @return int End index, exclusive.
+	 */
+	private function simple_select_from_clause_end( array $tokens, int $start ): int {
+		$clause_tokens = array(
+			WP_MySQL_Lexer::WHERE_SYMBOL,
+			WP_MySQL_Lexer::GROUP_SYMBOL,
+			WP_MySQL_Lexer::HAVING_SYMBOL,
+			WP_MySQL_Lexer::WINDOW_SYMBOL,
+			WP_MySQL_Lexer::ORDER_SYMBOL,
+			WP_MySQL_Lexer::LIMIT_SYMBOL,
+			WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+			WP_MySQL_Lexer::INTO_SYMBOL,
+			WP_MySQL_Lexer::FOR_SYMBOL,
+			WP_MySQL_Lexer::LOCK_SYMBOL,
+			WP_MySQL_Lexer::UNION_SYMBOL,
+		);
+		$depth         = 0;
+
+		for ( $index = $start; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 === $depth && in_array( $tokens[ $index ]->id, $clause_tokens, true ) ) {
+				return $index;
+			}
+		}
+
+		return count( $tokens );
+	}
+
+	/**
+	 * Parse a single-table reference for bounded SELECT metadata.
+	 *
+	 * @param WP_Parser_Token[] $tokens Table reference tokens.
+	 * @return array{table_name:string,alias:string,temporary:bool}|null Table reference, or null when unsupported.
+	 */
+	private function parse_simple_select_table_reference( array $tokens ): ?array {
+		if (
+			count( $tokens ) === 0
+			|| $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::COMMA_SYMBOL )
+			|| $this->contains_top_level_join_token( $tokens )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id
+		) {
+			return null;
+		}
+
+		$index      = 0;
+		$database   = null;
+		$table_name = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+		if ( null === $table_name ) {
+			return null;
+		}
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$database = $table_name;
+			++$index;
+			$table_name = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+			if ( null === $table_name ) {
+				return null;
+			}
+			++$index;
+
+			if ( 0 === strcasecmp( $database, 'information_schema' ) || 0 !== strcasecmp( $database, $this->database ) ) {
+				return null;
+			}
+		}
+
+		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		if ( null === $table_reference ) {
+			return null;
+		}
+
+		$alias = $table_reference['table_name'];
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) ) {
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			return null;
+		}
+
+		return array(
+			'table_name' => $table_reference['table_name'],
+			'alias'      => $alias,
+			'temporary'  => $table_reference['temporary'],
+		);
+	}
+
+	/**
+	 * Parse one SELECT list item for bounded result metadata.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return array{name:string,column_name:string,qualifier:string|null}|null Column reference, or null when unsupported.
+	 */
+	private function parse_simple_select_column_reference( array $tokens ): ?array {
+		$count = count( $tokens );
+		if ( 0 === $count ) {
+			return null;
+		}
+
+		$index     = 0;
+		$qualifier = null;
+		$name      = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+		if ( null === $name ) {
+			return null;
+		}
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$qualifier = $name;
+			++$index;
+			$name = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+			if ( null === $name ) {
+				return null;
+			}
+			++$index;
+		}
+
+		$alias = $name;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) ) {
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		}
+
+		if ( $count !== $index ) {
+			return null;
+		}
+
+		return array(
+			'name'        => $alias,
+			'column_name' => $name,
+			'qualifier'   => $qualifier,
+		);
+	}
+
+	/**
+	 * Read a metadata identifier without throwing for unsupported tokens.
+	 *
+	 * @param WP_Parser_Token|null $token Token.
+	 * @return string|null Identifier value, or null when unsupported.
+	 */
+	private function metadata_identifier_value( $token ): ?string {
+		if ( ! $token instanceof WP_Parser_Token || $this->is_non_identifier_token( $token ) || WP_MySQL_Lexer::MULT_OPERATOR === $token->id ) {
+			return null;
+		}
+
+		return $token->get_value();
+	}
+
+	/**
+	 * Build PDO/MySQLi-shaped result metadata for one direct table column.
+	 *
+	 * @param string              $table_name  Original table name.
+	 * @param string              $table_alias Result table alias.
+	 * @param array<string,mixed> $column      Stored column metadata.
+	 * @param string              $result_name Result column name.
+	 * @return array<string,mixed> Result column metadata.
+	 */
+	private function mysql_result_column_metadata( string $table_name, string $table_alias, array $column, string $result_name ): array {
+		$column_type     = (string) $column['column_type'];
+		$type_attributes = $this->column_type_attributes(
+			$column_type,
+			null === $column['collation_name'] ? null : (string) $column['collation_name']
+		);
+		$type_info       = $this->mysql_result_column_type_info( $type_attributes['data_type'], $column_type );
+
+		$length    = $this->mysql_result_column_length( $column_type, $type_attributes, $type_info['length'] );
+		$precision = $this->mysql_result_column_precision( $type_attributes, $type_info['precision'] );
+
+		return array(
+			'native_type'      => $type_info['native_type'],
+			'flags'            => array(),
+			'table'            => $table_alias,
+			'name'             => $result_name,
+			'len'              => $length,
+			'precision'        => $precision,
+			'duckdb:decl_type' => $column_type,
+			'mysqli:orgname'   => (string) $column['column_name'],
+			'mysqli:orgtable'  => $table_name,
+			'mysqli:db'        => $this->database,
+			'mysqli:charsetnr' => $this->mysql_result_column_charsetnr( $type_attributes['data_type'], $column['collation_name'] ),
+			'mysqli:flags'     => 0,
+			'mysqli:type'      => $type_info['mysqli_type'],
+		);
+	}
+
+	/**
+	 * Map MySQL data types to PDO/MySQLi result metadata types.
+	 *
+	 * @param string $data_type   Normalized MySQL data type.
+	 * @param string $column_type Full MySQL column type.
+	 * @return array{native_type:string,mysqli_type:int,length:int|null,precision:int|null} Type metadata.
+	 */
+	private function mysql_result_column_type_info( string $data_type, string $column_type ): array {
+		$type_map = array(
+			'bit'        => array( 'BIT', 16, 1, 0 ),
+			'tinyint'    => array( 'TINY', 1, 4, 0 ),
+			'smallint'   => array( 'SHORT', 2, 6, 0 ),
+			'mediumint'  => array( 'INT24', 9, 9, 0 ),
+			'int'        => array( 'LONG', 3, 11, 0 ),
+			'bigint'     => array( 'LONGLONG', 8, 20, 0 ),
+			'float'      => array( 'FLOAT', 4, 12, 31 ),
+			'double'     => array( 'DOUBLE', 5, 22, 31 ),
+			'decimal'    => array( 'NEWDECIMAL', 246, null, null ),
+			'char'       => array( 'STRING', 254, null, 0 ),
+			'varchar'    => array( 'VAR_STRING', 253, null, 0 ),
+			'tinytext'   => array( 'BLOB', 252, null, 0 ),
+			'text'       => array( 'BLOB', 252, null, 0 ),
+			'mediumtext' => array( 'BLOB', 252, null, 0 ),
+			'longtext'   => array( 'BLOB', 252, null, 0 ),
+			'json'       => array( 'BLOB', 245, 4294967295, 0 ),
+			'date'       => array( 'DATE', 10, 10, 0 ),
+			'time'       => array( 'TIME', 11, 10, 0 ),
+			'datetime'   => array( 'DATETIME', 12, 19, 0 ),
+			'timestamp'  => array( 'TIMESTAMP', 7, 19, 0 ),
+			'year'       => array( 'YEAR', 13, 4, 0 ),
+			'binary'     => array( 'BLOB', 254, null, 0 ),
+			'varbinary'  => array( 'BLOB', 253, null, 0 ),
+			'tinyblob'   => array( 'BLOB', 252, null, 0 ),
+			'blob'       => array( 'BLOB', 252, null, 0 ),
+			'mediumblob' => array( 'BLOB', 252, null, 0 ),
+			'longblob'   => array( 'BLOB', 252, null, 0 ),
+		);
+
+		$type_info = $type_map[ $data_type ] ?? array( 'VAR_STRING', 253, null, 0 );
+		if ( 'tinyint(1)' === strtolower( trim( $column_type ) ) ) {
+			$type_info[2] = 1;
+		}
+
+		return array(
+			'native_type' => $type_info[0],
+			'mysqli_type' => $type_info[1],
+			'length'      => $type_info[2],
+			'precision'   => $type_info[3],
+		);
+	}
+
+	/**
+	 * Derive MySQLi result length from MySQL type attributes.
+	 *
+	 * @param string              $column_type     Full MySQL column type.
+	 * @param array<string,mixed> $type_attributes Derived type attributes.
+	 * @param int|null            $default_length  Default mapped length.
+	 * @return int Length.
+	 */
+	private function mysql_result_column_length( string $column_type, array $type_attributes, ?int $default_length ): int {
+		$length    = $default_length;
+		$data_type = (string) $type_attributes['data_type'];
+
+		if ( 'decimal' === $data_type ) {
+			$length = (int) $type_attributes['numeric_precision'] + (int) $type_attributes['numeric_scale'];
+		} elseif ( null !== $type_attributes['character_maximum_length'] ) {
+			$length = (int) $type_attributes['character_maximum_length'];
+		}
+
+		if (
+			null !== $length
+			&& false !== strpos( strtolower( $column_type ), 'unsigned' )
+			&& false === strpos( strtolower( $column_type ), 'bigint' )
+		) {
+			--$length;
+		}
+
+		if (
+			null !== $length
+			&& (
+				false !== strpos( $data_type, 'text' )
+				|| false !== strpos( $data_type, 'char' )
+				|| 'enum' === $data_type
+				|| 'set' === $data_type
+			)
+			&& 'longtext' !== $data_type
+		) {
+			$length *= 4;
+		}
+
+		return null === $length ? 0 : $length;
+	}
+
+	/**
+	 * Derive MySQLi result precision.
+	 *
+	 * @param array<string,mixed> $type_attributes Derived type attributes.
+	 * @param int|null            $default_precision Default mapped precision.
+	 * @return int Precision.
+	 */
+	private function mysql_result_column_precision( array $type_attributes, ?int $default_precision ): int {
+		if ( 'decimal' === $type_attributes['data_type'] ) {
+			return (int) $type_attributes['numeric_scale'];
+		}
+
+		return null === $default_precision ? 0 : $default_precision;
+	}
+
+	/**
+	 * Derive a MySQLi charset number for the bounded metadata slice.
+	 *
+	 * @param string $data_type      Normalized MySQL data type.
+	 * @param mixed  $collation_name Optional collation name.
+	 * @return int MySQLi charset number.
+	 */
+	private function mysql_result_column_charsetnr( string $data_type, $collation_name ): int {
+		$charset = $this->character_set_from_collation( $collation_name );
+		if (
+			null !== $charset
+			&& false === strpos( $data_type, 'blob' )
+			&& ! in_array( $data_type, array( 'binary', 'varbinary', 'date', 'time', 'datetime', 'timestamp', 'year' ), true )
+		) {
+			return 255;
+		}
+
+		return 63;
 	}
 
 	/**
