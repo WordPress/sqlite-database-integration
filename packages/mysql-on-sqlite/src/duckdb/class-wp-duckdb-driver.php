@@ -452,7 +452,7 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE constraint in DuckDB driver: ' . $item[0]->get_bytes() . '.' );
 			}
 
-			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata ) = $this->translate_create_table_column( $table_name, $item, true, false, $temporary, $auto_increment_seed );
+			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata ) = $this->translate_create_table_column( $table_name, $item, true, false, $temporary, $auto_increment_seed, $table_metadata['table_collation'] );
 			$columns[]  = $column_sql;
 			$metadata[] = $column_metadata;
 			if ( null !== $sequence_sql ) {
@@ -614,11 +614,15 @@ class WP_DuckDB_Driver {
 			);
 		}
 
+		if ( ! $ignore ) {
+			$this->assert_insert_values_do_not_conflict_with_case_insensitive_unique_keys( $tokens, $index );
+		}
+
 		return $this->execute_auto_increment_write(
 			$this->identifier_value( $tokens[ $index ] ?? null ),
 			$ignore
-				? $this->translate_insert_ignore_tokens_to_duckdb_sql( $tokens, $index )
-				: $this->translate_tokens_to_duckdb_sql( $tokens ),
+					? $this->translate_insert_ignore_tokens_to_duckdb_sql( $tokens, $index )
+					: $this->translate_tokens_to_duckdb_sql( $tokens ),
 			'Failed to execute DuckDB INSERT',
 			$tokens,
 			$index
@@ -648,6 +652,11 @@ class WP_DuckDB_Driver {
 		}
 
 		$this->assert_values_write_statement( $tokens, $index, 'REPLACE' );
+
+		$manual_replace = $this->execute_replace_values_with_manual_conflict_handling( $tokens, $index );
+		if ( null !== $manual_replace ) {
+			return $manual_replace;
+		}
 
 		return $this->execute_auto_increment_write(
 			$this->identifier_value( $tokens[ $index ] ?? null ),
@@ -3024,7 +3033,7 @@ class WP_DuckDB_Driver {
 			$tokens = $items[0];
 		}
 
-		list( $column_sql, $sequence_sql, $indexes, $metadata ) = $this->translate_create_table_column( $table_name, $tokens, false, true, $temporary );
+		list( $column_sql, $sequence_sql, $indexes, $metadata ) = $this->translate_create_table_column( $table_name, $tokens, false, true, $temporary, null, $this->table_default_collation( $table_name, $temporary ) );
 		if ( 'PRI' === $metadata['column_key'] ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN PRIMARY KEY is not supported.' );
 		}
@@ -3150,7 +3159,7 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_alter_table_change_or_modify_column( string $table_name, string $old_column_name, array $definition_tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
-		list( , $sequence_sql, $inline_indexes, $metadata ) = $this->translate_create_table_column( $table_name, $definition_tokens, false, true, $temporary );
+		list( , $sequence_sql, $inline_indexes, $metadata ) = $this->translate_create_table_column( $table_name, $definition_tokens, false, true, $temporary, null, $this->table_default_collation( $table_name, $temporary ) );
 		if ( null !== $sequence_sql || 'auto_increment' === $metadata['extra'] ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY AUTO_INCREMENT requires a table rebuild.' );
 		}
@@ -4173,9 +4182,10 @@ class WP_DuckDB_Driver {
 	 * @param bool              $allow_position_options     Whether to accept FIRST/AFTER position hints.
 	 * @param bool              $temporary                  Whether the target is a temporary table.
 	 * @param int|null          $auto_increment_seed        Optional AUTO_INCREMENT table option.
+	 * @param string|null       $default_collation_name     Effective table collation for text columns without an explicit collation.
 	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>,3:array<string,mixed>}
 	 */
-	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false, ?int $auto_increment_seed = null ): array {
+	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false, ?int $auto_increment_seed = null, ?string $default_collation_name = null ): array {
 		$index       = 0;
 		$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
@@ -4278,8 +4288,14 @@ class WP_DuckDB_Driver {
 			$duck_type = 'BIGINT';
 		}
 
-		$column_sql = $this->connection->quote_identifier( $column_name ) . ' ' . $duck_type;
-		$sequence   = null;
+		$metadata_collation_name = $this->mysql_column_collation_from_tokens( $tokens, $type_token );
+		$physical_collation_name = $this->mysql_column_collation_from_tokens( $tokens, $type_token, $default_collation_name );
+		$column_sql              = $this->connection->quote_identifier( $column_name ) . ' ' . $duck_type;
+		$sequence                = null;
+
+		if ( $this->mysql_column_uses_case_insensitive_collation( $type_token, $physical_collation_name ) ) {
+			$column_sql .= ' COLLATE NOCASE';
+		}
 
 		if ( $auto_increment ) {
 			$sequence_name = $this->sequence_name( $table_name, $column_name, $temporary );
@@ -4325,7 +4341,7 @@ class WP_DuckDB_Driver {
 			'column_key'     => $primary_key ? 'PRI' : ( $unique_key ? 'UNI' : '' ),
 			'column_default' => $auto_increment || null === $default_sql ? null : $this->normalize_describe_default( $default_sql ),
 			'extra'          => $auto_increment ? 'auto_increment' : '',
-			'collation_name' => $this->mysql_column_collation_from_tokens( $tokens, $type_token ),
+			'collation_name' => $metadata_collation_name,
 			'comment'        => $this->mysql_column_comment_from_tokens( $tokens ),
 			'_duckdb_type'   => $duck_type,
 			'_default_sql'   => $auto_increment ? null : $default_sql,
@@ -4420,14 +4436,45 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token   $type_token Type token.
 	 * @return string|null Collation name.
 	 */
-	private function mysql_column_collation_from_tokens( array $tokens, WP_Parser_Token $type_token ): ?string {
+	private function mysql_column_collation_from_tokens( array $tokens, WP_Parser_Token $type_token, ?string $default_collation_name = null ): ?string {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
 			if ( WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $index ]->id ) {
 				return $this->option_value( $tokens, $index + 1 );
 			}
 		}
 
-		return $this->mysql_type_has_collation( $type_token ) ? 'utf8mb4_0900_ai_ci' : null;
+		if ( ! $this->mysql_type_has_collation( $type_token ) ) {
+			return null;
+		}
+
+		return null !== $default_collation_name && '' !== $default_collation_name ? $default_collation_name : 'utf8mb4_0900_ai_ci';
+	}
+
+	/**
+	 * Check whether a MySQL column should use DuckDB's case-insensitive collation.
+	 *
+	 * @param WP_Parser_Token $type_token     Type token.
+	 * @param string|null     $collation_name MySQL collation name.
+	 * @return bool Whether the column should use COLLATE NOCASE.
+	 */
+	private function mysql_column_uses_case_insensitive_collation( WP_Parser_Token $type_token, ?string $collation_name ): bool {
+		return $this->mysql_type_has_collation( $type_token ) && $this->mysql_collation_is_case_insensitive( $collation_name );
+	}
+
+	/**
+	 * Check whether a MySQL collation is case-insensitive.
+	 *
+	 * @param string|null $collation_name MySQL collation name.
+	 * @return bool Whether the collation is case-insensitive.
+	 */
+	private function mysql_collation_is_case_insensitive( ?string $collation_name ): bool {
+		if ( null === $collation_name || '' === $collation_name ) {
+			return false;
+		}
+
+		$collation_name = strtolower( trim( $collation_name ) );
+
+		return strlen( $collation_name ) > 3 && '_ci' === substr( $collation_name, -3 );
 	}
 
 	/**
@@ -5208,6 +5255,21 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Translate MySQL REPLACE ... VALUES to a plain DuckDB INSERT after manual conflict deletion.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_replace_tokens_to_duckdb_insert_sql( array $tokens ): string {
+		$index = 1;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		return 'INSERT INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $index ) );
+	}
+
+	/**
 	 * Translate MySQL INSERT IGNORE ... VALUES to DuckDB INSERT OR IGNORE.
 	 *
 	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
@@ -5402,6 +5464,252 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Assert plain INSERT ... VALUES does not bypass a case-insensitive unique key.
+	 *
+	 * DuckDB's plain INSERT can allow case-only duplicates for a unique index on a
+	 * COLLATE NOCASE column, even though INSERT OR IGNORE and ON CONFLICT honor it.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index of the table token.
+	 */
+	private function assert_insert_values_do_not_conflict_with_case_insensitive_unique_keys( array $tokens, int $table_index ): void {
+		$insert_shape             = $this->parse_insert_values_shape( $tokens, $table_index );
+		$case_insensitive_columns = $this->case_insensitive_column_names( $insert_shape['table_name'] );
+		if ( count( $case_insensitive_columns ) === 0 ) {
+			return;
+		}
+
+		foreach ( $insert_shape['rows'] as $values_by_column ) {
+			foreach ( $this->unique_key_column_sets( $insert_shape['table_name'] ) as $column_set ) {
+				$has_all_values           = true;
+				$has_case_insensitive_key = false;
+				foreach ( $column_set as $column_name ) {
+					$column_key = strtolower( $column_name );
+					if ( ! array_key_exists( $column_key, $values_by_column ) ) {
+						$has_all_values = false;
+						break;
+					}
+					if ( isset( $case_insensitive_columns[ $column_key ] ) ) {
+						$has_case_insensitive_key = true;
+					}
+				}
+
+				if ( ! $has_all_values || ! $has_case_insensitive_key ) {
+					continue;
+				}
+
+				if ( $this->insert_values_conflict_with_target( $insert_shape['table_name'], $column_set, $values_by_column ) ) {
+					throw new WP_DuckDB_Driver_Exception(
+						'Failed to execute DuckDB INSERT: UNIQUE constraint failed: '
+						. $insert_shape['table_name']
+						. '.'
+						. implode( ', ', $column_set )
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Parse a supported INSERT ... VALUES shape into per-row value SQL.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index of the table token.
+	 * @return array{table_name:string,rows:array<int,array<string,string>>}
+	 */
+	private function parse_insert_values_shape( array $tokens, int $table_index ): array {
+		$table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
+		$index      = $table_index + 1;
+		$columns    = array();
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+			list( $column_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
+			foreach ( $column_items as $column_tokens ) {
+				if ( 1 !== count( $column_tokens ) ) {
+					return array(
+						'table_name' => $table_name,
+						'rows'       => array(),
+					);
+				}
+				$columns[] = $this->identifier_value( $column_tokens[0] );
+			}
+		} else {
+			foreach ( $this->table_column_metadata_rows( $table_name ) as $row ) {
+				if ( ! array_key_exists( 'column_name', $row ) ) {
+					return array(
+						'table_name' => $table_name,
+						'rows'       => array(),
+					);
+				}
+				$columns[] = (string) $row['column_name'];
+			}
+		}
+
+		if ( count( $columns ) === 0 || ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $index ]->id ) {
+			return array(
+				'table_name' => $table_name,
+				'rows'       => array(),
+			);
+		}
+		++$index;
+
+		$rows = array();
+		while ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+			list( $value_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
+			if ( count( $columns ) !== count( $value_items ) ) {
+				return array(
+					'table_name' => $table_name,
+					'rows'       => array(),
+				);
+			}
+
+			$values_by_column = array();
+			foreach ( $columns as $offset => $column_name ) {
+				$values_by_column[ strtolower( $column_name ) ] = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
+			}
+			$rows[] = $values_by_column;
+
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				continue;
+			}
+			break;
+		}
+
+		return array(
+			'table_name' => $table_name,
+			'rows'       => $rows,
+		);
+	}
+
+	/**
+	 * Execute REPLACE ... VALUES when DuckDB's native INSERT OR REPLACE is insufficient.
+	 *
+	 * DuckDB requires a conflict target for INSERT OR REPLACE when multiple unique
+	 * constraints exist. MySQL REPLACE instead deletes every row that conflicts
+	 * with any supplied unique key, then inserts the incoming row. Case-insensitive
+	 * MySQL unique keys also need manual matching because DuckDB plain INSERT can
+	 * bypass those conflicts.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index of the table token.
+	 * @return WP_DuckDB_Result_Statement|null Statement when emulated, null when native DuckDB can be used.
+	 */
+	private function execute_replace_values_with_manual_conflict_handling( array $tokens, int $table_index ): ?WP_DuckDB_Result_Statement {
+		$replace_shape            = $this->parse_insert_values_shape( $tokens, $table_index );
+		$case_insensitive_columns = $this->case_insensitive_column_names( $replace_shape['table_name'] );
+		if ( count( $replace_shape['rows'] ) === 0 ) {
+			return null;
+		}
+
+		$unique_sets = $this->unique_key_column_sets( $replace_shape['table_name'] );
+		if ( count( $unique_sets ) < 2 && ! $this->has_case_insensitive_unique_key( $unique_sets, $case_insensitive_columns ) ) {
+			return null;
+		}
+
+		$started_transaction = false;
+		if ( ! $this->connection->inTransaction() ) {
+			$this->connection->beginTransaction();
+			$started_transaction = true;
+		}
+
+		try {
+			foreach ( $replace_shape['rows'] as $values_by_column ) {
+				$delete_predicates = array();
+				foreach ( $unique_sets as $column_set ) {
+					$predicate = $this->unique_key_conflict_predicate( $column_set, $values_by_column, $case_insensitive_columns );
+					if ( null !== $predicate ) {
+						$delete_predicates[] = '(' . $predicate . ')';
+					}
+				}
+
+				if ( count( $delete_predicates ) > 0 ) {
+					$this->execute_duckdb_query(
+						'DELETE FROM '
+							. $this->connection->quote_identifier( $replace_shape['table_name'] )
+							. ' WHERE '
+							. implode( ' OR ', $delete_predicates ),
+						'Failed to delete DuckDB REPLACE conflicts'
+					);
+				}
+			}
+
+			$result = $this->execute_auto_increment_write(
+				$replace_shape['table_name'],
+				$this->translate_replace_tokens_to_duckdb_insert_sql( $tokens ),
+				'Failed to execute DuckDB REPLACE',
+				$tokens,
+				$table_index
+			);
+
+			if ( $started_transaction ) {
+				$this->connection->commit();
+			}
+
+			return $result;
+		} catch ( Throwable $e ) {
+			if ( $started_transaction && $this->connection->inTransaction() ) {
+				$this->connection->rollback();
+			}
+			throw $e;
+		}
+	}
+
+	/**
+	 * Check whether any unique key includes a case-insensitive column.
+	 *
+	 * @param array<int,string[]> $unique_sets              Unique key column sets.
+	 * @param array<string,bool>  $case_insensitive_columns Lowercase column-name map.
+	 * @return bool Whether a case-insensitive unique key exists.
+	 */
+	private function has_case_insensitive_unique_key( array $unique_sets, array $case_insensitive_columns ): bool {
+		foreach ( $unique_sets as $column_set ) {
+			foreach ( $column_set as $column_name ) {
+				if ( isset( $case_insensitive_columns[ strtolower( $column_name ) ] ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Build a predicate that matches an incoming row against a supplied unique key.
+	 *
+	 * @param string[]             $column_set               Unique key columns.
+	 * @param array<string,string> $values_by_column         Inserted values keyed by lowercase column name.
+	 * @param array<string,bool>   $case_insensitive_columns Lowercase case-insensitive column-name map.
+	 * @return string|null SQL predicate, or null when the incoming row does not supply every key column.
+	 */
+	private function unique_key_conflict_predicate( array $column_set, array $values_by_column, array $case_insensitive_columns ): ?string {
+		$where = array();
+		foreach ( $column_set as $column_name ) {
+			$column_key = strtolower( $column_name );
+			if ( ! array_key_exists( $column_key, $values_by_column ) ) {
+				return null;
+			}
+
+			$value_sql = $values_by_column[ $column_key ];
+			if ( isset( $case_insensitive_columns[ $column_key ] ) ) {
+				$where[] = 'lower('
+					. $this->connection->quote_identifier( $column_name )
+					. ') IS NOT DISTINCT FROM lower(CAST(('
+					. $value_sql
+					. ') AS VARCHAR))';
+				continue;
+			}
+
+			$where[] = $this->connection->quote_identifier( $column_name )
+				. ' IS NOT DISTINCT FROM ('
+				. $value_sql
+				. ')';
+		}
+
+		return implode( ' AND ', $where );
+	}
+
+	/**
 	 * Select the conflict target that MySQL would hit for a single inserted row.
 	 *
 	 * @param string               $table_name       Table name.
@@ -5499,11 +5807,22 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether an existing row matches the target values.
 	 */
 	private function insert_values_conflict_with_target( string $table_name, array $column_set, array $values_by_column ): bool {
-		$where = array();
+		$where                    = array();
+		$case_insensitive_columns = $this->case_insensitive_column_names( $table_name );
 		foreach ( $column_set as $column_name ) {
+			$value_sql = $values_by_column[ strtolower( $column_name ) ];
+			if ( isset( $case_insensitive_columns[ strtolower( $column_name ) ] ) ) {
+				$where[] = 'lower('
+					. $this->connection->quote_identifier( $column_name )
+					. ') IS NOT DISTINCT FROM lower(CAST(('
+					. $value_sql
+					. ') AS VARCHAR))';
+				continue;
+			}
+
 			$where[] = $this->connection->quote_identifier( $column_name )
 				. ' IS NOT DISTINCT FROM ('
-				. $values_by_column[ strtolower( $column_name ) ]
+				. $value_sql
 				. ')';
 		}
 
@@ -5517,6 +5836,31 @@ class WP_DuckDB_Driver {
 		);
 
 		return false !== $stmt->fetch( PDO::FETCH_NUM );
+	}
+
+	/**
+	 * Read case-insensitive MySQL-facing text columns for a table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<string,bool> Lowercase column-name map.
+	 */
+	private function case_insensitive_column_names( string $table_name ): array {
+		$columns         = array();
+		$table_collation = $this->table_default_collation( $table_name );
+		foreach ( $this->column_metadata_rows( $table_name ) as $row ) {
+			if ( ! array_key_exists( 'column_name', $row ) || ! array_key_exists( 'collation_name', $row ) ) {
+				continue;
+			}
+			$collation_name = null === $row['collation_name'] ? null : (string) $row['collation_name'];
+			if ( 'utf8mb4_0900_ai_ci' === strtolower( (string) $collation_name ) && ! $this->mysql_collation_is_case_insensitive( $table_collation ) ) {
+				continue;
+			}
+			if ( $this->mysql_collation_is_case_insensitive( $collation_name ) ) {
+				$columns[ strtolower( (string) $row['column_name'] ) ] = true;
+			}
+		}
+
+		return $columns;
 	}
 
 	/**
@@ -7040,10 +7384,29 @@ class WP_DuckDB_Driver {
 
 		$metadata = array();
 		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			if ( ! array_key_exists( 'table_name', $row ) ) {
+				continue;
+			}
 			$metadata[ (string) $row['table_name'] ] = $row;
 		}
 
 		return $metadata;
+	}
+
+	/**
+	 * Read the effective default table collation for new text columns.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 * @return string MySQL collation name.
+	 */
+	private function table_default_collation( string $table_name, bool $temporary = false ): string {
+		$metadata = $this->table_metadata_by_table( $temporary );
+		if ( isset( $metadata[ $table_name ]['table_collation'] ) && '' !== $metadata[ $table_name ]['table_collation'] ) {
+			return (string) $metadata[ $table_name ]['table_collation'];
+		}
+
+		return 'utf8mb4_0900_ai_ci';
 	}
 
 	/**

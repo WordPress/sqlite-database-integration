@@ -962,6 +962,114 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_case_insensitive_unique_conflicts_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE ci_items (
+				id INTEGER PRIMARY KEY,
+				name VARCHAR(20) NOT NULL DEFAULT '',
+				payload VARCHAR(20),
+				UNIQUE KEY name (name)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$this->assertStringContainsString( 'COLLATE NOCASE', $driver->get_last_duckdb_queries()[0] );
+
+		$driver->query( "INSERT INTO ci_items (id, name, payload) VALUES (1, 'first', 'a')" );
+
+		try {
+			$driver->query( "INSERT INTO ci_items (id, name, payload) VALUES (2, 'FIRST', 'duplicate')" );
+			$this->fail( 'Expected case-insensitive duplicate INSERT to fail.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'UNIQUE constraint failed', $e->getMessage() );
+		}
+
+		$ignored = $driver->query( "INSERT IGNORE INTO ci_items (id, name, payload) VALUES (2, 'FIRST', 'ignored')" );
+		$this->assertSame( 0, $ignored->rowCount() );
+
+		$updated = $driver->query(
+			"INSERT INTO ci_items (id, name, payload) VALUES (2, 'FIRST', 'updated')
+			ON DUPLICATE KEY UPDATE name = VALUES(name), payload = VALUES(payload)"
+		);
+		$this->assertSame( 1, $updated->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'name'    => 'FIRST',
+					'payload' => 'updated',
+				),
+			),
+			$driver->query( 'SELECT id, name, payload FROM ci_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$replaced = $driver->query( "REPLACE INTO ci_items (id, name, payload) VALUES (2, 'first', 'replaced')" );
+		$this->assertSame( 1, $replaced->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 2,
+					'name'    => 'first',
+					'payload' => 'replaced',
+				),
+			),
+			$driver->query( 'SELECT id, name, payload FROM ci_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_binary_collation_unique_keys_remain_case_sensitive(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE bin_items (
+				id INTEGER PRIMARY KEY,
+				name VARCHAR(20),
+				payload VARCHAR(20),
+				UNIQUE KEY name (name)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin'
+		);
+
+		$driver->query( "INSERT INTO bin_items (id, name, payload) VALUES (1, 'first', 'a')" );
+		$driver->query( "INSERT INTO bin_items (id, name, payload) VALUES (2, 'FIRST', 'b')" );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'name'    => 'first',
+					'payload' => 'a',
+				),
+				array(
+					'id'      => 2,
+					'name'    => 'FIRST',
+					'payload' => 'b',
+				),
+			),
+			$driver->query( 'SELECT id, name, payload FROM bin_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$replaced = $driver->query( "REPLACE INTO bin_items (id, name, payload) VALUES (3, 'first', 'replaced')" );
+		$this->assertSame( 1, $replaced->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 2,
+					'name'    => 'FIRST',
+					'payload' => 'b',
+				),
+				array(
+					'id'      => 3,
+					'name'    => 'first',
+					'payload' => 'replaced',
+				),
+			),
+			$driver->query( 'SELECT id, name, payload FROM bin_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_wordpress_style_schema_can_be_created(): void {
 		$this->requireDuckDBRuntime();
 

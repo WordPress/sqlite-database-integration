@@ -80,6 +80,22 @@ abstract class WP_DuckDB_Differential_TestCase extends WP_DuckDB_TestCase {
 	}
 
 	/**
+	 * Run SQL on both engines and assert both fail with a matching message.
+	 *
+	 * @param string $sql    SQL query.
+	 * @param string $needle Expected message fragment.
+	 */
+	protected function assertParityErrorContains( string $sql, string $needle ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$sqlite_message = $this->query_sqlite_error_message( $sql );
+		$duckdb_message = $this->query_duckdb_error_message( $sql );
+
+		$this->assertIsString( $sqlite_message, 'SQLite query should have failed for SQL: ' . $sql );
+		$this->assertIsString( $duckdb_message, 'DuckDB query should have failed for SQL: ' . $sql );
+		$this->assertStringContainsString( $needle, $sqlite_message, 'SQLite error mismatch for SQL: ' . $sql );
+		$this->assertStringContainsString( $needle, $duckdb_message, 'DuckDB error mismatch for SQL: ' . $sql );
+	}
+
+	/**
 	 * Execute setup SQL on both engines.
 	 *
 	 * @param string[] $queries Setup queries.
@@ -131,6 +147,38 @@ abstract class WP_DuckDB_Differential_TestCase extends WP_DuckDB_TestCase {
 	 */
 	private function query_duckdb_row_count( string $sql ): int {
 		return $this->duckdb_driver->query( $sql )->rowCount();
+	}
+
+	/**
+	 * Run a query on SQLite and return the error message.
+	 *
+	 * @param string $sql SQL query.
+	 * @return string|null Error message, or null when the query succeeds.
+	 */
+	private function query_sqlite_error_message( string $sql ): ?string {
+		try {
+			$this->sqlite_driver->query( $sql, PDO::FETCH_ASSOC );
+		} catch ( Throwable $e ) {
+			return $e->getMessage();
+		}
+
+		return null;
+	}
+
+	/**
+	 * Run a query on DuckDB and return the error message.
+	 *
+	 * @param string $sql SQL query.
+	 * @return string|null Error message, or null when the query succeeds.
+	 */
+	private function query_duckdb_error_message( string $sql ): ?string {
+		try {
+			$this->duckdb_driver->query( $sql );
+		} catch ( Throwable $e ) {
+			return $e->getMessage();
+		}
+
+		return null;
 	}
 
 	/**

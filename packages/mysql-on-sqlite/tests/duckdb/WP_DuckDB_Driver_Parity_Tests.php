@@ -313,6 +313,68 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_case_insensitive_unique_conflicts_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE ci_items (
+					id INTEGER PRIMARY KEY,
+					name VARCHAR(20) NOT NULL DEFAULT '',
+					payload VARCHAR(20),
+					UNIQUE KEY name (name)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO ci_items (id, name, payload) VALUES (1, 'first', 'a')",
+			)
+		);
+
+		$this->assertParityErrorContains(
+			"INSERT INTO ci_items (id, name, payload) VALUES (2, 'FIRST', 'duplicate')",
+			'UNIQUE constraint failed'
+		);
+		$this->assertParityRows( 'SELECT id, name, payload FROM ci_items ORDER BY id' );
+
+		$this->assertParityRowCount( "INSERT IGNORE INTO ci_items (id, name, payload) VALUES (2, 'FIRST', 'ignored')" );
+		$this->assertParityRows( 'SELECT id, name, payload FROM ci_items ORDER BY id' );
+
+		$this->assertParityRowCount(
+			"INSERT INTO ci_items (id, name, payload) VALUES (2, 'FIRST', 'updated')
+			ON DUPLICATE KEY UPDATE name = VALUES(name), payload = VALUES(payload)"
+		);
+		$this->assertParityRows( 'SELECT id, name, payload FROM ci_items ORDER BY id' );
+
+		$this->assertParityRowCount( "REPLACE INTO ci_items (id, name, payload) VALUES (2, 'first', 'replaced')" );
+		$this->assertParityRows( 'SELECT id, name, payload FROM ci_items ORDER BY id' );
+	}
+
+	public function test_case_insensitive_composite_unique_conflicts_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE site_options (
+					id INTEGER PRIMARY KEY,
+					site_id INTEGER NOT NULL DEFAULT 0,
+					option_name VARCHAR(20) NOT NULL DEFAULT '',
+					payload VARCHAR(20),
+					UNIQUE KEY site_option (site_id, option_name)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO site_options (id, site_id, option_name, payload) VALUES (1, 1, 'first', 'a')",
+				"INSERT INTO site_options (id, site_id, option_name, payload) VALUES (2, 2, 'FIRST', 'other-site')",
+			)
+		);
+
+		$this->assertParityErrorContains(
+			"INSERT INTO site_options (id, site_id, option_name, payload) VALUES (3, 1, 'FIRST', 'duplicate')",
+			'UNIQUE constraint failed'
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO site_options (id, site_id, option_name, payload) VALUES (3, 1, 'FIRST', 'updated')
+			ON DUPLICATE KEY UPDATE option_name = VALUES(option_name), payload = VALUES(payload)"
+		);
+		$this->assertParityRows( 'SELECT id, site_id, option_name, payload FROM site_options ORDER BY id' );
+
+		$this->assertParityRowCount( "REPLACE INTO site_options (id, site_id, option_name, payload) VALUES (3, 1, 'first', 'replaced')" );
+		$this->assertParityRows( 'SELECT id, site_id, option_name, payload FROM site_options ORDER BY id' );
+	}
+
 	public function test_create_table_if_not_exists_with_secondary_index_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
