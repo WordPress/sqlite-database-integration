@@ -172,6 +172,35 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( array(), $result['after_flush_column_names'] );
 	}
 
+	public function test_duckdb_wpdb_db_connect_sets_filtered_sql_mode(): void {
+		$result = $this->run_sql_mode_boot_state_script( false );
+
+		$this->assertTrue( $result['connected'] );
+		$this->assertTrue( $result['ready'] );
+		$this->assertSame( '', $result['last_error'] );
+		$this->assertSame(
+			array(
+				'SELECT @@SESSION.sql_mode',
+				"SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'",
+			),
+			$result['driver_queries']
+		);
+	}
+
+	public function test_duckdb_wpdb_db_connect_reports_sql_mode_boot_failure(): void {
+		$result = $this->run_sql_mode_boot_state_script( true );
+
+		$this->assertFalse( $result['connected'] );
+		$this->assertFalse( $result['ready'] );
+		$this->assertSame( 'Broken SQL mode read.', $result['last_error'] );
+		$this->assertSame(
+			array(
+				'SELECT @@SESSION.sql_mode',
+			),
+			$result['driver_queries']
+		);
+	}
+
 	private function run_dispatcher_script( string $engine_expression ): array {
 		$plugin_dir = $this->get_plugin_dir();
 		$code       = $this->get_wordpress_stub_code();
@@ -207,6 +236,66 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 				unlink( $dropin_file );
 			}
 		}
+	}
+
+	private function run_sql_mode_boot_state_script( bool $fail_read ): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= '$fail_read = ' . ( $fail_read ? 'true' : 'false' ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_SQL_Mode_Test_Driver extends WP_DuckDB_Driver {
+	public $queries = array();
+	private $fail_read;
+
+	public function __construct( $fail_read ) {
+		$this->fail_read = $fail_read;
+	}
+
+	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		$this->queries[] = $sql;
+
+		if ( 'SELECT @@SESSION.sql_mode' === $sql ) {
+			if ( $this->fail_read ) {
+				throw new RuntimeException( 'Broken SQL mode read.' );
+			}
+
+			return new WP_DuckDB_Result_Statement(
+				array( '@@SESSION.sql_mode' ),
+				array(
+					array( 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION,ANSI' ),
+				),
+				0
+			);
+		}
+
+		if ( "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		throw new RuntimeException( 'Unexpected query: ' . $sql );
+	}
+}
+
+$driver                    = new WP_DuckDB_Plugin_SQL_Mode_Test_Driver( $fail_read );
+$GLOBALS['@duckdb_driver'] = $driver;
+$db                        = new WP_DuckDB_DB( 'wordpress_test' );
+$connected                 = $db->db_connect( false );
+
+echo json_encode(
+	array(
+		'connected'      => $connected,
+		'ready'          => $db->ready,
+		'last_error'     => $db->last_error,
+		'driver_queries' => $driver->queries,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
 	}
 
 	private function run_raw_query_state_script(): array {
@@ -331,6 +420,20 @@ class WP_DuckDB_Plugin_Insert_Id_Test_Driver extends WP_DuckDB_Driver {
 	public function __construct() {}
 
 	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		if ( 'SELECT @@SESSION.sql_mode' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( '@@SESSION.sql_mode' ),
+				array(
+					array( 'NO_ENGINE_SUBSTITUTION' ),
+				),
+				0
+			);
+		}
+
+		if ( "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
 		if ( false !== strpos( $sql, 'BROKEN' ) ) {
 			throw new RuntimeException( 'Synthetic insert failure.' );
 		}

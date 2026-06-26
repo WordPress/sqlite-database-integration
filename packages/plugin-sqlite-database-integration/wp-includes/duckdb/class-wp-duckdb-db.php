@@ -62,6 +62,52 @@ class WP_DuckDB_DB extends wpdb {
 	}
 
 	/**
+	 * Changes the current SQL mode, and ensures its WordPress compatibility.
+	 *
+	 * @param array $modes Optional. A list of SQL modes to set. Default empty array.
+	 */
+	public function set_sql_mode( $modes = array() ) {
+		if ( ! $this->dbh instanceof WP_DuckDB_Driver ) {
+			return;
+		}
+
+		if ( empty( $modes ) ) {
+			$result = $this->dbh->query( 'SELECT @@SESSION.sql_mode' );
+			$row    = $result->fetch( PDO::FETCH_OBJ ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+
+			if ( ! $row || ! isset( $row->{'@@SESSION.sql_mode'} ) ) {
+				throw new RuntimeException( 'DuckDB SQL mode bootstrap did not return @@SESSION.sql_mode.' );
+			}
+
+			$modes_str = $row->{'@@SESSION.sql_mode'};
+			if ( empty( $modes_str ) ) {
+				return;
+			}
+			$modes = explode( ',', $modes_str );
+		}
+
+		$modes = array_change_key_case( $modes, CASE_UPPER );
+
+		/**
+		 * Filters the list of incompatible SQL modes to exclude.
+		 *
+		 * @since 3.9.0
+		 *
+		 * @param array $incompatible_modes An array of incompatible modes.
+		 */
+		$incompatible_modes = $this->get_incompatible_sql_modes();
+
+		foreach ( $modes as $i => $mode ) {
+			if ( in_array( $mode, $incompatible_modes, true ) ) {
+				unset( $modes[ $i ] );
+			}
+		}
+		$modes_str = implode( ',', $modes );
+
+		$this->dbh->query( "SET SESSION sql_mode='" . str_replace( "'", "''", $modes_str ) . "'" );
+	}
+
+	/**
 	 * Close the database connection.
 	 *
 	 * @return bool
@@ -157,6 +203,13 @@ class WP_DuckDB_DB extends wpdb {
 		}
 
 		$this->ready = true;
+		try {
+			$this->set_sql_mode();
+		} catch ( Throwable $e ) {
+			$this->last_error = $e->getMessage();
+			$this->ready      = false;
+			return false;
+		}
 		return true;
 	}
 
@@ -317,6 +370,35 @@ class WP_DuckDB_DB extends wpdb {
 		} catch ( Throwable $e ) {
 			return 'DuckDB';
 		}
+	}
+
+	/**
+	 * Get the WordPress-incompatible SQL modes for filtering.
+	 *
+	 * @return array
+	 */
+	private function get_incompatible_sql_modes() {
+		$incompatible_modes = property_exists( $this, 'incompatible_modes' )
+			? $this->incompatible_modes
+			: $this->get_default_incompatible_sql_modes();
+
+		return (array) apply_filters( 'incompatible_sql_modes', $incompatible_modes );
+	}
+
+	/**
+	 * Get the WordPress wpdb default incompatible SQL modes.
+	 *
+	 * @return array
+	 */
+	private function get_default_incompatible_sql_modes() {
+		return array(
+			'NO_ZERO_DATE',
+			'ONLY_FULL_GROUP_BY',
+			'STRICT_TRANS_TABLES',
+			'STRICT_ALL_TABLES',
+			'TRADITIONAL',
+			'ANSI',
+		);
 	}
 
 	/**

@@ -294,6 +294,111 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_sql_mode_bootstrap_statements_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		foreach (
+			array(
+				'SET NAMES utf8mb4',
+				'SET CHARSET utf8mb4',
+				'SET CHARACTER SET utf8mb4',
+			) as $sql
+		) {
+			$set = $driver->query( $sql );
+			$this->assertSame( 0, $set->rowCount() );
+			$this->assertSame( 0, $set->columnCount() );
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		}
+
+		$default_sql_mode = 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,'
+			. 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES';
+		$read             = $driver->query( 'SELECT @@SESSION.sql_mode, @@sql_mode' );
+		$this->assertSame( array( 'name' => '@@SESSION.sql_mode' ), $read->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => '@@sql_mode' ), $read->getColumnMeta( 1 ) );
+		$this->assertSame(
+			array(
+				'@@SESSION.sql_mode' => $default_sql_mode,
+				'@@sql_mode'         => $default_sql_mode,
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$set = $driver->query( 'SET NAMES utf8mb4, autocommit = 0' );
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		$this->assertSame(
+			array( '@@autocommit' => 0 ),
+			$driver->query( 'SELECT @@autocommit' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$set = $driver->query( "SET CHARACTER SET utf8mb4, sql_mode = 'NO_ZERO_DATE'" );
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		$this->assertSame(
+			array(
+				'@@SESSION.sql_mode' => 'NO_ZERO_DATE',
+				'@@sql_mode'         => 'NO_ZERO_DATE',
+			),
+			$driver->query( 'SELECT @@SESSION.sql_mode, @@sql_mode' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		foreach (
+			array(
+				array(
+					'sql'      => "SET SESSION sql_mode = ''",
+					'expected' => '',
+				),
+				array(
+					'sql'      => "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'",
+					'expected' => 'NO_ENGINE_SUBSTITUTION',
+				),
+				array(
+					'sql'      => "SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'",
+					'expected' => 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION',
+				),
+			) as $case
+		) {
+			$set = $driver->query( $case['sql'] );
+			$this->assertSame( 0, $set->rowCount() );
+			$this->assertSame( 0, $set->columnCount() );
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+			$this->assertSame(
+				array(
+					'@@SESSION.sql_mode' => $case['expected'],
+					'@@sql_mode'         => $case['expected'],
+				),
+				$driver->query( 'SELECT @@SESSION.sql_mode, @@sql_mode' )->fetch( PDO::FETCH_ASSOC )
+			);
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		}
+	}
+
+	public function test_builtin_system_variables_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$read   = $driver->query( 'SELECT @@version, @@version_comment' );
+
+		$this->assertSame( array( 'name' => '@@version' ), $read->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => '@@version_comment' ), $read->getColumnMeta( 1 ) );
+		$this->assertSame(
+			array(
+				'@@version'         => '8.0.38',
+				'@@version_comment' => 'MySQL Community Server - GPL',
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
 	public function test_session_variable_unsupported_set_forms_are_rejected(): void {
 		$this->requireDuckDBRuntime();
 

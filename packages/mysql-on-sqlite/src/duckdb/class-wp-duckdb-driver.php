@@ -34,6 +34,12 @@ class WP_DuckDB_Driver {
 	const SUPPORTED_SESSION_SYSTEM_VARIABLES = array(
 		'autocommit' => true,
 		'big_tables' => true,
+		'sql_mode'   => true,
+	);
+
+	const READ_ONLY_SYSTEM_VARIABLES = array(
+		'version'         => true,
+		'version_comment' => true,
 	);
 
 	const DATA_TYPE_MAP = array(
@@ -104,6 +110,22 @@ class WP_DuckDB_Driver {
 	 * @var int
 	 */
 	private $last_insert_id = 0;
+
+	/**
+	 * The currently active MySQL SQL modes.
+	 *
+	 * The default value reflects the default SQL modes for MySQL 8.0.
+	 *
+	 * @var string[]
+	 */
+	private $active_sql_modes = array(
+		'ERROR_FOR_DIVISION_BY_ZERO',
+		'NO_ENGINE_SUBSTITUTION',
+		'NO_ZERO_DATE',
+		'NO_ZERO_IN_DATE',
+		'ONLY_FULL_GROUP_BY',
+		'STRICT_TRANS_TABLES',
+	);
 
 	/**
 	 * MySQL session system variables emulated by this driver.
@@ -262,6 +284,20 @@ class WP_DuckDB_Driver {
 	 * @return int|string|null Stored value, or null when supported but unset.
 	 */
 	private function get_session_system_variable( string $name ) {
+		$normalized_name = strtolower( $name );
+
+		if ( 'sql_mode' === $normalized_name ) {
+			return implode( ',', $this->active_sql_modes );
+		}
+
+		if ( 'version' === $normalized_name ) {
+			return $this->format_mysql_system_variable_version();
+		}
+
+		if ( 'version_comment' === $normalized_name ) {
+			return 'MySQL Community Server - GPL';
+		}
+
 		$normalized_name = $this->normalize_supported_session_system_variable_name( $name );
 
 		return $this->session_system_variables[ $normalized_name ] ?? null;
@@ -469,6 +505,7 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
+		$session_scoped = false;
 		if ( 2 === count( $tokens ) ) {
 			$name = $this->session_system_variable_name( $tokens[1] );
 		} elseif (
@@ -476,12 +513,13 @@ class WP_DuckDB_Driver {
 			&& WP_MySQL_Lexer::SESSION_SYMBOL === $tokens[1]->id
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[2]->id
 		) {
-			$name = $this->session_system_variable_name( $tokens[3] );
+			$name           = $this->session_system_variable_name( $tokens[3] );
+			$session_scoped = true;
 		} else {
 			return null;
 		}
 
-		if ( null === $name || ! $this->is_supported_session_system_variable( $name ) ) {
+		if ( null === $name || ! $this->is_supported_session_system_variable_reference( $name, $session_scoped ) ) {
 			return null;
 		}
 
@@ -506,13 +544,18 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Check whether this bounded slice supports a session system variable.
+	 * Check whether this bounded slice supports a system-variable reference.
 	 *
-	 * @param string $name Lowercase variable name.
+	 * @param string $name           Lowercase variable name.
+	 * @param bool   $session_scoped Whether the reference uses @@SESSION.
 	 * @return bool Whether the variable is supported.
 	 */
-	private function is_supported_session_system_variable( string $name ): bool {
-		return isset( self::SUPPORTED_SESSION_SYSTEM_VARIABLES[ $name ] );
+	private function is_supported_session_system_variable_reference( string $name, bool $session_scoped ): bool {
+		if ( isset( self::SUPPORTED_SESSION_SYSTEM_VARIABLES[ $name ] ) ) {
+			return true;
+		}
+
+		return ! $session_scoped && isset( self::READ_ONLY_SYSTEM_VARIABLES[ $name ] );
 	}
 
 	/**
@@ -1983,10 +2026,40 @@ class WP_DuckDB_Driver {
 
 		$default_scope = WP_MySQL_Lexer::SESSION_SYMBOL;
 		foreach ( $assignments as $assignment ) {
+			if ( $this->is_set_charset_bootstrap_assignment( $assignment ) ) {
+				continue;
+			}
+
 			$default_scope = $this->execute_set_session_system_variable_assignment( $assignment, $default_scope );
 		}
 
 		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Check whether a SET statement is a charset bootstrap no-op.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return bool Whether the assignment is SET NAMES, SET CHARSET, or SET CHARACTER SET.
+	 */
+	private function is_set_charset_bootstrap_assignment( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::NAMES_SYMBOL === $tokens[0]->id || WP_MySQL_Lexer::CHARSET_SYMBOL === $tokens[0]->id ) {
+			return true;
+		}
+
+		if (
+			( WP_MySQL_Lexer::CHARACTER_SYMBOL === $tokens[0]->id || WP_MySQL_Lexer::CHAR_SYMBOL === $tokens[0]->id )
+			&& isset( $tokens[1] )
+			&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[1]->id
+		) {
+			return true;
+		}
+
+		return false;
 	}
 
 	/**
@@ -2025,7 +2098,12 @@ class WP_DuckDB_Driver {
 			throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
 		}
 
-		$this->session_system_variables[ $name ] = $this->normalize_set_session_system_variable_value( $name, $value_tokens[0] );
+		$value = $this->normalize_set_session_system_variable_value( $name, $value_tokens[0] );
+		if ( 'sql_mode' === $name ) {
+			$this->active_sql_modes = '' === $value ? array() : explode( ',', (string) $value );
+		} else {
+			$this->session_system_variables[ $name ] = $value;
+		}
 
 		return $default_scope;
 	}
@@ -2084,6 +2162,10 @@ class WP_DuckDB_Driver {
 	 * @return int|string Normalized stored value.
 	 */
 	private function normalize_set_session_system_variable_value( string $name, WP_Parser_Token $token ) {
+		if ( 'sql_mode' === $name ) {
+			return $this->normalize_set_sql_mode_value( $token );
+		}
+
 		$value = $token->get_value();
 		$lower = strtolower( $value );
 
@@ -2119,12 +2201,44 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Normalize a SET sql_mode value for driver-local readback.
+	 *
+	 * @param WP_Parser_Token $token Value token.
+	 * @return string Normalized SQL mode string.
+	 */
+	private function normalize_set_sql_mode_value( WP_Parser_Token $token ): string {
+		if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
+			throw $this->new_unsupported_set_session_system_variable_value_exception( 'sql_mode' );
+		}
+
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+			return strtoupper( $token->get_value() );
+		}
+
+		if ( 'default' === strtolower( $token->get_value() ) ) {
+			return 'DEFAULT';
+		}
+
+		if ( ! $this->is_non_identifier_token( $token ) ) {
+			return strtoupper( $token->get_value() );
+		}
+
+		throw $this->new_unsupported_set_session_system_variable_value_exception( 'sql_mode' );
+	}
+
+	/**
 	 * Build an unsupported SET value exception.
 	 *
 	 * @param string $name Normalized variable name.
 	 * @return WP_DuckDB_Driver_Exception Exception.
 	 */
 	private function new_unsupported_set_session_system_variable_value_exception( string $name ): WP_DuckDB_Driver_Exception {
+		if ( 'sql_mode' === $name ) {
+			return new WP_DuckDB_Driver_Exception(
+				'Unsupported SET value for sql_mode in DuckDB driver. Only string literals, bare mode names, and DEFAULT are supported.'
+			);
+		}
+
 		return new WP_DuckDB_Driver_Exception(
 			'Unsupported SET value for '
 			. $name
@@ -2144,7 +2258,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception(
 				'Unsupported SET session variable in DuckDB driver: '
 				. $name
-				. '. Only autocommit and big_tables are supported.'
+				. '. Only autocommit, big_tables, and sql_mode are supported.'
 			);
 		}
 
@@ -9186,6 +9300,19 @@ class WP_DuckDB_Driver {
 		$patch = $this->mysql_version % 100;
 
 		return sprintf( '%d.%d.%d-DuckDB', $major, $minor, $patch );
+	}
+
+	/**
+	 * Format the emulated MySQL version for @@version readback.
+	 *
+	 * @return string
+	 */
+	private function format_mysql_system_variable_version(): string {
+		$major = (int) floor( $this->mysql_version / 10000 );
+		$minor = (int) floor( ( $this->mysql_version % 10000 ) / 100 );
+		$patch = $this->mysql_version % 100;
+
+		return sprintf( '%d.%d.%d', $major, $minor, $patch );
 	}
 
 	/**

@@ -111,6 +111,35 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT @@autocommit, @@big_tables' );
 	}
 
+	public function test_sql_mode_bootstrap_sql_matches_sqlite(): void {
+		$this->assertParityRowCount( 'SET NAMES utf8mb4' );
+		$this->assertParityRowCount( 'SET CHARSET utf8mb4' );
+		$this->assertParityRowCount( 'SET CHARACTER SET utf8mb4' );
+
+		$this->assertParityRows( 'SELECT @@SESSION.sql_mode, @@sql_mode' );
+
+		$this->assertParityRowCount( 'SET NAMES utf8mb4, autocommit = 0' );
+		$this->assertParityRows( 'SELECT @@autocommit' );
+
+		$this->assertParityRowCount( "SET CHARACTER SET utf8mb4, sql_mode = 'NO_ZERO_DATE'" );
+		$this->assertParityRows( 'SELECT @@SESSION.sql_mode, @@sql_mode' );
+
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->assertParityRows( 'SELECT @@SESSION.sql_mode, @@sql_mode' );
+
+		$this->assertParityRowCount( "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'" );
+		$this->assertParityRows( 'SELECT @@SESSION.sql_mode, @@sql_mode' );
+
+		$this->assertParityRowCount(
+			"SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'"
+		);
+		$this->assertParityRows( 'SELECT @@SESSION.sql_mode, @@sql_mode' );
+	}
+
+	public function test_builtin_system_variables_match_sqlite(): void {
+		$this->assertParityRows( 'SELECT @@version, @@version_comment' );
+	}
+
 	public function test_lock_unlock_sql_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
