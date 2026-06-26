@@ -331,6 +331,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 1, $inserted->rowCount() );
 		$this->assertSame( 'INSERT INTO items(id, name) SELECT id, name FROM source_items WHERE id = 1', $this->lastDuckDBQuery( $driver ) );
 
+		$inserted_without_target_columns = $driver->query( 'INSERT INTO items SELECT id, name FROM source_items WHERE id = 2' );
+		$this->assertSame( 1, $inserted_without_target_columns->rowCount() );
+		$this->assertSame( 'INSERT INTO items SELECT id, name FROM source_items WHERE id = 2', $this->lastDuckDBQuery( $driver ) );
+
 		$ignored = $driver->query( 'INSERT IGNORE items (id, name) SELECT id, name FROM source_items WHERE id = 1' );
 		$this->assertSame( 0, $ignored->rowCount() );
 		$this->assertSame( 'INSERT OR IGNORE INTO items(id, name) SELECT id, name FROM source_items WHERE id = 1', $this->lastDuckDBQuery( $driver ) );
@@ -348,6 +352,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array(
 					'id'   => 1,
 					'name' => 'replaced',
+				),
+				array(
+					'id'   => 2,
+					'name' => 'second',
 				),
 				array(
 					'id'   => 3,
