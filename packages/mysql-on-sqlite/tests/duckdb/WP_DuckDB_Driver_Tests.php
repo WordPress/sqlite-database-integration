@@ -113,6 +113,59 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'anonymous', $describe[1]['Default'] );
 	}
 
+	public function test_show_columns_and_full_fields_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE `metadata` (
+				`id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				`val1` INT DEFAULT NULL,
+				`val2` INT NOT NULL DEFAULT 0,
+				`title` VARCHAR(100) NOT NULL DEFAULT 'untitled' COMMENT 'DuckDB does not persist this yet'
+			)"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Field'   => 'val1',
+					'Type'    => 'INTEGER',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'val2',
+					'Type'    => 'INTEGER',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => '0',
+					'Extra'   => '',
+				),
+			),
+			$driver->query( "SHOW COLUMNS FROM `metadata` LIKE 'val_'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Field'      => 'title',
+					'Type'       => 'VARCHAR',
+					'Collation'  => null,
+					'Null'       => 'NO',
+					'Key'        => '',
+					'Default'    => 'untitled',
+					'Extra'      => '',
+					'Privileges' => 'select,insert,update,references',
+					'Comment'    => '',
+				),
+			),
+			$driver->query( "SHOW FULL FIELDS IN `metadata` LIKE 'title'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_regexp_predicates_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

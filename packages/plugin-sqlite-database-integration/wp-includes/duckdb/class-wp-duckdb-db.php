@@ -94,6 +94,20 @@ class WP_DuckDB_DB extends wpdb {
 	}
 
 	/**
+	 * Flush cached query state.
+	 */
+	public function flush() {
+		$this->last_result    = array();
+		$this->col_info       = null;
+		$this->last_query     = null;
+		$this->rows_affected  = 0;
+		$this->num_rows       = 0;
+		$this->last_error     = '';
+		$this->result         = null;
+		$this->last_statement = null;
+	}
+
+	/**
 	 * Connect to DuckDB.
 	 *
 	 * @param bool $allow_bail Whether to bail on error.

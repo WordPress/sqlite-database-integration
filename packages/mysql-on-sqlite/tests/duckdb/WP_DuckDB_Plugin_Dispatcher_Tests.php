@@ -111,15 +111,31 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 2, $result['insert_rows_affected'] );
 		$this->assertTrue( $result['create_return'] );
 		$this->assertSame( 3, $result['num_queries'] );
-			$this->assertSame(
-				array(
-					'CREATE OR REPLACE MACRO date_format(d, f) AS strftime(d, f)',
-					'SELECT 42 AS answer',
-					'INSERT INTO t VALUES (1), (2)',
-					'CREATE TABLE "t" ("id" INTEGER)',
-				),
-				$result['client_queries']
-			);
+		$this->assertSame(
+			array(
+				'CREATE OR REPLACE MACRO date_format(d, f) AS strftime(d, f)',
+				'SELECT 42 AS answer',
+				'INSERT INTO t VALUES (1), (2)',
+				'CREATE TABLE "t" ("id" INTEGER)',
+			),
+			$result['client_queries']
+		);
+	}
+
+	public function test_duckdb_wpdb_flush_clears_statement_metadata(): void {
+		$result = $this->run_flush_state_script();
+
+		$this->assertTrue( $result['connected'] );
+		$this->assertSame( 1, $result['select_return'] );
+		$this->assertSame( array( 'answer' ), $result['before_flush_column_names'] );
+		$this->assertSame( array(), $result['last_result_after_flush'] );
+		$this->assertNull( $result['col_info_after_flush'] );
+		$this->assertNull( $result['last_query_after_flush'] );
+		$this->assertSame( 0, $result['rows_affected_after_flush'] );
+		$this->assertSame( 0, $result['num_rows_after_flush'] );
+		$this->assertSame( '', $result['last_error_after_flush'] );
+		$this->assertNull( $result['result_after_flush'] );
+		$this->assertSame( array(), $result['after_flush_column_names'] );
 	}
 
 	private function run_dispatcher_script( string $engine_expression ): array {
@@ -251,6 +267,109 @@ echo json_encode(
 		'create_return'        => $create_return,
 		'num_queries'          => $db->num_queries,
 		'client_queries'       => $client->queries,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_flush_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_Flush_Test_Result {
+	private $columns;
+	private $rows;
+
+	public function __construct( array $columns, array $rows ) {
+		$this->columns = $columns;
+		$this->rows    = $rows;
+	}
+
+	public function columnNames() {
+		return new ArrayIterator( $this->columns );
+	}
+
+	public function rows( $assoc = false ) {
+		return new ArrayIterator( $this->rows );
+	}
+}
+
+class WP_DuckDB_Plugin_Flush_Test_Client {
+	public function query( $sql ) {
+		$normalized = strtolower( trim( $sql ) );
+
+		if ( 0 === strpos( $normalized, 'select' ) ) {
+			return new WP_DuckDB_Plugin_Flush_Test_Result(
+				array( 'answer' ),
+				array(
+					array( 'answer' => 42 ),
+				)
+			);
+		}
+
+		if ( 0 === strpos( $normalized, 'create' ) ) {
+			return new WP_DuckDB_Plugin_Flush_Test_Result(
+				array( 'Success' ),
+				array(
+					array( 'Success' => true ),
+				)
+			);
+		}
+
+		throw new RuntimeException( 'Unexpected query: ' . $sql );
+	}
+}
+
+class WP_DuckDB_Plugin_Flush_Test_DB extends WP_DuckDB_DB {
+	public function exported_column_names() {
+		$this->load_col_info();
+		return array_map(
+			function ( $column ) {
+				return $column->name;
+			},
+			$this->col_info
+		);
+	}
+}
+
+$GLOBALS['@duckdb'] = new WP_DuckDB_Connection( array( 'duckdb' => new WP_DuckDB_Plugin_Flush_Test_Client() ) );
+$db                 = new WP_DuckDB_Plugin_Flush_Test_DB( 'wordpress_test' );
+$connected          = $db->db_connect( false );
+$select_return      = $db->query( 'SELECT 42 AS answer' );
+$before_columns     = $db->exported_column_names();
+
+$db->flush();
+
+$state_after_flush = array(
+	'last_result'   => $db->last_result,
+	'col_info'      => $db->col_info,
+	'last_query'    => $db->last_query,
+	'rows_affected' => $db->rows_affected,
+	'num_rows'      => $db->num_rows,
+	'last_error'    => $db->last_error,
+	'result'        => $db->result,
+);
+$after_columns     = $db->exported_column_names();
+
+echo json_encode(
+	array(
+		'connected'                  => $connected,
+		'select_return'              => $select_return,
+		'before_flush_column_names'  => $before_columns,
+		'last_result_after_flush'    => $state_after_flush['last_result'],
+		'col_info_after_flush'       => $state_after_flush['col_info'],
+		'last_query_after_flush'     => $state_after_flush['last_query'],
+		'rows_affected_after_flush'  => $state_after_flush['rows_affected'],
+		'num_rows_after_flush'       => $state_after_flush['num_rows'],
+		'last_error_after_flush'     => $state_after_flush['last_error'],
+		'result_after_flush'         => $state_after_flush['result'],
+		'after_flush_column_names'   => $after_columns,
 	)
 );
 PHP;

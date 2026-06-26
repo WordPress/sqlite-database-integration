@@ -598,12 +598,107 @@ class WP_DuckDB_Driver {
 
 		if (
 			isset( $tokens[1] )
+			&& (
+				WP_MySQL_Lexer::COLUMNS_SYMBOL === $tokens[1]->id
+				|| (
+					isset( $tokens[2] )
+					&& WP_MySQL_Lexer::FULL_SYMBOL === $tokens[1]->id
+					&& WP_MySQL_Lexer::COLUMNS_SYMBOL === $tokens[2]->id
+				)
+			)
+		) {
+			return $this->execute_show_columns( $tokens );
+		}
+
+		if (
+			isset( $tokens[1] )
 			&& in_array( $tokens[1]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::INDEXES_SYMBOL, WP_MySQL_Lexer::KEYS_SYMBOL ), true )
 		) {
 			return $this->execute_show_index( $tokens );
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW statement in DuckDB driver.' );
+	}
+
+	/**
+	 * Execute SHOW [FULL] COLUMNS FROM table.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_show_columns( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 1;
+		$full  = false;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::FULL_SYMBOL === $tokens[ $index ]->id ) {
+			$full = true;
+			++$index;
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::COLUMNS_SYMBOL, 'Expected COLUMNS in SHOW COLUMNS statement.' );
+		++$index;
+
+		if (
+			! isset( $tokens[ $index ] )
+			|| ( WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $index ]->id && WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $index ]->id )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW COLUMNS statement in DuckDB driver. Use SHOW COLUMNS FROM table.' );
+		}
+		++$index;
+
+		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		$like_pattern = null;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $index ]->id ) {
+			if (
+				! isset( $tokens[ $index + 1 ] )
+				|| (
+					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
+					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
+				)
+			) {
+				throw new WP_DuckDB_Driver_Exception( 'SHOW COLUMNS LIKE requires a string pattern in the DuckDB driver.' );
+			}
+			$like_pattern = $tokens[ $index + 1 ]->get_value();
+			$index       += 2;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW COLUMNS statement in DuckDB driver. Only optional LIKE is supported.' );
+		}
+
+		$rows = $this->describe_column_rows( $table_name );
+		if ( null !== $like_pattern ) {
+			$rows = $this->filter_column_rows_by_like( $rows, $like_pattern );
+		}
+
+		if ( ! $full ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+				$rows
+			);
+		}
+
+		$full_rows = array();
+		foreach ( $rows as $row ) {
+			$full_rows[] = array(
+				$row[0],
+				$row[1],
+				null,
+				$row[2],
+				$row[3],
+				$row[4],
+				$row[5],
+				'select,insert,update,references',
+				'',
+			);
+		}
+
+		return new WP_DuckDB_Result_Statement(
+			array( 'Field', 'Type', 'Collation', 'Null', 'Key', 'Default', 'Extra', 'Privileges', 'Comment' ),
+			$full_rows
+		);
 	}
 
 	/**
@@ -765,12 +860,24 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported DESCRIBE statement in DuckDB driver. Only DESCRIBE table is supported.' );
 		}
 
-		$table_name = $this->identifier_value( $tokens[1] );
-		$pragma     = $this->execute_duckdb_query(
+		return new WP_DuckDB_Result_Statement(
+			array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+			$this->describe_column_rows( $this->identifier_value( $tokens[1] ) )
+		);
+	}
+
+	/**
+	 * Build MySQL DESCRIBE/SHOW COLUMNS rows from DuckDB table metadata.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array<int,mixed>>
+	 */
+	private function describe_column_rows( string $table_name ): array {
+		$pragma = $this->execute_duckdb_query(
 			'SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') ORDER BY cid',
 			'Failed to inspect DuckDB table'
 		);
-		$rows       = $pragma->fetchAll( PDO::FETCH_ASSOC );
+		$rows   = $pragma->fetchAll( PDO::FETCH_ASSOC );
 
 		if ( count( $rows ) === 0 ) {
 			throw new WP_DuckDB_Driver_Exception( 'DuckDB table does not exist: ' . $table_name . '.' );
@@ -792,10 +899,70 @@ class WP_DuckDB_Driver {
 			);
 		}
 
-		return new WP_DuckDB_Result_Statement(
-			array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
-			$describe_rows
-		);
+		return $describe_rows;
+	}
+
+	/**
+	 * Filter DESCRIBE-style rows using a MySQL LIKE pattern against Field.
+	 *
+	 * @param array<int,array<int,mixed>> $rows    DESCRIBE-style rows.
+	 * @param string                      $pattern LIKE pattern.
+	 * @return array<int,array<int,mixed>>
+	 */
+	private function filter_column_rows_by_like( array $rows, string $pattern ): array {
+		$filtered = array();
+		foreach ( $rows as $row ) {
+			if ( $this->mysql_like_matches( (string) $row[0], $pattern ) ) {
+				$filtered[] = $row;
+			}
+		}
+		return $filtered;
+	}
+
+	/**
+	 * Match a string with MySQL LIKE wildcards.
+	 *
+	 * @param string $value   Candidate value.
+	 * @param string $pattern LIKE pattern.
+	 * @return bool
+	 */
+	private function mysql_like_matches( string $value, string $pattern ): bool {
+		$regex    = '';
+		$escaping = false;
+		$length   = strlen( $pattern );
+
+		for ( $index = 0; $index < $length; ++$index ) {
+			$char = $pattern[ $index ];
+
+			if ( $escaping ) {
+				$regex   .= preg_quote( $char, '/' );
+				$escaping = false;
+				continue;
+			}
+
+			if ( '\\' === $char ) {
+				$escaping = true;
+				continue;
+			}
+
+			if ( '%' === $char ) {
+				$regex .= '.*';
+				continue;
+			}
+
+			if ( '_' === $char ) {
+				$regex .= '.';
+				continue;
+			}
+
+			$regex .= preg_quote( $char, '/' );
+		}
+
+		if ( $escaping ) {
+			$regex .= preg_quote( '\\', '/' );
+		}
+
+		return 1 === preg_match( '/\A' . $regex . '\z/s', $value );
 	}
 
 	/**
