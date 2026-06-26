@@ -120,6 +120,84 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'anonymous', $describe[1]['Default'] );
 	}
 
+	public function test_update_delete_alias_order_limit_are_rewritten(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE items (id INT, name VARCHAR(20), hits INT)' );
+		$driver->query( "INSERT INTO items VALUES (1, 'b', 1), (2, 'a', 2), (3, 'c', 3)" );
+
+		$update_ordered = $driver->query( 'UPDATE items SET hits = 9 ORDER BY name LIMIT 1' );
+		$this->assertSame( 1, $update_ordered->rowCount() );
+
+		$update_alias = $driver->query( "UPDATE items AS i SET i.hits = 7 WHERE i.name = 'b' LIMIT 1" );
+		$this->assertSame( 1, $update_alias->rowCount() );
+
+		$update_qualified = $driver->query( 'UPDATE wp.items SET hits = 6 WHERE id = 3' );
+		$this->assertSame( 1, $update_qualified->rowCount() );
+
+		$update_limit_zero = $driver->query( 'UPDATE items SET hits = 5 LIMIT 0' );
+		$this->assertSame( 0, $update_limit_zero->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'b',
+					'hits' => 7,
+				),
+				array(
+					'id'   => 2,
+					'name' => 'a',
+					'hits' => 9,
+				),
+				array(
+					'id'   => 3,
+					'name' => 'c',
+					'hits' => 6,
+				),
+			),
+			$driver->query( 'SELECT id, name, hits FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$delete_alias = $driver->query( "DELETE FROM items AS i WHERE i.name = 'b' LIMIT 1" );
+		$this->assertSame( 1, $delete_alias->rowCount() );
+
+		$delete_ordered = $driver->query( 'DELETE FROM wp.items ORDER BY name LIMIT 1' );
+		$this->assertSame( 1, $delete_ordered->rowCount() );
+
+		$delete_limit_zero = $driver->query( 'DELETE FROM items LIMIT 0' );
+		$this->assertSame( 0, $delete_limit_zero->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 3,
+					'name' => 'c',
+					'hits' => 6,
+				),
+			),
+			$driver->query( 'SELECT id, name, hits FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_ordered_limited_dml_rejects_user_defined_rowid_column(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE items (rowid INT, name VARCHAR(20), hits INT)' );
+		$driver->query( "INSERT INTO items VALUES (10, 'b', 1), (20, 'a', 2)" );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( 'ORDER BY/LIMIT rewrites require a table without a user-defined rowid column.' );
+		$driver->query( 'UPDATE items SET hits = 9 ORDER BY name LIMIT 1' );
+	}
+
 	public function test_show_columns_and_full_fields_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

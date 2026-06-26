@@ -33,6 +33,30 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_update_delete_alias_order_limit_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR(100), hits INTEGER DEFAULT 0)',
+				"INSERT INTO items (id, name, hits) VALUES (1, 'b', 1), (2, 'a', 2), (3, 'c', 3)",
+			)
+		);
+
+		$this->assertParityRowCount( 'UPDATE items SET hits = 9 ORDER BY name LIMIT 1' );
+		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
+		$this->assertParityRowCount( "UPDATE items AS i SET i.hits = 7 WHERE i.name = 'b' LIMIT 1" );
+		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
+		$this->assertParityRowCount( 'UPDATE wp.items SET hits = 6 WHERE id = 3' );
+		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
+		$this->assertParityRowCount( 'UPDATE items SET hits = 5 LIMIT 0' );
+		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
+		$this->assertParityRowCount( "DELETE FROM items AS i WHERE i.name = 'b' LIMIT 1" );
+		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
+		$this->assertParityRowCount( 'DELETE FROM wp.items ORDER BY name LIMIT 1' );
+		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
+		$this->assertParityRowCount( 'DELETE FROM items LIMIT 0' );
+		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
+	}
+
 	public function test_insert_set_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

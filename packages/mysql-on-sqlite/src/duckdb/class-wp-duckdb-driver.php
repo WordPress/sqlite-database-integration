@@ -620,15 +620,38 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_update( array $tokens ): WP_DuckDB_Result_Statement {
-		$this->identifier_value( $tokens[1] ?? null );
-		if ( ! isset( $tokens[2] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[2]->id ) {
+		$reference = $this->parse_single_table_dml_reference( $tokens, 1, 'UPDATE' );
+		$index     = $reference['next_index'];
+
+		if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[ $index ]->id ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only simple single-table UPDATE is supported.' );
 		}
+		++$index;
 
-		return $this->execute_duckdb_query(
-			$this->translate_tokens_to_duckdb_sql( $tokens ),
-			'Failed to execute DuckDB UPDATE'
-		);
+		$clauses       = $this->dml_clause_indexes( $tokens, $index );
+		$update_end    = $clauses['where'] ?? $clauses['order'] ?? $clauses['limit'] ?? count( $tokens );
+		$update_tokens = array_slice( $tokens, $index, $update_end - $index );
+		if ( count( $update_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE list is required.' );
+		}
+
+		$sql = 'UPDATE ' . $this->dml_table_reference_sql( $reference )
+			. ' SET '
+			. $this->translate_update_assignment_tokens_to_duckdb_sql( $update_tokens, $reference );
+
+		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
+			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'UPDATE' );
+			$sql .= ' WHERE rowid IN ( '
+				. $this->dml_rowid_subquery_sql( $tokens, $clauses, $reference )
+				. ' )';
+		} elseif ( null !== $clauses['where'] ) {
+			$where_end = $clauses['order'] ?? $clauses['limit'] ?? count( $tokens );
+			$sql      .= ' WHERE ' . $this->translate_tokens_to_duckdb_sql(
+				array_slice( $tokens, $clauses['where'] + 1, $where_end - $clauses['where'] - 1 )
+			);
+		}
+
+		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB UPDATE' );
 	}
 
 	/**
@@ -641,15 +664,229 @@ class WP_DuckDB_Driver {
 		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[1]->id ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Only DELETE FROM table is supported.' );
 		}
-		$this->identifier_value( $tokens[2] ?? null );
-		if ( isset( $tokens[3] ) && WP_MySQL_Lexer::WHERE_SYMBOL !== $tokens[3]->id ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Only simple single-table DELETE is supported.' );
+
+		$reference = $this->parse_single_table_dml_reference( $tokens, 2, 'DELETE' );
+		$clauses   = $this->dml_clause_indexes( $tokens, $reference['next_index'] );
+
+		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
+			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE' );
+			$sql = 'DELETE FROM ' . $this->connection->quote_identifier( $reference['table_name'] )
+				. ' WHERE rowid IN ( '
+				. $this->dml_rowid_subquery_sql( $tokens, $clauses, $reference )
+				. ' )';
+		} else {
+			$sql = 'DELETE FROM ' . $this->dml_table_reference_sql( $reference );
+			if ( null !== $clauses['where'] ) {
+				$sql .= ' WHERE ' . $this->translate_tokens_to_duckdb_sql(
+					array_slice( $tokens, $clauses['where'] + 1 )
+				);
+			}
 		}
 
-		return $this->execute_duckdb_query(
-			$this->translate_tokens_to_duckdb_sql( $tokens ),
-			'Failed to execute DuckDB DELETE'
+		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB DELETE' );
+	}
+
+	/**
+	 * Parse a single-table UPDATE/DELETE table reference.
+	 *
+	 * @param WP_Parser_Token[] $tokens    MySQL tokens.
+	 * @param int               $index     Index of the table reference.
+	 * @param string            $statement Statement name.
+	 * @return array{table_name:string,requested_table_name:string,alias:string|null,next_index:int}
+	 */
+	private function parse_single_table_dml_reference( array $tokens, int $index, string $statement ): array {
+		$database   = null;
+		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$database = $table_name;
+			++$index;
+			$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+
+			if ( 0 === strcasecmp( $database, 'information_schema' ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Access denied for user 'duckdb'@'%' to database 'information_schema'" );
+			}
+
+			if ( 0 !== strcasecmp( $database, $this->database ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only the current database is supported.' );
+			}
+		}
+
+		$alias = null;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$alias = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) && ! $this->is_dml_clause_start_token( $tokens[ $index ] ) ) {
+			$alias = $this->identifier_value( $tokens[ $index ] );
+			++$index;
+		}
+
+		return array(
+			'table_name'           => $this->resolve_user_table_name( $table_name ) ?? $table_name,
+			'requested_table_name' => $table_name,
+			'alias'                => $alias,
+			'next_index'           => $index,
 		);
+	}
+
+	/**
+	 * Build a DuckDB SQL table reference for a DML target.
+	 *
+	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int} $reference Parsed table reference.
+	 * @return string DuckDB table reference.
+	 */
+	private function dml_table_reference_sql( array $reference ): string {
+		$sql = $this->connection->quote_identifier( $reference['table_name'] );
+		if ( null !== $reference['alias'] ) {
+			$sql .= ' AS ' . $this->connection->quote_identifier( $reference['alias'] );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Find top-level WHERE/ORDER/LIMIT clauses in a DML statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $start  First token to scan.
+	 * @return array{where:int|null,order:int|null,limit:int|null}
+	 */
+	private function dml_clause_indexes( array $tokens, int $start ): array {
+		$clauses = array(
+			'where' => null,
+			'order' => null,
+			'limit' => null,
+		);
+		$depth   = 0;
+
+		for ( $index = $start; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 !== $depth ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $index ]->id && null === $clauses['where'] ) {
+				$clauses['where'] = $index;
+			} elseif ( WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $index ]->id && null === $clauses['order'] ) {
+				$clauses['order'] = $index;
+			} elseif ( WP_MySQL_Lexer::LIMIT_SYMBOL === $tokens[ $index ]->id && null === $clauses['limit'] ) {
+				$clauses['limit'] = $index;
+			}
+		}
+
+		return $clauses;
+	}
+
+	/**
+	 * Check whether a token starts a supported DML clause.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token starts a DML clause.
+	 */
+	private function is_dml_clause_start_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::SET_SYMBOL,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Translate UPDATE assignments, removing target qualifiers unsupported by DuckDB.
+	 *
+	 * @param WP_Parser_Token[]                                                                          $tokens    Update-list tokens.
+	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int} $reference Parsed table reference.
+	 * @return string DuckDB update list SQL.
+	 */
+	private function translate_update_assignment_tokens_to_duckdb_sql( array $tokens, array $reference ): string {
+		$qualifiers = array_filter(
+			array(
+				$reference['alias'],
+				$reference['requested_table_name'],
+				$reference['table_name'],
+			),
+			'is_string'
+		);
+
+		$items = array();
+		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
+			if (
+				isset( $item[0], $item[1] )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $item[1]->id
+				&& in_array( strtolower( $this->identifier_value( $item[0] ) ), array_map( 'strtolower', $qualifiers ), true )
+			) {
+				$item = array_slice( $item, 2 );
+			}
+			$items[] = $this->translate_tokens_to_duckdb_sql( $item );
+		}
+
+		return implode( ', ', $items );
+	}
+
+	/**
+	 * Build a rowid subquery for ordered/limited UPDATE and DELETE statements.
+	 *
+	 * @param WP_Parser_Token[]                                                                          $tokens    MySQL tokens.
+	 * @param array{where:int|null,order:int|null,limit:int|null}                                  $clauses   DML clause indexes.
+	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int} $reference Parsed table reference.
+	 * @return string DuckDB rowid subquery SQL.
+	 */
+	private function dml_rowid_subquery_sql( array $tokens, array $clauses, array $reference ): string {
+		$sql = 'SELECT rowid FROM ' . $this->dml_table_reference_sql( $reference );
+
+		if ( null !== $clauses['where'] ) {
+			$where_end = $clauses['order'] ?? $clauses['limit'] ?? count( $tokens );
+			$sql      .= ' WHERE ' . $this->translate_tokens_to_duckdb_sql(
+				array_slice( $tokens, $clauses['where'] + 1, $where_end - $clauses['where'] - 1 )
+			);
+		}
+
+		if ( null !== $clauses['order'] ) {
+			$order_end = $clauses['limit'] ?? count( $tokens );
+			$sql      .= ' ' . $this->translate_tokens_to_duckdb_sql(
+				array_slice( $tokens, $clauses['order'], $order_end - $clauses['order'] )
+			);
+		}
+
+		if ( null !== $clauses['limit'] ) {
+			$sql .= ' ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $clauses['limit'] ) );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Ensure rowid-based DML rewrites cannot target a user column named rowid.
+	 *
+	 * @param string $table_name Table name.
+	 * @param string $statement  Statement name.
+	 */
+	private function assert_dml_rowid_rewrite_supported( string $table_name, string $statement ): void {
+		$metadata_rows = $this->column_metadata_rows( $table_name );
+		if ( count( $metadata_rows ) === 0 ) {
+			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
+		}
+
+		foreach ( $metadata_rows as $metadata ) {
+			if ( 0 === strcasecmp( (string) $metadata['column_name'], 'rowid' ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. ORDER BY/LIMIT rewrites require a table without a user-defined rowid column.' );
+			}
+		}
 	}
 
 	/**
