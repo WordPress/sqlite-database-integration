@@ -167,6 +167,10 @@ class WP_DuckDB_Driver {
 				return $this->execute_update( $tokens );
 			case WP_MySQL_Lexer::DELETE_SYMBOL:
 				return $this->execute_delete( $tokens );
+			case WP_MySQL_Lexer::DROP_SYMBOL:
+				return $this->execute_drop( $tokens );
+			case WP_MySQL_Lexer::TRUNCATE_SYMBOL:
+				return $this->execute_truncate_table( $tokens );
 			case WP_MySQL_Lexer::ALTER_SYMBOL:
 				return $this->execute_alter_table( $tokens );
 			case WP_MySQL_Lexer::SHOW_SYMBOL:
@@ -687,6 +691,194 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute a supported DROP statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_drop( array $tokens ): WP_DuckDB_Result_Statement {
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP TABLE statement in DuckDB driver. Temporary tables are not supported.' );
+		}
+
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id ) {
+			return $this->execute_drop_table( $tokens );
+		}
+
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TABLES_SYMBOL === $tokens[1]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP TABLES statement in DuckDB driver. Use DROP TABLE.' );
+		}
+
+		if (
+			isset( $tokens[1] )
+			&& in_array( $tokens[1]->id, array( WP_MySQL_Lexer::INDEX_SYMBOL, WP_MySQL_Lexer::ONLINE_SYMBOL, WP_MySQL_Lexer::OFFLINE_SYMBOL ), true )
+		) {
+			return $this->execute_drop_index( $tokens );
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP statement in DuckDB driver. Only DROP TABLE and DROP INDEX are supported.' );
+	}
+
+	/**
+	 * Execute DROP TABLE.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_drop_table( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP.' );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TABLE_SYMBOL, 'Expected TABLE in DROP TABLE statement.' );
+		++$index;
+
+		$if_exists = false;
+		if (
+			isset( $tokens[ $index + 1 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $index ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $index + 1 ]->id
+		) {
+			$if_exists = true;
+			$index    += 2;
+		}
+
+		$table_tokens = array_slice( $tokens, $index );
+		if ( count( $table_tokens ) > 0 ) {
+			$last_token = $table_tokens[ count( $table_tokens ) - 1 ];
+			if ( WP_MySQL_Lexer::RESTRICT_SYMBOL === $last_token->id || WP_MySQL_Lexer::CASCADE_SYMBOL === $last_token->id ) {
+				array_pop( $table_tokens );
+			}
+		}
+		if ( count( $table_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'DROP TABLE requires at least one table name.' );
+		}
+
+		$targets = array();
+		foreach ( $this->split_top_level_comma_items( $table_tokens ) as $table_item ) {
+			$reference = $this->parse_schema_lifecycle_table_reference( $table_item, 0, 'DROP TABLE' );
+			if ( count( $table_item ) !== $reference['next_index'] ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP TABLE statement in DuckDB driver. Table aliases and extra table options are not supported.' );
+			}
+			$targets[] = $reference['requested_table_name'];
+		}
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $targets, $if_exists ): WP_DuckDB_Result_Statement {
+				foreach ( $targets as $requested_table_name ) {
+					$table_name = $this->resolve_user_table_name( $requested_table_name );
+					if ( null === $table_name ) {
+						if ( $if_exists ) {
+							continue;
+						}
+						throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$requested_table_name}' in DROP TABLE statement." );
+					}
+
+					$sequence_names = $this->auto_increment_sequences_for_table( $table_name );
+					$index_names    = array_map(
+						function ( array $index_definition ): string {
+							return $index_definition['index_name'];
+						},
+						$this->secondary_index_definitions_for_table( $table_name )
+					);
+
+					$this->execute_duckdb_query(
+						'DROP TABLE ' . $this->connection->quote_identifier( $table_name ),
+						'Failed to drop DuckDB table'
+					);
+
+					foreach ( $index_names as $index_name ) {
+						$this->drop_physical_secondary_index( $table_name, $index_name, true );
+					}
+					$this->drop_auto_increment_sequences( $sequence_names );
+					$this->delete_table_lifecycle_metadata( $table_name );
+				}
+
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
+	 * Execute TRUNCATE [TABLE].
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_truncate_table( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TRUNCATE_SYMBOL, 'Expected TRUNCATE.' );
+		++$index;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		$reference = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'TRUNCATE' );
+		if ( count( $tokens ) !== $reference['next_index'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported TRUNCATE statement in DuckDB driver. Only a single table target is supported.' );
+		}
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $reference ): WP_DuckDB_Result_Statement {
+				$table_name = $this->resolve_required_lifecycle_table_name( $reference['requested_table_name'], 'TRUNCATE' );
+				if ( null === $this->auto_increment_metadata_for_table( $table_name ) ) {
+					$this->execute_duckdb_query(
+						'DELETE FROM ' . $this->connection->quote_identifier( $table_name ),
+						'Failed to truncate DuckDB table'
+					);
+				} else {
+					$this->rebuild_empty_auto_increment_table( $table_name );
+				}
+
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
+	 * Execute DROP INDEX.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_drop_index( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP.' );
+		++$index;
+
+		if (
+			isset( $tokens[ $index ] )
+			&& ( WP_MySQL_Lexer::ONLINE_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::OFFLINE_SYMBOL === $tokens[ $index ]->id )
+		) {
+			++$index;
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::INDEX_SYMBOL, 'Expected INDEX in DROP INDEX statement.' );
+		++$index;
+
+		$index_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in DROP INDEX statement.' );
+		++$index;
+
+		$reference = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'DROP INDEX' );
+		$index     = $this->skip_drop_index_options( $tokens, $reference['next_index'] );
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP INDEX statement in DuckDB driver.' );
+		}
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $reference, $index_name ): WP_DuckDB_Result_Statement {
+				$table_name = $this->resolve_required_lifecycle_table_name( $reference['requested_table_name'], 'DROP INDEX' );
+				$this->drop_secondary_index( $table_name, $index_name );
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
 	 * Parse a single-table UPDATE/DELETE table reference.
 	 *
 	 * @param WP_Parser_Token[] $tokens    MySQL tokens.
@@ -745,6 +937,116 @@ class WP_DuckDB_Driver {
 		}
 
 		return $sql;
+	}
+
+	/**
+	 * Parse a schema lifecycle table reference.
+	 *
+	 * @param WP_Parser_Token[] $tokens    MySQL tokens.
+	 * @param int               $index     Index of the table reference.
+	 * @param string            $statement Statement name.
+	 * @return array{requested_table_name:string,next_index:int}
+	 */
+	private function parse_schema_lifecycle_table_reference( array $tokens, int $index, string $statement ): array {
+		$database   = null;
+		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$database = $table_name;
+			++$index;
+			$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+
+			if ( 0 === strcasecmp( $database, 'information_schema' ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Access denied for user 'duckdb'@'%' to database 'information_schema'" );
+			}
+
+			if ( 0 !== strcasecmp( $database, $this->database ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only the current database is supported.' );
+			}
+		}
+
+		if ( $this->is_duckdb_internal_table_name( $table_name ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Internal DuckDB metadata tables cannot be modified.' );
+		}
+
+		return array(
+			'requested_table_name' => $table_name,
+			'next_index'           => $index,
+		);
+	}
+
+	/**
+	 * Resolve a lifecycle table target or throw a stable missing-table error.
+	 *
+	 * @param string $requested_table_name Requested table name.
+	 * @param string $statement            Statement name.
+	 * @return string Resolved table name.
+	 */
+	private function resolve_required_lifecycle_table_name( string $requested_table_name, string $statement ): string {
+		$table_name = $this->resolve_user_table_name( $requested_table_name );
+		if ( null === $table_name ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$requested_table_name}' in {$statement} statement." );
+		}
+
+		return $table_name;
+	}
+
+	/**
+	 * Execute multi-step schema lifecycle work inside a transaction.
+	 *
+	 * @param callable $callback Lifecycle callback.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_schema_lifecycle_change( callable $callback ): WP_DuckDB_Result_Statement {
+		$started_transaction = ! $this->connection->inTransaction();
+		if ( $started_transaction ) {
+			$this->connection->beginTransaction();
+		}
+
+		try {
+			$result = $callback();
+			if ( $started_transaction ) {
+				$this->connection->commit();
+			}
+		} catch ( Throwable $e ) {
+			if ( $started_transaction && $this->connection->inTransaction() ) {
+				$this->connection->rollback();
+			}
+			throw $e;
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Return a MySQL-shaped empty DDL result.
+	 *
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function empty_ddl_result(): WP_DuckDB_Result_Statement {
+		return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Skip supported DROP INDEX options.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index.
+	 * @return int New index.
+	 */
+	private function skip_drop_index_options( array $tokens, int $index ): int {
+		while ( $index < count( $tokens ) ) {
+			if ( WP_MySQL_Lexer::ALGORITHM_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::LOCK_SYMBOL === $tokens[ $index ]->id ) {
+				$index = $this->skip_option_value( $tokens, $index + 1 );
+				continue;
+			}
+
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP INDEX option in DuckDB driver: ' . $tokens[ $index ]->get_bytes() . '.' );
+		}
+
+		return $index;
 	}
 
 	/**
@@ -982,17 +1284,27 @@ class WP_DuckDB_Driver {
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TABLE_SYMBOL, 'Only ALTER TABLE is supported by the DuckDB driver.' );
 		++$index;
 
-		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
-		++$index;
+		$reference  = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'ALTER TABLE' );
+		$table_name = $this->resolve_user_table_name( $reference['requested_table_name'] ) ?? $reference['requested_table_name'];
+		$index      = $reference['next_index'];
 
 		$actions = $this->split_top_level_comma_items( array_slice( $tokens, $index ) );
 		if ( count( $actions ) === 0 ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN and ADD INDEX are supported.' );
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN, ADD INDEX, and DROP INDEX are supported.' );
 		}
 
 		$result = null;
 		foreach ( $actions as $action ) {
-			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD actions are supported.' );
+			if ( ! isset( $action[0] ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Empty action.' );
+			}
+
+			if ( WP_MySQL_Lexer::DROP_SYMBOL === $action[0]->id ) {
+				$result = $this->execute_alter_table_drop_index( $table_name, $action );
+				continue;
+			}
+
+			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD and DROP INDEX actions are supported.' );
 			$alter_item = array_slice( $action, 1 );
 
 			$result = $this->is_create_table_index_item( $alter_item )
@@ -1001,6 +1313,46 @@ class WP_DuckDB_Driver {
 		}
 
 		return $result ?? new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Execute ALTER TABLE ... DROP INDEX|KEY.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     Action tokens starting at DROP.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_drop_index( string $table_name, array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP in ALTER TABLE action.' );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[ $index ]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP PRIMARY KEY requires a table rebuild.' );
+		}
+
+		if (
+			! isset( $tokens[ $index ] )
+			|| ( WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[ $index ]->id && WP_MySQL_Lexer::KEY_SYMBOL !== $tokens[ $index ]->id )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only DROP INDEX and DROP KEY are supported.' );
+		}
+		++$index;
+
+		$index_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP INDEX options are not supported.' );
+		}
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $table_name, $index_name ): WP_DuckDB_Result_Statement {
+				$resolved_table_name = $this->resolve_required_lifecycle_table_name( $table_name, 'ALTER TABLE' );
+				$this->drop_secondary_index( $resolved_table_name, $index_name );
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
 	}
 
 	/**
@@ -1455,7 +1807,9 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW INDEX statement in DuckDB driver. Use SHOW INDEX FROM table.' );
 		}
 
-		$table_name = $this->identifier_value( $tokens[3] );
+		$table_name          = $this->identifier_value( $tokens[3] );
+		$resolved_table_name = $this->resolve_user_table_name( $table_name );
+		$rows                = null === $resolved_table_name ? array() : $this->index_rows_for_table( $resolved_table_name );
 
 		return new WP_DuckDB_Result_Statement(
 			array(
@@ -1475,7 +1829,7 @@ class WP_DuckDB_Driver {
 				'Visible',
 				'Expression',
 			),
-			$this->index_rows_for_table( $table_name )
+			$rows
 		);
 	}
 
@@ -3510,6 +3864,46 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Find recorded AUTO_INCREMENT sequence names for a table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return string[] Sequence names.
+	 */
+	private function auto_increment_sequences_for_table( string $table_name ): array {
+		$this->ensure_column_metadata_table();
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT column_name FROM '
+				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. " AND extra = 'auto_increment' ORDER BY ordinal_position",
+			'Failed to inspect DuckDB AUTO_INCREMENT metadata'
+		);
+
+		$sequence_names = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN ) as $column_name ) {
+			$sequence_names[] = $this->sequence_name( $table_name, (string) $column_name );
+		}
+
+		return $sequence_names;
+	}
+
+	/**
+	 * Drop AUTO_INCREMENT sequences that are no longer referenced by a table.
+	 *
+	 * @param string[] $sequence_names Sequence names.
+	 */
+	private function drop_auto_increment_sequences( array $sequence_names ): void {
+		foreach ( $sequence_names as $sequence_name ) {
+			$this->execute_duckdb_query(
+				'DROP SEQUENCE IF EXISTS ' . $this->connection->quote_identifier( $sequence_name ),
+				'Failed to drop DuckDB AUTO_INCREMENT sequence'
+			);
+		}
+	}
+
+	/**
 	 * Parse the last explicit literal assigned to an AUTO_INCREMENT column.
 	 *
 	 * @param WP_Parser_Token[] $tokens      MySQL token stream.
@@ -3990,6 +4384,175 @@ class WP_DuckDB_Driver {
 				. ')',
 			'Failed to store DuckDB column metadata'
 		);
+	}
+
+	/**
+	 * Drop a recorded secondary index and refresh MySQL-facing metadata.
+	 *
+	 * @param string $table_name       Table name.
+	 * @param string $mysql_index_name MySQL-facing index name.
+	 */
+	private function drop_secondary_index( string $table_name, string $mysql_index_name ): void {
+		if ( 0 === strcasecmp( $mysql_index_name, 'PRIMARY' ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP INDEX statement in DuckDB driver. Dropping PRIMARY requires a table rebuild.' );
+		}
+
+		$resolved_index_name = $this->resolve_secondary_index_name( $table_name, $mysql_index_name );
+		if ( null === $resolved_index_name ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown index '{$mysql_index_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+
+		$this->drop_physical_secondary_index( $table_name, $resolved_index_name, false );
+		$this->delete_index_metadata( $table_name, $resolved_index_name );
+		$this->refresh_column_key_metadata( $table_name );
+	}
+
+	/**
+	 * Resolve a secondary index name from recorded metadata.
+	 *
+	 * @param string $table_name       Table name.
+	 * @param string $mysql_index_name Requested index name.
+	 * @return string|null Resolved index name.
+	 */
+	private function resolve_secondary_index_name( string $table_name, string $mysql_index_name ): ?string {
+		foreach ( $this->secondary_index_definitions_for_table( $table_name ) as $index_definition ) {
+			if ( 0 === strcasecmp( $index_definition['index_name'], $mysql_index_name ) ) {
+				return $index_definition['index_name'];
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Drop a physical DuckDB secondary index by its MySQL-facing name.
+	 *
+	 * @param string $table_name       Table name.
+	 * @param string $mysql_index_name MySQL-facing index name.
+	 * @param bool   $if_exists        Whether to use IF EXISTS.
+	 */
+	private function drop_physical_secondary_index( string $table_name, string $mysql_index_name, bool $if_exists ): void {
+		$this->execute_duckdb_query(
+			'DROP INDEX '
+				. ( $if_exists ? 'IF EXISTS ' : '' )
+				. $this->connection->quote_identifier( $this->index_name( $table_name, $mysql_index_name ) ),
+			'Failed to drop DuckDB index'
+		);
+	}
+
+	/**
+	 * Delete one secondary index's metadata rows.
+	 *
+	 * @param string $table_name Table name.
+	 * @param string $index_name Index name.
+	 */
+	private function delete_index_metadata( string $table_name, string $index_name ): void {
+		$this->ensure_index_metadata_table();
+
+		$this->execute_duckdb_query(
+			'DELETE FROM '
+				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. ' AND index_name = '
+				. $this->connection->quote( $index_name ),
+			'Failed to delete DuckDB index metadata'
+		);
+	}
+
+	/**
+	 * Delete all stored lifecycle metadata for a table.
+	 *
+	 * @param string $table_name Table name.
+	 */
+	private function delete_table_lifecycle_metadata( string $table_name ): void {
+		$this->ensure_index_metadata_table();
+		$this->ensure_column_metadata_table();
+		$this->ensure_table_metadata_table();
+
+		foreach (
+			array(
+				self::INDEX_METADATA_TABLE  => 'index',
+				self::COLUMN_METADATA_TABLE => 'column',
+				self::TABLE_METADATA_TABLE  => 'table',
+			) as $metadata_table => $label
+		) {
+			$this->execute_duckdb_query(
+				'DELETE FROM '
+					. $this->connection->quote_identifier( $metadata_table )
+					. ' WHERE table_name = '
+					. $this->connection->quote( $table_name ),
+				'Failed to delete DuckDB ' . $label . ' metadata'
+			);
+		}
+	}
+
+	/**
+	 * Refresh stored COLUMN_KEY values after an index is dropped.
+	 *
+	 * @param string $table_name Table name.
+	 */
+	private function refresh_column_key_metadata( string $table_name ): void {
+		$metadata = $this->column_metadata_rows( $table_name );
+		if ( count( $metadata ) === 0 ) {
+			return;
+		}
+
+		foreach ( $metadata as &$column ) {
+			$column['column_key'] = '';
+		}
+		unset( $column );
+
+		$primary_key = array_map(
+			function ( array $row ): string {
+				return (string) $row[4];
+			},
+			$this->primary_key_index_rows( $table_name )
+		);
+
+		$this->record_column_metadata(
+			$table_name,
+			$this->apply_column_key_metadata( $metadata, $primary_key, $this->secondary_index_definitions_for_table( $table_name ) )
+		);
+	}
+
+	/**
+	 * Rebuild an empty table so AUTO_INCREMENT starts from 1 again.
+	 *
+	 * DuckDB cannot restart a sequence while a column default depends on it.
+	 *
+	 * @param string $table_name Table name.
+	 */
+	private function rebuild_empty_auto_increment_table( string $table_name ): void {
+		$create_sql     = $this->mysql_create_table_statement( $table_name, $table_name );
+		$sequence_names = $this->auto_increment_sequences_for_table( $table_name );
+
+		$this->execute_duckdb_query(
+			'DROP TABLE ' . $this->connection->quote_identifier( $table_name ),
+			'Failed to truncate DuckDB table'
+		);
+		$this->drop_auto_increment_sequences( $sequence_names );
+		$this->execute_create_table( $this->tokenize_and_validate( $create_sql ) );
+	}
+
+	/**
+	 * Drop temporary information_schema compatibility snapshots.
+	 */
+	private function invalidate_information_schema_compatibility_tables(): void {
+		foreach (
+			array(
+				self::INFO_SCHEMA_TABLES_TABLE,
+				self::INFO_SCHEMA_COLUMNS_TABLE,
+				self::INFO_SCHEMA_STATISTICS_TABLE,
+				self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE,
+				self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE,
+			) as $table_name
+		) {
+			$this->execute_duckdb_query(
+				'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $table_name ),
+				'Failed to invalidate DuckDB information_schema compatibility table'
+			);
+		}
 	}
 
 	/**
@@ -5018,6 +5581,16 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Check whether a name targets a DuckDB driver internal table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table is internal to the driver.
+	 */
+	private function is_duckdb_internal_table_name( string $table_name ): bool {
+		return 0 === strpos( $table_name, '__wp_duckdb_' );
 	}
 
 	/**

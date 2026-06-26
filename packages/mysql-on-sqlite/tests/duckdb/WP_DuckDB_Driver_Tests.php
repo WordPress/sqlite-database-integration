@@ -1371,6 +1371,229 @@ SQL,
 		$this->assertSame( array(), $other_database_rows );
 	}
 
+	public function test_truncate_table_preserves_schema_and_resets_auto_increment(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( $this->lifecycleTableSql( 'lifecycle_t' ) );
+		$driver->query( "INSERT INTO lifecycle_t (name, payload) VALUES ('a', 'alpha'), ('b', 'bravo')" );
+		$driver->query( 'DELETE FROM lifecycle_t WHERE name = \'b\'' );
+
+		$this->assertSame(
+			array( array( 'AUTO_INCREMENT' => 3 ) ),
+			$driver->query(
+				"SELECT `AUTO_INCREMENT`
+				FROM information_schema.tables
+				WHERE table_schema = 'wp' AND table_name = 'lifecycle_t'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$truncate = $driver->query( 'TRUNCATE TABLE wp.lifecycle_t' );
+		$this->assertSame( 0, $truncate->rowCount() );
+		$this->assertSame(
+			array( array( 'count' => 0 ) ),
+			$driver->query( 'SELECT COUNT(*) AS count FROM lifecycle_t' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 'PRIMARY', 'name_unique', 'payload_prefix' ),
+			array_column( $driver->query( 'SHOW INDEX FROM lifecycle_t' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' )
+		);
+		$this->assertSame(
+			array( 'PRI', 'UNI', 'MUL' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM lifecycle_t' )->fetchAll( PDO::FETCH_ASSOC ), 'Key' )
+		);
+		$this->assertSame(
+			array( array( 'AUTO_INCREMENT' => 1 ) ),
+			$driver->query(
+				"SELECT `AUTO_INCREMENT`
+				FROM information_schema.tables
+				WHERE table_schema = 'wp' AND table_name = 'lifecycle_t'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE lifecycle_t' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringNotContainsString( 'AUTO_INCREMENT=', $create_rows[0]['Create Table'] );
+
+		$driver->query( "INSERT INTO lifecycle_t (name, payload) VALUES ('z', 'zulu')" );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'z',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM lifecycle_t ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_drop_index_updates_metadata_and_unique_enforcement(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( $this->lifecycleTableSql( 'lifecycle_idx' ) );
+		$driver->query( "INSERT INTO lifecycle_idx (name, payload) VALUES ('a', 'alpha')" );
+
+		try {
+			$driver->query( "INSERT INTO lifecycle_idx (name, payload) VALUES ('a', 'duplicate')" );
+			$this->fail( 'Duplicate insert should fail before dropping the unique index.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		$drop_payload = $driver->query( 'DROP INDEX payload_prefix ON lifecycle_idx' );
+		$this->assertSame( 0, $drop_payload->rowCount() );
+		$this->assertSame(
+			array( 'PRIMARY', 'name_unique' ),
+			array_column( $driver->query( 'SHOW INDEX FROM lifecycle_idx' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' )
+		);
+		$this->assertSame(
+			array(
+				'id'      => 'PRI',
+				'name'    => 'UNI',
+				'payload' => '',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM lifecycle_idx' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT INDEX_NAME
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp' AND table_name = 'lifecycle_idx' AND index_name = 'payload_prefix'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$drop_unique = $driver->query( 'ALTER TABLE wp.lifecycle_idx DROP KEY name_unique' );
+		$this->assertSame( 0, $drop_unique->rowCount() );
+		$this->assertSame(
+			array( 'PRIMARY' ),
+			array_column( $driver->query( 'SHOW INDEX FROM lifecycle_idx' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' )
+		);
+		$this->assertSame(
+			array(
+				'id'      => 'PRI',
+				'name'    => '',
+				'payload' => '',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM lifecycle_idx' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'lifecycle_idx' AND constraint_name = 'name_unique'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( "INSERT INTO lifecycle_idx (name, payload) VALUES ('a', 'duplicate')" );
+		$this->assertSame(
+			array(
+				array( 'name' => 'a' ),
+				array( 'name' => 'a' ),
+			),
+			$driver->query( 'SELECT name FROM lifecycle_idx ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE lifecycle_idx' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringNotContainsString( 'payload_prefix', $create_rows[0]['Create Table'] );
+		$this->assertStringNotContainsString( 'name_unique', $create_rows[0]['Create Table'] );
+	}
+
+	public function test_drop_table_removes_metadata_and_sequence_state(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( $this->lifecycleTableSql( 'lifecycle_drop' ) );
+		$driver->query( 'CREATE TABLE survivor (id INT, note VARCHAR(20))' );
+		$driver->query( "INSERT INTO lifecycle_drop (name, payload) VALUES ('a', 'alpha'), ('b', 'bravo')" );
+
+		$drop = $driver->query( 'DROP TABLE wp.lifecycle_drop' );
+		$this->assertSame( 0, $drop->rowCount() );
+		$this->assertSame(
+			array( array( 'Tables_in_wp' => 'survivor' ) ),
+			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->query( 'SHOW CREATE TABLE lifecycle_drop' )->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( array(), $driver->query( 'SHOW INDEX FROM lifecycle_drop' )->fetchAll( PDO::FETCH_ASSOC ) );
+
+		foreach ( array( 'tables', 'columns', 'statistics', 'table_constraints', 'key_column_usage' ) as $table ) {
+			$this->assertSame(
+				array(),
+				$driver->query(
+					"SELECT *
+					FROM information_schema.{$table}
+					WHERE table_schema = 'wp' AND table_name = 'lifecycle_drop'"
+				)->fetchAll( PDO::FETCH_ASSOC ),
+				'DuckDB metadata was not cleared from information_schema.' . $table
+			);
+		}
+
+		$driver->query( $this->lifecycleTableSql( 'lifecycle_drop' ) );
+		$driver->query( "INSERT INTO lifecycle_drop (name, payload) VALUES ('fresh', 'value')" );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'fresh',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM lifecycle_drop' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_drop_table_multiple_if_exists_and_lifecycle_protections(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE first_table (id INT)' );
+		$driver->query( 'CREATE TABLE second_table (id INT)' );
+		$driver->query( 'CREATE TABLE protected_target (id INT, KEY id_idx(id))' );
+
+		$driver->query( 'DROP TABLE wp.first_table, second_table' );
+		$this->assertSame(
+			array( array( 'Tables_in_wp' => 'protected_target' ) ),
+			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( 0, $driver->query( 'DROP TABLE IF EXISTS missing_table' )->rowCount() );
+
+		foreach (
+			array(
+				'DROP TABLE information_schema.tables'     => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
+				'TRUNCATE TABLE __wp_duckdb_column_metadata' => 'Internal DuckDB metadata tables cannot be modified',
+				'DROP INDEX `PRIMARY` ON protected_target' => 'Dropping PRIMARY requires a table rebuild',
+				'ALTER TABLE protected_target DROP PRIMARY KEY' => 'DROP PRIMARY KEY requires a table rebuild',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected lifecycle protection to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+		}
+	}
+
 	public function test_show_create_table_denies_information_schema_tables(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1423,6 +1646,17 @@ SQL,
 	private function lastDuckDBQuery( WP_DuckDB_Driver $driver ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 		$queries = $driver->get_last_duckdb_queries();
 		return $queries[ count( $queries ) - 1 ];
+	}
+
+	private function lifecycleTableSql( string $table_name ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return "CREATE TABLE {$table_name} (
+			id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			name VARCHAR(191) NOT NULL DEFAULT '',
+			payload LONGTEXT,
+			PRIMARY KEY (id),
+			UNIQUE KEY name_unique (name),
+			KEY payload_prefix (payload(12))
+		) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
 	}
 
 	/**

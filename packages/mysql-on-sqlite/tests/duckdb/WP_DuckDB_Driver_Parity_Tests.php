@@ -432,4 +432,145 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW CREATE TABLE plain' );
 		$this->assertParityRows( 'SHOW CREATE TABLE missing' );
 	}
+
+	public function test_drop_table_lifecycle_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				$this->lifecycleTableSql( 'lifecycle_drop' ),
+				'CREATE TABLE survivor (id INT, note VARCHAR(20))',
+				"INSERT INTO lifecycle_drop (name, payload) VALUES ('a', 'alpha'), ('b', 'bravo')",
+				'DROP TABLE lifecycle_drop',
+			)
+		);
+
+		$this->assertParityRows( 'SHOW TABLES' );
+		$this->assertParityRows( 'SHOW CREATE TABLE lifecycle_drop' );
+		$this->assertParityRows(
+			"SELECT table_name
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_drop'"
+		);
+		$this->assertParityRows(
+			"SELECT column_name
+			FROM information_schema.columns
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_drop'"
+		);
+		$this->assertParityRows(
+			"SELECT index_name
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_drop'"
+		);
+		$this->assertParityRows(
+			"SELECT constraint_name
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_drop'"
+		);
+
+		$this->runParitySetup(
+			array(
+				$this->lifecycleTableSql( 'lifecycle_drop' ),
+				"INSERT INTO lifecycle_drop (name, payload) VALUES ('fresh', 'value')",
+			)
+		);
+		$this->assertParityRows( 'SELECT id, name FROM lifecycle_drop ORDER BY id' );
+	}
+
+	public function test_truncate_lifecycle_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				$this->lifecycleTableSql( 'lifecycle_truncate' ),
+				"INSERT INTO lifecycle_truncate (name, payload) VALUES ('a', 'alpha'), ('b', 'bravo')",
+				'DELETE FROM lifecycle_truncate WHERE name = \'b\'',
+			)
+		);
+		$this->assertParityRows(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_truncate'"
+		);
+
+		$this->runParitySetup( array( 'TRUNCATE TABLE wp.lifecycle_truncate' ) );
+		$this->assertParityRows( 'SELECT COUNT(*) AS count FROM lifecycle_truncate' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM lifecycle_truncate' );
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM lifecycle_truncate',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_truncate'"
+		);
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'lifecycle_truncate'", array( 'Name', 'Auto_increment' ) );
+		$this->assertParityRows( 'SHOW CREATE TABLE lifecycle_truncate' );
+
+		$this->runParitySetup( array( "INSERT INTO lifecycle_truncate (name, payload) VALUES ('z', 'zulu')" ) );
+		$this->assertParityRows( 'SELECT id, name FROM lifecycle_truncate ORDER BY id' );
+		$this->assertParityRows(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_truncate'"
+		);
+	}
+
+	public function test_drop_index_lifecycle_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				$this->lifecycleTableSql( 'lifecycle_idx' ),
+				"INSERT INTO lifecycle_idx (name, payload) VALUES ('a', 'alpha')",
+				'DROP INDEX payload_prefix ON lifecycle_idx',
+			)
+		);
+
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM lifecycle_idx',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows( 'SHOW COLUMNS FROM lifecycle_idx' );
+		$this->assertParityRows(
+			"SELECT index_name, column_name, sub_part
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_idx'
+			ORDER BY index_name, seq_in_index"
+		);
+		$this->assertParityRows(
+			"SELECT constraint_name, constraint_type
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_idx'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE lifecycle_idx' );
+
+		$this->runParitySetup(
+			array(
+				'DROP INDEX name_unique ON wp.lifecycle_idx',
+				"INSERT INTO lifecycle_idx (name, payload) VALUES ('a', 'duplicate')",
+			)
+		);
+
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM lifecycle_idx',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows( 'SHOW COLUMNS FROM lifecycle_idx' );
+		$this->assertParityRows(
+			"SELECT constraint_name, constraint_type
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'lifecycle_idx'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE lifecycle_idx' );
+		$this->assertParityRows( 'SELECT name FROM lifecycle_idx ORDER BY id' );
+	}
+
+	private function lifecycleTableSql( string $table_name ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return "CREATE TABLE {$table_name} (
+			id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			name VARCHAR(191) NOT NULL DEFAULT '',
+			payload LONGTEXT,
+			PRIMARY KEY (id),
+			UNIQUE KEY name_unique (name),
+			KEY payload_prefix (payload(12))
+		) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+	}
 }
