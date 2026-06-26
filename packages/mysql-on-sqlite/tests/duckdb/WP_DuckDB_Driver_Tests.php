@@ -236,6 +236,42 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_insert_ignore_values_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR(100) UNIQUE)' );
+		$driver->query( "INSERT INTO items (id, name) VALUES (1, 'first')" );
+
+		$indexes = $driver->query( 'SHOW INDEX FROM items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'PRIMARY', 'name' ), array_column( $indexes, 'Key_name' ) );
+		$this->assertSame( 0, (int) $indexes[1]['Non_unique'] );
+
+		$duplicate_primary = $driver->query( "INSERT IGNORE INTO items (id, name) VALUES (1, 'duplicate-id')" );
+		$this->assertSame( 0, $duplicate_primary->rowCount() );
+		$this->assertSame( "INSERT OR IGNORE INTO items(id, name) VALUES (1, 'duplicate-id')", $this->lastDuckDBQuery( $driver ) );
+
+		$duplicate_unique = $driver->query( "INSERT IGNORE items (id, name) VALUES (2, 'first')" );
+		$this->assertSame( 0, $duplicate_unique->rowCount() );
+
+		$inserted = $driver->query( "INSERT IGNORE INTO items (id, name) VALUES (3, 'third')" );
+		$this->assertSame( 1, $inserted->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'first',
+				),
+				array(
+					'id'   => 3,
+					'name' => 'third',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_wordpress_style_schema_can_be_created(): void {
 		$this->requireDuckDBRuntime();
 

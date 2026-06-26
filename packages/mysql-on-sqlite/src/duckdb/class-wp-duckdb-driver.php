@@ -344,10 +344,10 @@ class WP_DuckDB_Driver {
 		list( $items, $index ) = $this->collect_parenthesized_items( $tokens, $index );
 		$this->assert_supported_create_table_options( array_slice( $tokens, $index ) );
 
-			$columns     = array();
-			$constraints = array();
-			$indexes     = array();
-			$sequences   = array();
+		$columns     = array();
+		$constraints = array();
+		$indexes     = array();
+		$sequences   = array();
 
 		foreach ( $items as $item ) {
 			if ( count( $item ) === 0 ) {
@@ -368,10 +368,13 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE constraint in DuckDB driver: ' . $item[0]->get_bytes() . '.' );
 			}
 
-			list( $column_sql, $sequence_sql ) = $this->translate_create_table_column( $table_name, $item );
-			$columns[]                         = $column_sql;
+			list( $column_sql, $sequence_sql, $column_indexes ) = $this->translate_create_table_column( $table_name, $item );
+			$columns[] = $column_sql;
 			if ( null !== $sequence_sql ) {
 				$sequences[] = $sequence_sql;
+			}
+			foreach ( $column_indexes as $index_definition ) {
+				$indexes[] = $index_definition;
 			}
 		}
 
@@ -392,13 +395,13 @@ class WP_DuckDB_Driver {
 		$table_sql .= implode( ', ', array_merge( $columns, $constraints ) );
 		$table_sql .= ')';
 
-			$result = $this->execute_duckdb_query( $table_sql, 'Failed to create DuckDB table' );
+		$result = $this->execute_duckdb_query( $table_sql, 'Failed to create DuckDB table' );
 		foreach ( $indexes as $index_definition ) {
 			$this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
 			$this->record_index_metadata( $index_definition );
 		}
 
-			return $result;
+		return $result;
 	}
 
 	/**
@@ -456,14 +459,21 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_insert( array $tokens ): WP_DuckDB_Result_Statement {
-		$index = 1;
+		$index  = 1;
+		$ignore = false;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $index ]->id ) {
+			$ignore = true;
+			++$index;
+		}
 		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $index ]->id ) {
 			++$index;
 		}
 		$this->assert_values_write_statement( $tokens, $index, 'INSERT' );
 
 		return $this->execute_duckdb_query(
-			$this->translate_tokens_to_duckdb_sql( $tokens ),
+			$ignore
+				? $this->translate_insert_ignore_tokens_to_duckdb_sql( $tokens, $index )
+				: $this->translate_tokens_to_duckdb_sql( $tokens ),
 			'Failed to execute DuckDB INSERT'
 		);
 	}
@@ -1009,7 +1019,7 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string            $table_name Table name.
 	 * @param WP_Parser_Token[] $tokens     Column definition tokens.
-	 * @return array{0:string,1:string|null}
+	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>}
 	 */
 	private function translate_create_table_column( string $table_name, array $tokens ): array {
 		$index       = 0;
@@ -1027,6 +1037,7 @@ class WP_DuckDB_Driver {
 
 		$not_null       = false;
 		$primary_key    = false;
+		$unique_key     = false;
 		$auto_increment = false;
 		$default_sql    = null;
 
@@ -1052,6 +1063,16 @@ class WP_DuckDB_Driver {
 					$primary_key = true;
 					$not_null    = true;
 					$index      += 2;
+					break;
+				case WP_MySQL_Lexer::UNIQUE_SYMBOL:
+					$unique_key = true;
+					++$index;
+					if (
+						isset( $tokens[ $index ] )
+						&& ( WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::INDEX_SYMBOL === $tokens[ $index ]->id )
+					) {
+						++$index;
+					}
 					break;
 				case WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL:
 					$auto_increment = true;
@@ -1107,7 +1128,23 @@ class WP_DuckDB_Driver {
 			$column_sql .= ' PRIMARY KEY';
 		}
 
-		return array( $column_sql, $sequence );
+		$indexes = array();
+		if ( $unique_key && ! $primary_key ) {
+			$indexes[] = $this->build_secondary_index_definition(
+				$table_name,
+				$column_name,
+				true,
+				array( $this->connection->quote_identifier( $column_name ) ),
+				array(
+					array(
+						'name'     => $column_name,
+						'sub_part' => null,
+					),
+				)
+			);
+		}
+
+		return array( $column_sql, $sequence, $indexes );
 	}
 
 	/**
@@ -1584,6 +1621,17 @@ class WP_DuckDB_Driver {
 		}
 
 		return 'INSERT OR REPLACE INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $index ) );
+	}
+
+	/**
+	 * Translate MySQL INSERT IGNORE ... VALUES to DuckDB INSERT OR IGNORE.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index of the table token.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_insert_ignore_tokens_to_duckdb_sql( array $tokens, int $table_index ): string {
+		return 'INSERT OR IGNORE INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $table_index ) );
 	}
 
 	/**
