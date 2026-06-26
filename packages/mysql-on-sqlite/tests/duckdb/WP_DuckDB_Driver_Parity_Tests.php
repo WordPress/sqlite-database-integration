@@ -57,6 +57,58 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_multi_table_delete_transient_cleanup_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL,
+					autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+					PRIMARY KEY (option_id),
+					UNIQUE KEY option_name (option_name),
+					KEY autoload (autoload)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_options (option_name, option_value, autoload) VALUES
+					('_transient_tag4', 'tag4', 'no'),
+					('_transient_timeout_tag4', '1', 'no'),
+					('_transient_tag5', 'tag5', 'no'),
+					('_transient_timeout_tag5', '9999999999', 'no'),
+					('_site_transient_tag1', 'tag1', 'no'),
+					('_site_transient_timeout_tag1', '1', 'no'),
+					('rss_1', 'rss', 'yes')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE a, b FROM wp_options a, wp_options b
+			WHERE a.option_name LIKE '\_transient\_%'
+			AND a.option_name NOT LIKE '\_transient\_timeout_%'
+			AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) )
+			AND b.option_value < UNIX_TIMESTAMP()"
+		);
+		$this->assertParityRows( 'SELECT option_name FROM wp_options ORDER BY option_id' );
+	}
+
+	public function test_multi_table_delete_using_and_single_target_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20))',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20))',
+				"INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+				"INSERT INTO t2 VALUES (1, 'x'), (3, 'z'), (4, 'other')",
+			)
+		);
+
+		$this->assertParityRowCount( 'DELETE FROM a, b USING t1 a, t2 b WHERE a.id = b.id AND a.id = 1' );
+		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount( 'DELETE a FROM t1 a, t2 b WHERE a.id = b.id' );
+		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note FROM t2 ORDER BY id' );
+	}
+
 	public function test_insert_set_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

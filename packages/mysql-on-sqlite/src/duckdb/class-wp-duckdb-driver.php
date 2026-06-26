@@ -665,6 +665,11 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_delete( array $tokens ): WP_DuckDB_Result_Statement {
+		$multi_table_delete = $this->parse_multi_table_delete_shape( $tokens );
+		if ( null !== $multi_table_delete ) {
+			return $this->execute_multi_table_delete( $multi_table_delete );
+		}
+
 		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[1]->id ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Only DELETE FROM table is supported.' );
 		}
@@ -688,6 +693,297 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB DELETE' );
+	}
+
+	/**
+	 * Parse supported multi-table DELETE shapes.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array{targets:array<int,array{alias:string,column:string,table_name:string}>,from_sql:string,where_tokens:array<int,WP_Parser_Token>,temp_table:string}|null Parsed shape, or null for single-table DELETE.
+	 */
+	private function parse_multi_table_delete_shape( array $tokens ): ?array {
+		if ( ! isset( $tokens[1] ) ) {
+			return null;
+		}
+
+		if (
+			WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $tokens[1]->id
+			|| WP_MySQL_Lexer::QUICK_SYMBOL === $tokens[1]->id
+			|| WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[1]->id
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. DELETE modifiers are not supported.' );
+		}
+
+		$target_tokens    = null;
+		$table_ref_start  = null;
+		$first_clause_pos = null;
+
+		if ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[1]->id ) {
+			$using_index = $this->find_top_level_token_index( $tokens, 2, WP_MySQL_Lexer::USING_SYMBOL );
+			if ( null === $using_index ) {
+				return null;
+			}
+			$target_tokens   = array_slice( $tokens, 2, $using_index - 2 );
+			$table_ref_start = $using_index + 1;
+		} else {
+			$from_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::FROM_SYMBOL );
+			if ( null === $from_index ) {
+				return null;
+			}
+			$target_tokens   = array_slice( $tokens, 1, $from_index - 1 );
+			$table_ref_start = $from_index + 1;
+		}
+
+		$clauses = $this->dml_clause_indexes( $tokens, $table_ref_start );
+		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Multi-table DELETE with ORDER BY or LIMIT is not supported.' );
+		}
+		$first_clause_pos = $clauses['where'] ?? count( $tokens );
+
+		$table_ref_tokens = array_slice( $tokens, $table_ref_start, $first_clause_pos - $table_ref_start );
+		if ( count( $target_tokens ) === 0 || count( $table_ref_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Multi-table DELETE requires target aliases and table references.' );
+		}
+
+		$target_aliases = $this->parse_multi_delete_target_aliases( $target_tokens );
+		$references     = $this->parse_multi_delete_table_references( $table_ref_tokens );
+		$targets        = array();
+		foreach ( $target_aliases as $offset => $target_alias ) {
+			$key = strtolower( $target_alias );
+			if ( ! isset( $references['by_alias'][ $key ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Unknown DELETE target alias '{$target_alias}' in DuckDB driver." );
+			}
+			$reference = $references['by_alias'][ $key ];
+			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE' );
+			$targets[] = array(
+				'alias'      => $reference['alias'],
+				'column'     => '__target_' . $offset . '_rowid',
+				'table_name' => $reference['table_name'],
+			);
+		}
+
+		$where_tokens = array();
+		if ( null !== $clauses['where'] ) {
+			$where_tokens = array_slice( $tokens, $clauses['where'] + 1 );
+		}
+
+		return array(
+			'targets'      => $targets,
+			'from_sql'     => $references['sql'],
+			'where_tokens' => $where_tokens,
+			'temp_table'   => '__wp_duckdb_dml_delete_' . substr( hash( 'sha256', (string) $this->last_mysql_query ), 0, 16 ),
+		);
+	}
+
+	/**
+	 * Execute a parsed multi-table DELETE.
+	 *
+	 * @param array{targets:array<int,array{alias:string,column:string,table_name:string}>,from_sql:string,where_tokens:array<int,WP_Parser_Token>,temp_table:string} $shape Parsed shape.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_multi_table_delete( array $shape ): WP_DuckDB_Result_Statement {
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $shape ): WP_DuckDB_Result_Statement {
+				$temp_table = $shape['temp_table'];
+				$this->execute_duckdb_query(
+					'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $temp_table ),
+					'Failed to reset DuckDB multi-table DELETE targets'
+				);
+
+				$select_list = array();
+				foreach ( $shape['targets'] as $target ) {
+					$select_list[] = $this->connection->quote_identifier( $target['alias'] )
+						. '.rowid AS '
+						. $this->connection->quote_identifier( $target['column'] );
+				}
+
+				$sql = 'CREATE TEMP TABLE '
+					. $this->connection->quote_identifier( $temp_table )
+					. ' AS SELECT DISTINCT '
+					. implode( ', ', $select_list )
+					. ' FROM '
+					. $shape['from_sql'];
+				if ( count( $shape['where_tokens'] ) > 0 ) {
+					$sql .= ' WHERE ' . $this->translate_tokens_to_duckdb_sql( $shape['where_tokens'] );
+				}
+
+				$this->execute_duckdb_query( $sql, 'Failed to collect DuckDB multi-table DELETE targets' );
+
+				$affected_rows = 0;
+				foreach ( $shape['targets'] as $target ) {
+					$stmt           = $this->execute_duckdb_query(
+						'DELETE FROM '
+							. $this->connection->quote_identifier( $target['table_name'] )
+							. ' AS '
+							. $this->connection->quote_identifier( $target['alias'] )
+							. ' WHERE rowid IN ( SELECT '
+							. $this->connection->quote_identifier( $target['column'] )
+							. ' FROM '
+							. $this->connection->quote_identifier( $temp_table )
+							. ' WHERE '
+							. $this->connection->quote_identifier( $target['column'] )
+							. ' IS NOT NULL )',
+						'Failed to execute DuckDB multi-table DELETE'
+					);
+					$affected_rows += $stmt->rowCount();
+				}
+
+				$this->execute_duckdb_query(
+					'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $temp_table ),
+					'Failed to clean up DuckDB multi-table DELETE targets'
+				);
+
+				return new WP_DuckDB_Result_Statement( array(), array(), $affected_rows );
+			}
+		);
+	}
+
+	/**
+	 * Parse a multi-table DELETE target alias list.
+	 *
+	 * @param WP_Parser_Token[] $tokens Target alias tokens.
+	 * @return string[] Target aliases.
+	 */
+	private function parse_multi_delete_target_aliases( array $tokens ): array {
+		$aliases = array();
+		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
+			if ( 1 !== count( $item ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. DELETE target wildcards are not supported.' );
+			}
+
+			$alias = $this->identifier_value( $item[0] );
+			$key   = strtolower( $alias );
+			if ( isset( $aliases[ $key ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Duplicate DELETE target alias '{$alias}' in DuckDB driver." );
+			}
+			$aliases[ $key ] = $alias;
+		}
+
+		return array_values( $aliases );
+	}
+
+	/**
+	 * Parse comma-separated table references for a bounded multi-table DELETE.
+	 *
+	 * @param WP_Parser_Token[] $tokens Table reference tokens.
+	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string}>} SQL and references keyed by lowercase alias.
+	 */
+	private function parse_multi_delete_table_references( array $tokens ): array {
+		if ( $this->contains_top_level_join_token( $tokens ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Joined table references in multi-table DELETE are not supported yet.' );
+		}
+
+		$sql_items = array();
+		$by_alias  = array();
+		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
+			$reference = $this->parse_multi_delete_table_reference( $item );
+			$key       = strtolower( $reference['alias'] );
+			if ( isset( $by_alias[ $key ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Duplicate table alias '{$reference['alias']}' in DELETE statement." );
+			}
+
+			$by_alias[ $key ] = array(
+				'alias'      => $reference['alias'],
+				'table_name' => $reference['table_name'],
+			);
+			$sql_items[]      = $this->connection->quote_identifier( $reference['table_name'] )
+				. ' AS '
+				. $this->connection->quote_identifier( $reference['alias'] );
+		}
+
+		return array(
+			'sql'      => implode( ', ', $sql_items ),
+			'by_alias' => $by_alias,
+		);
+	}
+
+	/**
+	 * Parse one base table reference for multi-table DELETE.
+	 *
+	 * @param WP_Parser_Token[] $tokens Table reference tokens.
+	 * @return array{alias:string,table_name:string}
+	 */
+	private function parse_multi_delete_table_reference( array $tokens ): array {
+		$index      = 0;
+		$database   = null;
+		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$database = $table_name;
+			++$index;
+			$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+
+			if ( 0 === strcasecmp( $database, 'information_schema' ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Access denied for user 'duckdb'@'%' to database 'information_schema'" );
+			}
+
+			if ( 0 !== strcasecmp( $database, $this->database ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Only the current database is supported.' );
+			}
+		}
+
+		if ( $this->is_duckdb_internal_table_name( $table_name ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Internal DuckDB metadata tables cannot be modified.' );
+		}
+
+		$resolved_table_name = $this->resolve_user_table_name( $table_name );
+		if ( null === $resolved_table_name ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in DELETE statement." );
+		}
+
+		$alias = $table_name;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$alias = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) ) {
+			$alias = $this->identifier_value( $tokens[ $index ] );
+			++$index;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Table reference options are not supported.' );
+		}
+
+		return array(
+			'alias'      => $alias,
+			'table_name' => $resolved_table_name,
+		);
+	}
+
+	/**
+	 * Check whether a token stream contains a top-level JOIN keyword.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether a top-level join is present.
+	 */
+	private function contains_top_level_join_token( array $tokens ): bool {
+		$join_tokens = array(
+			WP_MySQL_Lexer::JOIN_SYMBOL,
+			WP_MySQL_Lexer::INNER_SYMBOL,
+			WP_MySQL_Lexer::LEFT_SYMBOL,
+			WP_MySQL_Lexer::RIGHT_SYMBOL,
+			WP_MySQL_Lexer::NATURAL_SYMBOL,
+			WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+		);
+		$depth       = 0;
+		foreach ( $tokens as $token ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 === $depth && in_array( $token->id, $join_tokens, true ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -1047,6 +1343,33 @@ class WP_DuckDB_Driver {
 		}
 
 		return $index;
+	}
+
+	/**
+	 * Find a token at top-level parenthesis depth.
+	 *
+	 * @param WP_Parser_Token[] $tokens   Token stream.
+	 * @param int               $start    First token to scan.
+	 * @param int               $token_id Token ID to find.
+	 * @return int|null Token index, or null when absent.
+	 */
+	private function find_top_level_token_index( array $tokens, int $start, int $token_id ): ?int {
+		$depth = 0;
+		for ( $index = $start; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 === $depth && $token_id === $tokens[ $index ]->id ) {
+				return $index;
+			}
+		}
+
+		return null;
 	}
 
 	/**
@@ -3229,6 +3552,18 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$unix_timestamp_comparison = $this->translate_unix_timestamp_comparison( $tokens, $index );
+			if ( null !== $unix_timestamp_comparison ) {
+				$pieces[] = $unix_timestamp_comparison;
+				continue;
+			}
+
+			$like_escape_predicate = $this->translate_like_escape_predicate( $tokens, $index );
+			if ( null !== $like_escape_predicate ) {
+				$pieces[] = $like_escape_predicate;
+				continue;
+			}
+
 			if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
 				$identifier = null;
 				if ( $rewrite_information_schema_tables ) {
@@ -3706,6 +4041,127 @@ class WP_DuckDB_Driver {
 		}
 
 		return $token->get_bytes();
+	}
+
+	/**
+	 * Translate MySQL's numeric column coercion around UNIX_TIMESTAMP().
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated comparison, or null when the pattern does not match.
+	 */
+	private function translate_unix_timestamp_comparison( array $tokens, int &$index ): ?string {
+		$left_tokens    = array();
+		$operator_index = $index + 1;
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+		) {
+			$left_tokens    = array( $tokens[ $index ], $tokens[ $index + 1 ], $tokens[ $index + 2 ] );
+			$operator_index = $index + 3;
+		} elseif ( isset( $tokens[ $index ] ) && ! $this->is_non_identifier_token( $tokens[ $index ] ) ) {
+			$left_tokens = array( $tokens[ $index ] );
+		}
+
+		if (
+			count( $left_tokens ) === 0
+			|| ! isset( $tokens[ $operator_index + 3 ] )
+			|| ! in_array(
+				$tokens[ $operator_index ]->id,
+				array(
+					WP_MySQL_Lexer::LESS_THAN_OPERATOR,
+					WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
+					WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
+					WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
+					WP_MySQL_Lexer::EQUAL_OPERATOR,
+				),
+				true
+			)
+			|| ! $this->is_empty_function_call( $tokens, $operator_index + 1, 'UNIX_TIMESTAMP' )
+		) {
+			return null;
+		}
+
+		$left_sql = 1 === count( $left_tokens )
+			? $this->connection->quote_identifier( $this->identifier_value( $left_tokens[0] ) )
+			: $this->connection->quote_identifier( $this->identifier_value( $left_tokens[0] ) )
+				. '.'
+				. $this->connection->quote_identifier( $this->identifier_value( $left_tokens[2] ) );
+
+		$index = $operator_index + 3;
+		return 'TRY_CAST('
+			. $left_sql
+			. ' AS BIGINT) '
+			. $tokens[ $operator_index ]->get_bytes()
+			. ' CAST(epoch(current_timestamp) AS BIGINT)';
+	}
+
+	/**
+	 * Translate MySQL's default backslash escape for simple LIKE predicates.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated predicate, or null when the pattern does not match.
+	 */
+	private function translate_like_escape_predicate( array $tokens, int &$index ): ?string {
+		if ( ! isset( $tokens[ $index ] ) || $this->is_non_identifier_token( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		$operator_index = $index + 1;
+		$left_tokens    = array( $tokens[ $index ] );
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
+		) {
+			$left_tokens    = array( $tokens[ $index ], $tokens[ $index + 2 ] );
+			$operator_index = $index + 3;
+		}
+
+		if ( ! isset( $tokens[ $operator_index ] ) ) {
+			return null;
+		}
+
+		$is_not_like   = false;
+		$pattern_index = $operator_index + 1;
+		if ( WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $operator_index ]->id ) {
+			$is_not_like = false;
+		} elseif (
+			in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true )
+			&& isset( $tokens[ $operator_index + 1 ] )
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $operator_index + 1 ]->id
+		) {
+			$is_not_like   = true;
+			$pattern_index = $operator_index + 2;
+		} else {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $pattern_index ] )
+			|| (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $pattern_index ]->id
+				&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $pattern_index ]->id
+			)
+			|| false === strpos( $tokens[ $pattern_index ]->get_value(), '\\' )
+			|| ( isset( $tokens[ $pattern_index + 1 ] ) && WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $pattern_index + 1 ]->id )
+		) {
+			return null;
+		}
+
+		$left_sql = 1 === count( $left_tokens )
+			? $this->connection->quote_identifier( $this->identifier_value( $left_tokens[0] ) )
+			: $this->connection->quote_identifier( $this->identifier_value( $left_tokens[0] ) )
+				. '.'
+				. $this->connection->quote_identifier( $this->identifier_value( $left_tokens[1] ) );
+
+		$index = $pattern_index;
+		return $left_sql
+			. ( $is_not_like ? ' NOT LIKE ' : ' LIKE ' )
+			. $this->connection->quote( $tokens[ $pattern_index ]->get_value() )
+			. ' ESCAPE '
+			. $this->connection->quote( '\\' );
 	}
 
 	/**
