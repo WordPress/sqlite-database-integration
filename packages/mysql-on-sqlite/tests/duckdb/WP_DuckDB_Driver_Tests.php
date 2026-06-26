@@ -149,6 +149,40 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_savepoint_sql_is_rejected_without_mutating_active_transaction(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE tx_savepoint_state (id INT)' );
+
+		$driver->query( 'BEGIN' );
+		$driver->query( 'INSERT INTO tx_savepoint_state (id) VALUES (1)' );
+
+		foreach (
+			array(
+				'SAVEPOINT sp1',
+				'ROLLBACK TO sp1',
+				'ROLLBACK TO SAVEPOINT sp1',
+				'RELEASE SAVEPOINT sp1',
+			) as $sql
+		) {
+			$this->assertDriverQueryRejected( $driver, $sql );
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+			$this->assertTrue( $driver->get_connection()->inTransaction() );
+			$this->assertSame(
+				array( array( 'id' => 1 ) ),
+				$driver->query( 'SELECT id FROM tx_savepoint_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
+
+		$driver->query( 'ROLLBACK' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$this->assertSame(
+			array(),
+			$driver->query( 'SELECT id FROM tx_savepoint_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_session_boolean_variables_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
