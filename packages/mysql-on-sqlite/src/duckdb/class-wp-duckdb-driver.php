@@ -872,6 +872,14 @@ class WP_DuckDB_Driver {
 
 		if (
 			isset( $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::CREATE_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[2]->id
+		) {
+			return $this->execute_show_create_table( $tokens );
+		}
+
+		if (
+			isset( $tokens[1], $tokens[2] )
 			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id
 			&& WP_MySQL_Lexer::STATUS_SYMBOL === $tokens[2]->id
 		) {
@@ -900,6 +908,109 @@ class WP_DuckDB_Driver {
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW statement in DuckDB driver.' );
+	}
+
+	/**
+	 * Execute SHOW CREATE TABLE.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_show_create_table( array $tokens ): WP_DuckDB_Result_Statement {
+		$index      = 3;
+		$database   = null;
+		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$database = $table_name;
+			++$index;
+			$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW CREATE TABLE statement in DuckDB driver. Use SHOW CREATE TABLE [database.]table.' );
+		}
+
+		if ( null !== $database ) {
+			if ( 0 === strcasecmp( $database, 'information_schema' ) ) {
+				throw new WP_DuckDB_Driver_Exception( sprintf( "SHOW command denied to user 'duckdb'@'%%' for table '%s'", $table_name ) );
+			}
+
+			if ( 0 !== strcasecmp( $database, $this->database ) ) {
+				return new WP_DuckDB_Result_Statement(
+					array( 'Table', 'Create Table' ),
+					array()
+				);
+			}
+		}
+
+		$resolved_table_name = $this->resolve_user_table_name( $table_name );
+		if ( null === $resolved_table_name ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'Table', 'Create Table' ),
+				array()
+			);
+		}
+
+		return new WP_DuckDB_Result_Statement(
+			array( 'Table', 'Create Table' ),
+			array(
+				array(
+					$table_name,
+					$this->mysql_create_table_statement( $resolved_table_name, $table_name ),
+				),
+			)
+		);
+	}
+
+	/**
+	 * Build a MySQL-shaped SHOW CREATE TABLE statement from DuckDB metadata.
+	 *
+	 * @param string $table_name          Resolved physical table name.
+	 * @param string $requested_table_name Requested MySQL table name.
+	 * @return string MySQL CREATE TABLE statement.
+	 */
+	private function mysql_create_table_statement( string $table_name, string $requested_table_name ): string {
+		$metadata_by_table  = $this->table_metadata_by_table();
+		$table_metadata     = $metadata_by_table[ $table_name ] ?? $this->fallback_table_metadata( $table_name );
+		$table_info         = $this->information_schema_table_row( $table_name, $table_metadata );
+		$column_rows        = $this->show_create_table_column_rows( $table_name );
+		$rows               = array();
+		$has_auto_increment = false;
+
+		foreach ( $column_rows as $column ) {
+			$rows[] = $this->format_show_create_table_column( $column, $has_auto_increment );
+		}
+
+		foreach ( $this->show_create_table_index_groups( $table_name ) as $index_group ) {
+			$rows[] = $this->format_show_create_table_index( $index_group );
+		}
+
+		$sql  = 'CREATE TABLE ' . $this->quote_mysql_identifier( $requested_table_name ) . " (\n";
+		$sql .= implode( ",\n", $rows );
+		$sql .= "\n)";
+		$sql .= ' ENGINE=' . (string) $table_info['ENGINE'];
+
+		$auto_increment = $table_info['AUTO_INCREMENT'];
+		if ( $has_auto_increment && null !== $auto_increment && (int) $auto_increment > 1 ) {
+			$sql .= ' AUTO_INCREMENT=' . (int) $auto_increment;
+		}
+
+		$collation = (string) $table_info['TABLE_COLLATION'];
+		if ( '' === $collation ) {
+			$collation = 'utf8mb4_0900_ai_ci';
+		}
+		$charset = $this->character_set_from_collation( $collation ) ?? 'utf8mb4';
+		$sql    .= ' DEFAULT CHARSET=' . $charset;
+		$sql    .= ' COLLATE=' . $collation;
+
+		if ( '' !== $table_info['TABLE_COMMENT'] ) {
+			$sql .= ' COMMENT=' . $this->quote_mysql_utf8_string_literal( (string) $table_info['TABLE_COMMENT'] );
+		}
+
+		return $sql;
 	}
 
 	/**
@@ -1142,6 +1253,173 @@ class WP_DuckDB_Driver {
 			$this->primary_key_index_rows( $table_name ),
 			$this->secondary_index_rows( $table_name )
 		);
+	}
+
+	/**
+	 * Build information_schema-shaped column rows for SHOW CREATE TABLE.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function show_create_table_column_rows( string $table_name ): array {
+		$metadata_rows = $this->column_metadata_rows( $table_name );
+		if ( count( $metadata_rows ) === 0 ) {
+			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
+		}
+
+		return array_map(
+			function ( array $metadata ) use ( $table_name ): array {
+				return $this->information_schema_column_row( $table_name, $metadata );
+			},
+			$metadata_rows
+		);
+	}
+
+	/**
+	 * Format one SHOW CREATE TABLE column definition.
+	 *
+	 * @param array<string,mixed> $column             information_schema.columns row.
+	 * @param bool                $has_auto_increment Whether an AUTO_INCREMENT column has been seen.
+	 * @return string MySQL column definition.
+	 */
+	private function format_show_create_table_column( array $column, bool &$has_auto_increment ): string {
+		$extra              = (string) $column['EXTRA'];
+		$is_auto_increment  = false !== stripos( $extra, 'auto_increment' );
+		$has_auto_increment = $has_auto_increment || $is_auto_increment;
+
+		$sql  = '  ' . $this->quote_mysql_identifier( (string) $column['COLUMN_NAME'] );
+		$sql .= ' ' . (string) $column['COLUMN_TYPE'];
+
+		if ( 'NO' === $column['IS_NULLABLE'] ) {
+			$sql .= ' NOT NULL';
+		} elseif ( 'timestamp' === $column['COLUMN_TYPE'] ) {
+			$sql .= ' NULL';
+		}
+
+		if ( $is_auto_increment ) {
+			$sql .= ' AUTO_INCREMENT';
+		} elseif (
+			'CURRENT_TIMESTAMP' === $column['COLUMN_DEFAULT']
+			&& in_array( $column['DATA_TYPE'], array( 'timestamp', 'datetime' ), true )
+		) {
+			$sql .= ' DEFAULT CURRENT_TIMESTAMP';
+		} elseif ( null !== $column['COLUMN_DEFAULT'] ) {
+			if ( false !== strpos( $extra, 'DEFAULT_GENERATED' ) ) {
+				$sql .= ' DEFAULT (' . $column['COLUMN_DEFAULT'] . ')';
+			} else {
+				$sql .= ' DEFAULT ' . $this->format_show_create_table_default( $column );
+			}
+		} elseif ( 'YES' === $column['IS_NULLABLE'] ) {
+			$sql .= ' DEFAULT NULL';
+		}
+
+		if ( false !== strpos( $extra, 'on update CURRENT_TIMESTAMP' ) ) {
+			$sql .= ' ON UPDATE CURRENT_TIMESTAMP';
+		}
+
+		if ( '' !== $column['COLUMN_COMMENT'] ) {
+			$sql .= ' COMMENT ' . $this->quote_mysql_utf8_string_literal( (string) $column['COLUMN_COMMENT'] );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Format a column default for SHOW CREATE TABLE.
+	 *
+	 * @param array<string,mixed> $column information_schema.columns row.
+	 * @return string MySQL literal.
+	 */
+	private function format_show_create_table_default( array $column ): string {
+		if ( 'bit' === $column['DATA_TYPE'] ) {
+			return (string) $column['COLUMN_DEFAULT'];
+		}
+
+		return $this->quote_mysql_utf8_string_literal( (string) $column['COLUMN_DEFAULT'] );
+	}
+
+	/**
+	 * Build grouped index metadata for SHOW CREATE TABLE.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array{name:string,non_unique:int,index_type:string,index_comment:string,columns:array<int,array{name:string,sub_part:int|null,collation:string}>}>
+	 */
+	private function show_create_table_index_groups( string $table_name ): array {
+		$groups = array();
+
+		foreach ( $this->index_rows_for_table( $table_name ) as $row ) {
+			$index_name = (string) $row[2];
+			if ( ! isset( $groups[ $index_name ] ) ) {
+				$groups[ $index_name ] = array(
+					'name'          => $index_name,
+					'non_unique'    => (int) $row[1],
+					'index_type'    => (string) $row[10],
+					'index_comment' => (string) $row[12],
+					'columns'       => array(),
+				);
+			}
+
+			$groups[ $index_name ]['columns'][] = array(
+				'name'      => (string) $row[4],
+				'sub_part'  => null === $row[7] ? null : (int) $row[7],
+				'collation' => (string) $row[5],
+			);
+		}
+
+		$groups = array_values( $groups );
+		usort(
+			$groups,
+			function ( array $left, array $right ): int {
+				if ( 'PRIMARY' === $left['name'] ) {
+					return 'PRIMARY' === $right['name'] ? 0 : -1;
+				}
+				if ( 'PRIMARY' === $right['name'] ) {
+					return 1;
+				}
+				if ( $left['non_unique'] !== $right['non_unique'] ) {
+					return $left['non_unique'] <=> $right['non_unique'];
+				}
+				return strcmp( $left['name'], $right['name'] );
+			}
+		);
+
+		return $groups;
+	}
+
+	/**
+	 * Format one SHOW CREATE TABLE index definition.
+	 *
+	 * @param array{name:string,non_unique:int,index_type:string,index_comment:string,columns:array<int,array{name:string,sub_part:int|null,collation:string}>} $index_group Grouped index metadata.
+	 * @return string MySQL index definition.
+	 */
+	private function format_show_create_table_index( array $index_group ): string {
+		$columns = array_map(
+			function ( array $column ): string {
+				$sql = $this->quote_mysql_identifier( $column['name'] );
+				if ( null !== $column['sub_part'] ) {
+					$sql .= '(' . (int) $column['sub_part'] . ')';
+				}
+				if ( 'D' === $column['collation'] ) {
+					$sql .= ' DESC';
+				}
+				return $sql;
+			},
+			$index_group['columns']
+		);
+
+		if ( 'PRIMARY' === $index_group['name'] ) {
+			$sql = '  PRIMARY KEY (' . implode( ', ', $columns ) . ')';
+		} else {
+			$sql  = '  ' . ( 0 === $index_group['non_unique'] ? 'UNIQUE KEY ' : 'KEY ' );
+			$sql .= $this->quote_mysql_identifier( $index_group['name'] );
+			$sql .= ' (' . implode( ', ', $columns ) . ')';
+		}
+
+		if ( '' !== $index_group['index_comment'] ) {
+			$sql .= ' COMMENT ' . $this->quote_mysql_utf8_string_literal( $index_group['index_comment'] );
+		}
+
+		return $sql;
 	}
 
 	/**
@@ -4490,6 +4768,22 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Resolve a requested MySQL table name to a visible DuckDB table name.
+	 *
+	 * @param string $table_name Requested table name.
+	 * @return string|null Actual table name, or null when no user table matches.
+	 */
+	private function resolve_user_table_name( string $table_name ): ?string {
+		foreach ( $this->user_table_names() as $candidate ) {
+			if ( 0 === strcasecmp( $candidate, $table_name ) ) {
+				return $candidate;
+			}
+		}
+
+		return null;
+	}
+
+	/**
 	 * Build metadata rows for tables created outside the MySQL-emulation DDL path.
 	 *
 	 * @param string $table_name Table name.
@@ -4733,6 +5027,35 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Expected a MySQL identifier in DuckDB driver statement.' );
 		}
 		return $token->get_value();
+	}
+
+	/**
+	 * Quote an identifier for MySQL-facing SHOW CREATE TABLE output.
+	 *
+	 * @param string $identifier Identifier.
+	 * @return string Backtick-quoted identifier.
+	 */
+	private function quote_mysql_identifier( string $identifier ): string {
+		return '`' . str_replace( '`', '``', $identifier ) . '`';
+	}
+
+	/**
+	 * Quote a string literal for MySQL-facing SHOW CREATE TABLE output.
+	 *
+	 * @param string $literal UTF-8 literal.
+	 * @return string Single-quoted MySQL literal.
+	 */
+	private function quote_mysql_utf8_string_literal( string $literal ): string {
+		$backslash    = chr( 92 );
+		$replacements = array(
+			"'"        => "''",
+			$backslash => $backslash . $backslash,
+			chr( 0 )   => $backslash . '0',
+			chr( 10 )  => $backslash . 'n',
+			chr( 13 )  => $backslash . 'r',
+		);
+
+		return "'" . strtr( $literal, $replacements ) . "'";
 	}
 
 	/**

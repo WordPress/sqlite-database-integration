@@ -375,4 +375,37 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRowColumns( "SHOW TABLE STATUS WHERE SUBSTR(Name, 1, 4) = 'meta'", array( 'Name' ) );
 		$this->assertParityRowColumns( 'SHOW TABLE STATUS FROM other_database', $columns );
 	}
+
+	public function test_show_create_table_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					option_name VARCHAR(191) NOT NULL DEFAULT '' COMMENT 'Option name',
+					option_value LONGTEXT NOT NULL,
+					autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+					PRIMARY KEY (id),
+					UNIQUE KEY option_name (option_name),
+					KEY autoload (autoload),
+					KEY option_value_prefix (option_value(12))
+				) ENGINE=MyISAM DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Options table'",
+				"INSERT INTO metadata (option_name, option_value)
+				VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')",
+				"CREATE TABLE composite_pk (
+					site_id BIGINT(20) UNSIGNED NOT NULL,
+					option_id BIGINT(20) UNSIGNED NOT NULL,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					PRIMARY KEY (site_id, option_id),
+					UNIQUE KEY unique_site_option (site_id, option_name)
+				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+				'CREATE TABLE plain (id INT, name TEXT)',
+			)
+		);
+
+		$this->assertParityRows( 'SHOW CREATE TABLE metadata' );
+		$this->assertParityRows( 'SHOW CREATE TABLE wp.metadata' );
+		$this->assertParityRows( 'SHOW CREATE TABLE composite_pk' );
+		$this->assertParityRows( 'SHOW CREATE TABLE plain' );
+		$this->assertParityRows( 'SHOW CREATE TABLE missing' );
+	}
 }

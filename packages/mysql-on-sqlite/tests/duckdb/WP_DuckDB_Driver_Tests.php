@@ -1203,6 +1203,111 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal );
 	}
 
+	public function test_show_create_table_reconstructs_mysql_shaped_ddl(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE metadata (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL DEFAULT '' COMMENT 'Option name',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (id),
+				UNIQUE KEY option_name (option_name),
+				KEY autoload (autoload),
+				KEY option_value_prefix (option_value(12))
+			) ENGINE=MyISAM DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Options table'"
+		);
+		$driver->query(
+			"INSERT INTO metadata (option_name, option_value)
+			VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')"
+		);
+		$driver->query(
+			"CREATE TABLE composite_pk (
+				site_id BIGINT(20) UNSIGNED NOT NULL,
+				option_id BIGINT(20) UNSIGNED NOT NULL,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				PRIMARY KEY (site_id, option_id),
+				UNIQUE KEY unique_site_option (site_id, option_name)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+		);
+		$driver->query( 'CREATE TABLE plain (id INT, name TEXT)' );
+
+		$metadata_rows = $driver->query( 'SHOW CREATE TABLE metadata' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'Table', 'Create Table' ), array_keys( $metadata_rows[0] ) );
+		$this->assertSame( 'metadata', $metadata_rows[0]['Table'] );
+		$this->assertSame(
+			<<<'SQL'
+CREATE TABLE `metadata` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `option_name` varchar(191) NOT NULL DEFAULT '' COMMENT 'Option name',
+  `option_value` longtext NOT NULL,
+  `autoload` varchar(20) NOT NULL DEFAULT 'yes',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `option_name` (`option_name`),
+  KEY `autoload` (`autoload`),
+  KEY `option_value_prefix` (`option_value`(12))
+) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Options table'
+SQL,
+			$metadata_rows[0]['Create Table']
+		);
+
+		$qualified_rows = $driver->query( 'SHOW CREATE TABLE wp.metadata' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $metadata_rows, $qualified_rows );
+
+		$composite_rows = $driver->query( 'SHOW CREATE TABLE composite_pk' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			<<<'SQL'
+CREATE TABLE `composite_pk` (
+  `site_id` bigint(20) unsigned NOT NULL,
+  `option_id` bigint(20) unsigned NOT NULL,
+  `option_name` varchar(191) NOT NULL DEFAULT '',
+  PRIMARY KEY (`site_id`, `option_id`),
+  UNIQUE KEY `unique_site_option` (`site_id`, `option_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL,
+			$composite_rows[0]['Create Table']
+		);
+
+		$plain_rows = $driver->query( 'SHOW CREATE TABLE plain' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			<<<'SQL'
+CREATE TABLE `plain` (
+  `id` int DEFAULT NULL,
+  `name` text DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+SQL,
+			$plain_rows[0]['Create Table']
+		);
+
+		$missing_rows = $driver->query( 'SHOW CREATE TABLE missing' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $missing_rows );
+
+		$other_database_rows = $driver->query( 'SHOW CREATE TABLE other_database.metadata' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $other_database_rows );
+	}
+
+	public function test_show_create_table_denies_information_schema_tables(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( "SHOW command denied to user 'duckdb'@'%'" );
+		$driver->query( 'SHOW CREATE TABLE information_schema.tables' );
+	}
+
 	public function test_unsupported_alter_table_add_column_constraints_throw_driver_exception(): void {
 		$this->requireDuckDBRuntime();
 
