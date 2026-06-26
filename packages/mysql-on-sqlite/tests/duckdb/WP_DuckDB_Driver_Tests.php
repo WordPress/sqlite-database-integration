@@ -272,6 +272,46 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_insert_set_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE items (
+				id INTEGER PRIMARY KEY,
+				name VARCHAR(100) NOT NULL DEFAULT \'\',
+				hits INTEGER NOT NULL DEFAULT 0
+			)'
+		);
+
+		$inserted = $driver->query( "INSERT INTO items SET id = 1, name = 'first', hits = 2" );
+		$this->assertSame( 1, $inserted->rowCount() );
+		$this->assertSame( "INSERT INTO items (id, name, hits) VALUES (1, 'first', 2)", $this->lastDuckDBQuery( $driver ) );
+
+		$inserted_without_into = $driver->query( "INSERT items SET id = 2, name = 'second'" );
+		$this->assertSame( 1, $inserted_without_into->rowCount() );
+
+		$ignored = $driver->query( "INSERT IGNORE items SET id = 2, name = 'duplicate'" );
+		$this->assertSame( 0, $ignored->rowCount() );
+		$this->assertSame( "INSERT OR IGNORE INTO items (id, name) VALUES (2, 'duplicate')", $this->lastDuckDBQuery( $driver ) );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'first',
+					'hits' => 2,
+				),
+				array(
+					'id'   => 2,
+					'name' => 'second',
+					'hits' => 0,
+				),
+			),
+			$driver->query( 'SELECT id, name, hits FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_insert_on_duplicate_key_update_values_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 

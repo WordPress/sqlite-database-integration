@@ -468,6 +468,18 @@ class WP_DuckDB_Driver {
 		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $index ]->id ) {
 			++$index;
 		}
+
+		$set_index = $this->find_insert_set_index( $tokens, $index );
+		if ( null !== $set_index ) {
+			if ( null !== $this->find_on_duplicate_key_update_index( $tokens ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT statement in DuckDB driver. INSERT ... SET ... ON DUPLICATE KEY UPDATE is not supported.' );
+			}
+			return $this->execute_duckdb_query(
+				$this->translate_insert_set_tokens_to_duckdb_sql( $tokens, $index, $set_index, $ignore ),
+				'Failed to execute DuckDB INSERT'
+			);
+		}
+
 		$this->assert_values_write_statement( $tokens, $index, 'INSERT' );
 
 		$on_duplicate_index = $this->find_on_duplicate_key_update_index( $tokens );
@@ -592,6 +604,19 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Find the SET clause in a supported INSERT ... SET statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index expected to contain the table identifier.
+	 * @return int|null Index of the SET token, or null when absent.
+	 */
+	private function find_insert_set_index( array $tokens, int $table_index ): ?int {
+		return isset( $tokens[ $table_index + 1 ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $table_index + 1 ]->id
+			? $table_index + 1
+			: null;
 	}
 
 	/**
@@ -1664,6 +1689,85 @@ class WP_DuckDB_Driver {
 	 */
 	private function translate_insert_ignore_tokens_to_duckdb_sql( array $tokens, int $table_index ): string {
 		return 'INSERT OR IGNORE INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $table_index ) );
+	}
+
+	/**
+	 * Translate MySQL INSERT ... SET to DuckDB INSERT ... VALUES.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index of the table token.
+	 * @param int               $set_index   Index of the SET token.
+	 * @param bool              $ignore      Whether INSERT IGNORE was used.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_insert_set_tokens_to_duckdb_sql( array $tokens, int $table_index, int $set_index, bool $ignore ): string {
+		list( $columns, $values ) = $this->parse_insert_set_assignments( array_slice( $tokens, $set_index + 1 ) );
+
+		return 'INSERT '
+			. ( $ignore ? 'OR IGNORE ' : '' )
+			. 'INTO '
+			. $this->translate_tokens_to_duckdb_sql( array( $tokens[ $table_index ] ) )
+			. ' ('
+			. implode( ', ', $columns )
+			. ') VALUES ('
+			. implode( ', ', $values )
+			. ')';
+	}
+
+	/**
+	 * Parse INSERT ... SET assignments.
+	 *
+	 * @param WP_Parser_Token[] $tokens Assignment-list tokens after SET.
+	 * @return array{0:string[],1:string[]}
+	 */
+	private function parse_insert_set_assignments( array $tokens ): array {
+		$columns = array();
+		$values  = array();
+		$index   = 0;
+
+		while ( $index < count( $tokens ) ) {
+			$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
+			$columns[]   = $this->translate_tokens_to_duckdb_sql( array( $tokens[ $index ] ) );
+			++$index;
+
+			if (
+				! isset( $tokens[ $index ] )
+				|| ( WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $index ]->id && WP_MySQL_Lexer::ASSIGN_OPERATOR !== $tokens[ $index ]->id )
+			) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... SET statement in DuckDB driver. Expected assignment for column: ' . $column_name . '.' );
+			}
+			++$index;
+
+			$value_tokens = array();
+			$depth        = 0;
+			while ( $index < count( $tokens ) ) {
+				if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+					break;
+				}
+				if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+					++$depth;
+				} elseif ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+					--$depth;
+				}
+				$value_tokens[] = $tokens[ $index ];
+				++$index;
+			}
+
+			if ( count( $value_tokens ) === 0 ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... SET statement in DuckDB driver. Assignment value is required for column: ' . $column_name . '.' );
+			}
+
+			$values[] = $this->translate_tokens_to_duckdb_sql( $value_tokens );
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+			}
+		}
+
+		if ( count( $columns ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... SET statement in DuckDB driver. At least one assignment is required.' );
+		}
+
+		return array( $columns, $values );
 	}
 
 	/**

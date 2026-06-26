@@ -33,6 +33,19 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_insert_set_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR(100), hits INTEGER DEFAULT 0)',
+			)
+		);
+
+		$this->assertParityRowCount( "INSERT INTO items SET id = 1, name = 'first', hits = 2" );
+		$this->assertParityRowCount( "INSERT items SET id = 2, name = 'second'" );
+		$this->assertParityRowCount( "INSERT IGNORE items SET id = 2, name = 'duplicate'" );
+		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
+	}
+
 	public function test_regexp_and_not_regexp_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
