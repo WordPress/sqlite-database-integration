@@ -2163,7 +2163,17 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
-			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD and DROP actions are supported.' );
+			if ( WP_MySQL_Lexer::CHANGE_SYMBOL === $action[0]->id ) {
+				$result = $this->execute_alter_table_change_column( $table_name, $action, $temporary );
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::MODIFY_SYMBOL === $action[0]->id ) {
+				$result = $this->execute_alter_table_modify_column( $table_name, $action, $temporary );
+				continue;
+			}
+
+			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD, DROP, CHANGE, and MODIFY actions are supported.' );
 			$alter_item = array_slice( $action, 1 );
 
 			$result = $this->is_create_table_index_item( $alter_item )
@@ -2467,6 +2477,354 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Apply an ALTER TABLE ... CHANGE/MODIFY COLUMN after validation.
+	 *
+	 * @param string                                                                 $table_name          Table name.
+	 * @param string                                                                 $current_column_name Resolved current column name.
+	 * @param array<string,mixed>                                                    $metadata            New column metadata.
+	 * @param array<string,mixed>                                                    $current_column       Current column metadata.
+	 * @param array<int,array<string,mixed>>                                         $metadata_rows        Current table metadata rows.
+	 * @param bool                                                                   $has_stored_metadata Whether metadata rows came from the driver metadata table.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $dropped_indexes Current indexes dropped before the schema change.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $rebuilt_indexes Rebuilt surviving indexes.
+	 * @param bool                                                                   $rename_column       Whether the column is renamed.
+	 * @param bool                                                                   $type_change         Whether the physical DuckDB type changes.
+	 * @param bool                                                                   $default_change      Whether the physical default changes.
+	 * @param bool                                                                   $nullability_change  Whether the physical nullability changes.
+	 * @param bool                                                                   $temporary           Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_change_modify_column_change( string $table_name, string $current_column_name, array $metadata, array $current_column, array $metadata_rows, bool $has_stored_metadata, array $dropped_indexes, array $rebuilt_indexes, bool $rename_column, bool $type_change, bool $default_change, bool $nullability_change, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		if ( $rename_column ) {
+			foreach ( $dropped_indexes as $index_definition ) {
+				$this->drop_physical_secondary_index( $table_name, $index_definition['index_name'], true, $temporary );
+				$this->delete_index_metadata( $table_name, $index_definition['index_name'], $temporary );
+			}
+		}
+
+		$active_column_name       = $current_column_name;
+		$dropped_default_for_type = false;
+		try {
+			if ( $rename_column ) {
+				$active_column_name = (string) $metadata['column_name'];
+				$this->execute_duckdb_query(
+					'ALTER TABLE '
+						. $this->connection->quote_identifier( $table_name )
+						. ' RENAME COLUMN '
+						. $this->connection->quote_identifier( $current_column_name )
+						. ' TO '
+						. $this->connection->quote_identifier( $active_column_name ),
+					'Failed to rename DuckDB column'
+				);
+			}
+
+			if ( $type_change ) {
+				if ( null !== $current_column['column_default'] ) {
+					$this->execute_duckdb_query(
+						'ALTER TABLE '
+							. $this->connection->quote_identifier( $table_name )
+							. ' ALTER COLUMN '
+							. $this->connection->quote_identifier( $active_column_name )
+							. ' DROP DEFAULT',
+						'Failed to drop DuckDB column default before type change'
+					);
+					$dropped_default_for_type = true;
+				}
+
+				$this->execute_duckdb_query(
+					'ALTER TABLE '
+						. $this->connection->quote_identifier( $table_name )
+						. ' ALTER COLUMN '
+						. $this->connection->quote_identifier( $active_column_name )
+						. ' SET DATA TYPE '
+						. $metadata['_duckdb_type'],
+					'Failed to change DuckDB column type'
+				);
+			}
+
+			if ( $default_change || ( $type_change && null !== $metadata['_default_sql'] ) ) {
+				if ( null === $metadata['_default_sql'] ) {
+					if ( ! $dropped_default_for_type ) {
+						$this->execute_duckdb_query(
+							'ALTER TABLE '
+								. $this->connection->quote_identifier( $table_name )
+								. ' ALTER COLUMN '
+								. $this->connection->quote_identifier( $active_column_name )
+								. ' DROP DEFAULT',
+							'Failed to drop DuckDB column default'
+						);
+					}
+				} else {
+					$this->execute_duckdb_query(
+						'ALTER TABLE '
+							. $this->connection->quote_identifier( $table_name )
+							. ' ALTER COLUMN '
+							. $this->connection->quote_identifier( $active_column_name )
+							. ' SET DEFAULT '
+							. $metadata['_default_sql'],
+						'Failed to set DuckDB column default'
+					);
+				}
+			}
+
+			if ( $nullability_change ) {
+				$this->execute_duckdb_query(
+					'ALTER TABLE '
+						. $this->connection->quote_identifier( $table_name )
+						. ' ALTER COLUMN '
+						. $this->connection->quote_identifier( $active_column_name )
+						. ( 'NO' === $metadata['is_nullable'] ? ' SET NOT NULL' : ' DROP NOT NULL' ),
+					'Failed to change DuckDB column nullability'
+				);
+			}
+		} catch ( Throwable $e ) {
+			if ( $rename_column ) {
+				$this->restore_secondary_index_definitions( $dropped_indexes );
+				$this->refresh_column_key_metadata( $table_name, $temporary );
+				$this->invalidate_information_schema_compatibility_tables();
+			}
+			throw $e;
+		}
+
+		$this->replace_changed_column_metadata( $table_name, $current_column_name, $metadata, $metadata_rows, $has_stored_metadata, $temporary );
+
+		if ( $rename_column ) {
+			foreach ( $rebuilt_indexes as $index_definition ) {
+				$this->execute_duckdb_query( $index_definition['sql'], 'Failed to recreate DuckDB index after changing column' );
+				$this->record_index_metadata( $index_definition );
+			}
+		}
+
+		$this->refresh_column_key_metadata( $table_name, $temporary );
+		$this->invalidate_information_schema_compatibility_tables();
+
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Resolve current column metadata for CHANGE/MODIFY.
+	 *
+	 * @param string                         $table_name    Table name.
+	 * @param string                         $column_name   Requested column name.
+	 * @param array<int,array<string,mixed>> $metadata_rows Current table metadata rows.
+	 * @return array<string,mixed> Current column metadata.
+	 */
+	private function resolve_alter_table_change_column_metadata( string $table_name, string $column_name, array $metadata_rows ): array {
+		if ( count( $metadata_rows ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in ALTER TABLE statement." );
+		}
+
+		foreach ( $metadata_rows as $column ) {
+			if ( 0 === strcasecmp( (string) $column['column_name'], $column_name ) ) {
+				return $column;
+			}
+		}
+
+		throw new WP_DuckDB_Driver_Exception( "Unknown column '{$column_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+	}
+
+	/**
+	 * Validate a supported ALTER TABLE ... CHANGE/MODIFY target.
+	 *
+	 * @param string                         $table_name      Table name.
+	 * @param array<string,mixed>            $current_column  Current column metadata.
+	 * @param array<int,array<string,mixed>> $metadata_rows   Current table metadata rows.
+	 * @param string                         $new_column_name Requested new column name.
+	 * @param bool                           $temporary       Whether the target is a temporary table.
+	 */
+	private function assert_alter_table_change_column_supported( string $table_name, array $current_column, array $metadata_rows, string $new_column_name, bool $temporary = false ): void {
+		$current_column_name = (string) $current_column['column_name'];
+		foreach ( $metadata_rows as $column ) {
+			if (
+				0 !== strcasecmp( (string) $column['column_name'], $current_column_name )
+				&& 0 === strcasecmp( (string) $column['column_name'], $new_column_name )
+			) {
+				throw new WP_DuckDB_Driver_Exception( "Duplicate column name '{$new_column_name}' in ALTER TABLE statement." );
+			}
+		}
+
+		foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
+			if ( 0 === strcasecmp( (string) $index_row[4], $current_column_name ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY on a primary key column requires a table rebuild.' );
+			}
+		}
+
+		$auto_increment = $this->auto_increment_metadata_for_table( $table_name, $temporary );
+		if (
+			( null !== $auto_increment && 0 === strcasecmp( $auto_increment['column_name'], $current_column_name ) )
+			|| 'auto_increment' === $current_column['extra']
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY on an AUTO_INCREMENT column requires a table rebuild.' );
+		}
+	}
+
+	/**
+	 * Read one physical DuckDB pragma column row.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Column name.
+	 * @return array<string,mixed> Physical column info.
+	 */
+	private function physical_column_info_row( string $table_name, string $column_name ): array {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') ORDER BY cid',
+			'Failed to inspect DuckDB table columns'
+		);
+
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			if ( 0 === strcasecmp( (string) $row['name'], $column_name ) ) {
+				return $row;
+			}
+		}
+
+		throw new WP_DuckDB_Driver_Exception( "Unknown column '{$column_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+	}
+
+	/**
+	 * Check whether a CHANGE/MODIFY definition changes the stored default.
+	 *
+	 * @param array<string,mixed> $current_column Current column metadata.
+	 * @param array<string,mixed> $metadata       New column metadata.
+	 * @return bool Whether the default changes.
+	 */
+	private function column_default_changed( array $current_column, array $metadata ): bool {
+		$current_default = $current_column['column_default'];
+		$new_default     = $metadata['column_default'];
+
+		if ( null === $current_default || null === $new_default ) {
+			return $current_default !== $new_default;
+		}
+
+		return (string) $current_default !== (string) $new_default;
+	}
+
+	/**
+	 * Normalize DuckDB type strings for physical type comparisons.
+	 *
+	 * @param string $type DuckDB type.
+	 * @return string Canonical type.
+	 */
+	private function canonical_duckdb_type( string $type ): string {
+		$type = strtoupper( trim( preg_replace( '/\s+/', ' ', $type ) ) );
+
+		$aliases = array(
+			'INT'     => 'INTEGER',
+			'STRING'  => 'VARCHAR',
+			'CHAR'    => 'VARCHAR',
+			'BOOLEAN' => 'BOOLEAN',
+			'BOOL'    => 'BOOLEAN',
+		);
+
+		return $aliases[ $type ] ?? $type;
+	}
+
+	/**
+	 * Build secondary indexes after renaming one column.
+	 *
+	 * @param string                                                                 $table_name        Table name.
+	 * @param string                                                                 $old_column_name   Old column name.
+	 * @param string                                                                 $new_column_name   New column name.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Current index definitions.
+	 * @param bool                                                                   $temporary        Whether the target is a temporary table.
+	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}>
+	 */
+	private function secondary_index_definitions_after_column_rename( string $table_name, string $old_column_name, string $new_column_name, array $index_definitions, bool $temporary = false ): array {
+		$rebuilt_indexes = array();
+
+		foreach ( $index_definitions as $index_definition ) {
+			$column_metadata = array_map(
+				function ( array $column ) use ( $old_column_name, $new_column_name ): array {
+					if ( 0 === strcasecmp( $column['name'], $old_column_name ) ) {
+						$column['name'] = $new_column_name;
+					}
+					return $column;
+				},
+				$index_definition['columns']
+			);
+
+			$rebuilt_indexes[] = $this->build_secondary_index_definition(
+				$table_name,
+				$index_definition['index_name'],
+				$index_definition['unique'],
+				array_map(
+					function ( array $column ): string {
+						return $this->connection->quote_identifier( $column['name'] );
+					},
+					$column_metadata
+				),
+				$column_metadata,
+				$temporary
+			);
+		}
+
+		return $rebuilt_indexes;
+	}
+
+	/**
+	 * Replace one stored column metadata row while preserving ordinal positions.
+	 *
+	 * @param string                         $table_name          Table name.
+	 * @param string                         $old_column_name     Old column name.
+	 * @param array<string,mixed>            $metadata            New column metadata.
+	 * @param array<int,array<string,mixed>> $metadata_rows       Current table metadata rows.
+	 * @param bool                           $has_stored_metadata Whether metadata rows came from the driver metadata table.
+	 * @param bool                           $temporary           Whether the target is a temporary table.
+	 */
+	private function replace_changed_column_metadata( string $table_name, string $old_column_name, array $metadata, array $metadata_rows, bool $has_stored_metadata, bool $temporary = false ): void {
+		if ( ! $has_stored_metadata ) {
+			foreach ( $metadata_rows as &$column ) {
+				if ( 0 === strcasecmp( (string) $column['column_name'], $old_column_name ) ) {
+					$column = array_merge(
+						$column,
+						array(
+							'column_name'    => $metadata['column_name'],
+							'column_type'    => $metadata['column_type'],
+							'is_nullable'    => $metadata['is_nullable'],
+							'column_key'     => $metadata['column_key'],
+							'column_default' => $metadata['column_default'],
+							'extra'          => $metadata['extra'],
+							'collation_name' => $metadata['collation_name'],
+							'comment'        => $metadata['comment'],
+						)
+					);
+					break;
+				}
+			}
+			unset( $column );
+
+			$this->record_column_metadata( $table_name, $metadata_rows, $temporary );
+			return;
+		}
+
+		$this->ensure_column_metadata_table( $temporary );
+		$this->execute_duckdb_query(
+			'UPDATE '
+				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
+				. ' SET column_name = '
+				. $this->connection->quote( $metadata['column_name'] )
+				. ', column_type = '
+				. $this->connection->quote( $metadata['column_type'] )
+				. ', is_nullable = '
+				. $this->connection->quote( $metadata['is_nullable'] )
+				. ', column_key = '
+				. $this->connection->quote( $metadata['column_key'] )
+				. ', column_default = '
+				. $this->connection->quote( $metadata['column_default'] )
+				. ', extra = '
+				. $this->connection->quote( $metadata['extra'] )
+				. ', collation_name = '
+				. $this->connection->quote( $metadata['collation_name'] )
+				. ', comment = '
+				. $this->connection->quote( $metadata['comment'] )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. ' AND column_name = '
+				. $this->connection->quote( $old_column_name ),
+			'Failed to update DuckDB column metadata'
+		);
+	}
+
+	/**
 	 * Delete stored metadata for a dropped column.
 	 *
 	 * @param string $table_name  Table name.
@@ -2579,6 +2937,143 @@ class WP_DuckDB_Driver {
 		$this->append_column_metadata( $table_name, $metadata, $temporary );
 
 		return $result;
+	}
+
+	/**
+	 * Execute ALTER TABLE ... CHANGE [COLUMN].
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     Action tokens starting at CHANGE.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_change_column( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CHANGE_SYMBOL, 'Expected CHANGE in ALTER TABLE action.' );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		$old_column_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		$new_column_token = $tokens[ $index ] ?? null;
+		$this->identifier_value( $new_column_token );
+		++$index;
+
+		$definition_tokens = array_merge( array( $new_column_token ), array_slice( $tokens, $index ) );
+		if ( count( $definition_tokens ) < 2 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE COLUMN requires a full column definition.' );
+		}
+
+		return $this->execute_alter_table_change_or_modify_column( $table_name, $old_column_name, $definition_tokens, $temporary );
+	}
+
+	/**
+	 * Execute ALTER TABLE ... MODIFY [COLUMN].
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     Action tokens starting at MODIFY.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_modify_column( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::MODIFY_SYMBOL, 'Expected MODIFY in ALTER TABLE action.' );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		$column_token = $tokens[ $index ] ?? null;
+		$column_name  = $this->identifier_value( $column_token );
+		++$index;
+
+		$definition_tokens = array_merge( array( $column_token ), array_slice( $tokens, $index ) );
+		if ( count( $definition_tokens ) < 2 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. MODIFY COLUMN requires a full column definition.' );
+		}
+
+		return $this->execute_alter_table_change_or_modify_column( $table_name, $column_name, $definition_tokens, $temporary );
+	}
+
+	/**
+	 * Execute the common CHANGE/MODIFY column path.
+	 *
+	 * @param string            $table_name        Table name.
+	 * @param string            $old_column_name   Existing column name.
+	 * @param WP_Parser_Token[] $definition_tokens New column definition tokens.
+	 * @param bool              $temporary         Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_change_or_modify_column( string $table_name, string $old_column_name, array $definition_tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		list( , $sequence_sql, $inline_indexes, $metadata ) = $this->translate_create_table_column( $table_name, $definition_tokens, false, true, $temporary );
+		if ( null !== $sequence_sql || 'auto_increment' === $metadata['extra'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY AUTO_INCREMENT requires a table rebuild.' );
+		}
+		if ( 'PRI' === $metadata['column_key'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY inline PRIMARY KEY is not supported.' );
+		}
+		if ( 'UNI' === $metadata['column_key'] || count( $inline_indexes ) > 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY inline UNIQUE is not supported.' );
+		}
+
+		$stored_metadata_rows = $this->column_metadata_rows( $table_name, $temporary );
+		$metadata_rows        = count( $stored_metadata_rows ) > 0 ? $stored_metadata_rows : $this->pragma_column_metadata_rows( $table_name );
+		$current_column       = $this->resolve_alter_table_change_column_metadata( $table_name, $old_column_name, $metadata_rows );
+		$current_column_name  = (string) $current_column['column_name'];
+		$new_column_name      = (string) $metadata['column_name'];
+
+		$this->assert_alter_table_change_column_supported( $table_name, $current_column, $metadata_rows, $new_column_name, $temporary );
+
+		$physical_column      = $this->physical_column_info_row( $table_name, $current_column_name );
+		$rename_column        = 0 !== strcasecmp( $current_column_name, $new_column_name );
+		$type_change          = $this->canonical_duckdb_type( (string) $physical_column['type'] ) !== $this->canonical_duckdb_type( (string) $metadata['_duckdb_type'] );
+		$default_change       = $this->column_default_changed( $current_column, $metadata );
+		$nullability_change   = (string) $current_column['is_nullable'] !== (string) $metadata['is_nullable'];
+		$index_definitions    = $this->secondary_index_definitions_for_table( $table_name, $temporary );
+		$rebuilt_indexes      = $rename_column
+			? $this->secondary_index_definitions_after_column_rename( $table_name, $current_column_name, $new_column_name, $index_definitions, $temporary )
+			: $index_definitions;
+		$has_physical_changes = $rename_column || $type_change || $default_change || $nullability_change;
+
+		if ( count( $index_definitions ) > 0 && $has_physical_changes && ! $rename_column ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY on indexed columns that changes type, default, or nullability requires a table rebuild.' );
+		}
+		if ( count( $index_definitions ) > 0 && $rename_column && ( $type_change || $default_change || $nullability_change ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE COLUMN rename on indexed columns cannot also change type, default, or nullability without a table rebuild.' );
+		}
+
+		$callback = function () use ( $table_name, $current_column_name, $metadata, $current_column, $metadata_rows, $stored_metadata_rows, $index_definitions, $rebuilt_indexes, $rename_column, $type_change, $default_change, $nullability_change, $temporary ): WP_DuckDB_Result_Statement {
+			return $this->execute_alter_table_change_modify_column_change(
+				$table_name,
+				$current_column_name,
+				$metadata,
+				$current_column,
+				$metadata_rows,
+				count( $stored_metadata_rows ) > 0,
+				$index_definitions,
+				$rebuilt_indexes,
+				$rename_column,
+				$type_change,
+				$default_change,
+				$nullability_change,
+				$temporary
+			);
+		};
+
+		if ( count( $index_definitions ) > 0 && $rename_column ) {
+			if ( $this->connection->inTransaction() ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE COLUMN on indexed columns cannot run inside an active DuckDB transaction.' );
+			}
+
+			return $callback();
+		}
+
+		return $this->execute_schema_lifecycle_change( $callback );
 	}
 
 	/**
@@ -3676,6 +4171,8 @@ class WP_DuckDB_Driver {
 			'extra'          => $auto_increment ? 'auto_increment' : '',
 			'collation_name' => $this->mysql_column_collation_from_tokens( $tokens, $type_token ),
 			'comment'        => $this->mysql_column_comment_from_tokens( $tokens ),
+			'_duckdb_type'   => $duck_type,
+			'_default_sql'   => $auto_increment ? null : $default_sql,
 		);
 
 		return array( $column_sql, $sequence, $indexes, $metadata );

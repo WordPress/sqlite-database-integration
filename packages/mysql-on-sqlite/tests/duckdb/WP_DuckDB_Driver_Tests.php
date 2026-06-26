@@ -2286,6 +2286,279 @@ SQL,
 		);
 	}
 
+	public function test_alter_table_change_column_renames_with_type_default_and_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE change_col_meta (
+				option_name VARCHAR(255),
+				option_value LONGTEXT
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+		$driver->query( "INSERT INTO change_col_meta (option_name, option_value) VALUES ('siteurl', 'https://example.test')" );
+
+		$change = $driver->query( "ALTER TABLE change_col_meta CHANGE COLUMN option_name option_key VARCHAR(191) NOT NULL DEFAULT '' COMMENT 'Option key'" );
+
+		$this->assertSame( 0, $change->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'option_key'   => 'siteurl',
+					'option_value' => 'https://example.test',
+				),
+			),
+			$driver->query( 'SELECT option_key, option_value FROM change_col_meta' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 'option_key', 'option_value' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM change_col_meta' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+
+		$key_column = $driver->query( "SHOW FULL COLUMNS FROM change_col_meta LIKE 'option_key'" )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 'varchar(191)', $key_column['Type'] );
+		$this->assertSame( 'NO', $key_column['Null'] );
+		$this->assertSame( '', $key_column['Default'] );
+		$this->assertSame( 'Option key', $key_column['Comment'] );
+
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'      => 'option_key',
+					'ORDINAL_POSITION' => 1,
+					'COLUMN_DEFAULT'   => '',
+					'IS_NULLABLE'      => 'NO',
+					'COLUMN_TYPE'      => 'varchar(191)',
+					'COLUMN_COMMENT'   => 'Option key',
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, ORDINAL_POSITION, COLUMN_DEFAULT, IS_NULLABLE, COLUMN_TYPE, COLUMN_COMMENT
+				FROM information_schema.columns
+				WHERE table_schema = 'wp' AND table_name = 'change_col_meta' AND column_name = 'option_key'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( "INSERT INTO change_col_meta (option_value) VALUES ('defaulted')" );
+		$this->assertSame(
+			array(
+				array( 'option_key' => '' ),
+			),
+			$driver->query( "SELECT option_key FROM change_col_meta WHERE option_value = 'defaulted'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_change_same_name_and_modify_refresh_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE change_modify_meta (
+				option_name VARCHAR(255) DEFAULT '7',
+				autoload VARCHAR(10) DEFAULT 'no'
+			)"
+		);
+		$driver->query( "INSERT INTO change_modify_meta (option_name, autoload) VALUES ('7', 'no')" );
+
+		$driver->query( 'ALTER TABLE change_modify_meta CHANGE COLUMN option_name option_name SMALLINT NOT NULL DEFAULT 14' );
+		$driver->query( "ALTER TABLE change_modify_meta MODIFY COLUMN autoload VARCHAR(20) NOT NULL DEFAULT 'yes' COMMENT 'Load flag'" );
+		$driver->query( 'INSERT INTO change_modify_meta (option_name, autoload) VALUES (DEFAULT, DEFAULT)' );
+
+		$this->assertSame(
+			array(
+				array(
+					'option_name' => 7,
+					'autoload'    => 'no',
+				),
+				array(
+					'option_name' => 14,
+					'autoload'    => 'yes',
+				),
+			),
+			$driver->query( 'SELECT option_name, autoload FROM change_modify_meta ORDER BY option_name' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$columns = array_column( $driver->query( 'SHOW FULL COLUMNS FROM change_modify_meta' )->fetchAll( PDO::FETCH_ASSOC ), null, 'Field' );
+		$this->assertSame( 'smallint', $columns['option_name']['Type'] );
+		$this->assertSame( 'NO', $columns['option_name']['Null'] );
+		$this->assertSame( '14', $columns['option_name']['Default'] );
+		$this->assertSame( 'varchar(20)', $columns['autoload']['Type'] );
+		$this->assertSame( 'NO', $columns['autoload']['Null'] );
+		$this->assertSame( 'yes', $columns['autoload']['Default'] );
+		$this->assertSame( 'Load flag', $columns['autoload']['Comment'] );
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE change_modify_meta' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringContainsString( "`option_name` smallint NOT NULL DEFAULT '14'", $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( "`autoload` varchar(20) NOT NULL DEFAULT 'yes' COMMENT 'Load flag'", $create_rows[0]['Create Table'] );
+	}
+
+	public function test_alter_table_change_column_rebuilds_indexes_for_renamed_column(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE change_col_idx (
+				name VARCHAR(50) NOT NULL DEFAULT 'mark',
+				lastname VARCHAR(50),
+				payload INT,
+				UNIQUE KEY name (name),
+				KEY composite (name, lastname)
+			)"
+		);
+		$driver->query( "INSERT INTO change_col_idx (name, lastname, payload) VALUES ('ada', 'lovelace', 1)" );
+
+		$driver->query( "ALTER TABLE change_col_idx CHANGE name firstname VARCHAR(50) NOT NULL DEFAULT 'mark'" );
+
+		$this->assertSame(
+			array(
+				array(
+					'firstname' => 'ada',
+					'lastname'  => 'lovelace',
+					'payload'   => 1,
+				),
+			),
+			$driver->query( 'SELECT firstname, lastname, payload FROM change_col_idx' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$index_rows = array_map(
+			function ( array $row ): array {
+				return array(
+					'Key_name'     => $row['Key_name'],
+					'Seq_in_index' => $row['Seq_in_index'],
+					'Column_name'  => $row['Column_name'],
+					'Non_unique'   => $row['Non_unique'],
+				);
+			},
+			$driver->query( 'SHOW INDEX FROM change_col_idx' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'Key_name'     => 'composite',
+					'Seq_in_index' => 1,
+					'Column_name'  => 'firstname',
+					'Non_unique'   => 1,
+				),
+				array(
+					'Key_name'     => 'composite',
+					'Seq_in_index' => 2,
+					'Column_name'  => 'lastname',
+					'Non_unique'   => 1,
+				),
+				array(
+					'Key_name'     => 'name',
+					'Seq_in_index' => 1,
+					'Column_name'  => 'firstname',
+					'Non_unique'   => 0,
+				),
+			),
+			$index_rows
+		);
+		$this->assertSame(
+			array(
+				'firstname' => 'UNI',
+				'lastname'  => '',
+				'payload'   => '',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM change_col_idx' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT index_name
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp' AND table_name = 'change_col_idx' AND column_name = 'name'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		try {
+			$driver->query( "INSERT INTO change_col_idx (firstname, lastname, payload) VALUES ('ada', 'duplicate', 2)" );
+			$this->fail( 'Duplicate firstname should fail after rebuilding the renamed unique index.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_change_column_targets_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE shadow_change (name VARCHAR(20), payload INT)' );
+		$driver->query( 'CREATE TEMPORARY TABLE shadow_change (name VARCHAR(20), payload INT)' );
+		$driver->query( "INSERT INTO shadow_change (name, payload) VALUES ('temp', 3)" );
+
+		$driver->query( "ALTER TABLE shadow_change CHANGE COLUMN name temp_name VARCHAR(30) DEFAULT ''" );
+
+		$this->assertSame(
+			array( 'temp_name', 'payload' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM shadow_change' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'temp_name' => 'temp',
+					'payload'   => 3,
+				),
+			),
+			$driver->query( 'SELECT * FROM shadow_change' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE shadow_change' );
+		$this->assertSame(
+			array( 'name', 'payload' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM shadow_change' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+	}
+
+	public function test_alter_table_change_modify_rejects_protected_definitions(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE change_pk (id INT NOT NULL, note VARCHAR(20), PRIMARY KEY (id))' );
+		$driver->query( 'CREATE TABLE change_auto (id BIGINT NOT NULL AUTO_INCREMENT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE change_inline_unique (name VARCHAR(20))' );
+
+		foreach (
+			array(
+				'ALTER TABLE change_pk CHANGE id item_id INT NOT NULL' => 'primary key column requires a table rebuild',
+				'ALTER TABLE change_auto MODIFY id BIGINT NOT NULL' => 'AUTO_INCREMENT column requires a table rebuild',
+				'ALTER TABLE change_inline_unique MODIFY name VARCHAR(20) UNIQUE' => 'inline UNIQUE is not supported',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected CHANGE/MODIFY protection to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+		}
+	}
+
 	public function test_alter_table_drop_column_rejects_protected_columns(): void {
 		$this->requireDuckDBRuntime();
 

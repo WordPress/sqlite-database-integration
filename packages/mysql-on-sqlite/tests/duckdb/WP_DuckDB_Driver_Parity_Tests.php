@@ -324,6 +324,32 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW COLUMNS FROM metadata' );
 	}
 
+	public function test_alter_table_change_modify_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					option_name VARCHAR(255) DEFAULT '7',
+					option_value LONGTEXT,
+					autoload VARCHAR(10) DEFAULT 'no'
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO metadata (option_name, option_value, autoload) VALUES ('7', 'payload', 'no')",
+				'ALTER TABLE metadata CHANGE COLUMN option_name option_name SMALLINT NOT NULL DEFAULT 14',
+				"ALTER TABLE metadata MODIFY COLUMN autoload VARCHAR(20) NOT NULL DEFAULT 'yes'",
+				'ALTER TABLE metadata CHANGE COLUMN option_value option_payload LONGTEXT NULL',
+				'INSERT INTO metadata (option_payload) VALUES (\'defaulted\')',
+			)
+		);
+
+		$this->assertParityRows( 'SELECT option_name, option_payload, autoload FROM metadata ORDER BY option_payload' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM metadata' );
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, ORDINAL_POSITION, COLUMN_DEFAULT, IS_NULLABLE, COLUMN_TYPE, COLUMN_KEY, EXTRA
+			FROM information_schema.columns
+			WHERE table_schema = 'wp' AND table_name = 'metadata'
+			ORDER BY ordinal_position"
+		);
+	}
+
 	public function test_information_schema_columns_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
