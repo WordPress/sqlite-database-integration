@@ -154,4 +154,21 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 
 		$this->assertParityRows( 'SHOW COLUMNS FROM metadata' );
 	}
+
+	public function test_alter_table_add_column_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO metadata (option_name, option_value) VALUES ('siteurl', 'https://example.test')",
+				"ALTER TABLE metadata ADD COLUMN autoload VARCHAR(20) NOT NULL DEFAULT 'yes'",
+			)
+		);
+
+		$this->assertParityRows( 'SELECT option_name, option_value, autoload FROM metadata' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM metadata' );
+	}
 }

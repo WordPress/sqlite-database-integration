@@ -564,14 +564,132 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( "INSERT INTO wp_options (option_name, option_value) VALUES ('siteurl', 'duplicate')" );
 	}
 
-	public function test_unsupported_alter_table_shape_throws_driver_exception(): void {
+	public function test_alter_table_add_column_updates_data_and_metadata(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL
+			)"
+		);
+		$driver->query( "INSERT INTO wp_options (option_name, option_value) VALUES ('siteurl', 'https://example.test')" );
+
+		$result = $driver->query( "ALTER TABLE wp_options ADD COLUMN autoload VARCHAR(20) NOT NULL DEFAULT 'yes'" );
+
+		$this->assertSame( 0, $result->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'option_name' => 'siteurl',
+					'autoload'    => 'yes',
+				),
+			),
+			$driver->query( 'SELECT option_name, autoload FROM wp_options' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$describe = $driver->query( 'DESCRIBE wp_options' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'option_id', 'option_name', 'option_value', 'autoload' ), array_column( $describe, 'Field' ) );
+		$this->assertSame(
+			array(
+				'Field'   => 'autoload',
+				'Type'    => 'varchar(20)',
+				'Null'    => 'NO',
+				'Key'     => '',
+				'Default' => 'yes',
+				'Extra'   => '',
+			),
+			$describe[3]
+		);
+
+		$full = $driver->query( "SHOW FULL COLUMNS FROM wp_options LIKE 'autoload'" )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 'utf8mb4_unicode_ci', $full['Collation'] );
+	}
+
+	public function test_alter_table_add_column_without_column_keyword_and_position_hints(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE items (id INT, name VARCHAR(50))' );
+		$driver->query( "INSERT INTO items VALUES (1, 'alpha')" );
+
+		$driver->query( 'ALTER TABLE items ADD notes LONGTEXT NULL AFTER id' );
+		$driver->query( "ALTER TABLE items ADD COLUMN position_hint VARCHAR(20) DEFAULT 'tail' FIRST" );
+
+		$row = $driver->query( 'SELECT id, name, notes, position_hint FROM items' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				'id'            => 1,
+				'name'          => 'alpha',
+				'notes'         => null,
+				'position_hint' => 'tail',
+			),
+			$row
+		);
+
+		$describe = $driver->query( 'SHOW COLUMNS FROM items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'id', 'name', 'notes', 'position_hint' ), array_column( $describe, 'Field' ) );
+		$this->assertSame( 'longtext', $describe[2]['Type'] );
+		$this->assertSame( 'YES', $describe[2]['Null'] );
+		$this->assertSame( 'tail', $describe[3]['Default'] );
+	}
+
+	public function test_alter_table_multiple_add_columns_and_index_are_supported(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE items (id INT, slug VARCHAR(50))' );
+
+		$result = $driver->query(
+			"ALTER TABLE items
+				ADD COLUMN label VARCHAR(50) DEFAULT 'untitled',
+				ADD views INT DEFAULT 0,
+				ADD UNIQUE INDEX slug_key (slug)"
+		);
+
+		$this->assertSame( 0, $result->rowCount() );
+		$describe = $driver->query( 'DESCRIBE items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'id', 'slug', 'label', 'views' ), array_column( $describe, 'Field' ) );
+
+		$indexes = $driver->query( 'SHOW INDEX FROM items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'slug_key' ), array_column( $indexes, 'Key_name' ) );
+		$this->assertSame( 0, (int) $indexes[0]['Non_unique'] );
+	}
+
+	public function test_unsupported_alter_table_add_column_constraints_throw_driver_exception(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE users (name VARCHAR(100))' );
 
 		$this->expectException( WP_DuckDB_Driver_Exception::class );
-		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD INDEX is supported.' );
-		$driver->query( 'ALTER TABLE users ADD COLUMN email VARCHAR(255)' );
+		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN PRIMARY KEY is not supported.' );
+		$driver->query( 'ALTER TABLE users ADD COLUMN id INT PRIMARY KEY' );
+	}
+
+	public function test_unsupported_alter_table_add_auto_increment_throws_driver_exception(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE users (name VARCHAR(100))' );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN AUTO_INCREMENT is not supported.' );
+		$driver->query( 'ALTER TABLE users ADD COLUMN id BIGINT AUTO_INCREMENT' );
+	}
+
+	public function test_unsupported_alter_table_add_not_null_without_default_on_non_empty_table_throws_driver_exception(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE users (name VARCHAR(100))' );
+		$driver->query( "INSERT INTO users VALUES ('Ada')" );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN NOT NULL requires a DEFAULT for non-empty tables.' );
+		$driver->query( 'ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL' );
 	}
 
 	private function lastDuckDBQuery( WP_DuckDB_Driver $driver ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

@@ -713,21 +713,110 @@ class WP_DuckDB_Driver {
 		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
 
-		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::ADD_SYMBOL === $tokens[ $index ]->id ) {
-			++$index;
-			$alter_item = array_slice( $tokens, $index );
-			if ( ! $this->is_create_table_index_item( $alter_item ) ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD INDEX is supported.' );
-			}
-
-			$index_definition = $this->translate_create_table_index( $table_name, $alter_item );
-			$result           = $this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
-			$this->record_index_metadata( $index_definition );
-
-			return $result;
+		$actions = $this->split_top_level_comma_items( array_slice( $tokens, $index ) );
+		if ( count( $actions ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN and ADD INDEX are supported.' );
 		}
 
-		throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD INDEX is supported.' );
+		$result = null;
+		foreach ( $actions as $action ) {
+			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD actions are supported.' );
+			$alter_item = array_slice( $action, 1 );
+
+			$result = $this->is_create_table_index_item( $alter_item )
+				? $this->execute_alter_table_add_index( $table_name, $alter_item )
+				: $this->execute_alter_table_add_column( $table_name, $alter_item );
+		}
+
+		return $result ?? new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Execute ALTER TABLE ... ADD INDEX.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     Index definition tokens after ADD.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_add_index( string $table_name, array $tokens ): WP_DuckDB_Result_Statement {
+		$index_definition = $this->translate_create_table_index( $table_name, $tokens );
+		$result           = $this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
+		$this->record_index_metadata( $index_definition );
+
+		return $result;
+	}
+
+	/**
+	 * Execute a bounded ALTER TABLE ... ADD [COLUMN] statement.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     Tokens after ADD.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_add_column( string $table_name, array $tokens ): WP_DuckDB_Result_Statement {
+		if ( isset( $tokens[0] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[0]->id ) {
+			$tokens = array_slice( $tokens, 1 );
+		}
+
+		if ( count( $tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN requires a column definition.' );
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id ) {
+			list( $items, $index ) = $this->collect_parenthesized_items( $tokens, 1 );
+			if ( 1 !== count( $items ) || count( $tokens ) !== $index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD COLUMN definition is supported.' );
+			}
+			$tokens = $items[0];
+		}
+
+		list( $column_sql, $sequence_sql, $indexes, $metadata ) = $this->translate_create_table_column( $table_name, $tokens, false, true );
+		if ( 'PRI' === $metadata['column_key'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN PRIMARY KEY is not supported.' );
+		}
+		if ( 'auto_increment' === $metadata['extra'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN AUTO_INCREMENT is not supported.' );
+		}
+
+		if (
+			'NO' === $metadata['is_nullable']
+			&& null === $metadata['column_default']
+			&& 'auto_increment' !== $metadata['extra']
+			&& $this->table_has_rows( $table_name )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN NOT NULL requires a DEFAULT for non-empty tables.' );
+		}
+
+		if ( null !== $sequence_sql ) {
+			$this->execute_duckdb_query( $sequence_sql, 'Failed to create DuckDB AUTO_INCREMENT sequence' );
+		}
+
+		$result = $this->execute_duckdb_query(
+			'ALTER TABLE '
+				. $this->connection->quote_identifier( $table_name )
+				. ' ADD COLUMN '
+				. $column_sql,
+			'Failed to add DuckDB column'
+		);
+
+		if ( 'NO' === $metadata['is_nullable'] ) {
+			$this->execute_duckdb_query(
+				'ALTER TABLE '
+					. $this->connection->quote_identifier( $table_name )
+					. ' ALTER COLUMN '
+					. $this->connection->quote_identifier( $metadata['column_name'] )
+					. ' SET NOT NULL',
+				'Failed to apply DuckDB NOT NULL column constraint'
+			);
+		}
+
+		foreach ( $indexes as $index_definition ) {
+			$this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
+			$this->record_index_metadata( $index_definition );
+		}
+		$this->append_column_metadata( $table_name, $metadata );
+
+		return $result;
 	}
 
 	/**
@@ -1204,13 +1293,61 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Split a token stream on top-level commas.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return array<int,array<int,WP_Parser_Token>>
+	 */
+	private function split_top_level_comma_items( array $tokens ): array {
+		$items   = array();
+		$current = array();
+		$depth   = 0;
+
+		foreach ( $tokens as $token ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+				++$depth;
+				$current[] = $token;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unbalanced parentheses in DuckDB driver statement.' );
+				}
+				$current[] = $token;
+				continue;
+			}
+			if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $token->id ) {
+				if ( count( $current ) === 0 ) {
+					throw new WP_DuckDB_Driver_Exception( 'Empty comma-separated item in DuckDB driver statement.' );
+				}
+				$items[] = $current;
+				$current = array();
+				continue;
+			}
+			$current[] = $token;
+		}
+
+		if ( 0 !== $depth ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unbalanced parentheses in DuckDB driver statement.' );
+		}
+		if ( count( $current ) > 0 ) {
+			$items[] = $current;
+		}
+
+		return $items;
+	}
+
+	/**
 	 * Translate a column definition.
 	 *
-	 * @param string            $table_name Table name.
-	 * @param WP_Parser_Token[] $tokens     Column definition tokens.
+	 * @param string            $table_name                 Table name.
+	 * @param WP_Parser_Token[] $tokens                     Column definition tokens.
+	 * @param bool              $include_inline_constraints Whether to include inline NOT NULL/PRIMARY KEY SQL.
+	 * @param bool              $allow_position_options     Whether to accept FIRST/AFTER position hints.
 	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>,3:array<string,mixed>}
 	 */
-	private function translate_create_table_column( string $table_name, array $tokens ): array {
+	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false ): array {
 		$index       = 0;
 		$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
@@ -1276,6 +1413,19 @@ class WP_DuckDB_Driver {
 				case WP_MySQL_Lexer::CHARSET_SYMBOL:
 					$index = $this->skip_option_value( $tokens, $index + 1 );
 					break;
+				case WP_MySQL_Lexer::FIRST_SYMBOL:
+					if ( ! $allow_position_options ) {
+						throw new WP_DuckDB_Driver_Exception( 'Unsupported column attribute in DuckDB driver: ' . $token->get_bytes() . '.' );
+					}
+					++$index;
+					break;
+				case WP_MySQL_Lexer::AFTER_SYMBOL:
+					if ( ! $allow_position_options ) {
+						throw new WP_DuckDB_Driver_Exception( 'Unsupported column attribute in DuckDB driver: ' . $token->get_bytes() . '.' );
+					}
+					$this->identifier_value( $tokens[ $index + 1 ] ?? null );
+					$index += 2;
+					break;
 				case WP_MySQL_Lexer::CHAR_SYMBOL:
 				case WP_MySQL_Lexer::CHARACTER_SYMBOL:
 					if ( ! isset( $tokens[ $index + 1 ] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[ $index + 1 ]->id ) {
@@ -1311,10 +1461,10 @@ class WP_DuckDB_Driver {
 			$column_sql .= ' DEFAULT ' . $default_sql;
 		}
 
-		if ( $not_null ) {
+		if ( $not_null && $include_inline_constraints ) {
 			$column_sql .= ' NOT NULL';
 		}
-		if ( $primary_key ) {
+		if ( $primary_key && $include_inline_constraints ) {
 			$column_sql .= ' PRIMARY KEY';
 		}
 
@@ -2859,6 +3009,55 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Append one MySQL column metadata row when full table metadata is already recorded.
+	 *
+	 * @param string              $table_name Table name.
+	 * @param array<string,mixed> $column     Column metadata.
+	 */
+	private function append_column_metadata( string $table_name, array $column ): void {
+		$this->ensure_column_metadata_table();
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT COUNT(*) AS column_count, COALESCE(MAX(ordinal_position), 0) AS max_ordinal FROM '
+				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name ),
+			'Failed to inspect DuckDB column metadata'
+		);
+		$row  = $stmt->fetch( PDO::FETCH_ASSOC );
+		if ( ! is_array( $row ) || 0 === (int) $row['column_count'] ) {
+			return;
+		}
+
+		$this->execute_duckdb_query(
+			'INSERT INTO '
+				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. ' (table_name, ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment) VALUES ('
+				. $this->connection->quote( $table_name )
+				. ', '
+				. ( (int) $row['max_ordinal'] + 1 )
+				. ', '
+				. $this->connection->quote( $column['column_name'] )
+				. ', '
+				. $this->connection->quote( $column['column_type'] )
+				. ', '
+				. $this->connection->quote( $column['is_nullable'] )
+				. ', '
+				. $this->connection->quote( $column['column_key'] )
+				. ', '
+				. $this->connection->quote( $column['column_default'] )
+				. ', '
+				. $this->connection->quote( $column['extra'] )
+				. ', '
+				. $this->connection->quote( $column['collation_name'] )
+				. ', '
+				. $this->connection->quote( $column['comment'] )
+				. ')',
+			'Failed to store DuckDB column metadata'
+		);
+	}
+
+	/**
 	 * Read recorded MySQL column metadata.
 	 *
 	 * @param string $table_name Table name.
@@ -2877,6 +3076,23 @@ class WP_DuckDB_Driver {
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Check whether a table has at least one row.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether any row exists.
+	 */
+	private function table_has_rows( string $table_name ): bool {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT 1 FROM '
+				. $this->connection->quote_identifier( $table_name )
+				. ' LIMIT 1',
+			'Failed to inspect DuckDB table rows'
+		);
+
+		return false !== $stmt->fetch( PDO::FETCH_NUM );
 	}
 
 	/**
