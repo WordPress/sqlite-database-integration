@@ -2441,6 +2441,117 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_create_table_foreign_keys_use_native_enforcement_and_mysql_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY)' );
+		$driver->query(
+			'CREATE TABLE child_named (
+				id INT,
+				parent_id INT,
+				CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES parents (id) ON DELETE RESTRICT ON UPDATE NO ACTION
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE child_generated (
+				id INT,
+				parent_id INT,
+				FOREIGN KEY (parent_id) REFERENCES parents (id)
+			)'
+		);
+
+		$create_queries = $driver->get_last_duckdb_queries();
+		$this->assertContains(
+			'CREATE TABLE "child_generated" ("id" INTEGER, "parent_id" INTEGER, CONSTRAINT "child_generated_ibfk_1" FOREIGN KEY ("parent_id") REFERENCES "parents" ("id"))',
+			$create_queries
+		);
+
+		$driver->query( 'INSERT INTO parents (id) VALUES (1)' );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO child_named (id, parent_id) VALUES (10, 1)' )->rowCount() );
+
+		try {
+			$driver->query( 'INSERT INTO child_named (id, parent_id) VALUES (11, 404)' );
+			$this->fail( 'Expected FOREIGN KEY enforcement to reject a missing parent row.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'constraint', strtolower( $e->getMessage() ) );
+		}
+
+		try {
+			$driver->query( 'DELETE FROM parents WHERE id = 1' );
+			$this->fail( 'Expected FOREIGN KEY enforcement to restrict deleting a referenced parent row.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'constraint', strtolower( $e->getMessage() ) );
+		}
+
+		$constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name IN ('child_generated', 'child_named')
+			ORDER BY table_name, constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'child_generated_ibfk_1',
+					'CONSTRAINT_TYPE' => 'FOREIGN KEY',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'fk_parent',
+					'CONSTRAINT_TYPE' => 'FOREIGN KEY',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$constraints
+		);
+
+		$usage = $driver->query(
+			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
+				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_SCHEMA,
+				REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp' AND table_name = 'child_named'
+			ORDER BY constraint_name, ordinal_position"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'               => 'fk_parent',
+					'TABLE_NAME'                    => 'child_named',
+					'COLUMN_NAME'                   => 'parent_id',
+					'ORDINAL_POSITION'              => 1,
+					'POSITION_IN_UNIQUE_CONSTRAINT' => 1,
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 'parents',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+			),
+			$usage
+		);
+
+		$create = $driver->query( 'SHOW CREATE TABLE child_named' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `child_named` (',
+					'  `id` int DEFAULT NULL,',
+					'  `parent_id` int DEFAULT NULL,',
+					'  CONSTRAINT `fk_parent` FOREIGN KEY (`parent_id`) REFERENCES `parents` (`id`) ON DELETE RESTRICT',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$create['Create Table']
+		);
+	}
+
 	public function test_information_schema_tables_exposes_mysql_shaped_table_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -3653,6 +3764,44 @@ SQL,
 		$this->expectException( WP_DuckDB_Driver_Exception::class );
 		$this->expectExceptionMessage( 'Unsupported CREATE TABLE CHECK constraint in DuckDB driver: NOT ENFORCED is not supported.' );
 		$driver->query( 'CREATE TABLE checks (id INT, CONSTRAINT positive CHECK (id > 0) NOT ENFORCED)' );
+	}
+
+	public function test_unsupported_create_table_foreign_key_actions_throw_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY)' );
+
+		foreach (
+			array(
+				'CREATE TABLE child_cascade (parent_id INT, FOREIGN KEY (parent_id) REFERENCES parents (id) ON DELETE CASCADE)' => 'ON DELETE CASCADE is not supported',
+				'CREATE TABLE child_set_null (parent_id INT, FOREIGN KEY (parent_id) REFERENCES parents (id) ON UPDATE SET NULL)' => 'ON UPDATE SET NULL is not supported',
+				'CREATE TABLE child_set_default (parent_id INT DEFAULT 0, FOREIGN KEY (parent_id) REFERENCES parents (id) ON DELETE SET DEFAULT)' => 'ON DELETE SET DEFAULT is not supported',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected unsupported FOREIGN KEY action to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+		}
+
+		$this->assertSame(
+			array( array( 'Tables_in_wp' => 'parents' ) ),
+			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_inline_references_remain_unsupported(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY)' );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Unsupported inline REFERENCES constraint in DuckDB driver.' );
+		$driver->query( 'CREATE TABLE child_inline (parent_id INT REFERENCES parents (id))' );
 	}
 
 	public function test_unsupported_alter_table_add_auto_increment_throws_driver_exception(): void {

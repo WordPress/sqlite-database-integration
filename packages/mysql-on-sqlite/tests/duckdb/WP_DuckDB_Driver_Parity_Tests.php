@@ -889,6 +889,45 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW CREATE TABLE check_metadata' );
 	}
 
+	public function test_simple_table_level_foreign_keys_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE fk_parent (id INT PRIMARY KEY)',
+				'CREATE TABLE fk_child (
+					id INT,
+					parent_id INT,
+					CONSTRAINT fk_parent_ref FOREIGN KEY (parent_id) REFERENCES fk_parent (id) ON DELETE RESTRICT ON UPDATE NO ACTION
+				)',
+				'INSERT INTO fk_parent (id) VALUES (1)',
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO fk_child (id, parent_id) VALUES (10, 1)' );
+		$this->assertParityErrorContains(
+			'INSERT INTO fk_child (id, parent_id) VALUES (11, 404)',
+			'constraint'
+		);
+		$this->assertParityErrorContains(
+			'DELETE FROM fk_parent WHERE id = 1',
+			'constraint'
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'fk_child'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
+				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_SCHEMA,
+				REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp' AND table_name = 'fk_child'
+			ORDER BY constraint_name, ordinal_position"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE fk_child' );
+	}
+
 	public function test_information_schema_tables_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

@@ -23,10 +23,12 @@ class WP_DuckDB_Driver {
 	const COLUMN_METADATA_TABLE               = '__wp_duckdb_column_metadata';
 	const TABLE_METADATA_TABLE                = '__wp_duckdb_table_metadata';
 	const CHECK_METADATA_TABLE                = '__wp_duckdb_check_metadata';
+	const FOREIGN_KEY_METADATA_TABLE          = '__wp_duckdb_foreign_key_metadata';
 	const TEMP_INDEX_METADATA_TABLE           = '__wp_duckdb_temp_index_metadata';
 	const TEMP_COLUMN_METADATA_TABLE          = '__wp_duckdb_temp_column_metadata';
 	const TEMP_TABLE_METADATA_TABLE           = '__wp_duckdb_temp_table_metadata';
 	const TEMP_CHECK_METADATA_TABLE           = '__wp_duckdb_temp_check_metadata';
+	const TEMP_FOREIGN_KEY_METADATA_TABLE     = '__wp_duckdb_temp_foreign_key_metadata';
 	const INFO_SCHEMA_TABLES_TABLE            = '__wp_duckdb_information_schema_tables';
 	const INFO_SCHEMA_COLUMNS_TABLE           = '__wp_duckdb_information_schema_columns';
 	const INFO_SCHEMA_STATISTICS_TABLE        = '__wp_duckdb_information_schema_statistics';
@@ -816,6 +818,8 @@ class WP_DuckDB_Driver {
 		$constraints         = array();
 		$check_constraints   = array();
 		$check_names         = array();
+		$foreign_keys        = array();
+		$foreign_key_names   = array();
 		$indexes             = array();
 		$sequences           = array();
 		$metadata            = array();
@@ -837,6 +841,13 @@ class WP_DuckDB_Driver {
 				$check_constraint    = $this->translate_table_check_constraint( $table_name, $item, $check_names );
 				$constraints[]       = $check_constraint['sql'];
 				$check_constraints[] = $check_constraint['metadata'];
+				continue;
+			}
+
+			if ( $this->is_create_table_foreign_key_constraint( $item ) ) {
+				$foreign_key    = $this->translate_table_foreign_key_constraint( $table_name, $item, $foreign_key_names );
+				$constraints[]  = $foreign_key['sql'];
+				$foreign_keys[] = $foreign_key['metadata'];
 				continue;
 			}
 
@@ -894,6 +905,7 @@ class WP_DuckDB_Driver {
 		$this->record_column_metadata( $table_name, $this->apply_column_key_metadata( $metadata, $primary_key, $indexes ), $temporary );
 		$this->record_table_metadata( $table_name, $table_metadata, $temporary );
 		$this->record_check_metadata( $table_name, $check_constraints, $temporary );
+		$this->record_foreign_key_metadata( $table_name, $foreign_keys, $temporary );
 
 		return $result;
 	}
@@ -4186,6 +4198,10 @@ class WP_DuckDB_Driver {
 			$rows[] = $this->format_show_create_table_index( $index_group );
 		}
 
+		foreach ( $this->show_create_table_foreign_key_groups( $table_name, $temporary ) as $foreign_key ) {
+			$rows[] = $this->format_show_create_table_foreign_key_constraint( $foreign_key );
+		}
+
 		foreach ( $this->check_constraint_metadata_rows( $table_name, $temporary ) as $check_constraint ) {
 			$rows[] = $this->format_show_create_table_check_constraint( $check_constraint );
 		}
@@ -4210,6 +4226,73 @@ class WP_DuckDB_Driver {
 
 		if ( '' !== $table_info['TABLE_COMMENT'] ) {
 			$sql .= ' COMMENT=' . $this->quote_mysql_utf8_string_literal( (string) $table_info['TABLE_COMMENT'] );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Build grouped FOREIGN KEY metadata for SHOW CREATE TABLE.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether to use session-local temporary metadata.
+	 * @return array<int,array{constraint_name:string,columns:string[],referenced_table_name:string,referenced_columns:string[],update_rule:string,delete_rule:string}>
+	 */
+	private function show_create_table_foreign_key_groups( string $table_name, bool $temporary = false ): array {
+		$groups = array();
+
+		foreach ( $this->foreign_key_metadata_rows( $table_name, $temporary ) as $row ) {
+			$constraint_name = (string) $row['constraint_name'];
+			if ( ! isset( $groups[ $constraint_name ] ) ) {
+				$groups[ $constraint_name ] = array(
+					'constraint_name'       => $constraint_name,
+					'columns'               => array(),
+					'referenced_table_name' => (string) $row['referenced_table_name'],
+					'referenced_columns'    => array(),
+					'update_rule'           => (string) $row['update_rule'],
+					'delete_rule'           => (string) $row['delete_rule'],
+				);
+			}
+
+			$groups[ $constraint_name ]['columns'][]            = (string) $row['column_name'];
+			$groups[ $constraint_name ]['referenced_columns'][] = (string) $row['referenced_column_name'];
+		}
+
+		return array_values( $groups );
+	}
+
+	/**
+	 * Format one SHOW CREATE TABLE FOREIGN KEY constraint.
+	 *
+	 * @param array<string,mixed> $foreign_key FOREIGN KEY metadata group.
+	 * @return string MySQL FOREIGN KEY constraint definition.
+	 */
+	private function format_show_create_table_foreign_key_constraint( array $foreign_key ): string {
+		$columns = array_map(
+			function ( string $column_name ): string {
+				return $this->quote_mysql_identifier( $column_name );
+			},
+			$foreign_key['columns']
+		);
+
+		$referenced_columns = array_map(
+			function ( string $column_name ): string {
+				return $this->quote_mysql_identifier( $column_name );
+			},
+			$foreign_key['referenced_columns']
+		);
+
+		$sql  = '  CONSTRAINT ';
+		$sql .= $this->quote_mysql_identifier( (string) $foreign_key['constraint_name'] );
+		$sql .= ' FOREIGN KEY (' . implode( ', ', $columns ) . ')';
+		$sql .= ' REFERENCES ' . $this->quote_mysql_identifier( (string) $foreign_key['referenced_table_name'] );
+		$sql .= ' (' . implode( ', ', $referenced_columns ) . ')';
+
+		if ( 'NO ACTION' !== $foreign_key['delete_rule'] ) {
+			$sql .= ' ON DELETE ' . (string) $foreign_key['delete_rule'];
+		}
+		if ( 'NO ACTION' !== $foreign_key['update_rule'] ) {
+			$sql .= ' ON UPDATE ' . (string) $foreign_key['update_rule'];
 		}
 
 		return $sql;
@@ -4412,6 +4495,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::TABLE_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::CHECK_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::FOREIGN_KEY_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
 				. ' AND table_name <> '
@@ -5114,6 +5199,8 @@ class WP_DuckDB_Driver {
 					}
 					$index = $this->skip_option_value( $tokens, $index + 2 );
 					break;
+				case WP_MySQL_Lexer::REFERENCES_SYMBOL:
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported inline REFERENCES constraint in DuckDB driver. Use a table-level FOREIGN KEY constraint.' );
 				default:
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported column attribute in DuckDB driver: ' . $token->get_bytes() . '.' );
 			}
@@ -5559,6 +5646,275 @@ class WP_DuckDB_Driver {
 				$tokens
 			)
 		);
+	}
+
+	/**
+	 * Check whether a CREATE TABLE item is a table-level FOREIGN KEY constraint.
+	 *
+	 * @param WP_Parser_Token[] $tokens Item tokens.
+	 * @return bool
+	 */
+	private function is_create_table_foreign_key_constraint( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[0]->id ) {
+			return true;
+		}
+
+		if ( WP_MySQL_Lexer::CONSTRAINT_SYMBOL !== $tokens[0]->id || ! isset( $tokens[1] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[1]->id ) {
+			return true;
+		}
+
+		return isset( $tokens[2] ) && WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[2]->id;
+	}
+
+	/**
+	 * Translate a table-level FOREIGN KEY constraint.
+	 *
+	 * @param string             $table_name        Table name.
+	 * @param WP_Parser_Token[]  $tokens            Constraint tokens.
+	 * @param array<string,bool> $foreign_key_names Existing FOREIGN KEY names, keyed lowercase.
+	 * @return array{sql:string,metadata:array{constraint_name:string,columns:string[],referenced_table_name:string,referenced_columns:string[],update_rule:string,delete_rule:string}}
+	 */
+	private function translate_table_foreign_key_constraint( string $table_name, array $tokens, array &$foreign_key_names ): array {
+		$index           = 0;
+		$constraint_name = null;
+
+		if ( WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::FOREIGN_SYMBOL !== $tokens[ $index ]->id ) {
+				$constraint_name = $this->identifier_value( $tokens[ $index ] );
+				++$index;
+			}
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::FOREIGN_SYMBOL, 'Expected FOREIGN KEY constraint.' );
+		$this->expect_token( $tokens, $index + 1, WP_MySQL_Lexer::KEY_SYMBOL, 'Expected FOREIGN KEY constraint.' );
+		$index += 2;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index ]->id ) {
+			$this->identifier_value( $tokens[ $index ] );
+			++$index;
+		}
+
+		list( $columns, $index ) = $this->parse_foreign_key_column_list( $tokens, $index, 'FOREIGN KEY column list' );
+		if ( 1 !== count( $columns ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY constraint in DuckDB driver. Only single-column foreign keys are supported.' );
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::REFERENCES_SYMBOL, 'Expected REFERENCES in FOREIGN KEY constraint.' );
+		++$index;
+
+		$referenced_table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY constraint in DuckDB driver. Schema-qualified references are not supported.' );
+		}
+
+		list( $referenced_columns, $index ) = $this->parse_foreign_key_column_list( $tokens, $index, 'FOREIGN KEY referenced column list' );
+		if ( 1 !== count( $referenced_columns ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY constraint in DuckDB driver. Only single-column foreign keys are supported.' );
+		}
+
+		list( $update_rule, $delete_rule, $index ) = $this->parse_foreign_key_actions( $tokens, $index );
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY constraint in DuckDB driver.' );
+		}
+
+		if ( null === $constraint_name ) {
+			$constraint_name = $this->generate_foreign_key_constraint_name( $table_name, $foreign_key_names );
+		}
+		$this->register_foreign_key_constraint_name( $constraint_name, $foreign_key_names );
+
+		return array(
+			'sql'      => 'CONSTRAINT '
+				. $this->connection->quote_identifier( $constraint_name )
+				. ' FOREIGN KEY ('
+				. $this->connection->quote_identifier( $columns[0] )
+				. ') REFERENCES '
+				. $this->connection->quote_identifier( $referenced_table_name )
+				. ' ('
+				. $this->connection->quote_identifier( $referenced_columns[0] )
+				. ')',
+			'metadata' => array(
+				'constraint_name'       => $constraint_name,
+				'columns'               => $columns,
+				'referenced_table_name' => $referenced_table_name,
+				'referenced_columns'    => $referenced_columns,
+				'update_rule'           => $update_rule,
+				'delete_rule'           => $delete_rule,
+			),
+		);
+	}
+
+	/**
+	 * Parse a FOREIGN KEY column list.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Index at opening parenthesis.
+	 * @param string            $label  User-facing list label for errors.
+	 * @return array{0:string[],1:int}
+	 */
+	private function parse_foreign_key_column_list( array $tokens, int $index, string $label ): array {
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Expected ' . $label . '.' );
+		++$index;
+
+		$columns = array();
+		while ( $index < count( $tokens ) ) {
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				break;
+			}
+
+			$columns[] = $this->identifier_value( $tokens[ $index ] );
+			++$index;
+
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				continue;
+			}
+
+			if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $index ]->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $label . ' in DuckDB driver.' );
+			}
+		}
+
+		if ( count( $columns ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( $label . ' requires at least one column in the DuckDB driver.' );
+		}
+
+		return array( $columns, $index );
+	}
+
+	/**
+	 * Parse optional FOREIGN KEY ON UPDATE/DELETE actions.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index.
+	 * @return array{0:string,1:string,2:int}
+	 */
+	private function parse_foreign_key_actions( array $tokens, int $index ): array {
+		$update_rule = 'NO ACTION';
+		$delete_rule = 'NO ACTION';
+		$seen        = array();
+
+		while ( $index < count( $tokens ) ) {
+			$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in FOREIGN KEY action.' );
+			if ( ! isset( $tokens[ $index + 1 ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Expected FOREIGN KEY action target in DuckDB driver.' );
+			}
+
+			if ( WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $index + 1 ]->id ) {
+				$target = 'UPDATE';
+			} elseif ( WP_MySQL_Lexer::DELETE_SYMBOL === $tokens[ $index + 1 ]->id ) {
+				$target = 'DELETE';
+			} else {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY action in DuckDB driver: ON ' . $tokens[ $index + 1 ]->get_bytes() . '.' );
+			}
+
+			if ( isset( $seen[ $target ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Duplicate ON ' . $target . ' action in DuckDB FOREIGN KEY constraint.' );
+			}
+			$seen[ $target ] = true;
+
+			list( $rule, $index ) = $this->parse_foreign_key_action( $tokens, $index + 2, $target );
+			if ( 'UPDATE' === $target ) {
+				$update_rule = $rule;
+			} else {
+				$delete_rule = $rule;
+			}
+		}
+
+		return array( $update_rule, $delete_rule, $index );
+	}
+
+	/**
+	 * Parse one FOREIGN KEY action.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Index at action.
+	 * @param string            $target UPDATE or DELETE.
+	 * @return array{0:string,1:int}
+	 */
+	private function parse_foreign_key_action( array $tokens, int $index, string $target ): array {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Expected FOREIGN KEY action after ON ' . $target . ' in DuckDB driver.' );
+		}
+
+		if ( WP_MySQL_Lexer::NO_SYMBOL === $tokens[ $index ]->id ) {
+			if ( ! isset( $tokens[ $index + 1 ] ) || WP_MySQL_Lexer::ACTION_SYMBOL !== $tokens[ $index + 1 ]->id ) {
+				throw $this->unsupported_foreign_key_action_exception( $tokens, $index, $target );
+			}
+			return array( 'NO ACTION', $index + 2 );
+		}
+
+		if ( WP_MySQL_Lexer::RESTRICT_SYMBOL === $tokens[ $index ]->id ) {
+			return array( 'RESTRICT', $index + 1 );
+		}
+
+		throw $this->unsupported_foreign_key_action_exception( $tokens, $index, $target );
+	}
+
+	/**
+	 * Build an unsupported FOREIGN KEY action exception.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Index at action.
+	 * @param string            $target UPDATE or DELETE.
+	 * @return WP_DuckDB_Driver_Exception
+	 */
+	private function unsupported_foreign_key_action_exception( array $tokens, int $index, string $target ): WP_DuckDB_Driver_Exception {
+		$action = isset( $tokens[ $index ] ) ? $tokens[ $index ]->get_bytes() : '';
+		if (
+			isset( $tokens[ $index + 1 ] )
+			&& (
+				WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $index ]->id
+				|| WP_MySQL_Lexer::NO_SYMBOL === $tokens[ $index ]->id
+			)
+		) {
+			$action .= ' ' . $tokens[ $index + 1 ]->get_bytes();
+		}
+
+		return new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY action in DuckDB driver: ON ' . $target . ' ' . trim( $action ) . ' is not supported.' );
+	}
+
+	/**
+	 * Generate a MySQL-compatible name for an unnamed FOREIGN KEY constraint.
+	 *
+	 * @param string             $table_name        Table name.
+	 * @param array<string,bool> $foreign_key_names Existing FOREIGN KEY names, keyed lowercase.
+	 * @return string Generated constraint name.
+	 */
+	private function generate_foreign_key_constraint_name( string $table_name, array $foreign_key_names ): string {
+		$prefix = $table_name . '_ibfk_';
+		$index  = 1;
+
+		while ( isset( $foreign_key_names[ strtolower( $prefix . $index ) ] ) ) {
+			++$index;
+		}
+
+		return $prefix . $index;
+	}
+
+	/**
+	 * Register a FOREIGN KEY constraint name and reject duplicates.
+	 *
+	 * @param string             $constraint_name   Constraint name.
+	 * @param array<string,bool> $foreign_key_names Existing FOREIGN KEY names, keyed lowercase.
+	 */
+	private function register_foreign_key_constraint_name( string $constraint_name, array &$foreign_key_names ): void {
+		$key = strtolower( $constraint_name );
+		if ( isset( $foreign_key_names[ $key ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Duplicate FOREIGN KEY constraint name in DuckDB driver: ' . $constraint_name . '.' );
+		}
+
+		$foreign_key_names[ $key ] = true;
 	}
 
 	/**
@@ -7815,6 +8171,20 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Ensure the internal FOREIGN KEY metadata table exists.
+	 */
+	private function ensure_foreign_key_metadata_table( bool $temporary = false ): void {
+		$this->execute_duckdb_query(
+			'CREATE '
+				. ( $temporary ? 'TEMP ' : '' )
+				. 'TABLE IF NOT EXISTS '
+				. $this->connection->quote_identifier( $this->foreign_key_metadata_table_name( $temporary ) )
+				. ' (table_name VARCHAR, constraint_name VARCHAR, ordinal_position INTEGER, column_name VARCHAR, referenced_table_name VARCHAR, referenced_column_name VARCHAR, update_rule VARCHAR, delete_rule VARCHAR)',
+			'Failed to initialize DuckDB FOREIGN KEY metadata'
+		);
+	}
+
+	/**
 	 * Return the metadata table that stores secondary index rows.
 	 *
 	 * @param bool $temporary Whether to use session-local temporary metadata.
@@ -7852,6 +8222,16 @@ class WP_DuckDB_Driver {
 	 */
 	private function check_metadata_table_name( bool $temporary ): string {
 		return $temporary ? self::TEMP_CHECK_METADATA_TABLE : self::CHECK_METADATA_TABLE;
+	}
+
+	/**
+	 * Return the metadata table that stores FOREIGN KEY constraint rows.
+	 *
+	 * @param bool $temporary Whether to use session-local temporary metadata.
+	 * @return string Metadata table name.
+	 */
+	private function foreign_key_metadata_table_name( bool $temporary ): string {
+		return $temporary ? self::TEMP_FOREIGN_KEY_METADATA_TABLE : self::FOREIGN_KEY_METADATA_TABLE;
 	}
 
 	/**
@@ -8106,6 +8486,52 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Record MySQL FOREIGN KEY constraint metadata.
+	 *
+	 * @param string                         $table_name Table name.
+	 * @param array<int,array<string,mixed>> $metadata   FOREIGN KEY metadata rows.
+	 * @param bool                           $temporary  Whether the target is a temporary table.
+	 */
+	private function record_foreign_key_metadata( string $table_name, array $metadata, bool $temporary = false ): void {
+		$this->ensure_foreign_key_metadata_table( $temporary );
+
+		$this->execute_duckdb_query(
+			'DELETE FROM '
+				. $this->connection->quote_identifier( $this->foreign_key_metadata_table_name( $temporary ) )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name ),
+			'Failed to reset DuckDB FOREIGN KEY metadata'
+		);
+
+		foreach ( $metadata as $constraint ) {
+			foreach ( $constraint['columns'] as $offset => $column_name ) {
+				$this->execute_duckdb_query(
+					'INSERT INTO '
+						. $this->connection->quote_identifier( $this->foreign_key_metadata_table_name( $temporary ) )
+						. ' (table_name, constraint_name, ordinal_position, column_name, referenced_table_name, referenced_column_name, update_rule, delete_rule) VALUES ('
+						. $this->connection->quote( $table_name )
+						. ', '
+						. $this->connection->quote( $constraint['constraint_name'] )
+						. ', '
+						. ( $offset + 1 )
+						. ', '
+						. $this->connection->quote( $column_name )
+						. ', '
+						. $this->connection->quote( $constraint['referenced_table_name'] )
+						. ', '
+						. $this->connection->quote( $constraint['referenced_columns'][ $offset ] )
+						. ', '
+						. $this->connection->quote( $constraint['update_rule'] )
+						. ', '
+						. $this->connection->quote( $constraint['delete_rule'] )
+						. ')',
+					'Failed to store DuckDB FOREIGN KEY metadata'
+				);
+			}
+		}
+	}
+
+	/**
 	 * Read recorded MySQL CHECK constraint metadata.
 	 *
 	 * @param string $table_name Table name.
@@ -8122,6 +8548,28 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( $table_name )
 				. ' ORDER BY constraint_name',
 			'Failed to inspect DuckDB CHECK constraint metadata'
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Read recorded MySQL FOREIGN KEY constraint metadata.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether to use session-local temporary metadata.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function foreign_key_metadata_rows( string $table_name, bool $temporary = false ): array {
+		$this->ensure_foreign_key_metadata_table( $temporary );
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT constraint_name, ordinal_position, column_name, referenced_table_name, referenced_column_name, update_rule, delete_rule FROM '
+				. $this->connection->quote_identifier( $this->foreign_key_metadata_table_name( $temporary ) )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. ' ORDER BY constraint_name, ordinal_position',
+			'Failed to inspect DuckDB FOREIGN KEY metadata'
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
@@ -8260,13 +8708,15 @@ class WP_DuckDB_Driver {
 		$this->ensure_column_metadata_table( $temporary );
 		$this->ensure_table_metadata_table( $temporary );
 		$this->ensure_check_metadata_table( $temporary );
+		$this->ensure_foreign_key_metadata_table( $temporary );
 
 		foreach (
 			array(
-				$this->index_metadata_table_name( $temporary )  => 'index',
-				$this->column_metadata_table_name( $temporary ) => 'column',
-				$this->table_metadata_table_name( $temporary )  => 'table',
-				$this->check_metadata_table_name( $temporary )  => 'CHECK constraint',
+				$this->index_metadata_table_name( $temporary )       => 'index',
+				$this->column_metadata_table_name( $temporary )      => 'column',
+				$this->table_metadata_table_name( $temporary )       => 'table',
+				$this->check_metadata_table_name( $temporary )       => 'CHECK constraint',
+				$this->foreign_key_metadata_table_name( $temporary ) => 'FOREIGN KEY',
 			) as $metadata_table => $label
 		) {
 			$this->execute_duckdb_query(
@@ -9190,6 +9640,16 @@ class WP_DuckDB_Driver {
 			$rows[]       = $this->information_schema_table_constraints_row( $constraint );
 		}
 
+		foreach ( $this->information_schema_foreign_key_constraint_rows() as $constraint ) {
+			$key = $constraint['table_name'] . "\0" . $constraint['constraint_type'] . "\0" . $constraint['constraint_name'];
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+
+			$seen[ $key ] = true;
+			$rows[]       = $this->information_schema_table_constraints_row( $constraint );
+		}
+
 		foreach ( $this->information_schema_check_constraint_rows() as $constraint ) {
 			$key = $constraint['table_name'] . "\0" . $constraint['constraint_type'] . "\0" . $constraint['constraint_name'];
 			if ( isset( $seen[ $key ] ) ) {
@@ -9286,6 +9746,9 @@ class WP_DuckDB_Driver {
 		foreach ( $this->information_schema_key_constraint_rows() as $constraint ) {
 			$rows[] = $this->information_schema_key_column_usage_row( $constraint );
 		}
+		foreach ( $this->information_schema_foreign_key_constraint_rows() as $constraint ) {
+			$rows[] = $this->information_schema_key_column_usage_row( $constraint );
+		}
 
 		return $rows;
 	}
@@ -9306,10 +9769,10 @@ class WP_DuckDB_Driver {
 			'TABLE_NAME'                    => $constraint['table_name'],
 			'COLUMN_NAME'                   => $constraint['column_name'],
 			'ORDINAL_POSITION'              => $constraint['ordinal_position'],
-			'POSITION_IN_UNIQUE_CONSTRAINT' => null,
-			'REFERENCED_TABLE_SCHEMA'       => $this->database,
-			'REFERENCED_TABLE_NAME'         => null,
-			'REFERENCED_COLUMN_NAME'        => null,
+			'POSITION_IN_UNIQUE_CONSTRAINT' => $constraint['position_in_unique_constraint'] ?? null,
+			'REFERENCED_TABLE_SCHEMA'       => $constraint['referenced_table_schema'] ?? $this->database,
+			'REFERENCED_TABLE_NAME'         => $constraint['referenced_table_name'] ?? null,
+			'REFERENCED_COLUMN_NAME'        => $constraint['referenced_column_name'] ?? null,
 		);
 	}
 
@@ -9369,6 +9832,33 @@ class WP_DuckDB_Driver {
 					'constraint_type'  => 'UNIQUE',
 					'ordinal_position' => (int) $index_row[3],
 					'column_name'      => (string) $index_row[4],
+				);
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Build normalized FOREIGN KEY constraint column rows.
+	 *
+	 * @return array<int,array{table_name:string,constraint_name:string,constraint_type:string,ordinal_position:int,column_name:string,position_in_unique_constraint:int,referenced_table_schema:string,referenced_table_name:string,referenced_column_name:string}>
+	 */
+	private function information_schema_foreign_key_constraint_rows(): array {
+		$rows = array();
+
+		foreach ( $this->user_table_names() as $table_name ) {
+			foreach ( $this->foreign_key_metadata_rows( $table_name ) as $foreign_key ) {
+				$rows[] = array(
+					'table_name'                    => $table_name,
+					'constraint_name'               => (string) $foreign_key['constraint_name'],
+					'constraint_type'               => 'FOREIGN KEY',
+					'ordinal_position'              => (int) $foreign_key['ordinal_position'],
+					'column_name'                   => (string) $foreign_key['column_name'],
+					'position_in_unique_constraint' => (int) $foreign_key['ordinal_position'],
+					'referenced_table_schema'       => $this->database,
+					'referenced_table_name'         => (string) $foreign_key['referenced_table_name'],
+					'referenced_column_name'        => (string) $foreign_key['referenced_column_name'],
 				);
 			}
 		}
@@ -9492,6 +9982,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::TABLE_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::CHECK_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::FOREIGN_KEY_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
 				. ' AND table_name <> '
