@@ -171,4 +171,35 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT option_name, option_value, autoload FROM metadata' );
 		$this->assertParityRows( 'SHOW COLUMNS FROM metadata' );
 	}
+
+	public function test_information_schema_columns_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					option_name VARCHAR(191) NOT NULL DEFAULT '' COMMENT 'Option name',
+					option_value LONGTEXT NOT NULL,
+					UNIQUE KEY option_name (option_name)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"ALTER TABLE metadata ADD COLUMN autoload VARCHAR(20) NOT NULL DEFAULT 'yes'",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
+				COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+				CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
+				DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE,
+				COLUMN_KEY, EXTRA, PRIVILEGES, COLUMN_COMMENT, GENERATION_EXPRESSION, SRS_ID
+			FROM information_schema.columns
+			WHERE table_name = 'metadata'
+			ORDER BY ordinal_position"
+		);
+		$this->assertParityRows(
+			"SELECT c.COLUMN_NAME, c.COLUMN_TYPE
+			FROM information_schema.columns c
+			WHERE c.TABLE_SCHEMA = 'wp' AND c.TABLE_NAME = 'metadata'
+			ORDER BY c.ORDINAL_POSITION"
+		);
+	}
 }

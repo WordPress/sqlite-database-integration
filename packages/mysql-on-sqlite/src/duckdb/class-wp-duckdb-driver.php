@@ -14,13 +14,14 @@
  * throws WP_DuckDB_Driver_Exception for statements outside that subset.
  */
 class WP_DuckDB_Driver {
-	const MYSQL_GRAMMAR_PATH    = __DIR__ . '/../mysql/mysql-grammar.php';
-	const DEFAULT_DATABASE      = 'wp';
-	const DEFAULT_MYSQL_VERSION = 80038;
-	const SEQUENCE_PREFIX       = 'wp_duckdb_ai_';
-	const INDEX_PREFIX          = 'wp_duckdb_idx_';
-	const INDEX_METADATA_TABLE  = '__wp_duckdb_index_metadata';
-	const COLUMN_METADATA_TABLE = '__wp_duckdb_column_metadata';
+	const MYSQL_GRAMMAR_PATH        = __DIR__ . '/../mysql/mysql-grammar.php';
+	const DEFAULT_DATABASE          = 'wp';
+	const DEFAULT_MYSQL_VERSION     = 80038;
+	const SEQUENCE_PREFIX           = 'wp_duckdb_ai_';
+	const INDEX_PREFIX              = 'wp_duckdb_idx_';
+	const INDEX_METADATA_TABLE      = '__wp_duckdb_index_metadata';
+	const COLUMN_METADATA_TABLE     = '__wp_duckdb_column_metadata';
+	const INFO_SCHEMA_COLUMNS_TABLE = '__wp_duckdb_information_schema_columns';
 
 	const DATA_TYPE_MAP = array(
 		WP_MySQL_Lexer::BOOL_SYMBOL       => 'BOOLEAN',
@@ -302,8 +303,13 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_select( array $tokens ): WP_DuckDB_Result_Statement {
+		$rewrite_information_schema_columns = $this->uses_information_schema_columns( $tokens );
+		if ( $rewrite_information_schema_columns ) {
+			$this->refresh_information_schema_columns_table();
+		}
+
 		return $this->execute_duckdb_query(
-			$this->translate_tokens_to_duckdb_sql( $tokens ),
+			$this->translate_tokens_to_duckdb_sql( $tokens, $rewrite_information_schema_columns ),
 			'Unsupported DuckDB MySQL-emulation SELECT statement'
 		);
 	}
@@ -800,13 +806,18 @@ class WP_DuckDB_Driver {
 		);
 
 		if ( 'NO' === $metadata['is_nullable'] ) {
-			$this->execute_duckdb_query(
-				'ALTER TABLE '
-					. $this->connection->quote_identifier( $table_name )
-					. ' ALTER COLUMN '
-					. $this->connection->quote_identifier( $metadata['column_name'] )
-					. ' SET NOT NULL',
-				'Failed to apply DuckDB NOT NULL column constraint'
+			$this->execute_with_secondary_indexes_rebuilt(
+				$table_name,
+				function () use ( $table_name, $metadata ): void {
+					$this->execute_duckdb_query(
+						'ALTER TABLE '
+							. $this->connection->quote_identifier( $table_name )
+							. ' ALTER COLUMN '
+							. $this->connection->quote_identifier( $metadata['column_name'] )
+							. ' SET NOT NULL',
+						'Failed to apply DuckDB NOT NULL column constraint'
+					);
+				}
 			);
 		}
 
@@ -938,6 +949,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::INDEX_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
 				. ' ORDER BY table_name',
 			'Failed to execute SHOW TABLES'
 		);
@@ -1591,7 +1604,7 @@ class WP_DuckDB_Driver {
 			}
 		}
 
-		return $this->mysql_type_has_collation( $type_token ) ? 'utf8mb4_unicode_ci' : null;
+		return $this->mysql_type_has_collation( $type_token ) ? 'utf8mb4_0900_ai_ci' : null;
 	}
 
 	/**
@@ -2062,11 +2075,17 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return string DuckDB SQL.
 	 */
-	private function translate_tokens_to_duckdb_sql( array $tokens ): string {
+	private function translate_tokens_to_duckdb_sql( array $tokens, bool $rewrite_information_schema_columns = false ): string {
 		$pieces = array();
 
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
 			$token = $tokens[ $index ];
+
+			if ( $rewrite_information_schema_columns && $this->is_information_schema_columns_reference( $tokens, $index ) ) {
+				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_COLUMNS_TABLE );
+				$index   += 2;
+				continue;
+			}
 
 			if (
 				WP_MySQL_Lexer::FROM_SYMBOL === $token->id
@@ -2962,6 +2981,90 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute a schema change while temporarily dropping secondary indexes.
+	 *
+	 * @param string   $table_name Table name.
+	 * @param callable $callback   Schema change callback.
+	 */
+	private function execute_with_secondary_indexes_rebuilt( string $table_name, callable $callback ): void {
+		$index_definitions = $this->secondary_index_definitions_for_table( $table_name );
+		foreach ( $index_definitions as $index_definition ) {
+			$this->execute_duckdb_query(
+				'DROP INDEX IF EXISTS ' . $this->connection->quote_identifier( $this->index_name( $table_name, $index_definition['index_name'] ) ),
+				'Failed to drop DuckDB index before schema change'
+			);
+		}
+
+		$exception = null;
+		try {
+			$callback();
+		} catch ( Throwable $e ) {
+			$exception = $e;
+		}
+
+		foreach ( $index_definitions as $index_definition ) {
+			$this->execute_duckdb_query( $index_definition['sql'], 'Failed to recreate DuckDB index after schema change' );
+			$this->record_index_metadata( $index_definition );
+		}
+
+		if ( null !== $exception ) {
+			throw $exception;
+		}
+	}
+
+	/**
+	 * Read recorded secondary index definitions for a table.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>
+	 */
+	private function secondary_index_definitions_for_table( string $table_name ): array {
+		$this->ensure_index_metadata_table();
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT index_name, non_unique, seq_in_index, column_name, sub_part FROM '
+				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. ' ORDER BY index_name, seq_in_index',
+			'Failed to inspect DuckDB secondary indexes'
+		);
+
+		$grouped = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$index_name = (string) $row['index_name'];
+			if ( ! isset( $grouped[ $index_name ] ) ) {
+				$grouped[ $index_name ] = array(
+					'unique'  => 0 === (int) $row['non_unique'],
+					'columns' => array(),
+				);
+			}
+			$grouped[ $index_name ]['columns'][] = array(
+				'name'     => (string) $row['column_name'],
+				'sub_part' => null === $row['sub_part'] ? null : (int) $row['sub_part'],
+			);
+		}
+
+		$definitions = array();
+		foreach ( $grouped as $index_name => $definition ) {
+			$definitions[] = $this->build_secondary_index_definition(
+				$table_name,
+				$index_name,
+				$definition['unique'],
+				array_map(
+					function ( array $column ): string {
+						return $this->connection->quote_identifier( $column['name'] );
+					},
+					$definition['columns']
+				),
+				$definition['columns']
+			);
+		}
+
+		return $definitions;
+	}
+
+	/**
 	 * Record MySQL column metadata for DESCRIBE and SHOW COLUMNS.
 	 *
 	 * @param string                         $table_name Table name.
@@ -3067,7 +3170,7 @@ class WP_DuckDB_Driver {
 		$this->ensure_column_metadata_table();
 
 		$stmt = $this->execute_duckdb_query(
-			'SELECT column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment FROM '
+			'SELECT ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment FROM '
 				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
@@ -3076,6 +3179,385 @@ class WP_DuckDB_Driver {
 		);
 
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
+	 * Check whether a SELECT references information_schema.columns.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether the query needs the compatibility table.
+	 */
+	private function uses_information_schema_columns( array $tokens ): bool {
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( $this->is_information_schema_columns_reference( $tokens, $index ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token offset starts information_schema.columns.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return bool Whether the sequence is information_schema.columns.
+	 */
+	private function is_information_schema_columns_reference( array $tokens, int $index ): bool {
+		return isset( $tokens[ $index + 2 ] )
+			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'columns' );
+	}
+
+	/**
+	 * Refresh a temporary MySQL-shaped information_schema.columns table.
+	 */
+	private function refresh_information_schema_columns_table(): void {
+		$rows        = $this->information_schema_column_rows();
+		$definitions = $this->information_schema_column_definitions();
+		$columns     = array_keys( $definitions );
+
+		$column_sql = array();
+		foreach ( $definitions as $column_name => $type ) {
+			$column_sql[] = $this->connection->quote_identifier( $column_name ) . ' ' . $type;
+		}
+
+		$this->execute_duckdb_query(
+			'CREATE OR REPLACE TEMP TABLE '
+				. $this->connection->quote_identifier( self::INFO_SCHEMA_COLUMNS_TABLE )
+				. ' ('
+				. implode( ', ', $column_sql )
+				. ')',
+			'Failed to initialize DuckDB information_schema.columns compatibility table'
+		);
+
+		if ( count( $rows ) === 0 ) {
+			return;
+		}
+
+		$quoted_columns = implode(
+			', ',
+			array_map(
+				function ( string $column_name ): string {
+					return $this->connection->quote_identifier( $column_name );
+				},
+				$columns
+			)
+		);
+
+		foreach ( $rows as $row ) {
+			$values = array();
+			foreach ( $columns as $column_name ) {
+				$values[] = $this->connection->quote( $row[ $column_name ] );
+			}
+
+			$this->execute_duckdb_query(
+				'INSERT INTO '
+					. $this->connection->quote_identifier( self::INFO_SCHEMA_COLUMNS_TABLE )
+					. ' ('
+					. $quoted_columns
+					. ') VALUES ('
+					. implode( ', ', $values )
+					. ')',
+				'Failed to populate DuckDB information_schema.columns compatibility table'
+			);
+		}
+	}
+
+	/**
+	 * MySQL-shaped information_schema.columns definitions.
+	 *
+	 * @return array<string,string> Column name to DuckDB type.
+	 */
+	private function information_schema_column_definitions(): array {
+		return array(
+			'TABLE_CATALOG'            => 'VARCHAR',
+			'TABLE_SCHEMA'             => 'VARCHAR',
+			'TABLE_NAME'               => 'VARCHAR',
+			'COLUMN_NAME'              => 'VARCHAR',
+			'ORDINAL_POSITION'         => 'INTEGER',
+			'COLUMN_DEFAULT'           => 'VARCHAR',
+			'IS_NULLABLE'              => 'VARCHAR',
+			'DATA_TYPE'                => 'VARCHAR',
+			'CHARACTER_MAXIMUM_LENGTH' => 'BIGINT',
+			'CHARACTER_OCTET_LENGTH'   => 'BIGINT',
+			'NUMERIC_PRECISION'        => 'INTEGER',
+			'NUMERIC_SCALE'            => 'INTEGER',
+			'DATETIME_PRECISION'       => 'INTEGER',
+			'CHARACTER_SET_NAME'       => 'VARCHAR',
+			'COLLATION_NAME'           => 'VARCHAR',
+			'COLUMN_TYPE'              => 'VARCHAR',
+			'COLUMN_KEY'               => 'VARCHAR',
+			'EXTRA'                    => 'VARCHAR',
+			'PRIVILEGES'               => 'VARCHAR',
+			'COLUMN_COMMENT'           => 'VARCHAR',
+			'GENERATION_EXPRESSION'    => 'VARCHAR',
+			'SRS_ID'                   => 'INTEGER',
+		);
+	}
+
+	/**
+	 * Build MySQL-shaped information_schema.columns rows.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function information_schema_column_rows(): array {
+		$rows = array();
+		foreach ( $this->user_table_names() as $table_name ) {
+			$metadata_rows = $this->column_metadata_rows( $table_name );
+			if ( count( $metadata_rows ) === 0 ) {
+				$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
+			}
+
+			foreach ( $metadata_rows as $metadata ) {
+				$rows[] = $this->information_schema_column_row( $table_name, $metadata );
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * List non-internal DuckDB base tables.
+	 *
+	 * @return string[] Table names.
+	 */
+	private function user_table_names(): array {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()'
+				. " AND table_type = 'BASE TABLE'"
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INDEX_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
+				. ' ORDER BY table_name',
+			'Failed to inspect DuckDB tables'
+		);
+
+		return array_map(
+			'strval',
+			$stmt->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	/**
+	 * Build metadata rows for tables created outside the MySQL-emulation DDL path.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function pragma_column_metadata_rows( string $table_name ): array {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT cid, name, type, "notnull", dflt_value, pk FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') ORDER BY cid',
+			'Failed to inspect DuckDB table columns'
+		);
+
+		$rows = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$is_primary_key = isset( $row['pk'] ) && (int) $row['pk'] > 0;
+			$is_not_null    = $is_primary_key || ( isset( $row['notnull'] ) && (bool) $row['notnull'] );
+			$is_auto        = isset( $row['dflt_value'] ) && is_string( $row['dflt_value'] ) && false !== stripos( $row['dflt_value'], 'nextval(' );
+
+			$rows[] = array(
+				'ordinal_position' => (int) $row['cid'] + 1,
+				'column_name'      => (string) $row['name'],
+				'column_type'      => strtolower( (string) $row['type'] ),
+				'is_nullable'      => $is_not_null ? 'NO' : 'YES',
+				'column_key'       => $is_primary_key ? 'PRI' : '',
+				'column_default'   => $is_auto ? null : $this->normalize_describe_default( $row['dflt_value'] ?? null ),
+				'extra'            => $is_auto ? 'auto_increment' : '',
+				'collation_name'   => null,
+				'comment'          => '',
+			);
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Build one MySQL-shaped information_schema.columns row.
+	 *
+	 * @param string              $table_name Table name.
+	 * @param array<string,mixed> $metadata   Column metadata.
+	 * @return array<string,mixed>
+	 */
+	private function information_schema_column_row( string $table_name, array $metadata ): array {
+		$type_attributes = $this->column_type_attributes(
+			(string) $metadata['column_type'],
+			null === $metadata['collation_name'] ? null : (string) $metadata['collation_name']
+		);
+
+		return array(
+			'TABLE_CATALOG'            => 'def',
+			'TABLE_SCHEMA'             => $this->database,
+			'TABLE_NAME'               => $table_name,
+			'COLUMN_NAME'              => $metadata['column_name'],
+			'ORDINAL_POSITION'         => (int) $metadata['ordinal_position'],
+			'COLUMN_DEFAULT'           => $metadata['column_default'],
+			'IS_NULLABLE'              => $metadata['is_nullable'],
+			'DATA_TYPE'                => $type_attributes['data_type'],
+			'CHARACTER_MAXIMUM_LENGTH' => $type_attributes['character_maximum_length'],
+			'CHARACTER_OCTET_LENGTH'   => $type_attributes['character_octet_length'],
+			'NUMERIC_PRECISION'        => $type_attributes['numeric_precision'],
+			'NUMERIC_SCALE'            => $type_attributes['numeric_scale'],
+			'DATETIME_PRECISION'       => $type_attributes['datetime_precision'],
+			'CHARACTER_SET_NAME'       => $this->character_set_from_collation( $metadata['collation_name'] ),
+			'COLLATION_NAME'           => $metadata['collation_name'],
+			'COLUMN_TYPE'              => $metadata['column_type'],
+			'COLUMN_KEY'               => $metadata['column_key'],
+			'EXTRA'                    => $metadata['extra'],
+			'PRIVILEGES'               => 'select,insert,update,references',
+			'COLUMN_COMMENT'           => $metadata['comment'],
+			'GENERATION_EXPRESSION'    => '',
+			'SRS_ID'                   => null,
+		);
+	}
+
+	/**
+	 * Derive information_schema.columns type attributes from a MySQL column type.
+	 *
+	 * @param string      $column_type    MySQL-facing column type.
+	 * @param string|null $collation_name Optional collation name.
+	 * @return array<string,mixed>
+	 */
+	private function column_type_attributes( string $column_type, ?string $collation_name ): array {
+		$normalized   = strtolower( trim( $column_type ) );
+		$data_type    = $this->data_type_from_column_type( $normalized );
+		$length       = $this->column_type_length( $normalized );
+		$charset      = $this->character_set_from_collation( $collation_name );
+		$char_length  = null;
+		$octet_length = null;
+
+		if ( in_array( $data_type, array( 'char', 'varchar' ), true ) ) {
+			$char_length  = $length ?? 1;
+			$octet_length = $char_length * $this->charset_max_bytes( $charset );
+		} elseif ( 'tinytext' === $data_type || 'tinyblob' === $data_type ) {
+			$char_length  = 255;
+			$octet_length = 255;
+		} elseif ( 'text' === $data_type || 'blob' === $data_type ) {
+			$char_length  = 65535;
+			$octet_length = 65535;
+		} elseif ( 'mediumtext' === $data_type || 'mediumblob' === $data_type ) {
+			$char_length  = 16777215;
+			$octet_length = 16777215;
+		} elseif ( 'longtext' === $data_type || 'longblob' === $data_type ) {
+			$char_length  = 4294967295;
+			$octet_length = 4294967295;
+		}
+
+		list( $numeric_precision, $numeric_scale ) = $this->numeric_attributes_from_data_type( $data_type, $normalized );
+
+		return array(
+			'data_type'                => $data_type,
+			'character_maximum_length' => $char_length,
+			'character_octet_length'   => $octet_length,
+			'numeric_precision'        => $numeric_precision,
+			'numeric_scale'            => $numeric_scale,
+			'datetime_precision'       => in_array( $data_type, array( 'time', 'datetime', 'timestamp' ), true ) ? 0 : null,
+		);
+	}
+
+	/**
+	 * Extract the normalized data type from a column type.
+	 *
+	 * @param string $column_type MySQL-facing column type.
+	 * @return string Data type.
+	 */
+	private function data_type_from_column_type( string $column_type ): string {
+		if ( preg_match( '/^([a-z]+)/', $column_type, $matches ) ) {
+			$data_type = $matches[1];
+		} else {
+			$data_type = $column_type;
+		}
+
+		$map = array(
+			'integer' => 'int',
+			'boolean' => 'tinyint',
+		);
+
+		return $map[ $data_type ] ?? $data_type;
+	}
+
+	/**
+	 * Extract the first numeric length from a column type.
+	 *
+	 * @param string $column_type MySQL-facing column type.
+	 * @return int|null Length.
+	 */
+	private function column_type_length( string $column_type ): ?int {
+		if ( preg_match( '/\((\d+)/', $column_type, $matches ) ) {
+			return (int) $matches[1];
+		}
+
+		return null;
+	}
+
+	/**
+	 * Derive numeric precision and scale.
+	 *
+	 * @param string $data_type   Normalized data type.
+	 * @param string $column_type MySQL-facing column type.
+	 * @return array{0:int|null,1:int|null}
+	 */
+	private function numeric_attributes_from_data_type( string $data_type, string $column_type ): array {
+		$precision_map = array(
+			'tinyint'   => 3,
+			'smallint'  => 5,
+			'mediumint' => 7,
+			'int'       => 10,
+			'bigint'    => false === strpos( $column_type, 'unsigned' ) ? 19 : 20,
+			'float'     => 12,
+			'double'    => 22,
+		);
+
+		if ( array_key_exists( $data_type, $precision_map ) ) {
+			return array( $precision_map[ $data_type ], 0 );
+		}
+
+		if ( 'decimal' === $data_type ) {
+			if ( preg_match( '/\((\d+)(?:\s*,\s*(\d+))?\)/', $column_type, $matches ) ) {
+				return array( (int) $matches[1], isset( $matches[2] ) ? (int) $matches[2] : 0 );
+			}
+			return array( 10, 0 );
+		}
+
+		return array( null, null );
+	}
+
+	/**
+	 * Derive a character set from a collation.
+	 *
+	 * @param mixed $collation_name Collation name.
+	 * @return string|null Character set.
+	 */
+	private function character_set_from_collation( $collation_name ): ?string {
+		if ( null === $collation_name || '' === $collation_name ) {
+			return null;
+		}
+
+		$parts = explode( '_', (string) $collation_name );
+		return $parts[0] ?? null;
+	}
+
+	/**
+	 * Get max bytes per character for common charsets.
+	 *
+	 * @param string|null $charset Character set.
+	 * @return int Max bytes.
+	 */
+	private function charset_max_bytes( ?string $charset ): int {
+		if ( 'utf8mb4' === $charset ) {
+			return 4;
+		}
+		if ( 'utf8' === $charset || 'utf8mb3' === $charset ) {
+			return 3;
+		}
+
+		return 1;
 	}
 
 	/**

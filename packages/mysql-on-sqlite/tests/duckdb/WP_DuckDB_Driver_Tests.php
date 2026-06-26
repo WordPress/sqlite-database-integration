@@ -160,7 +160,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array(
 					'Field'      => 'title',
 					'Type'       => 'varchar(100)',
-					'Collation'  => 'utf8mb4_unicode_ci',
+					'Collation'  => 'utf8mb4_0900_ai_ci',
 					'Null'       => 'NO',
 					'Key'        => '',
 					'Default'    => 'untitled',
@@ -605,7 +605,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$full = $driver->query( "SHOW FULL COLUMNS FROM wp_options LIKE 'autoload'" )->fetch( PDO::FETCH_ASSOC );
-		$this->assertSame( 'utf8mb4_unicode_ci', $full['Collation'] );
+		$this->assertSame( 'utf8mb4_0900_ai_ci', $full['Collation'] );
 	}
 
 	public function test_alter_table_add_column_without_column_keyword_and_position_hints(): void {
@@ -656,6 +656,88 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$indexes = $driver->query( 'SHOW INDEX FROM items' )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( 'slug_key' ), array_column( $indexes, 'Key_name' ) );
 		$this->assertSame( 0, (int) $indexes[0]['Non_unique'] );
+	}
+
+	public function test_information_schema_columns_exposes_mysql_shaped_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE metadata (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '' COMMENT 'Option name',
+				option_value LONGTEXT NOT NULL,
+				UNIQUE KEY option_name (option_name)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( "ALTER TABLE metadata ADD COLUMN autoload VARCHAR(20) NOT NULL DEFAULT 'yes'" );
+
+		$rows = $driver->query(
+			"SELECT * FROM information_schema.columns
+			WHERE table_schema = 'wp' AND table_name = 'metadata'
+			ORDER BY ordinal_position"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'TABLE_CATALOG',
+				'TABLE_SCHEMA',
+				'TABLE_NAME',
+				'COLUMN_NAME',
+				'ORDINAL_POSITION',
+				'COLUMN_DEFAULT',
+				'IS_NULLABLE',
+				'DATA_TYPE',
+				'CHARACTER_MAXIMUM_LENGTH',
+				'CHARACTER_OCTET_LENGTH',
+				'NUMERIC_PRECISION',
+				'NUMERIC_SCALE',
+				'DATETIME_PRECISION',
+				'CHARACTER_SET_NAME',
+				'COLLATION_NAME',
+				'COLUMN_TYPE',
+				'COLUMN_KEY',
+				'EXTRA',
+				'PRIVILEGES',
+				'COLUMN_COMMENT',
+				'GENERATION_EXPRESSION',
+				'SRS_ID',
+			),
+			array_keys( $rows[0] )
+		);
+		$this->assertSame( array( 'id', 'option_name', 'option_value', 'autoload' ), array_column( $rows, 'COLUMN_NAME' ) );
+		$this->assertSame( 'bigint', $rows[0]['DATA_TYPE'] );
+		$this->assertSame( 20, $rows[0]['NUMERIC_PRECISION'] );
+		$this->assertSame( 'PRI', $rows[0]['COLUMN_KEY'] );
+		$this->assertSame( 'auto_increment', $rows[0]['EXTRA'] );
+		$this->assertSame( 'varchar', $rows[1]['DATA_TYPE'] );
+		$this->assertSame( 191, $rows[1]['CHARACTER_MAXIMUM_LENGTH'] );
+		$this->assertSame( 764, $rows[1]['CHARACTER_OCTET_LENGTH'] );
+		$this->assertSame( 'utf8mb4', $rows[1]['CHARACTER_SET_NAME'] );
+		$this->assertSame( 'utf8mb4_0900_ai_ci', $rows[1]['COLLATION_NAME'] );
+		$this->assertSame( 'UNI', $rows[1]['COLUMN_KEY'] );
+		$this->assertSame( 'Option name', $rows[1]['COLUMN_COMMENT'] );
+		$this->assertSame( 'yes', $rows[3]['COLUMN_DEFAULT'] );
+
+		$aliased = $driver->query(
+			"SELECT c.column_name
+			FROM information_schema.columns c
+			WHERE c.table_schema = 'wp' AND c.table_name = 'metadata'
+			ORDER BY c.ordinal_position"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'id', 'option_name', 'option_value', 'autoload' ), array_column( $aliased, 'COLUMN_NAME' ) );
+
+		$internal = $driver->query(
+			"SELECT table_name
+			FROM information_schema.columns
+			WHERE table_name LIKE '__wp_duckdb_%'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $internal );
 	}
 
 	public function test_unsupported_alter_table_add_column_constraints_throw_driver_exception(): void {
