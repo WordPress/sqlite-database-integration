@@ -871,6 +871,14 @@ class WP_DuckDB_Driver {
 		}
 
 		if (
+			isset( $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::STATUS_SYMBOL === $tokens[2]->id
+		) {
+			return $this->execute_show_table_status( $tokens );
+		}
+
+		if (
 			isset( $tokens[1] )
 			&& (
 				WP_MySQL_Lexer::COLUMNS_SYMBOL === $tokens[1]->id
@@ -892,6 +900,96 @@ class WP_DuckDB_Driver {
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW statement in DuckDB driver.' );
+	}
+
+	/**
+	 * Execute SHOW TABLE STATUS.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_show_table_status( array $tokens ): WP_DuckDB_Result_Statement {
+		$index    = 3;
+		$database = $this->database;
+
+		if (
+			isset( $tokens[ $index ] )
+			&& ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $index ]->id )
+		) {
+			++$index;
+			$database = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+		}
+
+		$condition = '';
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $index ]->id ) {
+			if (
+				! isset( $tokens[ $index + 1 ] )
+				|| (
+					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
+					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
+				)
+			) {
+				throw new WP_DuckDB_Driver_Exception( 'SHOW TABLE STATUS LIKE requires a string pattern in the DuckDB driver.' );
+			}
+			$condition = ' AND ' . $this->connection->quote_identifier( 'Name' )
+				. ' LIKE '
+				. $this->connection->quote( $tokens[ $index + 1 ]->get_value() )
+				. ' ESCAPE '
+				. $this->connection->quote( '\\' );
+			$index    += 2;
+		} elseif ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			if ( ! isset( $tokens[ $index ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'SHOW TABLE STATUS WHERE requires an expression in the DuckDB driver.' );
+			}
+			$condition = ' AND ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $index ) );
+			$index     = count( $tokens );
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW TABLE STATUS statement in DuckDB driver. Only optional FROM/IN, LIKE, and WHERE are supported.' );
+		}
+
+		$this->refresh_information_schema_tables_table();
+
+		$schema_condition = 0 === strcasecmp( $database, $this->database )
+			? $this->connection->quote_identifier( 'TABLE_SCHEMA' ) . ' = ' . $this->connection->quote( $this->database )
+			: '1 = 0';
+
+		$sql = 'SELECT * FROM ('
+			. 'SELECT '
+			. $this->connection->quote_identifier( 'TABLE_NAME' ) . ' AS ' . $this->connection->quote_identifier( 'Name' ) . ', '
+			. $this->connection->quote_identifier( 'ENGINE' ) . ' AS ' . $this->connection->quote_identifier( 'Engine' ) . ', '
+			. $this->connection->quote_identifier( 'VERSION' ) . ' AS ' . $this->connection->quote_identifier( 'Version' ) . ', '
+			. $this->connection->quote_identifier( 'ROW_FORMAT' ) . ' AS ' . $this->connection->quote_identifier( 'Row_format' ) . ', '
+			. $this->connection->quote_identifier( 'TABLE_ROWS' ) . ' AS ' . $this->connection->quote_identifier( 'Rows' ) . ', '
+			. $this->connection->quote_identifier( 'AVG_ROW_LENGTH' ) . ' AS ' . $this->connection->quote_identifier( 'Avg_row_length' ) . ', '
+			. $this->connection->quote_identifier( 'DATA_LENGTH' ) . ' AS ' . $this->connection->quote_identifier( 'Data_length' ) . ', '
+			. $this->connection->quote_identifier( 'MAX_DATA_LENGTH' ) . ' AS ' . $this->connection->quote_identifier( 'Max_data_length' ) . ', '
+			. $this->connection->quote_identifier( 'INDEX_LENGTH' ) . ' AS ' . $this->connection->quote_identifier( 'Index_length' ) . ', '
+			. $this->connection->quote_identifier( 'DATA_FREE' ) . ' AS ' . $this->connection->quote_identifier( 'Data_free' ) . ', '
+			. $this->connection->quote_identifier( 'AUTO_INCREMENT' ) . ' AS ' . $this->connection->quote_identifier( 'Auto_increment' ) . ', '
+			. $this->connection->quote_identifier( 'CREATE_TIME' ) . ' AS ' . $this->connection->quote_identifier( 'Create_time' ) . ', '
+			. $this->connection->quote_identifier( 'UPDATE_TIME' ) . ' AS ' . $this->connection->quote_identifier( 'Update_time' ) . ', '
+			. $this->connection->quote_identifier( 'CHECK_TIME' ) . ' AS ' . $this->connection->quote_identifier( 'Check_time' ) . ', '
+			. $this->connection->quote_identifier( 'TABLE_COLLATION' ) . ' AS ' . $this->connection->quote_identifier( 'Collation' ) . ', '
+			. $this->connection->quote_identifier( 'CHECKSUM' ) . ' AS ' . $this->connection->quote_identifier( 'Checksum' ) . ', '
+			. $this->connection->quote_identifier( 'CREATE_OPTIONS' ) . ' AS ' . $this->connection->quote_identifier( 'Create_options' ) . ', '
+			. $this->connection->quote_identifier( 'TABLE_COMMENT' ) . ' AS ' . $this->connection->quote_identifier( 'Comment' )
+			. ' FROM '
+			. $this->connection->quote_identifier( self::INFO_SCHEMA_TABLES_TABLE )
+			. ' WHERE '
+			. $schema_condition
+			. ') WHERE 1 = 1'
+			. $condition
+			. ' ORDER BY '
+			. $this->connection->quote_identifier( 'Name' );
+
+		return $this->execute_duckdb_query(
+			$sql,
+			'Failed to execute SHOW TABLE STATUS'
+		);
 	}
 
 	/**

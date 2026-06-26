@@ -333,4 +333,46 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			ORDER BY t.TABLE_NAME"
 		);
 	}
+
+	public function test_show_table_status_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL
+				) ENGINE=MyISAM CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Options table'",
+				'CREATE TABLE plain (id INT, name TEXT)',
+				"INSERT INTO metadata (option_name, option_value)
+				VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')",
+			)
+		);
+
+		$columns = array(
+			'Name',
+			'Engine',
+			'Version',
+			'Row_format',
+			'Rows',
+			'Avg_row_length',
+			'Data_length',
+			'Max_data_length',
+			'Index_length',
+			'Data_free',
+			'Auto_increment',
+			'Update_time',
+			'Check_time',
+			'Collation',
+			'Checksum',
+			'Create_options',
+			'Comment',
+		);
+
+		$this->assertParityRowColumns( 'SHOW TABLE STATUS FROM wp', $columns );
+		$this->assertParityRowColumns( "SHOW TABLE STATUS IN wp LIKE 'plain'", $columns );
+		$this->assertParityRowColumns( 'SHOW TABLE STATUS WHERE `Auto_increment` > 2', array( 'Name', 'Auto_increment' ) );
+		$this->assertParityRowColumns( 'SHOW TABLE STATUS WHERE `Auto_increment` IS NULL', array( 'Name', 'Auto_increment' ) );
+		$this->assertParityRowColumns( "SHOW TABLE STATUS WHERE SUBSTR(Name, 1, 4) = 'meta'", array( 'Name' ) );
+		$this->assertParityRowColumns( 'SHOW TABLE STATUS FROM other_database', $columns );
+	}
 }

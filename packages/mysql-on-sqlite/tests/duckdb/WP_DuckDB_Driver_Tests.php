@@ -1115,6 +1115,94 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal );
 	}
 
+	public function test_show_table_status_exposes_mysql_shaped_table_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE metadata (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL
+			) ENGINE=MyISAM CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Options table'"
+		);
+		$driver->query( 'CREATE TABLE plain (id INT, name TEXT)' );
+		$driver->query(
+			"INSERT INTO metadata (option_name, option_value)
+			VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')"
+		);
+
+		$rows = $driver->query( 'SHOW TABLE STATUS FROM wp' )->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'Name',
+				'Engine',
+				'Version',
+				'Row_format',
+				'Rows',
+				'Avg_row_length',
+				'Data_length',
+				'Max_data_length',
+				'Index_length',
+				'Data_free',
+				'Auto_increment',
+				'Create_time',
+				'Update_time',
+				'Check_time',
+				'Collation',
+				'Checksum',
+				'Create_options',
+				'Comment',
+			),
+			array_keys( $rows[0] )
+		);
+		$this->assertSame( array( 'metadata', 'plain' ), array_column( $rows, 'Name' ) );
+		$this->assertSame( 'MyISAM', $rows[0]['Engine'] );
+		$this->assertSame( 10, $rows[0]['Version'] );
+		$this->assertSame( 'Fixed', $rows[0]['Row_format'] );
+		$this->assertSame( 0, $rows[0]['Rows'] );
+		$this->assertSame( 0, $rows[0]['Avg_row_length'] );
+		$this->assertSame( 0, $rows[0]['Data_length'] );
+		$this->assertSame( 0, $rows[0]['Max_data_length'] );
+		$this->assertSame( 0, $rows[0]['Index_length'] );
+		$this->assertSame( 0, $rows[0]['Data_free'] );
+		$this->assertSame( 3, $rows[0]['Auto_increment'] );
+		$this->assertRegExp( '/^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d$/', $rows[0]['Create_time'] );
+		$this->assertSame( null, $rows[0]['Update_time'] );
+		$this->assertSame( null, $rows[0]['Check_time'] );
+		$this->assertSame( 'utf8mb4_unicode_ci', $rows[0]['Collation'] );
+		$this->assertSame( null, $rows[0]['Checksum'] );
+		$this->assertSame( '', $rows[0]['Create_options'] );
+		$this->assertSame( 'Options table', $rows[0]['Comment'] );
+		$this->assertSame( 'InnoDB', $rows[1]['Engine'] );
+		$this->assertSame( 'Dynamic', $rows[1]['Row_format'] );
+		$this->assertSame( null, $rows[1]['Auto_increment'] );
+
+		$like = $driver->query( "SHOW TABLE STATUS IN wp LIKE 'plain'" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'plain' ), array_column( $like, 'Name' ) );
+
+		$auto_increment = $driver->query( 'SHOW TABLE STATUS WHERE `Auto_increment` > 2' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'metadata' ), array_column( $auto_increment, 'Name' ) );
+
+		$without_auto_increment = $driver->query( 'SHOW TABLE STATUS WHERE `Auto_increment` IS NULL' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'plain' ), array_column( $without_auto_increment, 'Name' ) );
+
+		$where_function = $driver->query( "SHOW TABLE STATUS WHERE SUBSTR(Name, 1, 4) = 'meta'" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'metadata' ), array_column( $where_function, 'Name' ) );
+
+		$other_database = $driver->query( 'SHOW TABLE STATUS FROM other_database' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $other_database );
+
+		$internal = $driver->query( "SHOW TABLE STATUS LIKE '__wp_duckdb_%'" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $internal );
+	}
+
 	public function test_unsupported_alter_table_add_column_constraints_throw_driver_exception(): void {
 		$this->requireDuckDBRuntime();
 
