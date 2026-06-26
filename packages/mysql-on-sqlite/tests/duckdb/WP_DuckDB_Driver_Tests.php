@@ -319,6 +319,45 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_insert_select_and_replace_select_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE source_items (id INTEGER, name VARCHAR(100))' );
+		$driver->query( 'CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR(100))' );
+		$driver->query( "INSERT INTO source_items VALUES (1, 'first'), (2, 'second')" );
+
+		$inserted = $driver->query( 'INSERT INTO items (id, name) SELECT id, name FROM source_items WHERE id = 1' );
+		$this->assertSame( 1, $inserted->rowCount() );
+		$this->assertSame( 'INSERT INTO items(id, name) SELECT id, name FROM source_items WHERE id = 1', $this->lastDuckDBQuery( $driver ) );
+
+		$ignored = $driver->query( 'INSERT IGNORE items (id, name) SELECT id, name FROM source_items WHERE id = 1' );
+		$this->assertSame( 0, $ignored->rowCount() );
+		$this->assertSame( 'INSERT OR IGNORE INTO items(id, name) SELECT id, name FROM source_items WHERE id = 1', $this->lastDuckDBQuery( $driver ) );
+
+		$inserted_from_dual = $driver->query( "INSERT items (id, name) SELECT 3, 'third' FROM DUAL WHERE (SELECT NULL FROM DUAL) IS NULL" );
+		$this->assertSame( 1, $inserted_from_dual->rowCount() );
+		$this->assertSame( "INSERT INTO items(id, name) SELECT 3, 'third' WHERE (SELECT NULL) IS NULL", $this->lastDuckDBQuery( $driver ) );
+
+		$replaced_from_dual = $driver->query( "REPLACE INTO items (id, name) SELECT 1, 'replaced' FROM DUAL" );
+		$this->assertSame( 1, $replaced_from_dual->rowCount() );
+		$this->assertSame( "INSERT OR REPLACE INTO items(id, name) SELECT 1, 'replaced'", $this->lastDuckDBQuery( $driver ) );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'replaced',
+				),
+				array(
+					'id'   => 3,
+					'name' => 'third',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_insert_on_duplicate_key_update_values_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 

@@ -475,6 +475,17 @@ class WP_DuckDB_Driver {
 			++$index;
 		}
 
+		$select_index = $this->find_insert_select_index( $tokens, $index );
+		if ( null !== $select_index ) {
+			if ( null !== $this->find_on_duplicate_key_update_index( $tokens ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT statement in DuckDB driver. INSERT ... SELECT ... ON DUPLICATE KEY UPDATE is not supported.' );
+			}
+			return $this->execute_duckdb_query(
+				$this->translate_insert_select_tokens_to_duckdb_sql( $tokens, $index, $ignore ),
+				'Failed to execute DuckDB INSERT'
+			);
+		}
+
 		$set_index = $this->find_insert_set_index( $tokens, $index );
 		if ( null !== $set_index ) {
 			if ( null !== $this->find_on_duplicate_key_update_index( $tokens ) ) {
@@ -518,6 +529,14 @@ class WP_DuckDB_Driver {
 		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $index ]->id ) {
 			++$index;
 		}
+
+		if ( null !== $this->find_insert_select_index( $tokens, $index ) ) {
+			return $this->execute_duckdb_query(
+				$this->translate_replace_tokens_to_duckdb_sql( $tokens ),
+				'Failed to execute DuckDB REPLACE'
+			);
+		}
+
 		$this->assert_values_write_statement( $tokens, $index, 'REPLACE' );
 
 		return $this->execute_duckdb_query(
@@ -622,6 +641,26 @@ class WP_DuckDB_Driver {
 	private function find_insert_set_index( array $tokens, int $table_index ): ?int {
 		return isset( $tokens[ $table_index + 1 ] ) && WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $table_index + 1 ]->id
 			? $table_index + 1
+			: null;
+	}
+
+	/**
+	 * Find the top-level SELECT clause in a supported INSERT/REPLACE ... SELECT.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index expected to contain the table identifier.
+	 * @return int|null Index of the SELECT token, or null when absent.
+	 */
+	private function find_insert_select_index( array $tokens, int $table_index ): ?int {
+		$this->identifier_value( $tokens[ $table_index ] ?? null );
+
+		$index = $table_index + 1;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+			$index = $this->skip_balanced_parentheses( $tokens, $index );
+		}
+
+		return isset( $tokens[ $index ] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $index ]->id
+			? $index
 			: null;
 	}
 
@@ -1847,6 +1886,15 @@ class WP_DuckDB_Driver {
 			$token = $tokens[ $index ];
 
 			if (
+				WP_MySQL_Lexer::FROM_SYMBOL === $token->id
+				&& isset( $tokens[ $index + 1 ] )
+				&& WP_MySQL_Lexer::DUAL_SYMBOL === $tokens[ $index + 1 ]->id
+			) {
+				++$index;
+				continue;
+			}
+
+			if (
 				WP_MySQL_Lexer::NOT_SYMBOL === $token->id
 				&& isset( $tokens[ $index + 1 ], $tokens[ $index + 2 ] )
 				&& $this->is_regexp_operator( $tokens[ $index + 1 ] )
@@ -1929,6 +1977,21 @@ class WP_DuckDB_Driver {
 	 */
 	private function translate_insert_ignore_tokens_to_duckdb_sql( array $tokens, int $table_index ): string {
 		return 'INSERT OR IGNORE INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $table_index ) );
+	}
+
+	/**
+	 * Translate MySQL INSERT ... SELECT to DuckDB, normalizing optional INTO.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index of the table token.
+	 * @param bool              $ignore      Whether INSERT IGNORE was used.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_insert_select_tokens_to_duckdb_sql( array $tokens, int $table_index, bool $ignore ): string {
+		return 'INSERT '
+			. ( $ignore ? 'OR IGNORE ' : '' )
+			. 'INTO '
+			. $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $table_index ) );
 	}
 
 	/**
