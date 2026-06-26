@@ -46,6 +46,51 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'first', $stmt->fetchColumn() );
 	}
 
+	public function test_transactions_commit_and_rollback(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->query( 'CREATE TABLE t (id INTEGER)' );
+
+		$this->assertFalse( $connection->inTransaction() );
+		$this->assertTrue( $connection->beginTransaction() );
+		$this->assertTrue( $connection->inTransaction() );
+		$connection->query( 'INSERT INTO t VALUES (1)' );
+		$this->assertTrue( $connection->rollback() );
+		$this->assertFalse( $connection->inTransaction() );
+		$this->assertSame( 0, $connection->query( 'SELECT COUNT(*) AS c FROM t' )->fetchColumn() );
+
+		$connection->begin_transaction();
+		$connection->query( 'INSERT INTO t VALUES (2)' );
+		$this->assertTrue( $connection->commit() );
+		$this->assertSame( 1, $connection->query( 'SELECT COUNT(*) AS c FROM t' )->fetchColumn() );
+	}
+
+	public function test_transaction_state_errors_are_explicit(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( 'DuckDB transaction is not active.' );
+		$connection->commit();
+	}
+
+	public function test_nested_transaction_errors_are_explicit(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->beginTransaction();
+
+		try {
+			$this->expectException( WP_DuckDB_Driver_Exception::class );
+			$this->expectExceptionMessage( 'DuckDB transaction is already active.' );
+			$connection->beginTransaction();
+		} finally {
+			$connection->rollback();
+		}
+	}
+
 	public function test_file_connection_persists_data(): void {
 		$this->requireDuckDBRuntime();
 

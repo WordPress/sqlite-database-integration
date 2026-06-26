@@ -145,13 +145,17 @@ class WP_DuckDB_Driver {
 			case WP_MySQL_Lexer::SELECT_SYMBOL:
 				return $this->execute_select( $tokens );
 			case WP_MySQL_Lexer::CREATE_SYMBOL:
-				return $this->execute_create_table( $tokens );
+				return $this->execute_create( $tokens );
 			case WP_MySQL_Lexer::INSERT_SYMBOL:
 				return $this->execute_insert( $tokens );
+			case WP_MySQL_Lexer::REPLACE_SYMBOL:
+				return $this->execute_replace( $tokens );
 			case WP_MySQL_Lexer::UPDATE_SYMBOL:
 				return $this->execute_update( $tokens );
 			case WP_MySQL_Lexer::DELETE_SYMBOL:
 				return $this->execute_delete( $tokens );
+			case WP_MySQL_Lexer::ALTER_SYMBOL:
+				return $this->execute_alter_table( $tokens );
 			case WP_MySQL_Lexer::SHOW_SYMBOL:
 				return $this->execute_show( $tokens );
 			case WP_MySQL_Lexer::DESCRIBE_SYMBOL:
@@ -289,6 +293,24 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute a supported CREATE statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_create( array $tokens ): WP_DuckDB_Result_Statement {
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id ) {
+			return $this->execute_create_table( $tokens );
+		}
+
+		if ( $this->is_create_index_statement( $tokens ) ) {
+			return $this->execute_create_index( $tokens );
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE statement in DuckDB driver. Only CREATE TABLE and CREATE INDEX are supported.' );
+	}
+
+	/**
 	 * Execute a supported CREATE TABLE statement.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
@@ -380,6 +402,54 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute a supported CREATE INDEX statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_create_index( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CREATE_SYMBOL, 'Expected CREATE.' );
+		++$index;
+
+		$unique = false;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::UNIQUE_SYMBOL === $tokens[ $index ]->id ) {
+			$unique = true;
+			++$index;
+		}
+
+		if (
+			isset( $tokens[ $index ] )
+			&& ( WP_MySQL_Lexer::FULLTEXT_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::SPATIAL_SYMBOL === $tokens[ $index ]->id )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE INDEX type in DuckDB driver: ' . $tokens[ $index ]->get_bytes() . '.' );
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::INDEX_SYMBOL, 'Expected INDEX in CREATE INDEX statement.' );
+		++$index;
+
+		$mysql_index_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		$index = $this->skip_optional_index_type( $tokens, $index );
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in CREATE INDEX statement.' );
+		++$index;
+
+		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		$index                                     = $this->skip_optional_index_type( $tokens, $index );
+		list( $columns, $column_metadata, $index ) = $this->translate_index_column_list( $tokens, $index );
+		$this->assert_supported_index_options( $tokens, $index );
+
+		$index_definition = $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata );
+		$result           = $this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
+		$this->record_index_metadata( $index_definition );
+
+		return $result;
+	}
+
+	/**
 	 * Execute a supported INSERT statement.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
@@ -390,26 +460,30 @@ class WP_DuckDB_Driver {
 		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $index ]->id ) {
 			++$index;
 		}
-		$this->identifier_value( $tokens[ $index ] ?? null );
-
-		$has_values = false;
-		foreach ( $tokens as $token ) {
-			if ( WP_MySQL_Lexer::VALUES_SYMBOL === $token->id ) {
-				$has_values = true;
-				break;
-			}
-			if ( WP_MySQL_Lexer::SELECT_SYMBOL === $token->id || WP_MySQL_Lexer::SET_SYMBOL === $token->id ) {
-				break;
-			}
-		}
-
-		if ( ! $has_values ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT statement in DuckDB driver. Only INSERT ... VALUES is supported.' );
-		}
+		$this->assert_values_write_statement( $tokens, $index, 'INSERT' );
 
 		return $this->execute_duckdb_query(
 			$this->translate_tokens_to_duckdb_sql( $tokens ),
 			'Failed to execute DuckDB INSERT'
+		);
+	}
+
+	/**
+	 * Execute a supported REPLACE statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_replace( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 1;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+		}
+		$this->assert_values_write_statement( $tokens, $index, 'REPLACE' );
+
+		return $this->execute_duckdb_query(
+			$this->translate_replace_tokens_to_duckdb_sql( $tokens ),
+			'Failed to execute DuckDB REPLACE'
 		);
 	}
 
@@ -450,6 +524,65 @@ class WP_DuckDB_Driver {
 			$this->translate_tokens_to_duckdb_sql( $tokens ),
 			'Failed to execute DuckDB DELETE'
 		);
+	}
+
+	/**
+	 * Assert that INSERT/REPLACE use the supported VALUES form.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index expected to contain the table identifier.
+	 * @param string            $statement   Statement name for errors.
+	 */
+	private function assert_values_write_statement( array $tokens, int $table_index, string $statement ): void {
+		$this->identifier_value( $tokens[ $table_index ] ?? null );
+
+		$has_values = false;
+		foreach ( $tokens as $token ) {
+			if ( WP_MySQL_Lexer::VALUES_SYMBOL === $token->id ) {
+				$has_values = true;
+				break;
+			}
+			if ( WP_MySQL_Lexer::SELECT_SYMBOL === $token->id || WP_MySQL_Lexer::SET_SYMBOL === $token->id ) {
+				break;
+			}
+		}
+
+		if ( ! $has_values ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only ' . $statement . ' ... VALUES is supported.' );
+		}
+	}
+
+	/**
+	 * Execute a supported ALTER TABLE statement.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ALTER_SYMBOL, 'Expected ALTER.' );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TABLE_SYMBOL, 'Only ALTER TABLE is supported by the DuckDB driver.' );
+		++$index;
+
+		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::ADD_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$alter_item = array_slice( $tokens, $index );
+			if ( ! $this->is_create_table_index_item( $alter_item ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD INDEX is supported.' );
+			}
+
+			$index_definition = $this->translate_create_table_index( $table_name, $alter_item );
+			$result           = $this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
+			$this->record_index_metadata( $index_definition );
+
+			return $result;
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD INDEX is supported.' );
 	}
 
 	/**
@@ -899,6 +1032,29 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a CREATE statement starts a CREATE INDEX variant.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return bool
+	 */
+	private function is_create_index_statement( array $tokens ): bool {
+		if ( ! isset( $tokens[1] ) ) {
+			return false;
+		}
+
+		$index = 1;
+		if (
+			WP_MySQL_Lexer::UNIQUE_SYMBOL === $tokens[ $index ]->id
+			|| WP_MySQL_Lexer::FULLTEXT_SYMBOL === $tokens[ $index ]->id
+			|| WP_MySQL_Lexer::SPATIAL_SYMBOL === $tokens[ $index ]->id
+		) {
+			++$index;
+		}
+
+		return isset( $tokens[ $index ] ) && WP_MySQL_Lexer::INDEX_SYMBOL === $tokens[ $index ]->id;
+	}
+
+	/**
 	 * Translate a table-level MySQL index definition into CREATE INDEX.
 	 *
 	 * @param string            $table_name Table name.
@@ -945,6 +1101,20 @@ class WP_DuckDB_Driver {
 			$mysql_index_name = 'unnamed_' . substr( hash( 'sha256', serialize( $column_metadata ) ), 0, 8 );
 		}
 
+		return $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata );
+	}
+
+	/**
+	 * Build a DuckDB secondary index definition and SHOW INDEX metadata.
+	 *
+	 * @param string                                                                 $table_name       Table name.
+	 * @param string                                                                 $mysql_index_name MySQL index name.
+	 * @param bool                                                                   $unique           Whether the index is unique.
+	 * @param string[]                                                               $columns          DuckDB column SQL fragments.
+	 * @param array<int,array{name:string,sub_part:int|null}>                        $column_metadata  MySQL column metadata.
+	 * @return array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}
+	 */
+	private function build_secondary_index_definition( string $table_name, string $mysql_index_name, bool $unique, array $columns, array $column_metadata ): array {
 		return array(
 			'sql'        => 'CREATE '
 				. ( $unique ? 'UNIQUE ' : '' )
@@ -1232,6 +1402,21 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->join_sql_pieces( $pieces );
+	}
+
+	/**
+	 * Translate MySQL REPLACE ... VALUES to DuckDB INSERT OR REPLACE.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_replace_tokens_to_duckdb_sql( array $tokens ): string {
+		$index = 1;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::INTO_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		return 'INSERT OR REPLACE INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $index ) );
 	}
 
 	/**

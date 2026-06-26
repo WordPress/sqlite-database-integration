@@ -146,6 +146,43 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( 'INSERT INTO memberships (user_id, site_id) VALUES (1, 2)' );
 	}
 
+	public function test_replace_values_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE items (
+				id INTEGER PRIMARY KEY,
+				name VARCHAR(100) NOT NULL DEFAULT '',
+				hits INTEGER NOT NULL DEFAULT 0
+			)"
+		);
+		$driver->query( "INSERT INTO items (id, name, hits) VALUES (1, 'old', 1)" );
+
+		$replace = $driver->query( "REPLACE INTO items (id, name, hits) VALUES (1, 'new', 2)" );
+		$this->assertSame( 1, $replace->rowCount() );
+		$this->assertSame( "INSERT OR REPLACE INTO items(id, name, hits) VALUES (1, 'new', 2)", $this->lastDuckDBQuery( $driver ) );
+
+		$replace_without_into = $driver->query( "REPLACE items (id, name) VALUES (2, 'second')" );
+		$this->assertSame( 1, $replace_without_into->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'new',
+					'hits' => 2,
+				),
+				array(
+					'id'   => 2,
+					'name' => 'second',
+					'hits' => 0,
+				),
+			),
+			$driver->query( 'SELECT id, name, hits FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_wordpress_style_schema_can_be_created(): void {
 		$this->requireDuckDBRuntime();
 
@@ -189,13 +226,59 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
-	public function test_unsupported_statement_throws_driver_exception(): void {
+	public function test_create_index_statement_updates_show_index_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				post_name VARCHAR(200) NOT NULL DEFAULT '',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post'
+			)"
+		);
+
+		$result = $driver->query( 'CREATE INDEX post_name ON wp_posts (post_name(191))' );
+
+		$this->assertSame( 0, $result->rowCount() );
+		$this->assertStringStartsWith( 'CREATE INDEX IF NOT EXISTS "wp_duckdb_idx_', $driver->get_last_duckdb_queries()[0] );
+
+		$indexes = $driver->query( 'SHOW INDEX FROM wp_posts' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'PRIMARY', 'post_name' ), array_column( $indexes, 'Key_name' ) );
+		$this->assertSame( 191, $indexes[1]['Sub_part'] );
+	}
+
+	public function test_alter_table_add_unique_index_is_supported(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL
+			)"
+		);
+		$driver->query( "INSERT INTO wp_options (option_name, option_value) VALUES ('siteurl', 'https://example.test')" );
+
+		$result = $driver->query( 'ALTER TABLE wp_options ADD UNIQUE INDEX option_name (option_name)' );
+
+		$this->assertSame( 0, $result->rowCount() );
+		$indexes = $driver->query( 'SHOW INDEX FROM wp_options' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'PRIMARY', 'option_name' ), array_column( $indexes, 'Key_name' ) );
+		$this->assertSame( 0, (int) $indexes[1]['Non_unique'] );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$driver->query( "INSERT INTO wp_options (option_name, option_value) VALUES ('siteurl', 'duplicate')" );
+	}
+
+	public function test_unsupported_alter_table_shape_throws_driver_exception(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 
 		$this->expectException( WP_DuckDB_Driver_Exception::class );
-		$this->expectExceptionMessage( 'Unsupported DuckDB MySQL-emulation statement: ALTER.' );
+		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD INDEX is supported.' );
 		$driver->query( 'ALTER TABLE users ADD COLUMN email VARCHAR(255)' );
 	}
 

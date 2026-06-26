@@ -15,6 +15,13 @@ class WP_DuckDB_Connection {
 	private $query_logger;
 
 	/**
+	 * Whether this connection is inside an explicit transaction.
+	 *
+	 * @var bool
+	 */
+	private $in_transaction = false;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param array $options Connection options.
@@ -89,6 +96,83 @@ class WP_DuckDB_Connection {
 		} catch ( Throwable $e ) {
 			throw new WP_DuckDB_Driver_Exception( 'Failed to prepare DuckDB query: ' . $e->getMessage(), 0, $e );
 		}
+	}
+
+	/**
+	 * Begin a transaction.
+	 *
+	 * @return bool
+	 *
+	 * @throws WP_DuckDB_Driver_Exception When a transaction is already active or BEGIN fails.
+	 */
+	public function beginTransaction(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		if ( $this->in_transaction ) {
+			throw new WP_DuckDB_Driver_Exception( 'DuckDB transaction is already active.' );
+		}
+
+		$this->query( 'BEGIN TRANSACTION' );
+		$this->in_transaction = true;
+		return true;
+	}
+
+	/**
+	 * WordPress-style transaction alias.
+	 *
+	 * @return void
+	 */
+	public function begin_transaction(): void {
+		$this->beginTransaction();
+	}
+
+	/**
+	 * Commit the active transaction.
+	 *
+	 * @return bool
+	 *
+	 * @throws WP_DuckDB_Driver_Exception When no transaction is active or COMMIT fails.
+	 */
+	public function commit(): bool {
+		if ( ! $this->in_transaction ) {
+			throw new WP_DuckDB_Driver_Exception( 'DuckDB transaction is not active.' );
+		}
+
+		try {
+			$this->query( 'COMMIT' );
+		} finally {
+			$this->in_transaction = false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Roll back the active transaction.
+	 *
+	 * @return bool
+	 *
+	 * @throws WP_DuckDB_Driver_Exception When no transaction is active or ROLLBACK fails.
+	 */
+	public function rollback(): bool {
+		if ( ! $this->in_transaction ) {
+			throw new WP_DuckDB_Driver_Exception( 'DuckDB transaction is not active.' );
+		}
+
+		try {
+			$this->query( 'ROLLBACK' );
+		} finally {
+			$this->in_transaction = false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether a transaction is active.
+	 *
+	 * @return bool
+	 */
+	public function inTransaction(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return $this->in_transaction;
 	}
 
 	/**
