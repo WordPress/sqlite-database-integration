@@ -859,6 +859,36 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_table_level_check_constraints_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE check_metadata (
+					id INT,
+					amount INT,
+					CONSTRAINT amount_positive CHECK (amount > 0),
+					CHECK (id IS NULL OR id >= 0)
+				)',
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO check_metadata (id, amount) VALUES (1, 10)' );
+		$this->assertParityErrorContains(
+			'INSERT INTO check_metadata (id, amount) VALUES (2, -1)',
+			'CHECK constraint failed'
+		);
+		$this->assertParityErrorContains(
+			'INSERT INTO check_metadata (id, amount) VALUES (-1, 1)',
+			'CHECK constraint failed'
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'check_metadata'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE check_metadata' );
+	}
+
 	public function test_information_schema_tables_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

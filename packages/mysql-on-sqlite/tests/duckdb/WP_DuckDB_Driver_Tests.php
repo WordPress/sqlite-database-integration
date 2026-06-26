@@ -2367,6 +2367,80 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal_usage );
 	}
 
+	public function test_create_table_check_constraints_use_native_enforcement_and_mysql_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query(
+			'CREATE TABLE checks (
+				id INT,
+				amount INT,
+				CONSTRAINT amount_positive CHECK (amount > 0),
+				CHECK (id IS NULL OR id >= 0)
+			)'
+		);
+
+		$this->assertSame( 2, $driver->query( 'INSERT INTO checks (id, amount) VALUES (1, 10), (NULL, 2)' )->rowCount() );
+
+		try {
+			$driver->query( 'INSERT INTO checks (id, amount) VALUES (2, -1)' );
+			$this->fail( 'Expected CHECK constraint enforcement to reject a negative amount.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( 'INSERT INTO checks (id, amount) VALUES (-1, 1)' );
+			$this->fail( 'Expected CHECK constraint enforcement to reject a negative id.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'checks'
+			ORDER BY constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'checks_chk_1',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$constraints
+		);
+
+		$create = $driver->query( 'SHOW CREATE TABLE checks' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `checks` (',
+					'  `id` int DEFAULT NULL,',
+					'  `amount` int DEFAULT NULL,',
+					'  CONSTRAINT `amount_positive` CHECK (amount > 0),',
+					'  CONSTRAINT `checks_chk_1` CHECK (id IS NULL OR id >= 0)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$create['Create Table']
+		);
+	}
+
 	public function test_information_schema_tables_exposes_mysql_shaped_table_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -3569,6 +3643,16 @@ SQL,
 		$this->expectException( WP_DuckDB_Driver_Exception::class );
 		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN PRIMARY KEY is not supported.' );
 		$driver->query( 'ALTER TABLE users ADD COLUMN id INT PRIMARY KEY' );
+	}
+
+	public function test_unsupported_create_table_check_constraint_not_enforced_throws_driver_exception(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Unsupported CREATE TABLE CHECK constraint in DuckDB driver: NOT ENFORCED is not supported.' );
+		$driver->query( 'CREATE TABLE checks (id INT, CONSTRAINT positive CHECK (id > 0) NOT ENFORCED)' );
 	}
 
 	public function test_unsupported_alter_table_add_auto_increment_throws_driver_exception(): void {

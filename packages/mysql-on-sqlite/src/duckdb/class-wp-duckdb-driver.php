@@ -22,9 +22,11 @@ class WP_DuckDB_Driver {
 	const INDEX_METADATA_TABLE                = '__wp_duckdb_index_metadata';
 	const COLUMN_METADATA_TABLE               = '__wp_duckdb_column_metadata';
 	const TABLE_METADATA_TABLE                = '__wp_duckdb_table_metadata';
+	const CHECK_METADATA_TABLE                = '__wp_duckdb_check_metadata';
 	const TEMP_INDEX_METADATA_TABLE           = '__wp_duckdb_temp_index_metadata';
 	const TEMP_COLUMN_METADATA_TABLE          = '__wp_duckdb_temp_column_metadata';
 	const TEMP_TABLE_METADATA_TABLE           = '__wp_duckdb_temp_table_metadata';
+	const TEMP_CHECK_METADATA_TABLE           = '__wp_duckdb_temp_check_metadata';
 	const INFO_SCHEMA_TABLES_TABLE            = '__wp_duckdb_information_schema_tables';
 	const INFO_SCHEMA_COLUMNS_TABLE           = '__wp_duckdb_information_schema_columns';
 	const INFO_SCHEMA_STATISTICS_TABLE        = '__wp_duckdb_information_schema_statistics';
@@ -812,6 +814,8 @@ class WP_DuckDB_Driver {
 
 		$columns             = array();
 		$constraints         = array();
+		$check_constraints   = array();
+		$check_names         = array();
 		$indexes             = array();
 		$sequences           = array();
 		$metadata            = array();
@@ -826,6 +830,13 @@ class WP_DuckDB_Driver {
 			if ( WP_MySQL_Lexer::PRIMARY_SYMBOL === $item[0]->id ) {
 				$primary_key   = $this->table_primary_key_columns( $item );
 				$constraints[] = $this->translate_table_primary_key( $item );
+				continue;
+			}
+
+			if ( $this->is_create_table_check_constraint( $item ) ) {
+				$check_constraint    = $this->translate_table_check_constraint( $table_name, $item, $check_names );
+				$constraints[]       = $check_constraint['sql'];
+				$check_constraints[] = $check_constraint['metadata'];
 				continue;
 			}
 
@@ -882,6 +893,7 @@ class WP_DuckDB_Driver {
 		}
 		$this->record_column_metadata( $table_name, $this->apply_column_key_metadata( $metadata, $primary_key, $indexes ), $temporary );
 		$this->record_table_metadata( $table_name, $table_metadata, $temporary );
+		$this->record_check_metadata( $table_name, $check_constraints, $temporary );
 
 		return $result;
 	}
@@ -4174,6 +4186,10 @@ class WP_DuckDB_Driver {
 			$rows[] = $this->format_show_create_table_index( $index_group );
 		}
 
+		foreach ( $this->check_constraint_metadata_rows( $table_name, $temporary ) as $check_constraint ) {
+			$rows[] = $this->format_show_create_table_check_constraint( $check_constraint );
+		}
+
 		$sql  = 'CREATE ' . ( $temporary ? 'TEMPORARY ' : '' ) . 'TABLE ' . $this->quote_mysql_identifier( $requested_table_name ) . " (\n";
 		$sql .= implode( ",\n", $rows );
 		$sql .= "\n)";
@@ -4195,6 +4211,20 @@ class WP_DuckDB_Driver {
 		if ( '' !== $table_info['TABLE_COMMENT'] ) {
 			$sql .= ' COMMENT=' . $this->quote_mysql_utf8_string_literal( (string) $table_info['TABLE_COMMENT'] );
 		}
+
+		return $sql;
+	}
+
+	/**
+	 * Format one SHOW CREATE TABLE CHECK constraint.
+	 *
+	 * @param array<string,mixed> $check_constraint CHECK metadata row.
+	 * @return string MySQL CHECK constraint definition.
+	 */
+	private function format_show_create_table_check_constraint( array $check_constraint ): string {
+		$sql  = '  CONSTRAINT ';
+		$sql .= $this->quote_mysql_identifier( (string) $check_constraint['constraint_name'] );
+		$sql .= ' CHECK (' . (string) $check_constraint['check_clause'] . ')';
 
 		return $sql;
 	}
@@ -4380,6 +4410,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::TABLE_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::CHECK_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
 				. ' AND table_name <> '
@@ -5380,6 +5412,153 @@ class WP_DuckDB_Driver {
 		unset( $column );
 
 		return $metadata;
+	}
+
+	/**
+	 * Check whether a CREATE TABLE item is a table-level CHECK constraint.
+	 *
+	 * @param WP_Parser_Token[] $tokens Item tokens.
+	 * @return bool
+	 */
+	private function is_create_table_check_constraint( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[0]->id ) {
+			return true;
+		}
+
+		if ( WP_MySQL_Lexer::CONSTRAINT_SYMBOL !== $tokens[0]->id || ! isset( $tokens[1] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[1]->id ) {
+			return true;
+		}
+
+		return isset( $tokens[2] ) && WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[2]->id;
+	}
+
+	/**
+	 * Translate a table-level CHECK constraint.
+	 *
+	 * @param string            $table_name  Table name.
+	 * @param WP_Parser_Token[] $tokens      Constraint tokens.
+	 * @param array<string,bool> $check_names Existing MySQL-facing CHECK names, keyed lowercase.
+	 * @return array{sql:string,metadata:array{constraint_name:string,check_clause:string,enforced:string}}
+	 */
+	private function translate_table_check_constraint( string $table_name, array $tokens, array &$check_names ): array {
+		$index           = 0;
+		$constraint_name = null;
+
+		if ( WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::CHECK_SYMBOL !== $tokens[ $index ]->id ) {
+				$constraint_name = $this->identifier_value( $tokens[ $index ] );
+				++$index;
+			}
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CHECK_SYMBOL, 'Expected CHECK constraint.' );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Expected CHECK expression.' );
+
+		$expression_end    = $this->skip_balanced_parentheses( $tokens, $index );
+		$expression_tokens = array_slice( $tokens, $index + 1, $expression_end - $index - 2 );
+		if ( count( $expression_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'CHECK constraint requires an expression in the DuckDB driver.' );
+		}
+
+		$index = $expression_end;
+		if ( isset( $tokens[ $index ] ) ) {
+			if (
+				WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $index ]->id
+				&& isset( $tokens[ $index + 1 ] )
+				&& WP_MySQL_Lexer::ENFORCED_SYMBOL === $tokens[ $index + 1 ]->id
+			) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE CHECK constraint in DuckDB driver: NOT ENFORCED is not supported.' );
+			}
+
+			if ( WP_MySQL_Lexer::ENFORCED_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+			}
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE CHECK constraint in DuckDB driver.' );
+		}
+
+		if ( null === $constraint_name ) {
+			$constraint_name = $this->generate_check_constraint_name( $table_name, $check_names );
+		}
+		$this->register_check_constraint_name( $constraint_name, $check_names );
+
+		$duckdb_expression = $this->translate_tokens_to_duckdb_sql( $expression_tokens );
+		$mysql_expression  = $this->mysql_check_clause_from_tokens( $expression_tokens );
+
+		return array(
+			'sql'      => 'CONSTRAINT '
+				. $this->connection->quote_identifier( $constraint_name )
+				. ' CHECK ('
+				. $duckdb_expression
+				. ')',
+			'metadata' => array(
+				'constraint_name' => $constraint_name,
+				'check_clause'    => $mysql_expression,
+				'enforced'        => 'YES',
+			),
+		);
+	}
+
+	/**
+	 * Generate a MySQL-compatible name for an unnamed CHECK constraint.
+	 *
+	 * @param string             $table_name  Table name.
+	 * @param array<string,bool> $check_names Existing CHECK names, keyed lowercase.
+	 * @return string Generated constraint name.
+	 */
+	private function generate_check_constraint_name( string $table_name, array $check_names ): string {
+		$prefix = $table_name . '_chk_';
+		$index  = 1;
+
+		while ( isset( $check_names[ strtolower( $prefix . $index ) ] ) ) {
+			++$index;
+		}
+
+		return $prefix . $index;
+	}
+
+	/**
+	 * Register a CHECK constraint name and reject duplicates.
+	 *
+	 * @param string             $constraint_name Constraint name.
+	 * @param array<string,bool> $check_names     Existing CHECK names, keyed lowercase.
+	 */
+	private function register_check_constraint_name( string $constraint_name, array &$check_names ): void {
+		$key = strtolower( $constraint_name );
+		if ( isset( $check_names[ $key ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Duplicate CHECK constraint name in DuckDB driver: ' . $constraint_name . '.' );
+		}
+
+		$check_names[ $key ] = true;
+	}
+
+	/**
+	 * Format CHECK expression tokens for MySQL-facing metadata.
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return string MySQL-facing CHECK clause.
+	 */
+	private function mysql_check_clause_from_tokens( array $tokens ): string {
+		return $this->join_sql_pieces(
+			array_map(
+				function ( WP_Parser_Token $token ): string {
+					return $token->get_bytes();
+				},
+				$tokens
+			)
+		);
 	}
 
 	/**
@@ -7622,6 +7801,20 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Ensure the internal CHECK constraint metadata table exists.
+	 */
+	private function ensure_check_metadata_table( bool $temporary = false ): void {
+		$this->execute_duckdb_query(
+			'CREATE '
+				. ( $temporary ? 'TEMP ' : '' )
+				. 'TABLE IF NOT EXISTS '
+				. $this->connection->quote_identifier( $this->check_metadata_table_name( $temporary ) )
+				. ' (table_name VARCHAR, constraint_name VARCHAR, check_clause VARCHAR, enforced VARCHAR)',
+			'Failed to initialize DuckDB CHECK constraint metadata'
+		);
+	}
+
+	/**
 	 * Return the metadata table that stores secondary index rows.
 	 *
 	 * @param bool $temporary Whether to use session-local temporary metadata.
@@ -7649,6 +7842,16 @@ class WP_DuckDB_Driver {
 	 */
 	private function table_metadata_table_name( bool $temporary ): string {
 		return $temporary ? self::TEMP_TABLE_METADATA_TABLE : self::TABLE_METADATA_TABLE;
+	}
+
+	/**
+	 * Return the metadata table that stores CHECK constraint rows.
+	 *
+	 * @param bool $temporary Whether to use session-local temporary metadata.
+	 * @return string Metadata table name.
+	 */
+	private function check_metadata_table_name( bool $temporary ): string {
+		return $temporary ? self::TEMP_CHECK_METADATA_TABLE : self::CHECK_METADATA_TABLE;
 	}
 
 	/**
@@ -7867,6 +8070,64 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Record MySQL CHECK constraint metadata for SHOW CREATE TABLE.
+	 *
+	 * @param string                  $table_name Table name.
+	 * @param array<int,array<string,string>> $metadata   CHECK metadata rows.
+	 * @param bool                    $temporary  Whether the target is a temporary table.
+	 */
+	private function record_check_metadata( string $table_name, array $metadata, bool $temporary = false ): void {
+		$this->ensure_check_metadata_table( $temporary );
+
+		$this->execute_duckdb_query(
+			'DELETE FROM '
+				. $this->connection->quote_identifier( $this->check_metadata_table_name( $temporary ) )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name ),
+			'Failed to reset DuckDB CHECK constraint metadata'
+		);
+
+		foreach ( $metadata as $constraint ) {
+			$this->execute_duckdb_query(
+				'INSERT INTO '
+					. $this->connection->quote_identifier( $this->check_metadata_table_name( $temporary ) )
+					. ' (table_name, constraint_name, check_clause, enforced) VALUES ('
+					. $this->connection->quote( $table_name )
+					. ', '
+					. $this->connection->quote( $constraint['constraint_name'] )
+					. ', '
+					. $this->connection->quote( $constraint['check_clause'] )
+					. ', '
+					. $this->connection->quote( $constraint['enforced'] )
+					. ')',
+				'Failed to store DuckDB CHECK constraint metadata'
+			);
+		}
+	}
+
+	/**
+	 * Read recorded MySQL CHECK constraint metadata.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether to use session-local temporary metadata.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function check_constraint_metadata_rows( string $table_name, bool $temporary = false ): array {
+		$this->ensure_check_metadata_table( $temporary );
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT constraint_name, check_clause, enforced FROM '
+				. $this->connection->quote_identifier( $this->check_metadata_table_name( $temporary ) )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. ' ORDER BY constraint_name',
+			'Failed to inspect DuckDB CHECK constraint metadata'
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	/**
 	 * Append one MySQL column metadata row when full table metadata is already recorded.
 	 *
 	 * @param string              $table_name Table name.
@@ -7998,12 +8259,14 @@ class WP_DuckDB_Driver {
 		$this->ensure_index_metadata_table( $temporary );
 		$this->ensure_column_metadata_table( $temporary );
 		$this->ensure_table_metadata_table( $temporary );
+		$this->ensure_check_metadata_table( $temporary );
 
 		foreach (
 			array(
 				$this->index_metadata_table_name( $temporary )  => 'index',
 				$this->column_metadata_table_name( $temporary ) => 'column',
 				$this->table_metadata_table_name( $temporary )  => 'table',
+				$this->check_metadata_table_name( $temporary )  => 'CHECK constraint',
 			) as $metadata_table => $label
 		) {
 			$this->execute_duckdb_query(
@@ -8927,6 +9190,16 @@ class WP_DuckDB_Driver {
 			$rows[]       = $this->information_schema_table_constraints_row( $constraint );
 		}
 
+		foreach ( $this->information_schema_check_constraint_rows() as $constraint ) {
+			$key = $constraint['table_name'] . "\0" . $constraint['constraint_type'] . "\0" . $constraint['constraint_name'];
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+
+			$seen[ $key ] = true;
+			$rows[]       = $this->information_schema_table_constraints_row( $constraint );
+		}
+
 		return $rows;
 	}
 
@@ -9104,6 +9377,27 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Build normalized CHECK constraint rows.
+	 *
+	 * @return array<int,array{table_name:string,constraint_name:string,constraint_type:string}>
+	 */
+	private function information_schema_check_constraint_rows(): array {
+		$rows = array();
+
+		foreach ( $this->user_table_names() as $table_name ) {
+			foreach ( $this->check_constraint_metadata_rows( $table_name ) as $check_constraint ) {
+				$rows[] = array(
+					'table_name'      => $table_name,
+					'constraint_name' => (string) $check_constraint['constraint_name'],
+					'constraint_type' => 'CHECK',
+				);
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
 	 * Refresh a temporary MySQL-shaped information_schema compatibility table.
 	 *
 	 * @param string                  $table_name  Temporary table name.
@@ -9196,6 +9490,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::TABLE_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::CHECK_METADATA_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
 				. ' AND table_name <> '
