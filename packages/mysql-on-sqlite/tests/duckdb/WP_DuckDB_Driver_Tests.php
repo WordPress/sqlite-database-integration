@@ -868,6 +868,282 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringContainsString( " ESCAPE '\\'", $this->lastDuckDBQuery( $driver ) );
 	}
 
+	public function test_sql_calc_found_rows_and_found_rows_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_found_rows_users (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				user_login VARCHAR(60) NOT NULL DEFAULT '',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_found_rows_users (user_login) VALUES
+			('ada'),
+			('grace'),
+			('katherine')"
+		);
+
+		$rows = $driver->query(
+			'SELECT SQL_CALC_FOUND_ROWS ID, user_login FROM wp_found_rows_users ORDER BY ID LIMIT 2'
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'user_login' => 'ada',
+				),
+				array(
+					'ID'         => 2,
+					'user_login' => 'grace',
+				),
+			),
+			$rows
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_found_rows_state_tracks_selects_and_result_counts(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE wp_found_rows_state (id INT, label VARCHAR(20))' );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( "INSERT INTO wp_found_rows_state VALUES (1, 'one'), (2, 'two'), (3, 'three')" );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SELECT id, label FROM wp_found_rows_state ORDER BY id' );
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( "UPDATE wp_found_rows_state SET label = 'updated' WHERE id = 1" );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SELECT id, label FROM wp_found_rows_state ORDER BY id' );
+		$driver->query( 'CREATE TABLE wp_found_rows_state_extra (id INT)' );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SHOW TABLES' );
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DESCRIBE wp_found_rows_state' );
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_failed_selects_reset_found_rows_state(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE wp_found_rows_reset (id INT)' );
+		$driver->query( 'INSERT INTO wp_found_rows_reset VALUES (1), (2), (3)' );
+
+		$driver->query( 'SELECT id FROM wp_found_rows_reset ORDER BY id' );
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SELECT id FROM wp_found_rows_reset ORDER BY id' );
+		try {
+			$driver->query( 'SELECT * FROM missing_found_rows_reset' );
+			$this->fail( 'Missing table SELECT should have failed.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'missing_found_rows_reset', $e->getMessage() );
+		}
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SELECT id FROM wp_found_rows_reset ORDER BY id' );
+		try {
+			$driver->query( 'SELECT SQL_CALC_FOUND_ROWS * FROM missing_found_rows_reset LIMIT 1' );
+			$this->fail( 'Missing table SQL_CALC_FOUND_ROWS SELECT should have failed.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'missing_found_rows_reset', $e->getMessage() );
+		}
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_select_index_hints_are_ignored(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_hint_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				post_title VARCHAR(200) NOT NULL DEFAULT '',
+				PRIMARY KEY (ID),
+				KEY post_status (post_status)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_hint_posts (post_status, post_title) VALUES
+			('publish', 'first'),
+			('draft', 'second'),
+			('publish', 'third')"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'post_title' => 'first' ),
+				array( 'post_title' => 'third' ),
+			),
+			$driver->query(
+				"SELECT post_title
+				FROM wp_hint_posts FORCE INDEX (PRIMARY, post_status)
+				WHERE post_status = 'publish'
+				ORDER BY ID"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'post_status' => 'draft',
+					'total'       => 1,
+				),
+				array(
+					'post_status' => 'publish',
+					'total'       => 2,
+				),
+			),
+			$driver->query(
+				'SELECT post_status, COUNT(*) AS total
+				FROM wp_hint_posts USE KEY FOR GROUP BY (post_status)
+				GROUP BY post_status
+				ORDER BY post_status'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'post_title' => 'third' ) ),
+			$driver->query(
+				'SELECT post_title
+				FROM wp_hint_posts IGNORE INDEX FOR ORDER BY (post_status)
+				ORDER BY ID DESC
+				LIMIT 1'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_row_locking_clauses_are_ignored_for_selects(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE wp_lock_items (name VARCHAR(255), value VARCHAR(255))' );
+		$driver->query( "INSERT INTO wp_lock_items (name, value) VALUES ('test_lock', '123')" );
+
+		foreach (
+			array(
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' FOR UPDATE",
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' FOR SHARE",
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' LOCK IN SHARE MODE",
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' FOR UPDATE SKIP LOCKED",
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' FOR UPDATE NOWAIT",
+			) as $sql
+		) {
+			$this->assertSame(
+				array( array( 'value' => '123' ) ),
+				$driver->query( $sql )->fetchAll( PDO::FETCH_ASSOC ),
+				'Row-locking clause changed SELECT results for SQL: ' . $sql
+			);
+		}
+	}
+
+	public function test_order_by_field_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_field_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value VARCHAR(191) NOT NULL DEFAULT '',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_field_options (option_name, option_value) VALUES
+			('User 0000019', 'second'),
+			('User 0000020', 'third'),
+			('User 0000018', 'first')"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'sorting_order' => 1 ),
+				array( 'sorting_order' => 2 ),
+				array( 'sorting_order' => 3 ),
+			),
+			$driver->query(
+				"SELECT FIELD(option_name, 'User 0000018', 'User 0000019', 'User 0000020') AS sorting_order
+				FROM wp_field_options
+				ORDER BY FIELD(option_name, 'User 0000018', 'User 0000019', 'User 0000020')"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array( 'option_value' => 'first' ),
+				array( 'option_value' => 'second' ),
+				array( 'option_value' => 'third' ),
+			),
+			$driver->query(
+				"SELECT option_value
+				FROM wp_field_options
+				ORDER BY FIELD(option_name, 'User 0000018', 'User 0000019', 'User 0000020')"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'case_match' => 2,
+					'null_match' => 0,
+					'no_match'   => 0,
+				),
+			),
+			$driver->query(
+				"SELECT FIELD('b', 'A', 'B') AS case_match,
+				FIELD(NULL, 'A', 'B') AS null_match,
+				FIELD('z', 'A', 'B') AS no_match"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_multi_table_delete_removes_expired_transient_alias_rows(): void {
 		$this->requireDuckDBRuntime();
 

@@ -112,6 +112,18 @@ class WP_DuckDB_Driver {
 	private $last_insert_id = 0;
 
 	/**
+	 * Data for emulating MySQL FOUND_ROWS().
+	 *
+	 * SQL_CALC_FOUND_ROWS stores an eager integer count without the SELECT LIMIT.
+	 * Other SELECT statements store the translated DuckDB query and count it
+	 * lazily when FOUND_ROWS() is requested, matching the existing SQLite driver
+	 * behavior for the bounded compatibility slice.
+	 *
+	 * @var int|string
+	 */
+	private $found_rows = 0;
+
+	/**
 	 * The currently active MySQL SQL modes.
 	 *
 	 * The default value reflects the default SQL modes for MySQL 8.0.
@@ -193,52 +205,72 @@ class WP_DuckDB_Driver {
 		$this->last_duckdb_queries = array();
 		$this->last_insert_id      = 0;
 
-		$tokens = $this->tokenize_and_validate( $query );
-		if ( count( $tokens ) === 0 ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported DuckDB MySQL-emulation statement: empty query.' );
-		}
+		try {
+			$tokens = $this->tokenize_and_validate( $query );
+			if ( count( $tokens ) === 0 ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported DuckDB MySQL-emulation statement: empty query.' );
+			}
 
-		switch ( $tokens[0]->id ) {
-			case WP_MySQL_Lexer::BEGIN_SYMBOL:
-				return $this->execute_begin_transaction_statement( $tokens );
-			case WP_MySQL_Lexer::START_SYMBOL:
-				return $this->execute_start_transaction_statement( $tokens );
-			case WP_MySQL_Lexer::COMMIT_SYMBOL:
-				return $this->execute_commit_statement( $tokens );
-			case WP_MySQL_Lexer::ROLLBACK_SYMBOL:
-				return $this->execute_rollback_statement( $tokens );
-			case WP_MySQL_Lexer::LOCK_SYMBOL:
-				return $this->execute_lock_tables_statement( $tokens );
-			case WP_MySQL_Lexer::UNLOCK_SYMBOL:
-				return $this->execute_unlock_tables_statement( $tokens );
-			case WP_MySQL_Lexer::SET_SYMBOL:
-				return $this->execute_set_statement( $tokens );
-			case WP_MySQL_Lexer::SELECT_SYMBOL:
-				return $this->execute_select( $tokens );
-			case WP_MySQL_Lexer::CREATE_SYMBOL:
-				return $this->execute_create( $tokens );
-			case WP_MySQL_Lexer::INSERT_SYMBOL:
-				return $this->execute_insert( $tokens );
-			case WP_MySQL_Lexer::REPLACE_SYMBOL:
-				return $this->execute_replace( $tokens );
-			case WP_MySQL_Lexer::UPDATE_SYMBOL:
-				return $this->execute_update( $tokens );
-			case WP_MySQL_Lexer::DELETE_SYMBOL:
-				return $this->execute_delete( $tokens );
-			case WP_MySQL_Lexer::DROP_SYMBOL:
-				return $this->execute_drop( $tokens );
-			case WP_MySQL_Lexer::TRUNCATE_SYMBOL:
-				return $this->execute_truncate_table( $tokens );
-			case WP_MySQL_Lexer::ALTER_SYMBOL:
-				return $this->execute_alter_table( $tokens );
-			case WP_MySQL_Lexer::SHOW_SYMBOL:
-				return $this->execute_show( $tokens );
-			case WP_MySQL_Lexer::DESCRIBE_SYMBOL:
-			case WP_MySQL_Lexer::DESC_SYMBOL:
-				return $this->execute_describe( $tokens );
-		}
+			switch ( $tokens[0]->id ) {
+				case WP_MySQL_Lexer::BEGIN_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_begin_transaction_statement( $tokens );
+				case WP_MySQL_Lexer::START_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_start_transaction_statement( $tokens );
+				case WP_MySQL_Lexer::COMMIT_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_commit_statement( $tokens );
+				case WP_MySQL_Lexer::ROLLBACK_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_rollback_statement( $tokens );
+				case WP_MySQL_Lexer::LOCK_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_lock_tables_statement( $tokens );
+				case WP_MySQL_Lexer::UNLOCK_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_unlock_tables_statement( $tokens );
+				case WP_MySQL_Lexer::SET_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_set_statement( $tokens );
+				case WP_MySQL_Lexer::SELECT_SYMBOL:
+					return $this->execute_select( $tokens );
+				case WP_MySQL_Lexer::CREATE_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_create( $tokens );
+				case WP_MySQL_Lexer::INSERT_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_insert( $tokens );
+				case WP_MySQL_Lexer::REPLACE_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_replace( $tokens );
+				case WP_MySQL_Lexer::UPDATE_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_update( $tokens );
+				case WP_MySQL_Lexer::DELETE_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_delete( $tokens );
+				case WP_MySQL_Lexer::DROP_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_drop( $tokens );
+				case WP_MySQL_Lexer::TRUNCATE_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_truncate_table( $tokens );
+				case WP_MySQL_Lexer::ALTER_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_alter_table( $tokens );
+				case WP_MySQL_Lexer::SHOW_SYMBOL:
+					return $this->record_found_rows_from_result( $this->execute_show( $tokens ) );
+				case WP_MySQL_Lexer::DESCRIBE_SYMBOL:
+				case WP_MySQL_Lexer::DESC_SYMBOL:
+					return $this->record_found_rows_from_result( $this->execute_describe( $tokens ) );
+			}
 
-		throw $this->new_unsupported_statement_exception( $tokens[0] );
+			throw $this->new_unsupported_statement_exception( $tokens[0] );
+		} catch ( Throwable $e ) {
+			$this->found_rows = 0;
+			throw $e;
+		}
 	}
 
 	/**
@@ -396,10 +428,20 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_select( array $tokens ): WP_DuckDB_Result_Statement {
+		$found_rows_alias = $this->parse_found_rows_select( $tokens );
+		if ( null !== $found_rows_alias ) {
+			$found_rows       = $this->evaluate_found_rows();
+			$this->found_rows = 1;
+			return new WP_DuckDB_Result_Statement( array( $found_rows_alias ), array( array( $found_rows ) ), 0 );
+		}
+
 		$session_variable_select = $this->execute_session_system_variable_select( $tokens );
 		if ( null !== $session_variable_select ) {
-			return $session_variable_select;
+			return $this->record_found_rows_from_result( $session_variable_select );
 		}
+
+		$has_sql_calc_found_rows = $this->has_top_level_sql_calc_found_rows( $tokens );
+		$tokens                  = $this->normalize_select_helper_tokens( $tokens );
 
 		$rewrite_information_schema_tables            = $this->uses_information_schema_tables( $tokens );
 		$rewrite_information_schema_columns           = $this->uses_information_schema_columns( $tokens );
@@ -422,17 +464,146 @@ class WP_DuckDB_Driver {
 			$this->refresh_information_schema_key_column_usage_table();
 		}
 
-		return $this->execute_duckdb_query(
-			$this->translate_tokens_to_duckdb_sql(
-				$tokens,
-				$rewrite_information_schema_tables,
-				$rewrite_information_schema_columns,
-				$rewrite_information_schema_statistics,
-				$rewrite_information_schema_table_constraints,
-				$rewrite_information_schema_key_column_usage
-			),
-			'Unsupported DuckDB MySQL-emulation SELECT statement'
+		$sql = $this->translate_tokens_to_duckdb_sql(
+			$tokens,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage
 		);
+
+		if ( $has_sql_calc_found_rows ) {
+			try {
+				$this->found_rows = $this->count_select_rows(
+					$this->strip_top_level_limit_clause( $tokens ),
+					$rewrite_information_schema_tables,
+					$rewrite_information_schema_columns,
+					$rewrite_information_schema_statistics,
+					$rewrite_information_schema_table_constraints,
+					$rewrite_information_schema_key_column_usage
+				);
+				return $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+			} catch ( Throwable $e ) {
+				$this->found_rows = 0;
+				throw $e;
+			}
+		}
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+		return $result;
+	}
+
+	/**
+	 * Parse SELECT FOUND_ROWS() with an optional alias and optional FROM DUAL.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return string|null Result column name, or null for generic SELECT handling.
+	 */
+	private function parse_found_rows_select( array $tokens ): ?string {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$select_list_end = count( $tokens );
+		if (
+			$select_list_end >= 4
+			&& WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $select_list_end - 2 ]->id
+			&& WP_MySQL_Lexer::DUAL_SYMBOL === $tokens[ $select_list_end - 1 ]->id
+		) {
+			$select_list_end -= 2;
+		}
+
+		$select_list = array_slice( $tokens, 1, $select_list_end - 1 );
+		if (
+			! $this->is_empty_function_call( $select_list, 0, 'FOUND_ROWS' )
+			|| $this->contains_top_level_token_id( $select_list, WP_MySQL_Lexer::COMMA_SYMBOL )
+		) {
+			return null;
+		}
+
+		$index = 3;
+		$alias = 'FOUND_ROWS()';
+		if ( isset( $select_list[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $select_list[ $index ]->id ) {
+			++$index;
+			$alias = $this->identifier_value( $select_list[ $index ] ?? null );
+			++$index;
+		} elseif ( isset( $select_list[ $index ] ) ) {
+			$alias = $this->identifier_value( $select_list[ $index ] );
+			++$index;
+		}
+
+		return count( $select_list ) === $index ? $alias : null;
+	}
+
+	/**
+	 * Evaluate the current FOUND_ROWS() state.
+	 *
+	 * @return int FOUND_ROWS() value.
+	 */
+	private function evaluate_found_rows(): int {
+		if ( is_int( $this->found_rows ) ) {
+			return $this->found_rows;
+		}
+
+		return (int) $this->execute_duckdb_query(
+			'SELECT COUNT(*) AS cnt FROM (' . $this->found_rows . ') AS __wp_duckdb_found_rows',
+			'Failed to evaluate DuckDB FOUND_ROWS()'
+		)->fetchColumn();
+	}
+
+	/**
+	 * Count rows returned by a SELECT token stream.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return int Row count.
+	 */
+	private function count_select_rows(
+		array $tokens,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage
+	): int {
+		$sql = $this->translate_tokens_to_duckdb_sql(
+			$tokens,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage
+		);
+
+		return (int) $this->execute_duckdb_query(
+			'SELECT COUNT(*) AS cnt FROM (' . $sql . ') AS __wp_duckdb_found_rows',
+			'Failed to count DuckDB SQL_CALC_FOUND_ROWS rows'
+		)->fetchColumn();
+	}
+
+	/**
+	 * Materialize a result statement so FOUND_ROWS() can report its row count.
+	 *
+	 * @param WP_DuckDB_Result_Statement $statement Statement to record.
+	 * @return WP_DuckDB_Result_Statement Rewound statement with the same rows.
+	 */
+	private function record_found_rows_from_result( WP_DuckDB_Result_Statement $statement ): WP_DuckDB_Result_Statement {
+		if ( 0 === $statement->columnCount() ) {
+			$this->found_rows = 0;
+			return $statement;
+		}
+
+		$columns = array();
+		for ( $index = 0; $index < $statement->columnCount(); ++$index ) {
+			$meta      = $statement->getColumnMeta( $index );
+			$columns[] = is_array( $meta ) && isset( $meta['name'] ) ? (string) $meta['name'] : (string) $index;
+		}
+
+		$rows             = $statement->fetchAll( PDO::FETCH_NUM );
+		$this->found_rows = count( $rows );
+
+		return new WP_DuckDB_Result_Statement( $columns, $rows, $statement->rowCount() );
 	}
 
 	/**
@@ -5728,6 +5899,26 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$limit_clause = $this->translate_limit_offset_count_clause( $tokens, $index );
+			if ( null !== $limit_clause ) {
+				$pieces[] = $limit_clause;
+				continue;
+			}
+
+			$field_function = $this->translate_field_function_call(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage
+			);
+			if ( null !== $field_function ) {
+				$pieces[] = $field_function;
+				continue;
+			}
+
 			if (
 				WP_MySQL_Lexer::NOT_SYMBOL === $token->id
 				&& isset( $tokens[ $index + 1 ], $tokens[ $index + 2 ] )
@@ -5845,12 +6036,175 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Strip MySQL locking clauses that DuckDB does not support in derived SELECTs.
+	 * Translate MySQL LIMIT offset, row_count syntax to DuckDB LIMIT/OFFSET.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current token index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when the current token does not start this LIMIT shape.
+	 */
+	private function translate_limit_offset_count_clause( array $tokens, int &$index ): ?string {
+		if (
+			! isset( $tokens[ $index + 3 ] )
+			|| WP_MySQL_Lexer::LIMIT_SYMBOL !== $tokens[ $index ]->id
+			|| WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $index + 2 ]->id
+		) {
+			return null;
+		}
+
+		$offset    = $this->translate_token_to_duckdb_sql( $tokens[ $index + 1 ] );
+		$row_count = $this->translate_token_to_duckdb_sql( $tokens[ $index + 3 ] );
+		$index    += 3;
+
+		return 'LIMIT ' . $row_count . ' OFFSET ' . $offset;
+	}
+
+	/**
+	 * Normalize SELECT helper syntax that DuckDB does not understand directly.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL SELECT tokens.
+	 * @return WP_Parser_Token[] Normalized tokens.
+	 */
+	private function normalize_select_helper_tokens( array $tokens ): array {
+		$tokens = $this->strip_top_level_sql_calc_found_rows( $tokens );
+		$tokens = $this->strip_select_index_hints( $tokens );
+		return $this->strip_select_locking_clauses( $tokens );
+	}
+
+	/**
+	 * Check whether a SELECT has a top-level SQL_CALC_FOUND_ROWS option.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return bool Whether SQL_CALC_FOUND_ROWS is present.
+	 */
+	private function has_top_level_sql_calc_found_rows( array $tokens ): bool {
+		return null !== $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL );
+	}
+
+	/**
+	 * Strip a top-level SQL_CALC_FOUND_ROWS SELECT option.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_Parser_Token[] Tokens without SQL_CALC_FOUND_ROWS.
+	 */
+	private function strip_top_level_sql_calc_found_rows( array $tokens ): array {
+		$stripped = array();
+		$depth    = 0;
+		foreach ( $tokens as $token ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+				++$depth;
+				$stripped[] = $token;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+				--$depth;
+				$stripped[] = $token;
+				continue;
+			}
+			if ( 0 === $depth && WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL === $token->id ) {
+				continue;
+			}
+			$stripped[] = $token;
+		}
+
+		return $stripped;
+	}
+
+	/**
+	 * Strip a top-level LIMIT clause for SQL_CALC_FOUND_ROWS counting.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_Parser_Token[] Tokens without the top-level LIMIT clause.
+	 */
+	private function strip_top_level_limit_clause( array $tokens ): array {
+		$limit_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::LIMIT_SYMBOL );
+		if ( null === $limit_index ) {
+			return $tokens;
+		}
+
+		return array_slice( $tokens, 0, $limit_index );
+	}
+
+	/**
+	 * Strip MySQL index hints, which are optimizer directives only.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL SELECT tokens.
+	 * @return WP_Parser_Token[] Tokens without index hints.
+	 */
+	private function strip_select_index_hints( array $tokens ): array {
+		$stripped = array();
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			$next_index = $this->skip_select_index_hint( $tokens, $index );
+			if ( null !== $next_index ) {
+				$index = $next_index - 1;
+				continue;
+			}
+			$stripped[] = $tokens[ $index ];
+		}
+
+		return $stripped;
+	}
+
+	/**
+	 * Skip one MySQL index hint when the current token starts one.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current token index.
+	 * @return int|null Index after the hint, or null when no hint starts here.
+	 */
+	private function skip_select_index_hint( array $tokens, int $index ): ?int {
+		if (
+			! isset( $tokens[ $index + 2 ] )
+			|| ! in_array(
+				$tokens[ $index ]->id,
+				array(
+					WP_MySQL_Lexer::USE_SYMBOL,
+					WP_MySQL_Lexer::FORCE_SYMBOL,
+					WP_MySQL_Lexer::IGNORE_SYMBOL,
+				),
+				true
+			)
+			|| ! in_array(
+				$tokens[ $index + 1 ]->id,
+				array(
+					WP_MySQL_Lexer::INDEX_SYMBOL,
+					WP_MySQL_Lexer::KEY_SYMBOL,
+				),
+				true
+			)
+		) {
+			return null;
+		}
+
+		$index += 2;
+		if (
+			isset( $tokens[ $index + 1 ] )
+			&& WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $index ]->id
+			&& WP_MySQL_Lexer::JOIN_SYMBOL === $tokens[ $index + 1 ]->id
+		) {
+			$index += 2;
+		} elseif (
+			isset( $tokens[ $index + 2 ] )
+			&& WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $index ]->id
+			&& ( WP_MySQL_Lexer::ORDER_SYMBOL === $tokens[ $index + 1 ]->id || WP_MySQL_Lexer::GROUP_SYMBOL === $tokens[ $index + 1 ]->id )
+			&& WP_MySQL_Lexer::BY_SYMBOL === $tokens[ $index + 2 ]->id
+		) {
+			$index += 3;
+		}
+
+		if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index ]->id ) {
+			return null;
+		}
+
+		return $this->skip_balanced_parentheses( $tokens, $index );
+	}
+
+	/**
+	 * Strip MySQL locking clauses that DuckDB does not support.
 	 *
 	 * @param WP_Parser_Token[] $tokens SELECT tokens.
-	 * @return WP_Parser_Token[] Tokens without a top-level FOR UPDATE clause.
+	 * @return WP_Parser_Token[] Tokens without locking clauses.
 	 */
-	private function strip_for_update_locking_clause( array $tokens ): array {
+	private function strip_select_locking_clauses( array $tokens ): array {
 		$stripped = array();
 		$depth    = 0;
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
@@ -5865,18 +6219,128 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 			if (
-				0 === $depth
-				&& WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $index ]->id
+				WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $index ]->id
 				&& isset( $tokens[ $index + 1 ] )
-				&& WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $index + 1 ]->id
+				&& ( WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $index + 1 ]->id || WP_MySQL_Lexer::SHARE_SYMBOL === $tokens[ $index + 1 ]->id )
 			) {
-				++$index;
+				$index = $this->skip_select_locking_clause( $tokens, $index, $depth ) - 1;
+				continue;
+			}
+			if (
+				WP_MySQL_Lexer::LOCK_SYMBOL === $tokens[ $index ]->id
+				&& isset( $tokens[ $index + 3 ] )
+				&& WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $index + 1 ]->id
+				&& WP_MySQL_Lexer::SHARE_SYMBOL === $tokens[ $index + 2 ]->id
+				&& WP_MySQL_Lexer::MODE_SYMBOL === $tokens[ $index + 3 ]->id
+			) {
+				$index += 3;
 				continue;
 			}
 			$stripped[] = $tokens[ $index ];
 		}
 
 		return $stripped;
+	}
+
+	/**
+	 * Skip a SELECT locking clause.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index at FOR.
+	 * @param int               $depth  Parenthesis depth of the locking clause.
+	 * @return int Index after the locking clause.
+	 */
+	private function skip_select_locking_clause( array $tokens, int $index, int $depth ): int {
+		$index     += 2;
+		$scan_depth = $depth;
+		while ( $index < count( $tokens ) ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$scan_depth;
+				++$index;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				if ( $scan_depth === $depth ) {
+					return $index;
+				}
+				--$scan_depth;
+				++$index;
+				continue;
+			}
+			++$index;
+		}
+
+		return $index;
+	}
+
+	/**
+	 * Back-compat wrapper for older joined-update code paths.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @return WP_Parser_Token[] Tokens without locking clauses.
+	 */
+	private function strip_for_update_locking_clause( array $tokens ): array {
+		return $this->strip_select_locking_clauses( $tokens );
+	}
+
+	/**
+	 * Translate MySQL FIELD(expr, value...) to a CASE expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current token index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when the token does not start FIELD().
+	 */
+	private function translate_field_function_call(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage
+	): ?string {
+		if (
+			! isset( $tokens[ $index + 1 ] )
+			|| $this->is_non_identifier_token( $tokens[ $index ] )
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_value(), 'FIELD' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		list( $items, $next_index ) = $this->collect_parenthesized_items( $tokens, $index + 2 );
+		if ( count( $items ) < 2 ) {
+			$index = $next_index - 1;
+			return '0';
+		}
+
+		$needle = $this->translate_tokens_to_duckdb_sql(
+			$items[0],
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage
+		);
+
+		$needle_comparison = 'lower(CAST((' . $needle . ') AS VARCHAR))';
+		$cases             = array( 'CASE' );
+		for ( $item_index = 1; $item_index < count( $items ); ++$item_index ) {
+			$value_sql        = $this->translate_tokens_to_duckdb_sql(
+				$items[ $item_index ],
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage
+			);
+			$value_comparison = 'lower(CAST((' . $value_sql . ') AS VARCHAR))';
+			$cases[]          = 'WHEN ' . $needle_comparison . ' = ' . $value_comparison . ' THEN ' . $item_index;
+		}
+		$cases[] = 'ELSE 0 END';
+
+		$index = $next_index - 1;
+		return implode( ' ', $cases );
 	}
 
 	/**

@@ -210,6 +210,169 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_sql_calc_found_rows_and_found_rows_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_found_rows_users (
+					ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					user_login VARCHAR(60) NOT NULL DEFAULT '',
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_found_rows_users (user_login) VALUES
+					('ada'),
+					('grace'),
+					('katherine')",
+			)
+		);
+
+		$this->assertParityRows(
+			'SELECT SQL_CALC_FOUND_ROWS ID, user_login FROM wp_found_rows_users ORDER BY ID LIMIT 2'
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
+	public function test_found_rows_state_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_found_rows_state (id INT, label VARCHAR(20))',
+				"INSERT INTO wp_found_rows_state VALUES (1, 'one'), (2, 'two'), (3, 'three')",
+			)
+		);
+
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+		$this->assertParityRows( 'SELECT id, label FROM wp_found_rows_state ORDER BY id' );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRowCount( "UPDATE wp_found_rows_state SET label = 'updated' WHERE id = 1" );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows( 'SELECT id, label FROM wp_found_rows_state ORDER BY id' );
+		$this->runParitySetup( array( 'CREATE TABLE wp_found_rows_state_extra (id INT)' ) );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows( 'SHOW TABLES' );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows( 'DESCRIBE wp_found_rows_state' );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
+	public function test_failed_selects_reset_found_rows_state_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_found_rows_reset (id INT)',
+				'INSERT INTO wp_found_rows_reset VALUES (1), (2), (3)',
+			)
+		);
+
+		$this->assertParityRows( 'SELECT id FROM wp_found_rows_reset ORDER BY id' );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows( 'SELECT id FROM wp_found_rows_reset ORDER BY id' );
+		$this->assertParityErrorContains( 'SELECT * FROM missing_found_rows_reset', 'missing_found_rows_reset' );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows( 'SELECT id FROM wp_found_rows_reset ORDER BY id' );
+		$this->assertParityErrorContains(
+			'SELECT SQL_CALC_FOUND_ROWS * FROM missing_found_rows_reset LIMIT 1',
+			'missing_found_rows_reset'
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
+	public function test_select_index_hints_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_hint_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					post_title VARCHAR(200) NOT NULL DEFAULT '',
+					PRIMARY KEY (ID),
+					KEY post_status (post_status)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_hint_posts (post_status, post_title) VALUES
+					('publish', 'first'),
+					('draft', 'second'),
+					('publish', 'third')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT post_title
+			FROM wp_hint_posts FORCE INDEX (PRIMARY, post_status)
+			WHERE post_status = 'publish'
+			ORDER BY ID"
+		);
+		$this->assertParityRows(
+			'SELECT post_status, COUNT(*) AS total
+			FROM wp_hint_posts USE KEY FOR GROUP BY (post_status)
+			GROUP BY post_status
+			ORDER BY post_status'
+		);
+		$this->assertParityRows(
+			'SELECT post_title
+			FROM wp_hint_posts IGNORE INDEX FOR ORDER BY (post_status)
+			ORDER BY ID DESC
+			LIMIT 1'
+		);
+	}
+
+	public function test_row_locking_clauses_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_lock_items (name VARCHAR(255), value VARCHAR(255))',
+				"INSERT INTO wp_lock_items (name, value) VALUES ('test_lock', '123')",
+			)
+		);
+
+		foreach (
+			array(
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' FOR UPDATE",
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' FOR SHARE",
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' LOCK IN SHARE MODE",
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' FOR UPDATE SKIP LOCKED",
+				"SELECT value FROM wp_lock_items WHERE name = 'test_lock' FOR UPDATE NOWAIT",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
+	public function test_order_by_field_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_field_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value VARCHAR(191) NOT NULL DEFAULT '',
+					PRIMARY KEY (option_id),
+					UNIQUE KEY option_name (option_name)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_field_options (option_name, option_value) VALUES
+					('User 0000019', 'second'),
+					('User 0000020', 'third'),
+					('User 0000018', 'first')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT FIELD(option_name, 'User 0000018', 'User 0000019', 'User 0000020') AS sorting_order
+			FROM wp_field_options
+			ORDER BY FIELD(option_name, 'User 0000018', 'User 0000019', 'User 0000020')"
+		);
+		$this->assertParityRows(
+			"SELECT option_value
+			FROM wp_field_options
+			ORDER BY FIELD(option_name, 'User 0000018', 'User 0000019', 'User 0000020')"
+		);
+		$this->assertParityRows(
+			"SELECT FIELD('b', 'A', 'B') AS case_match,
+			FIELD(NULL, 'A', 'B') AS null_match,
+			FIELD('z', 'A', 'B') AS no_match"
+		);
+	}
+
 	public function test_joined_update_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
