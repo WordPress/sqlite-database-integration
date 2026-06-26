@@ -416,12 +416,13 @@ class WP_DuckDB_Driver {
 		list( $items, $index ) = $this->collect_parenthesized_items( $tokens, $index );
 		$table_metadata        = $this->parse_create_table_options( array_slice( $tokens, $index ) );
 
-		$columns     = array();
-		$constraints = array();
-		$indexes     = array();
-		$sequences   = array();
-		$metadata    = array();
-		$primary_key = array();
+		$columns             = array();
+		$constraints         = array();
+		$indexes             = array();
+		$sequences           = array();
+		$metadata            = array();
+		$primary_key         = array();
+		$auto_increment_seed = $table_metadata['auto_increment'];
 
 		foreach ( $items as $item ) {
 			if ( count( $item ) === 0 ) {
@@ -443,11 +444,14 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE constraint in DuckDB driver: ' . $item[0]->get_bytes() . '.' );
 			}
 
-			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata ) = $this->translate_create_table_column( $table_name, $item, true, false, $temporary );
+			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata ) = $this->translate_create_table_column( $table_name, $item, true, false, $temporary, $auto_increment_seed );
 			$columns[]  = $column_sql;
 			$metadata[] = $column_metadata;
 			if ( null !== $sequence_sql ) {
-				$sequences[] = $sequence_sql;
+				$sequences[] = array(
+					'sql'         => $sequence_sql,
+					'column_name' => $column_metadata['column_name'],
+				);
 			}
 			foreach ( $column_indexes as $index_definition ) {
 				$indexes[] = $index_definition;
@@ -458,8 +462,14 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'CREATE TABLE requires at least one column.' );
 		}
 
-		foreach ( $sequences as $sequence_sql ) {
-			$this->execute_duckdb_query( $sequence_sql, 'Failed to create DuckDB AUTO_INCREMENT sequence' );
+		foreach ( $sequences as $sequence ) {
+			$this->execute_duckdb_query( $sequence['sql'], 'Failed to create DuckDB AUTO_INCREMENT sequence' );
+			if ( null !== $auto_increment_seed && $auto_increment_seed > 1 ) {
+				$this->prime_auto_increment_sequence(
+					$this->sequence_name( $table_name, (string) $sequence['column_name'], $temporary ),
+					$auto_increment_seed
+				);
+			}
 		}
 
 		$table_sql = $temporary ? 'CREATE TEMPORARY TABLE ' : 'CREATE TABLE ';
@@ -2173,7 +2183,12 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
-			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD, DROP, CHANGE, and MODIFY actions are supported.' );
+			if ( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL === $action[0]->id ) {
+				$result = $this->execute_alter_table_set_auto_increment( $table_name, $action, $temporary );
+				continue;
+			}
+
+			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD, DROP, CHANGE, MODIFY, and AUTO_INCREMENT actions are supported.' );
 			$alter_item = array_slice( $action, 1 );
 
 			$result = $this->is_create_table_index_item( $alter_item )
@@ -2182,6 +2197,33 @@ class WP_DuckDB_Driver {
 		}
 
 		return $result ?? new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Execute ALTER TABLE ... AUTO_INCREMENT = N.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_set_auto_increment( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$requested_next = $this->parse_auto_increment_option_value( $tokens, 1, 'ALTER TABLE' );
+		$metadata       = $this->auto_increment_metadata_for_table( $table_name, $temporary );
+		if ( null === $metadata ) {
+			return $this->empty_ddl_result();
+		}
+
+		$max_existing = $this->max_auto_increment_column_value( $table_name, $metadata['column_name'], $temporary );
+		$next_value   = max( $requested_next, $max_existing + 1, 1 );
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $table_name, $next_value, $temporary ): WP_DuckDB_Result_Statement {
+				$this->rebuild_auto_increment_table_with_next_value( $table_name, $next_value, $temporary );
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
 	}
 
 	/**
@@ -3185,14 +3227,23 @@ class WP_DuckDB_Driver {
 	/**
 	 * Build a MySQL-shaped SHOW CREATE TABLE statement from DuckDB metadata.
 	 *
-	 * @param string $table_name          Resolved physical table name.
-	 * @param string $requested_table_name Requested MySQL table name.
+	 * @param string   $table_name              Resolved physical table name.
+	 * @param string   $requested_table_name    Requested MySQL table name.
+	 * @param bool     $temporary               Whether the table is temporary.
+	 * @param int|null $auto_increment_override AUTO_INCREMENT value override.
 	 * @return string MySQL CREATE TABLE statement.
 	 */
-	private function mysql_create_table_statement( string $table_name, string $requested_table_name, bool $temporary = false ): string {
+	private function mysql_create_table_statement( string $table_name, string $requested_table_name, bool $temporary = false, ?int $auto_increment_override = null ): string {
 		$metadata_by_table  = $this->table_metadata_by_table( $temporary );
 		$table_metadata     = $metadata_by_table[ $table_name ] ?? $this->fallback_table_metadata( $table_name );
-		$table_info         = $this->information_schema_table_row( $table_name, $table_metadata, $temporary );
+		$table_info         = null === $auto_increment_override
+			? $this->information_schema_table_row( $table_name, $table_metadata, $temporary )
+			: array(
+				'ENGINE'          => $table_metadata['engine'],
+				'AUTO_INCREMENT'  => $auto_increment_override,
+				'TABLE_COLLATION' => $table_metadata['table_collation'],
+				'TABLE_COMMENT'   => $table_metadata['table_comment'],
+			);
 		$column_rows        = $this->show_create_table_column_rows( $table_name, $temporary );
 		$rows               = array();
 		$has_auto_increment = false;
@@ -3210,7 +3261,7 @@ class WP_DuckDB_Driver {
 		$sql .= "\n)";
 		$sql .= ' ENGINE=' . (string) $table_info['ENGINE'];
 
-		$auto_increment = $table_info['AUTO_INCREMENT'];
+		$auto_increment = null === $auto_increment_override ? $table_info['AUTO_INCREMENT'] : $auto_increment_override;
 		if ( $has_auto_increment && null !== $auto_increment && (int) $auto_increment > 1 ) {
 			$sql .= ' AUTO_INCREMENT=' . (int) $auto_increment;
 		}
@@ -4022,9 +4073,11 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens                     Column definition tokens.
 	 * @param bool              $include_inline_constraints Whether to include inline NOT NULL/PRIMARY KEY SQL.
 	 * @param bool              $allow_position_options     Whether to accept FIRST/AFTER position hints.
+	 * @param bool              $temporary                  Whether the target is a temporary table.
+	 * @param int|null          $auto_increment_seed        Optional AUTO_INCREMENT table option.
 	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>,3:array<string,mixed>}
 	 */
-	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false ): array {
+	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false, ?int $auto_increment_seed = null ): array {
 		$index       = 0;
 		$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
@@ -4132,7 +4185,12 @@ class WP_DuckDB_Driver {
 
 		if ( $auto_increment ) {
 			$sequence_name = $this->sequence_name( $table_name, $column_name, $temporary );
-			$sequence      = 'CREATE ' . ( $temporary ? 'TEMP ' : '' ) . 'SEQUENCE IF NOT EXISTS ' . $this->connection->quote_identifier( $sequence_name ) . ' START 1';
+			$sequence      = 'CREATE '
+				. ( $temporary ? 'TEMP ' : '' )
+				. 'SEQUENCE IF NOT EXISTS '
+				. $this->connection->quote_identifier( $sequence_name )
+				. ' START '
+				. ( null !== $auto_increment_seed && $auto_increment_seed > 1 ? $auto_increment_seed - 1 : 1 );
 			$column_sql   .= ' DEFAULT nextval(' . $this->connection->quote( $sequence_name ) . ')';
 		} elseif ( null !== $default_sql ) {
 			$column_sql .= ' DEFAULT ' . $default_sql;
@@ -4675,12 +4733,13 @@ class WP_DuckDB_Driver {
 	 * Parse supported CREATE TABLE tail options into MySQL-facing metadata.
 	 *
 	 * @param WP_Parser_Token[] $tokens Tail tokens after the column list.
-	 * @return array{engine:string,row_format:string,table_collation:string,table_comment:string,create_options:string}
+	 * @return array{engine:string,row_format:string,table_collation:string,table_comment:string,create_options:string,auto_increment:int|null}
 	 */
 	private function parse_create_table_options( array $tokens ): array {
 		$engine          = 'InnoDB';
 		$table_collation = 'utf8mb4_0900_ai_ci';
 		$table_comment   = '';
+		$auto_increment  = null;
 		$index           = 0;
 		while ( $index < count( $tokens ) ) {
 			$token = $tokens[ $index ];
@@ -4709,10 +4768,15 @@ class WP_DuckDB_Driver {
 
 			if (
 				WP_MySQL_Lexer::CHARSET_SYMBOL === $token->id
-				|| WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL === $token->id
 				|| WP_MySQL_Lexer::ROW_FORMAT_SYMBOL === $token->id
 			) {
 				$index = $this->skip_option_value( $tokens, $index + 1 );
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL === $token->id ) {
+				$auto_increment = $this->parse_auto_increment_option_value( $tokens, $index + 1, 'CREATE TABLE', true );
+				$index          = $this->skip_option_value( $tokens, $index + 1 );
 				continue;
 			}
 
@@ -4732,7 +4796,38 @@ class WP_DuckDB_Driver {
 			'table_collation' => $table_collation,
 			'table_comment'   => $table_comment,
 			'create_options'  => '',
+			'auto_increment'  => $auto_increment,
 		);
+	}
+
+	/**
+	 * Parse an AUTO_INCREMENT table option value.
+	 *
+	 * @param WP_Parser_Token[] $tokens    Token stream.
+	 * @param int               $index     Index at optional equals or value.
+	 * @param string            $statement Statement name for errors.
+	 * @param bool              $allow_trailing Whether unrelated trailing option tokens are allowed.
+	 * @return int Requested next AUTO_INCREMENT value.
+	 */
+	private function parse_auto_increment_option_value( array $tokens, int $index, string $statement, bool $allow_trailing = false ): int {
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		if ( ! isset( $tokens[ $index ] ) || ! $this->is_number_token( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( $statement . ' AUTO_INCREMENT requires a numeric value in the DuckDB driver.' );
+		}
+
+		$value = (int) $tokens[ $index ]->get_bytes();
+		if ( $value < 1 ) {
+			throw new WP_DuckDB_Driver_Exception( $statement . ' AUTO_INCREMENT requires a positive value in the DuckDB driver.' );
+		}
+
+		if ( ! $allow_trailing && isset( $tokens[ $index + 1 ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' AUTO_INCREMENT option in DuckDB driver.' );
+		}
+
+		return $value;
 	}
 
 	/**
@@ -5903,6 +5998,25 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Prime a sequence so the next generated value matches MySQL AUTO_INCREMENT metadata.
+	 *
+	 * DuckDB exposes currval only after nextval has been called in the session.
+	 *
+	 * @param string $sequence_name Sequence name.
+	 * @param int    $next_value    Desired next generated value.
+	 */
+	private function prime_auto_increment_sequence( string $sequence_name, int $next_value ): void {
+		if ( $next_value <= 1 ) {
+			return;
+		}
+
+		$this->execute_duckdb_query(
+			'SELECT nextval(' . $this->connection->quote( $sequence_name ) . ')',
+			'Failed to initialize DuckDB AUTO_INCREMENT sequence'
+		);
+	}
+
+	/**
 	 * Execute DuckDB SQL and preserve inspectable SQL output.
 	 *
 	 * @param string $sql     DuckDB SQL.
@@ -6409,7 +6523,7 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 */
 	private function rebuild_empty_auto_increment_table( string $table_name, bool $temporary = false ): void {
-		$create_sql     = $this->mysql_create_table_statement( $table_name, $table_name, $temporary );
+		$create_sql     = $this->mysql_create_table_statement( $table_name, $table_name, $temporary, 1 );
 		$sequence_names = $this->auto_increment_sequences_for_table( $table_name, $temporary );
 
 		$this->execute_duckdb_query(
@@ -6418,6 +6532,70 @@ class WP_DuckDB_Driver {
 		);
 		$this->drop_auto_increment_sequences( $sequence_names );
 		$this->execute_create_table( $this->tokenize_and_validate( $create_sql ) );
+	}
+
+	/**
+	 * Rebuild a table so its AUTO_INCREMENT sequence has a specific next value.
+	 *
+	 * @param string $table_name Table name.
+	 * @param int    $next_value Desired next generated value.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 */
+	private function rebuild_auto_increment_table_with_next_value( string $table_name, int $next_value, bool $temporary = false ): void {
+		$create_sql     = $this->mysql_create_table_statement( $table_name, $table_name, $temporary, $next_value );
+		$sequence_names = $this->auto_increment_sequences_for_table( $table_name, $temporary );
+		$metadata_rows  = $this->table_column_metadata_rows( $table_name, $temporary );
+		$column_names   = array_map(
+			function ( array $column ): string {
+				return (string) $column['column_name'];
+			},
+			$metadata_rows
+		);
+		$quoted_columns = implode(
+			', ',
+			array_map(
+				function ( string $column_name ): string {
+					return $this->connection->quote_identifier( $column_name );
+				},
+				$column_names
+			)
+		);
+		$backup_table   = '__wp_duckdb_auto_increment_backup_' . substr( hash( 'sha256', $table_name . "\0" . microtime( true ) . "\0" . mt_rand() ), 0, 16 );
+
+		$this->execute_duckdb_query(
+			'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $backup_table ),
+			'Failed to reset DuckDB AUTO_INCREMENT rebuild backup table'
+		);
+		$this->execute_duckdb_query(
+			'CREATE TEMP TABLE '
+				. $this->connection->quote_identifier( $backup_table )
+				. ' AS SELECT '
+				. $quoted_columns
+				. ' FROM '
+				. $this->connection->quote_identifier( $table_name ),
+			'Failed to back up DuckDB table for AUTO_INCREMENT rebuild'
+		);
+		$this->execute_duckdb_query(
+			'DROP TABLE ' . $this->connection->quote_identifier( $table_name ),
+			'Failed to rebuild DuckDB AUTO_INCREMENT table'
+		);
+		$this->drop_auto_increment_sequences( $sequence_names );
+		$this->execute_create_table( $this->tokenize_and_validate( $create_sql ) );
+		$this->execute_duckdb_query(
+			'INSERT INTO '
+				. $this->connection->quote_identifier( $table_name )
+				. ' ('
+				. $quoted_columns
+				. ') SELECT '
+				. $quoted_columns
+				. ' FROM '
+				. $this->connection->quote_identifier( $backup_table ),
+			'Failed to restore DuckDB table rows after AUTO_INCREMENT rebuild'
+		);
+		$this->execute_duckdb_query(
+			'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $backup_table ),
+			'Failed to drop DuckDB AUTO_INCREMENT rebuild backup table'
+		);
 	}
 
 	/**
@@ -6802,6 +6980,27 @@ class WP_DuckDB_Driver {
 
 		$current = $this->sequence_currval( $metadata['sequence_name'] );
 		return null === $current ? 1 : $current + 1;
+	}
+
+	/**
+	 * Read the current maximum value in an AUTO_INCREMENT column.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name AUTO_INCREMENT column name.
+	 * @param bool   $temporary   Whether the target is a temporary table.
+	 * @return int Maximum existing value, or 0 for an empty table.
+	 */
+	private function max_auto_increment_column_value( string $table_name, string $column_name, bool $temporary = false ): int {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT MAX('
+				. $this->connection->quote_identifier( $column_name )
+				. ') AS max_value FROM '
+				. $this->connection->quote_identifier( $table_name ),
+			'Failed to inspect DuckDB AUTO_INCREMENT column'
+		);
+
+		$value = $stmt->fetchColumn();
+		return false === $value || null === $value ? 0 : (int) $value;
 	}
 
 	/**

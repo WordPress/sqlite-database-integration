@@ -667,6 +667,108 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_create_table_auto_increment_seed_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_ai (
+					id INT AUTO_INCREMENT PRIMARY KEY,
+					name VARCHAR(20)
+				) AUTO_INCREMENT=100',
+				'CREATE TABLE seeded_plain (id INT, name VARCHAR(20)) AUTO_INCREMENT=500',
+			)
+		);
+
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'seeded_ai'", array( 'Name', 'Auto_increment' ) );
+		$this->runParitySetup( array( "INSERT INTO seeded_ai (name) VALUES ('a')" ) );
+		$this->assertParityRows( 'SELECT id, name FROM seeded_ai ORDER BY id' );
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'seeded_ai'", array( 'Name', 'Auto_increment' ) );
+		$this->assertParityRows(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'seeded_ai'"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE seeded_ai' );
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'seeded_plain'", array( 'Name', 'Auto_increment' ) );
+		$this->assertParityRows( 'SHOW CREATE TABLE seeded_plain' );
+	}
+
+	public function test_alter_table_auto_increment_seed_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE alter_ai (
+					id INT AUTO_INCREMENT PRIMARY KEY,
+					name TEXT
+				)',
+				'ALTER TABLE alter_ai AUTO_INCREMENT = 50',
+			)
+		);
+
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'alter_ai'", array( 'Name', 'Auto_increment' ) );
+		$this->runParitySetup( array( "INSERT INTO alter_ai (name) VALUES ('first')" ) );
+		$this->assertParityRows( 'SELECT id, name FROM alter_ai ORDER BY id' );
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'alter_ai'", array( 'Name', 'Auto_increment' ) );
+
+		$this->runParitySetup( array( 'ALTER TABLE alter_ai AUTO_INCREMENT = 200' ) );
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'alter_ai'", array( 'Name', 'Auto_increment' ) );
+		$this->assertParityRows( 'SHOW CREATE TABLE alter_ai' );
+
+		$this->runParitySetup( array( 'ALTER TABLE alter_ai AUTO_INCREMENT = 1' ) );
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'alter_ai'", array( 'Name', 'Auto_increment' ) );
+		$this->runParitySetup( array( "INSERT INTO alter_ai (name) VALUES ('second')" ) );
+		$this->assertParityRows( 'SELECT id, name FROM alter_ai ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE alter_plain (id INT, name TEXT) AUTO_INCREMENT=500',
+				'ALTER TABLE alter_plain AUTO_INCREMENT = 900',
+			)
+		);
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'alter_plain'", array( 'Name', 'Auto_increment' ) );
+		$this->assertParityRows( 'SHOW CREATE TABLE alter_plain' );
+	}
+
+	public function test_temporary_table_auto_increment_seed_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE shadow_ai (
+					id INT AUTO_INCREMENT PRIMARY KEY,
+					name TEXT
+				)',
+				"INSERT INTO shadow_ai (name) VALUES ('p1'), ('p2')",
+				'CREATE TEMPORARY TABLE shadow_ai (
+					id INT AUTO_INCREMENT PRIMARY KEY,
+					name TEXT
+				) AUTO_INCREMENT=500',
+			)
+		);
+
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'shadow_ai'", array( 'Name', 'Auto_increment' ) );
+		$this->assertParityRows(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'shadow_ai'"
+		);
+
+		$this->runParitySetup( array( "INSERT INTO shadow_ai (name) VALUES ('temp-a')" ) );
+		$this->assertParityRows( 'SELECT id, name FROM shadow_ai ORDER BY id' );
+		$this->runParitySetup(
+			array(
+				'ALTER TABLE shadow_ai AUTO_INCREMENT = 1000',
+				"INSERT INTO shadow_ai (name) VALUES ('temp-b')",
+			)
+		);
+		$this->assertParityRows( 'SELECT id, name FROM shadow_ai ORDER BY id' );
+		$this->assertParityRowColumns( "SHOW TABLE STATUS LIKE 'shadow_ai'", array( 'Name', 'Auto_increment' ) );
+
+		$this->runParitySetup(
+			array(
+				'DROP TEMPORARY TABLE shadow_ai',
+				"INSERT INTO shadow_ai (name) VALUES ('p3')",
+			)
+		);
+		$this->assertParityRows( 'SELECT id, name FROM shadow_ai ORDER BY id' );
+	}
+
 	public function test_drop_index_lifecycle_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
