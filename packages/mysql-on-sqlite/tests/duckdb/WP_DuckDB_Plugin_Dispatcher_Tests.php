@@ -118,7 +118,7 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 				'INSERT INTO t VALUES (1), (2)',
 				'CREATE TABLE "t" ("id" INTEGER)',
 			),
-			$result['client_queries']
+			array_slice( $result['client_queries'], 0, 4 )
 		);
 	}
 
@@ -222,6 +222,15 @@ class WP_DuckDB_Plugin_Test_Client {
 				array( 'Count' ),
 				array(
 					array( 'Count' => 2 ),
+				)
+			);
+		}
+
+		if ( 0 === strpos( $normalized, 'delete' ) ) {
+			return new WP_DuckDB_Plugin_Test_Result(
+				array( 'Count' ),
+				array(
+					array( 'Count' => 0 ),
 				)
 			);
 		}

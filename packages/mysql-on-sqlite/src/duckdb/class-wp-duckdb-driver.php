@@ -20,6 +20,7 @@ class WP_DuckDB_Driver {
 	const SEQUENCE_PREFIX       = 'wp_duckdb_ai_';
 	const INDEX_PREFIX          = 'wp_duckdb_idx_';
 	const INDEX_METADATA_TABLE  = '__wp_duckdb_index_metadata';
+	const COLUMN_METADATA_TABLE = '__wp_duckdb_column_metadata';
 
 	const DATA_TYPE_MAP = array(
 		WP_MySQL_Lexer::BOOL_SYMBOL       => 'BOOLEAN',
@@ -348,6 +349,8 @@ class WP_DuckDB_Driver {
 		$constraints = array();
 		$indexes     = array();
 		$sequences   = array();
+		$metadata    = array();
+		$primary_key = array();
 
 		foreach ( $items as $item ) {
 			if ( count( $item ) === 0 ) {
@@ -355,6 +358,7 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( WP_MySQL_Lexer::PRIMARY_SYMBOL === $item[0]->id ) {
+				$primary_key   = $this->table_primary_key_columns( $item );
 				$constraints[] = $this->translate_table_primary_key( $item );
 				continue;
 			}
@@ -368,8 +372,9 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE constraint in DuckDB driver: ' . $item[0]->get_bytes() . '.' );
 			}
 
-			list( $column_sql, $sequence_sql, $column_indexes ) = $this->translate_create_table_column( $table_name, $item );
-			$columns[] = $column_sql;
+			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata ) = $this->translate_create_table_column( $table_name, $item );
+			$columns[]  = $column_sql;
+			$metadata[] = $column_metadata;
 			if ( null !== $sequence_sql ) {
 				$sequences[] = $sequence_sql;
 			}
@@ -400,6 +405,7 @@ class WP_DuckDB_Driver {
 			$this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
 			$this->record_index_metadata( $index_definition );
 		}
+		$this->record_column_metadata( $table_name, $this->apply_column_key_metadata( $metadata, $primary_key, $indexes ) );
 
 		return $result;
 	}
@@ -735,31 +741,21 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW COLUMNS statement in DuckDB driver. Only optional LIKE is supported.' );
 		}
 
-		$rows = $this->describe_column_rows( $table_name );
-		if ( null !== $like_pattern ) {
-			$rows = $this->filter_column_rows_by_like( $rows, $like_pattern );
-		}
-
 		if ( ! $full ) {
+			$rows = $this->describe_column_rows( $table_name );
+			if ( null !== $like_pattern ) {
+				$rows = $this->filter_column_rows_by_like( $rows, $like_pattern );
+			}
+
 			return new WP_DuckDB_Result_Statement(
 				array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
 				$rows
 			);
 		}
 
-		$full_rows = array();
-		foreach ( $rows as $row ) {
-			$full_rows[] = array(
-				$row[0],
-				$row[1],
-				null,
-				$row[2],
-				$row[3],
-				$row[4],
-				$row[5],
-				'select,insert,update,references',
-				'',
-			);
+		$full_rows = $this->full_describe_column_rows( $table_name );
+		if ( null !== $like_pattern ) {
+			$full_rows = $this->filter_column_rows_by_like( $full_rows, $like_pattern );
 		}
 
 		return new WP_DuckDB_Result_Statement(
@@ -779,6 +775,8 @@ class WP_DuckDB_Driver {
 			'SELECT table_name AS ' . $this->connection->quote_identifier( $column )
 				. " FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name <> "
 				. $this->connection->quote( self::INDEX_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
 				. ' ORDER BY table_name',
 			'Failed to execute SHOW TABLES'
 		);
@@ -940,6 +938,23 @@ class WP_DuckDB_Driver {
 	 * @return array<int,array<int,mixed>>
 	 */
 	private function describe_column_rows( string $table_name ): array {
+		$metadata_rows = $this->column_metadata_rows( $table_name );
+		if ( count( $metadata_rows ) > 0 ) {
+			return array_map(
+				function ( array $row ): array {
+					return array(
+						$row['column_name'],
+						$row['column_type'],
+						$row['is_nullable'],
+						$row['column_key'],
+						$row['column_default'],
+						$row['extra'],
+					);
+				},
+				$metadata_rows
+			);
+		}
+
 		$pragma = $this->execute_duckdb_query(
 			'SELECT name, type, "notnull", dflt_value, pk FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') ORDER BY cid',
 			'Failed to inspect DuckDB table'
@@ -967,6 +982,51 @@ class WP_DuckDB_Driver {
 		}
 
 		return $describe_rows;
+	}
+
+	/**
+	 * Build MySQL SHOW FULL COLUMNS rows.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array<int,mixed>>
+	 */
+	private function full_describe_column_rows( string $table_name ): array {
+		$metadata_rows = $this->column_metadata_rows( $table_name );
+		if ( count( $metadata_rows ) > 0 ) {
+			return array_map(
+				function ( array $row ): array {
+					return array(
+						$row['column_name'],
+						$row['column_type'],
+						$row['collation_name'],
+						$row['is_nullable'],
+						$row['column_key'],
+						$row['column_default'],
+						$row['extra'],
+						'select,insert,update,references',
+						$row['comment'],
+					);
+				},
+				$metadata_rows
+			);
+		}
+
+		$full_rows = array();
+		foreach ( $this->describe_column_rows( $table_name ) as $row ) {
+			$full_rows[] = array(
+				$row[0],
+				$row[1],
+				null,
+				$row[2],
+				$row[3],
+				$row[4],
+				$row[5],
+				'select,insert,update,references',
+				'',
+			);
+		}
+
+		return $full_rows;
 	}
 
 	/**
@@ -1076,7 +1136,7 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string            $table_name Table name.
 	 * @param WP_Parser_Token[] $tokens     Column definition tokens.
-	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>}
+	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>,3:array<string,mixed>}
 	 */
 	private function translate_create_table_column( string $table_name, array $tokens ): array {
 		$index       = 0;
@@ -1087,6 +1147,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported MySQL column type for DuckDB column: ' . $column_name . '.' );
 		}
 
+		$type_index = $index;
 		$type_token = $tokens[ $index ];
 		$duck_type  = self::DATA_TYPE_MAP[ $type_token->id ];
 		++$index;
@@ -1201,7 +1262,18 @@ class WP_DuckDB_Driver {
 			);
 		}
 
-		return array( $column_sql, $sequence, $indexes );
+		$metadata = array(
+			'column_name'    => $column_name,
+			'column_type'    => $this->mysql_column_type_from_tokens( $tokens, $type_index ),
+			'is_nullable'    => $not_null ? 'NO' : 'YES',
+			'column_key'     => $primary_key ? 'PRI' : ( $unique_key ? 'UNI' : '' ),
+			'column_default' => $auto_increment || null === $default_sql ? null : $this->normalize_describe_default( $default_sql ),
+			'extra'          => $auto_increment ? 'auto_increment' : '',
+			'collation_name' => $this->mysql_column_collation_from_tokens( $tokens, $type_token ),
+			'comment'        => $this->mysql_column_comment_from_tokens( $tokens ),
+		);
+
+		return array( $column_sql, $sequence, $indexes, $metadata );
 	}
 
 	/**
@@ -1239,12 +1311,180 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Build the MySQL-facing column type string for DESCRIBE/SHOW COLUMNS.
+	 *
+	 * @param WP_Parser_Token[] $tokens     Column definition tokens.
+	 * @param int               $type_index Index of the type token.
+	 * @return string MySQL column type.
+	 */
+	private function mysql_column_type_from_tokens( array $tokens, int $type_index ): string {
+		$pieces = array( $tokens[ $type_index ]->get_bytes() );
+		$index  = $type_index + 1;
+
+		while ( $index < count( $tokens ) ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				$end = $this->skip_balanced_parentheses( $tokens, $index );
+				for ( ; $index < $end; ++$index ) {
+					$pieces[] = $tokens[ $index ]->get_bytes();
+				}
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::UNSIGNED_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::ZEROFILL_SYMBOL === $tokens[ $index ]->id ) {
+				$pieces[] = $tokens[ $index ]->get_bytes();
+				++$index;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CHARSET_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $index ]->id ) {
+				$index = $this->skip_option_value( $tokens, $index + 1 );
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CHAR_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::CHARACTER_SYMBOL === $tokens[ $index ]->id ) {
+				if ( ! isset( $tokens[ $index + 1 ] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[ $index + 1 ]->id ) {
+					break;
+				}
+				$index = $this->skip_option_value( $tokens, $index + 2 );
+				continue;
+			}
+
+			break;
+		}
+
+		return strtolower( $this->join_sql_pieces( $pieces ) );
+	}
+
+	/**
+	 * Read column collation metadata from a column definition.
+	 *
+	 * @param WP_Parser_Token[] $tokens     Column definition tokens.
+	 * @param WP_Parser_Token   $type_token Type token.
+	 * @return string|null Collation name.
+	 */
+	private function mysql_column_collation_from_tokens( array $tokens, WP_Parser_Token $type_token ): ?string {
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $index ]->id ) {
+				return $this->option_value( $tokens, $index + 1 );
+			}
+		}
+
+		return $this->mysql_type_has_collation( $type_token ) ? 'utf8mb4_unicode_ci' : null;
+	}
+
+	/**
+	 * Read column comment metadata from a column definition.
+	 *
+	 * @param WP_Parser_Token[] $tokens Column definition tokens.
+	 * @return string Column comment.
+	 */
+	private function mysql_column_comment_from_tokens( array $tokens ): string {
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::COMMENT_SYMBOL === $tokens[ $index ]->id ) {
+				return (string) $this->option_value( $tokens, $index + 1 );
+			}
+		}
+
+		return '';
+	}
+
+	/**
+	 * Read an option value token, accepting optional equals.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Index at optional equals or value.
+	 * @return string|null Option value.
+	 */
+	private function option_value( array $tokens, int $index ): ?string {
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		return isset( $tokens[ $index ] ) ? $tokens[ $index ]->get_value() : null;
+	}
+
+	/**
+	 * Check whether a MySQL type normally has collation metadata.
+	 *
+	 * @param WP_Parser_Token $type_token Type token.
+	 * @return bool Whether the type is collated.
+	 */
+	private function mysql_type_has_collation( WP_Parser_Token $type_token ): bool {
+		return in_array(
+			$type_token->id,
+			array(
+				WP_MySQL_Lexer::CHAR_SYMBOL,
+				WP_MySQL_Lexer::VARCHAR_SYMBOL,
+				WP_MySQL_Lexer::TEXT_SYMBOL,
+				WP_MySQL_Lexer::TINYTEXT_SYMBOL,
+				WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL,
+				WP_MySQL_Lexer::LONGTEXT_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Apply primary/secondary index key markers to column metadata.
+	 *
+	 * @param array<int,array<string,mixed>>                                                       $metadata    Column metadata.
+	 * @param string[]                                                                              $primary_key Table-level primary key columns.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $indexes Index definitions.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function apply_column_key_metadata( array $metadata, array $primary_key, array $indexes ): array {
+		foreach ( $metadata as &$column ) {
+			$column_name = strtolower( (string) $column['column_name'] );
+			if ( in_array( $column_name, array_map( 'strtolower', $primary_key ), true ) ) {
+				$column['column_key'] = 'PRI';
+				continue;
+			}
+
+			foreach ( $indexes as $index_definition ) {
+				if ( count( $index_definition['columns'] ) === 0 ) {
+					continue;
+				}
+				if ( strtolower( $index_definition['columns'][0]['name'] ) !== $column_name ) {
+					continue;
+				}
+				$column['column_key'] = $index_definition['unique'] ? 'UNI' : 'MUL';
+				break;
+			}
+		}
+		unset( $column );
+
+		return $metadata;
+	}
+
+	/**
 	 * Translate a table-level PRIMARY KEY constraint.
 	 *
 	 * @param WP_Parser_Token[] $tokens Constraint tokens.
 	 * @return string
 	 */
 	private function translate_table_primary_key( array $tokens ): string {
+		$column_names = $this->table_primary_key_columns( $tokens );
+		if ( count( $column_names ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported PRIMARY KEY constraint in DuckDB driver.' );
+		}
+
+		$columns = array_map(
+			function ( string $column_name ): string {
+				return $this->connection->quote_identifier( $column_name );
+			},
+			$column_names
+		);
+
+		return 'PRIMARY KEY (' . implode( ', ', $columns ) . ')';
+	}
+
+	/**
+	 * Read table-level PRIMARY KEY columns.
+	 *
+	 * @param WP_Parser_Token[] $tokens Constraint tokens.
+	 * @return string[]
+	 */
+	private function table_primary_key_columns( array $tokens ): array {
 		$index = 0;
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::PRIMARY_SYMBOL, 'Expected PRIMARY KEY constraint.' );
 		$this->expect_token( $tokens, $index + 1, WP_MySQL_Lexer::KEY_SYMBOL, 'Expected PRIMARY KEY constraint.' );
@@ -1257,18 +1497,18 @@ class WP_DuckDB_Driver {
 				++$index;
 				break;
 			}
-			$columns[] = $this->connection->quote_identifier( $this->identifier_value( $tokens[ $index ] ) );
+			$columns[] = $this->identifier_value( $tokens[ $index ] );
 			++$index;
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
 			}
 		}
 
-		if ( count( $columns ) === 0 || count( $tokens ) !== $index ) {
+		if ( count( $tokens ) !== $index ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported PRIMARY KEY constraint in DuckDB driver.' );
 		}
 
-		return 'PRIMARY KEY (' . implode( ', ', $columns ) . ')';
+		return $columns;
 	}
 
 	/**
@@ -2191,6 +2431,18 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Ensure the internal column metadata table exists.
+	 */
+	private function ensure_column_metadata_table(): void {
+		$this->execute_duckdb_query(
+			'CREATE TABLE IF NOT EXISTS '
+				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. ' (table_name VARCHAR, ordinal_position INTEGER, column_name VARCHAR, column_type VARCHAR, is_nullable VARCHAR, column_key VARCHAR, column_default VARCHAR, extra VARCHAR, collation_name VARCHAR, comment VARCHAR)',
+			'Failed to initialize DuckDB column metadata'
+		);
+	}
+
+	/**
 	 * Record MySQL index metadata for SHOW INDEX.
 	 *
 	 * @param array{table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Index definition.
@@ -2231,6 +2483,74 @@ class WP_DuckDB_Driver {
 				'Failed to store DuckDB index metadata'
 			);
 		}
+	}
+
+	/**
+	 * Record MySQL column metadata for DESCRIBE and SHOW COLUMNS.
+	 *
+	 * @param string                         $table_name Table name.
+	 * @param array<int,array<string,mixed>> $metadata   Column metadata.
+	 */
+	private function record_column_metadata( string $table_name, array $metadata ): void {
+		$this->ensure_column_metadata_table();
+
+		$this->execute_duckdb_query(
+			'DELETE FROM '
+				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name ),
+			'Failed to reset DuckDB column metadata'
+		);
+
+		foreach ( $metadata as $offset => $column ) {
+			$this->execute_duckdb_query(
+				'INSERT INTO '
+					. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+					. ' (table_name, ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment) VALUES ('
+					. $this->connection->quote( $table_name )
+					. ', '
+					. ( $offset + 1 )
+					. ', '
+					. $this->connection->quote( $column['column_name'] )
+					. ', '
+					. $this->connection->quote( $column['column_type'] )
+					. ', '
+					. $this->connection->quote( $column['is_nullable'] )
+					. ', '
+					. $this->connection->quote( $column['column_key'] )
+					. ', '
+					. $this->connection->quote( $column['column_default'] )
+					. ', '
+					. $this->connection->quote( $column['extra'] )
+					. ', '
+					. $this->connection->quote( $column['collation_name'] )
+					. ', '
+					. $this->connection->quote( $column['comment'] )
+					. ')',
+				'Failed to store DuckDB column metadata'
+			);
+		}
+	}
+
+	/**
+	 * Read recorded MySQL column metadata.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function column_metadata_rows( string $table_name ): array {
+		$this->ensure_column_metadata_table();
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment FROM '
+				. $this->connection->quote_identifier( self::COLUMN_METADATA_TABLE )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. ' ORDER BY ordinal_position',
+			'Failed to inspect DuckDB column metadata'
+		);
+
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 
 	/**

@@ -51,7 +51,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$this->assertSame( 0, $create->rowCount() );
-		$this->assertStringStartsWith( 'CREATE TABLE "users"', $this->lastDuckDBQuery( $driver ) );
+		$this->assertNotEmpty(
+			array_filter(
+				$driver->get_last_duckdb_queries(),
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'CREATE TABLE "users"' );
+				}
+			)
+		);
 
 			$insert = $driver->query( "INSERT INTO `users` (`name`) VALUES ('Ada'), ('Grace')" );
 			$this->assertSame( 2, $insert->rowCount() );
@@ -100,7 +107,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame(
 			array(
 				'Field'   => 'id',
-				'Type'    => 'BIGINT',
+				'Type'    => 'bigint(20) unsigned',
 				'Null'    => 'NO',
 				'Key'     => 'PRI',
 				'Default' => null,
@@ -130,7 +137,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				array(
 					'Field'   => 'val1',
-					'Type'    => 'INTEGER',
+					'Type'    => 'int',
 					'Null'    => 'YES',
 					'Key'     => '',
 					'Default' => null,
@@ -138,7 +145,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				),
 				array(
 					'Field'   => 'val2',
-					'Type'    => 'INTEGER',
+					'Type'    => 'int',
 					'Null'    => 'NO',
 					'Key'     => '',
 					'Default' => '0',
@@ -152,14 +159,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				array(
 					'Field'      => 'title',
-					'Type'       => 'VARCHAR',
-					'Collation'  => null,
+					'Type'       => 'varchar(100)',
+					'Collation'  => 'utf8mb4_unicode_ci',
 					'Null'       => 'NO',
 					'Key'        => '',
 					'Default'    => 'untitled',
 					'Extra'      => '',
 					'Privileges' => 'select,insert,update,references',
-					'Comment'    => '',
+					'Comment'    => 'DuckDB does not persist this yet',
 				),
 			),
 			$driver->query( "SHOW FULL FIELDS IN `metadata` LIKE 'title'" )->fetchAll( PDO::FETCH_ASSOC )

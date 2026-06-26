@@ -120,4 +120,21 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
 		);
 	}
+
+	public function test_show_columns_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL,
+					autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+					UNIQUE KEY option_name (option_name),
+					KEY autoload (autoload)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			)
+		);
+
+		$this->assertParityRows( 'SHOW COLUMNS FROM metadata' );
+	}
 }
