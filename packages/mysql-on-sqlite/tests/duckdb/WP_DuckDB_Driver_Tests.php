@@ -2424,6 +2424,20 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		)->fetch( PDO::FETCH_ASSOC );
 		$this->assertSame( 0, (int) $key_column_usage_count['count'] );
 
+		$referential_constraints_count = $driver->query(
+			"SELECT COUNT(*) AS count
+			FROM information_schema.referential_constraints
+			WHERE constraint_schema = 'wp'"
+		)->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 0, (int) $referential_constraints_count['count'] );
+
+		$check_constraints_count = $driver->query(
+			"SELECT COUNT(*) AS count
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = 'wp'"
+		)->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 0, (int) $check_constraints_count['count'] );
+
 		$driver->query( 'CREATE TABLE empty_table (id INT, note TEXT)' );
 		$driver->query(
 			"CREATE TABLE metadata (
@@ -2657,6 +2671,40 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$constraints
 		);
 
+		$check_constraints = $driver->query(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = 'wp'
+			ORDER BY constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'amount_positive',
+					'CHECK_CLAUSE'       => 'amount > 0',
+				),
+				array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'checks_chk_1',
+					'CHECK_CLAUSE'       => 'id IS NULL OR id >= 0',
+				),
+			),
+			$check_constraints
+		);
+
+		$internal_checks = $driver->query(
+			"SELECT cc.CONSTRAINT_NAME
+			FROM information_schema.check_constraints AS cc
+			JOIN information_schema.table_constraints AS tc
+				ON tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+				AND tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
+			WHERE tc.TABLE_NAME LIKE '__wp_duckdb_%'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $internal_checks );
+
 		$create = $driver->query( 'SHOW CREATE TABLE checks' )->fetch( PDO::FETCH_ASSOC );
 		$this->assertSame(
 			implode(
@@ -2745,16 +2793,69 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$constraints
 		);
 
+		$referential_constraints = $driver->query(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME,
+				UNIQUE_CONSTRAINT_CATALOG, UNIQUE_CONSTRAINT_SCHEMA,
+				UNIQUE_CONSTRAINT_NAME, MATCH_OPTION, UPDATE_RULE, DELETE_RULE,
+				TABLE_NAME, REFERENCED_TABLE_NAME
+			FROM information_schema.referential_constraints
+			WHERE constraint_schema = 'wp'
+				AND table_name IN ('child_generated', 'child_named')
+			ORDER BY table_name, constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'child_generated_ibfk_1',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 'child_generated',
+					'REFERENCED_TABLE_NAME'     => 'parents',
+				),
+				array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'fk_parent',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'RESTRICT',
+					'TABLE_NAME'                => 'child_named',
+					'REFERENCED_TABLE_NAME'     => 'parents',
+				),
+			),
+			$referential_constraints
+		);
+
 		$usage = $driver->query(
 			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
 				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_SCHEMA,
 				REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
 			FROM information_schema.key_column_usage
-			WHERE table_schema = 'wp' AND table_name = 'child_named'
-			ORDER BY constraint_name, ordinal_position"
+			WHERE table_schema = 'wp'
+				AND table_name IN ('child_generated', 'child_named')
+			ORDER BY table_name, constraint_name, ordinal_position"
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame(
 			array(
+				array(
+					'CONSTRAINT_NAME'               => 'child_generated_ibfk_1',
+					'TABLE_NAME'                    => 'child_generated',
+					'COLUMN_NAME'                   => 'parent_id',
+					'ORDINAL_POSITION'              => 1,
+					'POSITION_IN_UNIQUE_CONSTRAINT' => 1,
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 'parents',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
 				array(
 					'CONSTRAINT_NAME'               => 'fk_parent',
 					'TABLE_NAME'                    => 'child_named',
@@ -2768,6 +2869,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			$usage
 		);
+
+		$internal_references = $driver->query(
+			"SELECT table_name
+			FROM information_schema.referential_constraints
+			WHERE table_name LIKE '__wp_duckdb_%'
+				OR referenced_table_name LIKE '__wp_duckdb_%'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $internal_references );
 
 		$create = $driver->query( 'SHOW CREATE TABLE child_named' )->fetch( PDO::FETCH_ASSOC );
 		$this->assertSame(
@@ -2783,6 +2892,96 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			$create['Create Table']
 		);
+	}
+
+	public function test_foreign_keys_referencing_driver_managed_unique_keys_are_not_supported(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query(
+			'CREATE TABLE unique_parent (
+				id INT PRIMARY KEY,
+				code INT,
+				UNIQUE KEY code_u (code)
+			)'
+		);
+
+		$parent_constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'unique_parent'
+			ORDER BY constraint_type, constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'PRIMARY',
+					'CONSTRAINT_TYPE' => 'PRIMARY KEY',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'code_u',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+				),
+			),
+			$parent_constraints
+		);
+
+		$parent_usage = $driver->query(
+			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME,
+				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_NAME,
+				REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp' AND table_name = 'unique_parent'
+			ORDER BY constraint_name, ordinal_position"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'               => 'code_u',
+					'TABLE_NAME'                    => 'unique_parent',
+					'COLUMN_NAME'                   => 'code',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => null,
+					'REFERENCED_TABLE_NAME'         => null,
+					'REFERENCED_COLUMN_NAME'        => null,
+				),
+				array(
+					'CONSTRAINT_NAME'               => 'PRIMARY',
+					'TABLE_NAME'                    => 'unique_parent',
+					'COLUMN_NAME'                   => 'id',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => null,
+					'REFERENCED_TABLE_NAME'         => null,
+					'REFERENCED_COLUMN_NAME'        => null,
+				),
+			),
+			$parent_usage
+		);
+
+		try {
+			$driver->query(
+				'CREATE TABLE unique_child (
+					id INT,
+					parent_code INT,
+					CONSTRAINT fk_parent_code FOREIGN KEY (parent_code) REFERENCES unique_parent (code)
+				)'
+			);
+			$this->fail( 'Expected DuckDB to reject a foreign key referencing a driver-managed unique index.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'primary key or unique constraint', strtolower( $e->getMessage() ) );
+		}
+
+		$referential_constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME
+			FROM information_schema.referential_constraints
+			WHERE table_name = 'unique_child'
+				OR referenced_table_name = 'unique_parent'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $referential_constraints );
 	}
 
 	public function test_information_schema_tables_exposes_mysql_shaped_table_metadata(): void {

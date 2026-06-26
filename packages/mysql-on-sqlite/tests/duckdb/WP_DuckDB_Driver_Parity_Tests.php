@@ -942,6 +942,21 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			WHERE table_schema = 'wp' AND table_name = 'check_metadata'
 			ORDER BY constraint_name"
 		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = 'wp'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT tc.CONSTRAINT_NAME, tc.TABLE_NAME, cc.CHECK_CLAUSE
+			FROM information_schema.table_constraints AS tc
+			JOIN information_schema.check_constraints AS cc
+				ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+				AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+			WHERE tc.table_schema = 'wp' AND tc.table_name = 'check_metadata'
+			ORDER BY tc.constraint_name"
+		);
 		$this->assertParityRows( 'SHOW CREATE TABLE check_metadata' );
 	}
 
@@ -954,11 +969,17 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 					parent_id INT,
 					CONSTRAINT fk_parent_ref FOREIGN KEY (parent_id) REFERENCES fk_parent (id) ON DELETE RESTRICT ON UPDATE NO ACTION
 				)',
+				'CREATE TABLE fk_child_generated (
+					id INT,
+					parent_id INT,
+					FOREIGN KEY (parent_id) REFERENCES fk_parent (id)
+				)',
 				'INSERT INTO fk_parent (id) VALUES (1)',
 			)
 		);
 
 		$this->assertParityRowCount( 'INSERT INTO fk_child (id, parent_id) VALUES (10, 1)' );
+		$this->assertParityRowCount( 'INSERT INTO fk_child_generated (id, parent_id) VALUES (20, 1)' );
 		$this->assertParityErrorContains(
 			'INSERT INTO fk_child (id, parent_id) VALUES (11, 404)',
 			'constraint'
@@ -970,18 +991,117 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows(
 			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
 			FROM information_schema.table_constraints
-			WHERE table_schema = 'wp' AND table_name = 'fk_child'
-			ORDER BY constraint_name"
+			WHERE table_schema = 'wp'
+				AND table_name IN ('fk_child', 'fk_child_generated')
+			ORDER BY table_name, constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME,
+				UNIQUE_CONSTRAINT_CATALOG, UNIQUE_CONSTRAINT_SCHEMA,
+				UNIQUE_CONSTRAINT_NAME, MATCH_OPTION, UPDATE_RULE, DELETE_RULE,
+				TABLE_NAME, REFERENCED_TABLE_NAME
+			FROM information_schema.referential_constraints
+			WHERE constraint_schema = 'wp'
+				AND table_name IN ('fk_child', 'fk_child_generated')
+			ORDER BY table_name, constraint_name"
 		);
 		$this->assertParityRows(
 			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
 				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_SCHEMA,
 				REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
 			FROM information_schema.key_column_usage
-			WHERE table_schema = 'wp' AND table_name = 'fk_child'
-			ORDER BY constraint_name, ordinal_position"
+			WHERE table_schema = 'wp'
+				AND table_name IN ('fk_child', 'fk_child_generated')
+			ORDER BY table_name, constraint_name, ordinal_position"
+		);
+		$this->assertParityRows(
+			"SELECT rc.CONSTRAINT_NAME, rc.TABLE_NAME, rc.REFERENCED_TABLE_NAME,
+				k.REFERENCED_COLUMN_NAME
+			FROM information_schema.referential_constraints AS rc
+			JOIN information_schema.key_column_usage AS k
+				ON k.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+				AND k.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+			WHERE rc.constraint_schema = 'wp'
+			ORDER BY rc.table_name, rc.constraint_name"
 		);
 		$this->assertParityRows( 'SHOW CREATE TABLE fk_child' );
+		$this->assertParityRows( 'SHOW CREATE TABLE fk_child_generated' );
+	}
+
+	public function test_unique_key_foreign_key_metadata_documents_current_duckdb_gap(): void {
+		$sqlite_driver = new WP_SQLite_Driver(
+			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
+			'wp'
+		);
+		$duckdb_driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$parent_sql = 'CREATE TABLE unique_parent (
+			id INT PRIMARY KEY,
+			code INT,
+			UNIQUE KEY code_u (code)
+		)';
+		$child_sql  = 'CREATE TABLE unique_child (
+			id INT,
+			parent_code INT,
+			CONSTRAINT fk_parent_code FOREIGN KEY (parent_code) REFERENCES unique_parent (code)
+		)';
+
+		$sqlite_driver->query( $parent_sql, PDO::FETCH_ASSOC );
+		$duckdb_driver->query( $parent_sql );
+		$sqlite_driver->query( $child_sql, PDO::FETCH_ASSOC );
+
+		try {
+			$duckdb_driver->query( $child_sql );
+			$this->fail( 'Expected DuckDB to reject a foreign key referencing a driver-managed unique index.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'primary key or unique constraint', strtolower( $e->getMessage() ) );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'        => 'fk_parent_code',
+					'UNIQUE_CONSTRAINT_NAME' => 'code_u',
+					'TABLE_NAME'             => 'unique_child',
+					'REFERENCED_TABLE_NAME'  => 'unique_parent',
+				),
+			),
+			$sqlite_driver->query(
+				"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp' AND table_name = 'unique_child'
+				ORDER BY constraint_name",
+				PDO::FETCH_ASSOC
+			)
+		);
+
+		$sqlite_usage = $sqlite_driver->query(
+			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME,
+				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_NAME,
+				REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp' AND table_name = 'unique_child'
+			ORDER BY constraint_name, ordinal_position",
+			PDO::FETCH_ASSOC
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'               => 'fk_parent_code',
+					'TABLE_NAME'                    => 'unique_child',
+					'COLUMN_NAME'                   => 'parent_code',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
+					'REFERENCED_TABLE_NAME'         => 'unique_parent',
+					'REFERENCED_COLUMN_NAME'        => 'code',
+				),
+			),
+			$sqlite_usage
+		);
 	}
 
 	public function test_information_schema_tables_metadata_matches_sqlite(): void {
