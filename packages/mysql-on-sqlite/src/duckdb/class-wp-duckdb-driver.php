@@ -31,6 +31,11 @@ class WP_DuckDB_Driver {
 	const INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE = '__wp_duckdb_information_schema_table_constraints';
 	const INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE  = '__wp_duckdb_information_schema_key_column_usage';
 
+	const SUPPORTED_SESSION_SYSTEM_VARIABLES = array(
+		'autocommit' => true,
+		'big_tables' => true,
+	);
+
 	const DATA_TYPE_MAP = array(
 		WP_MySQL_Lexer::BOOL_SYMBOL       => 'BOOLEAN',
 		WP_MySQL_Lexer::BOOLEAN_SYMBOL    => 'BOOLEAN',
@@ -99,6 +104,13 @@ class WP_DuckDB_Driver {
 	 * @var int
 	 */
 	private $last_insert_id = 0;
+
+	/**
+	 * MySQL session system variables emulated by this driver.
+	 *
+	 * @var array<string,int|string>
+	 */
+	private $session_system_variables = array();
 
 	/**
 	 * Whether a MySQL LOCK TABLES statement opened the current transaction.
@@ -177,6 +189,8 @@ class WP_DuckDB_Driver {
 				return $this->execute_lock_tables_statement( $tokens );
 			case WP_MySQL_Lexer::UNLOCK_SYMBOL:
 				return $this->execute_unlock_tables_statement( $tokens );
+			case WP_MySQL_Lexer::SET_SYMBOL:
+				return $this->execute_set_statement( $tokens );
 			case WP_MySQL_Lexer::SELECT_SYMBOL:
 				return $this->execute_select( $tokens );
 			case WP_MySQL_Lexer::CREATE_SYMBOL:
@@ -239,6 +253,18 @@ class WP_DuckDB_Driver {
 	 */
 	public function get_insert_id(): int {
 		return $this->last_insert_id;
+	}
+
+	/**
+	 * Get an emulated MySQL session system variable value.
+	 *
+	 * @param string $name Variable name.
+	 * @return int|string|null Stored value, or null when supported but unset.
+	 */
+	private function get_session_system_variable( string $name ) {
+		$normalized_name = $this->normalize_supported_session_system_variable_name( $name );
+
+		return $this->session_system_variables[ $normalized_name ] ?? null;
 	}
 
 	/**
@@ -334,6 +360,11 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_select( array $tokens ): WP_DuckDB_Result_Statement {
+		$session_variable_select = $this->execute_session_system_variable_select( $tokens );
+		if ( null !== $session_variable_select ) {
+			return $session_variable_select;
+		}
+
 		$rewrite_information_schema_tables            = $this->uses_information_schema_tables( $tokens );
 		$rewrite_information_schema_columns           = $this->uses_information_schema_columns( $tokens );
 		$rewrite_information_schema_statistics        = $this->uses_information_schema_statistics( $tokens );
@@ -366,6 +397,136 @@ class WP_DuckDB_Driver {
 			),
 			'Unsupported DuckDB MySQL-emulation SELECT statement'
 		);
+	}
+
+	/**
+	 * Execute a simple SELECT list of supported session system variables.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement|null Statement when emulated, null for generic SELECT handling.
+	 */
+	private function execute_session_system_variable_select( array $tokens ): ?WP_DuckDB_Result_Statement {
+		$variables = $this->parse_session_system_variable_select( $tokens );
+		if ( null === $variables ) {
+			return null;
+		}
+
+		$columns = array();
+		$row     = array();
+		foreach ( $variables as $variable ) {
+			$columns[] = $variable['alias'];
+			$row[]     = $this->get_session_system_variable( $variable['name'] );
+		}
+
+		return new WP_DuckDB_Result_Statement( $columns, array( $row ), 0 );
+	}
+
+	/**
+	 * Parse a simple SELECT list of supported session system variables.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array<int,array{name:string,alias:string}>|null Variables, or null for generic SELECT handling.
+	 */
+	private function parse_session_system_variable_select( array $tokens ): ?array {
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$select_list_end = count( $tokens );
+		if (
+			$select_list_end >= 4
+			&& WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $select_list_end - 2 ]->id
+			&& WP_MySQL_Lexer::DUAL_SYMBOL === $tokens[ $select_list_end - 1 ]->id
+		) {
+			$select_list_end -= 2;
+		}
+
+		$select_list = array_slice( $tokens, 1, $select_list_end - 1 );
+		if ( count( $select_list ) === 0 ) {
+			return null;
+		}
+
+		$variables = array();
+		foreach ( $this->split_top_level_comma_items( $select_list ) as $item ) {
+			$variable = $this->parse_session_system_variable_reference( $item );
+			if ( null === $variable ) {
+				return null;
+			}
+			$variables[] = $variable;
+		}
+
+		return $variables;
+	}
+
+	/**
+	 * Parse one supported @@session_variable reference.
+	 *
+	 * @param WP_Parser_Token[] $tokens Reference tokens.
+	 * @return array{name:string,alias:string}|null Variable, or null when the item is not supported by this slice.
+	 */
+	private function parse_session_system_variable_reference( array $tokens ): ?array {
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		if ( 2 === count( $tokens ) ) {
+			$name = $this->session_system_variable_name( $tokens[1] );
+		} elseif (
+			4 === count( $tokens )
+			&& WP_MySQL_Lexer::SESSION_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[2]->id
+		) {
+			$name = $this->session_system_variable_name( $tokens[3] );
+		} else {
+			return null;
+		}
+
+		if ( null === $name || ! $this->is_supported_session_system_variable( $name ) ) {
+			return null;
+		}
+
+		return array(
+			'name'  => $name,
+			'alias' => $this->concatenate_token_bytes( $tokens ),
+		);
+	}
+
+	/**
+	 * Normalize a supported session system variable token.
+	 *
+	 * @param WP_Parser_Token $token Variable-name token.
+	 * @return string|null Lowercase variable name, or null when not an identifier.
+	 */
+	private function session_system_variable_name( WP_Parser_Token $token ): ?string {
+		if ( $this->is_non_identifier_token( $token ) ) {
+			return null;
+		}
+
+		return strtolower( $token->get_value() );
+	}
+
+	/**
+	 * Check whether this bounded slice supports a session system variable.
+	 *
+	 * @param string $name Lowercase variable name.
+	 * @return bool Whether the variable is supported.
+	 */
+	private function is_supported_session_system_variable( string $name ): bool {
+		return isset( self::SUPPORTED_SESSION_SYSTEM_VARIABLES[ $name ] );
+	}
+
+	/**
+	 * Concatenate original token bytes without whitespace.
+	 *
+	 * @param WP_Parser_Token[] $tokens Tokens.
+	 * @return string Concatenated token bytes.
+	 */
+	private function concatenate_token_bytes( array $tokens ): string {
+		$bytes = '';
+		foreach ( $tokens as $token ) {
+			$bytes .= $token->get_bytes();
+		}
+		return $bytes;
 	}
 
 	/**
@@ -1794,6 +1955,258 @@ class WP_DuckDB_Driver {
 	 */
 	private function empty_ddl_result(): WP_DuckDB_Result_Statement {
 		return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Execute bounded MySQL SET session-variable assignments.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_set_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		$this->expect_token( $tokens, 0, WP_MySQL_Lexer::SET_SYMBOL, 'Expected SET.' );
+
+		$assignments = $this->split_top_level_comma_items( array_slice( $tokens, 1 ) );
+		if ( count( $assignments ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'SET statement requires at least one assignment.' );
+		}
+
+		// Match the current SQLite driver's scoped comma-list behavior: only
+		// the leading SESSION assignment is applied.
+		if (
+			count( $assignments ) > 1
+			&& isset( $assignments[0][0] )
+			&& WP_MySQL_Lexer::SESSION_SYMBOL === $assignments[0][0]->id
+		) {
+			$assignments = array( $assignments[0] );
+		}
+
+		$default_scope = WP_MySQL_Lexer::SESSION_SYMBOL;
+		foreach ( $assignments as $assignment ) {
+			$default_scope = $this->execute_set_session_system_variable_assignment( $assignment, $default_scope );
+		}
+
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Execute one SET assignment for an emulated session system variable.
+	 *
+	 * @param WP_Parser_Token[] $tokens        Assignment tokens.
+	 * @param int               $default_scope Active default scope token ID.
+	 * @return int Updated default scope token ID.
+	 */
+	private function execute_set_session_system_variable_assignment( array $tokens, int $default_scope ): int {
+		$index = 0;
+		$scope = $default_scope;
+
+		if ( isset( $tokens[ $index ] ) && $this->is_set_statement_type_token( $tokens[ $index ] ) ) {
+			$scope         = $tokens[ $index ]->id;
+			$default_scope = $scope;
+			++$index;
+		}
+
+		$target = $this->parse_set_session_system_variable_target( $tokens, $index, $scope );
+		$name   = $this->normalize_supported_session_system_variable_name( $target['name'] );
+		$scope  = $target['scope'];
+		$index  = $target['next_index'];
+
+		$this->assert_supported_set_session_scope( $scope );
+		$this->expect_token(
+			$tokens,
+			$index,
+			WP_MySQL_Lexer::EQUAL_OPERATOR,
+			'Unsupported SET statement in DuckDB driver. Expected "=" for session variable assignment.'
+		);
+		++$index;
+
+		$value_tokens = array_slice( $tokens, $index );
+		if ( 1 !== count( $value_tokens ) ) {
+			throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+		}
+
+		$this->session_system_variables[ $name ] = $this->normalize_set_session_system_variable_value( $name, $value_tokens[0] );
+
+		return $default_scope;
+	}
+
+	/**
+	 * Parse the target side of one SET assignment.
+	 *
+	 * @param WP_Parser_Token[] $tokens        Assignment tokens.
+	 * @param int               $index         Current token index.
+	 * @param int               $default_scope Active default scope token ID.
+	 * @return array{name:string,scope:int,next_index:int}
+	 */
+	private function parse_set_session_system_variable_target( array $tokens, int $index, int $default_scope ): array {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SET statement in DuckDB driver. Expected session variable name.' );
+		}
+
+		if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[ $index ]->id ) {
+			return array(
+				'name'       => $this->identifier_value( $tokens[ $index ] ),
+				'scope'      => $default_scope,
+				'next_index' => $index + 1,
+			);
+		}
+
+		++$index;
+		if ( ! isset( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SET statement in DuckDB driver. Expected session variable name after @@.' );
+		}
+
+		$scope = WP_MySQL_Lexer::SESSION_SYMBOL;
+		if (
+			$this->is_set_statement_type_token( $tokens[ $index ] )
+			&& isset( $tokens[ $index + 1 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+		) {
+			$scope  = $tokens[ $index ]->id;
+			$index += 2;
+			if ( ! isset( $tokens[ $index ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported SET statement in DuckDB driver. Expected session variable name after @@scope.' );
+			}
+		}
+
+		return array(
+			'name'       => $this->identifier_value( $tokens[ $index ] ),
+			'scope'      => $scope,
+			'next_index' => $index + 1,
+		);
+	}
+
+	/**
+	 * Normalize an emulated session system variable value.
+	 *
+	 * @param string          $name  Normalized variable name.
+	 * @param WP_Parser_Token $token Value token.
+	 * @return int|string Normalized stored value.
+	 */
+	private function normalize_set_session_system_variable_value( string $name, WP_Parser_Token $token ) {
+		$value = $token->get_value();
+		$lower = strtolower( $value );
+
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+			if ( 'on' === $lower ) {
+				return 1;
+			}
+			if ( 'off' === $lower ) {
+				return 0;
+			}
+
+			throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+		}
+
+		if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
+			throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+		}
+
+		if ( 'on' === $lower || 'true' === $lower ) {
+			return 1;
+		}
+		if ( 'off' === $lower || 'false' === $lower ) {
+			return 0;
+		}
+		if ( 'default' === $lower ) {
+			return 'DEFAULT';
+		}
+		if ( WP_MySQL_Lexer::INT_NUMBER === $token->id && ( '0' === $value || '1' === $value ) ) {
+			return (int) $value;
+		}
+
+		throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+	}
+
+	/**
+	 * Build an unsupported SET value exception.
+	 *
+	 * @param string $name Normalized variable name.
+	 * @return WP_DuckDB_Driver_Exception Exception.
+	 */
+	private function new_unsupported_set_session_system_variable_value_exception( string $name ): WP_DuckDB_Driver_Exception {
+		return new WP_DuckDB_Driver_Exception(
+			'Unsupported SET value for '
+			. $name
+			. ' in DuckDB driver. Only ON, OFF, TRUE, FALSE, 1, 0, and DEFAULT are supported.'
+		);
+	}
+
+	/**
+	 * Normalize and validate a supported emulated session system variable name.
+	 *
+	 * @param string $name Variable name.
+	 * @return string Normalized variable name.
+	 */
+	private function normalize_supported_session_system_variable_name( string $name ): string {
+		$normalized = strtolower( $name );
+		if ( ! isset( self::SUPPORTED_SESSION_SYSTEM_VARIABLES[ $normalized ] ) ) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Unsupported SET session variable in DuckDB driver: '
+				. $name
+				. '. Only autocommit and big_tables are supported.'
+			);
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * Check whether a token is a SET statement scope/type token.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether this token is a SET scope/type.
+	 */
+	private function is_set_statement_type_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::SESSION_SYMBOL,
+				WP_MySQL_Lexer::LOCAL_SYMBOL,
+				WP_MySQL_Lexer::GLOBAL_SYMBOL,
+				WP_MySQL_Lexer::PERSIST_SYMBOL,
+				WP_MySQL_Lexer::PERSIST_ONLY_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Assert that a SET assignment uses a supported session scope.
+	 *
+	 * @param int $scope SET statement scope token ID.
+	 */
+	private function assert_supported_set_session_scope( int $scope ): void {
+		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $scope ) {
+			return;
+		}
+
+		throw new WP_DuckDB_Driver_Exception(
+			"Unsupported SET statement type: '{$this->set_statement_type_name( $scope )}' in DuckDB driver."
+		);
+	}
+
+	/**
+	 * Get a readable SET statement scope/type name.
+	 *
+	 * @param int $scope SET statement scope token ID.
+	 * @return string Scope/type name.
+	 */
+	private function set_statement_type_name( int $scope ): string {
+		switch ( $scope ) {
+			case WP_MySQL_Lexer::SESSION_SYMBOL:
+				return 'SESSION';
+			case WP_MySQL_Lexer::LOCAL_SYMBOL:
+				return 'LOCAL';
+			case WP_MySQL_Lexer::GLOBAL_SYMBOL:
+				return 'GLOBAL';
+			case WP_MySQL_Lexer::PERSIST_SYMBOL:
+				return 'PERSIST';
+			case WP_MySQL_Lexer::PERSIST_ONLY_SYMBOL:
+				return 'PERSIST_ONLY';
+		}
+
+		return 'UNKNOWN';
 	}
 
 	/**

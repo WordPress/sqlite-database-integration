@@ -75,6 +75,42 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id FROM tx_items ORDER BY id' );
 	}
 
+	public function test_session_variable_sql_matches_sqlite(): void {
+		$this->assertParityRows( 'SELECT @@autocommit, @@session.autocommit, @@big_tables, @@SESSION.big_tables' );
+
+		$this->assertParityRowCount( 'SET SESSION autocommit = 1, big_tables = 0' );
+		$this->assertParityRows( 'SELECT @@autocommit, @@session.autocommit, @@big_tables, @@session.big_tables' );
+
+		foreach (
+			array(
+				'SET autocommit = ON, big_tables = OFF',
+				'SET autocommit = on, big_tables = off',
+				"SET autocommit = 'ON', big_tables = 'OFF'",
+				"SET autocommit = 'on', big_tables = 'off'",
+				'SET autocommit = TRUE, big_tables = FALSE',
+				'SET autocommit = true, big_tables = false',
+				'SET autocommit = 1, big_tables = 0',
+			) as $sql
+		) {
+			$this->assertParityRowCount( $sql );
+			$this->assertParityRows( 'SELECT @@autocommit, @@big_tables' );
+		}
+
+		$this->assertParityRowCount( 'SET autocommit = OFF' );
+		$this->assertParityRows( 'SELECT @@autocommit' );
+		$this->assertParityRowCount( 'SET big_tables = ON' );
+		$this->assertParityRows( 'SELECT @@big_tables' );
+
+		$this->assertParityRowCount( 'SET SESSION autocommit = 0' );
+		$this->assertParityRowCount( 'SET @@session.big_tables = 1' );
+		$this->assertParityRows(
+			'SELECT @@autocommit, @@SESSION.autocommit, @@big_tables, @@session.big_tables'
+		);
+
+		$this->assertParityRowCount( 'SET autocommit = DEFAULT, big_tables = DEFAULT' );
+		$this->assertParityRows( 'SELECT @@autocommit, @@big_tables' );
+	}
+
 	public function test_lock_unlock_sql_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

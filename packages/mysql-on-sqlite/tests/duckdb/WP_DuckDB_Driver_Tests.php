@@ -149,6 +149,196 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_session_boolean_variables_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		foreach (
+			array(
+				'SET autocommit = ON, big_tables = OFF',
+				'SET autocommit = on, big_tables = off',
+				"SET autocommit = 'ON', big_tables = 'OFF'",
+				"SET autocommit = 'on', big_tables = 'off'",
+				'SET autocommit = TRUE, big_tables = FALSE',
+				'SET autocommit = true, big_tables = false',
+				'SET autocommit = 1, big_tables = 0',
+			) as $sql
+		) {
+			$set = $driver->query( $sql );
+			$this->assertSame( 0, $set->rowCount() );
+			$this->assertSame( 0, $set->columnCount() );
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+			$read = $driver->query( 'SELECT @@autocommit, @@big_tables' );
+			$this->assertSame( 2, $read->columnCount() );
+			$this->assertSame( array( 'name' => '@@autocommit' ), $read->getColumnMeta( 0 ) );
+			$this->assertSame( array( 'name' => '@@big_tables' ), $read->getColumnMeta( 1 ) );
+			$this->assertSame(
+				array(
+					'@@autocommit' => 1,
+					'@@big_tables' => 0,
+				),
+				$read->fetch( PDO::FETCH_ASSOC )
+			);
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		}
+
+		$set = $driver->query( 'SET autocommit = OFF' );
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame(
+			array( '@@autocommit' => 0 ),
+			$driver->query( 'SELECT @@autocommit' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$set = $driver->query( 'SET big_tables = ON' );
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame(
+			array( '@@big_tables' => 1 ),
+			$driver->query( 'SELECT @@big_tables' )->fetch( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_session_variable_scoped_forms_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$read = $driver->query( 'SELECT @@session.autocommit, @@SESSION.big_tables' );
+		$this->assertSame(
+			array(
+				'@@session.autocommit' => null,
+				'@@SESSION.big_tables' => null,
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array( 'name' => '@@session.autocommit' ), $read->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => '@@SESSION.big_tables' ), $read->getColumnMeta( 1 ) );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		foreach (
+			array(
+				'SET SESSION autocommit = 0',
+				'SET @@session.big_tables = 1',
+			) as $sql
+		) {
+			$set = $driver->query( $sql );
+			$this->assertSame( 0, $set->rowCount() );
+			$this->assertSame( 0, $set->columnCount() );
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		}
+
+		$this->assertSame(
+			array(
+				'@@autocommit'         => 0,
+				'@@SESSION.autocommit' => 0,
+				'@@big_tables'         => 1,
+				'@@session.big_tables' => 1,
+			),
+			$driver->query(
+				'SELECT @@autocommit, @@SESSION.autocommit, @@big_tables, @@session.big_tables'
+			)->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
+	public function test_session_variable_scoped_comma_list_matches_sqlite_current_behavior(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$set = $driver->query( 'SET SESSION autocommit = 1, big_tables = 0' );
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$read = $driver->query( 'SELECT @@autocommit, @@session.autocommit, @@big_tables, @@session.big_tables' );
+		$this->assertSame(
+			array(
+				'@@autocommit'         => 1,
+				'@@session.autocommit' => 1,
+				'@@big_tables'         => null,
+				'@@session.big_tables' => null,
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
+	public function test_session_variable_default_matches_sqlite_current_behavior(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		foreach (
+			array(
+				'SET autocommit = DEFAULT',
+				'SET @@session.big_tables = DEFAULT',
+			) as $sql
+		) {
+			$set = $driver->query( $sql );
+			$this->assertSame( 0, $set->rowCount() );
+			$this->assertSame( 0, $set->columnCount() );
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		}
+
+		$this->assertSame(
+			array(
+				'@@autocommit'         => 'DEFAULT',
+				'@@session.big_tables' => 'DEFAULT',
+			),
+			$driver->query( 'SELECT @@autocommit, @@session.big_tables' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
+	public function test_session_variable_unsupported_set_forms_are_rejected(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		foreach (
+			array(
+				'SET autocommit = 2',
+				'SET autocommit = -1',
+				'SET autocommit = NULL',
+				'SET autocommit = YES',
+				'SET autocommit = (SELECT 1)',
+				'SET autocommit = @saved',
+				'SET GLOBAL autocommit = 1',
+				'SET LOCAL autocommit = 1',
+				'SET PERSIST autocommit = 1',
+				'SET PERSIST_ONLY autocommit = 1',
+				'SET @@GLOBAL.autocommit = 1',
+				'SET @@LOCAL.autocommit = 1',
+			) as $sql
+		) {
+			$this->assertDriverQueryRejected( $driver, $sql );
+		}
+	}
+
+	public function test_session_variable_unsupported_select_shapes_are_rejected(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE real_table (id INT)' );
+
+		foreach (
+			array(
+				'SELECT @@GLOBAL.autocommit',
+				'SELECT @@LOCAL.autocommit',
+				'SELECT @@autocommit AS ac',
+				'SELECT @@autocommit + 0',
+				'SELECT COALESCE(@@autocommit, 1)',
+				'SELECT @@autocommit FROM real_table',
+			) as $sql
+		) {
+			$this->assertDriverQueryRejected( $driver, $sql );
+		}
+	}
+
 	public function test_lock_unlock_table_statements_update_transaction_state(): void {
 		$this->requireDuckDBRuntime();
 
@@ -2987,6 +3177,15 @@ SQL,
 		$this->expectException( WP_DuckDB_Driver_Exception::class );
 		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN NOT NULL requires a DEFAULT for non-empty tables.' );
 		$driver->query( 'ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL' );
+	}
+
+	private function assertDriverQueryRejected( WP_DuckDB_Driver $driver, string $sql ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		try {
+			$driver->query( $sql );
+			$this->fail( 'Expected DuckDB driver rejection for SQL: ' . $sql );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertNotSame( '', $e->getMessage() );
+		}
 	}
 
 	private function lastDuckDBQuery( WP_DuckDB_Driver $driver ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
