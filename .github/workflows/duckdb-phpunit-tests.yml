@@ -1,0 +1,86 @@
+name: DuckDB PHPUnit Tests
+
+on:
+  push:
+    branches:
+      - trunk
+    paths:
+      - '.github/workflows/duckdb-phpunit-tests.yml'
+      - 'packages/mysql-on-sqlite/composer.json'
+      - 'packages/mysql-on-sqlite/composer.lock'
+      - 'packages/mysql-on-sqlite/src/load.php'
+      - 'packages/mysql-on-sqlite/src/duckdb/**'
+      - 'packages/mysql-on-sqlite/tests/duckdb/**'
+      - 'packages/plugin-sqlite-database-integration/constants.php'
+      - 'packages/plugin-sqlite-database-integration/db-duckdb.copy'
+      - 'packages/plugin-sqlite-database-integration/wp-includes/db.php'
+      - 'packages/plugin-sqlite-database-integration/wp-includes/duckdb/**'
+  pull_request:
+    paths:
+      - '.github/workflows/duckdb-phpunit-tests.yml'
+      - 'packages/mysql-on-sqlite/composer.json'
+      - 'packages/mysql-on-sqlite/composer.lock'
+      - 'packages/mysql-on-sqlite/src/load.php'
+      - 'packages/mysql-on-sqlite/src/duckdb/**'
+      - 'packages/mysql-on-sqlite/tests/duckdb/**'
+      - 'packages/plugin-sqlite-database-integration/constants.php'
+      - 'packages/plugin-sqlite-database-integration/db-duckdb.copy'
+      - 'packages/plugin-sqlite-database-integration/wp-includes/db.php'
+      - 'packages/plugin-sqlite-database-integration/wp-includes/duckdb/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
+jobs:
+  duckdb-test:
+    name: PHP 8.3 / DuckDB
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the repo.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: ffi, pdo_sqlite
+          ini-values: ffi.enable=true
+          coverage: none
+          tools: phpunit-polyfills
+
+      - name: Install Composer dependencies
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          ignore-cache: "yes"
+          composer-options: "--optimize-autoloader"
+
+      - name: Install DuckDB PHP client
+        run: |
+          composer config --no-plugins allow-plugins.satur.io/duckdb-auto true
+          composer require --dev --no-plugins --no-interaction --with-all-dependencies satur.io/duckdb-auto
+          composer dump-autoload
+          ./vendor/bin/install-c-lib
+        working-directory: packages/mysql-on-sqlite
+
+      - name: Verify DuckDB runtime
+        run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
+        working-directory: packages/mysql-on-sqlite
+
+      - name: Run DuckDB PHPUnit suite
+        env:
+          WP_DUCKDB_TESTS: '1'
+          WP_DUCKDB_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+        run: php -d ffi.enable=true ./vendor/bin/phpunit -c ./phpunit.xml.dist --group duckdb
+        working-directory: packages/mysql-on-sqlite

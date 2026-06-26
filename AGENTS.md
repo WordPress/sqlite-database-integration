@@ -55,7 +55,18 @@ composer run wp-test-start              # Start WordPress environment (Docker)
 composer run wp-test-php                # Run WordPress PHPUnit tests
 composer run wp-test-e2e                # Run WordPress E2E tests (Playwright)
 composer run wp-test-clean              # Clean up WordPress environment (Docker and DB)
+
+# Optional DuckDB driver tests (under packages/mysql-on-sqlite; PHP >=8.3 with ext-ffi)
+cd packages/mysql-on-sqlite
+composer run test -- --group duckdb-runtime
+WP_DUCKDB_TESTS=1 WP_DUCKDB_AUTOLOAD=/path/to/duckdb/vendor/autoload.php composer run test -- --group duckdb
 ```
+
+DuckDB support is experimental and optional. Do not add `satur.io/duckdb-auto`
+or any DuckDB PHP client package to the default project dependency graph unless
+that compatibility decision is explicitly requested. The WordPress drop-in uses
+`DB_ENGINE=duckdb`/`define( 'DB_ENGINE', 'duckdb' )` and
+`DUCKDB_PHP_AUTOLOAD`; PHPUnit uses `WP_DUCKDB_AUTOLOAD`.
 
 ## Release workflow
 Release is streamlined with a local preparation script and GitHub Actions:

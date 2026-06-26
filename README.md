@@ -13,6 +13,7 @@ It is a monorepo that includes the following components:
 - **MySQL lexer** — A fast MySQL lexer with multi-version support.
 - **MySQL parser** — An exhaustive MySQL parser with multi-version support.
 - **SQLite driver** — A MySQL emulation layer on top of SQLite with a PDO-compatible API.
+- **DuckDB driver** — An experimental, optional DuckDB backend for targeted development and testing.
 - **MySQL proxy** — A MySQL binary protocol implementation to support MySQL-based projects beyond PHP.
 - **WordPress plugin** — A plugin that adds SQLite support to WordPress.
 - **Test suites** — A set of extensive test suites to cover MySQL syntax and functionality.
@@ -25,6 +26,9 @@ replaces the symlink with a copy of the driver for release.
 The codebase is pure PHP with zero dependencies. It supports PHP 7.2 through 8.5,
 MySQL syntax from version 5.7 onward, and requires SQLite 3.37.0 or newer
 (with legacy mode down to 3.27.0).
+
+The default SQLite path remains the zero-dependency runtime. DuckDB support is
+optional and must be installed and enabled explicitly.
 
 ## Quick start
 The codebase is written in PHP and Composer is used to manage the project.
@@ -63,6 +67,68 @@ The default code path is pure PHP. For environments that can load PHP extensions
 - [Build, load, and benchmark docs](packages/php-ext-wp-mysql-parser/README.md)
 
 Latest local measurement (Apple Silicon macOS, PHP 8.4.5 CLI, 2026-05-26): the native lexer path processed the MySQL test corpus at ~343k QPS versus ~72k QPS for pure PHP (~4.80x), and the native parser path processed it at ~108k QPS versus ~7k QPS for pure PHP (~15.45x).
+
+## Optional: DuckDB backend
+
+DuckDB support is experimental and is not part of the default SQLite runtime or
+default CI matrix. It uses the third-party DuckDB PHP client documented by
+DuckDB. That client uses FFI, requires PHP 8.3 or newer and `ext-ffi`, and
+DuckDB recommends the automatic Composer install with `satur.io/duckdb-auto`.
+See the [DuckDB PHP client docs](https://duckdb.org/docs/lts/clients/php) and
+the [saturio/duckdb-php installation docs](https://duckdb-php.readthedocs.io/en/latest/installation/).
+
+Install the DuckDB PHP client outside the default project dependency graph, then
+point this project at that Composer autoloader. The commands below install
+`satur.io/duckdb-auto` but run the bundled C-library installer explicitly, which
+avoids Composer plugin hook ordering failures before `vendor/autoload.php`
+exists.
+
+```bash
+REPO_DIR=$(pwd)
+mkdir -p /tmp/wp-duckdb-php
+cd /tmp/wp-duckdb-php
+composer init --no-interaction --name=wp/duckdb-runtime
+composer config allow-plugins.satur.io/duckdb-auto true
+composer require --no-plugins --no-interaction satur.io/duckdb-auto
+composer dump-autoload
+./vendor/bin/install-c-lib
+cd "$REPO_DIR"
+```
+
+For WordPress manual testing, select the DuckDB backend and load that autoloader
+before the drop-in initializes:
+
+```php
+define( 'DB_ENGINE', 'duckdb' );
+define( 'DUCKDB_PHP_AUTOLOAD', '/tmp/wp-duckdb-php/vendor/autoload.php' );
+```
+
+If your local WordPress launcher maps environment variables into `wp-config.php`,
+set `DB_ENGINE=duckdb` and `DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php`.
+
+Exact local verification commands for this branch:
+
+```bash
+cd packages/mysql-on-sqlite
+composer run test -- --group duckdb-runtime
+
+WP_DUCKDB_TESTS=1 \
+WP_DUCKDB_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php \
+DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php \
+composer run test -- --group duckdb
+```
+
+Current limitations:
+- DuckDB support is a first-stage adapter. It is intended for targeted local
+  verification and isolated CI, not production WordPress traffic.
+- The branch currently verifies runtime gating, connections, query execution,
+  persistence, result handling, prepared statements, a focused MySQL-to-DuckDB
+  driver subset, and WordPress-style schema DDL including secondary indexes. It
+  does not yet run the full WordPress PHPUnit or E2E suites against DuckDB.
+- DuckDB's concurrency model allows one process to read and write, or multiple
+  read-only processes. The DuckDB docs state that automatic writes from multiple
+  processes are not supported and that many small transactions are not its
+  primary design goal; see the [DuckDB concurrency docs](https://duckdb.org/docs/lts/connect/concurrency/).
 
 ## Release workflow
 Release is streamlined with a local preparation script and GitHub Actions:

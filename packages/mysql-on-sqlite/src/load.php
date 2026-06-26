@@ -43,3 +43,9 @@ require_once __DIR__ . '/sqlite/class-wp-sqlite-information-schema-reconstructor
 require_once __DIR__ . '/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
 require_once __DIR__ . '/sqlite/class-wp-pdo-mysql-on-sqlite.php';
 require_once __DIR__ . '/sqlite/class-wp-pdo-proxy-statement.php';
+require_once __DIR__ . '/duckdb/class-wp-duckdb-driver-exception.php';
+require_once __DIR__ . '/duckdb/class-wp-duckdb-runtime.php';
+require_once __DIR__ . '/duckdb/class-wp-duckdb-result-statement.php';
+require_once __DIR__ . '/duckdb/class-wp-duckdb-prepared-statement.php';
+require_once __DIR__ . '/duckdb/class-wp-duckdb-connection.php';
+require_once __DIR__ . '/duckdb/class-wp-duckdb-driver.php';

@@ -1,0 +1,290 @@
+<?php
+
+require_once __DIR__ . '/WP_DuckDB_TestCase.php';
+
+/**
+ * @group duckdb
+ */
+class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
+	public function test_select_mysql_functions_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp_tests',
+			)
+		);
+
+		$row = $driver->query( 'SELECT DATABASE() AS db_name, VERSION() AS mysql_version, RAND() AS r, UNIX_TIMESTAMP() AS unix_time' )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertSame( 'wp_tests', $row['db_name'] );
+		$this->assertSame( '8.0.38-DuckDB', $row['mysql_version'] );
+		$this->assertIsFloat( $row['r'] );
+		$this->assertGreaterThanOrEqual( 0, $row['r'] );
+		$this->assertLessThan( 1, $row['r'] );
+		$this->assertIsInt( $row['unix_time'] );
+		$this->assertGreaterThan( time() - 60, $row['unix_time'] );
+		$this->assertLessThan( time() + 60, $row['unix_time'] );
+	}
+
+	public function test_date_format_function_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$row    = $driver->query( "SELECT DATE_FORMAT(DATE '2026-06-26', '%Y-%m-%d') AS formatted_date" )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertSame( '2026-06-26', $row['formatted_date'] );
+	}
+
+	public function test_create_table_insert_update_delete_show_and_describe(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$create = $driver->query(
+			"CREATE TABLE `users` (
+				`id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				`name` VARCHAR(100) NOT NULL DEFAULT 'anonymous',
+				`visits` INT DEFAULT 0
+			) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_520_ci"
+		);
+
+		$this->assertSame( 0, $create->rowCount() );
+		$this->assertStringStartsWith( 'CREATE TABLE "users"', $this->lastDuckDBQuery( $driver ) );
+
+			$insert = $driver->query( "INSERT INTO `users` (`name`) VALUES ('Ada'), ('Grace')" );
+			$this->assertSame( 2, $insert->rowCount() );
+			$this->assertSame( 'INSERT INTO "users"("name") VALUES (\'Ada\'), (\'Grace\')', $this->lastDuckDBQuery( $driver ) );
+
+			$rows = $driver->query( 'SELECT id, name, visits FROM `users` ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'name'   => 'Ada',
+					'visits' => 0,
+				),
+				array(
+					'id'     => 2,
+					'name'   => 'Grace',
+					'visits' => 0,
+				),
+			),
+			$rows
+		);
+
+		$update = $driver->query( "UPDATE `users` SET `visits` = 3 WHERE `name` = 'Ada'" );
+		$this->assertSame( 1, $update->rowCount() );
+
+		$delete = $driver->query( "DELETE FROM `users` WHERE `name` = 'Grace'" );
+		$this->assertSame( 1, $delete->rowCount() );
+
+		$remaining = $driver->query( 'SELECT name, visits FROM `users` ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'name'   => 'Ada',
+					'visits' => 3,
+				),
+			),
+			$remaining
+		);
+
+		$this->assertSame(
+			array( array( 'Tables_in_wp' => 'users' ) ),
+			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$describe = $driver->query( 'DESCRIBE `users`' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				'Field'   => 'id',
+				'Type'    => 'BIGINT',
+				'Null'    => 'NO',
+				'Key'     => 'PRI',
+				'Default' => null,
+				'Extra'   => 'auto_increment',
+			),
+			$describe[0]
+		);
+		$this->assertSame( 'name', $describe[1]['Field'] );
+		$this->assertSame( 'NO', $describe[1]['Null'] );
+		$this->assertSame( 'anonymous', $describe[1]['Default'] );
+	}
+
+	public function test_regexp_predicates_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE options (option_name VARCHAR(100))' );
+		$driver->query( "INSERT INTO options VALUES ('rss_123'), ('transient')" );
+
+		$regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name REGEXP '^rss_.+$'" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'rss_123' ) ), $regexp_rows );
+
+		$not_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name NOT REGEXP '^rss_.+$'" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'transient' ) ), $not_regexp_rows );
+	}
+
+	public function test_table_level_primary_key_is_supported(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE memberships (
+				user_id BIGINT NOT NULL,
+				site_id BIGINT NOT NULL,
+				role VARCHAR(20) DEFAULT 'subscriber',
+				PRIMARY KEY (user_id, site_id)
+			)"
+		);
+
+		$driver->query( 'INSERT INTO memberships (user_id, site_id) VALUES (1, 2)' );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$driver->query( 'INSERT INTO memberships (user_id, site_id) VALUES (1, 2)' );
+	}
+
+	public function test_wordpress_style_schema_can_be_created(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		foreach ( $this->wordpressStyleSchemaQueries() as $query ) {
+			$driver->query( $query );
+		}
+
+		$this->assertSame(
+			array(
+				array( 'Tables_in_wp' => 'wp_options' ),
+				array( 'Tables_in_wp' => 'wp_postmeta' ),
+				array( 'Tables_in_wp' => 'wp_posts' ),
+				array( 'Tables_in_wp' => 'wp_usermeta' ),
+				array( 'Tables_in_wp' => 'wp_users' ),
+			),
+			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$options_indexes = $driver->query( 'SHOW INDEX FROM wp_options' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'PRIMARY', 'autoload', 'option_name' ), array_column( $options_indexes, 'Key_name' ) );
+		$this->assertSame( array( 0, 1, 0 ), array_map( 'intval', array_column( $options_indexes, 'Non_unique' ) ) );
+
+		$usermeta_indexes = $driver->query( 'SHOW INDEX FROM wp_usermeta' )->fetchAll( PDO::FETCH_ASSOC );
+		$meta_key_rows    = array_filter(
+			$usermeta_indexes,
+			function ( array $row ): bool {
+				return 'meta_key' === $row['Key_name'];
+			}
+		);
+		$meta_key_row     = array_values( $meta_key_rows )[0];
+		$this->assertSame( 191, $meta_key_row['Sub_part'] );
+
+		$driver->query( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('siteurl', 'https://example.test', 'yes')" );
+
+		try {
+			$driver->query( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('siteurl', 'duplicate', 'yes')" );
+			$this->fail( 'Expected the wp_options option_name unique key to reject duplicates.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+	}
+
+	public function test_unsupported_statement_throws_driver_exception(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Unsupported DuckDB MySQL-emulation statement: ALTER.' );
+		$driver->query( 'ALTER TABLE users ADD COLUMN email VARCHAR(255)' );
+	}
+
+	private function lastDuckDBQuery( WP_DuckDB_Driver $driver ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$queries = $driver->get_last_duckdb_queries();
+		return $queries[ count( $queries ) - 1 ];
+	}
+
+	/**
+	 * WordPress-style schema statements that exercise core DDL shapes.
+	 *
+	 * @return string[]
+	 */
+	private function wordpressStyleSchemaQueries(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return array(
+			"CREATE TABLE wp_users (
+				ID bigint(20) unsigned NOT NULL auto_increment,
+				user_login varchar(60) NOT NULL default '',
+				user_pass varchar(255) NOT NULL default '',
+				user_nicename varchar(50) NOT NULL default '',
+				user_email varchar(100) NOT NULL default '',
+				user_url varchar(100) NOT NULL default '',
+				user_registered datetime NOT NULL default '0000-00-00 00:00:00',
+				user_activation_key varchar(255) NOT NULL default '',
+				user_status int(11) NOT NULL default '0',
+				display_name varchar(250) NOT NULL default '',
+				PRIMARY KEY  (ID),
+				KEY user_login_key (user_login),
+				KEY user_nicename (user_nicename),
+				KEY user_email (user_email)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			"CREATE TABLE wp_usermeta (
+				umeta_id bigint(20) unsigned NOT NULL auto_increment,
+				user_id bigint(20) unsigned NOT NULL default '0',
+				meta_key varchar(255) default NULL,
+				meta_value longtext,
+				PRIMARY KEY  (umeta_id),
+				KEY user_id (user_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			"CREATE TABLE wp_posts (
+				ID bigint(20) unsigned NOT NULL auto_increment,
+				post_author bigint(20) unsigned NOT NULL default '0',
+				post_date datetime NOT NULL default '0000-00-00 00:00:00',
+				post_date_gmt datetime NOT NULL default '0000-00-00 00:00:00',
+				post_content longtext NOT NULL,
+				post_title text NOT NULL,
+				post_excerpt text NOT NULL,
+				post_status varchar(20) NOT NULL default 'publish',
+				comment_status varchar(20) NOT NULL default 'open',
+				ping_status varchar(20) NOT NULL default 'open',
+				post_password varchar(255) NOT NULL default '',
+				post_name varchar(200) NOT NULL default '',
+				to_ping text NOT NULL,
+				pinged text NOT NULL,
+				post_modified datetime NOT NULL default '0000-00-00 00:00:00',
+				post_modified_gmt datetime NOT NULL default '0000-00-00 00:00:00',
+				post_content_filtered longtext NOT NULL,
+				post_parent bigint(20) unsigned NOT NULL default '0',
+				guid varchar(255) NOT NULL default '',
+				menu_order int(11) NOT NULL default '0',
+				post_type varchar(20) NOT NULL default 'post',
+				post_mime_type varchar(100) NOT NULL default '',
+				comment_count bigint(20) NOT NULL default '0',
+				PRIMARY KEY  (ID),
+				KEY post_name (post_name(191)),
+				KEY type_status_date (post_type,post_status,post_date,ID),
+				KEY post_parent (post_parent),
+				KEY post_author (post_author),
+				KEY type_status_author (post_type,post_status,post_author)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			"CREATE TABLE wp_postmeta (
+				meta_id bigint(20) unsigned NOT NULL auto_increment,
+				post_id bigint(20) unsigned NOT NULL default '0',
+				meta_key varchar(255) default NULL,
+				meta_value longtext,
+				PRIMARY KEY  (meta_id),
+				KEY post_id (post_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			"CREATE TABLE wp_options (
+				option_id bigint(20) unsigned NOT NULL auto_increment,
+				option_name varchar(191) NOT NULL default '',
+				option_value longtext NOT NULL,
+				autoload varchar(20) NOT NULL default 'yes',
+				PRIMARY KEY  (option_id),
+				UNIQUE KEY option_name (option_name),
+				KEY autoload (autoload)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+		);
+	}
+}

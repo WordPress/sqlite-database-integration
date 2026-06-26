@@ -25,21 +25,20 @@ if ( ! $sqlite_plugin_implementation_folder_path || ! file_exists( $sqlite_plugi
 }
 
 // Constant for backward compatibility.
-if ( ! defined( 'DATABASE_TYPE' ) ) {
-	define( 'DATABASE_TYPE', 'sqlite' );
-}
-// Define SQLite constant.
 if ( ! defined( 'DB_ENGINE' ) ) {
 	define( 'DB_ENGINE', 'sqlite' );
 }
+if ( ! defined( 'DATABASE_TYPE' ) ) {
+	define( 'DATABASE_TYPE', DB_ENGINE );
+}
 
 // Require the implementation from the plugin.
-require_once $sqlite_plugin_implementation_folder_path . '/wp-includes/sqlite/db.php';
+require_once $sqlite_plugin_implementation_folder_path . '/wp-includes/db.php';
 
 // Activate the performance-lab plugin if it is not already activated.
 add_action(
 	'admin_footer',
-	function() {
+	function () {
 		if ( defined( 'SQLITE_MAIN_FILE' ) ) {
 			return;
 		}

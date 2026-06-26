@@ -6,13 +6,33 @@
  * @package wp-sqlite-integration
  */
 
+if ( ! function_exists( 'wp_sqlite_database_integration_normalize_db_engine' ) ) {
+	/**
+	 * Normalize supported database engine names.
+	 *
+	 * @param string $engine Database engine name.
+	 * @return string Canonical database engine name.
+	 */
+	function wp_sqlite_database_integration_normalize_db_engine( $engine ) {
+		$engine = strtolower( (string) $engine );
+
+		if ( in_array( $engine, array( 'duck', 'duckdb' ), true ) ) {
+			return 'duckdb';
+		}
+
+		return $engine;
+	}
+}
+
 // Temporary - This will be in wp-config.php once SQLite is merged in Core.
 if ( ! defined( 'DB_ENGINE' ) ) {
 	if ( defined( 'SQLITE_DB_DROPIN_VERSION' ) ) {
 		define( 'DB_ENGINE', 'sqlite' );
+	} elseif ( defined( 'DUCKDB_DB_DROPIN_VERSION' ) ) {
+		define( 'DB_ENGINE', 'duckdb' );
 	} elseif ( defined( 'DATABASE_ENGINE' ) ) {
 		// backwards compatibility with previous versions of the plugin.
-		define( 'DB_ENGINE', DATABASE_ENGINE );
+		define( 'DB_ENGINE', wp_sqlite_database_integration_normalize_db_engine( DATABASE_ENGINE ) );
 	} else {
 		define( 'DB_ENGINE', 'mysql' );
 	}
@@ -37,6 +57,19 @@ if ( ! defined( 'FQDBDIR' ) ) {
 		define( 'FQDBDIR', WP_CONTENT_DIR . '/database/' );
 	} else {
 		define( 'FQDBDIR', ABSPATH . 'wp-content/database/' );
+	}
+}
+
+/**
+ * FQDUCKDB is a DuckDB database file name. If DUCKDB_FILE is defined, it is used
+ * as the basename; otherwise DuckDB uses a protected default file next to the
+ * SQLite database file.
+ */
+if ( ! defined( 'FQDUCKDB' ) ) {
+	if ( defined( 'DUCKDB_FILE' ) ) {
+		define( 'FQDUCKDB', FQDBDIR . DUCKDB_FILE );
+	} else {
+		define( 'FQDUCKDB', FQDBDIR . '.ht.duckdb' );
 	}
 }
 
