@@ -624,6 +624,11 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_update( array $tokens ): WP_DuckDB_Result_Statement {
+		$joined_update = $this->parse_joined_update_shape( $tokens );
+		if ( null !== $joined_update ) {
+			return $this->execute_joined_update( $joined_update );
+		}
+
 		$reference = $this->parse_single_table_dml_reference( $tokens, 1, 'UPDATE' );
 		$index     = $reference['next_index'];
 
@@ -656,6 +661,97 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB UPDATE' );
+	}
+
+	/**
+	 * Parse supported joined UPDATE shapes.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array{target:array{alias:string,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>}|null Parsed shape, or null for single-table UPDATE.
+	 */
+	private function parse_joined_update_shape( array $tokens ): ?array {
+		if ( ! isset( $tokens[1] ) ) {
+			return null;
+		}
+
+		if (
+			WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $tokens[1]->id
+			|| WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[1]->id
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE modifiers are not supported.' );
+		}
+
+		$set_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::SET_SYMBOL );
+		if ( null === $set_index ) {
+			return null;
+		}
+
+		$table_tokens = array_slice( $tokens, 1, $set_index - 1 );
+		if (
+			! $this->contains_top_level_token_id( $table_tokens, WP_MySQL_Lexer::COMMA_SYMBOL )
+			&& ! $this->contains_top_level_join_token( $table_tokens )
+		) {
+			return null;
+		}
+
+		$references = $this->parse_joined_update_table_references( $table_tokens );
+		if ( count( $references['sources'] ) === 0 ) {
+			return null;
+		}
+
+		$clauses = $this->dml_clause_indexes( $tokens, $set_index + 1 );
+		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Joined UPDATE with ORDER BY or LIMIT is not supported.' );
+		}
+
+		$update_end    = $clauses['where'] ?? count( $tokens );
+		$update_tokens = array_slice( $tokens, $set_index + 1, $update_end - $set_index - 1 );
+		if ( count( $update_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE list is required.' );
+		}
+
+		$where_tokens = array();
+		if ( null !== $clauses['where'] ) {
+			$where_tokens = array_slice( $tokens, $clauses['where'] + 1 );
+		}
+
+		return array(
+			'target'          => $references['target'],
+			'sources'         => $references['sources'],
+			'join_predicates' => $references['join_predicates'],
+			'update_tokens'   => $update_tokens,
+			'where_tokens'    => $where_tokens,
+		);
+	}
+
+	/**
+	 * Execute a parsed joined UPDATE.
+	 *
+	 * @param array{target:array{alias:string,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>} $shape Parsed shape.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_joined_update( array $shape ): WP_DuckDB_Result_Statement {
+		$sql = 'UPDATE '
+			. $this->connection->quote_identifier( $shape['target']['table_name'] )
+			. ' AS '
+			. $this->connection->quote_identifier( $shape['target']['alias'] )
+			. ' SET '
+			. $this->translate_joined_update_assignment_tokens_to_duckdb_sql( $shape['update_tokens'], $shape['target'], $shape['sources'] )
+			. ' FROM '
+			. implode( ', ', array_column( $shape['sources'], 'sql' ) );
+
+		$where_clauses = array();
+		if ( count( $shape['where_tokens'] ) > 0 ) {
+			$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $shape['where_tokens'] );
+		}
+		foreach ( $shape['join_predicates'] as $predicate ) {
+			$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $predicate );
+		}
+		if ( count( $where_clauses ) > 0 ) {
+			$sql .= ' WHERE (' . implode( ') AND (', $where_clauses ) . ')';
+		}
+
+		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB joined UPDATE' );
 	}
 
 	/**
@@ -954,6 +1050,182 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Parse joined UPDATE table references.
+	 *
+	 * @param WP_Parser_Token[] $tokens Table reference tokens.
+	 * @return array{target:array{alias:string,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>}
+	 */
+	private function parse_joined_update_table_references( array $tokens ): array {
+		$items           = $this->split_top_level_comma_items( $tokens );
+		$target_item     = array_shift( $items );
+		$target_factor   = $this->parse_joined_update_table_factor( $target_item, 0, false, true );
+		$target          = $target_factor['reference'];
+		$sources         = array();
+		$join_predicates = array();
+
+		if ( null === $target['table_name'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Derived tables cannot be updated.' );
+		}
+
+		$this->parse_joined_update_join_chain( $target_item, $target_factor['next_index'], $sources, $join_predicates );
+		foreach ( $items as $item ) {
+			$source    = $this->parse_joined_update_table_factor( $item, 0, true, false );
+			$sources[] = $source['reference'];
+			$this->parse_joined_update_join_chain( $item, $source['next_index'], $sources, $join_predicates );
+		}
+
+		return array(
+			'target'          => array(
+				'alias'                => $target['alias'],
+				'table_name'           => $target['table_name'],
+				'requested_table_name' => $target['requested_table_name'],
+			),
+			'sources'         => $sources,
+			'join_predicates' => $join_predicates,
+		);
+	}
+
+	/**
+	 * Parse one joined UPDATE table factor.
+	 *
+	 * @param WP_Parser_Token[] $tokens        Table reference tokens.
+	 * @param int               $index         Current index.
+	 * @param bool              $allow_derived Whether derived tables are allowed.
+	 * @param bool              $is_target     Whether this factor is the UPDATE target.
+	 * @return array{reference:array{alias:string,sql:string,table_name:string|null,requested_table_name:string},next_index:int}
+	 */
+	private function parse_joined_update_table_factor( array $tokens, int $index, bool $allow_derived, bool $is_target ): array {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Expected table reference.' );
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+			if ( ! $allow_derived ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Derived tables cannot be updated.' );
+			}
+
+			$close_index = $this->skip_balanced_parentheses( $tokens, $index ) - 1;
+			$inner       = array_slice( $tokens, $index + 1, $close_index - $index - 1 );
+			if ( ! isset( $inner[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $inner[0]->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only derived SELECT sources are supported.' );
+			}
+			if ( $this->contains_information_schema_reference( $inner ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Access denied for user 'duckdb'@'%' to database 'information_schema'" );
+			}
+
+			$index = $close_index + 1;
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+			}
+			$alias = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+
+			return array(
+				'reference'  => array(
+					'alias'                => $alias,
+					'sql'                  => '( '
+						. $this->translate_tokens_to_duckdb_sql( $this->strip_for_update_locking_clause( $inner ) )
+						. ' ) AS '
+						. $this->connection->quote_identifier( $alias ),
+					'table_name'           => null,
+					'requested_table_name' => $alias,
+				),
+				'next_index' => $index,
+			);
+		}
+
+		$database   = null;
+		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$database = $table_name;
+			++$index;
+			$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+
+			if ( 0 === strcasecmp( $database, 'information_schema' ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Access denied for user 'duckdb'@'%' to database 'information_schema'" );
+			}
+
+			if ( 0 !== strcasecmp( $database, $this->database ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only the current database is supported.' );
+			}
+		}
+
+		if ( $this->is_duckdb_internal_table_name( $table_name ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Internal DuckDB metadata tables cannot be modified.' );
+		}
+
+		$resolved_table_name = $this->resolve_user_table_name( $table_name );
+		if ( null === $resolved_table_name ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in UPDATE statement." );
+		}
+
+		$alias = $table_name;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$alias = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) && ! $this->is_joined_update_table_reference_boundary( $tokens[ $index ] ) ) {
+			$alias = $this->identifier_value( $tokens[ $index ] );
+			++$index;
+		}
+
+		return array(
+			'reference'  => array(
+				'alias'                => $alias,
+				'sql'                  => $this->connection->quote_identifier( $resolved_table_name )
+					. ' AS '
+					. $this->connection->quote_identifier( $alias ),
+				'table_name'           => $resolved_table_name,
+				'requested_table_name' => $table_name,
+			),
+			'next_index' => $index,
+		);
+	}
+
+	/**
+	 * Parse a joined UPDATE join chain.
+	 *
+	 * @param WP_Parser_Token[] $tokens          Table reference tokens.
+	 * @param int               $index           Current index.
+	 * @param array             $sources         Source references.
+	 * @param array             $join_predicates Join predicate token lists.
+	 */
+	private function parse_joined_update_join_chain( array $tokens, int $index, array &$sources, array &$join_predicates ): void {
+		while ( $index < count( $tokens ) ) {
+			if ( WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after INNER.' );
+			} elseif ( WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
+				if ( $this->is_unsupported_joined_update_join_token( $tokens[ $index ] ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only comma joins and INNER JOIN ... ON are supported.' );
+				}
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Table reference options are not supported.' );
+			}
+
+			++$index;
+			$source    = $this->parse_joined_update_table_factor( $tokens, $index, true, false );
+			$sources[] = $source['reference'];
+			$index     = $source['next_index'];
+
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $index ]->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. JOIN ... USING is not supported.' );
+			}
+
+			$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in joined UPDATE statement.' );
+			++$index;
+			$predicate_end = $this->find_next_joined_update_join_index( $tokens, $index ) ?? count( $tokens );
+			if ( $predicate_end === $index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. JOIN predicate is required.' );
+			}
+			$join_predicates[] = array_slice( $tokens, $index, $predicate_end - $index );
+			$index             = $predicate_end;
+		}
+	}
+
+	/**
 	 * Check whether a token stream contains a top-level JOIN keyword.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
@@ -979,6 +1251,109 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 			if ( 0 === $depth && in_array( $token->id, $join_tokens, true ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token stream contains a token at top-level depth.
+	 *
+	 * @param WP_Parser_Token[] $tokens   Token stream.
+	 * @param int               $token_id Token ID to find.
+	 * @return bool Whether the token is present.
+	 */
+	private function contains_top_level_token_id( array $tokens, int $token_id ): bool {
+		return null !== $this->find_top_level_token_index( $tokens, 0, $token_id );
+	}
+
+	/**
+	 * Check whether a token ends a joined UPDATE table factor.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token is a boundary.
+	 */
+	private function is_joined_update_table_reference_boundary( WP_Parser_Token $token ): bool {
+		return WP_MySQL_Lexer::ON_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::JOIN_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::INNER_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::LEFT_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::RIGHT_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::NATURAL_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::CROSS_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::USING_SYMBOL === $token->id;
+	}
+
+	/**
+	 * Check whether a join token is unsupported in joined UPDATE.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether this is an unsupported join token.
+	 */
+	private function is_unsupported_joined_update_join_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::LEFT_SYMBOL,
+				WP_MySQL_Lexer::RIGHT_SYMBOL,
+				WP_MySQL_Lexer::NATURAL_SYMBOL,
+				WP_MySQL_Lexer::CROSS_SYMBOL,
+				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+				WP_MySQL_Lexer::USING_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Find the next join operator in a joined UPDATE table item.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $start  First token to scan.
+	 * @return int|null Token index, or null when absent.
+	 */
+	private function find_next_joined_update_join_index( array $tokens, int $start ): ?int {
+		$depth = 0;
+		for ( $index = $start; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if (
+				0 === $depth
+				&& (
+					WP_MySQL_Lexer::JOIN_SYMBOL === $tokens[ $index ]->id
+					|| WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id
+					|| $this->is_unsupported_joined_update_join_token( $tokens[ $index ] )
+				)
+			) {
+				return $index;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token stream references information_schema.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether information_schema is referenced.
+	 */
+	private function contains_information_schema_reference( array $tokens ): bool {
+		foreach ( $tokens as $index => $token ) {
+			if (
+				isset( $tokens[ $index + 1 ] )
+				&& 0 === strcasecmp( $token->get_value(), 'information_schema' )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			) {
 				return true;
 			}
 		}
@@ -1461,6 +1836,105 @@ class WP_DuckDB_Driver {
 		}
 
 		return implode( ', ', $items );
+	}
+
+	/**
+	 * Translate joined UPDATE assignments and enforce a single writable target.
+	 *
+	 * @param WP_Parser_Token[]                                                $tokens  Update-list tokens.
+	 * @param array{alias:string,table_name:string,requested_table_name:string} $target Target reference.
+	 * @param array<int,array{alias:string,sql:string,table_name:string|null}>  $sources Source references.
+	 * @return string DuckDB update-list SQL.
+	 */
+	private function translate_joined_update_assignment_tokens_to_duckdb_sql( array $tokens, array $target, array $sources ): string {
+		$target_qualifiers = array_map(
+			'strtolower',
+			array_unique(
+				array(
+					$target['alias'],
+					$target['requested_table_name'],
+					$target['table_name'],
+				)
+			)
+		);
+		$source_aliases    = array();
+		foreach ( $sources as $source ) {
+			$source_aliases[ strtolower( $source['alias'] ) ] = $source;
+			if ( null !== $source['table_name'] ) {
+				$source_aliases[ strtolower( $source['table_name'] ) ] = $source;
+			}
+		}
+
+		$items = array();
+		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
+			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+			if ( null === $equals_index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE assignment is required.' );
+			}
+
+			$left_tokens  = array_slice( $item, 0, $equals_index );
+			$right_tokens = array_slice( $item, $equals_index + 1 );
+			if ( count( $right_tokens ) === 0 ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE assignment value is required.' );
+			}
+
+			if ( 1 === count( $left_tokens ) ) {
+				$column = $this->identifier_value( $left_tokens[0] );
+				if ( ! $this->table_has_column( $target['table_name'], $column ) ) {
+					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
+				}
+				foreach ( $sources as $source ) {
+					if ( null !== $source['table_name'] && $this->table_has_column( $source['table_name'], $column ) ) {
+						throw new WP_DuckDB_Driver_Exception( "Ambiguous unqualified UPDATE target column '{$column}' in DuckDB driver." );
+					}
+				}
+			} elseif (
+				3 === count( $left_tokens )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $left_tokens[1]->id
+			) {
+				$qualifier = strtolower( $this->identifier_value( $left_tokens[0] ) );
+				$column    = $this->identifier_value( $left_tokens[2] );
+				if ( ! in_array( $qualifier, $target_qualifiers, true ) ) {
+					if ( isset( $source_aliases[ $qualifier ] ) ) {
+						throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE statement modifying multiple tables is not supported.' );
+					}
+					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target qualifier '{$this->identifier_value( $left_tokens[0] )}' in DuckDB driver." );
+				}
+				if ( ! $this->table_has_column( $target['table_name'], $column ) ) {
+					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
+				}
+			} else {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only simple column assignments are supported.' );
+			}
+
+			$items[] = $this->connection->quote_identifier( $column )
+				. ' = '
+				. $this->translate_tokens_to_duckdb_sql( $right_tokens );
+		}
+
+		return implode( ', ', $items );
+	}
+
+	/**
+	 * Check whether a table has a column.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Column name.
+	 * @return bool Whether the column exists.
+	 */
+	private function table_has_column( string $table_name, string $column_name ): bool {
+		$metadata_rows = $this->column_metadata_rows( $table_name );
+		if ( count( $metadata_rows ) === 0 ) {
+			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
+		}
+
+		foreach ( $metadata_rows as $metadata ) {
+			if ( 0 === strcasecmp( (string) $metadata['column_name'], $column_name ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -3623,6 +4097,41 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->join_sql_pieces( $pieces );
+	}
+
+	/**
+	 * Strip MySQL locking clauses that DuckDB does not support in derived SELECTs.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @return WP_Parser_Token[] Tokens without a top-level FOR UPDATE clause.
+	 */
+	private function strip_for_update_locking_clause( array $tokens ): array {
+		$stripped = array();
+		$depth    = 0;
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				$stripped[] = $tokens[ $index ];
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				$stripped[] = $tokens[ $index ];
+				continue;
+			}
+			if (
+				0 === $depth
+				&& WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $index ]->id
+				&& isset( $tokens[ $index + 1 ] )
+				&& WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $index + 1 ]->id
+			) {
+				++$index;
+				continue;
+			}
+			$stripped[] = $tokens[ $index ];
+		}
+
+		return $stripped;
 	}
 
 	/**

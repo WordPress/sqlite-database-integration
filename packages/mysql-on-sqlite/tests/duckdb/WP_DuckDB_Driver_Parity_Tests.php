@@ -57,6 +57,82 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_joined_update_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE posts (id INT, status VARCHAR(20), score INT)',
+				'CREATE TABLE post_updates (post_id INT, new_status VARCHAR(20), bump INT, flag VARCHAR(20))',
+				"INSERT INTO posts VALUES (1, 'draft', 0), (2, 'draft', 0), (3, 'publish', 5)",
+				"INSERT INTO post_updates VALUES
+					(1, 'publish', 10, 'apply'),
+					(2, 'private', 20, 'skip'),
+					(3, 'archive', 30, 'apply')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"UPDATE posts p
+			JOIN post_updates u ON u.post_id = p.id
+			SET p.status = u.new_status, p.score = p.score + u.bump
+			WHERE u.flag = 'apply'"
+		);
+		$this->assertParityRows( 'SELECT id, status, score FROM posts ORDER BY id' );
+
+		$this->assertParityRowCount(
+			"UPDATE posts p, post_updates u
+			SET p.status = 'queued'
+			WHERE p.id = u.post_id AND u.flag = 'skip'"
+		);
+		$this->assertParityRows( 'SELECT id, status, score FROM posts ORDER BY id' );
+	}
+
+	public function test_joined_update_derived_table_claim_query_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_actionscheduler_actions (
+					action_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					status VARCHAR(20) NOT NULL,
+					scheduled_date_gmt DATETIME NULL,
+					priority TINYINT UNSIGNED NOT NULL DEFAULT '10',
+					attempts INT(11) NOT NULL DEFAULT '0',
+					claim_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+					last_attempt_gmt DATETIME NULL,
+					last_attempt_local DATETIME NULL,
+					PRIMARY KEY (action_id)
+				)",
+				"INSERT INTO wp_actionscheduler_actions
+					(action_id, status, scheduled_date_gmt, priority, attempts, claim_id)
+				VALUES
+					(1, 'pending', '2025-09-03 12:00:00', 10, 0, 0),
+					(2, 'pending', '2025-09-03 12:10:00', 5, 0, 0)",
+			)
+		);
+
+		$this->runParitySetup(
+			array(
+				"UPDATE wp_actionscheduler_actions t1
+			JOIN (
+				SELECT action_id
+				FROM wp_actionscheduler_actions
+				WHERE claim_id = 0
+				AND scheduled_date_gmt <= '2025-09-03 12:23:55'
+				AND status = 'pending'
+				ORDER BY priority ASC, attempts ASC, scheduled_date_gmt ASC, action_id ASC
+				LIMIT 2
+				FOR UPDATE
+			) t2 ON t1.action_id = t2.action_id
+			SET claim_id = 37,
+				last_attempt_gmt = '2025-09-03 12:23:55',
+				last_attempt_local = '2025-09-03 12:23:55'",
+			)
+		);
+		$this->assertParityRows(
+			'SELECT action_id, claim_id, last_attempt_gmt
+			FROM wp_actionscheduler_actions
+			ORDER BY action_id'
+		);
+	}
+
 	public function test_multi_table_delete_transient_cleanup_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

@@ -186,6 +186,208 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_update_rewrites_join_and_comma_forms(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE posts (id INT, status VARCHAR(20), score INT)' );
+		$driver->query( 'CREATE TABLE post_updates (post_id INT, new_status VARCHAR(20), bump INT, flag VARCHAR(20))' );
+		$driver->query( "INSERT INTO posts VALUES (1, 'draft', 0), (2, 'draft', 0), (3, 'publish', 5)" );
+		$driver->query(
+			"INSERT INTO post_updates VALUES
+			(1, 'publish', 10, 'apply'),
+			(2, 'private', 20, 'skip'),
+			(3, 'archive', 30, 'apply')"
+		);
+
+		$joined = $driver->query(
+			"UPDATE posts p
+			JOIN post_updates u ON u.post_id = p.id
+			SET p.status = u.new_status, p.score = p.score + u.bump
+			WHERE u.flag = 'apply'"
+		);
+		$this->assertSame( 2, $joined->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'status' => 'publish',
+					'score'  => 10,
+				),
+				array(
+					'id'     => 2,
+					'status' => 'draft',
+					'score'  => 0,
+				),
+				array(
+					'id'     => 3,
+					'status' => 'archive',
+					'score'  => 35,
+				),
+			),
+			$driver->query( 'SELECT id, status, score FROM posts ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$comma = $driver->query(
+			"UPDATE posts p, post_updates u
+			SET p.status = 'queued'
+			WHERE p.id = u.post_id AND u.flag = 'skip'"
+		);
+		$this->assertSame( 1, $comma->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'status' => 'publish',
+					'score'  => 10,
+				),
+				array(
+					'id'     => 2,
+					'status' => 'queued',
+					'score'  => 0,
+				),
+				array(
+					'id'     => 3,
+					'status' => 'archive',
+					'score'  => 35,
+				),
+			),
+			$driver->query( 'SELECT id, status, score FROM posts ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_joined_update_rewrites_derived_table_claim_query(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_actionscheduler_actions (
+				action_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				status VARCHAR(20) NOT NULL,
+				scheduled_date_gmt DATETIME NULL,
+				priority TINYINT UNSIGNED NOT NULL DEFAULT '10',
+				attempts INT(11) NOT NULL DEFAULT '0',
+				claim_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				last_attempt_gmt DATETIME NULL,
+				last_attempt_local DATETIME NULL,
+				PRIMARY KEY (action_id)
+			)"
+		);
+		$driver->query(
+			"INSERT INTO wp_actionscheduler_actions
+				(action_id, status, scheduled_date_gmt, priority, attempts, claim_id)
+			VALUES
+				(1, 'pending', '2025-09-03 12:00:00', 10, 0, 0),
+				(2, 'pending', '2025-09-03 12:10:00', 5, 0, 0),
+				(3, 'pending', '2025-09-03 12:20:00', 15, 0, 0),
+				(4, 'pending', '2025-09-03 12:00:00', 1, 0, 9)"
+		);
+
+		$claimed = $driver->query(
+			"UPDATE wp_actionscheduler_actions t1
+			JOIN (
+				SELECT action_id
+				FROM wp_actionscheduler_actions
+				WHERE claim_id = 0
+				AND scheduled_date_gmt <= '2025-09-03 12:23:55'
+				AND status = 'pending'
+				ORDER BY priority ASC, attempts ASC, scheduled_date_gmt ASC, action_id ASC
+				LIMIT 2
+				FOR UPDATE
+			) t2 ON t1.action_id = t2.action_id
+			SET claim_id = 37,
+				last_attempt_gmt = '2025-09-03 12:23:55',
+				last_attempt_local = '2025-09-03 12:23:55'"
+		);
+
+		$this->assertSame( 2, $claimed->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'action_id'        => 1,
+					'claim_id'         => 37,
+					'last_attempt_gmt' => '2025-09-03 12:23:55',
+				),
+				array(
+					'action_id'        => 2,
+					'claim_id'         => 37,
+					'last_attempt_gmt' => '2025-09-03 12:23:55',
+				),
+				array(
+					'action_id'        => 3,
+					'claim_id'         => 0,
+					'last_attempt_gmt' => null,
+				),
+				array(
+					'action_id'        => 4,
+					'claim_id'         => 9,
+					'last_attempt_gmt' => null,
+				),
+			),
+			$driver->query(
+				'SELECT action_id, claim_id, last_attempt_gmt
+				FROM wp_actionscheduler_actions
+				ORDER BY action_id'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_joined_update_rejects_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b')" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'x'), (3, 'z')" );
+
+		foreach (
+			array(
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b ON a.id = b.id SET a.note = 'target', b.note = 'source'",
+					'message' => 'UPDATE statement modifying multiple tables is not supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a, t2 b SET a.note = 'target', b.note = 'source' WHERE a.id = b.id",
+					'message' => 'UPDATE statement modifying multiple tables is not supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
+					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b ON a.id = b.id SET a.note = 'target' ORDER BY a.id LIMIT 1",
+					'message' => 'Joined UPDATE with ORDER BY or LIMIT is not supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a, information_schema.tables it SET a.note = 'target'",
+					'message' => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
+				),
+			) as $rejection
+		) {
+			try {
+				$driver->query( $rejection['sql'] );
+				$this->fail( 'Expected joined UPDATE rejection for SQL: ' . $rejection['sql'] );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $rejection['message'], $e->getMessage() );
+			}
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'a',
+				),
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_escaped_like_predicates_use_mysql_backslash_semantics(): void {
 		$this->requireDuckDBRuntime();
 
