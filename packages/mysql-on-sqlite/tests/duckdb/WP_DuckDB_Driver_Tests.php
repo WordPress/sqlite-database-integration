@@ -433,6 +433,113 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_user_variables_are_emulated_for_bounded_values(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$read = $driver->query( 'SELECT @missing, @missing AS missing_alias, @missing implicit_alias' );
+		$this->assertSame( array( 'name' => '@missing' ), $read->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => 'missing_alias' ), $read->getColumnMeta( 1 ) );
+		$this->assertSame( array( 'name' => 'implicit_alias' ), $read->getColumnMeta( 2 ) );
+		$this->assertSame(
+			array(
+				'@missing'       => null,
+				'missing_alias'  => null,
+				'implicit_alias' => null,
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$set = $driver->query(
+			"SET @my_var = 1, @name := 'Ada', @copy = @name, @mode = @@SQL_MODE, @nothing = NULL"
+		);
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$default_sql_mode = 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,'
+			. 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES';
+		$this->assertSame(
+			array(
+				'@MY_VAR' => 1,
+				'name'    => 'Ada',
+				'@copy'   => 'Ada',
+				'mode'    => $default_sql_mode,
+				'nothing' => null,
+			),
+			$driver->query(
+				'SELECT @MY_VAR, @name AS name, @copy, @mode mode, @nothing AS nothing FROM DUAL'
+			)->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'SET @signed = -2, @decimal = +1.25, @flag = TRUE' );
+		$this->assertSame(
+			array(
+				'@signed'  => -2,
+				'@decimal' => 1.25,
+				'@flag'    => 1,
+			),
+			$driver->query( 'SELECT @signed, @decimal, @flag' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
+	public function test_dump_check_variable_backup_and_restore_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$set = $driver->query( '/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;' );
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		$this->assertSame(
+			array(
+				'@OLD_UNIQUE_CHECKS' => null,
+				'@@UNIQUE_CHECKS'    => 0,
+			),
+			$driver->query( 'SELECT @OLD_UNIQUE_CHECKS, @@UNIQUE_CHECKS' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$set = $driver->query(
+			'/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;'
+		);
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		$this->assertSame(
+			array(
+				'@OLD_FOREIGN_KEY_CHECKS' => null,
+				'@@FOREIGN_KEY_CHECKS'    => 0,
+			),
+			$driver->query( 'SELECT @OLD_FOREIGN_KEY_CHECKS, @@FOREIGN_KEY_CHECKS' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( '/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;' );
+		$driver->query( '/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;' );
+		$this->assertSame(
+			array(
+				'@@UNIQUE_CHECKS'      => null,
+				'@@FOREIGN_KEY_CHECKS' => null,
+			),
+			$driver->query( 'SELECT @@UNIQUE_CHECKS, @@FOREIGN_KEY_CHECKS' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SET @RESTORED_UNIQUE_CHECKS = 1, @RESTORED_FOREIGN_KEY_CHECKS = "0"' );
+		$driver->query( 'SET UNIQUE_CHECKS=@RESTORED_UNIQUE_CHECKS' );
+		$driver->query( 'SET FOREIGN_KEY_CHECKS=@RESTORED_FOREIGN_KEY_CHECKS' );
+		$this->assertSame(
+			array(
+				'@@UNIQUE_CHECKS'      => 1,
+				'@@FOREIGN_KEY_CHECKS' => 0,
+			),
+			$driver->query( 'SELECT @@UNIQUE_CHECKS, @@FOREIGN_KEY_CHECKS' )->fetch( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_session_variable_unsupported_set_forms_are_rejected(): void {
 		$this->requireDuckDBRuntime();
 
@@ -452,6 +559,28 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'SET PERSIST_ONLY autocommit = 1',
 				'SET @@GLOBAL.autocommit = 1',
 				'SET @@LOCAL.autocommit = 1',
+			) as $sql
+		) {
+			$this->assertDriverQueryRejected( $driver, $sql );
+		}
+	}
+
+	public function test_user_variable_unsupported_expression_forms_are_rejected(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE real_table (id INT)' );
+		$driver->query( 'SET @my_var = 1' );
+
+		foreach (
+			array(
+				'SET @my_var = @my_var + 1',
+				'SET @my_var = DATABASE()',
+				'SET @my_var',
+				'SELECT @my_var AS alias, 1',
+				'SELECT @my_var + 1',
+				'SELECT COALESCE(@my_var, 1)',
+				'SELECT @my_var FROM real_table',
 			) as $sql
 		) {
 			$this->assertDriverQueryRejected( $driver, $sql );

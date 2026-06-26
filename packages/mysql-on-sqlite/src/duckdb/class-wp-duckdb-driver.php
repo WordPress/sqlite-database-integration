@@ -36,9 +36,11 @@ class WP_DuckDB_Driver {
 	const INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE  = '__wp_duckdb_information_schema_key_column_usage';
 
 	const SUPPORTED_SESSION_SYSTEM_VARIABLES = array(
-		'autocommit' => true,
-		'big_tables' => true,
-		'sql_mode'   => true,
+		'autocommit'         => true,
+		'big_tables'         => true,
+		'foreign_key_checks' => true,
+		'sql_mode'           => true,
+		'unique_checks'      => true,
 	);
 
 	const READ_ONLY_SYSTEM_VARIABLES = array(
@@ -146,9 +148,16 @@ class WP_DuckDB_Driver {
 	/**
 	 * MySQL session system variables emulated by this driver.
 	 *
-	 * @var array<string,int|string>
+	 * @var array<string,int|string|null>
 	 */
 	private $session_system_variables = array();
+
+	/**
+	 * MySQL user variables emulated by this driver.
+	 *
+	 * @var array<string,int|float|string|null>
+	 */
+	private $user_variables = array();
 
 	/**
 	 * Whether a MySQL LOCK TABLES statement opened the current transaction.
@@ -439,9 +448,9 @@ class WP_DuckDB_Driver {
 			return new WP_DuckDB_Result_Statement( array( $found_rows_alias ), array( array( $found_rows ) ), 0 );
 		}
 
-		$session_variable_select = $this->execute_session_system_variable_select( $tokens );
-		if ( null !== $session_variable_select ) {
-			return $this->record_found_rows_from_result( $session_variable_select );
+		$variable_select = $this->execute_variable_select( $tokens );
+		if ( null !== $variable_select ) {
+			return $this->record_found_rows_from_result( $variable_select );
 		}
 
 		$has_sql_calc_found_rows = $this->has_top_level_sql_calc_found_rows( $tokens );
@@ -1051,13 +1060,13 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Execute a simple SELECT list of supported session system variables.
+	 * Execute a simple SELECT list of supported MySQL variables.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return WP_DuckDB_Result_Statement|null Statement when emulated, null for generic SELECT handling.
 	 */
-	private function execute_session_system_variable_select( array $tokens ): ?WP_DuckDB_Result_Statement {
-		$variables = $this->parse_session_system_variable_select( $tokens );
+	private function execute_variable_select( array $tokens ): ?WP_DuckDB_Result_Statement {
+		$variables = $this->parse_variable_select( $tokens );
 		if ( null === $variables ) {
 			return null;
 		}
@@ -1066,19 +1075,21 @@ class WP_DuckDB_Driver {
 		$row     = array();
 		foreach ( $variables as $variable ) {
 			$columns[] = $variable['alias'];
-			$row[]     = $this->get_session_system_variable( $variable['name'] );
+			$row[]     = 'user' === $variable['type']
+				? $this->get_user_variable( $variable['name'] )
+				: $this->get_session_system_variable( $variable['name'] );
 		}
 
 		return new WP_DuckDB_Result_Statement( $columns, array( $row ), 0 );
 	}
 
 	/**
-	 * Parse a simple SELECT list of supported session system variables.
+	 * Parse a simple SELECT list of supported MySQL variables.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
-	 * @return array<int,array{name:string,alias:string}>|null Variables, or null for generic SELECT handling.
+	 * @return array<int,array{type:string,name:string,alias:string}>|null Variables, or null for generic SELECT handling.
 	 */
-	private function parse_session_system_variable_select( array $tokens ): ?array {
+	private function parse_variable_select( array $tokens ): ?array {
 		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
 		}
@@ -1100,10 +1111,18 @@ class WP_DuckDB_Driver {
 		$variables = array();
 		foreach ( $this->split_top_level_comma_items( $select_list ) as $item ) {
 			$variable = $this->parse_session_system_variable_reference( $item );
+			if ( null !== $variable ) {
+				$variable['type'] = 'system';
+				$variables[]      = $variable;
+				continue;
+			}
+
+			$variable = $this->parse_user_variable_select_reference( $item );
 			if ( null === $variable ) {
 				return null;
 			}
-			$variables[] = $variable;
+			$variable['type'] = 'user';
+			$variables[]      = $variable;
 		}
 
 		return $variables;
@@ -1145,6 +1164,38 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Parse one supported @user_variable reference with an optional alias.
+	 *
+	 * @param WP_Parser_Token[] $tokens Reference tokens.
+	 * @return array{name:string,alias:string}|null Variable, or null when the item is not supported by this slice.
+	 */
+	private function parse_user_variable_select_reference( array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || ! $this->is_user_variable_token( $tokens[0] ) ) {
+			return null;
+		}
+
+		$index = 1;
+		$alias = $tokens[0]->get_bytes();
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$alias = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) ) {
+			$alias = $this->identifier_value( $tokens[ $index ] );
+			++$index;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			return null;
+		}
+
+		return array(
+			'name'  => $this->user_variable_name( $tokens[0] ),
+			'alias' => $alias,
+		);
+	}
+
+	/**
 	 * Normalize a supported session system variable token.
 	 *
 	 * @param WP_Parser_Token $token Variable-name token.
@@ -1156,6 +1207,40 @@ class WP_DuckDB_Driver {
 		}
 
 		return strtolower( $token->get_value() );
+	}
+
+	/**
+	 * Get an emulated MySQL user variable value.
+	 *
+	 * @param string $name Normalized variable name.
+	 * @return int|float|string|null Stored value, or null when unset.
+	 */
+	private function get_user_variable( string $name ) {
+		return array_key_exists( $name, $this->user_variables ) ? $this->user_variables[ $name ] : null;
+	}
+
+	/**
+	 * Normalize a user-variable token name.
+	 *
+	 * @param WP_Parser_Token $token User-variable token.
+	 * @return string Lowercase variable name without the leading @.
+	 */
+	private function user_variable_name( WP_Parser_Token $token ): string {
+		if ( ! $this->is_user_variable_token( $token ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Expected a MySQL user variable in DuckDB driver statement.' );
+		}
+
+		return strtolower( substr( $token->get_value(), 1 ) );
+	}
+
+	/**
+	 * Check whether a token is a MySQL @user_variable token.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token is a user variable.
+	 */
+	private function is_user_variable_token( WP_Parser_Token $token ): bool {
+		return WP_MySQL_Lexer::AT_TEXT_SUFFIX === $token->id;
 	}
 
 	/**
@@ -2665,6 +2750,11 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			if ( $this->is_set_user_variable_assignment( $assignment ) ) {
+				$this->execute_set_user_variable_assignment( $assignment );
+				continue;
+			}
+
 			$default_scope = $this->execute_set_session_system_variable_assignment( $assignment, $default_scope );
 		}
 
@@ -2728,12 +2818,7 @@ class WP_DuckDB_Driver {
 		);
 		++$index;
 
-		$value_tokens = array_slice( $tokens, $index );
-		if ( 1 !== count( $value_tokens ) ) {
-			throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
-		}
-
-		$value = $this->normalize_set_session_system_variable_value( $name, $value_tokens[0] );
+		$value = $this->normalize_set_session_system_variable_value_tokens( $name, array_slice( $tokens, $index ) );
 		if ( 'sql_mode' === $name ) {
 			$this->active_sql_modes = '' === $value ? array() : explode( ',', (string) $value );
 		} else {
@@ -2741,6 +2826,35 @@ class WP_DuckDB_Driver {
 		}
 
 		return $default_scope;
+	}
+
+	/**
+	 * Check whether a SET assignment targets a user variable.
+	 *
+	 * @param WP_Parser_Token[] $tokens Assignment tokens.
+	 * @return bool Whether the assignment targets a user variable.
+	 */
+	private function is_set_user_variable_assignment( array $tokens ): bool {
+		return isset( $tokens[0] ) && $this->is_user_variable_token( $tokens[0] );
+	}
+
+	/**
+	 * Execute one SET assignment for an emulated user variable.
+	 *
+	 * @param WP_Parser_Token[] $tokens Assignment tokens.
+	 */
+	private function execute_set_user_variable_assignment( array $tokens ): void {
+		$name = $this->user_variable_name( $tokens[0] );
+		if (
+			! isset( $tokens[1] )
+			|| ( WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[1]->id && WP_MySQL_Lexer::ASSIGN_OPERATOR !== $tokens[1]->id )
+		) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Unsupported SET user variable statement in DuckDB driver. Expected "=" or ":=" for user variable assignment.'
+			);
+		}
+
+		$this->user_variables[ $name ] = $this->normalize_set_user_variable_value( array_slice( $tokens, 2 ) );
 	}
 
 	/**
@@ -2790,6 +2904,32 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Normalize an emulated session system variable value from assignment tokens.
+	 *
+	 * @param string            $name   Normalized variable name.
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return int|string|null Normalized stored value.
+	 */
+	private function normalize_set_session_system_variable_value_tokens( string $name, array $tokens ) {
+		if ( 1 !== count( $tokens ) ) {
+			throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+		}
+
+		if ( $this->is_user_variable_token( $tokens[0] ) ) {
+			if ( ! in_array( $name, array( 'foreign_key_checks', 'unique_checks' ), true ) ) {
+				throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+			}
+
+			return $this->normalize_set_dump_check_variable_value(
+				$name,
+				$this->get_user_variable( $this->user_variable_name( $tokens[0] ) )
+			);
+		}
+
+		return $this->normalize_set_session_system_variable_value( $name, $tokens[0] );
+	}
+
+	/**
 	 * Normalize an emulated session system variable value.
 	 *
 	 * @param string          $name  Normalized variable name.
@@ -2836,6 +2976,89 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Normalize a restored dump check variable value.
+	 *
+	 * @param string $name  Normalized variable name.
+	 * @param mixed  $value Restored user-variable value.
+	 * @return int|string|null Normalized stored value.
+	 */
+	private function normalize_set_dump_check_variable_value( string $name, $value ) {
+		if ( null === $value || 'DEFAULT' === $value ) {
+			return $value;
+		}
+
+		if ( is_int( $value ) && ( 0 === $value || 1 === $value ) ) {
+			return $value;
+		}
+
+		if ( is_string( $value ) ) {
+			$lower = strtolower( $value );
+			if ( 'on' === $lower || 'true' === $lower || '1' === $value ) {
+				return 1;
+			}
+			if ( 'off' === $lower || 'false' === $lower || '0' === $value ) {
+				return 0;
+			}
+		}
+
+		throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+	}
+
+	/**
+	 * Normalize an emulated user variable assignment value.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return int|float|string|null Normalized stored value.
+	 */
+	private function normalize_set_user_variable_value( array $tokens ) {
+		$system_variable = $this->parse_session_system_variable_reference( $tokens );
+		if ( null !== $system_variable ) {
+			return $this->get_session_system_variable( $system_variable['name'] );
+		}
+
+		if ( 1 === count( $tokens ) && $this->is_user_variable_token( $tokens[0] ) ) {
+			return $this->get_user_variable( $this->user_variable_name( $tokens[0] ) );
+		}
+
+		return $this->normalize_set_user_variable_literal_value( $tokens );
+	}
+
+	/**
+	 * Normalize a bounded literal for a user variable assignment.
+	 *
+	 * @param WP_Parser_Token[] $tokens Literal tokens.
+	 * @return int|float|string|null Normalized stored value.
+	 */
+	private function normalize_set_user_variable_literal_value( array $tokens ) {
+		if ( count( $tokens ) === 2 && $this->is_sign_token( $tokens[0] ) && $this->is_number_token( $tokens[1] ) ) {
+			return $this->signed_number_token_value( $tokens[0], $tokens[1] );
+		}
+
+		if ( 1 !== count( $tokens ) ) {
+			throw $this->new_unsupported_set_user_variable_value_exception();
+		}
+
+		$token = $tokens[0];
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+			return $token->get_value();
+		}
+		if ( $this->is_number_token( $token ) ) {
+			return $this->number_token_value( $token );
+		}
+		if ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id || WP_MySQL_Lexer::NULL2_SYMBOL === $token->id ) {
+			return null;
+		}
+		if ( WP_MySQL_Lexer::TRUE_SYMBOL === $token->id ) {
+			return 1;
+		}
+		if ( WP_MySQL_Lexer::FALSE_SYMBOL === $token->id ) {
+			return 0;
+		}
+
+		throw $this->new_unsupported_set_user_variable_value_exception();
+	}
+
+	/**
 	 * Normalize a SET sql_mode value for driver-local readback.
 	 *
 	 * @param WP_Parser_Token $token Value token.
@@ -2877,7 +3100,18 @@ class WP_DuckDB_Driver {
 		return new WP_DuckDB_Driver_Exception(
 			'Unsupported SET value for '
 			. $name
-			. ' in DuckDB driver. Only ON, OFF, TRUE, FALSE, 1, 0, and DEFAULT are supported.'
+			. ' in DuckDB driver. Only ON, OFF, TRUE, FALSE, 1, 0, DEFAULT, and supported dump restores are supported.'
+		);
+	}
+
+	/**
+	 * Build an unsupported user-variable SET value exception.
+	 *
+	 * @return WP_DuckDB_Driver_Exception Exception.
+	 */
+	private function new_unsupported_set_user_variable_value_exception(): WP_DuckDB_Driver_Exception {
+		return new WP_DuckDB_Driver_Exception(
+			'Unsupported SET user variable value in DuckDB driver. Only literals, supported system variables, and simple user variable references are supported.'
 		);
 	}
 
@@ -2893,7 +3127,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception(
 				'Unsupported SET session variable in DuckDB driver: '
 				. $name
-				. '. Only autocommit, big_tables, and sql_mode are supported.'
+				. '. Only autocommit, big_tables, foreign_key_checks, sql_mode, and unique_checks are supported.'
 			);
 		}
 
@@ -10913,6 +11147,46 @@ class WP_DuckDB_Driver {
 			),
 			true
 		);
+	}
+
+	/**
+	 * Check whether a token is a numeric sign.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token is + or -.
+	 */
+	private function is_sign_token( WP_Parser_Token $token ): bool {
+		return WP_MySQL_Lexer::PLUS_OPERATOR === $token->id || WP_MySQL_Lexer::MINUS_OPERATOR === $token->id;
+	}
+
+	/**
+	 * Convert a number token to a PHP scalar.
+	 *
+	 * @param WP_Parser_Token $token Number token.
+	 * @return int|float Number value.
+	 */
+	private function number_token_value( WP_Parser_Token $token ) {
+		if ( WP_MySQL_Lexer::DECIMAL_NUMBER === $token->id || WP_MySQL_Lexer::FLOAT_NUMBER === $token->id ) {
+			return (float) $token->get_value();
+		}
+
+		return (int) $token->get_value();
+	}
+
+	/**
+	 * Convert a signed number token pair to a PHP scalar.
+	 *
+	 * @param WP_Parser_Token $sign  Sign token.
+	 * @param WP_Parser_Token $token Number token.
+	 * @return int|float Number value.
+	 */
+	private function signed_number_token_value( WP_Parser_Token $sign, WP_Parser_Token $token ) {
+		$value = $this->number_token_value( $token );
+		if ( WP_MySQL_Lexer::MINUS_OPERATOR === $sign->id ) {
+			return -$value;
+		}
+
+		return $value;
 	}
 
 	/**

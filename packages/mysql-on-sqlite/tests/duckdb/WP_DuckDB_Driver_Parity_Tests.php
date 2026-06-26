@@ -111,6 +111,43 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT @@autocommit, @@big_tables' );
 	}
 
+	public function test_user_variable_sql_matches_sqlite(): void {
+		$this->assertParityRows( 'SELECT @missing, @missing AS missing_alias, @missing implicit_alias' );
+
+		$this->assertParityRowCount(
+			"SET @my_var = 1, @name := 'Ada', @copy = @name, @mode = @@SQL_MODE, @nothing = NULL"
+		);
+		$this->assertParityRows(
+			'SELECT @MY_VAR, @name AS name, @copy, @mode mode, @nothing AS nothing FROM DUAL'
+		);
+
+		$this->assertParityRowCount( 'SET @signed = -2, @decimal = +1.25, @flag = TRUE' );
+		$this->assertParityRows( 'SELECT @signed, @decimal, @flag' );
+	}
+
+	public function test_dump_check_variable_backup_and_restore_sql_matches_sqlite(): void {
+		$this->assertParityRowCount(
+			'/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;'
+		);
+		$this->assertParityRows( 'SELECT @OLD_UNIQUE_CHECKS, @@UNIQUE_CHECKS' );
+
+		$this->assertParityRowCount(
+			'/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;'
+		);
+		$this->assertParityRows( 'SELECT @OLD_FOREIGN_KEY_CHECKS, @@FOREIGN_KEY_CHECKS' );
+
+		$this->assertParityRowCount( '/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;' );
+		$this->assertParityRowCount( '/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;' );
+		$this->assertParityRows( 'SELECT @@UNIQUE_CHECKS, @@FOREIGN_KEY_CHECKS' );
+
+		$this->assertParityRowCount(
+			'SET @RESTORED_UNIQUE_CHECKS = 1, @RESTORED_FOREIGN_KEY_CHECKS = "0"'
+		);
+		$this->assertParityRowCount( 'SET UNIQUE_CHECKS=@RESTORED_UNIQUE_CHECKS' );
+		$this->assertParityRowCount( 'SET FOREIGN_KEY_CHECKS=@RESTORED_FOREIGN_KEY_CHECKS' );
+		$this->assertParityRows( 'SELECT @@UNIQUE_CHECKS, @@FOREIGN_KEY_CHECKS' );
+	}
+
 	public function test_sql_mode_bootstrap_sql_matches_sqlite(): void {
 		$this->assertParityRowCount( 'SET NAMES utf8mb4' );
 		$this->assertParityRowCount( 'SET CHARSET utf8mb4' );
