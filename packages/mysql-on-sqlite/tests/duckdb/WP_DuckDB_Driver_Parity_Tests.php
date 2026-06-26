@@ -33,6 +33,48 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_transaction_sql_matches_sqlite(): void {
+		$this->runParitySetup( array( 'CREATE TABLE tx_items (id INT)' ) );
+
+		$this->runParitySetup(
+			array(
+				'BEGIN',
+				'INSERT INTO tx_items (id) VALUES (1)',
+			)
+		);
+		$this->assertParityRows( 'SELECT id FROM tx_items ORDER BY id' );
+		$this->runParitySetup( array( 'ROLLBACK' ) );
+		$this->assertParityRows( 'SELECT id FROM tx_items ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'START TRANSACTION',
+				'INSERT INTO tx_items (id) VALUES (2)',
+				'COMMIT',
+			)
+		);
+		$this->assertParityRows( 'SELECT id FROM tx_items ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'BEGIN WORK',
+				'INSERT INTO tx_items (id) VALUES (3)',
+				'BEGIN',
+				'INSERT INTO tx_items (id) VALUES (4)',
+				'ROLLBACK WORK',
+			)
+		);
+		$this->assertParityRows( 'SELECT id FROM tx_items ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'ROLLBACK',
+				'COMMIT WORK',
+			)
+		);
+		$this->assertParityRows( 'SELECT id FROM tx_items ORDER BY id' );
+	}
+
 	public function test_update_delete_alias_order_limit_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

@@ -120,6 +120,35 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'anonymous', $describe[1]['Default'] );
 	}
 
+	public function test_sql_transaction_statements_update_connection_state_and_query_log(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE tx_state (id INT)' );
+
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$driver->query( 'BEGIN' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'BEGIN TRANSACTION' ), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'INSERT INTO tx_state (id) VALUES (1)' );
+		$driver->query( 'BEGIN' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'COMMIT', 'BEGIN TRANSACTION' ), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'INSERT INTO tx_state (id) VALUES (2)' );
+		$driver->query( 'ROLLBACK' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'ROLLBACK' ), $driver->get_last_duckdb_queries() );
+		$this->assertSame(
+			array( array( 'id' => 1 ) ),
+			$driver->query( 'SELECT id FROM tx_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'COMMIT' );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
 	public function test_update_delete_alias_order_limit_are_rewritten(): void {
 		$this->requireDuckDBRuntime();
 

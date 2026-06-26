@@ -158,6 +158,14 @@ class WP_DuckDB_Driver {
 		}
 
 		switch ( $tokens[0]->id ) {
+			case WP_MySQL_Lexer::BEGIN_SYMBOL:
+				return $this->execute_begin_transaction_statement( $tokens );
+			case WP_MySQL_Lexer::START_SYMBOL:
+				return $this->execute_start_transaction_statement( $tokens );
+			case WP_MySQL_Lexer::COMMIT_SYMBOL:
+				return $this->execute_commit_statement( $tokens );
+			case WP_MySQL_Lexer::ROLLBACK_SYMBOL:
+				return $this->execute_rollback_statement( $tokens );
 			case WP_MySQL_Lexer::SELECT_SYMBOL:
 				return $this->execute_select( $tokens );
 			case WP_MySQL_Lexer::CREATE_SYMBOL:
@@ -1766,6 +1774,96 @@ class WP_DuckDB_Driver {
 	 */
 	private function empty_ddl_result(): WP_DuckDB_Result_Statement {
 		return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Execute BEGIN [WORK].
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_begin_transaction_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		$this->assert_optional_work_only( $tokens, 'BEGIN' );
+		$this->begin_user_transaction();
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Execute START TRANSACTION.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_start_transaction_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		if ( 2 !== count( $tokens ) || WP_MySQL_Lexer::TRANSACTION_SYMBOL !== $tokens[1]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported START statement in DuckDB driver. Only START TRANSACTION is supported.' );
+		}
+
+		$this->begin_user_transaction();
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Execute COMMIT [WORK].
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_commit_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		$this->assert_optional_work_only( $tokens, 'COMMIT' );
+		if ( $this->connection->inTransaction() ) {
+			$this->last_duckdb_queries[] = 'COMMIT';
+			$this->connection->commit();
+		}
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Execute ROLLBACK [WORK].
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_rollback_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		$this->assert_optional_work_only( $tokens, 'ROLLBACK' );
+		if ( $this->connection->inTransaction() ) {
+			$this->last_duckdb_queries[] = 'ROLLBACK';
+			$this->connection->rollback();
+		}
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Begin a MySQL-style user transaction.
+	 *
+	 * MySQL implicitly commits the active transaction before starting another.
+	 */
+	private function begin_user_transaction(): void {
+		if ( $this->connection->inTransaction() ) {
+			$this->last_duckdb_queries[] = 'COMMIT';
+			$this->connection->commit();
+		}
+
+		$this->last_duckdb_queries[] = 'BEGIN TRANSACTION';
+		$this->connection->beginTransaction();
+	}
+
+	/**
+	 * Assert that a transaction statement has no trailing tokens except WORK.
+	 *
+	 * @param WP_Parser_Token[] $tokens    MySQL tokens.
+	 * @param string            $statement Statement name.
+	 */
+	private function assert_optional_work_only( array $tokens, string $statement ): void {
+		if ( 1 === count( $tokens ) ) {
+			return;
+		}
+
+		if ( 2 === count( $tokens ) && WP_MySQL_Lexer::WORK_SYMBOL === $tokens[1]->id ) {
+			return;
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only ' . $statement . ' [WORK] is supported.' );
 	}
 
 	/**
