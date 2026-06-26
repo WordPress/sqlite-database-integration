@@ -2147,7 +2147,7 @@ class WP_DuckDB_Driver {
 
 		$actions = $this->split_top_level_comma_items( array_slice( $tokens, $index ) );
 		if ( count( $actions ) === 0 ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN, ADD INDEX, and DROP INDEX are supported.' );
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN, ADD INDEX, DROP COLUMN, and DROP INDEX are supported.' );
 		}
 
 		$result = null;
@@ -2157,11 +2157,13 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( WP_MySQL_Lexer::DROP_SYMBOL === $action[0]->id ) {
-				$result = $this->execute_alter_table_drop_index( $table_name, $action, $temporary );
+				$result = $this->is_alter_table_drop_index_action( $action )
+					? $this->execute_alter_table_drop_index( $table_name, $action, $temporary )
+					: $this->execute_alter_table_drop_column( $table_name, $action, $temporary );
 				continue;
 			}
 
-			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD and DROP INDEX actions are supported.' );
+			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD and DROP actions are supported.' );
 			$alter_item = array_slice( $action, 1 );
 
 			$result = $this->is_create_table_index_item( $alter_item )
@@ -2208,6 +2210,280 @@ class WP_DuckDB_Driver {
 				$this->invalidate_information_schema_compatibility_tables();
 				return $this->empty_ddl_result();
 			}
+		);
+	}
+
+	/**
+	 * Check whether an ALTER TABLE DROP action targets an index/key.
+	 *
+	 * @param WP_Parser_Token[] $tokens Action tokens starting at DROP.
+	 * @return bool Whether this is a DROP INDEX/KEY/PRIMARY action.
+	 */
+	private function is_alter_table_drop_index_action( array $tokens ): bool {
+		if ( ! isset( $tokens[1] ) ) {
+			return false;
+		}
+
+		return in_array(
+			$tokens[1]->id,
+			array(
+				WP_MySQL_Lexer::INDEX_SYMBOL,
+				WP_MySQL_Lexer::KEY_SYMBOL,
+				WP_MySQL_Lexer::PRIMARY_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Execute ALTER TABLE ... DROP [COLUMN].
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     Action tokens starting at DROP.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_drop_column( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP in ALTER TABLE action.' );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN options are not supported.' );
+		}
+
+		$resolved_column_name = $this->assert_alter_table_drop_column_supported( $table_name, $column_name, $temporary );
+		$index_definitions    = $this->secondary_index_definitions_for_table( $table_name, $temporary );
+		$rebuilt_indexes      = $this->secondary_index_definitions_after_column_drop( $table_name, $resolved_column_name, $index_definitions, $temporary );
+
+		$callback = function () use ( $table_name, $resolved_column_name, $index_definitions, $rebuilt_indexes, $temporary ): WP_DuckDB_Result_Statement {
+			return $this->execute_alter_table_drop_column_change( $table_name, $resolved_column_name, $index_definitions, $rebuilt_indexes, $temporary );
+		};
+
+		if ( count( $index_definitions ) > 0 ) {
+			if ( $this->connection->inTransaction() ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN on indexed columns cannot run inside an active DuckDB transaction.' );
+			}
+
+			return $callback();
+		}
+
+		return $this->execute_schema_lifecycle_change(
+			$callback
+		);
+	}
+
+	/**
+	 * Apply an ALTER TABLE ... DROP COLUMN after validation.
+	 *
+	 * @param string                                                                 $table_name       Table name.
+	 * @param string                                                                 $column_name      Resolved column name.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $dropped_indexes Existing indexes dropped before the schema change.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $rebuilt_indexes Rebuilt surviving indexes.
+	 * @param bool                                                                   $temporary       Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_drop_column_change( string $table_name, string $column_name, array $dropped_indexes, array $rebuilt_indexes, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		foreach ( $dropped_indexes as $index_definition ) {
+			$this->drop_physical_secondary_index( $table_name, $index_definition['index_name'], true, $temporary );
+			$this->delete_index_metadata( $table_name, $index_definition['index_name'], $temporary );
+		}
+
+		try {
+			$result = $this->execute_duckdb_query(
+				'ALTER TABLE '
+					. $this->connection->quote_identifier( $table_name )
+					. ' DROP COLUMN '
+					. $this->connection->quote_identifier( $column_name ),
+				'Failed to drop DuckDB column'
+			);
+		} catch ( Throwable $e ) {
+			$this->restore_secondary_index_definitions( $dropped_indexes );
+			$this->refresh_column_key_metadata( $table_name, $temporary );
+			$this->invalidate_information_schema_compatibility_tables();
+			throw $e;
+		}
+
+		$this->delete_column_metadata( $table_name, $column_name, $temporary );
+
+		foreach ( $rebuilt_indexes as $index_definition ) {
+			$this->execute_duckdb_query( $index_definition['sql'], 'Failed to recreate DuckDB index after dropping column' );
+			$this->record_index_metadata( $index_definition );
+		}
+
+		$this->refresh_column_key_metadata( $table_name, $temporary );
+		$this->invalidate_information_schema_compatibility_tables();
+
+		return $result;
+	}
+
+	/**
+	 * Best-effort restore of secondary indexes after a failed DROP COLUMN.
+	 *
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Index definitions.
+	 */
+	private function restore_secondary_index_definitions( array $index_definitions ): void {
+		foreach ( $index_definitions as $index_definition ) {
+			try {
+				$this->execute_duckdb_query( $index_definition['sql'], 'Failed to restore DuckDB index after failed DROP COLUMN' );
+				$this->record_index_metadata( $index_definition );
+			} catch ( Throwable $restore_exception ) {
+				unset( $restore_exception );
+			}
+		}
+	}
+
+	/**
+	 * Resolve and validate a supported ALTER TABLE ... DROP COLUMN target.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Requested column name.
+	 * @param bool   $temporary   Whether the target is a temporary table.
+	 * @return string Resolved column name using stored table casing.
+	 */
+	private function assert_alter_table_drop_column_supported( string $table_name, string $column_name, bool $temporary = false ): string {
+		$metadata = $this->table_column_metadata_rows( $table_name, $temporary );
+		if ( count( $metadata ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in ALTER TABLE statement." );
+		}
+
+		$resolved_column_name = null;
+		foreach ( $metadata as $column ) {
+			if ( 0 === strcasecmp( (string) $column['column_name'], $column_name ) ) {
+				$resolved_column_name = (string) $column['column_name'];
+				break;
+			}
+		}
+
+		if ( null === $resolved_column_name ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown column '{$column_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+
+		if ( 1 === count( $metadata ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN cannot remove the last column.' );
+		}
+
+		foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
+			if ( 0 === strcasecmp( (string) $index_row[4], $resolved_column_name ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN on a primary key column requires a table rebuild.' );
+			}
+		}
+
+		$auto_increment = $this->auto_increment_metadata_for_table( $table_name, $temporary );
+		if ( null !== $auto_increment && 0 === strcasecmp( $auto_increment['column_name'], $resolved_column_name ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN on an AUTO_INCREMENT column requires a table rebuild.' );
+		}
+
+		return $resolved_column_name;
+	}
+
+	/**
+	 * Read stored column metadata, falling back to DuckDB pragma metadata.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function table_column_metadata_rows( string $table_name, bool $temporary = false ): array {
+		$metadata = $this->column_metadata_rows( $table_name, $temporary );
+		if ( count( $metadata ) === 0 ) {
+			$metadata = $this->pragma_column_metadata_rows( $table_name );
+		}
+
+		return $metadata;
+	}
+
+	/**
+	 * Check whether a secondary index definition contains a column.
+	 *
+	 * @param array{columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Index definition.
+	 * @param string                                                        $column_name      Column name.
+	 * @return bool Whether the index references the column.
+	 */
+	private function index_definition_contains_column( array $index_definition, string $column_name ): bool {
+		foreach ( $index_definition['columns'] as $column ) {
+			if ( 0 === strcasecmp( $column['name'], $column_name ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Build secondary indexes that survive after dropping one column.
+	 *
+	 * @param string                                                                 $table_name        Table name.
+	 * @param string                                                                 $column_name       Dropped column name.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Current index definitions.
+	 * @param bool                                                                   $temporary        Whether the target is a temporary table.
+	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}>
+	 */
+	private function secondary_index_definitions_after_column_drop( string $table_name, string $column_name, array $index_definitions, bool $temporary = false ): array {
+		$rebuilt_indexes = array();
+
+		foreach ( $index_definitions as $index_definition ) {
+			if ( ! $this->index_definition_contains_column( $index_definition, $column_name ) ) {
+				$rebuilt_indexes[] = $index_definition;
+				continue;
+			}
+
+			$column_metadata = array_values(
+				array_filter(
+					$index_definition['columns'],
+					function ( array $column ) use ( $column_name ): bool {
+						return 0 !== strcasecmp( $column['name'], $column_name );
+					}
+				)
+			);
+
+			if ( count( $column_metadata ) === 0 ) {
+				continue;
+			}
+
+			$rebuilt_indexes[] = $this->build_secondary_index_definition(
+				$table_name,
+				$index_definition['index_name'],
+				$index_definition['unique'],
+				array_map(
+					function ( array $column ): string {
+						return $this->connection->quote_identifier( $column['name'] );
+					},
+					$column_metadata
+				),
+				$column_metadata,
+				$temporary
+			);
+		}
+
+		return $rebuilt_indexes;
+	}
+
+	/**
+	 * Delete stored metadata for a dropped column.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Column name.
+	 * @param bool   $temporary   Whether the target is a temporary table.
+	 */
+	private function delete_column_metadata( string $table_name, string $column_name, bool $temporary = false ): void {
+		$this->ensure_column_metadata_table( $temporary );
+
+		$this->execute_duckdb_query(
+			'DELETE FROM '
+				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name )
+				. ' AND column_name = '
+				. $this->connection->quote( $column_name ),
+			'Failed to delete DuckDB column metadata'
 		);
 	}
 
@@ -3569,6 +3845,7 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$has_non_unique_index = false;
 			foreach ( $indexes as $index_definition ) {
 				if ( count( $index_definition['columns'] ) === 0 ) {
 					continue;
@@ -3576,8 +3853,17 @@ class WP_DuckDB_Driver {
 				if ( strtolower( $index_definition['columns'][0]['name'] ) !== $column_name ) {
 					continue;
 				}
-				$column['column_key'] = $index_definition['unique'] ? 'UNI' : 'MUL';
-				break;
+
+				if ( $index_definition['unique'] ) {
+					$column['column_key'] = 'UNI';
+					continue 2;
+				}
+
+				$has_non_unique_index = true;
+			}
+
+			if ( $has_non_unique_index ) {
+				$column['column_key'] = 'MUL';
 			}
 		}
 		unset( $column );
@@ -5574,7 +5860,7 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Refresh stored COLUMN_KEY values after an index is dropped.
+	 * Refresh stored COLUMN_KEY values after index metadata changes.
 	 *
 	 * @param string $table_name Table name.
 	 */
@@ -5596,11 +5882,26 @@ class WP_DuckDB_Driver {
 			$this->primary_key_index_rows( $table_name )
 		);
 
-		$this->record_column_metadata(
-			$table_name,
-			$this->apply_column_key_metadata( $metadata, $primary_key, $this->secondary_index_definitions_for_table( $table_name, $temporary ) ),
-			$temporary
+		$metadata_table = $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) );
+		$metadata       = $this->apply_column_key_metadata(
+			$metadata,
+			$primary_key,
+			$this->secondary_index_definitions_for_table( $table_name, $temporary )
 		);
+
+		foreach ( $metadata as $column ) {
+			$this->execute_duckdb_query(
+				'UPDATE '
+					. $metadata_table
+					. ' SET column_key = '
+					. $this->connection->quote( $column['column_key'] )
+					. ' WHERE table_name = '
+					. $this->connection->quote( $table_name )
+					. ' AND column_name = '
+					. $this->connection->quote( $column['column_name'] ),
+				'Failed to refresh DuckDB column metadata'
+			);
+		}
 	}
 
 	/**

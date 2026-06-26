@@ -2058,6 +2058,263 @@ SQL,
 		$this->assertStringNotContainsString( 'name_unique', $create_rows[0]['Create Table'] );
 	}
 
+	public function test_alter_table_drop_column_updates_data_and_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE drop_col_meta (
+				id INT,
+				keep_col VARCHAR(20) DEFAULT 'keep',
+				drop_col INT DEFAULT 0,
+				tail_col VARCHAR(20),
+				KEY keep_idx (keep_col),
+				KEY drop_idx (drop_col),
+				KEY keep_drop_tail (keep_col, drop_col, tail_col)
+			)"
+		);
+		$driver->query( "INSERT INTO drop_col_meta (id, keep_col, drop_col, tail_col) VALUES (1, 'a', 9, 'z')" );
+
+		$drop = $driver->query( 'ALTER TABLE drop_col_meta DROP COLUMN drop_col' );
+		$this->assertSame( 0, $drop->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'       => 1,
+					'keep_col' => 'a',
+					'tail_col' => 'z',
+				),
+			),
+			$driver->query( 'SELECT * FROM drop_col_meta' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 'id', 'keep_col', 'tail_col' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM drop_col_meta' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array( 'id', 'keep_col', 'tail_col' ),
+			array_column( $driver->query( 'DESCRIBE drop_col_meta' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'      => 'id',
+					'ORDINAL_POSITION' => 1,
+				),
+				array(
+					'COLUMN_NAME'      => 'keep_col',
+					'ORDINAL_POSITION' => 2,
+				),
+				array(
+					'COLUMN_NAME'      => 'tail_col',
+					'ORDINAL_POSITION' => 4,
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, ORDINAL_POSITION
+				FROM information_schema.columns
+				WHERE table_schema = 'wp' AND table_name = 'drop_col_meta'
+				ORDER BY ORDINAL_POSITION"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE drop_col_meta' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringNotContainsString( '`drop_col`', $create_rows[0]['Create Table'] );
+		$this->assertStringNotContainsString( 'KEY `drop_idx`', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'KEY `keep_drop_tail` (`keep_col`, `tail_col`)', $create_rows[0]['Create Table'] );
+	}
+
+	public function test_alter_table_drop_column_prunes_secondary_indexes(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE drop_col_idx (
+				a INT,
+				b INT,
+				c INT,
+				UNIQUE KEY unique_ab (a, b),
+				KEY compound (a, b, c),
+				KEY only_b (b),
+				KEY c_idx (c)
+			)'
+		);
+		$driver->query( 'INSERT INTO drop_col_idx (a, b, c) VALUES (1, 10, 100), (2, 20, 200)' );
+
+		$driver->query( 'ALTER TABLE drop_col_idx DROP b' );
+
+		$index_rows = array_map(
+			function ( array $row ): array {
+				return array(
+					'Key_name'     => $row['Key_name'],
+					'Seq_in_index' => $row['Seq_in_index'],
+					'Column_name'  => $row['Column_name'],
+					'Non_unique'   => $row['Non_unique'],
+				);
+			},
+			$driver->query( 'SHOW INDEX FROM drop_col_idx' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'Key_name'     => 'c_idx',
+					'Seq_in_index' => 1,
+					'Column_name'  => 'c',
+					'Non_unique'   => 1,
+				),
+				array(
+					'Key_name'     => 'compound',
+					'Seq_in_index' => 1,
+					'Column_name'  => 'a',
+					'Non_unique'   => 1,
+				),
+				array(
+					'Key_name'     => 'compound',
+					'Seq_in_index' => 2,
+					'Column_name'  => 'c',
+					'Non_unique'   => 1,
+				),
+				array(
+					'Key_name'     => 'unique_ab',
+					'Seq_in_index' => 1,
+					'Column_name'  => 'a',
+					'Non_unique'   => 0,
+				),
+			),
+			$index_rows
+		);
+		$this->assertSame(
+			array(
+				'a' => 'UNI',
+				'c' => 'MUL',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM drop_col_idx' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT index_name
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp' AND table_name = 'drop_col_idx' AND index_name = 'only_b'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_drop_multiple_and_mixed_columns(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE drop_col_multi (
+				a INT,
+				b INT,
+				c INT,
+				marker VARCHAR(20)
+			)'
+		);
+		$driver->query( "INSERT INTO drop_col_multi (a, b, c, marker) VALUES (1, 2, 3, 'row')" );
+
+		$driver->query( 'ALTER TABLE drop_col_multi DROP a, DROP COLUMN b' );
+		$this->assertSame(
+			array( 'c', 'marker' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM drop_col_multi' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+
+		$driver->query( 'ALTER TABLE drop_col_multi ADD d INT DEFAULT 9, DROP c' );
+		$this->assertSame(
+			array( 'marker', 'd' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM drop_col_multi' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'marker' => 'row',
+					'd'      => 9,
+				),
+			),
+			$driver->query( 'SELECT marker, d FROM drop_col_multi' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_drop_column_targets_temporary_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE shadow_drop (a INT, b INT)' );
+		$driver->query( 'CREATE TEMPORARY TABLE shadow_drop (a INT, b INT, c INT)' );
+		$driver->query( 'INSERT INTO shadow_drop (a, b, c) VALUES (3, 4, 5)' );
+
+		$driver->query( 'ALTER TABLE shadow_drop DROP COLUMN b' );
+		$this->assertSame(
+			array( 'a', 'c' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM shadow_drop' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'a' => 3,
+					'c' => 5,
+				),
+			),
+			$driver->query( 'SELECT * FROM shadow_drop' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE shadow_drop' );
+		$this->assertSame(
+			array( 'a', 'b' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM shadow_drop' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+	}
+
+	public function test_alter_table_drop_column_rejects_protected_columns(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE drop_col_pk (id INT NOT NULL, keep_col INT, PRIMARY KEY (id))' );
+		$driver->query( 'CREATE TABLE drop_col_auto (id BIGINT NOT NULL AUTO_INCREMENT, keep_col INT, KEY id_idx (id))' );
+		$driver->query( 'CREATE TABLE drop_col_last (only_col INT)' );
+
+		foreach (
+			array(
+				'ALTER TABLE drop_col_pk DROP COLUMN id'   => 'primary key column requires a table rebuild',
+				'ALTER TABLE drop_col_auto DROP COLUMN id' => 'AUTO_INCREMENT column requires a table rebuild',
+				'ALTER TABLE drop_col_last DROP COLUMN only_col' => 'DROP COLUMN cannot remove the last column',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected DROP COLUMN protection to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+		}
+	}
+
 	public function test_drop_table_removes_metadata_and_sequence_state(): void {
 		$this->requireDuckDBRuntime();
 
