@@ -111,6 +111,15 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 2, $result['insert_rows_affected'] );
 		$this->assertTrue( $result['create_return'] );
 		$this->assertSame( 3, $result['num_queries'] );
+		$user_client_queries = array_values(
+			array_filter(
+				$result['client_queries'],
+				function ( string $sql ): bool {
+					return false === strpos( $sql, '__wp_duckdb_' )
+						&& false === strpos( $sql, 'currval(' );
+				}
+			)
+		);
 		$this->assertSame(
 			array(
 				'CREATE OR REPLACE MACRO date_format(d, f) AS strftime(d, f)',
@@ -118,8 +127,20 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 				'INSERT INTO t VALUES (1), (2)',
 				'CREATE TABLE "t" ("id" INTEGER)',
 			),
-			array_slice( $result['client_queries'], 0, 4 )
+			array_slice( $user_client_queries, 0, 4 )
 		);
+	}
+
+	public function test_duckdb_wpdb_insert_id_tracks_driver_insert_id(): void {
+		$result = $this->run_insert_id_state_script();
+
+		$this->assertTrue( $result['connected'] );
+		$this->assertSame( 1, $result['insert_return'] );
+		$this->assertSame( 101, $result['insert_id_after_insert'] );
+		$this->assertSame( 1, $result['replace_return'] );
+		$this->assertSame( 102, $result['insert_id_after_replace'] );
+		$this->assertFalse( $result['failed_insert_return'] );
+		$this->assertSame( 0, $result['insert_id_after_failed_insert'] );
 	}
 
 	public function test_duckdb_wpdb_flush_clears_statement_metadata(): void {
@@ -276,6 +297,68 @@ echo json_encode(
 		'create_return'        => $create_return,
 		'num_queries'          => $db->num_queries,
 		'client_queries'       => $client->queries,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_insert_id_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_Insert_Id_Test_Driver extends WP_DuckDB_Driver {
+	private $insert_id = 0;
+
+	public function __construct() {}
+
+	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		if ( false !== strpos( $sql, 'BROKEN' ) ) {
+			throw new RuntimeException( 'Synthetic insert failure.' );
+		}
+
+		if ( 0 === stripos( trim( $sql ), 'replace' ) ) {
+			$this->insert_id = 102;
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		if ( 0 === stripos( trim( $sql ), 'insert' ) ) {
+			$this->insert_id = 101;
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	public function get_insert_id(): int {
+		return $this->insert_id;
+	}
+}
+
+$GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Insert_Id_Test_Driver();
+$db                        = new WP_DuckDB_DB( 'wordpress_test' );
+$connected                 = $db->db_connect( false );
+$insert_return             = $db->query( "INSERT INTO t (name) VALUES ('first')" );
+$insert_id                 = $db->insert_id;
+$replace_return            = $db->query( "REPLACE INTO t (name) VALUES ('second')" );
+$replace_insert_id         = $db->insert_id;
+$failed_insert             = $db->query( 'INSERT INTO t VALUES (BROKEN)' );
+$failed_insert_id          = $db->insert_id;
+
+echo json_encode(
+	array(
+		'connected'                     => $connected,
+		'insert_return'                 => $insert_return,
+		'insert_id_after_insert'        => $insert_id,
+		'replace_return'                => $replace_return,
+		'insert_id_after_replace'       => $replace_insert_id,
+		'failed_insert_return'          => $failed_insert,
+		'insert_id_after_failed_insert' => $failed_insert_id,
 	)
 );
 PHP;

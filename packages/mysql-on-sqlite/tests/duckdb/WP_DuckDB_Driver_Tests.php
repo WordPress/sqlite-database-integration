@@ -366,6 +366,59 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_insert_id_tracks_generated_auto_increment_values(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE auto_items (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(100) UNIQUE
+			)'
+		);
+		$driver->query( 'CREATE TABLE source_names (name VARCHAR(100))' );
+		$driver->query(
+			'CREATE TABLE replace_items (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(100)
+			)'
+		);
+		$driver->query( "INSERT INTO source_names VALUES ('fifth'), ('sixth')" );
+
+		$driver->query( "INSERT INTO auto_items (name) VALUES ('first')" );
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$driver->query( "INSERT INTO auto_items (name) VALUES ('second'), ('third')" );
+		$this->assertSame( 3, $driver->get_insert_id() );
+
+		$driver->query( "INSERT auto_items SET name = 'fourth'" );
+		$this->assertSame( 4, $driver->get_insert_id() );
+
+		$driver->query( 'INSERT INTO auto_items (name) SELECT name FROM source_names ORDER BY name' );
+		$this->assertSame( 6, $driver->get_insert_id() );
+
+		$driver->query( "REPLACE INTO replace_items (name) VALUES ('replacement')" );
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$driver->query( "REPLACE INTO replace_items (id, name) VALUES (42, 'explicit-replacement')" );
+		$this->assertSame( 42, $driver->get_insert_id() );
+
+		$driver->query( "INSERT INTO auto_items (id, name) VALUES (42, 'explicit')" );
+		$this->assertSame( 42, $driver->get_insert_id() );
+
+		$driver->query( "INSERT IGNORE INTO auto_items (name) VALUES ('first')" );
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		try {
+			$driver->query( "INSERT INTO auto_items (id, name) VALUES (42, 'duplicate-id')" );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertSame( 0, $driver->get_insert_id() );
+			return;
+		}
+
+		$this->fail( 'Expected duplicate insert to fail.' );
+	}
+
 	public function test_insert_on_duplicate_key_update_values_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 
