@@ -14,17 +14,19 @@
  * throws WP_DuckDB_Driver_Exception for statements outside that subset.
  */
 class WP_DuckDB_Driver {
-	const MYSQL_GRAMMAR_PATH           = __DIR__ . '/../mysql/mysql-grammar.php';
-	const DEFAULT_DATABASE             = 'wp';
-	const DEFAULT_MYSQL_VERSION        = 80038;
-	const SEQUENCE_PREFIX              = 'wp_duckdb_ai_';
-	const INDEX_PREFIX                 = 'wp_duckdb_idx_';
-	const INDEX_METADATA_TABLE         = '__wp_duckdb_index_metadata';
-	const COLUMN_METADATA_TABLE        = '__wp_duckdb_column_metadata';
-	const TABLE_METADATA_TABLE         = '__wp_duckdb_table_metadata';
-	const INFO_SCHEMA_TABLES_TABLE     = '__wp_duckdb_information_schema_tables';
-	const INFO_SCHEMA_COLUMNS_TABLE    = '__wp_duckdb_information_schema_columns';
-	const INFO_SCHEMA_STATISTICS_TABLE = '__wp_duckdb_information_schema_statistics';
+	const MYSQL_GRAMMAR_PATH                  = __DIR__ . '/../mysql/mysql-grammar.php';
+	const DEFAULT_DATABASE                    = 'wp';
+	const DEFAULT_MYSQL_VERSION               = 80038;
+	const SEQUENCE_PREFIX                     = 'wp_duckdb_ai_';
+	const INDEX_PREFIX                        = 'wp_duckdb_idx_';
+	const INDEX_METADATA_TABLE                = '__wp_duckdb_index_metadata';
+	const COLUMN_METADATA_TABLE               = '__wp_duckdb_column_metadata';
+	const TABLE_METADATA_TABLE                = '__wp_duckdb_table_metadata';
+	const INFO_SCHEMA_TABLES_TABLE            = '__wp_duckdb_information_schema_tables';
+	const INFO_SCHEMA_COLUMNS_TABLE           = '__wp_duckdb_information_schema_columns';
+	const INFO_SCHEMA_STATISTICS_TABLE        = '__wp_duckdb_information_schema_statistics';
+	const INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE = '__wp_duckdb_information_schema_table_constraints';
+	const INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE  = '__wp_duckdb_information_schema_key_column_usage';
 
 	const DATA_TYPE_MAP = array(
 		WP_MySQL_Lexer::BOOL_SYMBOL       => 'BOOLEAN',
@@ -306,9 +308,11 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_select( array $tokens ): WP_DuckDB_Result_Statement {
-		$rewrite_information_schema_tables     = $this->uses_information_schema_tables( $tokens );
-		$rewrite_information_schema_columns    = $this->uses_information_schema_columns( $tokens );
-		$rewrite_information_schema_statistics = $this->uses_information_schema_statistics( $tokens );
+		$rewrite_information_schema_tables            = $this->uses_information_schema_tables( $tokens );
+		$rewrite_information_schema_columns           = $this->uses_information_schema_columns( $tokens );
+		$rewrite_information_schema_statistics        = $this->uses_information_schema_statistics( $tokens );
+		$rewrite_information_schema_table_constraints = $this->uses_information_schema_table_constraints( $tokens );
+		$rewrite_information_schema_key_column_usage  = $this->uses_information_schema_key_column_usage( $tokens );
 		if ( $rewrite_information_schema_tables ) {
 			$this->refresh_information_schema_tables_table();
 		}
@@ -318,13 +322,21 @@ class WP_DuckDB_Driver {
 		if ( $rewrite_information_schema_statistics ) {
 			$this->refresh_information_schema_statistics_table();
 		}
+		if ( $rewrite_information_schema_table_constraints ) {
+			$this->refresh_information_schema_table_constraints_table();
+		}
+		if ( $rewrite_information_schema_key_column_usage ) {
+			$this->refresh_information_schema_key_column_usage_table();
+		}
 
 		return $this->execute_duckdb_query(
 			$this->translate_tokens_to_duckdb_sql(
 				$tokens,
 				$rewrite_information_schema_tables,
 				$rewrite_information_schema_columns,
-				$rewrite_information_schema_statistics
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage
 			),
 			'Unsupported DuckDB MySQL-emulation SELECT statement'
 		);
@@ -974,6 +986,10 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_STATISTICS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE )
 				. ' ORDER BY table_name',
 			'Failed to execute SHOW TABLES'
 		);
@@ -1038,17 +1054,17 @@ class WP_DuckDB_Driver {
 	 */
 	private function primary_key_index_rows( string $table_name ): array {
 		$pragma = $this->execute_duckdb_query(
-			'SELECT name, pk FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') WHERE pk > 0 ORDER BY pk',
+			'SELECT name FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') WHERE pk > 0 ORDER BY pk, cid',
 			'Failed to inspect DuckDB primary key'
 		);
 
 		$rows = array();
-		foreach ( $pragma->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+		foreach ( $pragma->fetchAll( PDO::FETCH_ASSOC ) as $offset => $row ) {
 			$rows[] = $this->show_index_row(
 				$table_name,
 				0,
 				'PRIMARY',
-				(int) $row['pk'],
+				$offset + 1,
 				(string) $row['name'],
 				null
 			);
@@ -2159,7 +2175,9 @@ class WP_DuckDB_Driver {
 		array $tokens,
 		bool $rewrite_information_schema_tables = false,
 		bool $rewrite_information_schema_columns = false,
-		bool $rewrite_information_schema_statistics = false
+		bool $rewrite_information_schema_statistics = false,
+		bool $rewrite_information_schema_table_constraints = false,
+		bool $rewrite_information_schema_key_column_usage = false
 	): string {
 		$pieces = array();
 
@@ -2178,6 +2196,16 @@ class WP_DuckDB_Driver {
 			}
 			if ( $rewrite_information_schema_statistics && $this->is_information_schema_statistics_reference( $tokens, $index ) ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_STATISTICS_TABLE );
+				$index   += 2;
+				continue;
+			}
+			if ( $rewrite_information_schema_table_constraints && $this->is_information_schema_table_constraints_reference( $tokens, $index ) ) {
+				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE );
+				$index   += 2;
+				continue;
+			}
+			if ( $rewrite_information_schema_key_column_usage && $this->is_information_schema_key_column_usage_reference( $tokens, $index ) ) {
+				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE );
 				$index   += 2;
 				continue;
 			}
@@ -2242,6 +2270,12 @@ class WP_DuckDB_Driver {
 				if ( null === $identifier && $rewrite_information_schema_statistics ) {
 					$identifier = $this->information_schema_statistics_column_name( $token->get_value() );
 				}
+				if ( null === $identifier && $rewrite_information_schema_table_constraints ) {
+					$identifier = $this->information_schema_table_constraints_column_name( $token->get_value() );
+				}
+				if ( null === $identifier && $rewrite_information_schema_key_column_usage ) {
+					$identifier = $this->information_schema_key_column_usage_column_name( $token->get_value() );
+				}
 				$pieces[] = $this->connection->quote_identifier( $identifier ?? $token->get_value() );
 				continue;
 			}
@@ -2261,6 +2295,22 @@ class WP_DuckDB_Driver {
 
 			if ( $rewrite_information_schema_statistics ) {
 				$identifier = $this->information_schema_statistics_column_name( $token->get_value() );
+				if ( null !== $identifier ) {
+					$pieces[] = $this->connection->quote_identifier( $identifier );
+					continue;
+				}
+			}
+
+			if ( $rewrite_information_schema_table_constraints ) {
+				$identifier = $this->information_schema_table_constraints_column_name( $token->get_value() );
+				if ( null !== $identifier ) {
+					$pieces[] = $this->connection->quote_identifier( $identifier );
+					continue;
+				}
+			}
+
+			if ( $rewrite_information_schema_key_column_usage ) {
+				$identifier = $this->information_schema_key_column_usage_column_name( $token->get_value() );
 				if ( null !== $identifier ) {
 					$pieces[] = $this->connection->quote_identifier( $identifier );
 					continue;
@@ -3441,6 +3491,66 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a SELECT references information_schema.table_constraints.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether the query needs the compatibility table.
+	 */
+	private function uses_information_schema_table_constraints( array $tokens ): bool {
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( $this->is_information_schema_table_constraints_reference( $tokens, $index ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token offset starts information_schema.table_constraints.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return bool Whether the sequence is information_schema.table_constraints.
+	 */
+	private function is_information_schema_table_constraints_reference( array $tokens, int $index ): bool {
+		return isset( $tokens[ $index + 2 ] )
+			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'table_constraints' );
+	}
+
+	/**
+	 * Check whether a SELECT references information_schema.key_column_usage.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether the query needs the compatibility table.
+	 */
+	private function uses_information_schema_key_column_usage( array $tokens ): bool {
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( $this->is_information_schema_key_column_usage_reference( $tokens, $index ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token offset starts information_schema.key_column_usage.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return bool Whether the sequence is information_schema.key_column_usage.
+	 */
+	private function is_information_schema_key_column_usage_reference( array $tokens, int $index ): bool {
+		return isset( $tokens[ $index + 2 ] )
+			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'key_column_usage' );
+	}
+
+	/**
 	 * Refresh a temporary MySQL-shaped information_schema.tables table.
 	 */
 	private function refresh_information_schema_tables_table(): void {
@@ -3945,6 +4055,287 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Refresh a temporary MySQL-shaped information_schema.table_constraints table.
+	 */
+	private function refresh_information_schema_table_constraints_table(): void {
+		$this->refresh_information_schema_compatibility_table(
+			self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE,
+			$this->information_schema_table_constraints_definitions(),
+			$this->information_schema_table_constraints_rows(),
+			'information_schema.table_constraints'
+		);
+	}
+
+	/**
+	 * MySQL-shaped information_schema.table_constraints definitions.
+	 *
+	 * @return array<string,string> Column name to DuckDB type.
+	 */
+	private function information_schema_table_constraints_definitions(): array {
+		return array(
+			'CONSTRAINT_CATALOG' => 'VARCHAR COLLATE NOCASE',
+			'CONSTRAINT_SCHEMA'  => 'VARCHAR COLLATE NOCASE',
+			'CONSTRAINT_NAME'    => 'VARCHAR COLLATE NOCASE',
+			'TABLE_SCHEMA'       => 'VARCHAR COLLATE NOCASE',
+			'TABLE_NAME'         => 'VARCHAR COLLATE NOCASE',
+			'CONSTRAINT_TYPE'    => 'VARCHAR',
+			'ENFORCED'           => 'VARCHAR',
+		);
+	}
+
+	/**
+	 * Build MySQL-shaped information_schema.table_constraints rows.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function information_schema_table_constraints_rows(): array {
+		$rows = array();
+		$seen = array();
+
+		foreach ( $this->information_schema_key_constraint_rows() as $constraint ) {
+			$key = $constraint['table_name'] . "\0" . $constraint['constraint_type'] . "\0" . $constraint['constraint_name'];
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+
+			$seen[ $key ] = true;
+			$rows[]       = $this->information_schema_table_constraints_row( $constraint );
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Build one MySQL-shaped information_schema.table_constraints row.
+	 *
+	 * @param array<string,mixed> $constraint Normalized key constraint row.
+	 * @return array<string,mixed>
+	 */
+	private function information_schema_table_constraints_row( array $constraint ): array {
+		return array(
+			'CONSTRAINT_CATALOG' => 'def',
+			'CONSTRAINT_SCHEMA'  => $this->database,
+			'CONSTRAINT_NAME'    => $constraint['constraint_name'],
+			'TABLE_SCHEMA'       => $this->database,
+			'TABLE_NAME'         => $constraint['table_name'],
+			'CONSTRAINT_TYPE'    => $constraint['constraint_type'],
+			'ENFORCED'           => 'YES',
+		);
+	}
+
+	/**
+	 * Return the canonical table_constraints column name for a token value.
+	 *
+	 * @param string $identifier Identifier token value.
+	 * @return string|null Canonical column name, or null when not a table_constraints column.
+	 */
+	private function information_schema_table_constraints_column_name( string $identifier ): ?string {
+		$columns = array(
+			'constraint_catalog' => 'CONSTRAINT_CATALOG',
+			'constraint_schema'  => 'CONSTRAINT_SCHEMA',
+			'constraint_name'    => 'CONSTRAINT_NAME',
+			'table_schema'       => 'TABLE_SCHEMA',
+			'table_name'         => 'TABLE_NAME',
+			'constraint_type'    => 'CONSTRAINT_TYPE',
+			'enforced'           => 'ENFORCED',
+		);
+		$key     = strtolower( $identifier );
+
+		return $columns[ $key ] ?? null;
+	}
+
+	/**
+	 * Refresh a temporary MySQL-shaped information_schema.key_column_usage table.
+	 */
+	private function refresh_information_schema_key_column_usage_table(): void {
+		$this->refresh_information_schema_compatibility_table(
+			self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE,
+			$this->information_schema_key_column_usage_definitions(),
+			$this->information_schema_key_column_usage_rows(),
+			'information_schema.key_column_usage'
+		);
+	}
+
+	/**
+	 * MySQL-shaped information_schema.key_column_usage definitions.
+	 *
+	 * @return array<string,string> Column name to DuckDB type.
+	 */
+	private function information_schema_key_column_usage_definitions(): array {
+		return array(
+			'CONSTRAINT_CATALOG'            => 'VARCHAR COLLATE NOCASE',
+			'CONSTRAINT_SCHEMA'             => 'VARCHAR COLLATE NOCASE',
+			'CONSTRAINT_NAME'               => 'VARCHAR COLLATE NOCASE',
+			'TABLE_CATALOG'                 => 'VARCHAR COLLATE NOCASE',
+			'TABLE_SCHEMA'                  => 'VARCHAR COLLATE NOCASE',
+			'TABLE_NAME'                    => 'VARCHAR COLLATE NOCASE',
+			'COLUMN_NAME'                   => 'VARCHAR COLLATE NOCASE',
+			'ORDINAL_POSITION'              => 'INTEGER',
+			'POSITION_IN_UNIQUE_CONSTRAINT' => 'INTEGER',
+			'REFERENCED_TABLE_SCHEMA'       => 'VARCHAR COLLATE NOCASE',
+			'REFERENCED_TABLE_NAME'         => 'VARCHAR COLLATE NOCASE',
+			'REFERENCED_COLUMN_NAME'        => 'VARCHAR COLLATE NOCASE',
+		);
+	}
+
+	/**
+	 * Build MySQL-shaped information_schema.key_column_usage rows.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function information_schema_key_column_usage_rows(): array {
+		$rows = array();
+		foreach ( $this->information_schema_key_constraint_rows() as $constraint ) {
+			$rows[] = $this->information_schema_key_column_usage_row( $constraint );
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Build one MySQL-shaped information_schema.key_column_usage row.
+	 *
+	 * @param array<string,mixed> $constraint Normalized key constraint row.
+	 * @return array<string,mixed>
+	 */
+	private function information_schema_key_column_usage_row( array $constraint ): array {
+		return array(
+			'CONSTRAINT_CATALOG'            => 'def',
+			'CONSTRAINT_SCHEMA'             => $this->database,
+			'CONSTRAINT_NAME'               => $constraint['constraint_name'],
+			'TABLE_CATALOG'                 => 'def',
+			'TABLE_SCHEMA'                  => $this->database,
+			'TABLE_NAME'                    => $constraint['table_name'],
+			'COLUMN_NAME'                   => $constraint['column_name'],
+			'ORDINAL_POSITION'              => $constraint['ordinal_position'],
+			'POSITION_IN_UNIQUE_CONSTRAINT' => null,
+			'REFERENCED_TABLE_SCHEMA'       => $this->database,
+			'REFERENCED_TABLE_NAME'         => null,
+			'REFERENCED_COLUMN_NAME'        => null,
+		);
+	}
+
+	/**
+	 * Return the canonical key_column_usage column name for a token value.
+	 *
+	 * @param string $identifier Identifier token value.
+	 * @return string|null Canonical column name, or null when not a key_column_usage column.
+	 */
+	private function information_schema_key_column_usage_column_name( string $identifier ): ?string {
+		$columns = array(
+			'constraint_catalog'            => 'CONSTRAINT_CATALOG',
+			'constraint_schema'             => 'CONSTRAINT_SCHEMA',
+			'constraint_name'               => 'CONSTRAINT_NAME',
+			'table_catalog'                 => 'TABLE_CATALOG',
+			'table_schema'                  => 'TABLE_SCHEMA',
+			'table_name'                    => 'TABLE_NAME',
+			'column_name'                   => 'COLUMN_NAME',
+			'ordinal_position'              => 'ORDINAL_POSITION',
+			'position_in_unique_constraint' => 'POSITION_IN_UNIQUE_CONSTRAINT',
+			'referenced_table_schema'       => 'REFERENCED_TABLE_SCHEMA',
+			'referenced_table_name'         => 'REFERENCED_TABLE_NAME',
+			'referenced_column_name'        => 'REFERENCED_COLUMN_NAME',
+		);
+		$key     = strtolower( $identifier );
+
+		return $columns[ $key ] ?? null;
+	}
+
+	/**
+	 * Build normalized primary and unique constraint column rows.
+	 *
+	 * @return array<int,array{table_name:string,constraint_name:string,constraint_type:string,ordinal_position:int,column_name:string}>
+	 */
+	private function information_schema_key_constraint_rows(): array {
+		$rows = array();
+
+		foreach ( $this->user_table_names() as $table_name ) {
+			foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
+				$rows[] = array(
+					'table_name'       => $table_name,
+					'constraint_name'  => (string) $index_row[2],
+					'constraint_type'  => 'PRIMARY KEY',
+					'ordinal_position' => (int) $index_row[3],
+					'column_name'      => (string) $index_row[4],
+				);
+			}
+
+			foreach ( $this->secondary_index_rows( $table_name ) as $index_row ) {
+				if ( 0 !== (int) $index_row[1] ) {
+					continue;
+				}
+
+				$rows[] = array(
+					'table_name'       => $table_name,
+					'constraint_name'  => (string) $index_row[2],
+					'constraint_type'  => 'UNIQUE',
+					'ordinal_position' => (int) $index_row[3],
+					'column_name'      => (string) $index_row[4],
+				);
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Refresh a temporary MySQL-shaped information_schema compatibility table.
+	 *
+	 * @param string                  $table_name  Temporary table name.
+	 * @param array<string,string>    $definitions Column definitions.
+	 * @param array<int,array<string,mixed>> $rows        Rows to insert.
+	 * @param string                  $label       User-facing information_schema table label.
+	 */
+	private function refresh_information_schema_compatibility_table( string $table_name, array $definitions, array $rows, string $label ): void {
+		$columns    = array_keys( $definitions );
+		$column_sql = array();
+		foreach ( $definitions as $column_name => $type ) {
+			$column_sql[] = $this->connection->quote_identifier( $column_name ) . ' ' . $type;
+		}
+
+		$this->execute_duckdb_query(
+			'CREATE OR REPLACE TEMP TABLE '
+				. $this->connection->quote_identifier( $table_name )
+				. ' ('
+				. implode( ', ', $column_sql )
+				. ')',
+			'Failed to initialize DuckDB ' . $label . ' compatibility table'
+		);
+
+		if ( count( $rows ) === 0 ) {
+			return;
+		}
+
+		$quoted_columns = implode(
+			', ',
+			array_map(
+				function ( string $column_name ): string {
+					return $this->connection->quote_identifier( $column_name );
+				},
+				$columns
+			)
+		);
+
+		foreach ( $rows as $row ) {
+			$values = array();
+			foreach ( $columns as $column_name ) {
+				$values[] = $this->connection->quote( $row[ $column_name ] );
+			}
+
+			$this->execute_duckdb_query(
+				'INSERT INTO '
+					. $this->connection->quote_identifier( $table_name )
+					. ' ('
+					. $quoted_columns
+					. ') VALUES ('
+					. implode( ', ', $values )
+					. ')',
+				'Failed to populate DuckDB ' . $label . ' compatibility table'
+			);
+		}
+	}
+
+	/**
 	 * Build MySQL-shaped information_schema.columns rows.
 	 *
 	 * @return array<int,array<string,mixed>>
@@ -3986,6 +4377,10 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
 				. ' AND table_name <> '
 				. $this->connection->quote( self::INFO_SCHEMA_STATISTICS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE )
 				. ' ORDER BY table_name',
 			'Failed to inspect DuckDB tables'
 		);

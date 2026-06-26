@@ -829,6 +829,206 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal );
 	}
 
+	public function test_information_schema_constraints_expose_mysql_shaped_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$table_constraints_count = $driver->query(
+			"SELECT COUNT(*) AS count
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp'"
+		)->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 0, (int) $table_constraints_count['count'] );
+
+		$key_column_usage_count = $driver->query(
+			"SELECT COUNT(*) AS count
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp'"
+		)->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 0, (int) $key_column_usage_count['count'] );
+
+		$driver->query( 'CREATE TABLE empty_table (id INT, note TEXT)' );
+		$driver->query(
+			"CREATE TABLE metadata (
+				site_id BIGINT(20) UNSIGNED NOT NULL,
+				option_id BIGINT(20) UNSIGNED NOT NULL,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				payload LONGTEXT,
+				PRIMARY KEY (site_id, option_id),
+				UNIQUE KEY unique_site_option (site_id, option_name),
+				KEY payload_prefix (payload(12))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+
+		$empty_constraints = $driver->query(
+			"SELECT TABLE_NAME, CONSTRAINT_NAME
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'empty_table'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $empty_constraints );
+
+		$constraints = $driver->query(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_SCHEMA,
+				TABLE_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'metadata'
+			ORDER BY constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'CONSTRAINT_CATALOG',
+				'CONSTRAINT_SCHEMA',
+				'CONSTRAINT_NAME',
+				'TABLE_SCHEMA',
+				'TABLE_NAME',
+				'CONSTRAINT_TYPE',
+				'ENFORCED',
+			),
+			array_keys( $constraints[0] )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'PRIMARY',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 'metadata',
+					'CONSTRAINT_TYPE'    => 'PRIMARY KEY',
+					'ENFORCED'           => 'YES',
+				),
+				array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'unique_site_option',
+					'TABLE_SCHEMA'       => 'wp',
+					'TABLE_NAME'         => 'metadata',
+					'CONSTRAINT_TYPE'    => 'UNIQUE',
+					'ENFORCED'           => 'YES',
+				),
+			),
+			$constraints
+		);
+
+		$usage = $driver->query(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_CATALOG,
+				TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
+				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_SCHEMA,
+				REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp' AND table_name = 'metadata'
+			ORDER BY constraint_name, ordinal_position"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'CONSTRAINT_CATALOG',
+				'CONSTRAINT_SCHEMA',
+				'CONSTRAINT_NAME',
+				'TABLE_CATALOG',
+				'TABLE_SCHEMA',
+				'TABLE_NAME',
+				'COLUMN_NAME',
+				'ORDINAL_POSITION',
+				'POSITION_IN_UNIQUE_CONSTRAINT',
+				'REFERENCED_TABLE_SCHEMA',
+				'REFERENCED_TABLE_NAME',
+				'REFERENCED_COLUMN_NAME',
+			),
+			array_keys( $usage[0] )
+		);
+		$this->assertSame( array( 'PRIMARY', 'PRIMARY', 'unique_site_option', 'unique_site_option' ), array_column( $usage, 'CONSTRAINT_NAME' ) );
+		$this->assertSame( array( 'site_id', 'option_id', 'site_id', 'option_name' ), array_column( $usage, 'COLUMN_NAME' ) );
+		$this->assertSame( array( 1, 2, 1, 2 ), array_map( 'intval', array_column( $usage, 'ORDINAL_POSITION' ) ) );
+		$this->assertSame( array( null, null, null, null ), array_column( $usage, 'POSITION_IN_UNIQUE_CONSTRAINT' ) );
+		$this->assertSame( array( 'wp', 'wp', 'wp', 'wp' ), array_column( $usage, 'REFERENCED_TABLE_SCHEMA' ) );
+		$this->assertSame( array( null, null, null, null ), array_column( $usage, 'REFERENCED_TABLE_NAME' ) );
+		$this->assertSame( array( null, null, null, null ), array_column( $usage, 'REFERENCED_COLUMN_NAME' ) );
+
+		$joined = $driver->query(
+			"SELECT tc.CONSTRAINT_NAME AS name, tc.CONSTRAINT_TYPE AS type,
+				k.COLUMN_NAME AS col, k.ORDINAL_POSITION AS pos
+			FROM information_schema.table_constraints AS tc
+			JOIN information_schema.key_column_usage AS k
+				ON k.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+				AND k.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+				AND k.TABLE_SCHEMA = tc.TABLE_SCHEMA
+				AND k.TABLE_NAME = tc.TABLE_NAME
+			WHERE tc.TABLE_SCHEMA = 'wp' AND tc.TABLE_NAME = 'metadata'
+			ORDER BY name, pos"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'name' => 'PRIMARY',
+					'type' => 'PRIMARY KEY',
+					'col'  => 'site_id',
+					'pos'  => 1,
+				),
+				array(
+					'name' => 'PRIMARY',
+					'type' => 'PRIMARY KEY',
+					'col'  => 'option_id',
+					'pos'  => 2,
+				),
+				array(
+					'name' => 'unique_site_option',
+					'type' => 'UNIQUE',
+					'col'  => 'site_id',
+					'pos'  => 1,
+				),
+				array(
+					'name' => 'unique_site_option',
+					'type' => 'UNIQUE',
+					'col'  => 'option_name',
+					'pos'  => 2,
+				),
+			),
+			$joined
+		);
+
+		$uppercase = $driver->query(
+			"SELECT tc.CONSTRAINT_NAME, k.COLUMN_NAME
+			FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS tc
+			JOIN information_schema.key_column_usage AS k
+				ON k.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+				AND k.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+				AND k.TABLE_SCHEMA = tc.TABLE_SCHEMA
+				AND k.TABLE_NAME = tc.TABLE_NAME
+			WHERE tc.TABLE_SCHEMA = 'wp' AND tc.TABLE_NAME = 'metadata'
+			ORDER BY tc.CONSTRAINT_NAME, k.ORDINAL_POSITION"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'site_id', 'option_id', 'site_id', 'option_name' ), array_column( $uppercase, 'COLUMN_NAME' ) );
+
+		$non_unique = $driver->query(
+			"SELECT CONSTRAINT_NAME
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND constraint_name = 'payload_prefix'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $non_unique );
+
+		$internal_constraints = $driver->query(
+			"SELECT table_name
+			FROM information_schema.table_constraints
+			WHERE table_name LIKE '__wp_duckdb_%'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $internal_constraints );
+
+		$internal_usage = $driver->query(
+			"SELECT table_name
+			FROM information_schema.key_column_usage
+			WHERE table_name LIKE '__wp_duckdb_%'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $internal_usage );
+	}
+
 	public function test_information_schema_tables_exposes_mysql_shaped_table_metadata(): void {
 		$this->requireDuckDBRuntime();
 

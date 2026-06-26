@@ -236,6 +236,73 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_information_schema_constraint_metadata_matches_sqlite(): void {
+		$this->assertParityRows(
+			"SELECT COUNT(*) AS count
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp'"
+		);
+		$this->assertParityRows(
+			"SELECT COUNT(*) AS count
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp'"
+		);
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE empty_table (id INT, note TEXT)',
+				"CREATE TABLE metadata (
+					site_id BIGINT(20) UNSIGNED NOT NULL,
+					option_id BIGINT(20) UNSIGNED NOT NULL,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					payload LONGTEXT,
+					PRIMARY KEY (site_id, option_id),
+					UNIQUE KEY unique_site_option (site_id, option_name),
+					KEY payload_prefix (payload(12))
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT TABLE_NAME, CONSTRAINT_NAME
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'empty_table'"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_SCHEMA,
+				TABLE_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'metadata'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_CATALOG,
+				TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
+				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_SCHEMA,
+				REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp' AND table_name = 'metadata'
+			ORDER BY constraint_name, ordinal_position"
+		);
+		$this->assertParityRows(
+			"SELECT tc.CONSTRAINT_NAME AS name, tc.CONSTRAINT_TYPE AS type,
+				k.COLUMN_NAME AS col, k.ORDINAL_POSITION AS pos
+			FROM information_schema.table_constraints AS tc
+			JOIN information_schema.key_column_usage AS k
+				ON k.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+				AND k.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+				AND k.TABLE_SCHEMA = tc.TABLE_SCHEMA
+				AND k.TABLE_NAME = tc.TABLE_NAME
+			WHERE tc.TABLE_SCHEMA = 'wp' AND tc.TABLE_NAME = 'metadata'
+			ORDER BY name, pos"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND constraint_name = 'payload_prefix'"
+		);
+	}
+
 	public function test_information_schema_tables_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
