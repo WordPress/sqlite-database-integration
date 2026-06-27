@@ -6390,6 +6390,80 @@ SQL,
 		);
 	}
 
+	public function test_alter_table_options_and_key_maintenance_are_noops(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE alter_options_noop (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(20)
+			) ENGINE=MyISAM DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Original comment'"
+		);
+		$driver->query( "INSERT INTO alter_options_noop (name) VALUES ('first'), ('second')" );
+
+		$before = $this->alter_table_auto_increment_snapshot( $driver, 'alter_options_noop' );
+		$this->assertSame( array( array( 'AUTO_INCREMENT' => 3 ) ), $before['auto_increment'] );
+
+		foreach (
+			array(
+				'ALTER TABLE alter_options_noop ENGINE=InnoDB',
+				'ALTER TABLE alter_options_noop DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"ALTER TABLE alter_options_noop COMMENT = 'Ignored comment'",
+				'ALTER TABLE alter_options_noop ROW_FORMAT=DYNAMIC',
+				'ALTER TABLE alter_options_noop DISABLE KEYS',
+				'ALTER TABLE alter_options_noop ENABLE KEYS',
+			) as $sql
+		) {
+			$this->assertSame( 0, $driver->query( $sql )->rowCount(), 'Unexpected row count for SQL: ' . $sql );
+			$this->assertSame( $before, $this->alter_table_auto_increment_snapshot( $driver, 'alter_options_noop' ), 'No-op ALTER TABLE mutated state for SQL: ' . $sql );
+		}
+	}
+
+	public function test_mixed_alter_table_auto_increment_rejections_do_not_mutate(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_ai_guard (
+				id INT AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(20)
+			)'
+		);
+		$driver->query( "INSERT INTO alter_ai_guard (name) VALUES ('first')" );
+
+		$before = $this->alter_table_auto_increment_snapshot( $driver, 'alter_ai_guard' );
+		foreach (
+			array(
+				'ALTER TABLE alter_ai_guard AUTO_INCREMENT = 50, ALGORITHM=INPLACE' => 'Only ADD, DROP, CHANGE, MODIFY, AUTO_INCREMENT, table option, and ENABLE/DISABLE KEYS actions are supported',
+				'ALTER TABLE alter_ai_guard AUTO_INCREMENT = 50, ADD COLUMN generated_id BIGINT AUTO_INCREMENT' => 'ADD COLUMN AUTO_INCREMENT is not supported',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected mixed ALTER TABLE AUTO_INCREMENT rejection for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+
+			$this->assertSame(
+				$before,
+				$this->alter_table_auto_increment_snapshot( $driver, 'alter_ai_guard' ),
+				'Mixed ALTER TABLE AUTO_INCREMENT rejection mutated state for SQL: ' . $sql
+			);
+		}
+	}
+
 	public function test_drop_index_updates_metadata_and_unique_enforcement(): void {
 		$this->requireDuckDBRuntime();
 
@@ -10100,6 +10174,19 @@ SQL,
 				'EXTRA'                    => '',
 				'COLUMN_COMMENT'           => '',
 			),
+		);
+	}
+
+	private function alter_table_auto_increment_snapshot( WP_DuckDB_Driver $driver, string $table_name ): array {
+		return array(
+			'rows'           => $driver->query( 'SELECT * FROM ' . $table_name . ' ORDER BY 1' )->fetchAll( PDO::FETCH_ASSOC ),
+			'show_create'    => $driver->query( 'SHOW CREATE TABLE ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+			'auto_increment' => $driver->query(
+				"SELECT `AUTO_INCREMENT`
+				FROM information_schema.tables
+				WHERE table_schema = 'wp' AND table_name = '{$table_name}'"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'status'         => $driver->query( "SHOW TABLE STATUS LIKE '{$table_name}'" )->fetchAll( PDO::FETCH_ASSOC ),
 		);
 	}
 

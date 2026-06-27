@@ -5219,6 +5219,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN, ADD INDEX, DROP COLUMN, and DROP INDEX are supported.' );
 		}
 
+		$this->validate_alter_table_supported_action_shapes( $actions );
 		$this->validate_alter_table_rebuild_action_combination( $table_name, $actions, $temporary );
 		$this->validate_alter_table_constraint_actions( $table_name, $actions, $temporary );
 
@@ -5226,6 +5227,11 @@ class WP_DuckDB_Driver {
 		foreach ( $actions as $action ) {
 			if ( ! isset( $action[0] ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Empty action.' );
+			}
+
+			if ( $this->is_alter_table_no_op_action( $action ) ) {
+				$result = $this->empty_ddl_result();
+				continue;
 			}
 
 			if ( WP_MySQL_Lexer::DROP_SYMBOL === $action[0]->id ) {
@@ -5284,6 +5290,178 @@ class WP_DuckDB_Driver {
 		}
 
 		return $result ?? new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Reject unsupported ALTER TABLE action shapes before any mutation.
+	 *
+	 * @param array<int,WP_Parser_Token[]> $actions ALTER action token groups.
+	 */
+	private function validate_alter_table_supported_action_shapes( array $actions ): void {
+		foreach ( $actions as $action ) {
+			if ( ! isset( $action[0] ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Empty action.' );
+			}
+
+			if ( $this->is_alter_table_no_op_action( $action ) ) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::ADD_SYMBOL === $action[0]->id ) {
+				$this->validate_alter_table_add_action_shape( $action );
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL === $action[0]->id ) {
+				$this->parse_alter_table_auto_increment_action_value( $action );
+				continue;
+			}
+
+			if (
+				WP_MySQL_Lexer::CHANGE_SYMBOL === $action[0]->id
+				|| WP_MySQL_Lexer::MODIFY_SYMBOL === $action[0]->id
+			) {
+				if ( $this->contains_auto_increment_token( $action ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY AUTO_INCREMENT requires a table rebuild.' );
+				}
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::DROP_SYMBOL === $action[0]->id ) {
+				continue;
+			}
+
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD, DROP, CHANGE, MODIFY, AUTO_INCREMENT, table option, and ENABLE/DISABLE KEYS actions are supported.' );
+		}
+	}
+
+	/**
+	 * Reject known unsupported ADD COLUMN shapes before earlier actions mutate.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens starting at ADD.
+	 */
+	private function validate_alter_table_add_action_shape( array $tokens ): void {
+		$alter_item = array_slice( $tokens, 1 );
+		if ( count( $alter_item ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN requires a column definition.' );
+		}
+
+		if (
+			$this->is_alter_table_add_check_constraint_action( $alter_item )
+			|| $this->is_alter_table_add_foreign_key_constraint_action( $alter_item )
+			|| $this->is_alter_table_add_primary_key_item( $alter_item )
+			|| $this->is_create_table_index_item( $alter_item )
+			|| WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $alter_item[0]->id
+		) {
+			return;
+		}
+
+		$column_tokens = $alter_item;
+		if ( isset( $column_tokens[0] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $column_tokens[0]->id ) {
+			$column_tokens = array_slice( $column_tokens, 1 );
+		}
+
+		if ( count( $column_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN requires a column definition.' );
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $column_tokens[0]->id ) {
+			list( $items, $index ) = $this->collect_parenthesized_items( $column_tokens, 1 );
+			if ( 1 !== count( $items ) || count( $column_tokens ) !== $index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD COLUMN definition is supported.' );
+			}
+			$column_tokens = $items[0];
+		}
+
+		if ( $this->contains_auto_increment_token( $column_tokens ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN AUTO_INCREMENT is not supported.' );
+		}
+	}
+
+	/**
+	 * Check whether an ALTER TABLE action is accepted as a no-op.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens.
+	 * @return bool Whether this action is a no-op.
+	 */
+	private function is_alter_table_no_op_action( array $tokens ): bool {
+		return $this->is_alter_table_no_op_table_options_action( $tokens )
+			|| $this->is_alter_table_no_op_key_maintenance_action( $tokens );
+	}
+
+	/**
+	 * Check whether an ALTER TABLE action only carries no-op table options.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens.
+	 * @return bool Whether this action only contains accepted table options.
+	 */
+	private function is_alter_table_no_op_table_options_action( array $tokens ): bool {
+		$matched = false;
+		$index   = 0;
+
+		while ( $index < count( $tokens ) ) {
+			$token = $tokens[ $index ];
+			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $token->id ) {
+				++$index;
+				continue;
+			}
+
+			if (
+				WP_MySQL_Lexer::ENGINE_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::COLLATE_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::COMMENT_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::CHARSET_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::ROW_FORMAT_SYMBOL === $token->id
+			) {
+				$index   = $this->skip_option_value( $tokens, $index + 1 );
+				$matched = true;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CHAR_SYMBOL === $token->id || WP_MySQL_Lexer::CHARACTER_SYMBOL === $token->id ) {
+				if ( ! isset( $tokens[ $index + 1 ] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[ $index + 1 ]->id ) {
+					return false;
+				}
+				$index   = $this->skip_option_value( $tokens, $index + 2 );
+				$matched = true;
+				continue;
+			}
+
+			return false;
+		}
+
+		return $matched;
+	}
+
+	/**
+	 * Check whether an ALTER TABLE action is ENABLE/DISABLE KEYS.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens.
+	 * @return bool Whether this action is key-maintenance no-op syntax.
+	 */
+	private function is_alter_table_no_op_key_maintenance_action( array $tokens ): bool {
+		return 2 === count( $tokens )
+			&& (
+				WP_MySQL_Lexer::ENABLE_SYMBOL === $tokens[0]->id
+				|| WP_MySQL_Lexer::DISABLE_SYMBOL === $tokens[0]->id
+			)
+			&& WP_MySQL_Lexer::KEYS_SYMBOL === $tokens[1]->id;
+	}
+
+	/**
+	 * Check whether a token stream contains AUTO_INCREMENT.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether AUTO_INCREMENT is present.
+	 */
+	private function contains_auto_increment_token( array $tokens ): bool {
+		foreach ( $tokens as $token ) {
+			if ( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL === $token->id ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -6875,7 +7053,7 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_alter_table_set_auto_increment( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
-		$requested_next = $this->parse_auto_increment_option_value( $tokens, 1, 'ALTER TABLE' );
+		$requested_next = $this->parse_alter_table_auto_increment_action_value( $tokens );
 		$metadata       = $this->auto_increment_metadata_for_table( $table_name, $temporary );
 		if ( null === $metadata ) {
 			return $this->empty_ddl_result();
@@ -6891,6 +7069,22 @@ class WP_DuckDB_Driver {
 				return $this->empty_ddl_result();
 			}
 		);
+	}
+
+	/**
+	 * Parse ALTER TABLE ... AUTO_INCREMENT = N, allowing trailing no-op options.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens starting at AUTO_INCREMENT.
+	 * @return int Requested next AUTO_INCREMENT value.
+	 */
+	private function parse_alter_table_auto_increment_action_value( array $tokens ): int {
+		$requested_next = $this->parse_auto_increment_option_value( $tokens, 1, 'ALTER TABLE', true );
+		$index          = $this->skip_option_value( $tokens, 1 );
+		if ( isset( $tokens[ $index ] ) && ! $this->is_alter_table_no_op_table_options_action( array_slice( $tokens, $index ) ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE AUTO_INCREMENT option in DuckDB driver.' );
+		}
+
+		return $requested_next;
 	}
 
 	/**

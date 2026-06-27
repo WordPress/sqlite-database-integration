@@ -3896,6 +3896,50 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW CREATE TABLE alter_plain' );
 	}
 
+	public function test_alter_table_options_and_key_maintenance_noops_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE alter_options (
+					id INT AUTO_INCREMENT PRIMARY KEY,
+					name VARCHAR(20)
+				) ENGINE=MyISAM DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Original comment'",
+				"INSERT INTO alter_options (name) VALUES ('first'), ('second')",
+			)
+		);
+
+		foreach (
+			array(
+				'ALTER TABLE alter_options ENGINE=InnoDB',
+				'ALTER TABLE alter_options DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"ALTER TABLE alter_options COMMENT = 'Ignored comment'",
+				'ALTER TABLE alter_options ROW_FORMAT=DYNAMIC',
+				'ALTER TABLE alter_options DISABLE KEYS',
+				'ALTER TABLE alter_options ENABLE KEYS',
+			) as $sql
+		) {
+			$this->assertParityRowCount( $sql );
+		}
+
+		$this->assertParityRows( 'SELECT id, name FROM alter_options ORDER BY id' );
+		$this->assertParityRows( 'SHOW CREATE TABLE alter_options' );
+		$this->assertParityRows(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'alter_options'"
+		);
+
+		$this->assertParityRowCount( 'ALTER TABLE alter_options AUTO_INCREMENT = 50, ENGINE=InnoDB, DISABLE KEYS' );
+		$this->assertParityRows(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'alter_options'"
+		);
+
+		$this->runParitySetup( array( "INSERT INTO alter_options (name) VALUES ('third')" ) );
+		$this->assertParityRows( 'SELECT id, name FROM alter_options ORDER BY id' );
+		$this->assertParityRows( 'SHOW CREATE TABLE alter_options' );
+	}
+
 	public function test_temporary_table_auto_increment_seed_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
