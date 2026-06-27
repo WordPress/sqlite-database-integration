@@ -152,6 +152,135 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertLessThan( time() + 60, $row['unix_time'] );
 	}
 
+	public function test_select_seeded_rand_literals_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$cases  = array(
+			'SELECT RAND(0) AS r'     => 0.15522042769494,
+			'SELECT RAND(1) AS r'     => 0.40540353712198,
+			'SELECT RAND(5) AS r'     => 0.40613597483014,
+			'SELECT RAND(NULL) AS r'  => 0.15522042769494,
+			"SELECT RAND('5') AS r"   => 0.40613597483014,
+			"SELECT RAND('3.9') AS r" => 0.15595286540310,
+			"SELECT RAND('abc') AS r" => 0.15522042769494,
+			'SELECT RAND(3.1) AS r'   => 0.90576975597606,
+			'SELECT RAND(3.9) AS r'   => 0.15595286540310,
+			'SELECT RAND(-1) AS r'    => 0.90503732199318,
+		);
+
+		foreach ( $cases as $sql => $expected ) {
+			$row = $driver->query( $sql )->fetch( PDO::FETCH_ASSOC );
+			$this->assertEqualsWithDelta( $expected, (float) $row['r'], 1e-12, $sql );
+		}
+	}
+
+	public function test_select_seeded_rand_without_alias_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$row    = $driver->query( 'SELECT RAND(1)' )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertArrayHasKey( 'RAND(1)', $row );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row['RAND(1)'], 1e-12 );
+	}
+
+	public function test_select_seeded_rand_sequence_advances_per_statement(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_rows (id INT)' );
+		$driver->query( 'INSERT INTO seeded_rand_rows (id) VALUES (1), (2), (3)' );
+
+		$first = $driver->query( 'SELECT id, RAND(3) AS r FROM seeded_rand_rows ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 3, $first );
+		$this->assertEqualsWithDelta( 0.90576975597606, (float) $first[0]['r'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.37307905813035, (float) $first[1]['r'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.14808605345719, (float) $first[2]['r'], 1e-12 );
+
+		$second = $driver->query( 'SELECT id, RAND(3) AS r FROM seeded_rand_rows ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $first, $second );
+	}
+
+	public function test_select_seeded_rand_call_sites_share_statement_state(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$row    = $driver->query( 'SELECT RAND(1) AS a, RAND(1) AS b' )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row['a'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.87161418038571, (float) $row['b'], 1e-12 );
+	}
+
+	public function test_select_seeded_and_unseeded_rand_are_independent(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$run1   = $driver->query( 'SELECT RAND(1) AS seeded, RAND() AS unseeded' )->fetch( PDO::FETCH_ASSOC );
+		$run2   = $driver->query( 'SELECT RAND(1) AS seeded, RAND() AS unseeded' )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertSame( (float) $run1['seeded'], (float) $run2['seeded'] );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $run1['seeded'], 1e-12 );
+		foreach ( array( $run1['unseeded'], $run2['unseeded'] ) as $value ) {
+			$this->assertGreaterThanOrEqual( 0.0, (float) $value );
+			$this->assertLessThan( 1.0, (float) $value );
+		}
+	}
+
+	public function test_select_seeded_rand_unsupported_shapes_are_rejected(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t (id INT, value DOUBLE)' );
+		$driver->query( 'INSERT INTO t (id, value) VALUES (1, 0.0)' );
+
+		try {
+			$driver->query( 'SELECT RAND(CAST(1 AS SIGNED)) AS r' );
+			$this->fail( 'Expected unsupported non-literal seeded RAND() shape to fail.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'literal numeric, string, or NULL seeds', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( 'SELECT CAST(RAND(1) AS DOUBLE) AS r' );
+			$this->fail( 'Expected nested seeded RAND() shape to fail.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'top-level SELECT expression', $e->getMessage() );
+		}
+
+		$unsupported_contexts = array(
+			array(
+				'sql'     => 'SELECT *, RAND(1) AS r FROM t',
+				'message' => 'SELECT-list wildcards',
+			),
+			array(
+				'sql'     => 'SELECT RAND(1) AS r FROM t ORDER BY RAND(1)',
+				'message' => 'top-level SELECT expression',
+			),
+			array(
+				'sql'     => 'SELECT id FROM t WHERE RAND(1) < 1',
+				'message' => 'top-level SELECT expression',
+			),
+			array(
+				'sql'     => 'UPDATE t SET value = RAND(1)',
+				'message' => 'top-level SELECT expression',
+			),
+			array(
+				'sql'     => 'INSERT INTO t (value) VALUES (RAND(1))',
+				'message' => 'top-level SELECT expression',
+			),
+		);
+
+		foreach ( $unsupported_contexts as $case ) {
+			try {
+				$driver->query( $case['sql'] );
+				$this->fail( 'Expected unsupported seeded RAND() context to fail: ' . $case['sql'] );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $case['message'], $e->getMessage(), $case['sql'] );
+			}
+		}
+	}
+
 	public function test_date_format_function_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 

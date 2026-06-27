@@ -464,6 +464,8 @@ class WP_DuckDB_Driver {
 		$has_sql_calc_found_rows = $this->has_top_level_sql_calc_found_rows( $tokens );
 		$tokens                  = $this->normalize_select_helper_tokens( $tokens );
 		$column_meta             = $this->simple_select_column_metadata( $tokens );
+		$seeded_rand_expressions = $this->parse_seeded_rand_select_expressions( $tokens );
+		$seeded_rand_rewrites    = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
 
 		$rewrite_information_schema_tables                  = $this->uses_information_schema_tables( $tokens );
 		$rewrite_information_schema_columns                 = $this->uses_information_schema_columns( $tokens );
@@ -502,7 +504,8 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_table_constraints,
 			$rewrite_information_schema_key_column_usage,
 			$rewrite_information_schema_referential_constraints,
-			$rewrite_information_schema_check_constraints
+			$rewrite_information_schema_check_constraints,
+			$seeded_rand_rewrites
 		);
 
 		if ( $has_sql_calc_found_rows ) {
@@ -515,10 +518,12 @@ class WP_DuckDB_Driver {
 					$rewrite_information_schema_table_constraints,
 					$rewrite_information_schema_key_column_usage,
 					$rewrite_information_schema_referential_constraints,
-					$rewrite_information_schema_check_constraints
+					$rewrite_information_schema_check_constraints,
+					$seeded_rand_rewrites
 				);
 				$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
-				return $this->apply_result_column_metadata( $result, $column_meta );
+				$result           = $this->apply_result_column_metadata( $result, $column_meta );
+				return $this->apply_seeded_rand_select_expressions( $result, $seeded_rand_expressions );
 			} catch ( Throwable $e ) {
 				$this->found_rows = 0;
 				throw $e;
@@ -527,7 +532,8 @@ class WP_DuckDB_Driver {
 
 		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 		$this->found_rows = $sql;
-		return $this->apply_result_column_metadata( $result, $column_meta );
+		$result           = $this->apply_result_column_metadata( $result, $column_meta );
+		return $this->apply_seeded_rand_select_expressions( $result, $seeded_rand_expressions );
 	}
 
 	/**
@@ -543,6 +549,385 @@ class WP_DuckDB_Driver {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Parse top-level SELECT-list RAND(seed) expressions supported by the DuckDB driver.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @return array<int,array{column:int,start:int,end:int,seed:int,replacement:string}>
+	 */
+	private function parse_seeded_rand_select_expressions( array $tokens ): array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return array();
+		}
+
+		$ranges = $this->split_top_level_select_item_ranges(
+			$tokens,
+			1,
+			$this->top_level_select_list_end( $tokens )
+		);
+
+		$expressions  = array();
+		$has_wildcard = false;
+		foreach ( $ranges as $column_index => $range ) {
+			if ( $this->select_item_is_wildcard( $range['tokens'] ) ) {
+				$has_wildcard = true;
+				continue;
+			}
+
+			$expression = $this->parse_seeded_rand_select_item( $range['tokens'], $range['start'], $column_index );
+			if ( null !== $expression ) {
+				$expressions[] = $expression;
+			}
+		}
+
+		if ( $has_wildcard && count( $expressions ) > 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() with SELECT-list wildcards is not supported by the DuckDB driver.' );
+		}
+
+		return $expressions;
+	}
+
+	/**
+	 * Index seeded RAND rewrites by absolute token offset.
+	 *
+	 * @param array<int,array{column:int,start:int,end:int,seed:int,replacement:string}> $expressions Seeded RAND expressions.
+	 * @return array<int,array{column:int,start:int,end:int,seed:int,replacement:string}>
+	 */
+	private function seeded_rand_rewrite_map( array $expressions ): array {
+		$rewrites = array();
+		foreach ( $expressions as $expression ) {
+			$rewrites[ $expression['start'] ] = $expression;
+		}
+		return $rewrites;
+	}
+
+	/**
+	 * Find the token offset where the top-level SELECT list ends.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @return int End offset, exclusive.
+	 */
+	private function top_level_select_list_end( array $tokens ): int {
+		$depth = 0;
+		for ( $index = 1; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 === $depth && $this->is_select_list_boundary_token( $tokens[ $index ] ) ) {
+				return $index;
+			}
+		}
+
+		return count( $tokens );
+	}
+
+	/**
+	 * Check whether a top-level token ends the SELECT list.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether this token starts a later SELECT clause.
+	 */
+	private function is_select_list_boundary_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::FROM_SYMBOL,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::INTO_SYMBOL,
+				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+				WP_MySQL_Lexer::FOR_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Split a top-level SELECT list into item token ranges.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @param int               $start  Start offset, inclusive.
+	 * @param int               $end    End offset, exclusive.
+	 * @return array<int,array{start:int,end:int,tokens:array<int,WP_Parser_Token>}>
+	 */
+	private function split_top_level_select_item_ranges( array $tokens, int $start, int $end ): array {
+		$ranges     = array();
+		$item_start = $start;
+		$depth      = 0;
+
+		for ( $index = $start; $index < $end; ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unbalanced parentheses in DuckDB driver statement.' );
+				}
+				continue;
+			}
+			if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+				if ( $item_start === $index ) {
+					throw new WP_DuckDB_Driver_Exception( 'Empty comma-separated item in DuckDB driver statement.' );
+				}
+				$ranges[]   = array(
+					'start'  => $item_start,
+					'end'    => $index,
+					'tokens' => array_slice( $tokens, $item_start, $index - $item_start ),
+				);
+				$item_start = $index + 1;
+			}
+		}
+
+		if ( 0 !== $depth ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unbalanced parentheses in DuckDB driver statement.' );
+		}
+		if ( $item_start < $end ) {
+			$ranges[] = array(
+				'start'  => $item_start,
+				'end'    => $end,
+				'tokens' => array_slice( $tokens, $item_start, $end - $item_start ),
+			);
+		}
+
+		return $ranges;
+	}
+
+	/**
+	 * Parse one supported RAND(seed) SELECT-list item.
+	 *
+	 * @param WP_Parser_Token[] $tokens         SELECT item tokens.
+	 * @param int               $absolute_start Absolute start offset in the full SELECT token stream.
+	 * @param int               $column_index   Result column index.
+	 * @return array{column:int,start:int,end:int,seed:int,replacement:string}|null Parsed expression, or null for non-RAND items.
+	 */
+	private function parse_seeded_rand_select_item( array $tokens, int $absolute_start, int $column_index ): ?array {
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| $this->is_non_identifier_token( $tokens[0] )
+			|| 0 !== strcasecmp( $tokens[0]->get_value(), 'RAND' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$close_index = $this->matching_parenthesis_index( $tokens, 1 );
+		if ( null === $close_index || 2 === $close_index ) {
+			return null;
+		}
+
+		$seed_tokens = array_slice( $tokens, 2, $close_index - 2 );
+		if ( count( $this->split_top_level_comma_items( $seed_tokens ) ) !== 1 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB SELECT supports exactly one seed argument.' );
+		}
+
+		$seed = $this->parse_seeded_rand_literal_seed( $seed_tokens );
+		if ( null === $seed ) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB SELECT supports only literal numeric, string, or NULL seeds.' );
+		}
+
+		$has_alias   = $this->validate_seeded_rand_select_item_tail( $tokens, $close_index + 1 );
+		$replacement = '0.0';
+		if ( ! $has_alias ) {
+			$replacement .= ' AS ' . $this->connection->quote_identifier(
+				$this->concatenate_token_bytes( array_slice( $tokens, 0, $close_index + 1 ) )
+			);
+		}
+
+		return array(
+			'column'      => $column_index,
+			'start'       => $absolute_start,
+			'end'         => $absolute_start + $close_index,
+			'seed'        => $seed,
+			'replacement' => $replacement,
+		);
+	}
+
+	/**
+	 * Find a matching closing parenthesis in a token array.
+	 *
+	 * @param WP_Parser_Token[] $tokens     Tokens.
+	 * @param int               $open_index Opening parenthesis offset.
+	 * @return int|null Closing parenthesis offset, or null when unbalanced.
+	 */
+	private function matching_parenthesis_index( array $tokens, int $open_index ): ?int {
+		$depth = 0;
+		for ( $index = $open_index; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				if ( 0 === $depth ) {
+					return $index;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Validate the alias tail after a supported RAND(seed) expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens Tokens.
+	 * @param int               $index  First tail token offset.
+	 * @return bool Whether the expression has an alias.
+	 */
+	private function validate_seeded_rand_select_item_tail( array $tokens, int $index ): bool {
+		if ( $index >= count( $tokens ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			if ( ! isset( $tokens[ $index + 1 ] ) || count( $tokens ) !== $index + 2 ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported seeded RAND() SELECT alias in DuckDB driver.' );
+			}
+			$this->identifier_value( $tokens[ $index + 1 ] );
+			return true;
+		}
+
+		if ( count( $tokens ) !== $index + 1 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB SELECT must be a standalone SELECT-list expression.' );
+		}
+
+		$this->identifier_value( $tokens[ $index ] );
+		return true;
+	}
+
+	/**
+	 * Parse a supported seeded RAND literal seed.
+	 *
+	 * @param WP_Parser_Token[] $tokens Seed tokens.
+	 * @return int|null Normalized seed, or null when unsupported.
+	 */
+	private function parse_seeded_rand_literal_seed( array $tokens ): ?int {
+		if ( 1 === count( $tokens ) ) {
+			$token = $tokens[0];
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id || WP_MySQL_Lexer::NULL2_SYMBOL === $token->id ) {
+				return $this->normalize_seeded_rand_seed( null );
+			}
+			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+				return $this->normalize_seeded_rand_seed( $token->get_value() );
+			}
+			if ( $this->is_number_token( $token ) ) {
+				return $this->normalize_seeded_rand_seed( $this->number_token_value( $token ) );
+			}
+		}
+
+		if (
+			2 === count( $tokens )
+			&& $this->is_sign_token( $tokens[0] )
+			&& $this->is_number_token( $tokens[1] )
+		) {
+			return $this->normalize_seeded_rand_seed( $this->signed_number_token_value( $tokens[0], $tokens[1] ) );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Normalize a RAND(seed) value using MySQL/SQLite-driver coercion.
+	 *
+	 * @param int|float|string|null $seed Seed value.
+	 * @return int Normalized seed.
+	 */
+	private function normalize_seeded_rand_seed( $seed ): int {
+		if ( null === $seed ) {
+			return 0;
+		}
+		if ( is_int( $seed ) ) {
+			return $seed;
+		}
+
+		return (int) fmod( round( (float) $seed, 0, PHP_ROUND_HALF_EVEN ), 0x100000000 );
+	}
+
+	/**
+	 * Check whether a SELECT-list item expands to one or more wildcard columns.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return bool Whether the item is * or qualifier.*.
+	 */
+	private function select_item_is_wildcard( array $tokens ): bool {
+		if ( 1 === count( $tokens ) && WP_MySQL_Lexer::MULT_OPERATOR === $tokens[0]->id ) {
+			return true;
+		}
+
+		return 3 === count( $tokens )
+			&& ! $this->is_non_identifier_token( $tokens[0] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::MULT_OPERATOR === $tokens[2]->id;
+	}
+
+	/**
+	 * Apply MySQL's seeded RAND(N) sequence to materialized SELECT rows.
+	 *
+	 * @param WP_DuckDB_Result_Statement $result      Result statement.
+	 * @param array<int,array{column:int,start:int,end:int,seed:int,replacement:string}> $expressions Seeded RAND expressions.
+	 * @return WP_DuckDB_Result_Statement Result with seeded RAND columns replaced.
+	 */
+	private function apply_seeded_rand_select_expressions( WP_DuckDB_Result_Statement $result, array $expressions ): WP_DuckDB_Result_Statement {
+		if ( count( $expressions ) === 0 ) {
+			return $result;
+		}
+
+		$columns     = array();
+		$column_meta = array();
+		for ( $index = 0; $index < $result->columnCount(); ++$index ) {
+			$meta          = $result->getColumnMeta( $index );
+			$column_meta[] = is_array( $meta ) ? $meta : array();
+			$columns[]     = is_array( $meta ) && isset( $meta['name'] ) ? (string) $meta['name'] : (string) $index;
+		}
+
+		$rows  = $result->fetchAll( PDO::FETCH_NUM );
+		$state = array();
+		foreach ( $rows as &$row ) {
+			foreach ( $expressions as $expression ) {
+				if ( ! array_key_exists( $expression['column'], $row ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() result column was not found in DuckDB SELECT result.' );
+				}
+				$row[ $expression['column'] ] = $this->next_seeded_rand_value( $expression['seed'], $state );
+			}
+		}
+		unset( $row );
+
+		return new WP_DuckDB_Result_Statement( $columns, $rows, $result->rowCount(), $column_meta );
+	}
+
+	/**
+	 * Advance MySQL's deterministic RAND(N) LCG.
+	 *
+	 * @param int   $seed  Normalized seed.
+	 * @param array $state Per-statement LCG state.
+	 * @return float A value in [0, 1).
+	 */
+	private function next_seeded_rand_value( int $seed, array &$state ): float {
+		$max_value = 0x3FFFFFFF;
+
+		if ( ! array_key_exists( 'last_seed', $state ) || $seed !== $state['last_seed'] ) {
+			$seed_u32           = $seed & 0xFFFFFFFF;
+			$state['seed1']     = ( ( $seed_u32 * 0x10001 + 55555555 ) & 0xFFFFFFFF ) % $max_value;
+			$state['seed2']     = ( ( $seed_u32 * 0x10000001 ) & 0xFFFFFFFF ) % $max_value;
+			$state['last_seed'] = $seed;
+		}
+
+		$state['seed1'] = ( $state['seed1'] * 3 + $state['seed2'] ) % $max_value;
+		$state['seed2'] = ( $state['seed1'] + $state['seed2'] + 33 ) % $max_value;
+
+		return (float) $state['seed1'] / (float) $max_value;
 	}
 
 	/**
@@ -1090,7 +1475,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_table_constraints,
 		bool $rewrite_information_schema_key_column_usage,
 		bool $rewrite_information_schema_referential_constraints,
-		bool $rewrite_information_schema_check_constraints
+		bool $rewrite_information_schema_check_constraints,
+		array $seeded_rand_rewrites = array()
 	): int {
 		$sql = $this->translate_tokens_to_duckdb_sql(
 			$tokens,
@@ -1100,7 +1486,8 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_table_constraints,
 			$rewrite_information_schema_key_column_usage,
 			$rewrite_information_schema_referential_constraints,
-			$rewrite_information_schema_check_constraints
+			$rewrite_information_schema_check_constraints,
+			$seeded_rand_rewrites
 		);
 
 		return (int) $this->execute_duckdb_query(
@@ -10570,7 +10957,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_table_constraints = false,
 		bool $rewrite_information_schema_key_column_usage = false,
 		bool $rewrite_information_schema_referential_constraints = false,
-		bool $rewrite_information_schema_check_constraints = false
+		bool $rewrite_information_schema_check_constraints = false,
+		array $seeded_rand_rewrites = array()
 	): string {
 		$pieces = array();
 
@@ -10708,6 +11096,12 @@ class WP_DuckDB_Driver {
 			if ( $this->is_empty_function_call( $tokens, $index, 'RAND' ) ) {
 				$pieces[] = 'random()';
 				$index   += 2;
+				continue;
+			}
+
+			$seeded_rand_function = $this->translate_seeded_rand_function_call( $tokens, $index, $seeded_rand_rewrites );
+			if ( null !== $seeded_rand_function ) {
+				$pieces[] = $seeded_rand_function;
 				continue;
 			}
 
@@ -12714,6 +13108,37 @@ class WP_DuckDB_Driver {
 			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), $name )
 			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index + 1 ]->id
 			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index + 2 ]->id;
+	}
+
+	/**
+	 * Translate a pre-approved seeded RAND(seed) call.
+	 *
+	 * @param WP_Parser_Token[] $tokens               Token stream.
+	 * @param int               $index                Current token index, advanced on match.
+	 * @param array<int,array{column:int,start:int,end:int,seed:int,replacement:string}> $seeded_rand_rewrites Allowed rewrites.
+	 * @return string|null Replacement SQL, or null when the current token is not RAND(seed).
+	 */
+	private function translate_seeded_rand_function_call( array $tokens, int &$index, array $seeded_rand_rewrites ): ?string {
+		if (
+			! isset( $tokens[ $index + 2 ] )
+			|| $this->is_non_identifier_token( $tokens[ $index ] )
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_value(), 'RAND' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index + 2 ]->id ) {
+			return null;
+		}
+
+		if ( isset( $seeded_rand_rewrites[ $index ] ) ) {
+			$rewrite = $seeded_rand_rewrites[ $index ];
+			$index   = $rewrite['end'];
+			return $rewrite['replacement'];
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB driver is supported only as a top-level SELECT expression with a literal seed.' );
 	}
 
 	/**

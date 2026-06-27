@@ -44,6 +44,34 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT CAST(RAND() >= 0 AND RAND() < 1 AS SIGNED) AS rand_in_range' );
 	}
 
+	public function test_select_seeded_rand_literals_match_sqlite(): void {
+		foreach (
+			array(
+				'SELECT RAND(0) AS r',
+				'SELECT RAND(1) AS r',
+				'SELECT RAND(5) AS r',
+				'SELECT RAND(NULL) AS r',
+				"SELECT RAND('5') AS r",
+				"SELECT RAND('3.9') AS r",
+				'SELECT RAND(3.9) AS r',
+				'SELECT RAND(-1) AS r',
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
+	public function test_select_seeded_rand_multi_row_sequence_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_rand_rows (id INT)',
+				'INSERT INTO seeded_rand_rows (id) VALUES (1), (2), (3)',
+			)
+		);
+
+		$this->assertParityRows( 'SELECT id, RAND(3) AS r FROM seeded_rand_rows ORDER BY id' );
+	}
+
 	public function test_select_cast_convert_binary_expressions_match_sqlite(): void {
 		foreach (
 			array(
