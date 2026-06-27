@@ -1951,7 +1951,7 @@ class WP_PostgreSQL_DB extends wpdb {
 		$this->postgresql_query_log_override = null;
 
 		try {
-			$install_state_result = $this->query_postgresql_missing_options_value_probe( $query );
+			$install_state_result = $this->query_postgresql_missing_options_install_probe( $query );
 			$site_health_result   = null === $install_state_result ? $this->query_postgresql_site_health_table_sizes( $query ) : null;
 			$this->result         = null !== $install_state_result
 				? $install_state_result
@@ -1979,12 +1979,12 @@ class WP_PostgreSQL_DB extends wpdb {
 	 * @param string $query Original MySQL query.
 	 * @return array|null Empty result rows when the current options table is missing, or null on non-match.
 	 */
-	private function query_postgresql_missing_options_value_probe( $query ) {
+	private function query_postgresql_missing_options_install_probe( $query ) {
 		if ( empty( $this->suppress_errors ) || ! isset( $this->options ) || ! $this->has_usable_postgresql_connection() ) {
 			return null;
 		}
 
-		$table = $this->parse_postgresql_options_value_probe_table( $query );
+		$table = $this->parse_postgresql_options_install_probe_table( $query );
 		if ( null === $table || $this->get_postgresql_metadata_key( (string) $this->options ) !== $this->get_postgresql_metadata_key( $table ) ) {
 			return null;
 		}
@@ -1999,28 +1999,40 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
-	 * Parse WordPress' exact current-prefix option-value install probe.
+	 * Parse WordPress' exact current-prefix option install probes.
 	 *
 	 * @param string $query Original MySQL query.
 	 * @return string|null Options table name, or null on non-match.
 	 */
-	private function parse_postgresql_options_value_probe_table( $query ) {
+	private function parse_postgresql_options_install_probe_table( $query ) {
 		if ( ! is_string( $query ) || ! class_exists( 'WP_MySQL_Lexer', false ) ) {
 			return null;
 		}
 
 		$tokens = $this->get_postgresql_mysql_tokens( $query );
-		if (
-			! isset( $tokens[0] )
-			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
-			|| 'option_value' !== strtolower( (string) $this->get_postgresql_identifier_token_value( $tokens[1] ?? null ) )
-			|| WP_MySQL_Lexer::FROM_SYMBOL !== ( $tokens[2]->id ?? null )
-		) {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
 		}
 
-		$position = 3;
-		$table    = $this->get_postgresql_identifier_token_value( $tokens[ $position ] ?? null );
+		if (
+			'option_value' === strtolower( (string) $this->get_postgresql_identifier_token_value( $tokens[1] ?? null ) )
+			&& WP_MySQL_Lexer::FROM_SYMBOL === ( $tokens[2]->id ?? null )
+		) {
+			return $this->parse_postgresql_options_value_probe_table( $tokens, 3 );
+		}
+
+		return $this->parse_postgresql_options_alloptions_probe_table( $tokens, 5 );
+	}
+
+	/**
+	 * Parse WordPress' exact current-prefix option-value install probe.
+	 *
+	 * @param array $tokens   MySQL token stream.
+	 * @param int   $position Current token position.
+	 * @return string|null Options table name, or null on non-match.
+	 */
+	private function parse_postgresql_options_value_probe_table( array $tokens, int $position ) {
+		$table = $this->get_postgresql_identifier_token_value( $tokens[ $position ] ?? null );
 		if ( null === $table ) {
 			return null;
 		}
@@ -2055,6 +2067,91 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		return $this->is_postgresql_mysql_token_stream_at_end( $tokens, $position ) ? $table : null;
+	}
+
+	/**
+	 * Parse WordPress' exact current-prefix alloptions install probes.
+	 *
+	 * @param array $tokens   MySQL token stream.
+	 * @param int   $position Current token position.
+	 * @return string|null Options table name, or null on non-match.
+	 */
+	private function parse_postgresql_options_alloptions_probe_table( array $tokens, int $position ) {
+		if (
+			'option_name' !== strtolower( (string) $this->get_postgresql_identifier_token_value( $tokens[1] ?? null ) )
+			|| WP_MySQL_Lexer::COMMA_SYMBOL !== ( $tokens[2]->id ?? null )
+			|| 'option_value' !== strtolower( (string) $this->get_postgresql_identifier_token_value( $tokens[3] ?? null ) )
+			|| WP_MySQL_Lexer::FROM_SYMBOL !== ( $tokens[4]->id ?? null )
+		) {
+			return null;
+		}
+
+		$table = $this->get_postgresql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $table ) {
+			return null;
+		}
+		++$position;
+
+		if ( WP_MySQL_Lexer::DOT_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			$table = $this->get_postgresql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if ( null === $table ) {
+				return null;
+			}
+			$position += 2;
+		}
+
+		if ( $this->is_postgresql_mysql_token_stream_at_end( $tokens, $position ) ) {
+			return $table;
+		}
+
+		if (
+			WP_MySQL_Lexer::WHERE_SYMBOL !== ( $tokens[ $position ]->id ?? null )
+			|| 'autoload' !== strtolower( (string) $this->get_postgresql_identifier_token_value( $tokens[ $position + 1 ] ?? null ) )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== ( $tokens[ $position + 2 ]->id ?? null )
+			|| ! $this->is_postgresql_alloptions_autoload_literal_list( $tokens, $position + 3 )
+		) {
+			return null;
+		}
+		$position += 12;
+
+		return $this->is_postgresql_mysql_token_stream_at_end( $tokens, $position ) ? $table : null;
+	}
+
+	/**
+	 * Check whether a token sequence is WordPress' exact alloptions autoload list.
+	 *
+	 * @param array $tokens   MySQL token stream.
+	 * @param int   $position Opening parenthesis token position.
+	 * @return bool Whether the token sequence matches the alloptions autoload list.
+	 */
+	private function is_postgresql_alloptions_autoload_literal_list( array $tokens, int $position ): bool {
+		$expected_values = array( 'yes', 'on', 'auto-on', 'auto' );
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+			return false;
+		}
+		++$position;
+
+		foreach ( $expected_values as $index => $expected_value ) {
+			if (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== ( $tokens[ $position ]->id ?? null )
+				|| $expected_value !== $tokens[ $position ]->get_value()
+			) {
+				return false;
+			}
+			++$position;
+
+			if ( count( $expected_values ) - 1 === $index ) {
+				break;
+			}
+
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== ( $tokens[ $position ]->id ?? null ) ) {
+				return false;
+			}
+			++$position;
+		}
+
+		return WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === ( $tokens[ $position ]->id ?? null );
 	}
 
 	/**

@@ -2921,6 +2921,15 @@ class WP_PostgreSQL_DB_Install_State_Fake_Driver extends WP_PostgreSQL_Driver {
 			throw new RuntimeException( 'relation "wp_e2e_options" does not exist' );
 		}
 
+		if ( false !== strpos( $query, 'option_name, option_value' ) ) {
+			return array(
+				(object) array(
+					'option_name'  => 'siteurl',
+					'option_value' => 'http://existing.example',
+				),
+			);
+		}
+
 		return array(
 			(object) array(
 				'option_value' => 'http://existing.example',
@@ -2998,10 +3007,12 @@ $db->suppress_errors = true;
 $db->options         = 'wp_e2e_options';
 
 $missing_queries = array(
-	'siteurl_limit'     => "SELECT option_value FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
-	'home_no_limit'     => "SELECT option_value FROM wp_e2e_options WHERE option_name = 'home'",
-	'permalink_limit'   => "SELECT option_value FROM `wp_e2e_options` WHERE `option_name` = 'permalink_structure' LIMIT 1",
-	'timezone_no_limit' => "SELECT `option_value` FROM `wp_e2e_options` WHERE `option_name` = 'timezone_string'",
+	'siteurl_limit'       => "SELECT option_value FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
+	'home_no_limit'       => "SELECT option_value FROM wp_e2e_options WHERE option_name = 'home'",
+	'permalink_limit'     => "SELECT option_value FROM `wp_e2e_options` WHERE `option_name` = 'permalink_structure' LIMIT 1",
+	'timezone_no_limit'   => "SELECT `option_value` FROM `wp_e2e_options` WHERE `option_name` = 'timezone_string'",
+	'alloptions_autoload' => "SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+	'alloptions_full'     => 'SELECT option_name, option_value FROM wp_e2e_options',
 );
 
 $missing_results = array();
@@ -3016,6 +3027,13 @@ $old_prefix_result = wp_postgresql_db_install_probe_result(
 	"SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1"
 );
 
+$old_prefix_alloptions_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	"SELECT option_name, option_value FROM wp_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')"
+);
+
 $db->options            = 'wp_options';
 $existing_active_result = wp_postgresql_db_install_probe_result(
 	$db,
@@ -3024,12 +3042,24 @@ $existing_active_result = wp_postgresql_db_install_probe_result(
 	"SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1"
 );
 
+$existing_active_alloptions_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	"SELECT option_name, option_value FROM wp_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')"
+);
+
 $db->options = 'wp_e2e_options';
 $near_miss_queries = array(
 	'different_selected_column' => "SELECT option_name FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
 	'different_predicate'       => "SELECT option_value FROM wp_e2e_options WHERE autoload = 'yes' LIMIT 1",
 	'alias'                     => "SELECT option_value FROM wp_e2e_options o WHERE option_name = 'siteurl' LIMIT 1",
 	'join'                      => "SELECT option_value FROM wp_e2e_options INNER JOIN wp_posts ON wp_posts.ID = wp_e2e_options.option_id WHERE option_name = 'siteurl' LIMIT 1",
+	'alloptions_column'         => "SELECT option_name, autoload FROM wp_e2e_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+	'alloptions_alias'          => "SELECT option_name, option_value FROM wp_e2e_options o WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+	'alloptions_join'           => "SELECT option_name, option_value FROM wp_e2e_options INNER JOIN wp_posts ON wp_posts.ID = wp_e2e_options.option_id WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+	'alloptions_extra'          => "SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto') AND option_name = 'siteurl'",
+	'alloptions_list'           => "SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes')",
 );
 
 $near_miss_results = array();
@@ -3045,15 +3075,26 @@ $unsuppressed_result = wp_postgresql_db_install_probe_result(
 	false
 );
 
+$unsuppressed_alloptions_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	"SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+	false
+);
+
 wp_postgresql_db_test_respond(
 	array(
-		'missing_queries'     => $missing_queries,
-		'missing_results'     => $missing_results,
-		'old_prefix_result'   => $old_prefix_result,
-		'existing_active'     => $existing_active_result,
-		'near_miss_queries'   => $near_miss_queries,
-		'near_miss_results'   => $near_miss_results,
-		'unsuppressed_result' => $unsuppressed_result,
+		'missing_queries'                 => $missing_queries,
+		'missing_results'                 => $missing_results,
+		'old_prefix_result'               => $old_prefix_result,
+		'old_prefix_alloptions_result'    => $old_prefix_alloptions_result,
+		'existing_active'                 => $existing_active_result,
+		'existing_active_alloptions'      => $existing_active_alloptions_result,
+		'near_miss_queries'               => $near_miss_queries,
+		'near_miss_results'               => $near_miss_results,
+		'unsuppressed_result'             => $unsuppressed_result,
+		'unsuppressed_alloptions_result'  => $unsuppressed_alloptions_result,
 	)
 );
 PHP
@@ -3086,6 +3127,24 @@ PHP
 		);
 		$this->assertSame( array(), $result['old_prefix_result']['catalog_query_params'] );
 
+		$this->assertSame( 1, $result['old_prefix_alloptions_result']['return'] );
+		$this->assertSame(
+			array(
+				array(
+					'option_name'  => 'siteurl',
+					'option_value' => 'http://existing.example',
+				),
+			),
+			$result['old_prefix_alloptions_result']['last_result']
+		);
+		$this->assertSame(
+			array(
+				"SELECT option_name, option_value FROM wp_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+			),
+			$result['old_prefix_alloptions_result']['driver_queries']
+		);
+		$this->assertSame( array(), $result['old_prefix_alloptions_result']['catalog_query_params'] );
+
 		$this->assertSame( 1, $result['existing_active']['return'] );
 		$this->assertSame(
 			array(
@@ -3102,6 +3161,24 @@ PHP
 			$result['existing_active']['driver_queries']
 		);
 		$this->assertSame( array( array( 'wp_options' ) ), $result['existing_active']['catalog_query_params'] );
+
+		$this->assertSame( 1, $result['existing_active_alloptions']['return'] );
+		$this->assertSame(
+			array(
+				array(
+					'option_name'  => 'siteurl',
+					'option_value' => 'http://existing.example',
+				),
+			),
+			$result['existing_active_alloptions']['last_result']
+		);
+		$this->assertSame(
+			array(
+				"SELECT option_name, option_value FROM wp_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+			),
+			$result['existing_active_alloptions']['driver_queries']
+		);
+		$this->assertSame( array( array( 'wp_options' ) ), $result['existing_active_alloptions']['catalog_query_params'] );
 
 		foreach ( $result['near_miss_results'] as $name => $case_result ) {
 			$this->assertFalse( $case_result['return'], $name );
@@ -3126,6 +3203,21 @@ PHP
 			$result['unsuppressed_result']['errors'][0]['query']
 		);
 		$this->assertSame( 'relation "wp_e2e_options" does not exist', $result['unsuppressed_result']['errors'][0]['error_str'] );
+
+		$this->assertFalse( $result['unsuppressed_alloptions_result']['return'] );
+		$this->assertSame( 'relation "wp_e2e_options" does not exist', $result['unsuppressed_alloptions_result']['last_error'] );
+		$this->assertSame(
+			array(
+				"SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+			),
+			$result['unsuppressed_alloptions_result']['driver_queries']
+		);
+		$this->assertSame( array(), $result['unsuppressed_alloptions_result']['catalog_query_params'] );
+		$this->assertSame(
+			"SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
+			$result['unsuppressed_alloptions_result']['errors'][0]['query']
+		);
+		$this->assertSame( 'relation "wp_e2e_options" does not exist', $result['unsuppressed_alloptions_result']['errors'][0]['error_str'] );
 	}
 
 	/**
