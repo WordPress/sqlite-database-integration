@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
       - '.github/workflows/wp-tests-phpunit-run.js'
+      - 'bin/wp-test-duckdb-smoke.sh'
       - 'bin/wp-test-ensure-env-duckdb.sh'
       - 'composer.json'
       - 'wp-setup.sh'
@@ -23,6 +24,7 @@ on:
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
       - '.github/workflows/wp-tests-phpunit-run.js'
+      - 'bin/wp-test-duckdb-smoke.sh'
       - 'bin/wp-test-ensure-env-duckdb.sh'
       - 'composer.json'
       - 'wp-setup.sh'
@@ -70,7 +72,6 @@ jobs:
         uses: ramsey/composer-install@v3
         with:
           working-directory: packages/mysql-on-sqlite
-          ignore-cache: "yes"
           composer-options: "--optimize-autoloader"
 
       - name: Install DuckDB PHP client
@@ -127,7 +128,6 @@ jobs:
         uses: ramsey/composer-install@v3
         with:
           working-directory: packages/mysql-on-sqlite
-          ignore-cache: "yes"
           composer-options: "--optimize-autoloader"
 
       - name: Install DuckDB PHP client
@@ -143,6 +143,20 @@ jobs:
         timeout-minutes: 2
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
+
+      - name: Prepare WordPress DuckDB PHPUnit environment
+        timeout-minutes: 15
+        env:
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_DUCKDB_SETUP_TIMEOUT_SECONDS: '300'
+          WP_DUCKDB_FFI_IMAGE_BUILD_TIMEOUT_SECONDS: '300'
+          WP_DUCKDB_TEST_START_TIMEOUT_SECONDS: '480'
+          WP_DUCKDB_FFI_RUNTIME_PROBE_TIMEOUT_SECONDS: '120'
+        run: composer run wp-test-ensure-env-duckdb
+
+      - name: Smoke test WordPress DuckDB wpdb
+        timeout-minutes: 5
+        run: ./bin/wp-test-duckdb-smoke.sh
 
       - name: Run WordPress wpdb PHPUnit tests with DuckDB
         timeout-minutes: 15
@@ -271,7 +285,6 @@ jobs:
         uses: ramsey/composer-install@v3
         with:
           working-directory: packages/mysql-on-sqlite
-          ignore-cache: "yes"
           composer-options: "--optimize-autoloader"
 
       - name: Install DuckDB PHP client
@@ -288,15 +301,23 @@ jobs:
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
 
-      - name: Install Playwright browsers
-        timeout-minutes: 10
-        run: npx playwright install --with-deps
-
       - name: Prepare WordPress DuckDB end-to-end environment
         timeout-minutes: 15
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_DUCKDB_SETUP_TIMEOUT_SECONDS: '300'
+          WP_DUCKDB_FFI_IMAGE_BUILD_TIMEOUT_SECONDS: '300'
+          WP_DUCKDB_TEST_START_TIMEOUT_SECONDS: '480'
+          WP_DUCKDB_FFI_RUNTIME_PROBE_TIMEOUT_SECONDS: '120'
         run: composer run wp-test-ensure-env-duckdb
+
+      - name: Smoke test WordPress DuckDB wpdb
+        timeout-minutes: 5
+        run: ./bin/wp-test-duckdb-smoke.sh
+
+      - name: Install Playwright browsers
+        timeout-minutes: 10
+        run: npx playwright install --with-deps
 
       - name: Serialize WordPress PHP-FPM for DuckDB end-to-end tests
         timeout-minutes: 5
