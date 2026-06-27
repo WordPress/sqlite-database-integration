@@ -1794,6 +1794,69 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_update_rewrites_cross_join(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (4, 'b4', 1), (5, 'b5', 0)" );
+
+		$updated = $driver->query(
+			"UPDATE t1 a CROSS JOIN t2 b
+			SET a.note = 'cross'
+			WHERE b.id = 4"
+		);
+
+		$this->assertSame( 3, $updated->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'note'    => 'cross',
+					'only_t1' => 10,
+				),
+				array(
+					'id'      => 2,
+					'note'    => 'cross',
+					'only_t1' => 20,
+				),
+				array(
+					'id'      => 3,
+					'note'    => 'cross',
+					'only_t1' => 30,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'b1',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 3,
+					'note' => 'b3',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 4,
+					'note' => 'b4',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 5,
+					'note' => 'b5',
+					'flag' => 0,
+				),
+			),
+			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_joined_update_rewrites_derived_table_claim_query(): void {
 		$this->requireDuckDBRuntime();
 
@@ -2138,16 +2201,24 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					'message' => 'UPDATE statement modifying multiple tables is not supported',
 				),
 				array(
+					'sql'     => "UPDATE t1 a CROSS JOIN t2 b SET a.note = 'target', b.note = 'source' WHERE b.id = 3",
+					'message' => 'UPDATE statement modifying multiple tables is not supported',
+				),
+				array(
 					'sql'     => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
-					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
 				),
 				array(
 					'sql'     => "UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
-					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
 				),
 				array(
 					'sql'     => "UPDATE t1 a NATURAL JOIN t2 b SET a.note = 'target'",
-					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a CROSS JOIN t2 b ON a.id = b.id SET a.note = 'target'",
+					'message' => 'CROSS JOIN ... ON is not supported',
 				),
 				array(
 					'sql'     => "UPDATE t1 a JOIN t2 b USING (id) SET a.note = 'target'",
@@ -2711,6 +2782,103 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_delete_rewrites_cross_join_forms(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (4, 'b4', 1), (5, 'b5', 0)" );
+
+		$single_target_delete = $driver->query(
+			'DELETE a FROM t1 a CROSS JOIN t2 b
+			WHERE a.id = 2 AND b.id = 4'
+		);
+		$this->assertSame( 1, $single_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'note'    => 'a1',
+					'only_t1' => 10,
+				),
+				array(
+					'id'      => 3,
+					'note'    => 'a3',
+					'only_t1' => 30,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$multi_target_delete = $driver->query(
+			'DELETE a, b FROM t1 a CROSS JOIN t2 b
+			WHERE a.id = 1 AND b.id = 4'
+		);
+		$this->assertSame( 2, $multi_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 3,
+					'note'    => 'a3',
+					'only_t1' => 30,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'b1',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 3,
+					'note' => 'b3',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 5,
+					'note' => 'b5',
+					'flag' => 0,
+				),
+			),
+			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$using_form_delete = $driver->query(
+			'DELETE FROM a USING t1 a CROSS JOIN t2 b
+			WHERE a.id = 3 AND b.id = 5'
+		);
+		$this->assertSame( 1, $using_form_delete->rowCount() );
+		$this->assertSame(
+			array(),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'b1',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 3,
+					'note' => 'b3',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 5,
+					'note' => 'b5',
+					'flag' => 0,
+				),
+			),
+			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_single_target_joined_delete_rewrites_join_using_and_alias_forms(): void {
 		$this->requireDuckDBRuntime();
 
@@ -2934,23 +3102,23 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a LEFT JOIN t2 b ON a.id = b.id',
-					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a RIGHT JOIN t2 b ON a.id = b.id',
-					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
-				),
-				array(
-					'sql'     => 'DELETE a, b FROM t1 a CROSS JOIN t2 b',
-					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a NATURAL JOIN t2 b',
-					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+				),
+				array(
+					'sql'     => 'DELETE a, b FROM t1 a CROSS JOIN t2 b ON a.id = b.id',
+					'message' => 'CROSS JOIN ... ON is not supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a STRAIGHT_JOIN t2 b ON a.id = b.id',
-					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a JOIN t2 b USING (missing_id)',

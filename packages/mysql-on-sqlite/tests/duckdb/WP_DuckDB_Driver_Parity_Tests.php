@@ -924,6 +924,25 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, status, score FROM posts ORDER BY id' );
 	}
 
+	public function test_cross_joined_update_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (4, 'b4', 1), (5, 'b5', 0)",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"UPDATE t1 a CROSS JOIN t2 b
+			SET a.note = 'cross'
+			WHERE b.id = 4"
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+	}
+
 	public function test_joined_update_non_first_target_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -986,6 +1005,15 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
 		$this->assertParityRows( 'SELECT id, note FROM t2 ORDER BY id' );
+
+		$this->assertParityErrorContains(
+			"UPDATE t1 a CROSS JOIN t2 b
+			SET a.note = 'target', b.note = 'source'
+			WHERE b.id = 3",
+			'UPDATE statement modifying multiple tables'
+		);
+		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note FROM t2 ORDER BY id' );
 	}
 
 	public function test_joined_update_unqualified_unique_unaliased_target_matches_sqlite(): void {
@@ -1012,7 +1040,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			array(
 				array(
 					'sql'              => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'left'",
-					'duckdb_message'   => 'Only comma joins and INNER JOIN ... ON are supported',
+					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
 					'sqlite_row_count' => 2,
 					'sqlite_rows'      => array(
 						array(
@@ -1039,7 +1067,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				),
 				array(
 					'sql'              => "UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id SET a.note = 'right'",
-					'duckdb_message'   => 'Only comma joins and INNER JOIN ... ON are supported',
+					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
 					'sqlite_row_count' => 2,
 					'sqlite_rows'      => array(
 						array(
@@ -1055,6 +1083,33 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 						array(
 							'id'      => '3',
 							'note'    => 'right',
+							'only_t1' => '30',
+						),
+						array(
+							'id'      => '4',
+							'note'    => 'a4',
+							'only_t1' => '40',
+						),
+					),
+				),
+				array(
+					'sql'              => 'UPDATE t1 a CROSS JOIN t2 b ON a.id = b.id SET a.note = b.note WHERE b.flag = 1',
+					'duckdb_message'   => 'CROSS JOIN ... ON is not supported',
+					'sqlite_row_count' => 2,
+					'sqlite_rows'      => array(
+						array(
+							'id'      => '1',
+							'note'    => 'b1',
+							'only_t1' => '10',
+						),
+						array(
+							'id'      => '2',
+							'note'    => 'a2',
+							'only_t1' => '20',
+						),
+						array(
+							'id'      => '3',
+							'note'    => 'b3',
 							'only_t1' => '30',
 						),
 						array(
@@ -1093,7 +1148,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				),
 				array(
 					'sql'              => "UPDATE t1 a NATURAL JOIN t2 b SET a.note = 'natural'",
-					'duckdb_message'   => 'Only comma joins and INNER JOIN ... ON are supported',
+					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
 					'sqlite_row_count' => 4,
 					'sqlite_rows'      => array(
 						array(
@@ -1313,6 +1368,38 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
 		$this->assertParityRows( 'SELECT id, flag FROM t2 ORDER BY id' );
+	}
+
+	public function test_cross_joined_delete_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (4, 'b4', 1), (5, 'b5', 0)",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'DELETE a FROM t1 a CROSS JOIN t2 b
+			WHERE a.id = 2 AND b.id = 4'
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount(
+			'DELETE a, b FROM t1 a CROSS JOIN t2 b
+			WHERE a.id = 1 AND b.id = 4'
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount(
+			'DELETE FROM a USING t1 a CROSS JOIN t2 b
+			WHERE a.id = 3 AND b.id = 5'
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
 	}
 
 	public function test_single_target_joined_delete_matches_sqlite(): void {

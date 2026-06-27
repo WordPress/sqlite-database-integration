@@ -2836,12 +2836,17 @@ class WP_DuckDB_Driver {
 	 */
 	private function parse_joined_update_join_chain( array $tokens, int $index, array $left_reference, array &$sources, array &$join_predicates, string $statement = 'UPDATE' ): void {
 		while ( $index < count( $tokens ) ) {
+			$join_type = 'INNER';
 			if ( WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
 				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after INNER.' );
+			} elseif ( WP_MySQL_Lexer::CROSS_SYMBOL === $tokens[ $index ]->id ) {
+				$join_type = 'CROSS';
+				++$index;
+				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after CROSS.' );
 			} elseif ( WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
 				if ( $this->is_unsupported_joined_update_join_token( $tokens[ $index ] ) ) {
-					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins and INNER JOIN ... ON are supported.' );
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported.' );
 				}
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Table reference options are not supported.' );
 			}
@@ -2852,6 +2857,10 @@ class WP_DuckDB_Driver {
 			$index     = $source['next_index'];
 
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $index ]->id ) {
+				if ( 'CROSS' === $join_type ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. CROSS JOIN ... USING is not supported.' );
+				}
+
 				if ( 'DELETE' !== $statement ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING is not supported.' );
 				}
@@ -2861,6 +2870,14 @@ class WP_DuckDB_Driver {
 					$join_predicates[] = $predicate;
 				}
 				$index          = $using['next_index'];
+				$left_reference = $source['reference'];
+				continue;
+			}
+
+			if ( 'CROSS' === $join_type ) {
+				if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $index ]->id ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. CROSS JOIN ... ON is not supported.' );
+				}
 				$left_reference = $source['reference'];
 				continue;
 			}
@@ -3012,12 +3029,24 @@ class WP_DuckDB_Driver {
 				WP_MySQL_Lexer::LEFT_SYMBOL,
 				WP_MySQL_Lexer::RIGHT_SYMBOL,
 				WP_MySQL_Lexer::NATURAL_SYMBOL,
-				WP_MySQL_Lexer::CROSS_SYMBOL,
 				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
 				WP_MySQL_Lexer::USING_SYMBOL,
 			),
 			true
 		);
+	}
+
+	/**
+	 * Check whether a token can start a joined UPDATE join operator.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether this token starts a supported or unsupported join operator.
+	 */
+	private function is_joined_update_join_start_token( WP_Parser_Token $token ): bool {
+		return WP_MySQL_Lexer::JOIN_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::INNER_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::CROSS_SYMBOL === $token->id
+			|| $this->is_unsupported_joined_update_join_token( $token );
 	}
 
 	/**
@@ -3040,11 +3069,7 @@ class WP_DuckDB_Driver {
 			}
 			if (
 				0 === $depth
-				&& (
-					WP_MySQL_Lexer::JOIN_SYMBOL === $tokens[ $index ]->id
-					|| WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id
-					|| $this->is_unsupported_joined_update_join_token( $tokens[ $index ] )
-				)
+				&& $this->is_joined_update_join_start_token( $tokens[ $index ] )
 			) {
 				return $index;
 			}
