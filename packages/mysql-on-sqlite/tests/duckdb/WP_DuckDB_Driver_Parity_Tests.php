@@ -1296,6 +1296,40 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW COLUMNS FROM metadata' );
 	}
 
+	public function test_show_columns_qualified_and_filtered_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					option_name VARCHAR(191) NOT NULL DEFAULT '' COMMENT 'Option name',
+					option_value LONGTEXT NOT NULL,
+					autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+					UNIQUE KEY option_name (option_name),
+					KEY autoload (autoload)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			)
+		);
+
+		foreach (
+			array(
+				'SHOW COLUMNS FROM wp.metadata',
+				"SHOW COLUMNS FROM `wp`.`metadata` LIKE 'option_%'",
+				"SHOW COLUMNS FROM information_schema.metadata FROM wp WHERE Field = 'option_name'",
+				"SHOW COLUMNS FROM wp.metadata WHERE Field = 'autoload'",
+				"SHOW COLUMNS FROM wp.metadata WHERE Type = 'longtext'",
+				"SHOW COLUMNS FROM wp.metadata WHERE `Null` = 'NO' AND `Key` = 'PRI'",
+				"SHOW COLUMNS FROM wp.metadata WHERE `Default` = 'yes'",
+				"SHOW COLUMNS FROM wp.metadata WHERE Extra = 'auto_increment'",
+				'SHOW FULL COLUMNS FROM wp.metadata WHERE `Collation` IS NOT NULL',
+				"SHOW FULL FIELDS IN `wp`.`metadata` WHERE `Comment` = 'Option name'",
+				'DESCRIBE wp.metadata',
+				"DESCRIBE `wp`.`metadata` 'option_%'",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
 	public function test_alter_table_add_column_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -1336,6 +1370,42 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			FROM information_schema.columns
 			WHERE table_schema = 'wp' AND table_name = 'metadata'
 			ORDER BY ordinal_position"
+		);
+	}
+
+	public function test_alter_table_change_modify_key_rebuild_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE metadata_key (
+					id VARCHAR(20) NOT NULL,
+					code VARCHAR(20) DEFAULT '7',
+					payload VARCHAR(20),
+					PRIMARY KEY (id),
+					KEY code_idx (code)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO metadata_key (id, code, payload) VALUES ('1', '10', 'alpha'), ('2', '11', 'bravo')",
+				'ALTER TABLE metadata_key CHANGE COLUMN id id INT NOT NULL',
+				"ALTER TABLE metadata_key MODIFY COLUMN code SMALLINT NOT NULL DEFAULT 42 COMMENT 'Numeric code'",
+				"INSERT INTO metadata_key (id, payload) VALUES (3, 'charlie')",
+			)
+		);
+
+		$this->assertParityRows( 'SELECT id, code, payload FROM metadata_key ORDER BY id' );
+		$this->assertParityRows(
+			"SELECT column_name, column_type, is_nullable, column_default, extra
+			FROM information_schema.columns
+			WHERE table_schema = 'wp' AND table_name = 'metadata_key'
+			ORDER BY ordinal_position"
+		);
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM metadata_key',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows(
+			"SELECT index_name AS INDEX_NAME, column_name AS COLUMN_NAME, non_unique AS NON_UNIQUE, sub_part AS SUB_PART
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'metadata_key'
+			ORDER BY CASE WHEN index_name = 'PRIMARY' THEN 0 ELSE 1 END, index_name, seq_in_index"
 		);
 	}
 

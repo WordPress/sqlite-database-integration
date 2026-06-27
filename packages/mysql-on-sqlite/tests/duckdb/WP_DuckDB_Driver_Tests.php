@@ -5609,7 +5609,19 @@ SQL,
 		);
 		$this->assertSame(
 			array( 'b' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM wp.t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array( 'b' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM information_schema.t FROM wp' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array( 'b' ),
 			array_column( $driver->query( 'DESCRIBE t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array( 'b' ),
+			array_column( $driver->query( 'DESCRIBE wp.t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
 		);
 		$this->assertSame(
 			array( 'ib' ),
@@ -5654,8 +5666,41 @@ SQL,
 			array_column( $driver->query( 'SHOW COLUMNS FROM t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
 		);
 		$this->assertSame(
+			array( 'a' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM wp.t' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
 			array( array( 'a' => 1 ) ),
 			$driver->query( 'SELECT * FROM t' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_qualified_describe_does_not_expose_information_schema_tables(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE columns (user_col INT)' );
+
+		$this->assertSame(
+			array(),
+			$driver->query( 'DESCRIBE information_schema.columns' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		try {
+			$driver->query( 'SHOW COLUMNS FROM information_schema.columns' );
+			$this->fail( 'Expected information_schema SHOW COLUMNS to be rejected.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Table 'information_schema.columns' doesn't exist", $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array( 'user_col' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM columns' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
 		);
 	}
 
@@ -6648,6 +6693,201 @@ SQL,
 			array( 'name', 'payload' ),
 			array_column( $driver->query( 'SHOW COLUMNS FROM shadow_change' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
 		);
+	}
+
+	public function test_alter_table_change_modify_rebuilds_same_name_key_columns(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE change_key_rebuild (
+				id VARCHAR(20) NOT NULL,
+				code VARCHAR(20) DEFAULT '7',
+				payload VARCHAR(20),
+				PRIMARY KEY (id),
+				UNIQUE KEY code_unique (code)
+			)"
+		);
+		$driver->query( "INSERT INTO change_key_rebuild (id, code, payload) VALUES ('1', '10', 'alpha'), ('2', '11', 'bravo')" );
+
+		$driver->query( 'ALTER TABLE change_key_rebuild CHANGE COLUMN id id INT NOT NULL' );
+		$driver->query( "ALTER TABLE change_key_rebuild MODIFY COLUMN code SMALLINT NOT NULL DEFAULT 42 COMMENT 'Numeric code'" );
+		$driver->query( "INSERT INTO change_key_rebuild (id, payload) VALUES (3, 'charlie')" );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'code'    => 10,
+					'payload' => 'alpha',
+				),
+				array(
+					'id'      => 2,
+					'code'    => 11,
+					'payload' => 'bravo',
+				),
+				array(
+					'id'      => 3,
+					'code'    => 42,
+					'payload' => 'charlie',
+				),
+			),
+			$driver->query( 'SELECT id, code, payload FROM change_key_rebuild ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$columns = array_column( $driver->query( 'SHOW FULL COLUMNS FROM change_key_rebuild' )->fetchAll( PDO::FETCH_ASSOC ), null, 'Field' );
+		$this->assertSame( 'int', $columns['id']['Type'] );
+		$this->assertSame( 'NO', $columns['id']['Null'] );
+		$this->assertSame( 'PRI', $columns['id']['Key'] );
+		$this->assertSame( 'smallint', $columns['code']['Type'] );
+		$this->assertSame( 'NO', $columns['code']['Null'] );
+		$this->assertSame( '42', $columns['code']['Default'] );
+		$this->assertSame( 'UNI', $columns['code']['Key'] );
+		$this->assertSame( 'Numeric code', $columns['code']['Comment'] );
+
+		$index_rows = array_map(
+			function ( array $row ): array {
+				return array(
+					'Key_name'     => $row['Key_name'],
+					'Seq_in_index' => (int) $row['Seq_in_index'],
+					'Column_name'  => $row['Column_name'],
+					'Non_unique'   => (int) $row['Non_unique'],
+				);
+			},
+			$driver->query( 'SHOW INDEX FROM change_key_rebuild' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'Key_name'     => 'PRIMARY',
+					'Seq_in_index' => 1,
+					'Column_name'  => 'id',
+					'Non_unique'   => 0,
+				),
+				array(
+					'Key_name'     => 'code_unique',
+					'Seq_in_index' => 1,
+					'Column_name'  => 'code',
+					'Non_unique'   => 0,
+				),
+			),
+			$index_rows
+		);
+
+		$statistics_rows = array_map(
+			function ( array $row ): array {
+				return array(
+					'index_name'  => $row['index_name'] ?? $row['INDEX_NAME'],
+					'column_name' => $row['column_name'] ?? $row['COLUMN_NAME'],
+					'non_unique'  => (int) ( $row['non_unique'] ?? $row['NON_UNIQUE'] ),
+					'nullable'    => $row['nullable'] ?? $row['NULLABLE'],
+				);
+			},
+			$driver->query(
+				"SELECT index_name AS index_name, column_name AS column_name, non_unique AS non_unique, nullable AS nullable
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp' AND table_name = 'change_key_rebuild'
+				ORDER BY CASE WHEN index_name = 'PRIMARY' THEN 0 ELSE 1 END, index_name, seq_in_index"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'index_name'  => 'PRIMARY',
+					'column_name' => 'id',
+					'non_unique'  => 0,
+					'nullable'    => '',
+				),
+				array(
+					'index_name'  => 'code_unique',
+					'column_name' => 'code',
+					'non_unique'  => 0,
+					'nullable'    => '',
+				),
+			),
+			$statistics_rows
+		);
+
+		try {
+			$driver->query( "INSERT INTO change_key_rebuild (id, code, payload) VALUES (4, 10, 'duplicate')" );
+			$this->fail( 'Expected rebuilt UNIQUE index to remain enforced.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_change_modify_key_rebuild_rejects_unsafe_conversion_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE change_key_bad_cast (
+				code VARCHAR(20),
+				payload INT,
+				KEY code_idx (code)
+			)'
+		);
+		$driver->query( "INSERT INTO change_key_bad_cast (code, payload) VALUES ('abc', 1)" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'change_key_bad_cast' );
+		try {
+			$driver->query( 'ALTER TABLE change_key_bad_cast MODIFY COLUMN code INT NOT NULL' );
+			$this->fail( 'Expected unsafe key-column conversion rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'existing rows cannot be converted', $e->getMessage() );
+		}
+
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'change_key_bad_cast' ) );
+	}
+
+	public function test_alter_table_change_modify_key_rebuild_rejects_transaction_and_multi_action_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE change_key_guard (id VARCHAR(20) NOT NULL, payload INT, PRIMARY KEY (id))' );
+		$driver->query( "INSERT INTO change_key_guard (id, payload) VALUES ('1', 1)" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'change_key_guard' );
+		$driver->query( 'BEGIN' );
+		try {
+			$driver->query( 'ALTER TABLE change_key_guard CHANGE COLUMN id id INT NOT NULL' );
+			$this->fail( 'Expected active transaction CHANGE/MODIFY rebuild rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHANGE/MODIFY cannot run inside an active DuckDB transaction', $e->getMessage() );
+		}
+		$driver->query( 'ROLLBACK' );
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'change_key_guard' ) );
+
+		foreach (
+			array(
+				'ALTER TABLE change_key_guard CHANGE COLUMN id id INT NOT NULL, ADD COLUMN should_not_exist INT',
+				'ALTER TABLE change_key_guard ADD COLUMN should_not_exist INT, CHANGE COLUMN id id INT NOT NULL',
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected multi-action CHANGE/MODIFY rebuild rejection for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( 'CHANGE/MODIFY requiring a table rebuild cannot be combined with other ALTER TABLE actions', $e->getMessage() );
+			}
+
+			$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'change_key_guard' ) );
+		}
 	}
 
 	public function test_alter_table_change_modify_rejects_protected_definitions(): void {

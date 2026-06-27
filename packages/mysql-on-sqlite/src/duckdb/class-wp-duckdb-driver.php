@@ -4658,7 +4658,78 @@ class WP_DuckDB_Driver {
 			if ( $this->is_alter_table_drop_column_rebuild_action( $table_name, $action, $temporary ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN requiring a table rebuild cannot be combined with other ALTER TABLE actions.' );
 			}
+			if ( $this->is_alter_table_change_modify_column_rebuild_action( $table_name, $action, $temporary ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY requiring a table rebuild cannot be combined with other ALTER TABLE actions.' );
+			}
 		}
+	}
+
+	/**
+	 * Check whether CHANGE/MODIFY targets a key column with physical changes.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return bool Whether the action requires a CHANGE/MODIFY rebuild.
+	 */
+	private function is_alter_table_change_modify_column_rebuild_action( string $table_name, array $tokens, bool $temporary = false ): bool {
+		if ( ! isset( $tokens[0] ) || ( WP_MySQL_Lexer::CHANGE_SYMBOL !== $tokens[0]->id && WP_MySQL_Lexer::MODIFY_SYMBOL !== $tokens[0]->id ) ) {
+			return false;
+		}
+
+		$index = 1;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+		}
+
+		$old_column_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( WP_MySQL_Lexer::CHANGE_SYMBOL === $tokens[0]->id ) {
+			$new_column_token = $tokens[ $index ] ?? null;
+			$this->identifier_value( $new_column_token );
+			++$index;
+		} else {
+			$new_column_token = $tokens[ $index - 1 ];
+		}
+
+		$definition_tokens = array_merge( array( $new_column_token ), array_slice( $tokens, $index ) );
+		if ( count( $definition_tokens ) < 2 ) {
+			return false;
+		}
+
+		list( , $sequence_sql, , $metadata ) = $this->translate_create_table_column( $table_name, $definition_tokens, false, true, $temporary, null, $this->table_default_collation( $table_name, $temporary ) );
+		if ( null !== $sequence_sql || 'auto_increment' === $metadata['extra'] || 'PRI' === $metadata['column_key'] || 'UNI' === $metadata['column_key'] ) {
+			return false;
+		}
+
+		$metadata_rows       = $this->table_column_metadata_rows( $table_name, $temporary );
+		$current_column      = $this->resolve_alter_table_change_column_metadata( $table_name, $old_column_name, $metadata_rows );
+		$current_column_name = (string) $current_column['column_name'];
+		$new_column_name     = (string) $metadata['column_name'];
+		if ( 0 !== strcasecmp( $current_column_name, $new_column_name ) ) {
+			return false;
+		}
+
+		$auto_increment = $this->auto_increment_metadata_for_table( $table_name, $temporary );
+		if (
+			( null !== $auto_increment && 0 === strcasecmp( $auto_increment['column_name'], $current_column_name ) )
+			|| 'auto_increment' === $current_column['extra']
+		) {
+			return false;
+		}
+
+		$physical_column      = $this->physical_column_info_row( $table_name, $current_column_name );
+		$type_change          = $this->canonical_duckdb_type( (string) $physical_column['type'] ) !== $this->canonical_duckdb_type( (string) $metadata['_duckdb_type'] );
+		$default_change       = $this->column_default_changed( $current_column, $metadata );
+		$nullability_change   = (string) $current_column['is_nullable'] !== (string) $metadata['is_nullable'];
+		$has_physical_changes = $type_change || $default_change || $nullability_change;
+
+		return $has_physical_changes && $this->alter_table_change_modify_column_targets_key(
+			$table_name,
+			$current_column_name,
+			$this->secondary_index_definitions_for_table( $table_name, $temporary )
+		);
 	}
 
 	/**
@@ -6921,7 +6992,10 @@ class WP_DuckDB_Driver {
 
 		foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
 			if ( 0 === strcasecmp( (string) $index_row[4], $current_column_name ) ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY on a primary key column requires a table rebuild.' );
+				if ( 0 !== strcasecmp( $current_column_name, $new_column_name ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY on a primary key column requires a table rebuild.' );
+				}
+				break;
 			}
 		}
 
@@ -7034,6 +7108,62 @@ class WP_DuckDB_Driver {
 		}
 
 		return $rebuilt_indexes;
+	}
+
+	/**
+	 * Check whether a CHANGE/MODIFY target participates in a primary or secondary key.
+	 *
+	 * @param string                                                                 $table_name        Table name.
+	 * @param string                                                                 $column_name       Column name.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Current secondary indexes.
+	 * @return bool Whether the column is part of any key.
+	 */
+	private function alter_table_change_modify_column_targets_key( string $table_name, string $column_name, array $index_definitions ): bool {
+		foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
+			if ( 0 === strcasecmp( (string) $index_row[4], $column_name ) ) {
+				return true;
+			}
+		}
+
+		foreach ( $index_definitions as $index_definition ) {
+			if ( $this->index_definition_contains_column( $index_definition, $column_name ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Return column metadata rows after a CHANGE/MODIFY column rebuild.
+	 *
+	 * @param array<int,array<string,mixed>> $metadata_rows     Current table metadata rows.
+	 * @param string                         $old_column_name   Old column name.
+	 * @param array<string,mixed>            $metadata          New column metadata.
+	 * @return array<int,array<string,mixed>> Updated metadata rows.
+	 */
+	private function column_metadata_rows_after_change_modify( array $metadata_rows, string $old_column_name, array $metadata ): array {
+		foreach ( $metadata_rows as &$column ) {
+			if ( 0 === strcasecmp( (string) $column['column_name'], $old_column_name ) ) {
+				$column = array_merge(
+					$column,
+					array(
+						'column_name'    => $metadata['column_name'],
+						'column_type'    => $metadata['column_type'],
+						'is_nullable'    => $metadata['is_nullable'],
+						'column_key'     => $metadata['column_key'],
+						'column_default' => $metadata['column_default'],
+						'extra'          => $metadata['extra'],
+						'collation_name' => $metadata['collation_name'],
+						'comment'        => $metadata['comment'],
+					)
+				);
+				break;
+			}
+		}
+		unset( $column );
+
+		return $metadata_rows;
 	}
 
 	/**
@@ -7315,6 +7445,26 @@ class WP_DuckDB_Driver {
 			? $this->secondary_index_definitions_after_column_rename( $table_name, $current_column_name, $new_column_name, $index_definitions, $temporary )
 			: $index_definitions;
 		$has_physical_changes = $rename_column || $type_change || $default_change || $nullability_change;
+		$targets_key_column   = $this->alter_table_change_modify_column_targets_key( $table_name, $current_column_name, $index_definitions );
+
+		if ( ! $rename_column && $has_physical_changes && $targets_key_column ) {
+			$this->assert_alter_table_change_modify_column_rebuild_supported(
+				$table_name,
+				$current_column_name,
+				$metadata,
+				$type_change,
+				$nullability_change,
+				$temporary
+			);
+
+			return $this->execute_schema_lifecycle_change(
+				function () use ( $table_name, $current_column_name, $metadata, $metadata_rows, $temporary ): WP_DuckDB_Result_Statement {
+					$this->execute_alter_table_change_modify_column_rebuild( $table_name, $current_column_name, $metadata, $metadata_rows, $temporary );
+					$this->invalidate_information_schema_compatibility_tables();
+					return $this->empty_ddl_result();
+				}
+			);
+		}
 
 		if ( count( $index_definitions ) > 0 && $has_physical_changes && ! $rename_column ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY on indexed columns that changes type, default, or nullability requires a table rebuild.' );
@@ -7350,6 +7500,112 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->execute_schema_lifecycle_change( $callback );
+	}
+
+	/**
+	 * Validate a CHANGE/MODIFY metadata-plan rebuild before mutation.
+	 *
+	 * @param string              $table_name         Table name.
+	 * @param string              $current_column_name Resolved current column name.
+	 * @param array<string,mixed> $metadata           New column metadata.
+	 * @param bool                $type_change        Whether the physical DuckDB type changes.
+	 * @param bool                $nullability_change Whether physical nullability changes.
+	 * @param bool                $temporary          Whether the target is a temporary table.
+	 */
+	private function assert_alter_table_change_modify_column_rebuild_supported( string $table_name, string $current_column_name, array $metadata, bool $type_change, bool $nullability_change, bool $temporary = false ): void {
+		$this->assert_no_active_transaction_for_table_rebuild( 'CHANGE/MODIFY' );
+		$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'CHANGE/MODIFY', $temporary );
+
+		if ( $type_change ) {
+			$this->assert_alter_table_change_modify_column_values_convertible( $table_name, $current_column_name, (string) $metadata['_duckdb_type'] );
+		}
+
+		if ( $nullability_change && 'NO' === $metadata['is_nullable'] ) {
+			$this->assert_alter_table_change_modify_column_not_null_safe( $table_name, $current_column_name );
+		}
+	}
+
+	/**
+	 * Reject key-column rebuilds when existing values cannot be converted.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Column name.
+	 * @param string $duck_type   Target DuckDB type.
+	 */
+	private function assert_alter_table_change_modify_column_values_convertible( string $table_name, string $column_name, string $duck_type ): void {
+		$stmt  = $this->execute_duckdb_query(
+			'SELECT COUNT(*) AS invalid_count FROM '
+				. $this->connection->quote_identifier( $table_name )
+				. ' WHERE '
+				. $this->connection->quote_identifier( $column_name )
+				. ' IS NOT NULL AND TRY_CAST('
+				. $this->connection->quote_identifier( $column_name )
+				. ' AS '
+				. $duck_type
+				. ') IS NULL',
+			'Failed to validate DuckDB CHANGE/MODIFY column conversion'
+		);
+		$row   = $stmt->fetch( PDO::FETCH_ASSOC );
+		$count = is_array( $row ) && isset( $row['invalid_count'] ) ? (int) $row['invalid_count'] : 0;
+
+		if ( $count > 0 ) {
+			throw new WP_DuckDB_Driver_Exception( "Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY cannot rebuild column '{$column_name}' as {$duck_type} because existing rows cannot be converted." );
+		}
+	}
+
+	/**
+	 * Reject NOT NULL key-column rebuilds when existing rows contain NULL.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Column name.
+	 */
+	private function assert_alter_table_change_modify_column_not_null_safe( string $table_name, string $column_name ): void {
+		$stmt  = $this->execute_duckdb_query(
+			'SELECT COUNT(*) AS null_count FROM '
+				. $this->connection->quote_identifier( $table_name )
+				. ' WHERE '
+				. $this->connection->quote_identifier( $column_name )
+				. ' IS NULL',
+			'Failed to validate DuckDB CHANGE/MODIFY column nullability'
+		);
+		$row   = $stmt->fetch( PDO::FETCH_ASSOC );
+		$count = is_array( $row ) && isset( $row['null_count'] ) ? (int) $row['null_count'] : 0;
+
+		if ( $count > 0 ) {
+			throw new WP_DuckDB_Driver_Exception( "Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY cannot rebuild column '{$column_name}' as NOT NULL because existing rows contain NULL values." );
+		}
+	}
+
+	/**
+	 * Rebuild a table for same-name ALTER TABLE ... CHANGE/MODIFY on a key column.
+	 *
+	 * @param string                         $table_name          Table name.
+	 * @param string                         $current_column_name Resolved current column name.
+	 * @param array<string,mixed>            $metadata            New column metadata.
+	 * @param array<int,array<string,mixed>> $metadata_rows       Current table metadata rows.
+	 * @param bool                           $temporary           Whether the target is a temporary table.
+	 */
+	private function execute_alter_table_change_modify_column_rebuild( string $table_name, string $current_column_name, array $metadata, array $metadata_rows, bool $temporary = false ): void {
+		$primary_key_columns  = $this->primary_key_columns_for_table( $table_name );
+		$column_metadata_rows = $this->column_metadata_rows_after_change_modify( $metadata_rows, $current_column_name, $metadata );
+		if ( count( $primary_key_columns ) > 0 ) {
+			$column_metadata_rows = $this->column_metadata_rows_with_primary_key_not_null( $column_metadata_rows, $primary_key_columns );
+		}
+		$auto_increment = $this->metadata_rows_have_auto_increment( $column_metadata_rows )
+			? $this->table_auto_increment_value( $table_name, $temporary )
+			: null;
+
+		$this->rebuild_table_from_metadata_plan(
+			$table_name,
+			$column_metadata_rows,
+			$primary_key_columns,
+			$this->secondary_index_definitions_for_table( $table_name, $temporary ),
+			$this->check_constraint_metadata_rows( $table_name, $temporary ),
+			$this->show_create_table_foreign_key_groups( $table_name, $temporary ),
+			$auto_increment,
+			'CHANGE/MODIFY',
+			$temporary
+		);
 	}
 
 	/**
@@ -7711,6 +7967,11 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id ) {
+				$pieces[] = 'NULL';
+				continue;
+			}
+
 			$next_token_starts_call = isset( $tokens[ $index + 1 ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index + 1 ]->id;
 			if ( ! $next_token_starts_call && ! $this->is_non_identifier_token( $token ) ) {
 				$column = $column_map[ strtolower( $token->get_value() ) ] ?? null;
@@ -8043,53 +8304,83 @@ class WP_DuckDB_Driver {
 		}
 		++$index;
 
-		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
-		++$index;
+		$requested_reference = $this->parse_metadata_table_reference( $tokens, $index, true );
+		$index               = $requested_reference['next_index'];
 
-		$like_pattern = null;
-		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $index ]->id ) {
-			if (
-				! isset( $tokens[ $index + 1 ] )
-				|| (
-					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
-					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
-				)
-			) {
-				throw new WP_DuckDB_Driver_Exception( 'SHOW COLUMNS LIKE requires a string pattern in the DuckDB driver.' );
-			}
-			$like_pattern = $tokens[ $index + 1 ]->get_value();
-			$index       += 2;
+		if ( 0 !== strcasecmp( $requested_reference['database'], $this->database ) ) {
+			throw new WP_DuckDB_Driver_Exception( "Table '{$requested_reference['database']}.{$requested_reference['table_name']}' doesn't exist" );
 		}
 
-		if ( count( $tokens ) !== $index ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW COLUMNS statement in DuckDB driver. Only optional LIKE is supported.' );
-		}
-
-		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		$table_reference = $this->resolve_visible_user_table_reference( $requested_reference['table_name'] );
 		if ( null === $table_reference ) {
-			throw new WP_DuckDB_Driver_Exception( 'DuckDB table does not exist: ' . $table_name . '.' );
+			if ( $requested_reference['database_explicit'] ) {
+				throw new WP_DuckDB_Driver_Exception( "Table '{$requested_reference['database']}.{$requested_reference['table_name']}' doesn't exist" );
+			}
+			throw new WP_DuckDB_Driver_Exception( 'DuckDB table does not exist: ' . $requested_reference['table_name'] . '.' );
 		}
 
 		if ( ! $full ) {
-			$rows = $this->describe_column_rows( $table_reference['table_name'], $table_reference['temporary'] );
-			if ( null !== $like_pattern ) {
-				$rows = $this->filter_column_rows_by_like( $rows, $like_pattern );
-			}
-
-			return new WP_DuckDB_Result_Statement(
+			return $this->execute_static_show_metadata_statement(
 				array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
-				$rows
+				$this->describe_column_rows( $table_reference['table_name'], $table_reference['temporary'] ),
+				'Field',
+				$tokens,
+				$index,
+				'SHOW COLUMNS'
 			);
 		}
 
-		$full_rows = $this->full_describe_column_rows( $table_reference['table_name'], $table_reference['temporary'] );
-		if ( null !== $like_pattern ) {
-			$full_rows = $this->filter_column_rows_by_like( $full_rows, $like_pattern );
+		return $this->execute_static_show_metadata_statement(
+			array( 'Field', 'Type', 'Collation', 'Null', 'Key', 'Default', 'Extra', 'Privileges', 'Comment' ),
+			$this->full_describe_column_rows( $table_reference['table_name'], $table_reference['temporary'] ),
+			'Field',
+			$tokens,
+			$index,
+			'SHOW COLUMNS'
+		);
+	}
+
+	/**
+	 * Parse a metadata table reference with an optional database qualifier.
+	 *
+	 * SHOW COLUMNS additionally supports a trailing FROM/IN database clause. When
+	 * both forms are present, the trailing database clause takes precedence.
+	 *
+	 * @param WP_Parser_Token[] $tokens                MySQL tokens.
+	 * @param int               $index                 Reference start index.
+	 * @param bool              $allow_database_clause Whether FROM/IN database is allowed after the table.
+	 * @return array{database:string,table_name:string,database_explicit:bool,next_index:int}
+	 */
+	private function parse_metadata_table_reference( array $tokens, int $index, bool $allow_database_clause ): array {
+		$database          = $this->database;
+		$database_explicit = false;
+		$table_name        = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$database          = $table_name;
+			$database_explicit = true;
+			++$index;
+			$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
 		}
 
-		return new WP_DuckDB_Result_Statement(
-			array( 'Field', 'Type', 'Collation', 'Null', 'Key', 'Default', 'Extra', 'Privileges', 'Comment' ),
-			$full_rows
+		if (
+			$allow_database_clause
+			&& isset( $tokens[ $index ] )
+			&& ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $index ]->id )
+		) {
+			++$index;
+			$database          = $this->identifier_value( $tokens[ $index ] ?? null );
+			$database_explicit = true;
+			++$index;
+		}
+
+		return array(
+			'database'          => $database,
+			'table_name'        => $table_name,
+			'database_explicit' => $database_explicit,
+			'next_index'        => $index,
 		);
 	}
 
@@ -8481,25 +8772,38 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_describe( array $tokens ): WP_DuckDB_Result_Statement {
-		if ( 2 !== count( $tokens ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported DESCRIBE statement in DuckDB driver. Only DESCRIBE table is supported.' );
+		$reference = $this->parse_metadata_table_reference( $tokens, 1, false );
+
+		if ( 0 === strcasecmp( $reference['database'], 'information_schema' ) ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+				array()
+			);
+		}
+
+		if ( 0 !== strcasecmp( $reference['database'], $this->database ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DESCRIBE statement in DuckDB driver. Only the current database is supported.' );
 		}
 
 		return new WP_DuckDB_Result_Statement(
 			array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
-			$this->describe_column_rows_for_request( $this->identifier_value( $tokens[1] ) )
+			$this->describe_column_rows_for_request( $reference['table_name'], $reference['database_explicit'] ? $reference['database'] : null )
 		);
 	}
 
 	/**
 	 * Build DESCRIBE rows for a requested table name, resolving temporary tables first.
 	 *
-	 * @param string $table_name Requested table name.
+	 * @param string      $table_name Requested table name.
+	 * @param string|null $database Explicit requested database, or null when unqualified.
 	 * @return array<int,array<int,mixed>>
 	 */
-	private function describe_column_rows_for_request( string $table_name ): array {
+	private function describe_column_rows_for_request( string $table_name, ?string $database = null ): array {
 		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
 		if ( null === $table_reference ) {
+			if ( null !== $database ) {
+				throw new WP_DuckDB_Driver_Exception( "Table '{$database}.{$table_name}' doesn't exist" );
+			}
 			throw new WP_DuckDB_Driver_Exception( 'DuckDB table does not exist: ' . $table_name . '.' );
 		}
 
