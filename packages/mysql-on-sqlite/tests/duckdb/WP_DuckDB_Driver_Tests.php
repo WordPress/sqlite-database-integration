@@ -1597,6 +1597,106 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_update_infers_unqualified_unique_target_column(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'b1', 1), (2, 'b2', 0), (3, 'b3', 1)" );
+
+		$updated = $driver->query(
+			'UPDATE t1 JOIN t2 ON t1.id = t2.id
+			SET only_t1 = 99
+			WHERE t2.flag = 1'
+		);
+
+		$this->assertSame( 2, $updated->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'only_t1' => 99,
+				),
+				array(
+					'id'      => 2,
+					'only_t1' => 20,
+				),
+				array(
+					'id'      => 3,
+					'only_t1' => 99,
+				),
+			),
+			$driver->query( 'SELECT id, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_joined_update_rejects_unqualified_unique_aliased_target_column(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'b1', 1), (2, 'b2', 0), (3, 'b3', 1)" );
+
+		try {
+			$driver->query(
+				'UPDATE t1 a JOIN t2 b ON a.id = b.id
+				SET only_t1 = 99
+				WHERE b.flag = 1'
+			);
+			$this->fail( 'Expected joined UPDATE rejection for unqualified aliased target column.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString(
+				"Unqualified UPDATE target column 'only_t1' is not supported for aliased joined UPDATE targets",
+				$e->getMessage()
+			);
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'note'    => 'a1',
+					'only_t1' => 10,
+				),
+				array(
+					'id'      => 2,
+					'note'    => 'a2',
+					'only_t1' => 20,
+				),
+				array(
+					'id'      => 3,
+					'note'    => 'a3',
+					'only_t1' => 30,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'b1',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 2,
+					'note' => 'b2',
+					'flag' => 0,
+				),
+				array(
+					'id'   => 3,
+					'note' => 'b3',
+					'flag' => 1,
+				),
+			),
+			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_joined_update_rejects_unsupported_shapes(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1640,6 +1740,22 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array(
 					'sql'     => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
 					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
+					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a NATURAL JOIN t2 b SET a.note = 'target'",
+					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b USING (id) SET a.note = 'target'",
+					'message' => 'JOIN ... USING is not supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b ON a.id = b.id SET note = 'ambiguous'",
+					'message' => "Ambiguous unqualified UPDATE target column 'note'",
 				),
 				array(
 					'sql'     => "UPDATE t1 a JOIN t2 b ON a.id = b.id SET a.note = 'target' ORDER BY a.id LIMIT 1",

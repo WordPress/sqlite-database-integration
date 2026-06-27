@@ -624,6 +624,215 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, note FROM t2 ORDER BY id' );
 	}
 
+	public function test_joined_update_unqualified_unique_unaliased_target_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30), (4, 'a4', 40)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (5, 'b5', 1)",
+			)
+		);
+
+			$this->assertParityRowCount(
+				'UPDATE t1 JOIN t2 ON t1.id = t2.id
+				SET only_t1 = 99
+				WHERE t2.flag = 1'
+			);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+	}
+
+	public function test_joined_update_unsupported_join_forms_document_current_duckdb_gap(): void {
+		foreach (
+			array(
+				array(
+					'sql'              => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'left'",
+					'duckdb_message'   => 'Only comma joins and INNER JOIN ... ON are supported',
+					'sqlite_row_count' => 2,
+					'sqlite_rows'      => array(
+						array(
+							'id'      => '1',
+							'note'    => 'left',
+							'only_t1' => '10',
+						),
+						array(
+							'id'      => '2',
+							'note'    => 'a2',
+							'only_t1' => '20',
+						),
+						array(
+							'id'      => '3',
+							'note'    => 'left',
+							'only_t1' => '30',
+						),
+						array(
+							'id'      => '4',
+							'note'    => 'a4',
+							'only_t1' => '40',
+						),
+					),
+				),
+				array(
+					'sql'              => "UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id SET a.note = 'right'",
+					'duckdb_message'   => 'Only comma joins and INNER JOIN ... ON are supported',
+					'sqlite_row_count' => 2,
+					'sqlite_rows'      => array(
+						array(
+							'id'      => '1',
+							'note'    => 'right',
+							'only_t1' => '10',
+						),
+						array(
+							'id'      => '2',
+							'note'    => 'a2',
+							'only_t1' => '20',
+						),
+						array(
+							'id'      => '3',
+							'note'    => 'right',
+							'only_t1' => '30',
+						),
+						array(
+							'id'      => '4',
+							'note'    => 'a4',
+							'only_t1' => '40',
+						),
+					),
+				),
+				array(
+					'sql'              => "UPDATE t1 a JOIN t2 b USING (id) SET a.note = 'using'",
+					'duckdb_message'   => 'JOIN ... USING is not supported',
+					'sqlite_row_count' => 4,
+					'sqlite_rows'      => array(
+						array(
+							'id'      => '1',
+							'note'    => 'using',
+							'only_t1' => '10',
+						),
+						array(
+							'id'      => '2',
+							'note'    => 'using',
+							'only_t1' => '20',
+						),
+						array(
+							'id'      => '3',
+							'note'    => 'using',
+							'only_t1' => '30',
+						),
+						array(
+							'id'      => '4',
+							'note'    => 'using',
+							'only_t1' => '40',
+						),
+					),
+				),
+				array(
+					'sql'              => "UPDATE t1 a NATURAL JOIN t2 b SET a.note = 'natural'",
+					'duckdb_message'   => 'Only comma joins and INNER JOIN ... ON are supported',
+					'sqlite_row_count' => 4,
+					'sqlite_rows'      => array(
+						array(
+							'id'      => '1',
+							'note'    => 'natural',
+							'only_t1' => '10',
+						),
+						array(
+							'id'      => '2',
+							'note'    => 'natural',
+							'only_t1' => '20',
+						),
+						array(
+							'id'      => '3',
+							'note'    => 'natural',
+							'only_t1' => '30',
+						),
+						array(
+							'id'      => '4',
+							'note'    => 'natural',
+							'only_t1' => '40',
+						),
+					),
+				),
+			) as $case
+		) {
+			$drivers = $this->createJoinedUpdateGapDrivers();
+
+			$this->assertSame(
+				$case['sqlite_row_count'],
+				(int) $drivers['sqlite']->query( $case['sql'], PDO::FETCH_ASSOC ),
+				'SQLite row count changed for SQL: ' . $case['sql']
+			);
+			$this->assertDuckDBGapQueryRejected( $drivers['duckdb'], $case['sql'], $case['duckdb_message'] );
+
+			$this->assertSame(
+				$case['sqlite_rows'],
+				$drivers['sqlite']->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id', PDO::FETCH_ASSOC ),
+				'SQLite rows changed for SQL: ' . $case['sql']
+			);
+			$this->assertSame(
+				$this->joinedUpdateGapInitialDuckDBRows(),
+				$drivers['duckdb']->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'DuckDB rejected joined UPDATE mutated t1 for SQL: ' . $case['sql']
+			);
+			$this->assertSame(
+				$this->joinedUpdateGapInitialDuckDBSourceRows(),
+				$drivers['duckdb']->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'DuckDB rejected joined UPDATE mutated t2 for SQL: ' . $case['sql']
+			);
+		}
+	}
+
+	public function test_joined_update_unqualified_unique_aliased_target_rejects_duckdb_gap(): void {
+		$drivers = $this->createJoinedUpdateGapDrivers();
+		$sql     = 'UPDATE t1 a JOIN t2 b ON a.id = b.id
+			SET only_t1 = 99
+			WHERE b.flag = 1';
+
+		$this->assertSame( 4, (int) $drivers['sqlite']->query( $sql, PDO::FETCH_ASSOC ) );
+		$this->assertDuckDBGapQueryRejected(
+			$drivers['duckdb'],
+			$sql,
+			"Unqualified UPDATE target column 'only_t1' is not supported for aliased joined UPDATE targets"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'id'      => '1',
+					'note'    => 'a1',
+					'only_t1' => '99',
+				),
+				array(
+					'id'      => '2',
+					'note'    => 'a2',
+					'only_t1' => '99',
+				),
+				array(
+					'id'      => '3',
+					'note'    => 'a3',
+					'only_t1' => '99',
+				),
+				array(
+					'id'      => '4',
+					'note'    => 'a4',
+					'only_t1' => '99',
+				),
+			),
+			$drivers['sqlite']->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id', PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			$this->joinedUpdateGapInitialDuckDBRows(),
+			$drivers['duckdb']->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+			'DuckDB rejected joined UPDATE mutated t1.'
+		);
+		$this->assertSame(
+			$this->joinedUpdateGapInitialDuckDBSourceRows(),
+			$drivers['duckdb']->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+			'DuckDB rejected joined UPDATE mutated t2.'
+		);
+	}
+
 	public function test_joined_update_derived_table_claim_query_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -1943,6 +2152,97 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 		$this->assertParityRows( 'SHOW CREATE TABLE lifecycle_idx' );
 		$this->assertParityRows( 'SELECT name FROM lifecycle_idx ORDER BY id' );
+	}
+
+	private function createJoinedUpdateGapDrivers(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$sqlite_driver = new WP_SQLite_Driver(
+			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
+			'wp'
+		);
+		$duckdb_driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$setup_queries = array(
+			'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+			'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+			"INSERT INTO t1 VALUES
+				(1, 'a1', 10),
+				(2, 'a2', 20),
+				(3, 'a3', 30),
+				(4, 'a4', 40)",
+			"INSERT INTO t2 VALUES
+				(1, 'b1', 1),
+				(3, 'b3', 1),
+				(5, 'b5', 1)",
+		);
+
+		foreach ( $setup_queries as $query ) {
+			$sqlite_driver->query( $query, PDO::FETCH_ASSOC );
+			$duckdb_driver->query( $query );
+		}
+
+		return array(
+			'sqlite' => $sqlite_driver,
+			'duckdb' => $duckdb_driver,
+		);
+	}
+
+	private function assertDuckDBGapQueryRejected( WP_DuckDB_Driver $driver, string $sql, string $message ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		try {
+			$driver->query( $sql );
+			$this->fail( 'Expected DuckDB joined UPDATE rejection for SQL: ' . $sql );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( $message, $e->getMessage() );
+		}
+	}
+
+	private function joinedUpdateGapInitialDuckDBRows(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return array(
+			array(
+				'id'      => 1,
+				'note'    => 'a1',
+				'only_t1' => 10,
+			),
+			array(
+				'id'      => 2,
+				'note'    => 'a2',
+				'only_t1' => 20,
+			),
+			array(
+				'id'      => 3,
+				'note'    => 'a3',
+				'only_t1' => 30,
+			),
+			array(
+				'id'      => 4,
+				'note'    => 'a4',
+				'only_t1' => 40,
+			),
+		);
+	}
+
+	private function joinedUpdateGapInitialDuckDBSourceRows(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return array(
+			array(
+				'id'   => 1,
+				'note' => 'b1',
+				'flag' => 1,
+			),
+			array(
+				'id'   => 3,
+				'note' => 'b3',
+				'flag' => 1,
+			),
+			array(
+				'id'   => 5,
+				'note' => 'b5',
+				'flag' => 1,
+			),
+		);
 	}
 
 	private function lifecycleTableSql( string $table_name ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

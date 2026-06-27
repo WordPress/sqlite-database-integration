@@ -1708,7 +1708,7 @@ class WP_DuckDB_Driver {
 	 * Parse supported joined UPDATE shapes.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
-	 * @return array{target:array{alias:string,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>}|null Parsed shape, or null for single-table UPDATE.
+	 * @return array{target:array{alias:string,explicit_alias:bool,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>}|null Parsed shape, or null for single-table UPDATE.
 	 */
 	private function parse_joined_update_shape( array $tokens ): ?array {
 		if ( ! isset( $tokens[1] ) ) {
@@ -1768,7 +1768,7 @@ class WP_DuckDB_Driver {
 	/**
 	 * Execute a parsed joined UPDATE.
 	 *
-	 * @param array{target:array{alias:string,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>} $shape Parsed shape.
+	 * @param array{target:array{alias:string,explicit_alias:bool,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>} $shape Parsed shape.
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_joined_update( array $shape ): WP_DuckDB_Result_Statement {
@@ -2161,7 +2161,7 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
 	 * @param string            $statement Statement name for diagnostics.
 	 * @param bool              $first_factor_must_be_base Whether the first table factor must be a base table.
-	 * @return array{target:array{alias:string,sql:string,table_name:string|null,requested_table_name:string,temporary:bool},sources:array<int,array{alias:string,sql:string,table_name:string|null,temporary:bool,requested_table_name:string}>,join_predicates:array<int,array<int,WP_Parser_Token>>}
+	 * @return array{target:array{alias:string,explicit_alias:bool,sql:string,table_name:string|null,requested_table_name:string,temporary:bool},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null,temporary:bool,requested_table_name:string}>,join_predicates:array<int,array<int,WP_Parser_Token>>}
 	 */
 	private function parse_joined_update_table_references( array $tokens, string $statement = 'UPDATE', bool $first_factor_must_be_base = true ): array {
 		$items           = $this->split_top_level_comma_items( $tokens );
@@ -2185,6 +2185,7 @@ class WP_DuckDB_Driver {
 		return array(
 			'target'          => array(
 				'alias'                => $target['alias'],
+				'explicit_alias'       => $target['explicit_alias'],
 				'sql'                  => $target['sql'],
 				'table_name'           => $target['table_name'],
 				'temporary'            => $target['temporary'],
@@ -2203,7 +2204,7 @@ class WP_DuckDB_Driver {
 	 * @param bool              $allow_derived Whether derived tables are allowed.
 	 * @param bool              $is_target     Whether this factor is the UPDATE target.
 	 * @param string            $statement     Statement name for diagnostics.
-	 * @return array{reference:array{alias:string,sql:string,table_name:string|null,temporary:bool,requested_table_name:string},next_index:int}
+	 * @return array{reference:array{alias:string,explicit_alias:bool,sql:string,table_name:string|null,temporary:bool,requested_table_name:string},next_index:int}
 	 */
 	private function parse_joined_update_table_factor( array $tokens, int $index, bool $allow_derived, bool $is_target, string $statement = 'UPDATE' ): array {
 		if ( ! isset( $tokens[ $index ] ) ) {
@@ -2234,6 +2235,7 @@ class WP_DuckDB_Driver {
 			return array(
 				'reference'  => array(
 					'alias'                => $alias,
+					'explicit_alias'       => true,
 					'sql'                  => '( '
 						. $this->translate_tokens_to_duckdb_sql( $this->strip_for_update_locking_clause( $inner ) )
 						. ' ) AS '
@@ -2274,19 +2276,23 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in {$statement} statement." );
 		}
 
-		$alias = $table_name;
+		$alias          = $table_name;
+		$explicit_alias = false;
 		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
 			++$index;
-			$alias = $this->identifier_value( $tokens[ $index ] ?? null );
+			$alias          = $this->identifier_value( $tokens[ $index ] ?? null );
+			$explicit_alias = true;
 			++$index;
 		} elseif ( isset( $tokens[ $index ] ) && ! $this->is_joined_update_table_reference_boundary( $tokens[ $index ] ) ) {
-			$alias = $this->identifier_value( $tokens[ $index ] );
+			$alias          = $this->identifier_value( $tokens[ $index ] );
+			$explicit_alias = true;
 			++$index;
 		}
 
 		return array(
 			'reference'  => array(
 				'alias'                => $alias,
+				'explicit_alias'       => $explicit_alias,
 				'sql'                  => $this->connection->quote_identifier( $table_reference['table_name'] )
 					. ' AS '
 					. $this->connection->quote_identifier( $alias ),
@@ -4256,6 +4262,9 @@ class WP_DuckDB_Driver {
 				if ( null === $assignment_target_index ) {
 					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
 				}
+				if ( $this->is_unsafe_unqualified_joined_update_target( $references, $assignment_target_index ) ) {
+					throw new WP_DuckDB_Driver_Exception( "Unqualified UPDATE target column '{$column}' is not supported for aliased joined UPDATE targets in DuckDB driver. Qualify the target column." );
+				}
 			} elseif (
 				3 === count( $left_tokens )
 				&& WP_MySQL_Lexer::DOT_SYMBOL === $left_tokens[1]->id
@@ -4301,6 +4310,28 @@ class WP_DuckDB_Driver {
 			'target_index' => $target_index,
 			'sql'          => implode( ', ', $items ),
 		);
+	}
+
+	/**
+	 * Check whether unqualified joined UPDATE target inference can diverge.
+	 *
+	 * @param array<int,array<string,mixed>> $references Joined references.
+	 * @param int                            $target_index Assignment target index.
+	 * @return bool Whether unqualified target inference should be rejected.
+	 */
+	private function is_unsafe_unqualified_joined_update_target( array $references, int $target_index ): bool {
+		if ( empty( $references[ $target_index ]['explicit_alias'] ) ) {
+			return false;
+		}
+
+		$base_reference_count = 0;
+		foreach ( $references as $reference ) {
+			if ( null !== $reference['table_name'] ) {
+				++$base_reference_count;
+			}
+		}
+
+		return $base_reference_count > 1;
 	}
 
 	/**
