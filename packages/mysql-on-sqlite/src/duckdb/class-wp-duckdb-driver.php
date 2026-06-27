@@ -17694,7 +17694,10 @@ class WP_DuckDB_Driver {
 		$explicit_insert_id = null === $metadata || null === $table_index
 			? null
 			: $this->explicit_auto_increment_value_for_write( $tokens, $table_index, $metadata['column_name'] );
-		$before             = null === $sequence_name ? null : $this->sequence_currval( $sequence_name );
+		$column_was_omitted = null !== $metadata && null !== $table_index
+			? $this->auto_increment_column_omitted_from_write( $tokens, $table_index, $metadata['column_name'] )
+			: false;
+		$before             = null === $sequence_name || $column_was_omitted ? null : $this->sequence_currval( $sequence_name );
 
 		$insert_ignore_write                  = null !== $metadata
 			&& null !== $table_reference
@@ -17716,10 +17719,7 @@ class WP_DuckDB_Driver {
 				}
 			}
 		}
-		$column_was_omitted = null !== $metadata && null !== $table_index
-			? $this->auto_increment_column_omitted_from_write( $tokens, $table_index, $metadata['column_name'] )
-			: false;
-		$before_max         = null;
+		$before_max = null;
 		if ( $column_was_omitted && null !== $table_reference ) {
 			$before_max = $this->max_auto_increment_column_value( $table_reference['table_name'], $metadata['column_name'], $table_reference['temporary'] );
 		}
@@ -17734,8 +17734,13 @@ class WP_DuckDB_Driver {
 		$result = $this->execute_duckdb_query( $sql, $context );
 
 		if ( null !== $sequence_name && ( $result->rowCount() > 0 || ! $insert_ignore_write ) ) {
-			$after = $this->sequence_currval( $sequence_name );
-			if ( null !== $after && $after !== $before ) {
+			$after             = $this->sequence_currval( $sequence_name );
+			$sequence_advanced = null !== $after
+				&& (
+					( null !== $before && $after !== $before )
+					|| ( $column_was_omitted && null !== $before_max && $after > $before_max )
+				);
+			if ( $sequence_advanced ) {
 				$this->last_insert_id = $after;
 				if ( 0 === $result->rowCount() ) {
 					$result = new WP_DuckDB_Result_Statement( array(), array(), 1 );
