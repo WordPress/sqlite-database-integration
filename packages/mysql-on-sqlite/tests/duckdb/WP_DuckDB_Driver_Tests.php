@@ -1182,6 +1182,43 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_default_storage_engine_session_variable_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$set = $driver->query( 'SET default_storage_engine = InnoDB' );
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$read = $driver->query( 'SELECT @@default_storage_engine, @@SESSION.default_storage_engine' );
+		$this->assertSame( array( 'name' => '@@default_storage_engine' ), $read->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => '@@SESSION.default_storage_engine' ), $read->getColumnMeta( 1 ) );
+		$this->assertSame(
+			array(
+				'@@default_storage_engine'         => 'InnoDB',
+				'@@SESSION.default_storage_engine' => 'InnoDB',
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$driver->query( "SET @@session.default_storage_engine = 'MyISAM'" );
+		$this->assertSame(
+			array( '@@default_storage_engine' => 'MyISAM' ),
+			$driver->query( 'SELECT @@default_storage_engine' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'SET SESSION default_storage_engine = DEFAULT' );
+		$this->assertSame(
+			array( '@@default_storage_engine' => 'DEFAULT' ),
+			$driver->query( 'SELECT @@default_storage_engine' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
 	public function test_sql_mode_bootstrap_statements_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -2907,6 +2944,64 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array( 'option_name' => '_transient_timeout_tag5' ),
 				array( 'option_name' => '_site_transient_tag1' ),
 				array( 'option_name' => '_site_transient_timeout_tag1' ),
+				array( 'option_name' => 'rss_1' ),
+			),
+			$driver->query( 'SELECT option_name FROM wp_options ORDER BY option_id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_multi_table_delete_removes_expired_transient_alias_rows_with_literal_timeout(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE wp_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name),
+				KEY autoload (autoload)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_options (option_name, option_value, autoload) VALUES
+			('_transient_tag4', 'tag4', 'no'),
+			('_transient_timeout_tag4', '1', 'no'),
+			('_transient_tag5', 'tag5', 'no'),
+			('_transient_timeout_tag5', '9999999999', 'no'),
+			('rss_1', 'rss', 'yes')"
+		);
+
+		$delete         = $driver->query(
+			"DELETE a, b FROM wp_options a, wp_options b
+			WHERE a.option_name LIKE '\_transient\_%'
+			AND a.option_name NOT LIKE '\_transient\_timeout_%'
+			AND b.option_name = CONCAT( '_transient_timeout_', SUBSTRING( a.option_name, 12 ) )
+			AND b.option_value < 1782556962"
+		);
+		$delete_queries = $driver->get_last_duckdb_queries();
+
+		$uses_numeric_cast = false;
+		foreach ( $delete_queries as $query ) {
+			if ( false !== strpos( $query, 'TRY_CAST("b"."option_value" AS BIGINT) < 1782556962' ) ) {
+				$uses_numeric_cast = true;
+				break;
+			}
+		}
+
+		$this->assertSame( 2, $delete->rowCount() );
+		$this->assertTrue( $uses_numeric_cast );
+		$this->assertSame(
+			array(
+				array( 'option_name' => '_transient_tag5' ),
+				array( 'option_name' => '_transient_timeout_tag5' ),
 				array( 'option_name' => 'rss_1' ),
 			),
 			$driver->query( 'SELECT option_name FROM wp_options ORDER BY option_id' )->fetchAll( PDO::FETCH_ASSOC )

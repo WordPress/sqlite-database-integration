@@ -603,6 +603,11 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			$this->assertParityRows( 'SELECT @@autocommit, @@big_tables' );
 		}
 
+		$this->assertParityRowCount( 'SET default_storage_engine = InnoDB' );
+		$this->assertParityRows( 'SELECT @@default_storage_engine, @@SESSION.default_storage_engine' );
+		$this->assertParityRowCount( "SET @@session.default_storage_engine = 'MyISAM'" );
+		$this->assertParityRows( 'SELECT @@default_storage_engine' );
+
 		$this->assertParityRowCount( 'SET autocommit = OFF' );
 		$this->assertParityRows( 'SELECT @@autocommit' );
 		$this->assertParityRowCount( 'SET big_tables = ON' );

@@ -38,12 +38,13 @@ class WP_DuckDB_Driver {
 	const INFO_SCHEMA_CHECK_CONSTRAINTS_TABLE       = '__wp_duckdb_information_schema_check_constraints';
 
 	const SUPPORTED_SESSION_SYSTEM_VARIABLES = array(
-		'autocommit'         => true,
-		'big_tables'         => true,
-		'foreign_key_checks' => true,
-		'sql_mode'           => true,
-		'sql_warnings'       => true,
-		'unique_checks'      => true,
+		'autocommit'             => true,
+		'big_tables'             => true,
+		'default_storage_engine' => true,
+		'foreign_key_checks'     => true,
+		'sql_mode'               => true,
+		'sql_warnings'           => true,
+		'unique_checks'          => true,
 	);
 
 	const READ_ONLY_SYSTEM_VARIABLES = array(
@@ -2529,7 +2530,7 @@ class WP_DuckDB_Driver {
 					. $shape['from_sql'];
 				$where_clauses = array();
 				if ( count( $shape['where_tokens'] ) > 0 ) {
-					$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $shape['where_tokens'] );
+					$where_clauses[] = $this->translate_multi_table_delete_where_tokens_to_duckdb_sql( $shape['where_tokens'] );
 				}
 				foreach ( $shape['join_predicates'] as $predicate ) {
 					$where_clauses[] = $this->joined_dml_predicate_sql( $predicate );
@@ -2581,6 +2582,27 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->translate_tokens_to_duckdb_sql( $predicate );
+	}
+
+	/**
+	 * Translate the WHERE clause used while collecting multi-table DELETE targets.
+	 *
+	 * @param WP_Parser_Token[] $tokens WHERE tokens.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_multi_table_delete_where_tokens_to_duckdb_sql( array $tokens ): string {
+		return $this->translate_tokens_to_duckdb_sql(
+			$tokens,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			array(),
+			true
+		);
 	}
 
 	/**
@@ -3891,6 +3913,9 @@ class WP_DuckDB_Driver {
 		if ( 'sql_mode' === $name ) {
 			return $this->normalize_set_sql_mode_value( $token );
 		}
+		if ( 'default_storage_engine' === $name ) {
+			return $this->normalize_set_default_storage_engine_value( $token );
+		}
 
 		$value = $token->get_value();
 		$lower = strtolower( $value );
@@ -3924,6 +3949,28 @@ class WP_DuckDB_Driver {
 		}
 
 		throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+	}
+
+	/**
+	 * Normalize a SET default_storage_engine value for driver-local readback.
+	 *
+	 * @param WP_Parser_Token $token Value token.
+	 * @return string Normalized storage engine value.
+	 */
+	private function normalize_set_default_storage_engine_value( WP_Parser_Token $token ): string {
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+			return $token->get_value();
+		}
+
+		if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id || $this->is_non_identifier_token( $token ) ) {
+			throw $this->new_unsupported_set_session_system_variable_value_exception( 'default_storage_engine' );
+		}
+
+		if ( 'default' === strtolower( $token->get_value() ) ) {
+			return 'DEFAULT';
+		}
+
+		return $token->get_value();
 	}
 
 	/**
@@ -4071,6 +4118,11 @@ class WP_DuckDB_Driver {
 				'Unsupported SET value for sql_mode in DuckDB driver. Only string literals, bare mode names, and DEFAULT are supported.'
 			);
 		}
+		if ( 'default_storage_engine' === $name ) {
+			return new WP_DuckDB_Driver_Exception(
+				'Unsupported SET value for default_storage_engine in DuckDB driver. Only string literals, bare engine names, and DEFAULT are supported.'
+			);
+		}
 
 		return new WP_DuckDB_Driver_Exception(
 			'Unsupported SET value for '
@@ -4102,7 +4154,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception(
 				'Unsupported SET session variable in DuckDB driver: '
 				. $name
-				. '. Only autocommit, big_tables, foreign_key_checks, sql_mode, sql_warnings, and unique_checks are supported.'
+				. '. Only autocommit, big_tables, default_storage_engine, foreign_key_checks, sql_mode, sql_warnings, and unique_checks are supported.'
 			);
 		}
 
@@ -12045,7 +12097,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_key_column_usage = false,
 		bool $rewrite_information_schema_referential_constraints = false,
 		bool $rewrite_information_schema_check_constraints = false,
-		array $seeded_rand_rewrites = array()
+		array $seeded_rand_rewrites = array(),
+		bool $rewrite_option_value_numeric_literal_comparisons = false
 	): string {
 		$pieces = array();
 
@@ -12294,6 +12347,14 @@ class WP_DuckDB_Driver {
 			if ( null !== $unix_timestamp_comparison ) {
 				$pieces[] = $unix_timestamp_comparison;
 				continue;
+			}
+
+			if ( $rewrite_option_value_numeric_literal_comparisons ) {
+				$option_value_comparison = $this->translate_option_value_numeric_literal_comparison( $tokens, $index );
+				if ( null !== $option_value_comparison ) {
+					$pieces[] = $option_value_comparison;
+					continue;
+				}
 			}
 
 			$like_binary_predicate = $this->translate_like_binary_predicate( $tokens, $index );
@@ -16390,6 +16451,126 @@ class WP_DuckDB_Driver {
 			. ' AS BIGINT) '
 			. $tokens[ $operator_index ]->get_bytes()
 			. ' CAST(epoch(current_timestamp) AS BIGINT)';
+	}
+
+	/**
+	 * Translate WordPress transient timeout string comparisons in multi-table DELETE collection.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated comparison, or null when the pattern does not match.
+	 */
+	private function translate_option_value_numeric_literal_comparison( array $tokens, int &$index ): ?string {
+		$operand = $this->option_value_numeric_comparison_operand_sql( $tokens, $index );
+		if ( null === $operand ) {
+			return null;
+		}
+
+		$operator_index = $operand['next_index'];
+		$literal_index  = $operator_index + 1;
+		if (
+			! isset( $tokens[ $literal_index ] )
+			|| ! $this->is_numeric_comparison_operator_token( $tokens[ $operator_index ] ?? null )
+			|| ! $this->is_integer_number_token( $tokens[ $literal_index ] )
+		) {
+			return null;
+		}
+
+		if (
+			isset( $tokens[ $literal_index + 1 ] )
+			&& ! $this->is_option_value_numeric_comparison_boundary_token( $tokens[ $literal_index + 1 ] )
+		) {
+			return null;
+		}
+
+		$index = $literal_index;
+		return 'TRY_CAST('
+			. $operand['sql']
+			. ' AS BIGINT) '
+			. $tokens[ $operator_index ]->get_bytes()
+			. ' '
+			. $tokens[ $literal_index ]->get_bytes();
+	}
+
+	/**
+	 * Build an option_value operand SQL fragment for a bounded numeric comparison.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index.
+	 * @return array{sql:string,next_index:int}|null Operand SQL and next token index, or null when not matched.
+	 */
+	private function option_value_numeric_comparison_operand_sql( array $tokens, int $index ): ?array {
+		if ( ! isset( $tokens[ $index ] ) || $this->is_non_identifier_token( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
+		) {
+			$column_name = $this->identifier_value( $tokens[ $index + 2 ] );
+			if ( 0 !== strcasecmp( $column_name, 'option_value' ) ) {
+				return null;
+			}
+
+			return array(
+				'sql'        => $this->connection->quote_identifier( $this->identifier_value( $tokens[ $index ] ) )
+					. '.'
+					. $this->connection->quote_identifier( $column_name ),
+				'next_index' => $index + 3,
+			);
+		}
+
+		$column_name = $this->identifier_value( $tokens[ $index ] );
+		if ( 0 !== strcasecmp( $column_name, 'option_value' ) ) {
+			return null;
+		}
+
+		return array(
+			'sql'        => $this->connection->quote_identifier( $column_name ),
+			'next_index' => $index + 1,
+		);
+	}
+
+	/**
+	 * Check whether a token is a comparison operator that coerces strings numerically in MySQL.
+	 *
+	 * @param WP_Parser_Token|null $token Token.
+	 * @return bool Whether the token is a supported comparison operator.
+	 */
+	private function is_numeric_comparison_operator_token( $token ): bool {
+		return $token instanceof WP_Parser_Token
+			&& in_array(
+				$token->id,
+				array(
+					WP_MySQL_Lexer::LESS_THAN_OPERATOR,
+					WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
+					WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
+					WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
+					WP_MySQL_Lexer::EQUAL_OPERATOR,
+				),
+				true
+			);
+	}
+
+	/**
+	 * Check whether a token can end an option_value numeric literal predicate.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token is a predicate boundary.
+	 */
+	private function is_option_value_numeric_comparison_boundary_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::AND_SYMBOL,
+				WP_MySQL_Lexer::OR_SYMBOL,
+				WP_MySQL_Lexer::XOR_SYMBOL,
+				WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
+			),
+			true
+		);
 	}
 
 	/**
