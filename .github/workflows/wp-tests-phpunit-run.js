@@ -9,7 +9,13 @@ const { execSync } = require( 'child_process' );
 const fs = require( 'fs' );
 const path = require( 'path' );
 
+const repoRoot = path.join( __dirname, '..', '..' );
 const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
+const phpunitCommand = process.env.WP_SQLITE_PHPUNIT_COMMAND || 'composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose';
+const junitOutputPath = process.env.WP_SQLITE_PHPUNIT_JUNIT_PATH || 'wordpress/phpunit-results.xml';
+const junitOutputFile = path.isAbsolute( junitOutputPath )
+	? junitOutputPath
+	: path.join( repoRoot, junitOutputPath );
 
 const expectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
@@ -94,6 +100,8 @@ console.log( 'Running WordPress PHPUnit tests with expected failures tracking...
 if ( requiresNativeParserExtension ) {
 	console.log( 'Native parser extension is required for this PHPUnit run.' );
 }
+console.log( 'PHPUnit command:', phpunitCommand );
+console.log( 'JUnit output:', junitOutputFile );
 console.log( 'Expected errors:', expectedErrors );
 console.log( 'Expected failures:', expectedFailures );
 
@@ -117,17 +125,13 @@ try {
 	}
 
 	try {
-		execSync(
-			`composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose`,
-			{ stdio: 'inherit' }
-		);
+		execSync( phpunitCommand, { stdio: 'inherit' } );
 		console.log( '\n⚠️ All tests passed, checking if expected errors/failures occurred...' );
 	} catch ( error ) {
 		console.log( '\n⚠️ Some tests errored/failed (expected). Analyzing results...' );
 	}
 
 	// Read the JUnit XML test output:
-	const junitOutputFile = path.join( __dirname, '..', '..', 'wordpress', 'phpunit-results.xml' );
 	if ( ! fs.existsSync( junitOutputFile ) ) {
 		console.error( 'Error: JUnit output file not found!' );
 		process.exit( 1 );
