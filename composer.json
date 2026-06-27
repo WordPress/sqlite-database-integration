@@ -50,6 +50,9 @@
 		"wp-setup": [
 			"./wp-setup.sh"
 		],
+		"wp-setup-duckdb": [
+			"WP_TEST_DB_ENGINE=duckdb ./wp-setup.sh"
+		],
 		"wp-run": [
 			"npm --prefix wordpress run"
 		],
@@ -64,9 +67,19 @@
 			"@putenv COMPOSE_IGNORE_ORPHANS=true",
 			"cd wordpress && if [ -z \"$(node tools/local-env/scripts/docker.js ps -q)\" ]; then cd ..; composer run wp-test-start; fi"
 		],
+		"wp-test-ensure-env-duckdb": [
+			"if [ ! -f wordpress/src/wp-load.php ] || ! grep -q \"define( 'DB_ENGINE', 'duckdb' );\" wordpress/src/wp-content/db.php 2>/dev/null; then composer run wp-setup-duckdb; fi",
+			"@putenv COMPOSE_IGNORE_ORPHANS=true",
+			"cd wordpress && if [ -z \"$(node tools/local-env/scripts/docker.js ps -q)\" ]; then cd ..; composer run wp-test-start; fi"
+		],
 		"wp-test-php": [
 			"@wp-test-ensure-env @no_additional_args",
-			"rm -rf wordpress/src/wp-content/database/.ht.sqlite @no_additional_args",
+			"rm -rf wordpress/src/wp-content/database/.ht.sqlite wordpress/src/wp-content/database/.ht.duckdb wordpress/src/wp-content/database/.ht.duckdb.wal @no_additional_args",
+			"npm --prefix wordpress run test:php -- @additional_args"
+		],
+		"wp-test-php-duckdb": [
+			"@wp-test-ensure-env-duckdb @no_additional_args",
+			"rm -rf wordpress/src/wp-content/database/.ht.duckdb wordpress/src/wp-content/database/.ht.duckdb.wal @no_additional_args",
 			"npm --prefix wordpress run test:php -- @additional_args"
 		],
 		"wp-test-e2e": [
@@ -75,7 +88,7 @@
 		],
 		"wp-test-clean": [
 			"npm --prefix wordpress run env:clean",
-			"rm -rf wordpress/src/wp-content/database/.ht.sqlite"
+			"rm -rf wordpress/src/wp-content/database/.ht.sqlite wordpress/src/wp-content/database/.ht.duckdb wordpress/src/wp-content/database/.ht.duckdb.wal"
 		]
 	}
 }
