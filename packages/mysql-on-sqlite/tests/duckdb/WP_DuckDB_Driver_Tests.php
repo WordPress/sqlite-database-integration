@@ -5805,6 +5805,45 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->fail( 'Expected duplicate insert to fail.' );
 	}
 
+	public function test_serial_alias_tracks_generated_insert_id_and_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE serial_items (id SERIAL, name VARCHAR(20))' );
+
+		$driver->query( "INSERT INTO serial_items (name) VALUES ('first')" );
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$driver->query( "INSERT INTO serial_items (name) VALUES ('second')" );
+		$this->assertSame( 2, $driver->get_insert_id() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'first',
+				),
+				array(
+					'id'   => 2,
+					'name' => 'second',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM serial_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				'Field'   => 'id',
+				'Type'    => 'bigint unsigned',
+				'Null'    => 'NO',
+				'Key'     => 'PRI',
+				'Default' => null,
+				'Extra'   => 'auto_increment',
+			),
+			$driver->query( 'SHOW COLUMNS FROM serial_items WHERE Field = "id"' )->fetch( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_insert_id_tracks_on_duplicate_key_update_policy(): void {
 		$this->requireDuckDBRuntime();
 

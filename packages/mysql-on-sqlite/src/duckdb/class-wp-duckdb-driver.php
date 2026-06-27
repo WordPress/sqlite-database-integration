@@ -67,42 +67,52 @@ class WP_DuckDB_Driver {
 	);
 
 	const DATA_TYPE_MAP = array(
-		WP_MySQL_Lexer::BIT_SYMBOL        => 'BIGINT',
-		WP_MySQL_Lexer::BOOL_SYMBOL       => 'BOOLEAN',
-		WP_MySQL_Lexer::BOOLEAN_SYMBOL    => 'BOOLEAN',
-		WP_MySQL_Lexer::TINYINT_SYMBOL    => 'TINYINT',
-		WP_MySQL_Lexer::SMALLINT_SYMBOL   => 'SMALLINT',
-		WP_MySQL_Lexer::MEDIUMINT_SYMBOL  => 'INTEGER',
-		WP_MySQL_Lexer::INT_SYMBOL        => 'INTEGER',
-		WP_MySQL_Lexer::INTEGER_SYMBOL    => 'INTEGER',
-		WP_MySQL_Lexer::BIGINT_SYMBOL     => 'BIGINT',
-		WP_MySQL_Lexer::FLOAT_SYMBOL      => 'FLOAT',
-		WP_MySQL_Lexer::DOUBLE_SYMBOL     => 'DOUBLE',
-		WP_MySQL_Lexer::REAL_SYMBOL       => 'DOUBLE',
-		WP_MySQL_Lexer::DECIMAL_SYMBOL    => 'DECIMAL',
-		WP_MySQL_Lexer::DEC_SYMBOL        => 'DECIMAL',
-		WP_MySQL_Lexer::FIXED_SYMBOL      => 'DECIMAL',
-		WP_MySQL_Lexer::NUMERIC_SYMBOL    => 'DECIMAL',
-		WP_MySQL_Lexer::CHAR_SYMBOL       => 'VARCHAR',
-		WP_MySQL_Lexer::VARCHAR_SYMBOL    => 'VARCHAR',
-		WP_MySQL_Lexer::TEXT_SYMBOL       => 'VARCHAR',
-		WP_MySQL_Lexer::TINYTEXT_SYMBOL   => 'VARCHAR',
-		WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL => 'VARCHAR',
-		WP_MySQL_Lexer::LONGTEXT_SYMBOL   => 'VARCHAR',
-		WP_MySQL_Lexer::JSON_SYMBOL       => 'VARCHAR',
-		WP_MySQL_Lexer::ENUM_SYMBOL       => 'VARCHAR',
-		WP_MySQL_Lexer::SET_SYMBOL        => 'VARCHAR',
-		WP_MySQL_Lexer::DATE_SYMBOL       => 'VARCHAR',
-		WP_MySQL_Lexer::TIME_SYMBOL       => 'VARCHAR',
-		WP_MySQL_Lexer::DATETIME_SYMBOL   => 'VARCHAR',
-		WP_MySQL_Lexer::TIMESTAMP_SYMBOL  => 'VARCHAR',
-		WP_MySQL_Lexer::YEAR_SYMBOL       => 'VARCHAR',
-		WP_MySQL_Lexer::BLOB_SYMBOL       => 'BLOB',
-		WP_MySQL_Lexer::TINYBLOB_SYMBOL   => 'BLOB',
-		WP_MySQL_Lexer::MEDIUMBLOB_SYMBOL => 'BLOB',
-		WP_MySQL_Lexer::LONGBLOB_SYMBOL   => 'BLOB',
-		WP_MySQL_Lexer::BINARY_SYMBOL     => 'BLOB',
-		WP_MySQL_Lexer::VARBINARY_SYMBOL  => 'BLOB',
+		WP_MySQL_Lexer::BIT_SYMBOL                => 'BIGINT',
+		WP_MySQL_Lexer::BOOL_SYMBOL               => 'BOOLEAN',
+		WP_MySQL_Lexer::BOOLEAN_SYMBOL            => 'BOOLEAN',
+		WP_MySQL_Lexer::TINYINT_SYMBOL            => 'TINYINT',
+		WP_MySQL_Lexer::SMALLINT_SYMBOL           => 'SMALLINT',
+		WP_MySQL_Lexer::MEDIUMINT_SYMBOL          => 'INTEGER',
+		WP_MySQL_Lexer::INT_SYMBOL                => 'INTEGER',
+		WP_MySQL_Lexer::INTEGER_SYMBOL            => 'INTEGER',
+		WP_MySQL_Lexer::BIGINT_SYMBOL             => 'BIGINT',
+		WP_MySQL_Lexer::FLOAT_SYMBOL              => 'FLOAT',
+		WP_MySQL_Lexer::DOUBLE_SYMBOL             => 'DOUBLE',
+		WP_MySQL_Lexer::REAL_SYMBOL               => 'DOUBLE',
+		WP_MySQL_Lexer::DECIMAL_SYMBOL            => 'DECIMAL',
+		WP_MySQL_Lexer::DEC_SYMBOL                => 'DECIMAL',
+		WP_MySQL_Lexer::FIXED_SYMBOL              => 'DECIMAL',
+		WP_MySQL_Lexer::NUMERIC_SYMBOL            => 'DECIMAL',
+		WP_MySQL_Lexer::CHAR_SYMBOL               => 'VARCHAR',
+		WP_MySQL_Lexer::VARCHAR_SYMBOL            => 'VARCHAR',
+		WP_MySQL_Lexer::TEXT_SYMBOL               => 'VARCHAR',
+		WP_MySQL_Lexer::TINYTEXT_SYMBOL           => 'VARCHAR',
+		WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL         => 'VARCHAR',
+		WP_MySQL_Lexer::LONGTEXT_SYMBOL           => 'VARCHAR',
+		WP_MySQL_Lexer::JSON_SYMBOL               => 'VARCHAR',
+		WP_MySQL_Lexer::ENUM_SYMBOL               => 'VARCHAR',
+		WP_MySQL_Lexer::SET_SYMBOL                => 'VARCHAR',
+		WP_MySQL_Lexer::DATE_SYMBOL               => 'VARCHAR',
+		WP_MySQL_Lexer::TIME_SYMBOL               => 'VARCHAR',
+		WP_MySQL_Lexer::DATETIME_SYMBOL           => 'VARCHAR',
+		WP_MySQL_Lexer::TIMESTAMP_SYMBOL          => 'VARCHAR',
+		WP_MySQL_Lexer::YEAR_SYMBOL               => 'VARCHAR',
+		WP_MySQL_Lexer::BLOB_SYMBOL               => 'BLOB',
+		WP_MySQL_Lexer::TINYBLOB_SYMBOL           => 'BLOB',
+		WP_MySQL_Lexer::MEDIUMBLOB_SYMBOL         => 'BLOB',
+		WP_MySQL_Lexer::LONGBLOB_SYMBOL           => 'BLOB',
+		WP_MySQL_Lexer::BINARY_SYMBOL             => 'BLOB',
+		WP_MySQL_Lexer::VARBINARY_SYMBOL          => 'BLOB',
+		WP_MySQL_Lexer::SERIAL_SYMBOL             => 'BIGINT',
+		WP_MySQL_Lexer::GEOMETRY_SYMBOL           => 'VARCHAR',
+		WP_MySQL_Lexer::POINT_SYMBOL              => 'VARCHAR',
+		WP_MySQL_Lexer::LINESTRING_SYMBOL         => 'VARCHAR',
+		WP_MySQL_Lexer::POLYGON_SYMBOL            => 'VARCHAR',
+		WP_MySQL_Lexer::MULTIPOINT_SYMBOL         => 'VARCHAR',
+		WP_MySQL_Lexer::MULTILINESTRING_SYMBOL    => 'VARCHAR',
+		WP_MySQL_Lexer::MULTIPOLYGON_SYMBOL       => 'VARCHAR',
+		WP_MySQL_Lexer::GEOMCOLLECTION_SYMBOL     => 'VARCHAR',
+		WP_MySQL_Lexer::GEOMETRYCOLLECTION_SYMBOL => 'VARCHAR',
 	);
 
 	const TEMPORAL_IMPLICIT_DEFAULT_MAP = array(
@@ -1359,35 +1369,43 @@ class WP_DuckDB_Driver {
 	 */
 	private function mysql_result_column_type_info( string $data_type, string $column_type ): array {
 		$type_map = array(
-			'bit'        => array( 'BIT', 16, 1, 0 ),
-			'tinyint'    => array( 'TINY', 1, 4, 0 ),
-			'smallint'   => array( 'SHORT', 2, 6, 0 ),
-			'mediumint'  => array( 'INT24', 9, 9, 0 ),
-			'int'        => array( 'LONG', 3, 11, 0 ),
-			'bigint'     => array( 'LONGLONG', 8, 20, 0 ),
-			'float'      => array( 'FLOAT', 4, 12, 31 ),
-			'double'     => array( 'DOUBLE', 5, 22, 31 ),
-			'decimal'    => array( 'NEWDECIMAL', 246, null, null ),
-			'char'       => array( 'STRING', 254, null, 0 ),
-			'varchar'    => array( 'VAR_STRING', 253, null, 0 ),
-			'tinytext'   => array( 'BLOB', 252, null, 0 ),
-			'text'       => array( 'BLOB', 252, null, 0 ),
-			'mediumtext' => array( 'BLOB', 252, null, 0 ),
-			'longtext'   => array( 'BLOB', 252, null, 0 ),
-			'json'       => array( 'BLOB', 245, 4294967295, 0 ),
-			'enum'       => array( 'STRING', 254, null, 0 ),
-			'set'        => array( 'STRING', 254, null, 0 ),
-			'date'       => array( 'DATE', 10, 10, 0 ),
-			'time'       => array( 'TIME', 11, 10, 0 ),
-			'datetime'   => array( 'DATETIME', 12, 19, 0 ),
-			'timestamp'  => array( 'TIMESTAMP', 7, 19, 0 ),
-			'year'       => array( 'YEAR', 13, 4, 0 ),
-			'binary'     => array( 'BLOB', 254, null, 0 ),
-			'varbinary'  => array( 'BLOB', 253, null, 0 ),
-			'tinyblob'   => array( 'BLOB', 252, null, 0 ),
-			'blob'       => array( 'BLOB', 252, null, 0 ),
-			'mediumblob' => array( 'BLOB', 252, null, 0 ),
-			'longblob'   => array( 'BLOB', 252, null, 0 ),
+			'bit'             => array( 'BIT', 16, 1, 0 ),
+			'tinyint'         => array( 'TINY', 1, 4, 0 ),
+			'smallint'        => array( 'SHORT', 2, 6, 0 ),
+			'mediumint'       => array( 'INT24', 9, 9, 0 ),
+			'int'             => array( 'LONG', 3, 11, 0 ),
+			'bigint'          => array( 'LONGLONG', 8, 20, 0 ),
+			'float'           => array( 'FLOAT', 4, 12, 31 ),
+			'double'          => array( 'DOUBLE', 5, 22, 31 ),
+			'decimal'         => array( 'NEWDECIMAL', 246, null, null ),
+			'char'            => array( 'STRING', 254, null, 0 ),
+			'varchar'         => array( 'VAR_STRING', 253, null, 0 ),
+			'tinytext'        => array( 'BLOB', 252, null, 0 ),
+			'text'            => array( 'BLOB', 252, null, 0 ),
+			'mediumtext'      => array( 'BLOB', 252, null, 0 ),
+			'longtext'        => array( 'BLOB', 252, null, 0 ),
+			'json'            => array( 'BLOB', 245, 4294967295, 0 ),
+			'enum'            => array( 'STRING', 254, null, 0 ),
+			'set'             => array( 'STRING', 254, null, 0 ),
+			'date'            => array( 'DATE', 10, 10, 0 ),
+			'time'            => array( 'TIME', 11, 10, 0 ),
+			'datetime'        => array( 'DATETIME', 12, 19, 0 ),
+			'timestamp'       => array( 'TIMESTAMP', 7, 19, 0 ),
+			'year'            => array( 'YEAR', 13, 4, 0 ),
+			'binary'          => array( 'BLOB', 254, null, 0 ),
+			'varbinary'       => array( 'BLOB', 253, null, 0 ),
+			'tinyblob'        => array( 'BLOB', 252, null, 0 ),
+			'blob'            => array( 'BLOB', 252, null, 0 ),
+			'mediumblob'      => array( 'BLOB', 252, null, 0 ),
+			'longblob'        => array( 'BLOB', 252, null, 0 ),
+			'geometry'        => array( 'GEOMETRY', 255, 4294967295, 0 ),
+			'point'           => array( 'GEOMETRY', 255, 4294967295, 0 ),
+			'linestring'      => array( 'GEOMETRY', 255, 4294967295, 0 ),
+			'polygon'         => array( 'GEOMETRY', 255, 4294967295, 0 ),
+			'multipoint'      => array( 'GEOMETRY', 255, 4294967295, 0 ),
+			'multilinestring' => array( 'GEOMETRY', 255, 4294967295, 0 ),
+			'multipolygon'    => array( 'GEOMETRY', 255, 4294967295, 0 ),
+			'geomcollection'  => array( 'GEOMETRY', 255, 4294967295, 0 ),
 		);
 
 		$type_info = $type_map[ $data_type ] ?? array( 'VAR_STRING', 253, null, 0 );
@@ -10427,6 +10445,11 @@ class WP_DuckDB_Driver {
 			}
 		}
 
+		if ( WP_MySQL_Lexer::SERIAL_SYMBOL === $type_token->id ) {
+			$not_null       = true;
+			$auto_increment = true;
+		}
+
 		if ( $auto_increment && null !== $default_sql ) {
 			throw new WP_DuckDB_Driver_Exception( 'AUTO_INCREMENT columns cannot also declare DEFAULT in the DuckDB driver.' );
 		}
@@ -10494,7 +10517,7 @@ class WP_DuckDB_Driver {
 			'column_name'    => $column_name,
 			'column_type'    => $this->mysql_column_type_from_tokens( $tokens, $type_index ),
 			'is_nullable'    => $not_null ? 'NO' : 'YES',
-			'column_key'     => $primary_key ? 'PRI' : ( $unique_key ? 'UNI' : '' ),
+			'column_key'     => $primary_key || WP_MySQL_Lexer::SERIAL_SYMBOL === $type_token->id ? 'PRI' : ( $unique_key ? 'UNI' : '' ),
 			'column_default' => $column_default,
 			'extra'          => $auto_increment ? 'auto_increment' : '',
 			'collation_name' => $metadata_collation_name,
@@ -10796,6 +10819,13 @@ class WP_DuckDB_Driver {
 			case WP_MySQL_Lexer::SET_SYMBOL:
 				$canonical = preg_replace( '/^(enum|set)\s+\(/', '$1(', $column_type );
 				return null === $canonical ? $column_type : $canonical;
+
+			case WP_MySQL_Lexer::SERIAL_SYMBOL:
+				return 'bigint unsigned';
+
+			case WP_MySQL_Lexer::GEOMCOLLECTION_SYMBOL:
+			case WP_MySQL_Lexer::GEOMETRYCOLLECTION_SYMBOL:
+				return 'geomcollection';
 		}
 
 		return $column_type;
@@ -19516,12 +19546,14 @@ class WP_DuckDB_Driver {
 		}
 
 		$map = array(
-			'integer' => 'int',
-			'boolean' => 'tinyint',
-			'real'    => 'double',
-			'dec'     => 'decimal',
-			'fixed'   => 'decimal',
-			'numeric' => 'decimal',
+			'integer'            => 'int',
+			'boolean'            => 'tinyint',
+			'real'               => 'double',
+			'dec'                => 'decimal',
+			'fixed'              => 'decimal',
+			'numeric'            => 'decimal',
+			'serial'             => 'bigint',
+			'geometrycollection' => 'geomcollection',
 		);
 
 		return $map[ $data_type ] ?? $data_type;

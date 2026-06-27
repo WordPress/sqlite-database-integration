@@ -3379,6 +3379,87 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_serial_alias_storage_metadata_and_insert_id_shape_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE serial_type_family (
+					id SERIAL,
+					name VARCHAR(20)
+				)',
+			)
+		);
+
+		$this->assertParityRowCount( "INSERT INTO serial_type_family (name) VALUES ('first')" );
+		$this->assertParityRowCount( "INSERT INTO serial_type_family (name) VALUES ('second')" );
+		$this->assertParityRows( 'SELECT id, name FROM serial_type_family ORDER BY id' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM serial_type_family' );
+		$this->assertParityRows( 'DESCRIBE serial_type_family' );
+		$this->assertParityRows( 'SHOW CREATE TABLE serial_type_family' );
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM serial_type_family',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE,
+				CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH,
+				NUMERIC_PRECISION, NUMERIC_SCALE, COLUMN_TYPE, COLUMN_KEY, EXTRA
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name = 'serial_type_family'
+			ORDER BY ordinal_position"
+		);
+	}
+
+	public function test_spatial_type_family_storage_and_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE spatial_type_family (
+					id INT PRIMARY KEY,
+					geom GEOMETRY,
+					pt POINT,
+					line LINESTRING,
+					poly POLYGON,
+					mpt MULTIPOINT,
+					mline MULTILINESTRING,
+					mpoly MULTIPOLYGON,
+					gc GEOMETRYCOLLECTION
+				)',
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO spatial_type_family
+				(id, geom, pt, line, poly, mpt, mline, mpoly, gc)
+			VALUES
+				(
+					1,
+					'POINT(1 1)',
+					'POINT(2 2)',
+					'LINESTRING(0 0, 1 1)',
+					'POLYGON((0 0, 1 0, 0 1, 0 0))',
+					'MULTIPOINT(1 1, 2 2)',
+					'MULTILINESTRING((0 0, 1 1), (2 2, 3 3))',
+					'MULTIPOLYGON(((0 0, 1 0, 0 1, 0 0)))',
+					'GEOMETRYCOLLECTION(POINT(1 1), LINESTRING(0 0, 1 1))'
+				)"
+		);
+
+		$this->assertParityRows( 'SELECT id, geom, pt, line, poly, mpt, mline, mpoly, gc FROM spatial_type_family ORDER BY id' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM spatial_type_family' );
+		$this->assertParityRows( 'SHOW FULL COLUMNS FROM spatial_type_family' );
+		$this->assertParityRows( 'DESCRIBE spatial_type_family' );
+		$this->assertParityRows( 'SHOW CREATE TABLE spatial_type_family' );
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+				CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
+				CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name = 'spatial_type_family'
+			ORDER BY ordinal_position"
+		);
+	}
+
 	public function test_alias_storage_type_family_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
