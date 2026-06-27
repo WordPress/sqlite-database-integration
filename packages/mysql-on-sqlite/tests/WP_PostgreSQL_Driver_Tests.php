@@ -16540,6 +16540,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 				$this->assertStringNotContainsString( 'SHOW TABLES', $current_database_full_queries[0]['sql'] );
 				$this->assertSame( array( $database_name, $task_show_tables_pattern ), $current_database_full_queries[0]['params'] );
 
+				$this->clear_driver_mysql_metadata_caches( $driver );
 				$create_rows = $driver->query( 'SHOW CREATE TABLE `' . $child_table . '`' );
 				$this->collect_last_postgresql_queries(
 					$driver,
