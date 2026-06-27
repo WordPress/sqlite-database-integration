@@ -354,6 +354,23 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( array(), $cases['create_table']['col_info_names'] );
 	}
 
+	public function test_duckdb_wpdb_odku_rows_affected_are_propagated_from_statement(): void {
+		$result = $this->run_query_surface_state_script();
+		$cases  = $result['cases'];
+
+		$this->assertTrue( $result['connected'] );
+
+		$this->assertSame( 1, $cases['odku_duplicate_changed']['return'] );
+		$this->assertSame( 1, $cases['odku_duplicate_changed']['rows_affected'] );
+		$this->assertSame( 0, $cases['odku_duplicate_changed']['num_rows'] );
+		$this->assertSame( array(), $cases['odku_duplicate_changed']['col_info_names'] );
+
+		$this->assertSame( 1, $cases['odku_duplicate_noop']['return'] );
+		$this->assertSame( 1, $cases['odku_duplicate_noop']['rows_affected'] );
+		$this->assertSame( 0, $cases['odku_duplicate_noop']['num_rows'] );
+		$this->assertSame( array(), $cases['odku_duplicate_noop']['col_info_names'] );
+	}
+
 	public function test_duckdb_wpdb_last_error_surface_provider(): void {
 		$result = $this->run_query_surface_state_script();
 		$cases  = $result['cases'];
@@ -1051,6 +1068,11 @@ PHP;
 		$code       .= <<<'PHP'
 
 class WP_DuckDB_Plugin_Query_Surface_Test_Driver extends WP_DuckDB_Driver {
+	const ODKU_CHANGED_SQL = "INSERT INTO wp_posts (ID, post_title) VALUES (11, 'changed') "
+		. 'ON DUPLICATE KEY UPDATE post_title = VALUES(post_title)';
+	const ODKU_NOOP_SQL    = "INSERT INTO wp_posts (ID, post_title) VALUES (11, 'same') "
+		. 'ON DUPLICATE KEY UPDATE post_title = post_title';
+
 	private $insert_id = 0;
 
 	public function __construct() {}
@@ -1166,6 +1188,14 @@ class WP_DuckDB_Plugin_Query_Surface_Test_Driver extends WP_DuckDB_Driver {
 			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
 		}
 
+		if ( self::ODKU_CHANGED_SQL === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		if ( self::ODKU_NOOP_SQL === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
 		if ( "UPDATE wp_posts SET post_title = 'missing' WHERE ID = 999" === $sql ) {
 			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
 		}
@@ -1260,6 +1290,14 @@ $cases                     = array(
 	'check_table'          => wp_duckdb_plugin_query_surface_case( $db, 'CHECK TABLE wp_posts' ),
 	'insert_row'           => wp_duckdb_plugin_query_surface_case( $db, "INSERT INTO wp_posts (post_title) VALUES ('hello')" ),
 	'update_changed'       => wp_duckdb_plugin_query_surface_case( $db, "UPDATE wp_posts SET post_title = 'changed' WHERE ID = 11" ),
+	'odku_duplicate_changed' => wp_duckdb_plugin_query_surface_case(
+		$db,
+		WP_DuckDB_Plugin_Query_Surface_Test_Driver::ODKU_CHANGED_SQL
+	),
+	'odku_duplicate_noop'  => wp_duckdb_plugin_query_surface_case(
+		$db,
+		WP_DuckDB_Plugin_Query_Surface_Test_Driver::ODKU_NOOP_SQL
+	),
 	'update_no_match'      => wp_duckdb_plugin_query_surface_case( $db, "UPDATE wp_posts SET post_title = 'missing' WHERE ID = 999" ),
 	'delete_row'           => wp_duckdb_plugin_query_surface_case( $db, 'DELETE FROM wp_posts WHERE ID = 11' ),
 	'replace_row'          => wp_duckdb_plugin_query_surface_case( $db, "REPLACE INTO wp_posts (ID, post_title) VALUES (12, 'replacement')" ),
