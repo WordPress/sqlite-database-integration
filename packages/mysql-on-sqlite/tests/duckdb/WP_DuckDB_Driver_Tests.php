@@ -5918,7 +5918,7 @@ SQL,
 				'DROP TABLE information_schema.tables'     => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
 				'TRUNCATE TABLE __wp_duckdb_column_metadata' => 'Internal DuckDB metadata tables cannot be modified',
 				'DROP INDEX `PRIMARY` ON protected_target' => 'Dropping PRIMARY requires a table rebuild',
-				'ALTER TABLE protected_target DROP PRIMARY KEY' => 'DROP PRIMARY KEY requires a table rebuild',
+				'ALTER TABLE protected_target DROP PRIMARY KEY' => "Unknown index 'PRIMARY'",
 			) as $sql => $message
 		) {
 			try {
@@ -6625,6 +6625,219 @@ SQL,
 		$driver->query( 'ROLLBACK' );
 
 		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_tx' ) );
+	}
+
+	public function test_alter_table_drop_primary_key_preserves_rows_metadata_and_secondary_enforcement(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE drop_pk_direct (
+				id INT NOT NULL,
+				name VARCHAR(20) NOT NULL,
+				amount INT,
+				PRIMARY KEY (id),
+				UNIQUE KEY name_unique (name),
+				KEY amount_idx (amount),
+				CONSTRAINT amount_positive CHECK (amount > 0)
+			)'
+		);
+		$driver->query( "INSERT INTO drop_pk_direct (id, name, amount) VALUES (1, 'a', 10), (2, 'b', 20)" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE drop_pk_direct DROP PRIMARY KEY' )->rowCount() );
+		$driver->query( "INSERT INTO drop_pk_direct (id, name, amount) VALUES (1, 'c', 30)" );
+
+		try {
+			$driver->query( "INSERT INTO drop_pk_direct (id, name, amount) VALUES (3, 'a', 40)" );
+			$this->fail( 'Expected secondary UNIQUE index to remain enforced after DROP PRIMARY KEY.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( "INSERT INTO drop_pk_direct (id, name, amount) VALUES (4, 'd', 0)" );
+			$this->fail( 'Expected CHECK constraint to remain enforced after DROP PRIMARY KEY.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'name'   => 'a',
+					'amount' => 10,
+				),
+				array(
+					'id'     => 1,
+					'name'   => 'c',
+					'amount' => 30,
+				),
+				array(
+					'id'     => 2,
+					'name'   => 'b',
+					'amount' => 20,
+				),
+			),
+			$driver->query( 'SELECT id, name, amount FROM drop_pk_direct ORDER BY id, name' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertNotContains( 'PRIMARY', array_column( $driver->query( 'SHOW INDEX FROM drop_pk_direct' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' ) );
+		$this->assertSame(
+			array(
+				'id'     => '',
+				'name'   => 'UNI',
+				'amount' => 'MUL',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM drop_pk_direct' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE drop_pk_direct' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringNotContainsString( 'PRIMARY KEY', $create_sql );
+		$this->assertStringContainsString( 'UNIQUE KEY `name_unique` (`name`)', $create_sql );
+		$this->assertStringContainsString( 'KEY `amount_idx` (`amount`)', $create_sql );
+		$this->assertStringContainsString( 'CONSTRAINT `amount_positive` CHECK (amount > 0)', $create_sql );
+
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT *
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp'
+					AND table_name = 'drop_pk_direct'
+					AND index_name = 'PRIMARY'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		foreach ( array( 'table_constraints', 'key_column_usage' ) as $table ) {
+			$this->assertSame(
+				array(),
+				$driver->query(
+					"SELECT *
+					FROM information_schema.{$table}
+					WHERE table_schema = 'wp'
+						AND table_name = 'drop_pk_direct'
+						AND constraint_name = 'PRIMARY'"
+				)->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
+	}
+
+	public function test_alter_table_drop_primary_key_rejects_active_transaction_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE drop_pk_tx (id INT PRIMARY KEY, name VARCHAR(20), KEY name_idx (name))' );
+		$driver->query( "INSERT INTO drop_pk_tx (id, name) VALUES (1, 'a')" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_pk_tx' );
+
+		$driver->query( 'BEGIN' );
+		try {
+			$driver->query( 'ALTER TABLE drop_pk_tx DROP PRIMARY KEY' );
+			$this->fail( 'Expected active transaction DROP PRIMARY KEY rebuild rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'DROP PRIMARY KEY cannot run inside an active DuckDB transaction', $e->getMessage() );
+		}
+		$driver->query( 'ROLLBACK' );
+
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_pk_tx' ) );
+	}
+
+	public function test_alter_table_drop_primary_key_rejects_multi_action_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE drop_pk_multi (id INT PRIMARY KEY, name VARCHAR(20))' );
+		$driver->query( "INSERT INTO drop_pk_multi (id, name) VALUES (1, 'a')" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_pk_multi' );
+
+		foreach (
+			array(
+				'ALTER TABLE drop_pk_multi DROP PRIMARY KEY, ADD COLUMN should_not_exist INT',
+				'ALTER TABLE drop_pk_multi ADD COLUMN should_not_exist INT, DROP PRIMARY KEY',
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected multi-action DROP PRIMARY KEY rejection for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( 'DROP PRIMARY KEY cannot be combined with other ALTER TABLE actions', $e->getMessage() );
+			}
+
+			$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_pk_multi' ) );
+		}
+	}
+
+	public function test_alter_table_drop_primary_key_rejects_referenced_parent_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE drop_pk_parent_guard (id INT PRIMARY KEY, name VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE drop_pk_child_guard (id INT PRIMARY KEY, parent_id INT, CONSTRAINT child_parent_fk FOREIGN KEY (parent_id) REFERENCES drop_pk_parent_guard (id))' );
+		$driver->query( "INSERT INTO drop_pk_parent_guard (id, name) VALUES (1, 'parent')" );
+		$driver->query( 'INSERT INTO drop_pk_child_guard (id, parent_id) VALUES (10, 1)' );
+
+		$before = array(
+			'parent'                  => $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_pk_parent_guard' ),
+			'child'                   => $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_pk_child_guard' ),
+			'referential_constraints' => $driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE drop_pk_parent_guard DROP PRIMARY KEY' );
+			$this->fail( 'Expected referenced parent DROP PRIMARY KEY rebuild to be rejected before mutation.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'DROP PRIMARY KEY on table', $e->getMessage() );
+			$this->assertStringContainsString( 'referenced by FOREIGN KEY', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			$before,
+			array(
+				'parent'                  => $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_pk_parent_guard' ),
+				'child'                   => $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_pk_child_guard' ),
+				'referential_constraints' => $driver->query(
+					"SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
+					FROM information_schema.referential_constraints
+					WHERE constraint_schema = 'wp'
+					ORDER BY constraint_name"
+				)->fetchAll( PDO::FETCH_ASSOC ),
+			)
+		);
+
+		try {
+			$driver->query( 'INSERT INTO drop_pk_child_guard (id, parent_id) VALUES (11, 2)' );
+			$this->fail( 'Expected FK enforcement to remain intact after rejected DROP PRIMARY KEY.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
 	}
 
 	public function test_unsupported_alter_table_constraint_actions_throw_before_mutation(): void {

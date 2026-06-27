@@ -18,6 +18,25 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SELECT SUBSTR('abcdef', 2, 3) AS short_substr, SUBSTRING('abcdef', 2, 3) AS long_substring" );
 	}
 
+	public function test_select_date_time_literal_functions_match_sqlite(): void {
+		foreach (
+			array(
+				'SELECT LENGTH(NOW()) AS value_length, SUBSTR(NOW(), 5, 1) AS date_sep, SUBSTR(NOW(), 14, 1) AS time_sep',
+				'SELECT LENGTH(CURRENT_TIMESTAMP()) AS value_length, SUBSTR(CURRENT_TIMESTAMP(), 5, 1) AS date_sep, SUBSTR(CURRENT_TIMESTAMP(), 14, 1) AS time_sep',
+				'SELECT LENGTH(CURDATE()) AS value_length, SUBSTR(CURDATE(), 5, 1) AS date_sep',
+				'SELECT LENGTH(UTC_DATE()) AS value_length, SUBSTR(UTC_DATE(), 5, 1) AS date_sep',
+				'SELECT LENGTH(UTC_TIME()) AS value_length, SUBSTR(UTC_TIME(), 3, 1) AS hour_sep',
+				'SELECT LENGTH(UTC_TIMESTAMP()) AS value_length, SUBSTR(UTC_TIMESTAMP(), 5, 1) AS date_sep, SUBSTR(UTC_TIMESTAMP(), 14, 1) AS time_sep',
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
+	public function test_select_unseeded_rand_range_matches_sqlite(): void {
+		$this->assertParityRows( 'SELECT CAST(RAND() >= 0 AND RAND() < 1 AS SIGNED) AS rand_in_range' );
+	}
+
 	public function test_select_cast_convert_binary_expressions_match_sqlite(): void {
 		foreach (
 			array(
@@ -2196,6 +2215,198 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 		$this->assertParityRows( 'SHOW CREATE TABLE lifecycle_idx' );
 		$this->assertParityRows( 'SELECT name FROM lifecycle_idx ORDER BY id' );
+	}
+
+	public function test_alter_table_drop_primary_key_lifecycle_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE ddl_drop_pk (
+					id INT NOT NULL,
+					name VARCHAR(20) NOT NULL,
+					amount INT,
+					PRIMARY KEY (id),
+					UNIQUE KEY name_unique (name),
+					KEY amount_idx (amount),
+					CONSTRAINT amount_positive CHECK (amount > 0)
+				)',
+				"INSERT INTO ddl_drop_pk (id, name, amount) VALUES (1, 'a', 10), (2, 'b', 20)",
+				'ALTER TABLE ddl_drop_pk DROP PRIMARY KEY',
+				"INSERT INTO ddl_drop_pk (id, name, amount) VALUES (1, 'c', 30)",
+			)
+		);
+
+		$this->assertParityRows( 'SELECT id, name, amount FROM ddl_drop_pk ORDER BY id, name' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM ddl_drop_pk' );
+		$this->assertParityRows( 'SHOW CREATE TABLE ddl_drop_pk' );
+		$this->assertParityRows(
+			"SELECT index_name, column_name, non_unique
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'ddl_drop_pk'
+			ORDER BY index_name, seq_in_index"
+		);
+		$this->assertParityRows(
+			"SELECT constraint_name, constraint_type
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'ddl_drop_pk'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT constraint_name, column_name, referenced_table_name
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp' AND table_name = 'ddl_drop_pk'
+			ORDER BY constraint_name, ordinal_position"
+		);
+		$this->assertParityErrorContains(
+			"INSERT INTO ddl_drop_pk (id, name, amount) VALUES (3, 'a', 40)",
+			'constraint'
+		);
+		$this->assertParityErrorContains(
+			"INSERT INTO ddl_drop_pk (id, name, amount) VALUES (4, 'd', 0)",
+			'CHECK constraint failed'
+		);
+	}
+
+	public function test_alter_table_drop_primary_index_quoted_aliases_match_sqlite(): void {
+		foreach ( array( 'DROP INDEX `PRIMARY`', 'DROP KEY `PRIMARY`' ) as $drop_action ) {
+			$table_name = 'ddl_drop_pk_alias_' . strtolower( str_replace( array( 'DROP ', ' `PRIMARY`' ), '', $drop_action ) );
+			$this->runParitySetup(
+				array(
+					"CREATE TABLE {$table_name} (
+						id INT NOT NULL,
+						name VARCHAR(20),
+						PRIMARY KEY (id),
+						KEY name_idx (name)
+					)",
+					"INSERT INTO {$table_name} (id, name) VALUES (1, 'a'), (2, 'b')",
+					"ALTER TABLE {$table_name} {$drop_action}",
+					"INSERT INTO {$table_name} (id, name) VALUES (1, 'duplicate')",
+				)
+			);
+
+			$this->assertParityRows( "SELECT id, name FROM {$table_name} ORDER BY id, name" );
+			$this->assertParityRows( "SHOW COLUMNS FROM {$table_name}" );
+			$this->assertParityRowColumns(
+				"SHOW INDEX FROM {$table_name}",
+				array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+			);
+			$this->assertParityRows( "SHOW CREATE TABLE {$table_name}" );
+		}
+	}
+
+	public function test_alter_table_drop_primary_index_unquoted_aliases_reject_without_mutation_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE ddl_drop_pk_unquoted (id INT PRIMARY KEY, name VARCHAR(20), KEY name_idx (name))',
+				"INSERT INTO ddl_drop_pk_unquoted (id, name) VALUES (1, 'a')",
+			)
+		);
+
+		foreach ( array( 'DROP INDEX PRIMARY', 'DROP KEY PRIMARY' ) as $drop_action ) {
+			$this->assertParityErrorContains(
+				'ALTER TABLE ddl_drop_pk_unquoted ' . $drop_action,
+				'parse'
+			);
+			$this->assertParityRows( 'SELECT id, name FROM ddl_drop_pk_unquoted ORDER BY id' );
+			$this->assertParityRows( 'SHOW COLUMNS FROM ddl_drop_pk_unquoted' );
+			$this->assertParityRowColumns(
+				'SHOW INDEX FROM ddl_drop_pk_unquoted',
+				array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+			);
+			$this->assertParityRows( 'SHOW CREATE TABLE ddl_drop_pk_unquoted' );
+		}
+	}
+
+	public function test_alter_table_drop_composite_primary_key_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE ddl_drop_composite_pk (
+					site_id INT NOT NULL,
+					object_id INT NOT NULL,
+					name VARCHAR(20),
+					PRIMARY KEY (site_id, object_id),
+					KEY name_idx (name)
+				)',
+				"INSERT INTO ddl_drop_composite_pk (site_id, object_id, name) VALUES (1, 10, 'a'), (1, 11, 'b')",
+				'ALTER TABLE ddl_drop_composite_pk DROP PRIMARY KEY',
+				"INSERT INTO ddl_drop_composite_pk (site_id, object_id, name) VALUES (1, 10, 'duplicate')",
+			)
+		);
+
+		$this->assertParityRows( 'SELECT site_id, object_id, name FROM ddl_drop_composite_pk ORDER BY site_id, object_id, name' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM ddl_drop_composite_pk' );
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM ddl_drop_composite_pk',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE ddl_drop_composite_pk' );
+		$this->assertParityRows(
+			"SELECT constraint_name, constraint_type
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'ddl_drop_composite_pk'
+			ORDER BY constraint_name"
+		);
+	}
+
+	public function test_alter_table_drop_auto_increment_primary_key_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE ddl_drop_pk_ai (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					name VARCHAR(20) NOT NULL,
+					KEY name_idx (name)
+				)',
+				"INSERT INTO ddl_drop_pk_ai (name) VALUES ('a'), ('b')",
+				'ALTER TABLE ddl_drop_pk_ai DROP PRIMARY KEY',
+				"INSERT INTO ddl_drop_pk_ai (name) VALUES ('generated_after_drop')",
+			)
+		);
+
+		$this->assertParityErrorContains(
+			"INSERT INTO ddl_drop_pk_ai (id, name) VALUES (1, 'explicit_duplicate')",
+			'UNIQUE constraint failed'
+		);
+		$this->assertParityRows( 'SELECT id, name FROM ddl_drop_pk_ai ORDER BY id, name' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM ddl_drop_pk_ai' );
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM ddl_drop_pk_ai',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = 'ddl_drop_pk_ai'"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE ddl_drop_pk_ai' );
+	}
+
+	public function test_alter_table_drop_primary_key_temporary_shadow_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE ddl_drop_pk_shadow (id INT PRIMARY KEY, name VARCHAR(20))',
+				"INSERT INTO ddl_drop_pk_shadow (id, name) VALUES (1, 'persistent')",
+				'CREATE TEMPORARY TABLE ddl_drop_pk_shadow (id INT PRIMARY KEY, name VARCHAR(20), KEY name_idx (name))',
+				"INSERT INTO ddl_drop_pk_shadow (id, name) VALUES (2, 'temporary')",
+				'ALTER TABLE ddl_drop_pk_shadow DROP PRIMARY KEY',
+				"INSERT INTO ddl_drop_pk_shadow (id, name) VALUES (2, 'temporary_duplicate')",
+			)
+		);
+
+		$this->assertParityRows( 'SELECT id, name FROM ddl_drop_pk_shadow ORDER BY id, name' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM ddl_drop_pk_shadow' );
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM ddl_drop_pk_shadow',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE ddl_drop_pk_shadow' );
+
+		$this->runParitySetup( array( 'DROP TEMPORARY TABLE ddl_drop_pk_shadow' ) );
+		$this->assertParityRows( 'SELECT id, name FROM ddl_drop_pk_shadow ORDER BY id' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM ddl_drop_pk_shadow' );
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM ddl_drop_pk_shadow',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE ddl_drop_pk_shadow' );
 	}
 
 	private function createJoinedUpdateGapDrivers(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

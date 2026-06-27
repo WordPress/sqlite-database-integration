@@ -4511,7 +4511,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN, ADD INDEX, DROP COLUMN, and DROP INDEX are supported.' );
 		}
 
-		$this->validate_alter_table_check_rebuild_action_combination( $table_name, $actions, $temporary );
+		$this->validate_alter_table_rebuild_action_combination( $table_name, $actions, $temporary );
 		$this->validate_alter_table_constraint_actions( $table_name, $actions, $temporary );
 
 		$result = null;
@@ -4564,13 +4564,13 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Reject combined ALTER TABLE CHECK rebuild actions before any mutation.
+	 * Reject combined ALTER TABLE rebuild actions before any mutation.
 	 *
-	 * @param string                         $table_name Table name.
+	 * @param string                       $table_name Table name.
 	 * @param array<int,WP_Parser_Token[]> $actions ALTER action token groups.
-	 * @param bool                           $temporary  Whether the target is a temporary table.
+	 * @param bool                         $temporary  Whether the target is a temporary table.
 	 */
-	private function validate_alter_table_check_rebuild_action_combination( string $table_name, array $actions, bool $temporary = false ): void {
+	private function validate_alter_table_rebuild_action_combination( string $table_name, array $actions, bool $temporary = false ): void {
 		if ( count( $actions ) <= 1 ) {
 			return;
 		}
@@ -4578,6 +4578,9 @@ class WP_DuckDB_Driver {
 		foreach ( $actions as $action ) {
 			if ( $this->is_alter_table_check_rebuild_action( $table_name, $action, $temporary ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD/DROP CHECK cannot be combined with other ALTER TABLE actions.' );
+			}
+			if ( $this->is_alter_table_drop_primary_key_action( $action ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP PRIMARY KEY cannot be combined with other ALTER TABLE actions.' );
 			}
 		}
 	}
@@ -4740,8 +4743,8 @@ class WP_DuckDB_Driver {
 
 		foreach ( $items as $item ) {
 			if ( $this->is_create_table_check_constraint( $item ) ) {
-				$this->assert_no_active_transaction_for_alter_table_check_rebuild();
-				$this->assert_not_referenced_parent_for_alter_table_check_rebuild( $table_name, $temporary );
+				$this->assert_no_active_transaction_for_table_rebuild( 'ADD/DROP CHECK' );
+				$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'ADD/DROP CHECK', $temporary );
 				$this->ensure_alter_table_check_constraint_name_map( $table_name, $check_names, $check_names_loaded, $temporary );
 				$this->translate_table_check_constraint( $table_name, $item, $check_names );
 				continue;
@@ -4807,14 +4810,19 @@ class WP_DuckDB_Driver {
 			return;
 		}
 
+		if ( $this->is_alter_table_drop_primary_key_action( $tokens ) ) {
+			$this->assert_alter_table_drop_primary_key_supported( $table_name, $temporary );
+			return;
+		}
+
 		if ( WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[1]->id ) {
 			$constraint_name = $this->parse_alter_table_drop_check_constraint_name( $tokens, WP_MySQL_Lexer::CHECK_SYMBOL );
 			$check           = $this->resolve_check_constraint_metadata_row( $table_name, $constraint_name, $temporary );
 			if ( null === $check ) {
 				return;
 			}
-			$this->assert_no_active_transaction_for_alter_table_check_rebuild();
-			$this->assert_not_referenced_parent_for_alter_table_check_rebuild( $table_name, $temporary );
+			$this->assert_no_active_transaction_for_table_rebuild( 'ADD/DROP CHECK' );
+			$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'ADD/DROP CHECK', $temporary );
 			$this->ensure_alter_table_check_constraint_name_map( $table_name, $check_names, $check_names_loaded, $temporary );
 			unset( $check_names[ strtolower( (string) $check['constraint_name'] ) ] );
 			return;
@@ -4826,8 +4834,8 @@ class WP_DuckDB_Driver {
 			if ( 'CHECK' !== $constraint_type ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CONSTRAINT currently supports CHECK constraints only.' );
 			}
-			$this->assert_no_active_transaction_for_alter_table_check_rebuild();
-			$this->assert_not_referenced_parent_for_alter_table_check_rebuild( $table_name, $temporary );
+			$this->assert_no_active_transaction_for_table_rebuild( 'ADD/DROP CHECK' );
+			$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'ADD/DROP CHECK', $temporary );
 			$this->ensure_alter_table_check_constraint_name_map( $table_name, $check_names, $check_names_loaded, $temporary );
 			unset( $check_names[ strtolower( $constraint_name ) ] );
 			return;
@@ -4843,24 +4851,27 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Reject CHECK table rebuilds inside an active transaction.
+	 * Reject table rebuilds inside an active transaction.
+	 *
+	 * @param string $operation Operation label for the error message.
 	 */
-	private function assert_no_active_transaction_for_alter_table_check_rebuild(): void {
+	private function assert_no_active_transaction_for_table_rebuild( string $operation ): void {
 		if ( $this->connection->inTransaction() ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD/DROP CHECK cannot run inside an active DuckDB transaction.' );
+			throw new WP_DuckDB_Driver_Exception( "Unsupported ALTER TABLE statement in DuckDB driver. {$operation} cannot run inside an active DuckDB transaction." );
 		}
 	}
 
 	/**
-	 * Reject CHECK rebuilds on referenced parent tables before mutation.
+	 * Reject rebuilds on referenced parent tables before mutation.
 	 *
 	 * @param string $table_name Table name.
+	 * @param string $operation  Operation label for the error message.
 	 * @param bool   $temporary  Whether the target is a temporary table.
 	 */
-	private function assert_not_referenced_parent_for_alter_table_check_rebuild( string $table_name, bool $temporary = false ): void {
+	private function assert_not_referenced_parent_for_table_rebuild( string $table_name, string $operation, bool $temporary = false ): void {
 		foreach ( $this->foreign_key_references_to_table( $table_name, $temporary ) as $reference ) {
 			throw new WP_DuckDB_Driver_Exception(
-				"Unsupported ALTER TABLE statement in DuckDB driver. ADD/DROP CHECK on table '{$this->database}.{$table_name}' is not supported because it is referenced by FOREIGN KEY '{$reference['constraint_name']}' on table '{$reference['table_name']}'."
+				"Unsupported ALTER TABLE statement in DuckDB driver. {$operation} on table '{$this->database}.{$table_name}' is not supported because it is referenced by FOREIGN KEY '{$reference['constraint_name']}' on table '{$reference['table_name']}'."
 			);
 		}
 	}
@@ -5130,13 +5141,39 @@ class WP_DuckDB_Driver {
 	 * @param bool                           $temporary         Whether the target is a temporary table.
 	 */
 	private function rebuild_table_with_check_constraints( string $table_name, array $check_constraints, bool $temporary = false ): void {
+		$this->rebuild_table_from_metadata_plan(
+			$table_name,
+			$this->table_column_metadata_rows( $table_name, $temporary ),
+			$this->primary_key_columns_for_table( $table_name ),
+			$this->secondary_index_definitions_for_table( $table_name, $temporary ),
+			$check_constraints,
+			$this->show_create_table_foreign_key_groups( $table_name, $temporary ),
+			null,
+			'CHECK',
+			$temporary
+		);
+	}
+
+	/**
+	 * Rebuild a table from explicit MySQL-facing metadata.
+	 *
+	 * @param string                                                                 $table_name              Table name.
+	 * @param array<int,array<string,mixed>>                                         $column_metadata_rows    Column metadata rows.
+	 * @param string[]                                                               $primary_key_columns     Planned primary key columns.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $secondary_indexes      Planned secondary indexes.
+	 * @param array<int,array<string,mixed>>                                         $check_constraints       Planned CHECK constraints.
+	 * @param array<int,array<string,mixed>>                                         $foreign_key_constraints Planned FOREIGN KEY constraints.
+	 * @param int|null                                                               $auto_increment_override Optional AUTO_INCREMENT value override.
+	 * @param string                                                                 $context                 Rebuild context for error messages.
+	 * @param bool                                                                   $temporary               Whether the target is a temporary table.
+	 */
+	private function rebuild_table_from_metadata_plan( string $table_name, array $column_metadata_rows, array $primary_key_columns, array $secondary_indexes, array $check_constraints, array $foreign_key_constraints, ?int $auto_increment_override, string $context, bool $temporary = false ): void {
 		$sequence_names = $this->auto_increment_sequences_for_table( $table_name, $temporary );
-		$metadata_rows  = $this->table_column_metadata_rows( $table_name, $temporary );
 		$column_names   = array_map(
 			function ( array $column ): string {
 				return (string) $column['column_name'];
 			},
-			$metadata_rows
+			$column_metadata_rows
 		);
 		$quoted_columns = implode(
 			', ',
@@ -5147,14 +5184,22 @@ class WP_DuckDB_Driver {
 				$column_names
 			)
 		);
-		$backup_table   = '__wp_duckdb_check_rebuild_' . substr( hash( 'sha256', $table_name . "\0" . microtime( true ) . "\0" . mt_rand() ), 0, 16 );
-
-		$this->record_check_metadata( $table_name, $check_constraints, $temporary );
-		$create_sql = $this->mysql_create_table_statement( $table_name, $table_name, $temporary );
+		$backup_table   = '__wp_duckdb_rebuild_' . substr( hash( 'sha256', $context . "\0" . $table_name . "\0" . microtime( true ) . "\0" . mt_rand() ), 0, 16 );
+		$create_sql     = $this->mysql_create_table_statement_from_metadata_plan(
+			$table_name,
+			$table_name,
+			$column_metadata_rows,
+			$primary_key_columns,
+			$secondary_indexes,
+			$check_constraints,
+			$foreign_key_constraints,
+			$temporary,
+			$auto_increment_override
+		);
 
 		$this->execute_duckdb_query(
 			'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $backup_table ),
-			'Failed to reset DuckDB CHECK rebuild backup table'
+			'Failed to reset DuckDB ' . $context . ' rebuild backup table'
 		);
 		$this->execute_duckdb_query(
 			'CREATE TEMP TABLE '
@@ -5163,11 +5208,11 @@ class WP_DuckDB_Driver {
 				. $quoted_columns
 				. ' FROM '
 				. $this->connection->quote_identifier( $table_name ),
-			'Failed to back up DuckDB table for CHECK rebuild'
+			'Failed to back up DuckDB table for ' . $context . ' rebuild'
 		);
 		$this->execute_duckdb_query(
 			'DROP TABLE ' . $this->connection->quote_identifier( $table_name ),
-			'Failed to rebuild DuckDB CHECK table'
+			'Failed to rebuild DuckDB ' . $context . ' table'
 		);
 		$this->drop_auto_increment_sequences( $sequence_names );
 		$this->execute_create_table( $this->tokenize_and_validate( $create_sql ) );
@@ -5180,11 +5225,170 @@ class WP_DuckDB_Driver {
 				. $quoted_columns
 				. ' FROM '
 				. $this->connection->quote_identifier( $backup_table ),
-			'Failed to restore DuckDB table rows after CHECK rebuild'
+			'Failed to restore DuckDB table rows after ' . $context . ' rebuild'
 		);
 		$this->execute_duckdb_query(
 			'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $backup_table ),
-			'Failed to drop DuckDB CHECK rebuild backup table'
+			'Failed to drop DuckDB ' . $context . ' rebuild backup table'
+		);
+		$this->refresh_column_key_metadata( $table_name, $temporary );
+	}
+
+	/**
+	 * Build a MySQL CREATE TABLE statement from explicit planned metadata.
+	 *
+	 * @param string                                                                 $table_name              Resolved physical table name.
+	 * @param string                                                                 $requested_table_name    Requested MySQL table name.
+	 * @param array<int,array<string,mixed>>                                         $column_metadata_rows    Column metadata rows.
+	 * @param string[]                                                               $primary_key_columns     Planned primary key columns.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $secondary_indexes      Planned secondary indexes.
+	 * @param array<int,array<string,mixed>>                                         $check_constraints       Planned CHECK constraints.
+	 * @param array<int,array<string,mixed>>                                         $foreign_key_constraints Planned FOREIGN KEY constraints.
+	 * @param bool                                                                   $temporary               Whether the target is a temporary table.
+	 * @param int|null                                                               $auto_increment_override AUTO_INCREMENT value override.
+	 * @return string MySQL CREATE TABLE statement.
+	 */
+	private function mysql_create_table_statement_from_metadata_plan( string $table_name, string $requested_table_name, array $column_metadata_rows, array $primary_key_columns, array $secondary_indexes, array $check_constraints, array $foreign_key_constraints, bool $temporary = false, ?int $auto_increment_override = null ): string {
+		$metadata_by_table  = $this->table_metadata_by_table( $temporary );
+		$table_metadata     = $metadata_by_table[ $table_name ] ?? $this->fallback_table_metadata( $table_name );
+		$table_info         = null === $auto_increment_override
+			? $this->information_schema_table_row( $table_name, $table_metadata, $temporary )
+			: array(
+				'ENGINE'          => $table_metadata['engine'],
+				'AUTO_INCREMENT'  => $auto_increment_override,
+				'TABLE_COLLATION' => $table_metadata['table_collation'],
+				'TABLE_COMMENT'   => $table_metadata['table_comment'],
+			);
+		$rows               = array();
+		$has_auto_increment = false;
+
+		foreach ( $column_metadata_rows as $column ) {
+			$rows[] = $this->format_show_create_table_column(
+				$this->information_schema_column_row( $table_name, $column ),
+				$has_auto_increment
+			);
+		}
+
+		if ( count( $primary_key_columns ) > 0 ) {
+			$rows[] = $this->format_show_create_table_index(
+				$this->show_create_table_primary_key_group_from_columns( $primary_key_columns )
+			);
+		}
+
+		foreach ( $this->show_create_table_index_groups_from_definitions( $secondary_indexes ) as $index_group ) {
+			$rows[] = $this->format_show_create_table_index( $index_group );
+		}
+
+		foreach ( $foreign_key_constraints as $foreign_key ) {
+			$rows[] = $this->format_show_create_table_foreign_key_constraint( $foreign_key );
+		}
+
+		foreach ( $check_constraints as $check_constraint ) {
+			$rows[] = $this->format_show_create_table_check_constraint( $check_constraint );
+		}
+
+		$sql  = 'CREATE ' . ( $temporary ? 'TEMPORARY ' : '' ) . 'TABLE ' . $this->quote_mysql_identifier( $requested_table_name ) . " (\n";
+		$sql .= implode( ",\n", $rows );
+		$sql .= "\n)";
+		$sql .= ' ENGINE=' . (string) $table_info['ENGINE'];
+
+		$auto_increment = null === $auto_increment_override ? $table_info['AUTO_INCREMENT'] : $auto_increment_override;
+		if ( $has_auto_increment && null !== $auto_increment && (int) $auto_increment > 1 ) {
+			$sql .= ' AUTO_INCREMENT=' . (int) $auto_increment;
+		}
+
+		$collation = (string) $table_info['TABLE_COLLATION'];
+		if ( '' === $collation ) {
+			$collation = 'utf8mb4_0900_ai_ci';
+		}
+		$charset = $this->character_set_from_collation( $collation ) ?? 'utf8mb4';
+		$sql    .= ' DEFAULT CHARSET=' . $charset;
+		$sql    .= ' COLLATE=' . $collation;
+
+		if ( '' !== $table_info['TABLE_COMMENT'] ) {
+			$sql .= ' COMMENT=' . $this->quote_mysql_utf8_string_literal( (string) $table_info['TABLE_COMMENT'] );
+		}
+
+		return $sql;
+	}
+
+	/**
+	 * Build a SHOW CREATE index group from primary key columns.
+	 *
+	 * @param string[] $columns Primary key columns.
+	 * @return array{name:string,non_unique:int,index_type:string,index_comment:string,columns:array<int,array{name:string,sub_part:int|null,collation:string}>}
+	 */
+	private function show_create_table_primary_key_group_from_columns( array $columns ): array {
+		return array(
+			'name'          => 'PRIMARY',
+			'non_unique'    => 0,
+			'index_type'    => 'BTREE',
+			'index_comment' => '',
+			'columns'       => array_map(
+				function ( string $column ): array {
+					return array(
+						'name'      => $column,
+						'sub_part'  => null,
+						'collation' => 'A',
+					);
+				},
+				$columns
+			),
+		);
+	}
+
+	/**
+	 * Build SHOW CREATE index groups from secondary index definitions.
+	 *
+	 * @param array<int,array{index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Index definitions.
+	 * @return array<int,array{name:string,non_unique:int,index_type:string,index_comment:string,columns:array<int,array{name:string,sub_part:int|null,collation:string}>}>
+	 */
+	private function show_create_table_index_groups_from_definitions( array $index_definitions ): array {
+		$groups = array();
+		foreach ( $index_definitions as $index_definition ) {
+			$groups[] = array(
+				'name'          => $index_definition['index_name'],
+				'non_unique'    => $index_definition['unique'] ? 0 : 1,
+				'index_type'    => 'BTREE',
+				'index_comment' => '',
+				'columns'       => array_map(
+					function ( array $column ): array {
+						return array(
+							'name'      => $column['name'],
+							'sub_part'  => $column['sub_part'],
+							'collation' => 'A',
+						);
+					},
+					$index_definition['columns']
+				),
+			);
+		}
+
+		usort(
+			$groups,
+			function ( array $left, array $right ): int {
+				if ( $left['non_unique'] !== $right['non_unique'] ) {
+					return $left['non_unique'] <=> $right['non_unique'];
+				}
+				return strcmp( $left['name'], $right['name'] );
+			}
+		);
+
+		return $groups;
+	}
+
+	/**
+	 * Return physical primary key columns in key order.
+	 *
+	 * @param string $table_name Table name.
+	 * @return string[] Primary key columns.
+	 */
+	private function primary_key_columns_for_table( string $table_name ): array {
+		return array_map(
+			function ( array $row ): string {
+				return (string) $row[4];
+			},
+			$this->primary_key_index_rows( $table_name )
 		);
 	}
 
@@ -5223,13 +5427,13 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_alter_table_drop_index( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		if ( $this->is_alter_table_drop_primary_key_action( $tokens ) ) {
+			return $this->execute_alter_table_drop_primary_key( $table_name, $temporary );
+		}
+
 		$index = 0;
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP in ALTER TABLE action.' );
 		++$index;
-
-		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[ $index ]->id ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP PRIMARY KEY requires a table rebuild.' );
-		}
 
 		if (
 			! isset( $tokens[ $index ] )
@@ -5238,6 +5442,10 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only DROP INDEX and DROP KEY are supported.' );
 		}
 		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[ $index ]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP INDEX PRIMARY and DROP KEY PRIMARY require quoted PRIMARY.' );
+		}
 
 		$index_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
@@ -5252,6 +5460,76 @@ class WP_DuckDB_Driver {
 				return $this->empty_ddl_result();
 			}
 		);
+	}
+
+	/**
+	 * Check whether ALTER TABLE ... DROP targets the primary key.
+	 *
+	 * @param WP_Parser_Token[] $tokens Action tokens starting at DROP.
+	 * @return bool Whether this is DROP PRIMARY KEY or DROP INDEX/KEY PRIMARY.
+	 */
+	private function is_alter_table_drop_primary_key_action( array $tokens ): bool {
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::DROP_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[1]->id ) {
+			return isset( $tokens[2] )
+				&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[2]->id
+				&& 3 === count( $tokens );
+		}
+
+		if ( WP_MySQL_Lexer::INDEX_SYMBOL !== $tokens[1]->id && WP_MySQL_Lexer::KEY_SYMBOL !== $tokens[1]->id ) {
+			return false;
+		}
+
+		return isset( $tokens[2] )
+			&& WP_MySQL_Lexer::PRIMARY_SYMBOL !== $tokens[2]->id
+			&& 0 === strcasecmp( $this->identifier_value( $tokens[2] ), 'PRIMARY' )
+			&& 3 === count( $tokens );
+	}
+
+	/**
+	 * Execute ALTER TABLE ... DROP PRIMARY KEY.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_drop_primary_key( string $table_name, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$this->assert_alter_table_drop_primary_key_supported( $table_name, $temporary );
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $table_name, $temporary ): WP_DuckDB_Result_Statement {
+				$this->rebuild_table_from_metadata_plan(
+					$table_name,
+					$this->table_column_metadata_rows( $table_name, $temporary ),
+					array(),
+					$this->secondary_index_definitions_for_table( $table_name, $temporary ),
+					$this->check_constraint_metadata_rows( $table_name, $temporary ),
+					$this->show_create_table_foreign_key_groups( $table_name, $temporary ),
+					$this->table_auto_increment_value( $table_name, $temporary ),
+					'DROP PRIMARY KEY',
+					$temporary
+				);
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
+	 * Validate ALTER TABLE ... DROP PRIMARY KEY before mutation.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 */
+	private function assert_alter_table_drop_primary_key_supported( string $table_name, bool $temporary = false ): void {
+		$this->assert_no_active_transaction_for_table_rebuild( 'DROP PRIMARY KEY' );
+		if ( count( $this->primary_key_index_rows( $table_name ) ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown index 'PRIMARY' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+		$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'DROP PRIMARY KEY', $temporary );
 	}
 
 	/**
@@ -9040,6 +9318,36 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			if (
+				$this->is_empty_function_call( $tokens, $index, 'NOW' )
+				|| $this->is_empty_function_call( $tokens, $index, 'CURRENT_TIMESTAMP' )
+			) {
+				$pieces[] = "strftime(current_timestamp, '%Y-%m-%d %H:%M:%S')";
+				$index   += 2;
+				continue;
+			}
+
+			if (
+				$this->is_empty_function_call( $tokens, $index, 'CURDATE' )
+				|| $this->is_empty_function_call( $tokens, $index, 'UTC_DATE' )
+			) {
+				$pieces[] = "strftime(current_timestamp, '%Y-%m-%d')";
+				$index   += 2;
+				continue;
+			}
+
+			if ( $this->is_empty_function_call( $tokens, $index, 'UTC_TIME' ) ) {
+				$pieces[] = "strftime(current_timestamp, '%H:%M:%S')";
+				$index   += 2;
+				continue;
+			}
+
+			if ( $this->is_empty_function_call( $tokens, $index, 'UTC_TIMESTAMP' ) ) {
+				$pieces[] = "strftime(current_timestamp, '%Y-%m-%d %H:%M:%S')";
+				$index   += 2;
+				continue;
+			}
+
 			if ( $this->is_empty_function_call( $tokens, $index, 'RAND' ) ) {
 				$pieces[] = 'random()';
 				$index   += 2;
@@ -10992,7 +11300,15 @@ class WP_DuckDB_Driver {
 			? null
 			: $this->explicit_auto_increment_value_for_write( $tokens, $table_index, $metadata['column_name'] );
 		$before             = null === $sequence_name ? null : $this->sequence_currval( $sequence_name );
-		$result             = $this->execute_duckdb_query( $sql, $context );
+		if (
+			null !== $metadata
+			&& null !== $explicit_insert_id
+			&& ! $this->auto_increment_column_has_visible_unique_key( $table_reference['table_name'], $metadata['column_name'] )
+			&& $this->auto_increment_value_exists( $table_reference['table_name'], $metadata['column_name'], $explicit_insert_id )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'UNIQUE constraint failed: ' . $table_reference['table_name'] . '.' . $metadata['column_name'] );
+		}
+		$result = $this->execute_duckdb_query( $sql, $context );
 
 		if ( null !== $sequence_name && $result->rowCount() > 0 ) {
 			$after = $this->sequence_currval( $sequence_name );
@@ -11004,6 +11320,46 @@ class WP_DuckDB_Driver {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Check whether an AUTO_INCREMENT column still has a visible primary or unique key.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name AUTO_INCREMENT column name.
+	 * @return bool Whether a visible unique key exists.
+	 */
+	private function auto_increment_column_has_visible_unique_key( string $table_name, string $column_name ): bool {
+		foreach ( $this->unique_key_column_sets( $table_name ) as $column_set ) {
+			if ( array( $column_name ) === $column_set ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether an explicit AUTO_INCREMENT value already exists.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name AUTO_INCREMENT column name.
+	 * @param int    $value       Explicit AUTO_INCREMENT value.
+	 * @return bool Whether the value exists.
+	 */
+	private function auto_increment_value_exists( string $table_name, string $column_name, int $value ): bool {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT 1 FROM '
+				. $this->connection->quote_identifier( $table_name )
+				. ' WHERE '
+				. $this->connection->quote_identifier( $column_name )
+				. ' = '
+				. $value
+				. ' LIMIT 1',
+			'Failed to inspect DuckDB AUTO_INCREMENT value'
+		);
+
+		return false !== $stmt->fetchColumn();
 	}
 
 	/**
@@ -11968,59 +12324,16 @@ class WP_DuckDB_Driver {
 	 * @param bool   $temporary  Whether the target is a temporary table.
 	 */
 	private function rebuild_auto_increment_table_with_next_value( string $table_name, int $next_value, bool $temporary = false ): void {
-		$create_sql     = $this->mysql_create_table_statement( $table_name, $table_name, $temporary, $next_value );
-		$sequence_names = $this->auto_increment_sequences_for_table( $table_name, $temporary );
-		$metadata_rows  = $this->table_column_metadata_rows( $table_name, $temporary );
-		$column_names   = array_map(
-			function ( array $column ): string {
-				return (string) $column['column_name'];
-			},
-			$metadata_rows
-		);
-		$quoted_columns = implode(
-			', ',
-			array_map(
-				function ( string $column_name ): string {
-					return $this->connection->quote_identifier( $column_name );
-				},
-				$column_names
-			)
-		);
-		$backup_table   = '__wp_duckdb_auto_increment_backup_' . substr( hash( 'sha256', $table_name . "\0" . microtime( true ) . "\0" . mt_rand() ), 0, 16 );
-
-		$this->execute_duckdb_query(
-			'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $backup_table ),
-			'Failed to reset DuckDB AUTO_INCREMENT rebuild backup table'
-		);
-		$this->execute_duckdb_query(
-			'CREATE TEMP TABLE '
-				. $this->connection->quote_identifier( $backup_table )
-				. ' AS SELECT '
-				. $quoted_columns
-				. ' FROM '
-				. $this->connection->quote_identifier( $table_name ),
-			'Failed to back up DuckDB table for AUTO_INCREMENT rebuild'
-		);
-		$this->execute_duckdb_query(
-			'DROP TABLE ' . $this->connection->quote_identifier( $table_name ),
-			'Failed to rebuild DuckDB AUTO_INCREMENT table'
-		);
-		$this->drop_auto_increment_sequences( $sequence_names );
-		$this->execute_create_table( $this->tokenize_and_validate( $create_sql ) );
-		$this->execute_duckdb_query(
-			'INSERT INTO '
-				. $this->connection->quote_identifier( $table_name )
-				. ' ('
-				. $quoted_columns
-				. ') SELECT '
-				. $quoted_columns
-				. ' FROM '
-				. $this->connection->quote_identifier( $backup_table ),
-			'Failed to restore DuckDB table rows after AUTO_INCREMENT rebuild'
-		);
-		$this->execute_duckdb_query(
-			'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $backup_table ),
-			'Failed to drop DuckDB AUTO_INCREMENT rebuild backup table'
+		$this->rebuild_table_from_metadata_plan(
+			$table_name,
+			$this->table_column_metadata_rows( $table_name, $temporary ),
+			$this->primary_key_columns_for_table( $table_name ),
+			$this->secondary_index_definitions_for_table( $table_name, $temporary ),
+			$this->check_constraint_metadata_rows( $table_name, $temporary ),
+			$this->show_create_table_foreign_key_groups( $table_name, $temporary ),
+			$next_value,
+			'AUTO_INCREMENT',
+			$temporary
 		);
 	}
 
