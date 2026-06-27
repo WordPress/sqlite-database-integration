@@ -5206,6 +5206,32 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_show( array $tokens ): WP_DuckDB_Result_Statement {
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::COLLATION_SYMBOL === $tokens[1]->id ) {
+			return $this->execute_show_collation( $tokens );
+		}
+
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::DATABASES_SYMBOL === $tokens[1]->id ) {
+			return $this->execute_show_databases( $tokens );
+		}
+
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::GRANTS_SYMBOL === $tokens[1]->id ) {
+			return $this->execute_show_grants( $tokens );
+		}
+
+		if (
+			isset( $tokens[1] )
+			&& (
+				WP_MySQL_Lexer::VARIABLES_SYMBOL === $tokens[1]->id
+				|| (
+					isset( $tokens[2] )
+					&& in_array( $tokens[1]->id, array( WP_MySQL_Lexer::GLOBAL_SYMBOL, WP_MySQL_Lexer::LOCAL_SYMBOL, WP_MySQL_Lexer::SESSION_SYMBOL ), true )
+					&& WP_MySQL_Lexer::VARIABLES_SYMBOL === $tokens[2]->id
+				)
+			)
+		) {
+			return $this->execute_show_variables( $tokens );
+		}
+
 		if (
 			isset( $tokens[1] )
 			&& (
@@ -5258,6 +5284,285 @@ class WP_DuckDB_Driver {
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW statement in DuckDB driver.' );
+	}
+
+	/**
+	 * Execute SHOW COLLATION.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_show_collation( array $tokens ): WP_DuckDB_Result_Statement {
+		$this->expect_token( $tokens, 1, WP_MySQL_Lexer::COLLATION_SYMBOL, 'Expected COLLATION in SHOW COLLATION statement.' );
+
+		return $this->execute_static_show_metadata_statement(
+			array( 'Collation', 'Charset', 'Id', 'Default', 'Compiled', 'Sortlen', 'Pad_attribute' ),
+			$this->show_collation_rows(),
+			'Collation',
+			$tokens,
+			2,
+			'SHOW COLLATION'
+		);
+	}
+
+	/**
+	 * Build SQLite-compatible SHOW COLLATION rows.
+	 *
+	 * @return array<int,array<int,mixed>>
+	 */
+	private function show_collation_rows(): array {
+		return array(
+			array( 'binary', 'binary', 63, 'Yes', 'Yes', 1, 'NO PAD' ),
+			array( 'utf8_bin', 'utf8', 83, '', 'Yes', 1, 'PAD SPACE' ),
+			array( 'utf8_general_ci', 'utf8', 33, 'Yes', 'Yes', 1, 'PAD SPACE' ),
+			array( 'utf8_unicode_ci', 'utf8', 192, '', 'Yes', 8, 'PAD SPACE' ),
+			array( 'utf8mb4_bin', 'utf8mb4', 46, '', 'Yes', 1, 'PAD SPACE' ),
+			array( 'utf8mb4_unicode_ci', 'utf8mb4', 224, '', 'Yes', 8, 'PAD SPACE' ),
+			array( 'utf8mb4_0900_ai_ci', 'utf8mb4', 255, 'Yes', 'Yes', 0, 'NO PAD' ),
+		);
+	}
+
+	/**
+	 * Execute SHOW DATABASES.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_show_databases( array $tokens ): WP_DuckDB_Result_Statement {
+		$this->expect_token( $tokens, 1, WP_MySQL_Lexer::DATABASES_SYMBOL, 'Expected DATABASES in SHOW DATABASES statement.' );
+
+		return $this->execute_static_show_metadata_statement(
+			array( 'Database' ),
+			array(
+				array( 'information_schema' ),
+				array( $this->database ),
+			),
+			'Database',
+			$tokens,
+			2,
+			'SHOW DATABASES'
+		);
+	}
+
+	/**
+	 * Execute SHOW GRANTS.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_show_grants( array $tokens ): WP_DuckDB_Result_Statement {
+		$this->expect_token( $tokens, 1, WP_MySQL_Lexer::GRANTS_SYMBOL, 'Expected GRANTS in SHOW GRANTS statement.' );
+
+		if ( 2 !== count( $tokens ) ) {
+			if (
+				! isset( $tokens[2], $tokens[3] )
+				|| WP_MySQL_Lexer::FOR_SYMBOL !== $tokens[2]->id
+			) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW GRANTS statement in DuckDB driver. Use SHOW GRANTS or SHOW GRANTS FOR a parsed target.' );
+			}
+		}
+
+		return new WP_DuckDB_Result_Statement(
+			array( 'Grants for root@%' ),
+			array(
+				array(
+					'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION',
+				),
+			)
+		);
+	}
+
+	/**
+	 * Execute SHOW VARIABLES.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_show_variables( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 1;
+		if (
+			isset( $tokens[ $index ] )
+			&& in_array( $tokens[ $index ]->id, array( WP_MySQL_Lexer::GLOBAL_SYMBOL, WP_MySQL_Lexer::LOCAL_SYMBOL, WP_MySQL_Lexer::SESSION_SYMBOL ), true )
+		) {
+			++$index;
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::VARIABLES_SYMBOL, 'Expected VARIABLES in SHOW VARIABLES statement.' );
+		++$index;
+
+		$this->consume_show_like_or_where_clause( $tokens, $index, 'SHOW VARIABLES' );
+
+		return new WP_DuckDB_Result_Statement(
+			array( 'Variable_name', 'Value' ),
+			array()
+		);
+	}
+
+	/**
+	 * Execute a static SHOW metadata statement with optional LIKE or WHERE.
+	 *
+	 * @param string[]                $columns     Result column names.
+	 * @param array<int,array<mixed>> $rows        Result rows.
+	 * @param string                  $like_column Column filtered by LIKE.
+	 * @param WP_Parser_Token[]       $tokens      MySQL tokens.
+	 * @param int                     $index       Index after the SHOW statement name.
+	 * @param string                  $statement   Statement label for errors.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_static_show_metadata_statement( array $columns, array $rows, string $like_column, array $tokens, int $index, string $statement ): WP_DuckDB_Result_Statement {
+		$condition = $this->consume_show_like_or_where_clause( $tokens, $index, $statement, $like_column, $columns );
+
+		$select_columns = array_map(
+			function ( string $column ): string {
+				return $this->connection->quote_identifier( $column );
+			},
+			$columns
+		);
+
+		$aliased_columns = array_merge(
+			array( $this->connection->quote_identifier( '__wp_order' ) ),
+			$select_columns
+		);
+
+		$value_rows = array();
+		foreach ( $rows as $ordinal => $row ) {
+			$values = array( (int) $ordinal );
+			foreach ( $row as $value ) {
+				$values[] = $value;
+			}
+			$value_rows[] = '(' . implode(
+				', ',
+				array_map(
+					function ( $value ): string {
+						return $this->connection->quote( $value );
+					},
+					$values
+				)
+			) . ')';
+		}
+
+		$sql = 'SELECT '
+			. implode( ', ', $select_columns )
+			. ' FROM (VALUES '
+			. implode( ', ', $value_rows )
+			. ') AS '
+			. $this->connection->quote_identifier( '__wp_show' )
+			. '('
+			. implode( ', ', $aliased_columns )
+			. ')'
+			. $condition
+			. ' ORDER BY '
+			. $this->connection->quote_identifier( '__wp_order' );
+
+		return $this->execute_duckdb_query( $sql, 'Failed to execute ' . $statement );
+	}
+
+	/**
+	 * Consume an optional SHOW LIKE or WHERE clause.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $index       Clause start index.
+	 * @param string            $statement   Statement label for errors.
+	 * @param string|null       $like_column Column filtered by LIKE, or null to only validate.
+	 * @param string[]          $where_columns Result column aliases available to WHERE.
+	 * @return string DuckDB SQL condition.
+	 */
+	private function consume_show_like_or_where_clause( array $tokens, int $index, string $statement, ?string $like_column = null, array $where_columns = array() ): string {
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $index ]->id ) {
+			if (
+				! isset( $tokens[ $index + 1 ] )
+				|| (
+					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
+					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $index + 1 ]->id
+				)
+			) {
+				throw new WP_DuckDB_Driver_Exception( $statement . ' LIKE requires a string pattern in the DuckDB driver.' );
+			}
+
+			$index += 2;
+			if ( count( $tokens ) !== $index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only optional LIKE and WHERE are supported.' );
+			}
+
+			if ( null === $like_column ) {
+				return '';
+			}
+
+			return ' WHERE '
+				. $this->connection->quote_identifier( $like_column )
+				. ' LIKE '
+				. $this->connection->quote( $tokens[ $index - 1 ]->get_value() )
+				. ' ESCAPE '
+				. $this->connection->quote( '\\' );
+		}
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			if ( ! isset( $tokens[ $index ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( $statement . ' WHERE requires an expression in the DuckDB driver.' );
+			}
+
+			$condition_tokens = array_slice( $tokens, $index );
+			$index            = count( $tokens );
+			if ( count( $tokens ) !== $index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only optional LIKE and WHERE are supported.' );
+			}
+
+			if ( null === $like_column ) {
+				return '';
+			}
+
+			if ( 1 === count( $condition_tokens ) && $this->is_number_token( $condition_tokens[0] ) ) {
+				return ' WHERE ' . ( 0.0 === (float) $this->number_token_value( $condition_tokens[0] ) ? 'FALSE' : 'TRUE' );
+			}
+
+			return ' WHERE ' . $this->translate_static_show_where_condition( $condition_tokens, $where_columns );
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only optional LIKE and WHERE are supported.' );
+		}
+
+		return '';
+	}
+
+	/**
+	 * Translate a static SHOW WHERE expression with result-alias identifiers.
+	 *
+	 * SQLite accepts SHOW output aliases in WHERE. DuckDB needs keyword-like
+	 * aliases such as Collation quoted when filtering a VALUES-backed result.
+	 *
+	 * @param WP_Parser_Token[] $tokens  WHERE expression tokens.
+	 * @param string[]          $columns Result column aliases.
+	 * @return string DuckDB SQL expression.
+	 */
+	private function translate_static_show_where_condition( array $tokens, array $columns ): string {
+		$column_map = array();
+		foreach ( $columns as $column ) {
+			$column_map[ strtolower( $column ) ] = $column;
+		}
+
+		$pieces = array();
+		foreach ( $tokens as $index => $token ) {
+			if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
+				$column   = $column_map[ strtolower( $token->get_value() ) ] ?? null;
+				$pieces[] = $this->connection->quote_identifier( $column ?? $token->get_value() );
+				continue;
+			}
+
+			$next_token_starts_call = isset( $tokens[ $index + 1 ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index + 1 ]->id;
+			if ( ! $next_token_starts_call && ! $this->is_non_identifier_token( $token ) ) {
+				$column = $column_map[ strtolower( $token->get_value() ) ] ?? null;
+				if ( null !== $column ) {
+					$pieces[] = $this->connection->quote_identifier( $column );
+					continue;
+				}
+			}
+
+			$pieces[] = $this->translate_token_to_duckdb_sql( $token );
+		}
+
+		return $this->join_sql_pieces( $pieces );
 	}
 
 	/**

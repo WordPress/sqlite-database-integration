@@ -174,6 +174,249 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_show_admin_metadata_statements_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$collations = $driver->query( 'SHOW COLLATION' );
+		$this->assertSame( 7, $collations->columnCount() );
+		$this->assertSame( 0, $collations->rowCount() );
+		$this->assertSame( array( 'name' => 'Collation' ), $collations->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => 'Charset' ), $collations->getColumnMeta( 1 ) );
+		$this->assertSame( array( 'name' => 'Id' ), $collations->getColumnMeta( 2 ) );
+		$this->assertSame( array( 'name' => 'Default' ), $collations->getColumnMeta( 3 ) );
+		$this->assertSame( array( 'name' => 'Compiled' ), $collations->getColumnMeta( 4 ) );
+		$this->assertSame( array( 'name' => 'Sortlen' ), $collations->getColumnMeta( 5 ) );
+		$this->assertSame( array( 'name' => 'Pad_attribute' ), $collations->getColumnMeta( 6 ) );
+		$this->assertSame(
+			array(
+				array(
+					'Collation'     => 'binary',
+					'Charset'       => 'binary',
+					'Id'            => 63,
+					'Default'       => 'Yes',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => 1,
+					'Pad_attribute' => 'NO PAD',
+				),
+				array(
+					'Collation'     => 'utf8_bin',
+					'Charset'       => 'utf8',
+					'Id'            => 83,
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => 1,
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8_general_ci',
+					'Charset'       => 'utf8',
+					'Id'            => 33,
+					'Default'       => 'Yes',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => 1,
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8_unicode_ci',
+					'Charset'       => 'utf8',
+					'Id'            => 192,
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => 8,
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8mb4_bin',
+					'Charset'       => 'utf8mb4',
+					'Id'            => 46,
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => 1,
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8mb4_unicode_ci',
+					'Charset'       => 'utf8mb4',
+					'Id'            => 224,
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => 8,
+					'Pad_attribute' => 'PAD SPACE',
+				),
+				array(
+					'Collation'     => 'utf8mb4_0900_ai_ci',
+					'Charset'       => 'utf8mb4',
+					'Id'            => 255,
+					'Default'       => 'Yes',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => 0,
+					'Pad_attribute' => 'NO PAD',
+				),
+			),
+			$collations->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$utf8_collations = $driver->query( "SHOW COLLATION LIKE 'utf8%'" );
+		$this->assertSame( 0, $utf8_collations->rowCount() );
+		$this->assertSame(
+			array( 'utf8_bin', 'utf8_general_ci', 'utf8_unicode_ci', 'utf8mb4_bin', 'utf8mb4_unicode_ci', 'utf8mb4_0900_ai_ci' ),
+			array_column( $utf8_collations->fetchAll( PDO::FETCH_ASSOC ), 'Collation' )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 6 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$filtered_collations = $driver->query( "SHOW COLLATION WHERE Collation = 'utf8_bin'" );
+		$this->assertSame( 0, $filtered_collations->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'Collation'     => 'utf8_bin',
+					'Charset'       => 'utf8',
+					'Id'            => 83,
+					'Default'       => '',
+					'Compiled'      => 'Yes',
+					'Sortlen'       => 1,
+					'Pad_attribute' => 'PAD SPACE',
+				),
+			),
+			$filtered_collations->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$missing_collations = $driver->query( "SHOW COLLATION LIKE 'missing%'" );
+		$this->assertSame( 0, $missing_collations->rowCount() );
+		$this->assertSame( array(), $missing_collations->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$databases = $driver->query( 'SHOW DATABASES' );
+		$this->assertSame( 1, $databases->columnCount() );
+		$this->assertSame( 0, $databases->rowCount() );
+		$this->assertSame( array( 'name' => 'Database' ), $databases->getColumnMeta( 0 ) );
+		$this->assertSame(
+			array(
+				array( 'Database' => 'information_schema' ),
+				array( 'Database' => 'wp' ),
+			),
+			$databases->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'Database' => 'wp' ) ),
+			$driver->query( 'SHOW DATABASES LIKE "w%"' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'Database' => 'information_schema' ) ),
+			$driver->query( 'SHOW DATABASES WHERE `Database` = "information_schema"' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$schemas = $driver->query( 'SHOW SCHEMAS' );
+		$this->assertSame( 1, $schemas->columnCount() );
+		$this->assertSame( 0, $schemas->rowCount() );
+		$this->assertSame( array( 'name' => 'Database' ), $schemas->getColumnMeta( 0 ) );
+		$this->assertSame(
+			array(
+				array( 'Database' => 'information_schema' ),
+				array( 'Database' => 'wp' ),
+			),
+			$schemas->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$filtered_schemas = $driver->query( "SHOW SCHEMAS LIKE 'wp'" );
+		$this->assertSame( 0, $filtered_schemas->rowCount() );
+		$this->assertSame(
+			array( array( 'Database' => 'wp' ) ),
+			$filtered_schemas->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$missing_schemas = $driver->query( "SHOW SCHEMAS WHERE `Database` = 'missing'" );
+		$this->assertSame( 0, $missing_schemas->rowCount() );
+		$this->assertSame( array(), $missing_schemas->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		foreach (
+			array(
+				'SHOW GRANTS',
+				'SHOW GRANTS FOR current_user()',
+				'SHOW GRANTS FOR CURRENT_USER',
+				'SHOW GRANTS FOR root@localhost',
+				"SHOW GRANTS FOR 'root'@'localhost'",
+				'SHOW GRANTS FOR usera@localhost',
+				'SHOW GRANTS FOR root',
+			) as $sql
+		) {
+			$grants = $driver->query( $sql );
+			$this->assertSame( 1, $grants->columnCount() );
+			$this->assertSame( 0, $grants->rowCount() );
+			$this->assertSame( array( 'name' => 'Grants for root@%' ), $grants->getColumnMeta( 0 ) );
+			$this->assertSame(
+				array(
+					array(
+						'Grants for root@%' => 'GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, RELOAD, SHUTDOWN, PROCESS, FILE, REFERENCES, INDEX, ALTER, SHOW DATABASES, SUPER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER, CREATE TABLESPACE, CREATE ROLE, DROP ROLE ON *.* TO `root`@`localhost` WITH GRANT OPTION',
+					),
+				),
+				$grants->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		foreach (
+			array(
+				'SHOW VARIABLES',
+				"SHOW VARIABLES LIKE 'version'",
+				"SHOW VARIABLES WHERE Variable_name = 'version'",
+				'SHOW GLOBAL VARIABLES',
+				'SHOW SESSION VARIABLES',
+				'SHOW LOCAL VARIABLES',
+				"SHOW GLOBAL VARIABLES LIKE 'version'",
+				"SHOW SESSION VARIABLES WHERE Variable_name = 'version'",
+				"SHOW LOCAL VARIABLES WHERE Variable_name = 'version'",
+			) as $sql
+		) {
+			$variables = $driver->query( $sql );
+			$this->assertSame( 2, $variables->columnCount() );
+			$this->assertSame( 0, $variables->rowCount() );
+			$this->assertSame( array( 'name' => 'Variable_name' ), $variables->getColumnMeta( 0 ) );
+			$this->assertSame( array( 'name' => 'Value' ), $variables->getColumnMeta( 1 ) );
+			$this->assertSame( array(), $variables->fetchAll( PDO::FETCH_ASSOC ) );
+		}
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_show_grants_rejects_unsupported_like_forms(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$this->assertDriverQueryRejected( $driver, "SHOW GRANTS LIKE '%'" );
+	}
+
 	public function test_sql_transaction_statements_update_connection_state_and_query_log(): void {
 		$this->requireDuckDBRuntime();
 

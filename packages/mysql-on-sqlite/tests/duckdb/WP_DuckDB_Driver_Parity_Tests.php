@@ -52,6 +52,67 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SHOW FULL TABLES LIKE 'temp_only_show'" );
 	}
 
+	public function test_show_admin_metadata_sql_matches_sqlite(): void {
+		$this->assertParityRows( 'SHOW COLLATION' );
+		$this->assertParityRows( "SHOW COLLATION LIKE 'utf8%'" );
+		$this->assertParityRows( "SHOW COLLATION WHERE Collation = 'utf8_bin'" );
+		$this->assertParityRows( 'SHOW COLLATION WHERE 0' );
+		$this->assertParityRows( "SHOW COLLATION LIKE 'missing%'" );
+
+		$this->assertParityRows( 'SHOW DATABASES' );
+		$this->assertParityRows( 'SHOW DATABASES LIKE "w%"' );
+		$this->assertParityRows( 'SHOW DATABASES WHERE `Database` = "wp"' );
+		$this->assertParityRows( 'SHOW DATABASES WHERE `Database` = "information_schema"' );
+		$this->assertParityRows( "SHOW DATABASES LIKE 'missing%'" );
+		$this->assertParityRows( 'SHOW SCHEMAS' );
+		$this->assertParityRows( "SHOW SCHEMAS LIKE 'wp'" );
+		$this->assertParityRows( 'SHOW SCHEMAS WHERE `Database` = "wp"' );
+		$this->assertParityRows( 'SHOW SCHEMAS WHERE 0' );
+
+		$this->assertParityRows( 'SHOW GRANTS' );
+		$this->assertParityRows( 'SHOW GRANTS FOR current_user()' );
+		$this->assertParityRows( 'SHOW GRANTS FOR CURRENT_USER' );
+		$this->assertParityRows( 'SHOW GRANTS FOR root@localhost' );
+		$this->assertParityRows( "SHOW GRANTS FOR 'root'@'localhost'" );
+		$this->assertParityRows( 'SHOW GRANTS FOR usera@localhost' );
+		$this->assertParityRows( 'SHOW GRANTS FOR root' );
+
+		$this->assertParityRows( 'SHOW VARIABLES' );
+		$this->assertParityRows( "SHOW VARIABLES LIKE 'version'" );
+		$this->assertParityRows( "SHOW VARIABLES WHERE Variable_name = 'version'" );
+		$this->assertParityRows( 'SHOW VARIABLES WHERE 0' );
+		$this->assertParityRows( 'SHOW GLOBAL VARIABLES' );
+		$this->assertParityRows( 'SHOW SESSION VARIABLES' );
+		$this->assertParityRows( 'SHOW LOCAL VARIABLES' );
+		$this->assertParityRows( "SHOW GLOBAL VARIABLES LIKE 'version'" );
+		$this->assertParityRows( "SHOW SESSION VARIABLES WHERE Variable_name = 'version'" );
+		$this->assertParityRows( "SHOW LOCAL VARIABLES WHERE Variable_name = 'version'" );
+	}
+
+	public function test_show_admin_metadata_found_rows_match_sqlite(): void {
+		foreach (
+			array(
+				'SHOW COLLATION',
+				"SHOW COLLATION LIKE 'utf8_bin'",
+				"SHOW COLLATION LIKE 'missing%'",
+				'SHOW DATABASES',
+				"SHOW DATABASES LIKE 'missing%'",
+				"SHOW SCHEMAS LIKE 'wp'",
+				'SHOW SCHEMAS WHERE 0',
+				'SHOW GRANTS',
+				'SHOW GRANTS FOR current_user()',
+				'SHOW VARIABLES',
+				'SHOW GLOBAL VARIABLES',
+				'SHOW SESSION VARIABLES',
+				'SHOW LOCAL VARIABLES',
+				'SHOW VARIABLES WHERE 0',
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+			$this->assertParityRows( 'SELECT FOUND_ROWS()' );
+		}
+	}
+
 	public function test_transaction_sql_matches_sqlite(): void {
 		$this->runParitySetup( array( 'CREATE TABLE tx_items (id INT)' ) );
 
