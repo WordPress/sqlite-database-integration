@@ -1952,6 +1952,9 @@ class WP_PostgreSQL_DB extends wpdb {
 
 		try {
 			$install_state_result = $this->query_postgresql_missing_options_install_probe( $query );
+			$install_state_result = null === $install_state_result
+				? $this->query_postgresql_missing_describe_install_probe( $query )
+				: $install_state_result;
 			$site_health_result   = null === $install_state_result ? $this->query_postgresql_site_health_table_sizes( $query ) : null;
 			$this->result         = null !== $install_state_result
 				? $install_state_result
@@ -1999,6 +2002,31 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
+	 * Fast path for WordPress install-state DESCRIBE probes against missing prefixed tables.
+	 *
+	 * @param string $query Original MySQL query.
+	 * @return array|null Empty result rows when the described current-prefix table is missing, or null on non-match.
+	 */
+	private function query_postgresql_missing_describe_install_probe( $query ) {
+		if ( empty( $this->suppress_errors ) || ! isset( $this->prefix ) || ! $this->has_usable_postgresql_connection() ) {
+			return null;
+		}
+
+		$table = $this->parse_postgresql_describe_table_probe( $query );
+		if ( null === $table || ! $this->is_postgresql_current_prefix_table( $table ) ) {
+			return null;
+		}
+
+		$exists = $this->postgresql_visible_table_exists( $table );
+		if ( null === $exists || $exists ) {
+			$this->postgresql_query_log_override = null;
+			return null;
+		}
+
+		return array();
+	}
+
+	/**
 	 * Parse WordPress' exact current-prefix option install probes.
 	 *
 	 * @param string $query Original MySQL query.
@@ -2022,6 +2050,32 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		return $this->parse_postgresql_options_alloptions_probe_table( $tokens, 5 );
+	}
+
+	/**
+	 * Parse WordPress' exact install-state DESCRIBE table probe.
+	 *
+	 * @param string $query Original MySQL query.
+	 * @return string|null Table name, or null on non-match.
+	 */
+	private function parse_postgresql_describe_table_probe( $query ) {
+		if ( ! is_string( $query ) || ! class_exists( 'WP_MySQL_Lexer', false ) ) {
+			return null;
+		}
+
+		$tokens = $this->get_postgresql_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0] )
+			|| ( WP_MySQL_Lexer::DESCRIBE_SYMBOL !== $tokens[0]->id && WP_MySQL_Lexer::DESC_SYMBOL !== $tokens[0]->id )
+		) {
+			return null;
+		}
+
+		$table = $this->get_postgresql_identifier_token_value( $tokens[1] ?? null );
+		if ( null === $table ) {
+			return null;
+		}
+		return $this->is_postgresql_mysql_token_stream_at_end( $tokens, 2 ) ? $table : null;
 	}
 
 	/**
@@ -2167,6 +2221,24 @@ class WP_PostgreSQL_DB extends wpdb {
 		}
 
 		return ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::EOF === $tokens[ $position ]->id;
+	}
+
+	/**
+	 * Check whether a table name belongs to the active WordPress prefix.
+	 *
+	 * @param string $table Table name.
+	 * @return bool Whether the table uses the current prefix.
+	 */
+	private function is_postgresql_current_prefix_table( string $table ): bool {
+		$prefix = (string) $this->prefix;
+		if ( '' === $prefix ) {
+			return false;
+		}
+
+		return 0 === strpos(
+			$this->get_postgresql_metadata_key( $table ),
+			$this->get_postgresql_metadata_key( $prefix )
+		);
 	}
 
 	/**

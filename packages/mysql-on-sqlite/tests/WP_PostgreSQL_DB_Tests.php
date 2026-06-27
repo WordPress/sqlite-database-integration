@@ -2839,7 +2839,7 @@ PHP
 	}
 
 	/**
-	 * Tests missing active-prefix options table option probes return an empty install state.
+	 * Tests missing active-prefix options and DESCRIBE probes return an empty install state.
 	 */
 	public function test_query_returns_empty_for_missing_current_prefix_options_install_probes(): void {
 		$result = $this->run_isolated_wpdb_script(
@@ -2861,6 +2861,7 @@ class wpdb {
 	public $suppress_errors = true;
 	public $show_errors     = false;
 	public $options         = 'wp_e2e_options';
+	public $prefix          = 'wp_e2e_';
 
 	public function get_caller() {
 		return 'wpdb-install-state-test';
@@ -2917,8 +2918,10 @@ class WP_PostgreSQL_DB_Install_State_Fake_Driver extends WP_PostgreSQL_Driver {
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
 		$this->queries[] = $query;
 
-		if ( false !== strpos( $query, 'wp_e2e_options' ) ) {
-			throw new RuntimeException( 'relation "wp_e2e_options" does not exist' );
+		if ( false !== strpos( $query, 'wp_e2e_' ) ) {
+			preg_match( '/wp_e2e_[A-Za-z0-9_]+/', $query, $matches );
+			$table = $matches[0] ?? 'wp_e2e_options';
+			throw new RuntimeException( sprintf( 'relation "%s" does not exist', $table ) );
 		}
 
 		if ( false !== strpos( $query, 'option_name, option_value' ) ) {
@@ -3013,6 +3016,8 @@ $missing_queries = array(
 	'timezone_no_limit'   => "SELECT `option_value` FROM `wp_e2e_options` WHERE `option_name` = 'timezone_string'",
 	'alloptions_autoload' => "SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
 	'alloptions_full'     => 'SELECT option_name, option_value FROM wp_e2e_options',
+	'describe_posts'      => 'DESCRIBE wp_e2e_posts;',
+	'desc_options'        => 'DESC `wp_e2e_options`',
 );
 
 $missing_results = array();
@@ -3034,7 +3039,15 @@ $old_prefix_alloptions_result = wp_postgresql_db_install_probe_result(
 	"SELECT option_name, option_value FROM wp_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')"
 );
 
+$old_prefix_describe_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	'DESCRIBE wp_options;'
+);
+
 $db->options            = 'wp_options';
+$db->prefix             = 'wp_';
 $existing_active_result = wp_postgresql_db_install_probe_result(
 	$db,
 	$driver,
@@ -3049,7 +3062,15 @@ $existing_active_alloptions_result = wp_postgresql_db_install_probe_result(
 	"SELECT option_name, option_value FROM wp_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')"
 );
 
+$existing_active_describe_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	'DESCRIBE wp_options;'
+);
+
 $db->options = 'wp_e2e_options';
+$db->prefix  = 'wp_e2e_';
 $near_miss_queries = array(
 	'different_selected_column' => "SELECT option_name FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
 	'different_predicate'       => "SELECT option_value FROM wp_e2e_options WHERE autoload = 'yes' LIMIT 1",
@@ -3060,6 +3081,10 @@ $near_miss_queries = array(
 	'alloptions_join'           => "SELECT option_name, option_value FROM wp_e2e_options INNER JOIN wp_posts ON wp_posts.ID = wp_e2e_options.option_id WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')",
 	'alloptions_extra'          => "SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto') AND option_name = 'siteurl'",
 	'alloptions_list'           => "SELECT option_name, option_value FROM wp_e2e_options WHERE autoload IN ('yes')",
+	'describe_column'           => 'DESCRIBE wp_e2e_posts ID',
+	'describe_predicate'        => 'DESC wp_e2e_posts WHERE Field = \'ID\'',
+	'describe_qualified'        => 'DESCRIBE currentdb.wp_e2e_posts',
+	'describe_alias'            => 'DESCRIBE wp_e2e_posts p',
 );
 
 $near_miss_results = array();
@@ -3083,30 +3108,42 @@ $unsuppressed_alloptions_result = wp_postgresql_db_install_probe_result(
 	false
 );
 
+$unsuppressed_describe_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	'DESCRIBE wp_e2e_posts;',
+	false
+);
+
 wp_postgresql_db_test_respond(
 	array(
 		'missing_queries'                 => $missing_queries,
 		'missing_results'                 => $missing_results,
 		'old_prefix_result'               => $old_prefix_result,
 		'old_prefix_alloptions_result'    => $old_prefix_alloptions_result,
+		'old_prefix_describe_result'      => $old_prefix_describe_result,
 		'existing_active'                 => $existing_active_result,
 		'existing_active_alloptions'      => $existing_active_alloptions_result,
+		'existing_active_describe'        => $existing_active_describe_result,
 		'near_miss_queries'               => $near_miss_queries,
 		'near_miss_results'               => $near_miss_results,
 		'unsuppressed_result'             => $unsuppressed_result,
 		'unsuppressed_alloptions_result'  => $unsuppressed_alloptions_result,
+		'unsuppressed_describe_result'    => $unsuppressed_describe_result,
 	)
 );
 PHP
 		);
 
 		foreach ( $result['missing_results'] as $name => $case_result ) {
+			$expected_catalog_table = 'describe_posts' === $name ? 'wp_e2e_posts' : 'wp_e2e_options';
 			$this->assertSame( 0, $case_result['return'], $name );
 			$this->assertSame( '', $case_result['last_error'], $name );
 			$this->assertSame( 0, $case_result['num_rows'], $name );
 			$this->assertSame( array(), $case_result['last_result'], $name );
 			$this->assertSame( array(), $case_result['driver_queries'], $name );
-			$this->assertSame( array( array( 'wp_e2e_options' ) ), $case_result['catalog_query_params'], $name );
+			$this->assertSame( array( array( $expected_catalog_table ) ), $case_result['catalog_query_params'], $name );
 			$this->assertSame( array(), $case_result['errors'], $name );
 		}
 
@@ -3145,6 +3182,15 @@ PHP
 		);
 		$this->assertSame( array(), $result['old_prefix_alloptions_result']['catalog_query_params'] );
 
+		$this->assertSame( 1, $result['old_prefix_describe_result']['return'] );
+		$this->assertSame(
+			array(
+				'DESCRIBE wp_options;',
+			),
+			$result['old_prefix_describe_result']['driver_queries']
+		);
+		$this->assertSame( array(), $result['old_prefix_describe_result']['catalog_query_params'] );
+
 		$this->assertSame( 1, $result['existing_active']['return'] );
 		$this->assertSame(
 			array(
@@ -3180,13 +3226,22 @@ PHP
 		);
 		$this->assertSame( array( array( 'wp_options' ) ), $result['existing_active_alloptions']['catalog_query_params'] );
 
+		$this->assertSame( 1, $result['existing_active_describe']['return'] );
+		$this->assertSame(
+			array(
+				'DESCRIBE wp_options;',
+			),
+			$result['existing_active_describe']['driver_queries']
+		);
+		$this->assertSame( array( array( 'wp_options' ) ), $result['existing_active_describe']['catalog_query_params'] );
+
 		foreach ( $result['near_miss_results'] as $name => $case_result ) {
 			$this->assertFalse( $case_result['return'], $name );
-			$this->assertSame( 'relation "wp_e2e_options" does not exist', $case_result['last_error'], $name );
+			$this->assertStringStartsWith( 'relation "wp_e2e_', $case_result['last_error'], $name );
 			$this->assertSame( array( $result['near_miss_queries'][ $name ] ), $case_result['driver_queries'], $name );
 			$this->assertSame( array(), $case_result['catalog_query_params'], $name );
 			$this->assertSame( $result['near_miss_queries'][ $name ], $case_result['errors'][0]['query'], $name );
-			$this->assertSame( 'relation "wp_e2e_options" does not exist', $case_result['errors'][0]['error_str'], $name );
+			$this->assertSame( $case_result['last_error'], $case_result['errors'][0]['error_str'], $name );
 		}
 
 		$this->assertFalse( $result['unsuppressed_result']['return'] );
@@ -3218,6 +3273,21 @@ PHP
 			$result['unsuppressed_alloptions_result']['errors'][0]['query']
 		);
 		$this->assertSame( 'relation "wp_e2e_options" does not exist', $result['unsuppressed_alloptions_result']['errors'][0]['error_str'] );
+
+		$this->assertFalse( $result['unsuppressed_describe_result']['return'] );
+		$this->assertSame( 'relation "wp_e2e_posts" does not exist', $result['unsuppressed_describe_result']['last_error'] );
+		$this->assertSame(
+			array(
+				'DESCRIBE wp_e2e_posts;',
+			),
+			$result['unsuppressed_describe_result']['driver_queries']
+		);
+		$this->assertSame( array(), $result['unsuppressed_describe_result']['catalog_query_params'] );
+		$this->assertSame(
+			'DESCRIBE wp_e2e_posts;',
+			$result['unsuppressed_describe_result']['errors'][0]['query']
+		);
+		$this->assertSame( 'relation "wp_e2e_posts" does not exist', $result['unsuppressed_describe_result']['errors'][0]['error_str'] );
 	}
 
 	/**
