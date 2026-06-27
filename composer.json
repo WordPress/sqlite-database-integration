@@ -89,6 +89,10 @@
 			"@wp-test-ensure-env @no_additional_args",
 			"npm --prefix wordpress run test:e2e -- @additional_args"
 		],
+		"wp-test-e2e-duckdb": [
+			"@wp-test-ensure-env-duckdb @no_additional_args",
+			"npm --prefix wordpress run test:e2e -- @additional_args"
+		],
 		"wp-test-clean": [
 			"npm --prefix wordpress run env:clean",
 			"rm -rf wordpress/src/wp-content/database/.ht.sqlite wordpress/src/wp-content/database/.ht.duckdb wordpress/src/wp-content/database/.ht.duckdb.wal"
