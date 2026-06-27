@@ -1127,6 +1127,11 @@ class WP_PostgreSQL_Driver {
 				$metadata_tables,
 				! empty( $create_table_query['temporary'] ) ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $metadata_schema
 			);
+			$this->seed_mysql_column_metadata_introspection_cache_for_created_tables(
+				$metadata_tables,
+				! empty( $create_table_query['temporary'] ) ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $metadata_schema,
+				$metadata_query
+			);
 			if ( ! empty( $create_table_query['temporary'] ) ) {
 				$this->mark_mysql_temporary_table_created( $create_table_query['table'] );
 			}
@@ -3414,6 +3419,137 @@ class WP_PostgreSQL_Driver {
 				$this->sync_postgresql_catalog_check_comment( $schema_name, $table_name, $check );
 			}
 		}
+	}
+	private function seed_mysql_column_metadata_introspection_cache_for_created_tables( array $metadata_tables, $table_schema, string $metadata_query ): void {
+		if ( $this->mysql_create_metadata_query_has_explicit_default_null( $metadata_query ) ) {
+			return;
+		}
+
+		foreach ( $metadata_tables as $metadata ) {
+			if ( empty( $metadata['table_name'] ) || ! is_string( $metadata['table_name'] ) ) {
+				continue;
+			}
+
+			$schema_name = is_callable( $table_schema )
+				? (string) call_user_func( $table_schema, $metadata['table_name'] )
+				: (string) $table_schema;
+			if ( '' === $schema_name ) {
+				continue;
+			}
+
+			$rows = $this->get_mysql_column_metadata_introspection_rows_from_create_metadata( $metadata );
+			if ( null === $rows ) {
+				continue;
+			}
+
+			$this->mysql_column_metadata_introspection_cache[ $schema_name . "\0" . $metadata['table_name'] ] = $rows;
+		}
+	}
+	private function mysql_create_metadata_query_has_explicit_default_null( string $metadata_query ): bool {
+		$tokens = $this->get_mysql_tokens( $metadata_query );
+		foreach ( $tokens as $position => $token ) {
+			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL !== $token->id ) {
+				continue;
+			}
+
+			$next = $position + 1;
+			while ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === ( $tokens[ $next ]->id ?? null ) ) {
+				++$next;
+			}
+
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === ( $tokens[ $next ]->id ?? null ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+	private function get_mysql_column_metadata_introspection_rows_from_create_metadata( array $metadata ): ?array {
+		if ( empty( $metadata['columns'] ) || ! is_array( $metadata['columns'] ) ) {
+			return null;
+		}
+
+		$rows              = array();
+		$column_name_index = array();
+		$ordinal           = 1;
+		foreach ( $metadata['columns'] as $column ) {
+			if ( ! is_array( $column ) ) {
+				return null;
+			}
+
+			$row = $this->get_mysql_column_metadata_introspection_row_from_create_column_metadata( $column, $ordinal );
+			if ( null === $row ) {
+				return null;
+			}
+
+			$column_name_key = strtolower( $row['column_name'] );
+			if ( isset( $column_name_index[ $column_name_key ] ) ) {
+				return null;
+			}
+
+			$column_name_index[ $column_name_key ] = true;
+			$rows[]                                = $row;
+			++$ordinal;
+		}
+		return $rows;
+	}
+	private function get_mysql_column_metadata_introspection_row_from_create_column_metadata( array $column, int $expected_ordinal ): ?array {
+		foreach ( array( 'name', 'ordinal', 'type', 'collation', 'nullable', 'default', 'extra' ) as $required_field ) {
+			if ( ! array_key_exists( $required_field, $column ) ) {
+				return null;
+			}
+		}
+
+		$column_name = (string) $column['name'];
+		$column_type = (string) $column['type'];
+		if (
+			'' === $column_name
+			|| '' === trim( $column_type )
+			|| (int) $column['ordinal'] !== $expected_ordinal
+			|| ! $this->is_postgresql_catalog_recoverable_mysql_column_type( $column_type )
+			|| ! $this->is_postgresql_catalog_recoverable_mysql_column_extra( $column['extra'], $column )
+		) {
+			return null;
+		}
+
+		$is_nullable = strtoupper( (string) $column['nullable'] );
+		if ( ! in_array( $is_nullable, array( 'YES', 'NO' ), true ) ) {
+			return null;
+		}
+
+		$column_default = $column['default'];
+		if ( null !== $column_default && ! is_scalar( $column_default ) ) {
+			return null;
+		}
+
+		$extra = $column['extra'];
+		if ( ! is_scalar( $extra ) ) {
+			return null;
+		}
+
+		$collation = $column['collation'];
+		if ( $this->is_mysql_column_metadata_preseed_collatable_column_type( $column_type ) ) {
+			if ( ! is_string( $collation ) || '' === trim( $collation ) ) {
+				return null;
+			}
+
+			$collation = strtolower( trim( $collation ) );
+		} elseif ( null !== $collation ) {
+			return null;
+		}
+
+		return array(
+			'column_name'      => $column_name,
+			'ordinal_position' => (string) $expected_ordinal,
+			'column_type'      => $column_type,
+			'collation_name'   => $collation,
+			'is_nullable'      => $is_nullable,
+			'column_default'   => null === $column_default ? null : (string) $column_default,
+			'extra'            => (string) $extra,
+		);
+	}
+	private function is_mysql_column_metadata_preseed_collatable_column_type( string $column_type ): bool {
+		return $this->is_mysql_text_family_column_type( $column_type )
+			|| 1 === preg_match( '/^\s*(?:enum|set)\s*\(/i', $column_type );
 	}
 	private function mysql_column_extra_has_on_update_current_timestamp( ?string $extra ): bool {
 		return null !== $extra && false !== stripos( $extra, 'on update CURRENT_TIMESTAMP' );

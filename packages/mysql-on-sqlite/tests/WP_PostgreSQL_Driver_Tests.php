@@ -15564,6 +15564,158 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE-time metadata preseed rows exactly match real PostgreSQL catalog rows.
+	 */
+	public function test_create_metadata_preseed_rows_match_real_catalog_rows(): void {
+		list( $driver, $connection, $schema ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                                = 'wptests_create_metadata_preseed_rows';
+
+		$this->assertSame( 0, $driver->query( $this->get_create_metadata_preseed_fixture_sql( $table ) ) );
+
+		$cache_key = $schema . "\0" . $table;
+		$cache     = $this->get_driver_private_property( $driver, 'mysql_column_metadata_introspection_cache' );
+		$this->assertArrayHasKey( $cache_key, $cache );
+
+		$real_rows = $this->read_mysql_catalog_column_metadata_rows( $driver, $schema, $table );
+		$this->assertSame( $real_rows, $cache[ $cache_key ] );
+
+		$connection->clear_column_catalog_queries();
+		$this->assertSame( $real_rows, $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $schema, $table ) );
+		$this->assertSame( array(), $connection->get_column_catalog_queries() );
+
+		$rows_by_column = $this->index_metadata_rows_by_column_name( $real_rows );
+		$this->assertSame( 'bigint(20) unsigned', $rows_by_column['id']['column_type'] );
+		$this->assertSame( 'auto_increment', $rows_by_column['id']['extra'] );
+		$this->assertSame( 'varchar(191)', $rows_by_column['title']['column_type'] );
+		$this->assertSame( 'big5_chinese_ci', $rows_by_column['title']['collation_name'] );
+		$this->assertSame( '', $rows_by_column['title']['column_default'] );
+		$this->assertNull( $rows_by_column['body']['column_default'] );
+		$this->assertSame( 'CURRENT_TIMESTAMP', $rows_by_column['created_at']['column_default'] );
+		$this->assertSame( 'DEFAULT_GENERATED', $rows_by_column['created_at']['extra'] );
+		$this->assertSame( 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', $rows_by_column['touched_at']['extra'] );
+		$this->assertSame( 'enum(\'draft\',\'published\')', $rows_by_column['status']['column_type'] );
+		$this->assertSame( 'draft', $rows_by_column['status']['column_default'] );
+		$this->assertSame( 'set(\'flag-a\',\'flag-b\')', $rows_by_column['flags']['column_type'] );
+		$this->assertSame( 'decimal(10,2) unsigned', $rows_by_column['price']['column_type'] );
+		$this->assertSame( '0.00', $rows_by_column['price']['column_default'] );
+	}
+
+	/**
+	 * Tests CREATE-time metadata preseed does not survive explicit clears, DROP/CREATE, or ALTER.
+	 */
+	public function test_create_metadata_preseed_invalidates_on_explicit_clear_drop_create_and_alter(): void {
+		list( $driver, $connection, $schema ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                                = 'wptests_create_metadata_preseed_invalidate';
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$table}` (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					`title` varchar(20),
+					PRIMARY KEY (`id`)
+				)"
+			)
+		);
+
+		$connection->clear_column_catalog_queries();
+		$this->assertSame(
+			array( 'id', 'title' ),
+			array_column( $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $schema, $table ), 'column_name' )
+		);
+		$this->assertSame( array(), $connection->get_column_catalog_queries() );
+
+		$this->clear_driver_mysql_metadata_caches( $driver );
+		$connection->clear_column_catalog_queries();
+		$this->assertSame(
+			array( 'id', 'title' ),
+			array_column( $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $schema, $table ), 'column_name' )
+		);
+		$this->assertCount( 1, $connection->get_column_catalog_queries() );
+
+		$this->assertSame( 0, $driver->query( "DROP TABLE `{$table}`" ) );
+		$this->assertSame( 0, $driver->query( "CREATE TABLE `{$table}` ( `replacement` varchar(10) )" ) );
+
+		$connection->clear_column_catalog_queries();
+		$this->assertSame(
+			array( 'replacement' ),
+			array_column( $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $schema, $table ), 'column_name' )
+		);
+		$this->assertSame( array(), $connection->get_column_catalog_queries() );
+
+		$this->assertSame( 0, $driver->query( "ALTER TABLE `{$table}` ADD COLUMN `after_alter` varchar(10)" ) );
+
+		$connection->clear_column_catalog_queries();
+		$this->assertSame(
+			array( 'replacement', 'after_alter' ),
+			array_column( $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $schema, $table ), 'column_name' )
+		);
+		$this->assertCount( 1, $connection->get_column_catalog_queries() );
+	}
+
+	/**
+	 * Tests explicit DEFAULT NULL falls back because translator metadata cannot disambiguate it.
+	 */
+	public function test_create_metadata_preseed_falls_back_for_explicit_default_null(): void {
+		list( $driver, $connection, $schema ) = $this->create_create_metadata_preseed_capture_driver();
+		$columns                              = array(
+			'plain'             => '`value` int(11) DEFAULT NULL',
+			'comment_gap'       => '`value` varchar(20) DEFAULT /*gap*/ NULL',
+			'parenthesized_gap' => '`value` varchar(20) DEFAULT ( /*gap*/ NULL )',
+		);
+
+		foreach ( $columns as $suffix => $column ) {
+			$table = 'wptests_create_metadata_preseed_default_null_' . $suffix;
+			$this->assertSame( 0, $driver->query( "CREATE TABLE `{$table}` ( {$column} )" ), $suffix );
+
+			$cache_key = $schema . "\0" . $table;
+			$cache     = $this->get_driver_private_property( $driver, 'mysql_column_metadata_introspection_cache' );
+			$this->assertArrayNotHasKey( $cache_key, $cache, $suffix );
+
+			$connection->clear_column_catalog_queries();
+			$rows = $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $schema, $table );
+
+			$this->assertSame( array( 'value' ), array_column( $rows, 'column_name' ), $suffix );
+			$this->assertCount( 1, $connection->get_column_catalog_queries(), $suffix );
+		}
+	}
+
+	/**
+	 * Tests CREATE-time metadata preseed keeps temporary and permanent tables separate.
+	 */
+	public function test_create_metadata_preseed_keeps_temporary_and_permanent_tables_separate(): void {
+		list( $driver, $connection, $schema ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                                = 'wptests_create_metadata_preseed_shadow';
+
+		$this->assertSame( 0, $driver->query( "CREATE TABLE `{$table}` ( `id` int(11) )" ) );
+		$this->assertSame( 0, $driver->query( "CREATE TEMPORARY TABLE `{$table}` ( `name` varchar(20) )" ) );
+
+		$temp_schema = $this->get_temporary_metadata_schema_for_table( $driver, $table );
+		$this->assertNotSame( $schema, $temp_schema );
+
+		$connection->clear_column_catalog_queries();
+		$this->assertSame(
+			array( 'name' ),
+			array_column( $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $temp_schema, $table ), 'column_name' )
+		);
+		$this->assertSame( array(), $connection->get_column_catalog_queries() );
+
+		$connection->clear_column_catalog_queries();
+		$this->assertSame(
+			array( 'id' ),
+			array_column( $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $schema, $table ), 'column_name' )
+		);
+		$this->assertCount( 1, $connection->get_column_catalog_queries() );
+
+		$connection->clear_column_catalog_queries();
+		$this->assertSame(
+			array( 'name' ),
+			array_column( $this->get_cached_mysql_catalog_column_metadata_rows( $driver, $temp_schema, $table ), 'column_name' )
+		);
+		$this->assertSame( array(), $connection->get_column_catalog_queries() );
+	}
+
+	/**
 	 * Tests unsupported ALTER TABLE column attributes fail before backend execution.
 	 */
 	public function test_alter_table_unsupported_column_attributes_fail_closed_before_backend_execution(): void {
@@ -32219,6 +32371,223 @@ $$'
 
 		$driver->client_info = 'PostgreSQL';
 		return $driver;
+	}
+
+	/**
+	 * Creates a PostgreSQL driver whose connection records full-table column catalog reads.
+	 *
+	 * @return array{0:WP_PostgreSQL_Driver,1:WP_PostgreSQL_Connection,2:string} Driver, connection, and backend schema.
+	 */
+	private function create_create_metadata_preseed_capture_driver(): array {
+		$dsn = getenv( 'PGSQL_TEST_DSN' );
+		if ( false === $dsn || '' === $dsn ) {
+			$this->markTestSkipped( 'Set PGSQL_TEST_DSN to run this real PostgreSQL metadata preseed test.' );
+		}
+
+		$user     = getenv( 'PGSQL_TEST_USER' );
+		$password = getenv( 'PGSQL_TEST_PASSWORD' );
+		$pdo      = new PDO(
+			$dsn,
+			false === $user ? null : $user,
+			false === $password ? null : $password
+		);
+		$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+
+		$this->assertSame(
+			'pgsql',
+			$pdo->getAttribute( PDO::ATTR_DRIVER_NAME ),
+			'PGSQL_TEST_DSN must use the pgsql PDO driver.'
+		);
+
+		$schema     = 'wp_pg_test_' . strtolower( bin2hex( random_bytes( 8 ) ) );
+		$schema_sql = WP_PostgreSQL_Connection::quote_identifier_value( $schema );
+
+		$pdo->exec( 'CREATE SCHEMA ' . $schema_sql );
+		$this->real_pgsql_test_schemas[] = array(
+			'pdo'    => $pdo,
+			'schema' => $schema,
+		);
+
+		$pdo->exec( 'SET search_path TO ' . $schema_sql . ', public' );
+
+		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection {
+			/**
+			 * Captured full-table column catalog metadata reads.
+			 *
+			 * @var array[]
+			 */
+			private $column_catalog_queries = array();
+
+			/**
+			 * Execute a PostgreSQL query and record full-table column catalog reads.
+			 *
+			 * @param string $sql    SQL query.
+			 * @param array  $params Query parameters.
+			 * @return PDOStatement Statement.
+			 */
+			public function query( string $sql, array $params = array() ): PDOStatement {
+				if (
+					false !== strpos( $sql, 'FROM information_schema.columns c' )
+					&& false !== strpos( $sql, 'pg_catalog.col_description(pc.oid, pa.attnum)' )
+				) {
+					$this->column_catalog_queries[] = array(
+						'sql'    => $sql,
+						'params' => $params,
+					);
+				}
+
+				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured full-table column catalog metadata reads.
+			 *
+			 * @return array[] Catalog queries.
+			 */
+			public function get_column_catalog_queries(): array {
+				return $this->column_catalog_queries;
+			}
+
+			/**
+			 * Clear captured column catalog metadata reads.
+			 */
+			public function clear_column_catalog_queries(): void {
+				$this->column_catalog_queries = array();
+			}
+		};
+
+		$driver           = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$db_name_property = new ReflectionProperty( WP_PostgreSQL_Driver::class, 'db_name' );
+		$db_name_property->setValue( $driver, $schema );
+
+		return array( $driver, $connection, $schema );
+	}
+
+	/**
+	 * Get CREATE TABLE SQL for metadata preseed row-equivalence coverage.
+	 *
+	 * @param string $table Table name.
+	 * @return string MySQL CREATE TABLE SQL.
+	 */
+	private function get_create_metadata_preseed_fixture_sql( string $table ): string {
+		return "CREATE TABLE `{$table}` (
+			`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			`title` varchar(191) CHARACTER SET big5 NOT NULL DEFAULT '' COMMENT 'Title note',
+			`body` longtext,
+			`created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			`touched_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			`status` enum('draft','published') NOT NULL DEFAULT 'draft',
+			`flags` set('flag-a','flag-b'),
+			`price` decimal(10,2) unsigned NOT NULL DEFAULT '0.00',
+			PRIMARY KEY (`id`),
+			KEY `title` (`title`)
+		) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Preseed table'";
+	}
+
+	/**
+	 * Read real catalog column metadata rows through the driver's private reader.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 * @param string               $schema Backend schema.
+	 * @param string               $table  Table name.
+	 * @return array[] Metadata rows.
+	 */
+	private function read_mysql_catalog_column_metadata_rows( WP_PostgreSQL_Driver $driver, string $schema, string $table ): array {
+		$read_rows = Closure::bind(
+			function ( string $schema, string $table ): array {
+				return $this->read_mysql_table_catalog_column_metadata_rows( $schema, $table );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		if ( ! $read_rows instanceof Closure ) {
+			throw new RuntimeException( 'Could not bind MySQL metadata catalog reader.' );
+		}
+
+		return $read_rows( $schema, $table );
+	}
+
+	/**
+	 * Get cached catalog column metadata rows through the driver's private cache helper.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 * @param string               $schema Backend schema.
+	 * @param string               $table  Table name.
+	 * @return array[] Metadata rows.
+	 */
+	private function get_cached_mysql_catalog_column_metadata_rows( WP_PostgreSQL_Driver $driver, string $schema, string $table ): array {
+		$get_rows = Closure::bind(
+			function ( string $schema, string $table ): array {
+				return $this->get_cached_mysql_table_catalog_column_metadata_rows( $schema, $table );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		if ( ! $get_rows instanceof Closure ) {
+			throw new RuntimeException( 'Could not bind MySQL metadata catalog cache reader.' );
+		}
+
+		return $get_rows( $schema, $table );
+	}
+
+	/**
+	 * Clear driver metadata caches through the driver's private helper.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 */
+	private function clear_driver_mysql_metadata_caches( WP_PostgreSQL_Driver $driver ): void {
+		$clear_caches = Closure::bind(
+			function (): void {
+				$this->clear_mysql_metadata_caches();
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		if ( ! $clear_caches instanceof Closure ) {
+			throw new RuntimeException( 'Could not bind MySQL metadata cache clearer.' );
+		}
+
+		$clear_caches();
+	}
+
+	/**
+	 * Get the backend temporary schema for a table through the driver's private helper.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver Driver under test.
+	 * @param string               $table  Table name.
+	 * @return string Temporary schema name.
+	 */
+	private function get_temporary_metadata_schema_for_table( WP_PostgreSQL_Driver $driver, string $table ): string {
+		$get_schema = Closure::bind(
+			function ( string $table ): string {
+				return $this->get_temporary_schema_for_metadata_table( $table );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		if ( ! $get_schema instanceof Closure ) {
+			throw new RuntimeException( 'Could not bind MySQL temporary metadata schema reader.' );
+		}
+
+		return $get_schema( $table );
+	}
+
+	/**
+	 * Index metadata rows by column name.
+	 *
+	 * @param array[] $rows Metadata rows.
+	 * @return array<string,array> Metadata rows keyed by column name.
+	 */
+	private function index_metadata_rows_by_column_name( array $rows ): array {
+		$indexed = array();
+		foreach ( $rows as $row ) {
+			$indexed[ (string) $row['column_name'] ] = $row;
+		}
+		return $indexed;
 	}
 
 	/**
