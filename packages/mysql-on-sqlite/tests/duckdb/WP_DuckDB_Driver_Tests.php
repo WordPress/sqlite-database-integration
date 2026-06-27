@@ -1470,6 +1470,133 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_update_infers_non_first_writable_target(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'x'), (2, 'y'), (3, 'q')" );
+
+		$joined = $driver->query(
+			"UPDATE t1 a JOIN t2 b ON a.id = b.id
+			SET b.note = 'z'
+			WHERE a.id IN (1, 3)"
+		);
+
+		$this->assertSame( 2, $joined->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'a',
+				),
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+				array(
+					'id'   => 3,
+					'note' => 'c',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'z',
+				),
+				array(
+					'id'   => 2,
+					'note' => 'y',
+				),
+				array(
+					'id'   => 3,
+					'note' => 'z',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$comma = $driver->query(
+			"UPDATE t1 a, t2 b
+			SET b.note = 'comma'
+			WHERE a.id = b.id AND a.id = 2"
+		);
+
+		$this->assertSame( 1, $comma->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'a',
+				),
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+				array(
+					'id'   => 3,
+					'note' => 'c',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'z',
+				),
+				array(
+					'id'   => 2,
+					'note' => 'comma',
+				),
+				array(
+					'id'   => 3,
+					'note' => 'z',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_joined_update_infers_same_base_non_first_alias_target(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE tree (id INT, parent_id INT, label VARCHAR(20))' );
+		$driver->query( "INSERT INTO tree VALUES (1, NULL, 'root'), (2, 1, 'child'), (3, 1, 'sibling')" );
+
+		$updated = $driver->query(
+			"UPDATE tree parent JOIN tree child ON child.parent_id = parent.id
+			SET child.label = 'claimed'
+			WHERE parent.id = 1 AND child.id = 2"
+		);
+
+		$this->assertSame( 1, $updated->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'    => 1,
+					'label' => 'root',
+				),
+				array(
+					'id'    => 2,
+					'label' => 'claimed',
+				),
+				array(
+					'id'    => 3,
+					'label' => 'sibling',
+				),
+			),
+			$driver->query( 'SELECT id, label FROM tree ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_joined_update_rejects_unsupported_shapes(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1478,6 +1605,27 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20))' );
 		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b')" );
 		$driver->query( "INSERT INTO t2 VALUES (1, 'x'), (3, 'z')" );
+
+		$expected_t1_rows = array(
+			array(
+				'id'   => 1,
+				'note' => 'a',
+			),
+			array(
+				'id'   => 2,
+				'note' => 'b',
+			),
+		);
+		$expected_t2_rows = array(
+			array(
+				'id'   => 1,
+				'note' => 'x',
+			),
+			array(
+				'id'   => 3,
+				'note' => 'z',
+			),
+		);
 
 		foreach (
 			array(
@@ -1509,21 +1657,18 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
 				$this->assertStringContainsString( $rejection['message'], $e->getMessage() );
 			}
-		}
 
-		$this->assertSame(
-			array(
-				array(
-					'id'   => 1,
-					'note' => 'a',
-				),
-				array(
-					'id'   => 2,
-					'note' => 'b',
-				),
-			),
-			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
-		);
+			$this->assertSame(
+				$expected_t1_rows,
+				$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'Rejected joined UPDATE mutated t1 for SQL: ' . $rejection['sql']
+			);
+			$this->assertSame(
+				$expected_t2_rows,
+				$driver->query( 'SELECT id, note FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'Rejected joined UPDATE mutated t2 for SQL: ' . $rejection['sql']
+			);
+		}
 	}
 
 	public function test_escaped_like_predicates_use_mysql_backslash_semantics(): void {

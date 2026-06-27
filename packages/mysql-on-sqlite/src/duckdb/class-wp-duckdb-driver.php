@@ -1772,14 +1772,24 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_joined_update( array $shape ): WP_DuckDB_Result_Statement {
+		$references = array_merge( array( $shape['target'] ), $shape['sources'] );
+		$update     = $this->translate_joined_update_assignment_tokens_to_duckdb_sql( $shape['update_tokens'], $references );
+		$target     = $references[ $update['target_index'] ];
+		$sources    = array();
+		foreach ( $references as $index => $reference ) {
+			if ( $update['target_index'] !== $index ) {
+				$sources[] = $reference;
+			}
+		}
+
 		$sql = 'UPDATE '
-			. $this->connection->quote_identifier( $shape['target']['table_name'] )
+			. $this->connection->quote_identifier( $target['table_name'] )
 			. ' AS '
-			. $this->connection->quote_identifier( $shape['target']['alias'] )
+			. $this->connection->quote_identifier( $target['alias'] )
 			. ' SET '
-			. $this->translate_joined_update_assignment_tokens_to_duckdb_sql( $shape['update_tokens'], $shape['target'], $shape['sources'] )
+			. $update['sql']
 			. ' FROM '
-			. implode( ', ', array_column( $shape['sources'], 'sql' ) );
+			. implode( ', ', array_column( $sources, 'sql' ) );
 
 		$where_clauses = array();
 		if ( count( $shape['where_tokens'] ) > 0 ) {
@@ -4191,31 +4201,33 @@ class WP_DuckDB_Driver {
 	/**
 	 * Translate joined UPDATE assignments and enforce a single writable target.
 	 *
-	 * @param WP_Parser_Token[]                                                $tokens  Update-list tokens.
-	 * @param array{alias:string,table_name:string,requested_table_name:string} $target Target reference.
-	 * @param array<int,array{alias:string,sql:string,table_name:string|null}>  $sources Source references.
-	 * @return string DuckDB update-list SQL.
+	 * @param WP_Parser_Token[]            $tokens     Update-list tokens.
+	 * @param array<int,array<string,mixed>> $references Joined references.
+	 * @return array{target_index:int,sql:string} Resolved writable target index and DuckDB update-list SQL.
 	 */
-	private function translate_joined_update_assignment_tokens_to_duckdb_sql( array $tokens, array $target, array $sources ): string {
-		$target_qualifiers = array_map(
-			'strtolower',
-			array_unique(
+	private function translate_joined_update_assignment_tokens_to_duckdb_sql( array $tokens, array $references ): array {
+		$qualifier_references = array();
+		foreach ( $references as $index => $reference ) {
+			$qualifiers = array_filter(
 				array(
-					$target['alias'],
-					$target['requested_table_name'],
-					$target['table_name'],
-				)
-			)
-		);
-		$source_aliases    = array();
-		foreach ( $sources as $source ) {
-			$source_aliases[ strtolower( $source['alias'] ) ] = $source;
-			if ( null !== $source['table_name'] ) {
-				$source_aliases[ strtolower( $source['table_name'] ) ] = $source;
+					$reference['alias'],
+					$reference['requested_table_name'],
+					$reference['table_name'],
+				),
+				'is_string'
+			);
+
+			foreach ( array_unique( $qualifiers ) as $qualifier ) {
+				$key = strtolower( $qualifier );
+				if ( ! isset( $qualifier_references[ $key ] ) ) {
+					$qualifier_references[ $key ] = array();
+				}
+				$qualifier_references[ $key ][] = $index;
 			}
 		}
 
-		$items = array();
+		$items        = array();
+		$target_index = null;
 		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
 			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
 			if ( null === $equals_index ) {
@@ -4229,32 +4241,51 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( 1 === count( $left_tokens ) ) {
-				$column = $this->identifier_value( $left_tokens[0] );
-				if ( ! $this->table_has_column( $target['table_name'], $column, $target['temporary'] ) ) {
-					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
-				}
-				foreach ( $sources as $source ) {
-					if ( null !== $source['table_name'] && $this->table_has_column( $source['table_name'], $column, $source['temporary'] ) ) {
-						throw new WP_DuckDB_Driver_Exception( "Ambiguous unqualified UPDATE target column '{$column}' in DuckDB driver." );
+				$column                  = $this->identifier_value( $left_tokens[0] );
+				$assignment_target_index = null;
+				foreach ( $references as $index => $reference ) {
+					$has_column = null !== $reference['table_name']
+						&& $this->table_has_column( $reference['table_name'], $column, $reference['temporary'] );
+					if ( $has_column ) {
+						if ( null !== $assignment_target_index ) {
+							throw new WP_DuckDB_Driver_Exception( "Ambiguous unqualified UPDATE target column '{$column}' in DuckDB driver." );
+						}
+						$assignment_target_index = $index;
 					}
+				}
+				if ( null === $assignment_target_index ) {
+					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
 				}
 			} elseif (
 				3 === count( $left_tokens )
 				&& WP_MySQL_Lexer::DOT_SYMBOL === $left_tokens[1]->id
 			) {
-				$qualifier = strtolower( $this->identifier_value( $left_tokens[0] ) );
-				$column    = $this->identifier_value( $left_tokens[2] );
-				if ( ! in_array( $qualifier, $target_qualifiers, true ) ) {
-					if ( isset( $source_aliases[ $qualifier ] ) ) {
-						throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE statement modifying multiple tables is not supported.' );
-					}
-					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target qualifier '{$this->identifier_value( $left_tokens[0] )}' in DuckDB driver." );
+				$qualifier_label = $this->identifier_value( $left_tokens[0] );
+				$qualifier       = strtolower( $qualifier_label );
+				$column          = $this->identifier_value( $left_tokens[2] );
+				if ( ! isset( $qualifier_references[ $qualifier ] ) ) {
+					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target qualifier '{$qualifier_label}' in DuckDB driver." );
 				}
-				if ( ! $this->table_has_column( $target['table_name'], $column, $target['temporary'] ) ) {
+				$matched_references = array_values( array_unique( $qualifier_references[ $qualifier ] ) );
+				if ( 1 !== count( $matched_references ) ) {
+					throw new WP_DuckDB_Driver_Exception( "Ambiguous UPDATE target qualifier '{$qualifier_label}' in DuckDB driver." );
+				}
+				$assignment_target_index = $matched_references[0];
+				$assignment_target       = $references[ $assignment_target_index ];
+				if ( null === $assignment_target['table_name'] ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Derived tables cannot be updated.' );
+				}
+				if ( ! $this->table_has_column( $assignment_target['table_name'], $column, $assignment_target['temporary'] ) ) {
 					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
 				}
 			} else {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only simple column assignments are supported.' );
+			}
+
+			if ( null === $target_index ) {
+				$target_index = $assignment_target_index;
+			} elseif ( $target_index !== $assignment_target_index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE statement modifying multiple tables is not supported.' );
 			}
 
 			$items[] = $this->connection->quote_identifier( $column )
@@ -4262,7 +4293,14 @@ class WP_DuckDB_Driver {
 				. $this->translate_tokens_to_duckdb_sql( $right_tokens );
 		}
 
-		return implode( ', ', $items );
+		if ( null === $target_index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE list is required.' );
+		}
+
+		return array(
+			'target_index' => $target_index,
+			'sql'          => implode( ', ', $items ),
+		);
 	}
 
 	/**
