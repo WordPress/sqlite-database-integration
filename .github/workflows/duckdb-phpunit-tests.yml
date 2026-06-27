@@ -164,7 +164,11 @@ jobs:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
           WP_SQLITE_DISABLE_EXPECTED_RESULTS: '1'
-          WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb -- --log-junit=phpunit-duckdb-results.xml --verbose
+          WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND: 'true'
+          WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-full
+          WP_SQLITE_PHPUNIT_BASELINE_SECONDS: '380'
+          WP_SQLITE_PHPUNIT_MAX_SECONDS: '420'
+          WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-results.xml --verbose
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
 

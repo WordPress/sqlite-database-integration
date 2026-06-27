@@ -10,10 +10,14 @@ const fs = require( 'fs' );
 const path = require( 'path' );
 
 const repoRoot = path.join( __dirname, '..', '..' );
+const wrapperStartedAt = Date.now();
 const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
 const phpunitCommand = process.env.WP_SQLITE_PHPUNIT_COMMAND || 'composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose';
 const isDuckDBPhpunitRun = phpunitCommand.includes( 'wp-test-php-duckdb' );
 const phpunitEnsureEnvironmentCommand = process.env.WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND || getDefaultEnsureEnvironmentCommand();
+const phpunitMaxSeconds = getPositiveNumberEnv( 'WP_SQLITE_PHPUNIT_MAX_SECONDS' );
+const phpunitBaselineSeconds = getPositiveNumberEnv( 'WP_SQLITE_PHPUNIT_BASELINE_SECONDS' );
+const phpunitTimingLabel = process.env.WP_SQLITE_PHPUNIT_TIMING_LABEL || ( isDuckDBPhpunitRun ? 'duckdb' : 'sqlite' );
 const ensurePhpunitCompatibility = process.env.WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY === '1';
 const phpunitCompatibilityConstraint = process.env.WP_SQLITE_PHPUNIT_COMPATIBILITY_CONSTRAINT || '^9.6';
 const skipPhpunitCompatibilityCheck = process.env.WP_SQLITE_SKIP_PHPUNIT_COMPATIBILITY_CHECK === '1';
@@ -167,6 +171,9 @@ if ( requiresNativeParserExtension ) {
 }
 console.log( 'PHPUnit command:', phpunitCommand );
 console.log( 'Expected-result mode:', isDuckDBPhpunitRun ? 'duckdb' : 'sqlite' );
+console.log( 'PHPUnit timing label:', phpunitTimingLabel );
+console.log( 'PHPUnit baseline seconds:', phpunitBaselineSeconds || 'none' );
+console.log( 'PHPUnit max seconds:', phpunitMaxSeconds || 'none' );
 if ( disableExpectedResults ) {
 	console.log( 'Expected-result allowlist disabled.' );
 }
@@ -181,6 +188,42 @@ function getDefaultEnsureEnvironmentCommand() {
 	return isDuckDBPhpunitRun
 		? 'composer run wp-test-ensure-env-duckdb'
 		: 'composer run wp-test-ensure-env';
+}
+
+function getPositiveNumberEnv( name ) {
+	const value = Number( process.env[ name ] || 0 );
+	return Number.isFinite( value ) && value > 0 ? value : 0;
+}
+
+function markProgress( phase, extra = {} ) {
+	const elapsedSeconds = ( Date.now() - wrapperStartedAt ) / 1000;
+	const fields = {
+		phase,
+		label: phpunitTimingLabel,
+		elapsed_seconds: elapsedSeconds.toFixed( 3 ),
+		...extra,
+	};
+	const message = Object.entries( fields ).map( ( [ key, value ] ) => `${ key }=${ value }` ).join( ' ' );
+	console.log( `WP_SQLITE_PHPUNIT_PROGRESS ${ message }` );
+	if ( process.env.GITHUB_ACTIONS === 'true' ) {
+		console.log( `::notice title=WordPress PHPUnit progress::${ message }` );
+	}
+}
+
+function appendTimingSummary( timingSummary ) {
+	if ( ! process.env.GITHUB_STEP_SUMMARY ) {
+		return;
+	}
+
+	const rows = [
+		'| Field | Value |',
+		'| --- | --- |',
+		...Object.entries( timingSummary ).map( ( [ key, value ] ) => `| ${ key } | ${ value } |` ),
+	];
+	fs.appendFileSync(
+		process.env.GITHUB_STEP_SUMMARY,
+		`\n### WordPress PHPUnit timing\n\n${ rows.join( '\n' ) }\n`
+	);
 }
 
 function preparePhpunitCommand() {
@@ -431,13 +474,48 @@ try {
 		verifyNativeParserExtension();
 	}
 
+	markProgress( 'compatibility_start' );
 	ensureCompatiblePhpunitRunner();
+	markProgress( 'compatibility_done' );
 	const effectivePhpunitCommand = preparePhpunitCommand();
+	markProgress( 'command_prepared' );
+
+	let phpunitTimedOut = false;
+	let phpunitCommandSeconds = 0;
+	let phpunitStartedAt = 0;
 
 	try {
-		execSync( effectivePhpunitCommand, { stdio: 'inherit' } );
+		markProgress( 'phpunit_start', { max_seconds: phpunitMaxSeconds || 'none' } );
+		phpunitStartedAt = Date.now();
+		execSync(
+			effectivePhpunitCommand,
+			{
+				stdio: 'inherit',
+				timeout: phpunitMaxSeconds ? phpunitMaxSeconds * 1000 : undefined,
+				killSignal: 'SIGTERM',
+			}
+		);
+		phpunitCommandSeconds = ( Date.now() - phpunitStartedAt ) / 1000;
+		markProgress( 'phpunit_exit_zero', { command_seconds: phpunitCommandSeconds.toFixed( 3 ) } );
 		console.log( '\n⚠️ All tests passed, checking if expected errors/failures occurred...' );
 	} catch ( error ) {
+		phpunitCommandSeconds = phpunitStartedAt ? ( Date.now() - phpunitStartedAt ) / 1000 : 0;
+		phpunitTimedOut = Boolean(
+			phpunitMaxSeconds &&
+			(
+				phpunitCommandSeconds >= phpunitMaxSeconds ||
+				error.signal === 'SIGTERM' ||
+				String( error.message || '' ).includes( 'ETIMEDOUT' )
+			)
+		);
+		markProgress(
+			phpunitTimedOut ? 'phpunit_timeout' : 'phpunit_exit_nonzero',
+			{ command_seconds: phpunitCommandSeconds.toFixed( 3 ) }
+		);
+		if ( phpunitTimedOut ) {
+			console.error( `\n❌ PHPUnit command exceeded ${ phpunitMaxSeconds }s for ${ phpunitTimingLabel }.` );
+			process.exit( 1 );
+		}
 		console.log( '\n⚠️ Some tests errored/failed (expected). Analyzing results...' );
 	}
 
@@ -447,11 +525,13 @@ try {
 		process.exit( 1 );
 	}
 	const junitXml = fs.readFileSync( junitOutputFile, 'utf8' );
+	markProgress( 'junit_read', { command_seconds: phpunitCommandSeconds.toFixed( 3 ) } );
 
 	// Extract test info from the XML:
 	const actualTests = [];
 	const actualErrors = [];
 	const actualFailures = [];
+	let junitTestcaseSeconds = 0;
 	for ( const testcase of junitXml.matchAll( /<testcase([^>]*)\/>|<testcase([^>]*)>([\s\S]*?)<\/testcase>/g ) ) {
 		const attributes = {};
 		const attributesString = testcase[2] ?? testcase[1];
@@ -462,6 +542,12 @@ try {
 		const content = testcase[3] ?? '';
 		const fqn = attributes.class ? `${attributes.class}::${attributes.name}` : attributes.name;
 		actualTests.push( fqn );
+		if ( attributes.time ) {
+			const testcaseSeconds = Number( attributes.time );
+			if ( Number.isFinite( testcaseSeconds ) ) {
+				junitTestcaseSeconds += testcaseSeconds;
+			}
+		}
 
 		const hasError = content.includes( '<error' );
 		const hasFailure = content.includes( '<failure' );
@@ -475,7 +561,31 @@ try {
 		}
 	}
 
+	const timingSummary = {
+		label: phpunitTimingLabel,
+		command_seconds: phpunitCommandSeconds.toFixed( 3 ),
+		junit_testcase_seconds: junitTestcaseSeconds.toFixed( 3 ),
+		tests: actualTests.length,
+		errors: actualErrors.length,
+		failures: actualFailures.length,
+		baseline_seconds: phpunitBaselineSeconds || '',
+		max_seconds: phpunitMaxSeconds || '',
+	};
+	console.log(
+		'WP_SQLITE_PHPUNIT_TIMING ' +
+		Object.entries( timingSummary ).map( ( [ key, value ] ) => `${ key }=${ value }` ).join( ' ' )
+	);
+	appendTimingSummary( timingSummary );
+	markProgress( 'junit_parsed', { tests: actualTests.length } );
+
 	let isSuccess = true;
+
+	if ( phpunitBaselineSeconds && phpunitCommandSeconds > phpunitBaselineSeconds ) {
+		console.error(
+			`\n❌ PHPUnit command took ${ phpunitCommandSeconds.toFixed( 3 ) }s, above ${ phpunitBaselineSeconds }s baseline.`
+		);
+		isSuccess = false;
+	}
 
 	// Check if all expected errors actually errored
 	const expectedErrorsInScope = filterExpectedResultsInScope( expectedErrors, actualTests );
