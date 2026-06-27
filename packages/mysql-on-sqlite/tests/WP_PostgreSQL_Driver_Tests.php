@@ -3877,7 +3877,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_plain (`id`, `value`) VALUES (1, 'first')" ) );
 		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_plain (`id`, `value`) VALUES (2, 'second')" ) );
-		$this->assertSame( 1, $this->count_dml_identity_eligibility_metadata_queries( $logged_sql ) );
+		$this->assertSame( 0, $this->count_dml_identity_eligibility_metadata_queries( $logged_sql ) );
 		$this->assertSame( 0, $this->count_identity_sequence_repair_metadata_queries( $logged_sql ) );
 		$this->assertSame( array(), $this->get_identity_sequence_repair_queries( $driver->get_last_postgresql_queries() ) );
 
