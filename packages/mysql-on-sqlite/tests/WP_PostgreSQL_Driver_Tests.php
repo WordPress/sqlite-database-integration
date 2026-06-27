@@ -11499,6 +11499,166 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests usermeta priming SELECT templates reuse shape without stale literals.
+	 */
+	public function test_usermeta_priming_select_template_cache_reuses_shape_without_stale_literals(): void {
+		$driver = $this->create_backendless_driver();
+
+		$first = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'get_mysql_select_query_translation',
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (11) ORDER BY umeta_id ASC'
+		);
+
+		$this->assertIsArray( $first );
+		$this->assertTrue( $first['translated'] );
+		$this->assertSame(
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (11) ORDER BY umeta_id ASC',
+			$first['sql']
+		);
+
+		$cache = $this->get_driver_private_property( $driver, 'mysql_meta_priming_select_template_cache' );
+		$this->assertCount( 1, $cache );
+
+		$template = reset( $cache );
+		$this->assertIsArray( $template );
+		$this->assertStringNotContainsString( '11', $template['prefix_sql'] . $template['suffix_sql'] );
+
+		$second = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'get_mysql_select_query_translation',
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (27) ORDER BY umeta_id ASC'
+		);
+
+		$this->assertIsArray( $second );
+		$this->assertSame(
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (27) ORDER BY umeta_id ASC',
+			$second['sql']
+		);
+		$this->assertStringNotContainsString( '(11)', $second['sql'] );
+		$this->assertSame(
+			$cache,
+			$this->get_driver_private_property( $driver, 'mysql_meta_priming_select_template_cache' )
+		);
+	}
+
+	/**
+	 * Tests placeholder and literal usermeta priming SELECT templates are distinct.
+	 */
+	public function test_usermeta_priming_select_template_cache_separates_placeholder_and_literal_slots(): void {
+		$driver = $this->create_backendless_driver();
+
+		$literal     = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'get_mysql_select_query_translation',
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (42) ORDER BY umeta_id ASC'
+		);
+		$placeholder = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'get_mysql_select_query_translation',
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (?) ORDER BY umeta_id ASC'
+		);
+
+		$this->assertIsArray( $literal );
+		$this->assertIsArray( $placeholder );
+		$this->assertSame(
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (42) ORDER BY umeta_id ASC',
+			$literal['sql']
+		);
+		$this->assertSame(
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (?) ORDER BY umeta_id ASC',
+			$placeholder['sql']
+		);
+		$this->assertCount(
+			2,
+			$this->get_driver_private_property( $driver, 'mysql_meta_priming_select_template_cache' )
+		);
+	}
+
+	/**
+	 * Tests multi-slot usermeta priming SELECT templates preserve slot order and count.
+	 */
+	public function test_usermeta_priming_select_template_cache_preserves_multi_slot_lists(): void {
+		$driver = $this->create_backendless_driver();
+
+		$placeholders = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'get_mysql_select_query_translation',
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (?, ?) ORDER BY umeta_id ASC'
+		);
+		$literals     = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'get_mysql_select_query_translation',
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (7, 3, 11) ORDER BY umeta_id ASC'
+		);
+
+		$this->assertIsArray( $placeholders );
+		$this->assertIsArray( $literals );
+		$this->assertSame(
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (?, ?) ORDER BY umeta_id ASC',
+			$placeholders['sql']
+		);
+		$this->assertSame(
+			'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (7, 3, 11) ORDER BY umeta_id ASC',
+			$literals['sql']
+		);
+		$this->assertCount(
+			2,
+			$this->get_driver_private_property( $driver, 'mysql_meta_priming_select_template_cache' )
+		);
+	}
+
+	/**
+	 * Tests quoted identifiers and prefixed usermeta table names preserve translator output.
+	 */
+	public function test_usermeta_priming_select_template_cache_preserves_quoted_prefixed_table_translation(): void {
+		$driver = $this->create_backendless_driver();
+		$query  = 'SELECT `user_id`, `meta_key`, `meta_value` FROM `wptests_usermeta` WHERE `user_id` IN (4, 5) ORDER BY `umeta_id` ASC';
+
+		$template_translation = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'get_mysql_select_query_translation',
+			$query
+		);
+
+		$this->assertIsArray( $template_translation );
+		$this->assertSame(
+			'SELECT "user_id", "meta_key", "meta_value" FROM "wptests_usermeta" WHERE "user_id" IN (4, 5) ORDER BY "umeta_id" ASC',
+			$template_translation['sql']
+		);
+	}
+
+	/**
+	 * Tests usermeta priming SELECT near misses stay on the normal translation path.
+	 */
+	public function test_usermeta_priming_select_template_cache_rejects_near_misses(): void {
+		$driver = $this->create_backendless_driver();
+
+		$queries = array(
+			'LIMIT 0, 1'              => 'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (1) ORDER BY umeta_id ASC LIMIT 0, 1',
+			'missing ORDER BY'        => 'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (1)',
+			'table alias'             => 'SELECT user_id, meta_key, meta_value FROM wp_usermeta AS um WHERE user_id IN (1) ORDER BY umeta_id ASC',
+			'AND predicate'           => "SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (1) AND meta_key = 'role' ORDER BY umeta_id ASC",
+			'mismatched order column' => 'SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (1) ORDER BY meta_id ASC',
+		);
+
+		foreach ( $queries as $label => $query ) {
+			$translation = $this->translate_driver_query_data_with_private_method(
+				$driver,
+				'get_mysql_usermeta_priming_select_template_translation',
+				$query
+			);
+
+			$this->assertNull( $translation, $label );
+			$this->assertSame(
+				array(),
+				$this->get_driver_private_property( $driver, 'mysql_meta_priming_select_template_cache' ),
+				$label
+			);
+		}
+	}
+
+	/**
 	 * Tests exact SQL_CALC_FOUND_ROWS count SQL is cached until table metadata changes.
 	 */
 	public function test_sql_calc_found_rows_count_query_cache_reuses_exact_sql_until_metadata_changes(): void {
