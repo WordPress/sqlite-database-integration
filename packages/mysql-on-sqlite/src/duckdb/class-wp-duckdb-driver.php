@@ -10278,15 +10278,11 @@ class WP_DuckDB_Driver {
 		$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
 
-		if ( ! isset( $tokens[ $index ] ) || ! isset( self::DATA_TYPE_MAP[ $tokens[ $index ]->id ] ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported MySQL column type for DuckDB column: ' . $column_name . '.' );
-		}
-
 		$type_index = $index;
-		$type_token = $tokens[ $index ];
-		$duck_type  = self::DATA_TYPE_MAP[ $type_token->id ];
+		$duck_type  = $this->duckdb_type_for_mysql_column_type( $tokens, $type_index, $column_name );
+		$type_token = $tokens[ $type_index ];
 		++$index;
-		$index = $this->skip_type_modifiers( $tokens, $index );
+		$index = $this->skip_type_modifiers( $tokens, $index, $type_index );
 
 		$not_null       = false;
 		$primary_key    = false;
@@ -10594,13 +10590,43 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Resolve the DuckDB storage type for a MySQL column type.
+	 *
+	 * @param WP_Parser_Token[] $tokens      Token stream.
+	 * @param int               $type_index  Index of the type token.
+	 * @param string            $column_name Column name.
+	 * @return string DuckDB storage type.
+	 */
+	private function duckdb_type_for_mysql_column_type( array $tokens, int $type_index, string $column_name ): string {
+		if ( ! isset( $tokens[ $type_index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported MySQL column type for DuckDB column: ' . $column_name . '.' );
+		}
+
+		if ( isset( self::DATA_TYPE_MAP[ $tokens[ $type_index ]->id ] ) ) {
+			return self::DATA_TYPE_MAP[ $tokens[ $type_index ]->id ];
+		}
+
+		if ( null !== $this->national_character_column_type( $tokens, $type_index ) ) {
+			return 'VARCHAR';
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported MySQL column type for DuckDB column: ' . $column_name . '.' );
+	}
+
+	/**
 	 * Skip MySQL type display widths and modifiers.
 	 *
-	 * @param WP_Parser_Token[] $tokens Token stream.
-	 * @param int               $index  Current index.
+	 * @param WP_Parser_Token[] $tokens     Token stream.
+	 * @param int               $index      Current index.
+	 * @param int               $type_index Index of the type token.
 	 * @return int New index.
 	 */
-	private function skip_type_modifiers( array $tokens, int $index ): int {
+	private function skip_type_modifiers( array $tokens, int $index, int $type_index ): int {
+		$national_type = $this->national_character_column_type( $tokens, $type_index );
+		if ( null !== $national_type ) {
+			$index = $national_type['attributes_index'];
+		}
+
 		while ( $index < count( $tokens ) ) {
 			$token = $tokens[ $index ];
 			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
@@ -10635,8 +10661,14 @@ class WP_DuckDB_Driver {
 	 * @return string MySQL column type.
 	 */
 	private function mysql_column_type_from_tokens( array $tokens, int $type_index ): string {
-		$pieces = array( $tokens[ $type_index ]->get_bytes() );
-		$index  = $type_index + 1;
+		$national_type = $this->national_character_column_type( $tokens, $type_index );
+		if ( null !== $national_type ) {
+			$pieces = array( $national_type['data_type'] );
+			$index  = $national_type['attributes_index'];
+		} else {
+			$pieces = array( $tokens[ $type_index ]->get_bytes() );
+			$index  = $type_index + 1;
+		}
 
 		while ( $index < count( $tokens ) ) {
 			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
@@ -10715,9 +10747,91 @@ class WP_DuckDB_Driver {
 
 			case WP_MySQL_Lexer::VARBINARY_SYMBOL:
 				return $this->mysql_column_type_with_base( $column_type, 'varbinary' );
+
+			case WP_MySQL_Lexer::NCHAR_SYMBOL:
+			case WP_MySQL_Lexer::NATIONAL_SYMBOL:
+			case WP_MySQL_Lexer::NVARCHAR_SYMBOL:
+				if ( 0 === strpos( $column_type, 'varchar' ) ) {
+					return $this->mysql_column_type_with_base( $column_type, 'varchar' );
+				}
+
+				return $this->mysql_column_type_with_default_attributes(
+					$this->mysql_column_type_with_base( $column_type, 'char' ),
+					'(1)'
+				);
 		}
 
 		return $column_type;
+	}
+
+	/**
+	 * Resolve national character aliases to their canonical MySQL type family.
+	 *
+	 * @param WP_Parser_Token[] $tokens     Column definition tokens.
+	 * @param int               $type_index Index of the type token.
+	 * @return array{data_type:string,attributes_index:int}|null National type details.
+	 */
+	private function national_character_column_type( array $tokens, int $type_index ): ?array {
+		if ( ! isset( $tokens[ $type_index ] ) ) {
+			return null;
+		}
+
+		switch ( $tokens[ $type_index ]->id ) {
+			case WP_MySQL_Lexer::NCHAR_SYMBOL:
+				if (
+					isset( $tokens[ $type_index + 1 ] )
+					&& in_array( $tokens[ $type_index + 1 ]->id, array( WP_MySQL_Lexer::VARCHAR_SYMBOL, WP_MySQL_Lexer::VARYING_SYMBOL ), true )
+				) {
+					return array(
+						'data_type'        => 'varchar',
+						'attributes_index' => $type_index + 2,
+					);
+				}
+
+				return array(
+					'data_type'        => 'char',
+					'attributes_index' => $type_index + 1,
+				);
+
+			case WP_MySQL_Lexer::NVARCHAR_SYMBOL:
+				return array(
+					'data_type'        => 'varchar',
+					'attributes_index' => $type_index + 1,
+				);
+
+			case WP_MySQL_Lexer::NATIONAL_SYMBOL:
+				if ( ! isset( $tokens[ $type_index + 1 ] ) ) {
+					return null;
+				}
+
+				if ( WP_MySQL_Lexer::VARCHAR_SYMBOL === $tokens[ $type_index + 1 ]->id ) {
+					return array(
+						'data_type'        => 'varchar',
+						'attributes_index' => $type_index + 2,
+					);
+				}
+
+				if ( WP_MySQL_Lexer::CHAR_SYMBOL !== $tokens[ $type_index + 1 ]->id ) {
+					return null;
+				}
+
+				if (
+					isset( $tokens[ $type_index + 2 ] )
+					&& WP_MySQL_Lexer::VARYING_SYMBOL === $tokens[ $type_index + 2 ]->id
+				) {
+					return array(
+						'data_type'        => 'varchar',
+						'attributes_index' => $type_index + 3,
+					);
+				}
+
+				return array(
+					'data_type'        => 'char',
+					'attributes_index' => $type_index + 2,
+				);
+		}
+
+		return null;
 	}
 
 	/**
@@ -10768,6 +10882,10 @@ class WP_DuckDB_Driver {
 
 		if ( ! $this->mysql_type_has_collation( $type_token ) ) {
 			return null;
+		}
+
+		if ( $this->mysql_type_uses_national_charset( $type_token ) ) {
+			return 'utf8_general_ci';
 		}
 
 		return null !== $default_collation_name && '' !== $default_collation_name ? $default_collation_name : 'utf8mb4_0900_ai_ci';
@@ -10847,6 +10965,27 @@ class WP_DuckDB_Driver {
 				WP_MySQL_Lexer::TINYTEXT_SYMBOL,
 				WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL,
 				WP_MySQL_Lexer::LONGTEXT_SYMBOL,
+				WP_MySQL_Lexer::NCHAR_SYMBOL,
+				WP_MySQL_Lexer::NATIONAL_SYMBOL,
+				WP_MySQL_Lexer::NVARCHAR_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a MySQL type uses the national character set by default.
+	 *
+	 * @param WP_Parser_Token $type_token Type token.
+	 * @return bool Whether the type is national-character based.
+	 */
+	private function mysql_type_uses_national_charset( WP_Parser_Token $type_token ): bool {
+		return in_array(
+			$type_token->id,
+			array(
+				WP_MySQL_Lexer::NCHAR_SYMBOL,
+				WP_MySQL_Lexer::NATIONAL_SYMBOL,
+				WP_MySQL_Lexer::NVARCHAR_SYMBOL,
 			),
 			true
 		);

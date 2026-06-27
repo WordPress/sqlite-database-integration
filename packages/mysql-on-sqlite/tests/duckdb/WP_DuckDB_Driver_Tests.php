@@ -4190,6 +4190,360 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_national_character_type_family_metadata_defaults_and_writes(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE national_character_types (
+				id INT PRIMARY KEY,
+				plain_nchar NCHAR DEFAULT 'a',
+				nchar_len NCHAR(10) DEFAULT 'bee',
+				national_plain NATIONAL CHAR DEFAULT 'c',
+				national_len NATIONAL CHAR (10) DEFAULT 'dee',
+				nchar_varchar NCHAR VARCHAR(255) DEFAULT 'echo',
+				nchar_varying NCHAR VARYING(32) DEFAULT 'foxtrot',
+				nvarchar_col NVARCHAR(20) DEFAULT 'golf',
+				national_varchar NATIONAL VARCHAR(30) DEFAULT 'hotel',
+				national_char_varying NATIONAL CHAR VARYING(40) DEFAULT 'india',
+				national_character_varying NATIONAL CHARACTER VARYING(50) DEFAULT 'juliet'
+			)"
+		);
+		$driver->query( 'INSERT INTO national_character_types (id) VALUES (1)' );
+		$driver->query(
+			"INSERT INTO national_character_types
+				(id, plain_nchar, nchar_len, national_plain, national_len,
+					nchar_varchar, nchar_varying, nvarchar_col, national_varchar,
+					national_char_varying, national_character_varying)
+			VALUES
+				(2, 'aa', 'bb', 'cc', 'dd', 'ee', 'ff', 'gg', 'hh', 'ii', 'jj')"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'id'                         => 1,
+					'plain_nchar'                => 'a',
+					'nchar_len'                  => 'bee',
+					'national_plain'             => 'c',
+					'national_len'               => 'dee',
+					'nchar_varchar'              => 'echo',
+					'nchar_varying'              => 'foxtrot',
+					'nvarchar_col'               => 'golf',
+					'national_varchar'           => 'hotel',
+					'national_char_varying'      => 'india',
+					'national_character_varying' => 'juliet',
+				),
+				array(
+					'id'                         => 2,
+					'plain_nchar'                => 'aa',
+					'nchar_len'                  => 'bb',
+					'national_plain'             => 'cc',
+					'national_len'               => 'dd',
+					'nchar_varchar'              => 'ee',
+					'nchar_varying'              => 'ff',
+					'nvarchar_col'               => 'gg',
+					'national_varchar'           => 'hh',
+					'national_char_varying'      => 'ii',
+					'national_character_varying' => 'jj',
+				),
+			),
+			$driver->query(
+				'SELECT id, plain_nchar, nchar_len, national_plain, national_len,
+					nchar_varchar, nchar_varying, nvarchar_col, national_varchar,
+					national_char_varying, national_character_varying
+				FROM national_character_types
+				ORDER BY id'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$show_columns = array_slice( $driver->query( 'SHOW COLUMNS FROM national_character_types' )->fetchAll( PDO::FETCH_ASSOC ), 1 );
+		$this->assertSame(
+			array(
+				array(
+					'Field'   => 'plain_nchar',
+					'Type'    => 'char(1)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'a',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'nchar_len',
+					'Type'    => 'char(10)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'bee',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'national_plain',
+					'Type'    => 'char(1)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'c',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'national_len',
+					'Type'    => 'char(10)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'dee',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'nchar_varchar',
+					'Type'    => 'varchar(255)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'echo',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'nchar_varying',
+					'Type'    => 'varchar(32)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'foxtrot',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'nvarchar_col',
+					'Type'    => 'varchar(20)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'golf',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'national_varchar',
+					'Type'    => 'varchar(30)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'hotel',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'national_char_varying',
+					'Type'    => 'varchar(40)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'india',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'national_character_varying',
+					'Type'    => 'varchar(50)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'juliet',
+					'Extra'   => '',
+				),
+			),
+			$show_columns
+		);
+		$this->assertSame(
+			$show_columns,
+			array_slice( $driver->query( 'DESCRIBE national_character_types' )->fetchAll( PDO::FETCH_ASSOC ), 1 )
+		);
+
+		$this->assertSame(
+			array_fill( 0, 10, 'utf8_general_ci' ),
+			array_column(
+				array_slice( $driver->query( 'SHOW FULL COLUMNS FROM national_character_types' )->fetchAll( PDO::FETCH_ASSOC ), 1 ),
+				'Collation'
+			)
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'              => 'plain_nchar',
+					'COLUMN_DEFAULT'           => 'a',
+					'DATA_TYPE'                => 'char',
+					'CHARACTER_MAXIMUM_LENGTH' => 1,
+					'CHARACTER_OCTET_LENGTH'   => 3,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'char(1)',
+				),
+				array(
+					'COLUMN_NAME'              => 'nchar_len',
+					'COLUMN_DEFAULT'           => 'bee',
+					'DATA_TYPE'                => 'char',
+					'CHARACTER_MAXIMUM_LENGTH' => 10,
+					'CHARACTER_OCTET_LENGTH'   => 30,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'char(10)',
+				),
+				array(
+					'COLUMN_NAME'              => 'national_plain',
+					'COLUMN_DEFAULT'           => 'c',
+					'DATA_TYPE'                => 'char',
+					'CHARACTER_MAXIMUM_LENGTH' => 1,
+					'CHARACTER_OCTET_LENGTH'   => 3,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'char(1)',
+				),
+				array(
+					'COLUMN_NAME'              => 'national_len',
+					'COLUMN_DEFAULT'           => 'dee',
+					'DATA_TYPE'                => 'char',
+					'CHARACTER_MAXIMUM_LENGTH' => 10,
+					'CHARACTER_OCTET_LENGTH'   => 30,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'char(10)',
+				),
+				array(
+					'COLUMN_NAME'              => 'nchar_varchar',
+					'COLUMN_DEFAULT'           => 'echo',
+					'DATA_TYPE'                => 'varchar',
+					'CHARACTER_MAXIMUM_LENGTH' => 255,
+					'CHARACTER_OCTET_LENGTH'   => 765,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'varchar(255)',
+				),
+				array(
+					'COLUMN_NAME'              => 'nchar_varying',
+					'COLUMN_DEFAULT'           => 'foxtrot',
+					'DATA_TYPE'                => 'varchar',
+					'CHARACTER_MAXIMUM_LENGTH' => 32,
+					'CHARACTER_OCTET_LENGTH'   => 96,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'varchar(32)',
+				),
+				array(
+					'COLUMN_NAME'              => 'nvarchar_col',
+					'COLUMN_DEFAULT'           => 'golf',
+					'DATA_TYPE'                => 'varchar',
+					'CHARACTER_MAXIMUM_LENGTH' => 20,
+					'CHARACTER_OCTET_LENGTH'   => 60,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'varchar(20)',
+				),
+				array(
+					'COLUMN_NAME'              => 'national_varchar',
+					'COLUMN_DEFAULT'           => 'hotel',
+					'DATA_TYPE'                => 'varchar',
+					'CHARACTER_MAXIMUM_LENGTH' => 30,
+					'CHARACTER_OCTET_LENGTH'   => 90,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'varchar(30)',
+				),
+				array(
+					'COLUMN_NAME'              => 'national_char_varying',
+					'COLUMN_DEFAULT'           => 'india',
+					'DATA_TYPE'                => 'varchar',
+					'CHARACTER_MAXIMUM_LENGTH' => 40,
+					'CHARACTER_OCTET_LENGTH'   => 120,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'varchar(40)',
+				),
+				array(
+					'COLUMN_NAME'              => 'national_character_varying',
+					'COLUMN_DEFAULT'           => 'juliet',
+					'DATA_TYPE'                => 'varchar',
+					'CHARACTER_MAXIMUM_LENGTH' => 50,
+					'CHARACTER_OCTET_LENGTH'   => 150,
+					'CHARACTER_SET_NAME'       => 'utf8',
+					'COLLATION_NAME'           => 'utf8_general_ci',
+					'COLUMN_TYPE'              => 'varchar(50)',
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, COLUMN_DEFAULT, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+					CHARACTER_OCTET_LENGTH, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+				FROM information_schema.columns
+				WHERE table_schema = 'wp'
+					AND table_name = 'national_character_types'
+					AND column_name <> 'id'
+				ORDER BY ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$result            = $driver->query(
+			'SELECT plain_nchar, nchar_len, nchar_varchar, nvarchar_col
+			FROM national_character_types
+			WHERE 0 = 1'
+		);
+		$expected_metadata = array(
+			array(
+				'name'             => 'plain_nchar',
+				'native_type'      => 'STRING',
+				'len'              => 4,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'char(1)',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 254,
+			),
+			array(
+				'name'             => 'nchar_len',
+				'native_type'      => 'STRING',
+				'len'              => 40,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'char(10)',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 254,
+			),
+			array(
+				'name'             => 'nchar_varchar',
+				'native_type'      => 'VAR_STRING',
+				'len'              => 1020,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'varchar(255)',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 253,
+			),
+			array(
+				'name'             => 'nvarchar_col',
+				'native_type'      => 'VAR_STRING',
+				'len'              => 80,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'varchar(20)',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 253,
+			),
+		);
+		foreach ( $expected_metadata as $index => $expected ) {
+			$metadata = $result->getColumnMeta( $index );
+			foreach ( $expected as $key => $value ) {
+				$this->assertSame( $value, $metadata[ $key ], $expected['name'] . ' metadata key ' . $key );
+			}
+		}
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE national_character_types' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		foreach (
+			array(
+				"`plain_nchar` char(1) DEFAULT 'a'",
+				"`nchar_len` char(10) DEFAULT 'bee'",
+				"`national_plain` char(1) DEFAULT 'c'",
+				"`national_len` char(10) DEFAULT 'dee'",
+				"`nchar_varchar` varchar(255) DEFAULT 'echo'",
+				"`nchar_varying` varchar(32) DEFAULT 'foxtrot'",
+				"`nvarchar_col` varchar(20) DEFAULT 'golf'",
+				"`national_varchar` varchar(30) DEFAULT 'hotel'",
+				"`national_char_varying` varchar(40) DEFAULT 'india'",
+				"`national_character_varying` varchar(50) DEFAULT 'juliet'",
+			) as $expected_fragment
+		) {
+			$this->assertStringContainsString( $expected_fragment, $create_sql );
+		}
+	}
+
 	public function test_bit_type_family_metadata_defaults_and_writes(): void {
 		$this->requireDuckDBRuntime();
 

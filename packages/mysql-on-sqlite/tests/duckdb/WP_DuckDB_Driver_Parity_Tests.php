@@ -3402,6 +3402,54 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_national_character_type_family_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE national_character_types (
+					id INT PRIMARY KEY,
+					plain_nchar NCHAR DEFAULT 'a',
+					nchar_len NCHAR(10) DEFAULT 'bee',
+					national_plain NATIONAL CHAR DEFAULT 'c',
+					national_len NATIONAL CHAR (10) DEFAULT 'dee',
+					nchar_varchar NCHAR VARCHAR(255) DEFAULT 'echo',
+					nchar_varying NCHAR VARYING(32) DEFAULT 'foxtrot',
+					nvarchar_col NVARCHAR(20) DEFAULT 'golf',
+					national_varchar NATIONAL VARCHAR(30) DEFAULT 'hotel',
+					national_char_varying NATIONAL CHAR VARYING(40) DEFAULT 'india',
+					national_character_varying NATIONAL CHARACTER VARYING(50) DEFAULT 'juliet'
+				)",
+				'INSERT INTO national_character_types (id) VALUES (1)',
+				"INSERT INTO national_character_types
+					(id, plain_nchar, nchar_len, national_plain, national_len,
+						nchar_varchar, nchar_varying, nvarchar_col, national_varchar,
+						national_char_varying, national_character_varying)
+				VALUES
+					(2, 'aa', 'bb', 'cc', 'dd', 'ee', 'ff', 'gg', 'hh', 'ii', 'jj')",
+			)
+		);
+
+		$this->assertParityRows( 'SHOW COLUMNS FROM national_character_types' );
+		$this->assertParityRows( 'SHOW FULL COLUMNS FROM national_character_types' );
+		$this->assertParityRows( 'DESCRIBE national_character_types' );
+		$this->assertParityRows( 'SHOW CREATE TABLE national_character_types' );
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, COLUMN_DEFAULT, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+				CHARACTER_OCTET_LENGTH, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name = 'national_character_types'
+				AND column_name <> 'id'
+			ORDER BY ordinal_position"
+		);
+		$this->assertParityRows(
+			'SELECT id, plain_nchar, nchar_len, national_plain, national_len,
+				nchar_varchar, nchar_varying, nvarchar_col, national_varchar,
+				national_char_varying, national_character_varying
+			FROM national_character_types
+			ORDER BY id'
+		);
+	}
+
 	public function test_bit_type_family_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
