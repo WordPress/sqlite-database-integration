@@ -200,6 +200,54 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_select_primary_key_group_by_orders_by_functionally_dependent_column(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_posts (ID, post_date, post_type, post_status) VALUES
+				(1, '2026-01-01 00:00:00', 'wp_global_styles', 'publish'),
+				(2, '2026-02-01 00:00:00', 'wp_global_styles', 'publish'),
+				(3, '2026-03-01 00:00:00', 'post', 'publish')"
+		);
+
+		$rows = $driver->query(
+			"SELECT wp_posts.ID
+			FROM wp_posts
+			WHERE 1=1
+				AND wp_posts.post_type = 'wp_global_styles'
+				AND ((wp_posts.post_status = 'publish'))
+			GROUP BY wp_posts.ID
+			ORDER BY wp_posts.post_date DESC
+			LIMIT 0, 1"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array( 'ID' => 2 ),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString(
+			'GROUP BY wp_posts.ID, "wp_posts"."post_date"',
+			$select_sql
+		);
+	}
+
 	public function test_select_seeded_rand_literals_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

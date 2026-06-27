@@ -159,8 +159,15 @@ function ensureCompatiblePhpunitRunner() {
 }
 
 function ensureWordPressGitSafeDirectory() {
-	execSync(
-		`cd wordpress && node tools/local-env/scripts/docker.js run --rm php sh -lc ${ shellQuote( 'if command -v git >/dev/null 2>&1; then git config --global --add safe.directory /var/www; fi' ) }`,
+	runWordPressDockerCompose(
+		[
+			'run',
+			'--rm',
+			'php',
+			'sh',
+			'-lc',
+			'if command -v git >/dev/null 2>&1; then git config --global --add safe.directory /var/www; fi',
+		],
 		{ stdio: 'inherit' }
 	);
 }
@@ -168,8 +175,19 @@ function ensureWordPressGitSafeDirectory() {
 function installCompatiblePhpunitRunner() {
 	const phpunitPackage = `phpunit/phpunit:${ phpunitCompatibilityConstraint }`;
 
-	execSync(
-		`cd wordpress && node tools/local-env/scripts/docker.js run --rm php composer require --dev --no-interaction --no-progress --with-all-dependencies ${ shellQuote( phpunitPackage ) }`,
+	runWordPressDockerCompose(
+		[
+			'run',
+			'--rm',
+			'php',
+			'composer',
+			'require',
+			'--dev',
+			'--no-interaction',
+			'--no-progress',
+			'--with-all-dependencies',
+			phpunitPackage,
+		],
 		{ stdio: 'inherit' }
 	);
 }
@@ -178,14 +196,32 @@ function hasCompatiblePhpunitRunner() {
 	const check = "require 'vendor/autoload.php'; exit( method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ? 0 : 1 );";
 
 	try {
-		execSync(
-			`cd wordpress && node tools/local-env/scripts/docker.js run --rm php php -r ${ shellQuote( check ) }`,
-			{ stdio: 'ignore' }
-		);
+		runWordPressDockerCompose( [ 'run', '--rm', 'php', 'php', '-r', check ], { stdio: 'ignore' } );
 		return true;
 	} catch ( error ) {
 		return false;
 	}
+}
+
+function runWordPressDockerCompose( args, options ) {
+	const command = [
+		'cd wordpress &&',
+		'COMPOSE_IGNORE_ORPHANS=true docker compose',
+		...getWordPressComposeArgs().map( shellQuote ),
+		...args.map( shellQuote ),
+	].join( ' ' );
+
+	execSync( command, options );
+}
+
+function getWordPressComposeArgs() {
+	const composeArgs = [ '-f', 'docker-compose.yml' ];
+
+	if ( fs.existsSync( path.join( repoRoot, 'wordpress', 'docker-compose.override.yml' ) ) ) {
+		composeArgs.push( '-f', 'docker-compose.override.yml' );
+	}
+
+	return composeArgs;
 }
 
 function shellQuote( value ) {

@@ -538,7 +538,7 @@ class WP_DuckDB_Driver {
 		$has_sql_calc_found_rows = $this->has_top_level_sql_calc_found_rows( $tokens );
 		$tokens                  = $this->normalize_select_helper_tokens( $tokens );
 		$column_meta             = $this->simple_select_column_metadata( $tokens );
-		$group_by_expansion      = $this->primary_key_group_by_wildcard_expansion( $tokens );
+		$group_by_expansion      = $this->primary_key_group_by_expansion( $tokens );
 		$seeded_rand_expressions = $this->parse_seeded_rand_select_expressions( $tokens );
 		$seeded_rand_rewrites    = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
 
@@ -1101,12 +1101,12 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Build a bounded GROUP BY expansion for SELECT table.* grouped by that table's full primary key.
+	 * Build a bounded GROUP BY expansion for simple SELECTs grouped by a table's full primary key.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return array{group_index:int,group_end:int,table_alias:string,columns:string[]}|null Expansion data, or null when outside the supported slice.
 	 */
-	private function primary_key_group_by_wildcard_expansion( array $tokens ): ?array {
+	private function primary_key_group_by_expansion( array $tokens ): ?array {
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
 		}
@@ -1131,7 +1131,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$select_items = $this->split_top_level_comma_items( array_slice( $tokens, 1, $from_index - 1 ) );
-		if ( 1 !== count( $select_items ) ) {
+		if ( count( $select_items ) === 0 ) {
 			return null;
 		}
 
@@ -1145,13 +1145,23 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$wildcard = $this->parse_simple_select_column_reference( $select_items[0] );
-		if (
-			null === $wildcard
-			|| ! $wildcard['wildcard']
-			|| ! $this->simple_select_column_qualifier_matches_table( $wildcard['qualifier'], $table )
-		) {
-			return null;
+		$selected_columns    = array();
+		$select_has_wildcard = false;
+		foreach ( $select_items as $item ) {
+			$column = $this->parse_simple_select_column_reference( $item );
+			if (
+				null === $column
+				|| ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+			) {
+				return null;
+			}
+
+			if ( $column['wildcard'] ) {
+				$select_has_wildcard = true;
+				continue;
+			}
+
+			$selected_columns[ strtolower( $column['column_name'] ) ] = true;
 		}
 
 		$primary_key_columns = $this->primary_key_columns_for_table( $table['table_name'] );
@@ -1183,12 +1193,41 @@ class WP_DuckDB_Driver {
 			}
 		}
 
-		$columns = array();
-		foreach ( $this->table_column_metadata_rows( $table['table_name'], $table['temporary'] ) as $metadata ) {
-			$column_name = (string) $metadata['column_name'];
-			if ( ! isset( $grouped_columns[ strtolower( $column_name ) ] ) ) {
-				$columns[] = $column_name;
+		$metadata_rows      = $this->table_column_metadata_rows( $table['table_name'], $table['temporary'] );
+		$metadata_by_column = array();
+		foreach ( $metadata_rows as $metadata ) {
+			$metadata_by_column[ strtolower( (string) $metadata['column_name'] ) ] = $metadata;
+		}
+
+		$columns_by_key = array();
+		if ( $select_has_wildcard ) {
+			foreach ( $metadata_rows as $metadata ) {
+				$column_name = (string) $metadata['column_name'];
+				$key         = strtolower( $column_name );
+				if ( ! isset( $grouped_columns[ $key ] ) ) {
+					$columns_by_key[ $key ] = $column_name;
+				}
 			}
+		}
+
+		foreach ( array_keys( $selected_columns ) as $column_key ) {
+			if ( ! isset( $metadata_by_column[ $column_key ] ) ) {
+				return null;
+			}
+			if ( ! isset( $grouped_columns[ $column_key ] ) ) {
+				$columns_by_key[ $column_key ] = (string) $metadata_by_column[ $column_key ]['column_name'];
+			}
+		}
+
+		foreach ( $this->primary_key_group_by_order_columns( $tokens, $group_end, $table, $metadata_by_column ) as $column_key => $column_name ) {
+			if ( ! isset( $grouped_columns[ $column_key ] ) ) {
+				$columns_by_key[ $column_key ] = $column_name;
+			}
+		}
+
+		$columns = array();
+		foreach ( $columns_by_key as $column_name ) {
+			$columns[] = $column_name;
 		}
 
 		if ( count( $columns ) === 0 ) {
@@ -1239,6 +1278,102 @@ class WP_DuckDB_Driver {
 		}
 
 		return count( $tokens );
+	}
+
+	/**
+	 * Extract simple ORDER BY columns that are functionally dependent on a full primary-key GROUP BY.
+	 *
+	 * @param WP_Parser_Token[]                               $tokens             MySQL tokens.
+	 * @param int                                             $group_end          End of the GROUP BY clause.
+	 * @param array{table_name:string,alias:string,temporary:bool} $table              Parsed table reference.
+	 * @param array<string,array<string,mixed>>               $metadata_by_column Table metadata keyed by lower-case column name.
+	 * @return array<string,string> Column names keyed by lower-case column name.
+	 */
+	private function primary_key_group_by_order_columns( array $tokens, int $group_end, array $table, array $metadata_by_column ): array {
+		if (
+			! isset( $tokens[ $group_end ] )
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $group_end ]->id
+			|| ! isset( $tokens[ $group_end + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_end + 1 ]->id
+		) {
+			return array();
+		}
+
+		$order_end    = $this->primary_key_order_by_clause_end( $tokens, $group_end + 2 );
+		$order_tokens = array_slice( $tokens, $group_end + 2, $order_end - $group_end - 2 );
+		if ( count( $order_tokens ) === 0 ) {
+			return array();
+		}
+
+		$columns = array();
+		foreach ( $this->split_top_level_comma_items( $order_tokens ) as $item ) {
+			$column = $this->parse_order_by_column_reference( $item );
+			if (
+				null === $column
+				|| ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+			) {
+				continue;
+			}
+
+			$column_key = strtolower( $column['column_name'] );
+			if ( isset( $metadata_by_column[ $column_key ] ) ) {
+				$columns[ $column_key ] = (string) $metadata_by_column[ $column_key ]['column_name'];
+			}
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * Find the end of the supported top-level ORDER BY clause.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $start  First token after ORDER BY.
+	 * @return int End offset, exclusive.
+	 */
+	private function primary_key_order_by_clause_end( array $tokens, int $start ): int {
+		$clause_tokens = array(
+			WP_MySQL_Lexer::LIMIT_SYMBOL,
+			WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+			WP_MySQL_Lexer::INTO_SYMBOL,
+			WP_MySQL_Lexer::FOR_SYMBOL,
+			WP_MySQL_Lexer::LOCK_SYMBOL,
+			WP_MySQL_Lexer::UNION_SYMBOL,
+		);
+		$depth         = 0;
+
+		for ( $index = $start; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 === $depth && in_array( $tokens[ $index ]->id, $clause_tokens, true ) ) {
+				return $index;
+			}
+		}
+
+		return count( $tokens );
+	}
+
+	/**
+	 * Parse a simple ORDER BY column reference.
+	 *
+	 * @param WP_Parser_Token[] $tokens ORDER BY item tokens.
+	 * @return array{column_name:string,qualifier:string|null}|null Column reference, or null when unsupported.
+	 */
+	private function parse_order_by_column_reference( array $tokens ): ?array {
+		if ( count( $tokens ) > 0 ) {
+			$last = $tokens[ count( $tokens ) - 1 ];
+			if ( WP_MySQL_Lexer::ASC_SYMBOL === $last->id || WP_MySQL_Lexer::DESC_SYMBOL === $last->id ) {
+				array_pop( $tokens );
+			}
+		}
+
+		return $this->parse_group_by_column_reference( $tokens );
 	}
 
 	/**
@@ -12313,7 +12448,7 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Render a GROUP BY clause expanded with selected wildcard columns.
+	 * Render a GROUP BY clause expanded with functionally dependent columns.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @param array{group_index:int,group_end:int,table_alias:string,columns:string[]} $group_by_expansion Expansion data.
