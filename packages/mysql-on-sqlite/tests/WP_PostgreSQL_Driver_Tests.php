@@ -12156,6 +12156,67 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests overlapping SELECT shapes keep explicit translator precedence.
+	 */
+	public function test_select_translation_pipeline_preserves_overlapping_special_case_order(): void {
+		$driver = $this->create_backendless_driver();
+
+		$row_locking = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_select_query_for_postgresql',
+			'SELECT SQL_CALC_FOUND_ROWS id FROM wptests_posts LIMIT 1 FOR UPDATE'
+		);
+
+		$this->assertIsArray( $row_locking );
+		$this->assertTrue( $row_locking['translated'] );
+		$this->assertSame(
+			'SELECT id FROM wptests_posts LIMIT 1',
+			$row_locking['sql']
+		);
+
+		$information_schema = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_select_query_for_postgresql',
+			'SELECT TABLE_NAME FROM information_schema.TABLES ORDER BY TABLE_NAME LIMIT 1'
+		);
+
+		$this->assertIsArray( $information_schema );
+		$this->assertTrue( $information_schema['translated'] );
+		$this->assertStringContainsString( 'FROM information_schema.tables t', $information_schema['sql'] );
+		$this->assertStringNotContainsString( '__wp_mysql_information_schema', $information_schema['sql'] );
+
+		$aggregate_sql_calc = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_select_query_for_postgresql',
+			'SELECT SQL_CALC_FOUND_ROWS COUNT(*) AS c FROM t ORDER BY id ASC LIMIT 1'
+		);
+
+		$this->assertIsArray( $aggregate_sql_calc );
+		$this->assertTrue( $aggregate_sql_calc['translated'] );
+		$this->assertSame( 'SELECT COUNT (*) AS c FROM t LIMIT 1', $aggregate_sql_calc['sql'] );
+
+		$last_insert_id = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_select_query_for_postgresql',
+			'SELECT LAST_INSERT_ID(17) AS assigned_id, LAST_INSERT_ID() AS readback'
+		);
+
+		$this->assertIsArray( $last_insert_id );
+		$this->assertSame( 17, $last_insert_id['last_insert_id'] );
+		$this->assertSame( 'SELECT 17 AS assigned_id, 17 AS readback', $last_insert_id['sql'] );
+
+		$distinct_sql_calc = $this->translate_driver_query_data_with_private_method(
+			$driver,
+			'translate_mysql_select_query_for_postgresql',
+			'SELECT DISTINCT SQL_CALC_FOUND_ROWS user_id FROM wptests_usermeta LIMIT 5'
+		);
+
+		$this->assertIsArray( $distinct_sql_calc );
+		$this->assertTrue( $distinct_sql_calc['translated'] );
+		$this->assertSame( 'SELECT DISTINCT user_id FROM wptests_usermeta LIMIT 5', $distinct_sql_calc['sql'] );
+	}
+
+	/**
 	 * Tests WordPress user text predicates and ordering preserve MySQL collation behavior.
 	 */
 	public function test_wordpress_user_text_predicates_and_ordering_use_case_insensitive_mysql_collation_metadata(): void {
