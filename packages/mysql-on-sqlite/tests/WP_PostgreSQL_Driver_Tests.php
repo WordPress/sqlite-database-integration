@@ -15971,6 +15971,291 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW CREATE TABLE preseed includes foreign keys and matches the catalog fallback.
+	 */
+	public function test_real_pgsql_show_create_table_preseed_includes_foreign_keys_and_matches_catalog(): void {
+		list( $driver, $connection ) = $this->create_create_metadata_preseed_capture_driver();
+		$parent_table                = 'wptests_show_create_preseed_fk_parent';
+		$child_table                 = 'wptests_show_create_preseed_fk_child';
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$parent_table}` (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					PRIMARY KEY (`id`)
+				)"
+			)
+		);
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$child_table}` (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					`parent_id` bigint(20) unsigned NOT NULL,
+					PRIMARY KEY (`id`),
+					KEY `parent_idx` (`parent_id`),
+					CONSTRAINT `show_create_preseed_fk` FOREIGN KEY (`parent_id`) REFERENCES `{$parent_table}` (`id`) ON DELETE CASCADE
+				) COMMENT='FK child'"
+			)
+		);
+
+		$connection->clear_queries();
+		$preseed_rows    = $driver->query( 'SHOW CREATE TABLE `' . $child_table . '`' );
+		$preseed_queries = $connection->get_queries();
+
+		$this->assertSame( array(), $preseed_queries );
+		$this->assertCount( 1, $preseed_rows );
+		$preseed_sql = (string) $this->get_row_value( $preseed_rows[0], 'Create Table' );
+		$this->assertStringContainsString( 'CONSTRAINT `show_create_preseed_fk` FOREIGN KEY (`parent_id`)', $preseed_sql );
+		$this->assertStringContainsString( 'REFERENCES `' . $parent_table . '` (`id`)', $preseed_sql );
+		$this->assertStringContainsString( 'ON DELETE CASCADE', $preseed_sql );
+		$this->assertStringContainsString( "COMMENT='FK child'", $preseed_sql );
+
+		$this->clear_driver_mysql_metadata_caches( $driver );
+		$connection->clear_queries();
+		$catalog_rows    = $driver->query( 'SHOW CREATE TABLE `' . $child_table . '`' );
+		$catalog_queries = $connection->get_queries();
+
+		$this->assertEquals( $catalog_rows, $preseed_rows );
+		$this->assertGreaterThanOrEqual( 5, count( $catalog_queries ) );
+	}
+
+	/**
+	 * Tests CREATE TABLE LIKE uses catalog metadata but does not copy foreign keys.
+	 */
+	public function test_real_pgsql_create_table_like_does_not_copy_foreign_keys_from_source_table(): void {
+		list( $driver, $connection ) = $this->create_create_metadata_preseed_capture_driver();
+		$parent_table                = 'wptests_create_like_fk_parent';
+		$child_table                 = 'wptests_create_like_fk_child';
+		$like_table                  = 'wptests_create_like_fk_copy';
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$parent_table}` (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					PRIMARY KEY (`id`)
+				)"
+			)
+		);
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$child_table}` (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					`parent_id` bigint(20) unsigned NOT NULL,
+					PRIMARY KEY (`id`),
+					KEY `parent_idx` (`parent_id`),
+					CONSTRAINT `create_like_source_fk` FOREIGN KEY (`parent_id`) REFERENCES `{$parent_table}` (`id`) ON DELETE CASCADE
+				)"
+			)
+		);
+
+		$source_rows = $driver->query( 'SHOW CREATE TABLE `' . $child_table . '`' );
+		$source_sql  = (string) $this->get_row_value( $source_rows[0], 'Create Table' );
+		$this->assertStringContainsString( 'CONSTRAINT `create_like_source_fk` FOREIGN KEY', $source_sql );
+
+		$this->assertSame( 0, $driver->query( "CREATE TABLE `{$like_table}` LIKE `{$child_table}`" ) );
+
+		$connection->clear_queries();
+		$like_rows    = $driver->query( 'SHOW CREATE TABLE `' . $like_table . '`' );
+		$like_queries = $connection->get_queries();
+
+		$this->assertSame( array(), $like_queries );
+		$this->assertCount( 1, $like_rows );
+		$like_sql = (string) $this->get_row_value( $like_rows[0], 'Create Table' );
+		$this->assertStringContainsString( 'CREATE TABLE `' . $like_table . '`', $like_sql );
+		$this->assertStringContainsString( '`parent_id` bigint(20) unsigned NOT NULL', $like_sql );
+		$this->assertStringContainsString( 'KEY `parent_idx` (`parent_id`)', $like_sql );
+		$this->assertStringNotContainsString( 'FOREIGN KEY', $like_sql );
+		$this->assertStringNotContainsString( 'REFERENCES', $like_sql );
+
+		$like_table_literal = $driver->get_connection()->quote( $like_table );
+		$like_fk_rows       = $driver->query(
+			"SELECT constraint_name
+			FROM information_schema.key_column_usage
+			WHERE table_schema = DATABASE()
+				AND table_name = {$like_table_literal}
+				AND referenced_table_name IS NOT NULL"
+		);
+		$this->assertSame( array(), $like_fk_rows );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE preseed keeps temporary table shadowing separate.
+	 */
+	public function test_real_pgsql_show_create_table_preseed_uses_temporary_shadow_table(): void {
+		list( $driver ) = $this->create_create_metadata_preseed_capture_driver();
+		$table          = 'wptests_show_create_preseed_temp_shadow';
+
+		$this->assertSame( 0, $driver->query( "CREATE TEMPORARY TABLE `{$table}` ( `name` varchar(20), KEY `name_key` (`name`) ) COMMENT='temporary table'" ) );
+		$this->assertSame( 0, $driver->query( "CREATE TABLE `{$table}` ( `id` int(11), KEY `id_key` (`id`) ) COMMENT='permanent table'" ) );
+
+		$temp_rows = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$this->assertCount( 1, $temp_rows );
+		$temp_sql = (string) $this->get_row_value( $temp_rows[0], 'Create Table' );
+		$this->assertStringContainsString( 'CREATE TEMPORARY TABLE `' . $table . '`', $temp_sql );
+		$this->assertStringContainsString( '`name` varchar(20)', $temp_sql );
+		$this->assertStringContainsString( 'KEY `name_key` (`name`)', $temp_sql );
+		$this->assertStringNotContainsString( '`id` int(11)', $temp_sql );
+		$this->assertStringNotContainsString( 'permanent table', $temp_sql );
+
+		$temp_columns = $driver->query( 'SHOW COLUMNS FROM `' . $table . '`' );
+		$this->assertSame( 'varchar(20)', $this->get_row_value( $this->find_row_by_value( $temp_columns, 'Field', 'name' ), 'Type' ) );
+		$this->assertNull( $this->find_optional_row_by_value( $temp_columns, 'Field', 'id' ) );
+
+		$this->assertSame( 0, $driver->query( 'DROP TABLE `' . $table . '`' ) );
+
+		$permanent_rows = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$this->assertCount( 1, $permanent_rows );
+		$permanent_sql = (string) $this->get_row_value( $permanent_rows[0], 'Create Table' );
+		$this->assertStringContainsString( 'CREATE TABLE `' . $table . '`', $permanent_sql );
+		$this->assertStringNotContainsString( 'CREATE TEMPORARY TABLE', $permanent_sql );
+		$this->assertStringContainsString( '`id` int(11)', $permanent_sql );
+		$this->assertStringContainsString( 'KEY `id_key` (`id`)', $permanent_sql );
+		$this->assertStringContainsString( "COMMENT='permanent table'", $permanent_sql );
+		$this->assertStringNotContainsString( '`name` varchar(20)', $permanent_sql );
+
+		$permanent_columns = $driver->query( 'SHOW COLUMNS FROM `' . $table . '`' );
+		$this->assertSame( 'int(11)', $this->get_row_value( $this->find_row_by_value( $permanent_columns, 'Field', 'id' ), 'Type' ) );
+		$this->assertNull( $this->find_optional_row_by_value( $permanent_columns, 'Field', 'name' ) );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE preseed invalidates across DROP and replacement CREATE.
+	 */
+	public function test_real_pgsql_show_create_table_preseed_invalidates_after_drop_and_recreate(): void {
+		list( $driver ) = $this->create_create_metadata_preseed_capture_driver();
+		$table          = 'wptests_show_create_preseed_recreate';
+
+		$this->assertSame( 0, $driver->query( "CREATE TABLE `{$table}` ( `id` int(11), KEY `id_key` (`id`) ) COMMENT='first table'" ) );
+
+		$first_rows = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$this->assertCount( 1, $first_rows );
+		$first_sql = (string) $this->get_row_value( $first_rows[0], 'Create Table' );
+		$this->assertStringContainsString( '`id` int(11)', $first_sql );
+		$this->assertStringContainsString( 'KEY `id_key` (`id`)', $first_sql );
+		$this->assertStringContainsString( "COMMENT='first table'", $first_sql );
+
+		$this->assertSame( 0, $driver->query( 'DROP TABLE `' . $table . '`' ) );
+		$this->assertSame( array(), $driver->query( 'SHOW CREATE TABLE `' . $table . '`' ) );
+
+		$this->assertSame( 0, $driver->query( "CREATE TABLE `{$table}` ( `replacement` varchar(12), UNIQUE KEY `replacement_unique` (`replacement`) ) COMMENT='replacement table'" ) );
+
+		$replacement_rows = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$this->assertCount( 1, $replacement_rows );
+		$replacement_sql = (string) $this->get_row_value( $replacement_rows[0], 'Create Table' );
+		$this->assertStringContainsString( '`replacement` varchar(12)', $replacement_sql );
+		$this->assertStringContainsString( 'UNIQUE KEY `replacement_unique` (`replacement`)', $replacement_sql );
+		$this->assertStringContainsString( "COMMENT='replacement table'", $replacement_sql );
+		$this->assertStringNotContainsString( '`id` int(11)', $replacement_sql );
+		$this->assertStringNotContainsString( 'KEY `id_key`', $replacement_sql );
+		$this->assertStringNotContainsString( 'first table', $replacement_sql );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE preseed supports schema-qualified CREATE targets.
+	 */
+	public function test_real_pgsql_show_create_table_preseed_supports_schema_qualified_created_table(): void {
+		list( $driver, $connection, $schema ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                                = 'wptests_show_create_preseed_schema_qualified';
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$schema}`.`{$table}` (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					`slug` varchar(64) NOT NULL,
+					PRIMARY KEY (`id`),
+					UNIQUE KEY `slug_unique` (`slug`)
+				) COMMENT='schema qualified table'"
+			)
+		);
+
+		$connection->clear_queries();
+		$preseed_rows    = $driver->query( 'SHOW CREATE TABLE `' . $schema . '`.`' . $table . '`' );
+		$preseed_queries = $connection->get_queries();
+
+		$this->assertSame( array(), $preseed_queries );
+		$this->assertCount( 1, $preseed_rows );
+		$preseed_sql = (string) $this->get_row_value( $preseed_rows[0], 'Create Table' );
+		$this->assertStringContainsString( 'CREATE TABLE `' . $table . '`', $preseed_sql );
+		$this->assertStringContainsString( '`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT', $preseed_sql );
+		$this->assertStringContainsString( 'UNIQUE KEY `slug_unique` (`slug`)', $preseed_sql );
+		$this->assertStringContainsString( "COMMENT='schema qualified table'", $preseed_sql );
+
+		$this->clear_driver_mysql_metadata_caches( $driver );
+		$catalog_rows = $driver->query( 'SHOW CREATE TABLE `' . $schema . '`.`' . $table . '`' );
+		$this->assertEquals( $catalog_rows, $preseed_rows );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE renders column collations and still matches catalog fallback.
+	 */
+	public function test_real_pgsql_show_create_table_preseed_renders_column_collations_and_matches_catalog(): void {
+		list( $driver, $connection ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                       = 'wptests_show_create_preseed_column_collations';
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$table}` (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					`title` varchar(64) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL DEFAULT '',
+					`body` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+					PRIMARY KEY (`id`)
+				) DEFAULT CHARACTER SET big5 COLLATE big5_chinese_ci COMMENT='column collation table'"
+			)
+		);
+
+		$connection->clear_queries();
+		$preseed_rows    = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$preseed_queries = $connection->get_queries();
+
+		$this->assertSame( array(), $preseed_queries );
+		$this->assertCount( 1, $preseed_rows );
+		$preseed_sql = (string) $this->get_row_value( $preseed_rows[0], 'Create Table' );
+		$this->assertStringContainsString( "`title` varchar(64) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL DEFAULT ''", $preseed_sql );
+		$this->assertStringContainsString( '`body` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL', $preseed_sql );
+		$this->assertStringContainsString( 'DEFAULT CHARSET=big5 COLLATE=big5_chinese_ci', $preseed_sql );
+
+		$this->clear_driver_mysql_metadata_caches( $driver );
+		$catalog_rows = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$this->assertEquals( $catalog_rows, $preseed_rows );
+	}
+
+	/**
+	 * Tests explicit DEFAULT NULL skips SHOW CREATE TABLE preseed and uses catalog metadata.
+	 */
+	public function test_real_pgsql_show_create_table_preseed_skips_explicit_default_null(): void {
+		list( $driver, $connection ) = $this->create_create_metadata_preseed_capture_driver();
+		$columns                     = array(
+			'plain'             => '`value` int(11) DEFAULT NULL',
+			'comment_gap'       => '`value` varchar(20) DEFAULT /*gap*/ NULL',
+			'parenthesized_gap' => '`value` varchar(20) DEFAULT ( /*gap*/ NULL )',
+		);
+
+		foreach ( $columns as $suffix => $column ) {
+			$table = 'wptests_show_create_preseed_default_null_' . $suffix;
+			$this->assertSame( 0, $driver->query( "CREATE TABLE `{$table}` ( {$column} )" ), $suffix );
+
+			$connection->clear_queries();
+			$first_rows    = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+			$first_queries = $connection->get_queries();
+
+			$this->assertGreaterThanOrEqual( 5, count( $first_queries ), $suffix );
+			$this->assertCount( 1, $first_rows, $suffix );
+			$this->assertStringContainsString( '`value` ', (string) $this->get_row_value( $first_rows[0], 'Create Table' ), $suffix );
+			$this->assertStringContainsString( 'DEFAULT NULL', (string) $this->get_row_value( $first_rows[0], 'Create Table' ), $suffix );
+
+			$this->clear_driver_mysql_metadata_caches( $driver );
+			$catalog_rows = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+			$this->assertEquals( $catalog_rows, $first_rows, $suffix );
+		}
+	}
+
+	/**
 	 * Tests unsupported ALTER TABLE column attributes fail before backend execution.
 	 */
 	public function test_alter_table_unsupported_column_attributes_fail_closed_before_backend_execution(): void {

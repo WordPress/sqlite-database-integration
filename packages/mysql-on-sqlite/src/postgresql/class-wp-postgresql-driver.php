@@ -3253,7 +3253,6 @@ class WP_PostgreSQL_Driver {
 	}
 	private function clear_mysql_metadata_caches(): void {
 		$this->mysql_table_schema_introspection_cache               = array();
-		$this->mysql_has_active_temporary_tables                    = null;
 		$this->mysql_upsert_conflict_target_cache                   = array();
 		$this->mysql_introspection_result_cache                     = array();
 		$this->mysql_column_metadata_introspection_cache            = array();
@@ -7839,7 +7838,7 @@ $wp_mysql_primary_index_comment$',
 	}
 	private function update_mysql_table_schema_state_after_drop( array $drop_query ): void {
 		foreach ( $drop_query['targets'] as $drop_target ) {
-			if ( null === $drop_target['schema'] ) {
+			if ( null === $drop_target['schema'] || $this->is_mysql_temporary_schema_name( (string) $drop_target['schema'] ) ) {
 				$this->forget_mysql_temporary_table( $drop_target['table'] );
 			}
 		}
@@ -10305,12 +10304,17 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
 	private function get_mysql_create_table_statement_from_metadata( string $table_name, array $columns, array $indexes, array $foreign_keys, array $checks, string $table_comment = '', bool $temporary = false, ?string $table_collation = null ): string {
-		$definitions = array_merge( array_map( array( $this, 'get_mysql_create_table_column_definition' ), $columns ), array_map( array( $this, 'get_mysql_create_table_index_definition' ), $this->group_show_create_table_metadata_rows( $indexes, 'key_name' ) ), array_map( array( $this, 'get_mysql_create_table_foreign_key_definition' ), $this->group_show_create_table_metadata_rows( $foreign_keys, 'constraint_name' ) ), array_map( array( $this, 'get_mysql_create_table_check_definition' ), $checks ) );
+		$column_definitions = array();
+		foreach ( $columns as $column ) {
+			$column_definitions[] = $this->get_mysql_create_table_column_definition( $column, $table_collation );
+		}
+		$definitions = array_merge( $column_definitions, array_map( array( $this, 'get_mysql_create_table_index_definition' ), $this->group_show_create_table_metadata_rows( $indexes, 'key_name' ) ), array_map( array( $this, 'get_mysql_create_table_foreign_key_definition' ), $this->group_show_create_table_metadata_rows( $foreign_keys, 'constraint_name' ) ), array_map( array( $this, 'get_mysql_create_table_check_definition' ), $checks ) );
 		return $this->get_mysql_create_table_sql( $table_name, $definitions, $columns, $table_comment, $temporary, $table_collation );
 	}
-	private function get_mysql_create_table_column_definition( array $column ): string {
-		$extra      = (string) ( $column['extra'] ?? '' );
-		$definition = sprintf( '  %s %s', $this->quote_mysql_identifier( (string) $column['column_name'] ), (string) $column['column_type'] );
+	private function get_mysql_create_table_column_definition( array $column, ?string $table_collation = null ): string {
+		$extra       = (string) ( $column['extra'] ?? '' );
+		$definition  = sprintf( '  %s %s', $this->quote_mysql_identifier( (string) $column['column_name'] ), (string) $column['column_type'] );
+		$definition .= $this->get_mysql_create_table_column_charset_definition( $column, $table_collation );
 		if ( 'NO' === strtoupper( (string) $column['is_nullable'] ) ) {
 			$definition .= ' NOT NULL';
 		}
@@ -10324,6 +10328,22 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		}
 		$comment = (string) ( $column['column_comment'] ?? '' );
 		return '' === $comment ? $definition : $definition . ' COMMENT ' . $this->quote_mysql_utf8_string_literal( $comment );
+	}
+	private function get_mysql_create_table_column_charset_definition( array $column, ?string $table_collation ): string {
+		$column_collation = strtolower( trim( (string) ( $column['collation_name'] ?? '' ) ) );
+		if ( '' === $column_collation || strtolower( trim( (string) $table_collation ) ) === $column_collation ) {
+			return '';
+		}
+
+		$charset = strtolower( trim( (string) ( $column['character_set_name'] ?? '' ) ) );
+		if ( '' === $charset ) {
+			$charset = $this->get_mysql_charset_from_collation( $column_collation );
+		}
+		return ( '' === $charset ? '' : ' CHARACTER SET ' . $charset ) . ' COLLATE ' . $column_collation;
+	}
+	private function get_mysql_charset_from_collation( string $collation ): string {
+		$separator = strpos( $collation, '_' );
+		return false === $separator ? $collation : substr( $collation, 0, $separator );
 	}
 	private function get_mysql_create_table_index_definition( array $index ): string {
 		$first     = $index[0];
@@ -11307,13 +11327,31 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		return true;
 	}
 	private function resolve_mysql_table_schema_for_introspection( string $schema_name, string $table_name ): string {
-		if ( 'public' !== $schema_name ) {
+		$uses_current_table_resolution = 0 === strcasecmp( $schema_name, 'public' )
+			|| (
+				0 === strcasecmp( $schema_name, $this->db_name )
+				&& 0 !== strcasecmp( $schema_name, 'information_schema' )
+				&& ! $this->is_postgresql_internal_schema( $schema_name )
+			);
+		if ( ! $uses_current_table_resolution ) {
 			return $schema_name;
 		}
 
 		$cache_key = $schema_name . "\0" . $table_name;
 		if ( isset( $this->mysql_table_schema_introspection_cache[ $cache_key ] ) ) {
-			return $this->mysql_table_schema_introspection_cache[ $cache_key ];
+			$cached_schema = $this->mysql_table_schema_introspection_cache[ $cache_key ];
+			if (
+				'public' !== $schema_name
+				|| true !== $this->mysql_has_active_temporary_tables
+				|| $this->is_mysql_temporary_schema_name( $cached_schema )
+			) {
+				return $cached_schema;
+			}
+		}
+
+		if ( 'public' !== $schema_name && true !== $this->mysql_has_active_temporary_tables ) {
+			$this->mysql_table_schema_introspection_cache[ $cache_key ] = $schema_name;
+			return $schema_name;
 		}
 
 		if ( ! $this->mysql_connection_has_active_temporary_tables() ) {
@@ -19080,24 +19118,27 @@ END',
 	private function get_direct_information_schema_column_default_expression( string $catalog_alias, ?string $column_comment_sql = null ): string {
 		$fractional_timestamp_default_pattern = $this->connection->quote( "^\\s*left\\s*\\(\\s*to_char\\s*\\(\\s*\\(?\\s*current_timestamp\\(([0-6])\\)\\s+at\\s+time\\s+zone\\s+'UTC'(::text)?\\s*\\)?\\s*,\\s*'YYYY-MM-DD HH24:MI:SS\\.US'(::text)?\\s*\\)\\s*,\\s*2[1-6]\\s*\\)\\s*$" );
 		$quoted_literal_default_pattern       = $this->connection->quote( '^\'(.*)\'::((?:[a-z_][a-z0-9_]*\\.)?__wp_mysql_[a-z0-9_]+|character varying|character|text|bpchar|timestamp without time zone|timestamp with time zone|date|time without time zone|time with time zone|integer|bigint|smallint|numeric|decimal|double precision|real|boolean)$' );
+		$null_default_pattern                 = $this->connection->quote( '^\\s*NULL(?:::[a-z_][a-z0-9_]*(?:[. ][a-z_][a-z0-9_]*)*(?:\\([0-9, ]+\\))?)?\\s*$' );
 		$column_default_comment_sql           = null === $column_comment_sql
 			? 'NULL'
 			: $this->get_postgresql_catalog_column_comment_marker_sql( $column_comment_sql, self::MYSQL_COLUMN_COMMENT_DEFAULT_PREFIX );
 		return sprintf(
 			'CASE
-	WHEN %1$s.is_identity = \'YES\' THEN NULL
-	WHEN LOWER(COALESCE(%1$s.column_default, \'\')) LIKE \'nextval(%%\' THEN NULL
-	WHEN %5$s IS NOT NULL THEN %5$s
-	WHEN %2$s THEN \'CURRENT_TIMESTAMP\'
-	WHEN %1$s.column_default ~* %3$s THEN \'CURRENT_TIMESTAMP(\' || SUBSTRING(%1$s.column_default FROM %3$s) || \')\'
-	WHEN %1$s.column_default ~ %4$s THEN REPLACE(SUBSTRING(%1$s.column_default FROM %4$s), CHR(39) || CHR(39), CHR(39))
-	ELSE %1$s.column_default
-END',
+		WHEN %1$s.is_identity = \'YES\' THEN NULL
+		WHEN LOWER(COALESCE(%1$s.column_default, \'\')) LIKE \'nextval(%%\' THEN NULL
+		WHEN %5$s IS NOT NULL THEN %5$s
+		WHEN %1$s.column_default ~* %6$s THEN NULL
+		WHEN %2$s THEN \'CURRENT_TIMESTAMP\'
+		WHEN %1$s.column_default ~* %3$s THEN \'CURRENT_TIMESTAMP(\' || SUBSTRING(%1$s.column_default FROM %3$s) || \')\'
+		WHEN %1$s.column_default ~ %4$s THEN REPLACE(SUBSTRING(%1$s.column_default FROM %4$s), CHR(39) || CHR(39), CHR(39))
+		ELSE %1$s.column_default
+	END',
 			$catalog_alias,
 			$this->get_postgresql_catalog_current_timestamp_default_condition_sql( $catalog_alias, false ),
 			$fractional_timestamp_default_pattern,
 			$quoted_literal_default_pattern,
-			$column_default_comment_sql
+			$column_default_comment_sql,
+			$null_default_pattern
 		);
 	}
 	private function get_postgresql_catalog_marker_condition_sql( string $comment_sql, string $prefix ): string {
