@@ -484,6 +484,53 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_wrapped_duckdb_query_failure_rolls_back_active_transaction(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public $rollback_count = 0;
+
+			private $in_transaction = false;
+
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				if ( 0 === strpos( $sql, 'SELECT ' ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported DuckDB MySQL-emulation SELECT statement: DuckDB query failed: Invalid Input Error: invalid unicode' );
+				}
+
+				return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+			}
+
+			public function beginTransaction(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+				$this->in_transaction = true;
+				return true;
+			}
+
+			public function rollback(): bool {
+				++$this->rollback_count;
+				$this->in_transaction = false;
+				return true;
+			}
+
+			public function inTransaction(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+				return $this->in_transaction;
+			}
+		};
+		$driver     = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+
+		$driver->query( 'BEGIN' );
+		$this->assertTrue( $connection->inTransaction() );
+
+		try {
+			$driver->query( 'SELECT 1 AS wrapped_failure' );
+			$this->fail( 'Expected wrapped SELECT failure.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( ': DuckDB query failed: Invalid Input Error:', $e->getMessage() );
+		}
+
+		$this->assertSame( 1, $connection->rollback_count );
+		$this->assertFalse( $connection->inTransaction() );
+	}
+
 	public function test_select_mysql_functions_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

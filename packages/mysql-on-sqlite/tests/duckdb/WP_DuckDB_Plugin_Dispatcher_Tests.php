@@ -111,6 +111,16 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 'WP_DuckDB_DB', $result['wpdb_class'] );
 	}
 
+	public function test_duckdb_wpdb_reports_spatial_compatible_mysql_version(): void {
+		$result = $this->run_duckdb_version_state_script();
+
+		$this->assertSame( '8.0.11', $result['db_version'] );
+		$this->assertSame( 'geomcollection', $result['dbdelta_spatial_type'] );
+		$this->assertTrue( $result['is_mysql_8011_or_later'] );
+		$this->assertTrue( $result['is_before_mysql_8017'] );
+		$this->assertFalse( $result['is_mariadb'] );
+	}
+
 	public function test_duckdb_wpdb_query_updates_raw_query_state(): void {
 		$result = $this->run_raw_query_state_script();
 
@@ -296,6 +306,16 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 				);
 			}
 		}
+	}
+
+	public function test_duckdb_wpdb_show_index_non_unique_uses_dbdelta_string_values(): void {
+		$result = $this->run_show_index_non_unique_state_script();
+
+		$this->assertTrue( $result['connected'] );
+		$this->assertSame( 2, $result['show_index_return'] );
+		$this->assertSame( array( '0', '1' ), $result['non_unique_values'] );
+		$this->assertSame( array( 'string', 'string' ), $result['non_unique_types'] );
+		$this->assertTrue( $result['dbdelta_primary_match'] );
 	}
 
 	public function test_duckdb_wpdb_query_surface_provider(): void {
@@ -523,6 +543,36 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 				unlink( $dropin_file );
 			}
 		}
+	}
+
+	private function run_duckdb_version_state_script(): array {
+		$plugin_dir = $this->get_plugin_dir();
+		$code       = $this->get_wordpress_stub_code();
+		$code      .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code      .= <<<'PHP'
+
+$db             = new WP_DuckDB_DB( 'wordpress_test' );
+$db_version     = $db->db_version();
+$db_server_info = $db->db_server_info();
+$spatial_type   = 'geometrycollection';
+
+if ( version_compare( $db_version, '8.0.11', '>=' ) && false === strpos( $db_server_info, 'MariaDB' ) ) {
+	$spatial_type = 'geomcollection';
+}
+
+echo json_encode(
+	array(
+		'db_version'             => $db_version,
+		'db_server_info'         => $db_server_info,
+		'dbdelta_spatial_type'   => $spatial_type,
+		'is_mysql_8011_or_later' => version_compare( $db_version, '8.0.11', '>=' ),
+		'is_before_mysql_8017'   => version_compare( $db_version, '8.0.17', '<' ),
+		'is_mariadb'             => false !== strpos( $db_server_info, 'MariaDB' ),
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
 	}
 
 	private function run_sql_mode_boot_state_script( bool $fail_read ): array {
@@ -1200,6 +1250,97 @@ echo json_encode(
 	array(
 		'connected' => $connected,
 		'cases'     => $cases,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_show_index_non_unique_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_Show_Index_Test_Driver extends WP_DuckDB_Driver {
+	public function __construct() {}
+
+	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		if ( 'SELECT @@SESSION.sql_mode' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( '@@SESSION.sql_mode' ),
+				array(
+					array( 'NO_ENGINE_SUBSTITUTION' ),
+				),
+				0
+			);
+		}
+
+		if ( "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		if ( 'SHOW INDEX FROM wp_posts' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array(
+					'Table',
+					'Non_unique',
+					'Key_name',
+					'Seq_in_index',
+					'Column_name',
+					'Collation',
+					'Cardinality',
+					'Sub_part',
+					'Packed',
+					'Null',
+					'Index_type',
+					'Comment',
+					'Index_comment',
+					'Visible',
+					'Expression',
+				),
+				array(
+					array( 'wp_posts', 0, 'PRIMARY', 1, 'ID', 'A', 0, null, null, '', 'BTREE', '', '', 'YES', null ),
+					array( 'wp_posts', 1, 'post_name', 1, 'post_name', 'A', 0, 191, null, '', 'BTREE', '', '', 'YES', null ),
+				),
+				0
+			);
+		}
+
+		throw new RuntimeException( 'Unexpected query: ' . $sql );
+	}
+}
+
+$GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Show_Index_Test_Driver();
+$db                        = new WP_DuckDB_DB( 'wordpress_test' );
+$connected                 = $db->db_connect( false );
+$show_index_return         = $db->query( 'SHOW INDEX FROM wp_posts' );
+$rows                      = array_map(
+	function ( $row ) {
+		return get_object_vars( $row );
+	},
+	$db->last_result
+);
+$non_unique_values         = array_map(
+	function ( $row ) {
+		return $row['Non_unique'];
+	},
+	$rows
+);
+$non_unique_types          = array_map( 'gettype', $non_unique_values );
+$dbdelta_primary_match     = isset( $db->last_result[0]->Non_unique ) && '0' === $db->last_result[0]->Non_unique;
+
+echo json_encode(
+	array(
+		'connected'             => $connected,
+		'show_index_return'     => $show_index_return,
+		'rows'                  => $rows,
+		'non_unique_values'     => $non_unique_values,
+		'non_unique_types'      => $non_unique_types,
+		'dbdelta_primary_match' => $dbdelta_primary_match,
 	)
 );
 PHP;

@@ -423,11 +423,14 @@ class WP_DuckDB_Driver {
 		}
 
 		for ( $current = $error; null !== $current; $current = $current->getPrevious() ) {
+			$message = $current->getMessage();
 			if (
 				$current instanceof WP_DuckDB_Driver_Exception
 				&& (
-					0 === strpos( $current->getMessage(), 'DuckDB query failed:' )
-					|| 0 === strpos( $current->getMessage(), 'Failed to prepare DuckDB query:' )
+					0 === strpos( $message, 'DuckDB query failed:' )
+					|| 0 === strpos( $message, 'Failed to prepare DuckDB query:' )
+					|| false !== strpos( $message, ': DuckDB query failed:' )
+					|| false !== strpos( $message, ': Failed to prepare DuckDB query:' )
 				)
 			) {
 				return true;
