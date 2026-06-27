@@ -9775,6 +9775,68 @@ SQL,
 		$driver->query( 'INSERT INTO alter_fk_validate_child (id, parent_id) VALUES (3, 405)' );
 	}
 
+	public function test_alter_table_foreign_key_actions_reject_without_metadata_or_rebuild(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_fk_action_guard_parent (id INT PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO alter_fk_action_guard_parent (id) VALUES (0), (1)' );
+		$driver->query( 'CREATE TABLE alter_fk_action_guard_child (id INT PRIMARY KEY, parent_id INT DEFAULT 0, KEY parent_idx (parent_id))' );
+		$driver->query( 'INSERT INTO alter_fk_action_guard_child (id, parent_id) VALUES (1, 1)' );
+
+		foreach (
+			array(
+				'ALTER TABLE alter_fk_action_guard_child ADD CONSTRAINT fk_action_cascade FOREIGN KEY (parent_id) REFERENCES alter_fk_action_guard_parent (id) ON DELETE CASCADE' => 'ON DELETE CASCADE is not supported',
+				'ALTER TABLE alter_fk_action_guard_child ADD CONSTRAINT fk_action_set_null FOREIGN KEY (parent_id) REFERENCES alter_fk_action_guard_parent (id) ON DELETE SET NULL' => 'ON DELETE SET NULL is not supported',
+				'ALTER TABLE alter_fk_action_guard_child ADD CONSTRAINT fk_action_set_default FOREIGN KEY (parent_id) REFERENCES alter_fk_action_guard_parent (id) ON DELETE SET DEFAULT' => 'ON DELETE SET DEFAULT is not supported',
+				'ALTER TABLE alter_fk_action_guard_child ADD CONSTRAINT fk_action_update_cascade FOREIGN KEY (parent_id) REFERENCES alter_fk_action_guard_parent (id) ON UPDATE CASCADE' => 'ON UPDATE CASCADE is not supported',
+			) as $sql => $message
+		) {
+			$before = array(
+				'child'                => $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_action_guard_child' ),
+				'parent_rows'          => $driver->query( 'SELECT id FROM alter_fk_action_guard_parent ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'foreign_key_metadata' => $this->foreign_key_rejection_metadata_snapshot( $driver ),
+			);
+
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected unsupported FOREIGN KEY action to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+
+			$this->assertSame(
+				$before,
+				array(
+					'child'                => $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_action_guard_child' ),
+					'parent_rows'          => $driver->query( 'SELECT id FROM alter_fk_action_guard_parent ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+					'foreign_key_metadata' => $this->foreign_key_rejection_metadata_snapshot( $driver ),
+				),
+				'Unsupported FOREIGN KEY action mutated schema, metadata, or data for SQL: ' . $sql
+			);
+		}
+
+		$driver->query( 'INSERT INTO alter_fk_action_guard_child (id, parent_id) VALUES (2, 404)' );
+		$this->assertSame(
+			array(
+				array(
+					'id'        => 1,
+					'parent_id' => 1,
+				),
+				array(
+					'id'        => 2,
+					'parent_id' => 404,
+				),
+			),
+			$driver->query( 'SELECT id, parent_id FROM alter_fk_action_guard_child ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_alter_table_foreign_key_limitations_reject_before_mutation(): void {
 		$this->requireDuckDBRuntime();
 
@@ -10017,10 +10079,12 @@ SQL,
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO parents (id) VALUES (1)' );
 
 		foreach (
 			array(
 				'CREATE TABLE child_cascade (parent_id INT, FOREIGN KEY (parent_id) REFERENCES parents (id) ON DELETE CASCADE)' => 'ON DELETE CASCADE is not supported',
+				'CREATE TABLE child_update_cascade (parent_id INT, FOREIGN KEY (parent_id) REFERENCES parents (id) ON UPDATE CASCADE)' => 'ON UPDATE CASCADE is not supported',
 				'CREATE TABLE child_set_null (parent_id INT, FOREIGN KEY (parent_id) REFERENCES parents (id) ON UPDATE SET NULL)' => 'ON UPDATE SET NULL is not supported',
 				'CREATE TABLE child_set_default (parent_id INT DEFAULT 0, FOREIGN KEY (parent_id) REFERENCES parents (id) ON DELETE SET DEFAULT)' => 'ON DELETE SET DEFAULT is not supported',
 				'CREATE TABLE child_inline_cascade (parent_id INT REFERENCES parents (id) ON DELETE CASCADE)' => 'ON DELETE CASCADE is not supported',
@@ -10028,17 +10092,37 @@ SQL,
 				'CREATE TABLE child_inline_set_default (parent_id INT DEFAULT 0 REFERENCES parents (id) ON DELETE SET DEFAULT)' => 'ON DELETE SET DEFAULT is not supported',
 			) as $sql => $message
 		) {
+			$before = array(
+				'tables'               => $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ),
+				'parent_rows'          => $driver->query( 'SELECT id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'foreign_key_metadata' => $this->foreign_key_rejection_metadata_snapshot( $driver ),
+			);
+
 			try {
 				$driver->query( $sql );
 				$this->fail( 'Expected unsupported FOREIGN KEY action to reject SQL: ' . $sql );
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
 				$this->assertStringContainsString( $message, $e->getMessage() );
 			}
+
+			$this->assertSame(
+				$before,
+				array(
+					'tables'               => $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ),
+					'parent_rows'          => $driver->query( 'SELECT id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+					'foreign_key_metadata' => $this->foreign_key_rejection_metadata_snapshot( $driver ),
+				),
+				'Unsupported FOREIGN KEY action created schema, metadata, or data for SQL: ' . $sql
+			);
 		}
 
 		$this->assertSame(
 			array( array( 'Tables_in_wp' => 'parents' ) ),
 			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'id' => 1 ) ),
+			$driver->query( 'SELECT id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
@@ -10721,6 +10805,31 @@ SQL,
 				ORDER BY constraint_name"
 			)->fetchAll( PDO::FETCH_ASSOC ),
 			'show_create'             => $driver->query( 'SHOW CREATE TABLE alter_constraint_guard' )->fetchAll( PDO::FETCH_ASSOC ),
+		);
+	}
+
+	private function foreign_key_rejection_metadata_snapshot( WP_DuckDB_Driver $driver ): array {
+		return array(
+			'table_constraints'       => $driver->query(
+				"SELECT TABLE_NAME, CONSTRAINT_NAME, CONSTRAINT_TYPE
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp'
+					AND constraint_type = 'FOREIGN KEY'
+				ORDER BY table_name, constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'referential_constraints' => $driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME, UPDATE_RULE, DELETE_RULE
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp'
+				ORDER BY table_name, constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'key_column_usage'        => $driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp'
+					AND referenced_table_name IS NOT NULL
+				ORDER BY table_name, constraint_name, ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC ),
 		);
 	}
 
