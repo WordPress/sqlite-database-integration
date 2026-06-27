@@ -454,6 +454,13 @@ class WP_PostgreSQL_Driver {
 	private $mysql_column_metadata_introspection_cache = array();
 
 	/**
+	 * Cached MySQL unique-index metadata rows keyed by backend schema and table.
+	 *
+	 * @var array<string, array>
+	 */
+	private $mysql_unique_index_metadata_introspection_cache = array();
+
+	/**
 	 * Cached exact MySQL SELECT translations keyed by query hash.
 	 *
 	 * @var array<string, array{query: string, sql: string, translated: bool}>
@@ -2864,12 +2871,13 @@ class WP_PostgreSQL_Driver {
 		return $this->last_result;
 	}
 	private function clear_mysql_metadata_caches(): void {
-		$this->mysql_table_schema_introspection_cache      = array();
-		$this->mysql_upsert_conflict_target_cache          = array();
-		$this->mysql_introspection_result_cache            = array();
-		$this->mysql_column_metadata_introspection_cache   = array();
-		$this->mysql_select_translation_cache              = array();
-		$this->mysql_sql_calc_found_rows_count_query_cache = array();
+		$this->mysql_table_schema_introspection_cache          = array();
+		$this->mysql_upsert_conflict_target_cache              = array();
+		$this->mysql_introspection_result_cache                = array();
+		$this->mysql_column_metadata_introspection_cache       = array();
+		$this->mysql_unique_index_metadata_introspection_cache = array();
+		$this->mysql_select_translation_cache                  = array();
+		$this->mysql_sql_calc_found_rows_count_query_cache     = array();
 	}
 
 	private function get_postgresql_catalog_mysql_schema_metadata_or_fail( string $query ): array {

@@ -1707,7 +1707,8 @@ WHERE option_name IN (
 		string $table_name,
 		array $columns,
 		?array $value_rows = null,
-		?array $probe_safe_rows = null
+		?array $probe_safe_rows = null,
+		?array $unique_index_metadata_rows = null
 	): ?array {
 		$insert_columns = array_map( 'strtolower', $columns );
 		sort( $insert_columns, SORT_STRING );
@@ -1719,7 +1720,7 @@ WHERE option_name IN (
 			return null === $cached ? null : $cached;
 		}
 
-		$candidates = $this->get_mysql_upsert_conflict_target_candidates( $table_name, $columns );
+		$candidates = $this->get_mysql_upsert_conflict_target_candidates( $table_name, $columns, false, $unique_index_metadata_rows );
 
 		if ( 1 !== count( $candidates ) ) {
 			if ( null !== $value_rows && null !== $probe_safe_rows && count( $candidates ) > 1 ) {
@@ -1816,12 +1817,12 @@ WHERE option_name IN (
 		}
 		return $this->get_mysql_upsert_conflict_target_from_candidate( $omitted_candidates[0] );
 	}
-	private function get_mysql_upsert_conflict_target_candidates( string $table_name, array $columns, bool $allow_omitted_columns = false ): array {
+	private function get_mysql_upsert_conflict_target_candidates( string $table_name, array $columns, bool $allow_omitted_columns = false, ?array $unique_index_metadata_rows = null ): array {
 		$insert_column_lookup = $this->get_mysql_upsert_insert_column_lookup( $columns );
 
 		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
 		return $this->get_mysql_upsert_conflict_target_candidates_from_rows(
-			$this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ),
+			null === $unique_index_metadata_rows ? $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ) : $unique_index_metadata_rows,
 			$insert_column_lookup,
 			$allow_omitted_columns
 		);
@@ -1830,6 +1831,11 @@ WHERE option_name IN (
 		return array_fill_keys( array_map( 'strtolower', array_map( 'strval', $columns ) ), true );
 	}
 	private function get_mysql_unique_index_metadata_rows( string $table_schema, string $table_name ): array {
+		$cache_key = $table_schema . "\0" . $table_name;
+		if ( array_key_exists( $cache_key, $this->mysql_unique_index_metadata_introspection_cache ) ) {
+			return $this->mysql_unique_index_metadata_introspection_cache[ $cache_key ];
+		}
+
 		$rows       = array();
 		$index_rows = $this->get_show_create_table_metadata_rows( 'indexes', $table_schema, $table_name, false );
 
@@ -1845,6 +1851,7 @@ WHERE option_name IN (
 				'sub_part'    => $row['sub_part'],
 			);
 		}
+		$this->mysql_unique_index_metadata_introspection_cache[ $cache_key ] = $rows;
 		return $rows;
 	}
 	private function get_mysql_upsert_conflict_target_candidates_from_rows( array $rows, array $insert_column_lookup, bool $allow_omitted_columns ): array {
@@ -2303,19 +2310,25 @@ WHERE option_name IN (
 			$value_rows
 		);
 
+		$table_schema                     = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
+		$unique_index_metadata_rows       = $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name );
+		$unique_index_groups              = $this->get_mysql_unique_index_groups_from_metadata_rows( $unique_index_metadata_rows );
 		$conflict_target                  = $this->get_mysql_replace_conflict_target(
 			$table_name,
 			$columns,
 			$value_rows,
-			$probe_safe_rows
+			$probe_safe_rows,
+			$unique_index_metadata_rows,
+			$unique_index_groups
 		);
 		$delete_conflict_index_groups     = $this->get_mysql_replace_delete_conflict_index_groups(
 			$table_name,
 			$columns,
 			$value_rows,
-			$probe_safe_rows
+			$probe_safe_rows,
+			$unique_index_groups
 		);
-		$all_delete_conflict_index_groups = $this->get_mysql_replace_delete_conflict_index_groups( $table_name, $columns );
+		$all_delete_conflict_index_groups = $this->get_mysql_replace_delete_conflict_index_groups( $table_name, $columns, array(), array(), $unique_index_groups );
 		if (
 			null !== $conflict_target
 			&& count( $all_delete_conflict_index_groups ) > count( $delete_conflict_index_groups )
@@ -2588,10 +2601,14 @@ WHERE option_name IN (
 		}
 		return empty( $where ) ? null : implode( ' AND ', $where );
 	}
-	private function get_mysql_replace_delete_conflict_index_groups( string $table_name, array $columns, array $value_rows = array(), array $probe_safe_rows = array() ): array {
-		$table_schema          = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
+	private function get_mysql_replace_delete_conflict_index_groups( string $table_name, array $columns, array $value_rows = array(), array $probe_safe_rows = array(), ?array $unique_index_groups = null ): array {
+		if ( null === $unique_index_groups ) {
+			$table_schema        = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
+			$unique_index_groups = $this->get_mysql_unique_index_groups_from_metadata_rows( $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ) );
+		}
+
 		$conflict_index_groups = array();
-		foreach ( $this->get_mysql_unique_index_groups_from_metadata_rows( $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ) ) as $index ) {
+		foreach ( $unique_index_groups as $index ) {
 			if ( empty( $index['parts'] ) || $this->is_mysql_metadata_only_index_type( $index['index_type'] ) ) {
 				continue;
 			}
@@ -2669,13 +2686,18 @@ WHERE option_name IN (
 			$replace_select_probe_safe_rows = array( $replace_select_literal_row['probe_safe_values'] );
 		}
 
-		$conflict_target     = $this->get_mysql_replace_conflict_target(
+		$table_schema               = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
+		$unique_index_metadata_rows = $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name );
+		$unique_index_groups        = $this->get_mysql_unique_index_groups_from_metadata_rows( $unique_index_metadata_rows );
+		$conflict_target            = $this->get_mysql_replace_conflict_target(
 			$table_name,
 			$columns,
 			$replace_select_value_rows,
-			$replace_select_probe_safe_rows
+			$replace_select_probe_safe_rows,
+			$unique_index_metadata_rows,
+			$unique_index_groups
 		);
-		$replace_select_flow = $this->get_mysql_replace_select_delete_then_insert_flow(
+		$replace_select_flow        = $this->get_mysql_replace_select_delete_then_insert_flow(
 			$table_name,
 			$columns,
 			$select_columns,
@@ -2683,9 +2705,10 @@ WHERE option_name IN (
 			$conflict_target,
 			$tokens,
 			$select_start,
-			$select_end
+			$select_end,
+			$unique_index_groups
 		);
-		$replace_query       = null;
+		$replace_query              = null;
 		if ( null !== $replace_select_flow ) {
 			$conflict_target = $conflict_target ?? array(
 				'columns' => array(),
@@ -2751,8 +2774,8 @@ WHERE option_name IN (
 			$conflict_index_groups
 		);
 	}
-	private function get_mysql_replace_select_delete_then_insert_flow( string $table_name, array $columns, array $select_columns, array $default_columns, ?array $conflict_target, array $tokens, int $select_start, int $select_end ): ?array {
-		$conflict_index_groups = $this->get_mysql_replace_delete_conflict_index_groups( $table_name, $columns );
+	private function get_mysql_replace_select_delete_then_insert_flow( string $table_name, array $columns, array $select_columns, array $default_columns, ?array $conflict_target, array $tokens, int $select_start, int $select_end, ?array $unique_index_groups = null ): ?array {
+		$conflict_index_groups = $this->get_mysql_replace_delete_conflict_index_groups( $table_name, $columns, array(), array(), $unique_index_groups );
 		$conflict_indexes      = null;
 		if ( null !== $conflict_target ) {
 			$conflict_indexes = $this->get_mysql_upsert_conflict_indexes( $columns, $conflict_target['parts'] ?? array() );
@@ -3093,8 +3116,8 @@ WHERE option_name IN (
 		$replace_query['inserted_new_row'] = ! empty( $replace_query['delete_then_insert'] ) ? true : $inserted_new_row;
 		return $return_value;
 	}
-	private function get_mysql_replace_conflict_target( string $table_name, array $columns, ?array $value_rows = null, ?array $probe_safe_rows = null ): ?array {
-		$metadata_target  = $this->get_mysql_upsert_conflict_target( $table_name, $columns, $value_rows, $probe_safe_rows );
+	private function get_mysql_replace_conflict_target( string $table_name, array $columns, ?array $value_rows = null, ?array $probe_safe_rows = null, ?array $unique_index_metadata_rows = null, ?array $unique_index_groups = null ): ?array {
+		$metadata_target  = $this->get_mysql_upsert_conflict_target( $table_name, $columns, $value_rows, $probe_safe_rows, $unique_index_metadata_rows );
 		$heuristic_target = $this->get_simple_replace_conflict_target( $table_name, $columns );
 		if ( null === $heuristic_target ) {
 			return $metadata_target;
@@ -3105,7 +3128,7 @@ WHERE option_name IN (
 		}
 
 		if (
-			$this->is_mysql_replace_conflict_target_backed_by_unique_metadata( $table_name, $heuristic_target )
+			$this->is_mysql_replace_conflict_target_backed_by_unique_metadata( $table_name, $heuristic_target, $unique_index_groups )
 			&&
 			null !== $value_rows
 			&& null !== $probe_safe_rows
@@ -3121,15 +3144,18 @@ WHERE option_name IN (
 		}
 		return $metadata_target;
 	}
-	private function is_mysql_replace_conflict_target_backed_by_unique_metadata( string $table_name, array $conflict_target ): bool {
+	private function is_mysql_replace_conflict_target_backed_by_unique_metadata( string $table_name, array $conflict_target, ?array $unique_index_groups = null ): bool {
 		$target_parts = $conflict_target['parts'] ?? array();
 		if ( empty( $target_parts ) ) {
 			return false;
 		}
 
-		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
+		if ( null === $unique_index_groups ) {
+			$table_schema        = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
+			$unique_index_groups = $this->get_mysql_unique_index_groups_from_metadata_rows( $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ) );
+		}
 
-		foreach ( $this->get_mysql_unique_index_groups_from_metadata_rows( $this->get_mysql_unique_index_metadata_rows( $table_schema, $table_name ) ) as $index ) {
+		foreach ( $unique_index_groups as $index ) {
 			if ( $this->is_mysql_metadata_only_index_type( $index['index_type'] ) ) {
 				continue;
 			}

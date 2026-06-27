@@ -3887,14 +3887,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( $insert ) );
 		$this->assertSame( $insert, $driver->get_last_mysql_query() );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			)
 		);
 
 		$this->assertSame( 1, $unique_index_metadata_queries );
@@ -3906,14 +3903,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = VALUES(`autoload`);";
 
 		$this->assertSame( 1, $driver->query( $update ) );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			)
 		);
 
 		$this->assertSame( 1, $unique_index_metadata_queries );
@@ -3943,9 +3937,42 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertIsArray( $translated_update );
 		$this->assertSame(
 			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_name" = excluded."option_name", "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
-			$translated_update['sql']
+			$this->remove_real_pgsql_test_schema_qualifiers( (string) $translated_update['sql'] )
 		);
 		$this->assertSame( 2, $unique_index_metadata_queries );
+	}
+
+	/**
+	 * Tests REPLACE reuses unique-index metadata within and across DML statements.
+	 */
+	public function test_replace_reuses_unique_index_metadata_rows(): void {
+		$driver = $this->create_driver();
+		$driver->set_sql_mode( '' );
+
+		$this->install_options_table_with_mysql_metadata( $driver );
+
+		$unique_index_metadata_queries = 0;
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$unique_index_metadata_queries ): void {
+				if (
+					false !== strpos( $sql, 'pg_catalog.pg_index' )
+					|| (
+						false !== strpos( $sql, 'index_list' )
+						&& false !== strpos( $sql, 'wptests_options' )
+					)
+				) {
+					++$unique_index_metadata_queries;
+				}
+			}
+		);
+
+		$replace = "REPLACE INTO `wptests_options` (`option_name`) VALUES ('siteurl')";
+
+		$this->assertSame( 1, $driver->query( $replace ) );
+		$this->assertSame( 1, $unique_index_metadata_queries );
+
+		$this->assertSame( 2, $driver->query( $replace ) );
+		$this->assertSame( 1, $unique_index_metadata_queries );
 	}
 
 	/**
@@ -3963,9 +3990,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = VALUES(`autoload`)";
 
 		$this->assertSame( 1, $driver->query( $insert ) );
-		$this->assertSame(
-			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
-			$this->get_last_single_postgresql_sql( $driver )
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			)
 		);
 
 		$update = "INSERT INTO `wptests_options` SET `option_name` = 'siteurl',
@@ -3975,9 +4004,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = VALUES(`autoload`)";
 
 		$this->assertSame( 1, $driver->query( $update ) );
-		$this->assertSame(
-			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
-			$this->get_last_single_postgresql_sql( $driver )
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
@@ -3999,9 +4030,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = VALUES(`autoload`)";
 
 		$this->assertSame( 1, $driver->query( $insert ) );
-		$this->assertSame(
-			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
-			$this->get_last_single_postgresql_sql( $driver )
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			)
 		);
 
 		$update = "INSERT HIGH_PRIORITY INTO `wptests_options` (`option_name`, `option_value`, `autoload`)
@@ -4010,9 +4043,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = VALUES(`autoload`)";
 
 		$this->assertSame( 1, $driver->query( $update ) );
-		$this->assertSame(
-			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
-			$this->get_last_single_postgresql_sql( $driver )
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.net\', \'no\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
@@ -4100,14 +4135,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = \"no\"";
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'inserted\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = \'http://example.net\', "autoload" = \'no\'',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'inserted\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = \'http://example.net\', "autoload" = \'no\'',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
@@ -4175,9 +4207,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `wptests`.`wptests_options`.`autoload` = DEFAULT";
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
-		$this->assertSame(
-			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'inserted\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = \'yes\'',
-			$this->get_last_single_postgresql_sql( $driver )
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'inserted\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = \'yes\'',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
@@ -4374,9 +4408,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			ON DUPLICATE KEY UPDATE `option_value` = VALUES(`option_value`)";
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
-		$this->assertSame(
-			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'from-set\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value"',
-			$this->get_last_single_postgresql_sql( $driver )
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'from-set\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value"',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
@@ -4404,9 +4440,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = autoload_alias";
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
-		$this->assertSame(
-			'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'from-set-alias\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
-			$this->get_last_single_postgresql_sql( $driver )
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
+			array(
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'from-set-alias\', \'off\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = excluded."option_value", "autoload" = excluded."autoload"',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'siteurl'" );
@@ -7962,14 +8000,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$update = "UPDATE `wptests_options` SET `option_value` = NULL, `autoload` = NULL WHERE `option_name` = 'cron'";
 
 		$this->assertSame( 1, $driver->query( $update ) );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'UPDATE "wptests_options" SET "option_value" = \'\', "autoload" = \'yes\' WHERE ("option_name" = \'cron\') AND ("option_value" IS DISTINCT FROM (\'\') OR "autoload" IS DISTINCT FROM (\'yes\'))',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'UPDATE "wptests_options" SET "option_value" = \'\', "autoload" = \'yes\' WHERE ("option_name" = \'cron\') AND ("option_value" IS DISTINCT FROM (\'\') OR "autoload" IS DISTINCT FROM (\'yes\'))',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'cron'" );
@@ -14525,14 +14560,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
 		$this->assertSame( 1, $driver->query( $upsert ) );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT \'http://example.net\') AS text)',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT \'http://example.net\') AS text)',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl'" );
@@ -14545,14 +14577,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			ON DUPLICATE KEY UPDATE `option_value` = (SELECT 'http://example.net/dual' FROM DUAL WHERE 1 = 1 ORDER BY 1 LIMIT 1)";
 
 		$this->assertSame( 1, $driver->query( $dual_tail_upsert ) );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT \'http://example.net/dual\' WHERE 1 = 1 ORDER BY 1 LIMIT 1) AS text)',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'siteurl\', \'http://example.org\', \'yes\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT \'http://example.net/dual\' WHERE 1 = 1 ORDER BY 1 LIMIT 1) AS text)',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl'" );
@@ -14591,14 +14620,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = (SELECT `s`.`label` FROM `wptests_upsert_source` AS `s` WHERE `s`.`id` = 2)";
 
 		$this->assertSame( 1, $driver->query( $upsert ) );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT COUNT(*) FROM "wptests_upsert_source" WHERE "id" > 1) AS text), "autoload" = CAST((SELECT "s"."label" FROM "wptests_upsert_source" AS "s" WHERE "s"."id" = 2) AS text)',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT COUNT(*) FROM "wptests_upsert_source" WHERE "id" > 1) AS text), "autoload" = CAST((SELECT "s"."label" FROM "wptests_upsert_source" AS "s" WHERE "s"."id" = 2) AS text)',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'source_counts'" );
@@ -14613,14 +14639,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = (SELECT COUNT(NULL) FROM `wptests_upsert_source`)";
 
 		$this->assertSame( 1, $driver->query( $count_literal_upsert ) );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT COUNT(1) FROM "wptests_upsert_source" WHERE "id" > 0) AS text), "autoload" = CAST((SELECT COUNT(NULL) FROM "wptests_upsert_source") AS text)',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT COUNT(1) FROM "wptests_upsert_source" WHERE "id" > 0) AS text), "autoload" = CAST((SELECT COUNT(NULL) FROM "wptests_upsert_source") AS text)',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'source_counts'" );
@@ -14635,14 +14658,11 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			                        `autoload` = (SELECT `s`.`label` FROM `wptests_upsert_source` AS `s` WHERE `s`.`id` > 0 ORDER BY `s`.`id` ASC LIMIT 1, 1)";
 
 		$this->assertSame( 1, $driver->query( $ordered_upsert ) );
-		$this->assertSame(
+		$this->assert_last_postgresql_sql_statements(
+			$driver,
 			array(
-				array(
-					'sql'    => 'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT "label" FROM "wptests_upsert_source" ORDER BY "id" DESC LIMIT 1) AS text), "autoload" = CAST((SELECT "s"."label" FROM "wptests_upsert_source" AS "s" WHERE "s"."id" > 0 ORDER BY "s"."id" ASC LIMIT 1 OFFSET 1) AS text)',
-					'params' => array(),
-				),
-			),
-			$driver->get_last_postgresql_queries()
+				'INSERT INTO "wptests_options" ("option_name", "option_value", "autoload") VALUES (\'source_counts\', \'ignored\', \'ignored\') ON CONFLICT ("option_name") DO UPDATE SET "option_value" = CAST((SELECT "label" FROM "wptests_upsert_source" ORDER BY "id" DESC LIMIT 1) AS text), "autoload" = CAST((SELECT "s"."label" FROM "wptests_upsert_source" AS "s" WHERE "s"."id" > 0 ORDER BY "s"."id" ASC LIMIT 1 OFFSET 1) AS text)',
+			)
 		);
 
 		$rows = $driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'source_counts'" );
@@ -30742,11 +30762,12 @@ $$'
 	 * @param WP_PostgreSQL_Driver $driver Driver under test.
 	 */
 	private function install_options_table_with_mysql_metadata( WP_PostgreSQL_Driver $driver ): void {
-		$driver->query(
+		$driver->get_connection()->query(
 			'CREATE TABLE wptests_options (
+				option_id BIGSERIAL PRIMARY KEY,
 				option_name TEXT NOT NULL UNIQUE,
-				option_value TEXT NOT NULL,
-				autoload TEXT NOT NULL
+				option_value TEXT NOT NULL DEFAULT \'\',
+				autoload TEXT NOT NULL DEFAULT \'yes\'
 			)'
 		);
 		$this->install_mysql_schema_metadata_fixture(
