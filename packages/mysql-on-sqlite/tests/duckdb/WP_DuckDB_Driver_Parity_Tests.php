@@ -1259,6 +1259,59 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityErrorContains( 'CHECK TABLE information_schema.tables', "to database 'information_schema'" );
 	}
 
+	public function test_administration_table_status_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE admin_items (id INT)',
+				'CREATE TABLE admin_second (id INT)',
+				'CREATE TEMPORARY TABLE admin_temp_only (id INT)',
+				'CREATE TABLE admin_shadow (base_id INT)',
+				'CREATE TEMPORARY TABLE admin_shadow (temp_id INT)',
+				'INSERT INTO admin_items VALUES (1)',
+				'INSERT INTO admin_shadow VALUES (9)',
+			)
+		);
+
+		foreach ( array( 'ANALYZE TABLE', 'OPTIMIZE TABLE', 'REPAIR TABLE' ) as $statement ) {
+			$this->assertParityRows( 'SELECT id FROM admin_items' );
+			$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+			$this->assertParityRows( $statement . ' admin_items' );
+			$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+			$this->assertParityRows( $statement . ' wp.admin_items' );
+			$this->assertParityRows( str_replace( ' TABLE', ' TABLES', $statement ) . ' admin_items' );
+			$this->assertParityRows( $statement . ' admin_items, admin_second' );
+			$this->assertParityRows( $statement . ' admin_temp_only' );
+			$this->assertParityRows( $statement . ' admin_shadow' );
+			$this->assertParityRows( $statement . ' missing_admin_table' );
+			$this->assertParityRows( $statement . ' admin_items, missing_admin_table' );
+			$this->assertParityErrorContains( $statement . ' information_schema.tables', "to database 'information_schema'" );
+			$this->assertParityErrorContains( $statement . ' admin_items, information_schema.tables', "to database 'information_schema'" );
+		}
+
+		$this->assertParityRows( 'ANALYZE LOCAL TABLE admin_items' );
+		$this->assertParityRows( 'ANALYZE NO_WRITE_TO_BINLOG TABLES admin_items' );
+		$this->assertParityRows( 'OPTIMIZE LOCAL TABLE admin_items' );
+		$this->assertParityRows( 'OPTIMIZE NO_WRITE_TO_BINLOG TABLES admin_items' );
+		$this->assertParityRows( 'REPAIR LOCAL TABLE admin_items' );
+		$this->assertParityRows( 'REPAIR NO_WRITE_TO_BINLOG TABLES admin_items' );
+		$this->assertParityRows( 'REPAIR TABLE admin_items QUICK' );
+		$this->assertParityRows( 'REPAIR TABLE admin_items EXTENDED' );
+		$this->assertParityRows( 'REPAIR TABLE admin_items USE_FRM' );
+		$this->assertParityRows( 'REPAIR TABLE admin_items QUICK EXTENDED USE_FRM' );
+		$this->assertParityRows( 'ANALYZE TABLE admin_items UPDATE HISTOGRAM ON id' );
+		$this->assertParityRows( 'ANALYZE TABLE admin_items DROP HISTOGRAM ON id' );
+		$this->assertParityErrorContains( 'OPTIMIZE TABLE admin_items QUICK', 'parse' );
+
+		$this->assertParityRows(
+			"SELECT TABLE_NAME
+			FROM information_schema.tables
+			WHERE TABLE_NAME = 'admin_temp_only'
+				OR TABLE_NAME LIKE '__wp_duckdb_%'
+			ORDER BY TABLE_NAME"
+		);
+		$this->assertParityRows( 'SELECT temp_id FROM admin_shadow' );
+	}
+
 	public function test_show_table_status_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

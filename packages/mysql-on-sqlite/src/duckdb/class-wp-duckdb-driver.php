@@ -274,9 +274,12 @@ class WP_DuckDB_Driver {
 				case WP_MySQL_Lexer::ALTER_SYMBOL:
 					$this->found_rows = 0;
 					return $this->execute_alter_table( $tokens );
+				case WP_MySQL_Lexer::ANALYZE_SYMBOL:
 				case WP_MySQL_Lexer::CHECK_SYMBOL:
+				case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
+				case WP_MySQL_Lexer::REPAIR_SYMBOL:
 					$this->found_rows = 0;
-					return $this->execute_check_table( $tokens );
+					return $this->execute_table_administration_statement( $tokens );
 				case WP_MySQL_Lexer::SHOW_SYMBOL:
 					return $this->record_found_rows_from_result( $this->execute_show( $tokens ) );
 				case WP_MySQL_Lexer::DESCRIBE_SYMBOL:
@@ -3326,30 +3329,41 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Execute CHECK TABLE as a MySQL-shaped no-op status report.
+	 * Execute table administration statements as MySQL-shaped status reports.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_check_table( array $tokens ): WP_DuckDB_Result_Statement {
-		$index = 0;
-		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CHECK_SYMBOL, 'Expected CHECK.' );
+	private function execute_table_administration_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		$operation = $this->table_administration_operation( $tokens[0] );
+		$statement = strtoupper( $operation ) . ' TABLE';
+		$index     = 0;
+		$this->expect_token( $tokens, $index, $tokens[0]->id, 'Expected ' . strtoupper( $operation ) . '.' );
 		++$index;
+
+		if (
+			'check' !== $operation
+			&& isset( $tokens[ $index ] )
+			&& $this->is_table_administration_log_modifier_token( $tokens[ $index ] )
+		) {
+			++$index;
+		}
+
 		if (
 			! isset( $tokens[ $index ] )
 			|| ( WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $index ]->id && WP_MySQL_Lexer::TABLES_SYMBOL !== $tokens[ $index ]->id )
 		) {
-			throw new WP_DuckDB_Driver_Exception( 'Expected TABLE in CHECK TABLE statement.' );
+			throw new WP_DuckDB_Driver_Exception( 'Expected TABLE in ' . $statement . ' statement.' );
 		}
 		++$index;
 
 		if ( ! isset( $tokens[ $index ] ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'CHECK TABLE requires at least one table name.' );
+			throw new WP_DuckDB_Driver_Exception( $statement . ' requires at least one table name.' );
 		}
 
 		$requested_table_names = array();
 		while ( $index < count( $tokens ) ) {
-			$reference               = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'CHECK TABLE' );
+			$reference               = $this->parse_schema_lifecycle_table_reference( $tokens, $index, $statement );
 			$requested_table_names[] = $reference['requested_table_name'];
 			$index                   = $reference['next_index'];
 
@@ -3357,32 +3371,106 @@ class WP_DuckDB_Driver {
 				break;
 			}
 
-			if ( $this->is_check_table_option_start_token( $tokens[ $index ] ) ) {
+			if ( 'check' === $operation && $this->is_check_table_option_start_token( $tokens[ $index ] ) ) {
 				$index = $this->consume_check_table_options( $tokens, $index );
+				break;
+			}
+
+			if ( 'repair' === $operation && $this->is_repair_table_option_start_token( $tokens[ $index ] ) ) {
+				$index = $this->consume_repair_table_options( $tokens, $index );
+				break;
+			}
+
+			if ( 'analyze' === $operation && $this->is_analyze_table_histogram_start_token( $tokens[ $index ] ) ) {
+				$index = $this->consume_analyze_table_histogram_options( $tokens, $index );
 				break;
 			}
 
 			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $index ]->id ) {
 				throw new WP_DuckDB_Driver_Exception(
-					'Unsupported CHECK TABLE statement in DuckDB driver. Only table names followed by optional CHECK options are supported.'
+					$this->unsupported_table_administration_message( $statement, $operation )
 				);
 			}
 			++$index;
 
 			if ( $index >= count( $tokens ) ) {
-				throw new WP_DuckDB_Driver_Exception( 'Expected table name after comma in CHECK TABLE statement.' );
+				throw new WP_DuckDB_Driver_Exception( 'Expected table name after comma in ' . $statement . ' statement.' );
 			}
 		}
 
 		$rows = array();
 		foreach ( $requested_table_names as $requested_table_name ) {
-			$rows = array_merge( $rows, $this->check_table_status_rows( $requested_table_name ) );
+			$rows = array_merge(
+				$rows,
+				$this->table_administration_status_rows( $requested_table_name, $operation )
+			);
 		}
 
 		return new WP_DuckDB_Result_Statement(
 			array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
 			$rows
 		);
+	}
+
+	/**
+	 * Get the result-row operation label for a table administration statement.
+	 *
+	 * @param WP_Parser_Token $token Statement token.
+	 * @return string Operation label.
+	 */
+	private function table_administration_operation( WP_Parser_Token $token ): string {
+		switch ( $token->id ) {
+			case WP_MySQL_Lexer::ANALYZE_SYMBOL:
+				return 'analyze';
+			case WP_MySQL_Lexer::CHECK_SYMBOL:
+				return 'check';
+			case WP_MySQL_Lexer::OPTIMIZE_SYMBOL:
+				return 'optimize';
+			case WP_MySQL_Lexer::REPAIR_SYMBOL:
+				return 'repair';
+		}
+
+		throw $this->new_unsupported_statement_exception( $token );
+	}
+
+	/**
+	 * Check whether a token is an ignored table administration log modifier.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether this token is LOCAL or NO_WRITE_TO_BINLOG.
+	 */
+	private function is_table_administration_log_modifier_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::LOCAL_SYMBOL,
+				WP_MySQL_Lexer::NO_WRITE_TO_BINLOG_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Build a stable unsupported-shape message for table administration statements.
+	 *
+	 * @param string $statement Statement name.
+	 * @param string $operation Operation label.
+	 * @return string Error message.
+	 */
+	private function unsupported_table_administration_message( string $statement, string $operation ): string {
+		if ( 'check' === $operation ) {
+			return 'Unsupported CHECK TABLE statement in DuckDB driver. Only table names followed by optional CHECK options are supported.';
+		}
+
+		if ( 'repair' === $operation ) {
+			return 'Unsupported REPAIR TABLE statement in DuckDB driver. Only table names followed by optional REPAIR options are supported.';
+		}
+
+		if ( 'analyze' === $operation ) {
+			return 'Unsupported ANALYZE TABLE statement in DuckDB driver. Only table names followed by optional histogram clauses are supported.';
+		}
+
+		return 'Unsupported ' . $statement . ' statement in DuckDB driver. Only table names are supported.';
 	}
 
 	/**
@@ -3451,35 +3539,217 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Build CHECK TABLE result rows for one requested table.
+	 * Consume legal REPAIR TABLE options.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index of the first option token.
+	 * @return int Index after the consumed options.
+	 */
+	private function consume_repair_table_options( array $tokens, int $index ): int {
+		while ( $index < count( $tokens ) ) {
+			if ( $this->is_repair_table_option_start_token( $tokens[ $index ] ) ) {
+				++$index;
+				continue;
+			}
+
+			throw new WP_DuckDB_Driver_Exception(
+				'Unsupported REPAIR TABLE statement in DuckDB driver. Only QUICK, EXTENDED, and USE_FRM options are supported.'
+			);
+		}
+
+		return $index;
+	}
+
+	/**
+	 * Check whether a token can begin REPAIR TABLE options.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token starts REPAIR TABLE options.
+	 */
+	private function is_repair_table_option_start_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::QUICK_SYMBOL,
+				WP_MySQL_Lexer::EXTENDED_SYMBOL,
+				WP_MySQL_Lexer::USE_FRM_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Consume ignored ANALYZE TABLE histogram clauses.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index of UPDATE or DROP.
+	 * @return int Index after the consumed histogram clause.
+	 */
+	private function consume_analyze_table_histogram_options( array $tokens, int $index ): int {
+		$is_update = WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $index ]->id;
+		$is_drop   = WP_MySQL_Lexer::DROP_SYMBOL === $tokens[ $index ]->id;
+		if ( ! $is_update && ! $is_drop ) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Unsupported ANALYZE TABLE statement in DuckDB driver. Histogram clauses must start with UPDATE or DROP.'
+			);
+		}
+		++$index;
+
+		if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::HISTOGRAM_SYMBOL !== $tokens[ $index ]->id ) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Unsupported ANALYZE TABLE statement in DuckDB driver. UPDATE or DROP must be followed by HISTOGRAM.'
+			);
+		}
+		++$index;
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in ANALYZE TABLE histogram clause.' );
+		++$index;
+
+		$index = $this->consume_analyze_table_histogram_column_list( $tokens, $index );
+
+		if (
+			$is_update
+			&& isset( $tokens[ $index ] )
+			&& WP_MySQL_Lexer::WITH_SYMBOL === $tokens[ $index ]->id
+		) {
+			$index = $this->consume_analyze_table_histogram_bucket_count( $tokens, $index );
+		}
+
+		if ( $index < count( $tokens ) ) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Unsupported ANALYZE TABLE statement in DuckDB driver. Only UPDATE HISTOGRAM ON columns and DROP HISTOGRAM ON columns are supported.'
+			);
+		}
+
+		return $index;
+	}
+
+	/**
+	 * Check whether a token can begin an ANALYZE TABLE histogram clause.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token starts a histogram clause.
+	 */
+	private function is_analyze_table_histogram_start_token( WP_Parser_Token $token ): bool {
+		return WP_MySQL_Lexer::UPDATE_SYMBOL === $token->id || WP_MySQL_Lexer::DROP_SYMBOL === $token->id;
+	}
+
+	/**
+	 * Consume an ANALYZE TABLE histogram column list.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index of the first column token.
+	 * @return int Index after the consumed column list.
+	 */
+	private function consume_analyze_table_histogram_column_list( array $tokens, int $index ): int {
+		$this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		while ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$this->identifier_value( $tokens[ $index ] ?? null );
+			++$index;
+		}
+
+		return $index;
+	}
+
+	/**
+	 * Consume an ANALYZE TABLE histogram bucket count.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index of WITH.
+	 * @return int Index after the consumed bucket count.
+	 */
+	private function consume_analyze_table_histogram_bucket_count( array $tokens, int $index ): int {
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::WITH_SYMBOL, 'Expected WITH in ANALYZE TABLE histogram clause.' );
+		++$index;
+
+		if ( ! isset( $tokens[ $index ] ) || ! $this->is_integer_number_token( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Expected bucket count in ANALYZE TABLE histogram clause.' );
+		}
+		++$index;
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::BUCKETS_SYMBOL, 'Expected BUCKETS in ANALYZE TABLE histogram clause.' );
+		++$index;
+
+		return $index;
+	}
+
+	/**
+	 * Check whether a token is an integer number token.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token is an integer number.
+	 */
+	private function is_integer_number_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::INT_NUMBER,
+				WP_MySQL_Lexer::LONG_NUMBER,
+				WP_MySQL_Lexer::ULONGLONG_NUMBER,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Build table administration result rows for one requested table.
 	 *
 	 * @param string $requested_table_name Requested table name.
+	 * @param string $operation            Operation label.
 	 * @return array<int,array<int,string>>
 	 */
-	private function check_table_status_rows( string $requested_table_name ): array {
-		$table_label = $this->database . '.' . $requested_table_name;
+	private function table_administration_status_rows( string $requested_table_name, string $operation ): array {
+		$table_label     = $this->database . '.' . $requested_table_name;
+		$table_reference = $this->resolve_visible_user_table_reference( $requested_table_name );
 
-		if ( null === $this->resolve_visible_user_table_reference( $requested_table_name ) ) {
+		if ( null === $table_reference ) {
 			return array(
 				array(
 					$table_label,
-					'check',
+					$operation,
 					'Error',
 					"Table '{$requested_table_name}' doesn't exist",
 				),
 				array(
 					$table_label,
-					'check',
+					$operation,
 					'status',
 					'Operation failed',
 				),
 			);
 		}
 
+		if ( 'analyze' === $operation ) {
+			try {
+				$this->execute_duckdb_query(
+					'ANALYZE ' . $this->connection->quote_identifier( $table_reference['table_name'] ),
+					'Failed to analyze DuckDB table'
+				);
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				return array(
+					array(
+						$table_label,
+						$operation,
+						'Error',
+						$e->getMessage(),
+					),
+					array(
+						$table_label,
+						$operation,
+						'status',
+						'Operation failed',
+					),
+				);
+			}
+		}
+
 		return array(
 			array(
 				$table_label,
-				'check',
+				$operation,
 				'status',
 				'OK',
 			),

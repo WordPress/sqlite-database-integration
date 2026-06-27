@@ -3624,6 +3624,214 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_administration_table_statements_return_mysql_shaped_status_rows(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE admin_items (id INT)' );
+		$driver->query( 'CREATE TABLE admin_second (id INT)' );
+		$driver->query( 'CREATE TEMPORARY TABLE admin_temp_only (id INT)' );
+		$driver->query( 'CREATE TABLE admin_shadow (base_id INT)' );
+		$driver->query( 'CREATE TEMPORARY TABLE admin_shadow (temp_id INT)' );
+		$driver->query( 'INSERT INTO admin_items VALUES (1)' );
+		$driver->query( 'INSERT INTO admin_shadow VALUES (9)' );
+
+		foreach (
+			array(
+				'ANALYZE TABLE'  => 'analyze',
+				'OPTIMIZE TABLE' => 'optimize',
+				'REPAIR TABLE'   => 'repair',
+			) as $statement => $operation
+		) {
+			$driver->query( 'SELECT id FROM admin_items' );
+			$this->assertSame(
+				array( array( 'found_rows' => 1 ) ),
+				$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$result = $driver->query( $statement . ' admin_items' );
+			$this->assertSame( 4, $result->columnCount() );
+			$this->assertSame( array( 'name' => 'Table' ), $result->getColumnMeta( 0 ) );
+			$this->assertSame( array( 'name' => 'Op' ), $result->getColumnMeta( 1 ) );
+			$this->assertSame( array( 'name' => 'Msg_type' ), $result->getColumnMeta( 2 ) );
+			$this->assertSame( array( 'name' => 'Msg_text' ), $result->getColumnMeta( 3 ) );
+			$this->assertSame( 0, $result->rowCount() );
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.admin_items',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$result->fetchAll( PDO::FETCH_ASSOC )
+			);
+			$this->assertSame(
+				array( array( 'found_rows' => 0 ) ),
+				$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.admin_items',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$driver->query( $statement . ' wp.admin_items' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.admin_items',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$driver->query( str_replace( ' TABLE', ' TABLES', $statement ) . ' admin_items' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.admin_items',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+					array(
+						'Table'    => 'wp.admin_second',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$driver->query( $statement . ' admin_items, admin_second' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.admin_temp_only',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$driver->query( $statement . ' admin_temp_only' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.admin_shadow',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$driver->query( $statement . ' admin_shadow' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.missing_admin_table',
+						'Op'       => $operation,
+						'Msg_type' => 'Error',
+						'Msg_text' => "Table 'missing_admin_table' doesn't exist",
+					),
+					array(
+						'Table'    => 'wp.missing_admin_table',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'Operation failed',
+					),
+				),
+				$driver->query( $statement . ' missing_admin_table' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.admin_items',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+					array(
+						'Table'    => 'wp.missing_admin_table',
+						'Op'       => $operation,
+						'Msg_type' => 'Error',
+						'Msg_text' => "Table 'missing_admin_table' doesn't exist",
+					),
+					array(
+						'Table'    => 'wp.missing_admin_table',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'Operation failed',
+					),
+				),
+				$driver->query( $statement . ' admin_items, missing_admin_table' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
+
+		foreach (
+			array(
+				'ANALYZE LOCAL TABLE admin_items'   => 'analyze',
+				'ANALYZE NO_WRITE_TO_BINLOG TABLES admin_items' => 'analyze',
+				'OPTIMIZE LOCAL TABLE admin_items'  => 'optimize',
+				'OPTIMIZE NO_WRITE_TO_BINLOG TABLES admin_items' => 'optimize',
+				'REPAIR LOCAL TABLE admin_items'    => 'repair',
+				'REPAIR NO_WRITE_TO_BINLOG TABLES admin_items' => 'repair',
+				'REPAIR TABLE admin_items QUICK'    => 'repair',
+				'REPAIR TABLE admin_items EXTENDED' => 'repair',
+				'REPAIR TABLE admin_items USE_FRM'  => 'repair',
+				'REPAIR TABLE admin_items QUICK EXTENDED USE_FRM' => 'repair',
+				'ANALYZE TABLE admin_items UPDATE HISTOGRAM ON id' => 'analyze',
+				'ANALYZE TABLE admin_items DROP HISTOGRAM ON id' => 'analyze',
+			) as $sql => $operation
+		) {
+			$this->assertSame(
+				array(
+					array(
+						'Table'    => 'wp.admin_items',
+						'Op'       => $operation,
+						'Msg_type' => 'status',
+						'Msg_text' => 'OK',
+					),
+				),
+				$driver->query( $sql )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
+
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT TABLE_NAME
+				FROM information_schema.tables
+				WHERE TABLE_NAME = 'admin_temp_only'
+					OR TABLE_NAME LIKE '__wp_duckdb_%'
+				ORDER BY TABLE_NAME"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array( array( 'temp_id' => 9 ) ),
+			$driver->query( 'SELECT temp_id FROM admin_shadow' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_check_table_rejects_unsupported_shapes(): void {
 		$this->requireDuckDBRuntime();
 
@@ -3651,6 +3859,45 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
 				$this->assertStringContainsString( $message, $e->getMessage() );
 			}
+		}
+	}
+
+	public function test_administration_table_statements_reject_unsupported_targets(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE admin_items (id INT)' );
+
+		foreach ( array( 'ANALYZE TABLE', 'OPTIMIZE TABLE', 'REPAIR TABLE' ) as $statement ) {
+			foreach (
+				array(
+					$statement . ' other_database.admin_items'  => 'Only the current database is supported',
+					$statement . ' __wp_duckdb_column_metadata' => 'Internal DuckDB metadata tables cannot be modified',
+					$statement . ' information_schema.tables'   =>
+						"Access denied for user 'duckdb'@'%' to database 'information_schema'",
+					$statement . ' admin_items, information_schema.tables' =>
+						"Access denied for user 'duckdb'@'%' to database 'information_schema'",
+				) as $sql => $message
+			) {
+				try {
+					$driver->query( $sql );
+					$this->fail( 'Expected table administration rejection for SQL: ' . $sql );
+				} catch ( WP_DuckDB_Driver_Exception $e ) {
+					$this->assertStringContainsString( $message, $e->getMessage() );
+				}
+			}
+		}
+
+		try {
+			$driver->query( 'OPTIMIZE TABLE admin_items QUICK' );
+			$this->fail( 'Expected OPTIMIZE TABLE trailing option rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'could not parse MySQL statement', $e->getMessage() );
 		}
 	}
 
