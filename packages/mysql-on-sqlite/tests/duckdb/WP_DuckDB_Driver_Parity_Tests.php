@@ -27,6 +27,13 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				'SELECT LENGTH(UTC_DATE()) AS value_length, SUBSTR(UTC_DATE(), 5, 1) AS date_sep',
 				'SELECT LENGTH(UTC_TIME()) AS value_length, SUBSTR(UTC_TIME(), 3, 1) AS hour_sep',
 				'SELECT LENGTH(UTC_TIMESTAMP()) AS value_length, SUBSTR(UTC_TIMESTAMP(), 5, 1) AS date_sep, SUBSTR(UTC_TIMESTAMP(), 14, 1) AS time_sep',
+				"SELECT DATE('2008-01-02 13:29:17') AS value_date",
+				"SELECT DATEDIFF('2008-01-09 13:29:17', '2008-01-02 00:00:00') AS day_delta",
+				"SELECT DATE_ADD('2008-01-02 13:29:17', INTERVAL 1 SECOND) AS shifted",
+				"SELECT DATE_ADD('2008-01-02 13:29:17', INTERVAL 2 WEEK) AS shifted",
+				"SELECT DATE_SUB('2008-01-02 13:29:17', INTERVAL 1 MONTH) AS shifted",
+				"SELECT DATE(DATE_ADD('2008-01-02 13:29:17', INTERVAL 1 DAY)) AS nested_date",
+				"SELECT DATE_ADD('2008-01-02 13:29:17', INTERVAL 1 HOUR) AS shifted ORDER BY shifted",
 			) as $sql
 		) {
 			$this->assertParityRows( $sql );

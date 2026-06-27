@@ -10277,6 +10277,22 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$date_time_function = $this->translate_date_time_function_call(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $date_time_function ) {
+				$pieces[] = $date_time_function;
+				continue;
+			}
+
 			$binary_comparison = $this->translate_binary_comparison_predicate(
 				$tokens,
 				$index,
@@ -11478,6 +11494,145 @@ class WP_DuckDB_Driver {
 		}
 
 		return $token->get_bytes();
+	}
+
+	/**
+	 * Translate deterministic MySQL date/time scalar functions.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when no supported function starts here.
+	 */
+	private function translate_date_time_function_call(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if ( ! isset( $tokens[ $index + 1 ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id ) {
+			return null;
+		}
+
+		$name = strtoupper( $tokens[ $index ]->get_value() );
+		if ( ! in_array( $name, array( 'DATE', 'DATEDIFF', 'DATE_ADD', 'DATE_SUB' ), true ) ) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$items     = $this->split_top_level_comma_items( $body );
+
+		if ( 'DATE' === $name ) {
+			if ( 1 !== count( $items ) || count( $items[0] ) === 0 ) {
+				return null;
+			}
+
+			$index = $end_index - 1;
+			return 'strftime(CAST(('
+				. $this->translate_tokens_to_duckdb_sql(
+					$items[0],
+					$rewrite_information_schema_tables,
+					$rewrite_information_schema_columns,
+					$rewrite_information_schema_statistics,
+					$rewrite_information_schema_table_constraints,
+					$rewrite_information_schema_key_column_usage,
+					$rewrite_information_schema_referential_constraints,
+					$rewrite_information_schema_check_constraints
+				)
+				. ") AS TIMESTAMP), '%Y-%m-%d')";
+		}
+
+		if ( 'DATEDIFF' === $name ) {
+			if ( 2 !== count( $items ) || count( $items[0] ) === 0 || count( $items[1] ) === 0 ) {
+				return null;
+			}
+
+			$start_sql = $this->translate_tokens_to_duckdb_sql(
+				$items[0],
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			$end_sql   = $this->translate_tokens_to_duckdb_sql(
+				$items[1],
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+
+			$index = $end_index - 1;
+			return 'CAST(CAST((' . $start_sql . ') AS DATE) - CAST((' . $end_sql . ') AS DATE) AS BIGINT)';
+		}
+
+		if ( 2 !== count( $items ) || count( $items[0] ) === 0 || count( $items[1] ) < 3 ) {
+			return null;
+		}
+
+		$interval_tokens = $items[1];
+		if ( WP_MySQL_Lexer::INTERVAL_SYMBOL !== $interval_tokens[0]->id ) {
+			return null;
+		}
+
+		$unit_token = $interval_tokens[ count( $interval_tokens ) - 1 ];
+		$unit       = strtoupper( $unit_token->get_value() );
+		if ( ! in_array( $unit, array( 'SECOND', 'MINUTE', 'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' ), true ) ) {
+			return null;
+		}
+
+		$value_tokens = array_slice( $interval_tokens, 1, -1 );
+		if ( count( $value_tokens ) === 0 ) {
+			return null;
+		}
+
+		$date_sql  = $this->translate_tokens_to_duckdb_sql(
+			$items[0],
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		$value_sql = $this->translate_tokens_to_duckdb_sql(
+			$value_tokens,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		$sign      = 'DATE_SUB' === $name ? '-' : '+';
+		if ( 'WEEK' === $unit ) {
+			$unit      = 'DAY';
+			$value_sql = '7 * (' . $value_sql . ')';
+		}
+
+		$index = $end_index - 1;
+		return 'strftime(CAST(('
+			. $date_sql
+			. ') AS TIMESTAMP) '
+			. $sign
+			. ' CAST(('
+			. $value_sql
+			. ') AS BIGINT) * INTERVAL 1 '
+			. $unit
+			. ", '%Y-%m-%d %H:%M:%S')";
 	}
 
 	/**
