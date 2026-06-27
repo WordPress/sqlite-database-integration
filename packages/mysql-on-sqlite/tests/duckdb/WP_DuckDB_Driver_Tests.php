@@ -248,6 +248,82 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_select_posts_wildcard_joined_group_by_primary_key_expands_group_by(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_joined_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			"SELECT wptests_posts.*
+			FROM wptests_posts
+			INNER JOIN wptests_postmeta
+				ON (wptests_posts.ID = wptests_postmeta.post_id)
+			WHERE 1=1
+				AND wptests_posts.post_type = 'page'
+				AND wptests_postmeta.meta_key = '_wp_page_template'
+				AND wptests_postmeta.meta_value = 'default'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'ID'          => 2,
+					'post_author' => 20,
+					'post_date'   => '2026-02-01 00:00:00',
+					'post_title'  => 'second',
+					'post_type'   => 'page',
+				),
+				array(
+					'ID'          => 1,
+					'post_author' => 10,
+					'post_date'   => '2026-01-01 00:00:00',
+					'post_title'  => 'first',
+					'post_type'   => 'page',
+				),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString(
+			'GROUP BY wptests_posts.ID, "wptests_posts"."post_author", "wptests_posts"."post_date", "wptests_posts"."post_title", "wptests_posts"."post_type"',
+			$select_sql
+		);
+	}
+
+	public function test_select_joined_group_by_primary_key_rejects_joined_table_projection(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_joined_group_by_tables( $driver );
+
+		try {
+			$driver->query(
+				"SELECT wptests_posts.ID, wptests_postmeta.meta_value
+				FROM wptests_posts
+				INNER JOIN wptests_postmeta
+					ON (wptests_posts.ID = wptests_postmeta.post_id)
+				WHERE wptests_postmeta.meta_key = '_wp_page_template'
+				GROUP BY wptests_posts.ID"
+			);
+			$this->fail( 'Expected WP_DuckDB_Driver_Exception.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Unsupported DuckDB MySQL-emulation SELECT statement', $e->getMessage() );
+		}
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringNotContainsString( '"wptests_posts"."post_author"', $select_sql );
+	}
+
 	public function test_select_seeded_rand_literals_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -13444,6 +13520,44 @@ SQL,
 			UNIQUE KEY name_unique (name),
 			KEY payload_prefix (payload(12))
 		) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+	}
+
+	private function create_wordpress_joined_group_by_tables( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_title TEXT NOT NULL,
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_postmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL,
+				post_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY post_id (post_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_author, post_date, post_title, post_type) VALUES
+				(1, 10, '2026-01-01 00:00:00', 'first', 'page'),
+				(2, 20, '2026-02-01 00:00:00', 'second', 'page'),
+				(3, 30, '2026-03-01 00:00:00', 'third', 'post')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_postmeta (meta_id, post_id, meta_key, meta_value) VALUES
+				(1, 1, '_wp_page_template', 'default'),
+				(2, 1, '_wp_page_template', 'default'),
+				(3, 2, '_wp_page_template', 'default'),
+				(4, 3, '_wp_page_template', 'default'),
+				(5, 2, '_edit_lock', 'ignored')"
+		);
 	}
 
 	/**

@@ -1140,7 +1140,7 @@ class WP_DuckDB_Driver {
 			$from_index + 1,
 			$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
 		);
-		$table        = $this->parse_simple_select_table_reference( $table_tokens );
+		$table        = $this->parse_primary_key_group_by_from_clause( $table_tokens );
 		if ( null === $table ) {
 			return null;
 		}
@@ -1151,7 +1151,7 @@ class WP_DuckDB_Driver {
 			$column = $this->parse_simple_select_column_reference( $item );
 			if (
 				null === $column
-				|| ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+				|| ! $this->primary_key_group_by_column_qualifier_matches_table( $column['qualifier'], $table )
 			) {
 				return null;
 			}
@@ -1180,7 +1180,7 @@ class WP_DuckDB_Driver {
 			$column = $this->parse_group_by_column_reference( $item );
 			if (
 				null === $column
-				|| ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+				|| ! $this->primary_key_group_by_column_qualifier_matches_table( $column['qualifier'], $table )
 			) {
 				return null;
 			}
@@ -1243,6 +1243,186 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Parse the FROM clause supported by primary-key GROUP BY expansion.
+	 *
+	 * Joined tables are accepted only as direct INNER JOIN sources. Projected,
+	 * grouped, and ordered columns must still qualify the primary table.
+	 *
+	 * @param WP_Parser_Token[] $tokens FROM clause tokens.
+	 * @return array{table_name:string,alias:string,temporary:bool,joined:bool}|null Primary table reference, or null when unsupported.
+	 */
+	private function parse_primary_key_group_by_from_clause( array $tokens ): ?array {
+		if (
+			count( $tokens ) === 0
+			|| $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::COMMA_SYMBOL )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id
+		) {
+			return null;
+		}
+
+		$join_index = $this->find_primary_key_group_by_join_index( $tokens, 0 );
+		if ( null === $join_index ) {
+			$table = $this->parse_simple_select_table_reference( $tokens );
+			if ( null === $table ) {
+				return null;
+			}
+			$table['joined'] = false;
+			return $table;
+		}
+
+		$table = $this->parse_simple_select_table_reference( array_slice( $tokens, 0, $join_index ) );
+		if ( null === $table || ! $this->primary_key_group_by_join_chain_is_supported( $tokens, $join_index ) ) {
+			return null;
+		}
+
+		$table['joined'] = true;
+		return $table;
+	}
+
+	/**
+	 * Check whether the joined-table tail is narrow enough for GROUP BY expansion.
+	 *
+	 * @param WP_Parser_Token[] $tokens FROM clause tokens.
+	 * @param int               $index  First join token.
+	 * @return bool Whether the join chain is supported.
+	 */
+	private function primary_key_group_by_join_chain_is_supported( array $tokens, int $index ): bool {
+		while ( $index < count( $tokens ) ) {
+			if ( WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
+					return false;
+				}
+			} elseif ( WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
+				return false;
+			}
+
+			++$index;
+			$table_end = $this->primary_key_group_by_join_table_factor_end( $tokens, $index );
+			if (
+				$table_end === $index
+				|| null === $this->parse_simple_select_table_reference( array_slice( $tokens, $index, $table_end - $index ) )
+			) {
+				return false;
+			}
+
+			$index = $table_end;
+			if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $index ]->id ) {
+				return false;
+			}
+
+			++$index;
+			$predicate_end = $this->find_primary_key_group_by_join_index( $tokens, $index );
+			if ( null === $predicate_end ) {
+				$predicate_end = count( $tokens );
+			}
+			if ( $predicate_end === $index ) {
+				return false;
+			}
+
+			$index = $predicate_end;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Find the end of a joined table factor.
+	 *
+	 * @param WP_Parser_Token[] $tokens FROM clause tokens.
+	 * @param int               $start  First table-factor token.
+	 * @return int End index, exclusive.
+	 */
+	private function primary_key_group_by_join_table_factor_end( array $tokens, int $start ): int {
+		$depth = 0;
+		for ( $index = $start; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if (
+				0 === $depth
+				&& (
+					WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $index ]->id
+					|| WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $index ]->id
+					|| $this->is_primary_key_group_by_join_start_token( $tokens[ $index ] )
+				)
+			) {
+				return $index;
+			}
+		}
+
+		return count( $tokens );
+	}
+
+	/**
+	 * Find the next join operator token in a FROM clause.
+	 *
+	 * @param WP_Parser_Token[] $tokens FROM clause tokens.
+	 * @param int               $start  First token to scan.
+	 * @return int|null Join token index, or null when absent.
+	 */
+	private function find_primary_key_group_by_join_index( array $tokens, int $start ): ?int {
+		$depth = 0;
+		for ( $index = $start; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 === $depth && $this->is_primary_key_group_by_join_start_token( $tokens[ $index ] ) ) {
+				return $index;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token can start a join operator.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token starts a join operator.
+	 */
+	private function is_primary_key_group_by_join_start_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::JOIN_SYMBOL,
+				WP_MySQL_Lexer::INNER_SYMBOL,
+				WP_MySQL_Lexer::LEFT_SYMBOL,
+				WP_MySQL_Lexer::RIGHT_SYMBOL,
+				WP_MySQL_Lexer::NATURAL_SYMBOL,
+				WP_MySQL_Lexer::CROSS_SYMBOL,
+				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a GROUP BY expansion column qualifier belongs to the primary table.
+	 *
+	 * @param string|null                                            $qualifier Optional column qualifier.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $table     Parsed primary table reference.
+	 * @return bool Whether the qualifier matches the primary table.
+	 */
+	private function primary_key_group_by_column_qualifier_matches_table( ?string $qualifier, array $table ): bool {
+		if ( isset( $table['joined'] ) && $table['joined'] ) {
+			return null !== $qualifier && 0 === strcasecmp( $qualifier, $table['alias'] );
+		}
+
+		return $this->simple_select_column_qualifier_matches_table( $qualifier, $table );
+	}
+
+	/**
 	 * Find the end of the supported top-level GROUP BY clause.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
@@ -1285,7 +1465,7 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param WP_Parser_Token[]                               $tokens             MySQL tokens.
 	 * @param int                                             $group_end          End of the GROUP BY clause.
-	 * @param array{table_name:string,alias:string,temporary:bool} $table              Parsed table reference.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $table              Parsed table reference.
 	 * @param array<string,array<string,mixed>>               $metadata_by_column Table metadata keyed by lower-case column name.
 	 * @return array<string,string> Column names keyed by lower-case column name.
 	 */
@@ -1310,7 +1490,7 @@ class WP_DuckDB_Driver {
 			$column = $this->parse_order_by_column_reference( $item );
 			if (
 				null === $column
-				|| ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+				|| ! $this->primary_key_group_by_column_qualifier_matches_table( $column['qualifier'], $table )
 			) {
 				continue;
 			}

@@ -20,6 +20,10 @@ const junitOutputPath = process.env.WP_SQLITE_PHPUNIT_JUNIT_PATH || 'wordpress/p
 const junitOutputFile = path.isAbsolute( junitOutputPath )
 	? junitOutputPath
 	: path.join( repoRoot, junitOutputPath );
+const phpunitCompatibilityPrependPath = path.join( repoRoot, 'wordpress', 'phpunit-runner-compat-prepend.php' );
+const duckdbAutoloadCompatibilityWrapperPath = path.join( repoRoot, 'wordpress', 'phpunit-duckdb-autoload-wrapper.php' );
+const phpunitCompatibilityPrependContainerPath = '/var/www/phpunit-runner-compat-prepend.php';
+const duckdbAutoloadCompatibilityWrapperContainerPath = '/var/www/phpunit-duckdb-autoload-wrapper.php';
 
 const expectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
@@ -113,6 +117,132 @@ function getDefaultEnsureEnvironmentCommand() {
 	return phpunitCommand.includes( 'wp-test-php-duckdb' )
 		? 'composer run wp-test-ensure-env-duckdb'
 		: 'composer run wp-test-ensure-env';
+}
+
+function preparePhpunitCommand() {
+	if ( ! shouldPreloadCompatiblePhpunitRunner() ) {
+		return phpunitCommand;
+	}
+
+	writePhpunitCompatibilityFiles();
+	verifyPhpunitCompatibilityFiles();
+
+	const effectivePhpunitCommand = addPhpunitPrependArgument(
+		phpunitCommand,
+		phpunitCompatibilityPrependContainerPath
+	);
+
+	if ( effectivePhpunitCommand !== phpunitCommand ) {
+		console.log( 'PHPUnit compatibility prepend:', phpunitCompatibilityPrependContainerPath );
+		console.log( 'Effective PHPUnit command:', effectivePhpunitCommand );
+	}
+
+	return effectivePhpunitCommand;
+}
+
+function shouldPreloadCompatiblePhpunitRunner() {
+	return (
+		ensurePhpunitCompatibility &&
+		! skipPhpunitCompatibilityCheck &&
+		phpunitCommand.includes( 'wp-test-php-duckdb' )
+	);
+}
+
+function writePhpunitCompatibilityFiles() {
+	if ( ! process.env.DUCKDB_PHP_AUTOLOAD ) {
+		console.error( 'Error: DUCKDB_PHP_AUTOLOAD is required for the DuckDB PHPUnit compatibility wrapper.' );
+		process.exit( 1 );
+	}
+
+	fs.writeFileSync(
+		phpunitCompatibilityPrependPath,
+		`<?php
+$autoload = defined( 'PHPUNIT_COMPOSER_INSTALL' ) && is_string( PHPUNIT_COMPOSER_INSTALL )
+\t? PHPUNIT_COMPOSER_INSTALL
+\t: __DIR__ . '/vendor/autoload.php';
+
+if ( ! is_readable( $autoload ) ) {
+\tfwrite( STDERR, "Error: WordPress PHPUnit autoload file is not readable: {$autoload}\\n" );
+\texit( 1 );
+}
+
+$wp_sqlite_phpunit_autoloader = require $autoload;
+if ( is_object( $wp_sqlite_phpunit_autoloader ) ) {
+\t$GLOBALS['wp_sqlite_phpunit_autoloader'] = $wp_sqlite_phpunit_autoloader;
+}
+
+if ( ! defined( 'DUCKDB_PHP_AUTOLOAD' ) ) {
+\tdefine( 'DUCKDB_PHP_AUTOLOAD', ${ phpSingleQuote( duckdbAutoloadCompatibilityWrapperContainerPath ) } );
+}
+
+if ( ! method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ) {
+\tfwrite( STDERR, "Error: WordPress PHPUnit runner does not provide PHPUnit\\\\TextUI\\\\TestRunner::run().\\n" );
+\texit( 1 );
+}
+`
+	);
+
+	fs.writeFileSync(
+		duckdbAutoloadCompatibilityWrapperPath,
+		`<?php
+$duckdb_autoload = ${ phpSingleQuote( process.env.DUCKDB_PHP_AUTOLOAD ) };
+
+if ( ! is_readable( $duckdb_autoload ) ) {
+\tfwrite( STDERR, "Error: DuckDB PHP autoload file is not readable: {$duckdb_autoload}\\n" );
+\texit( 1 );
+}
+
+require_once $duckdb_autoload;
+
+if ( isset( $GLOBALS['wp_sqlite_phpunit_autoloader'] )
+\t&& is_object( $GLOBALS['wp_sqlite_phpunit_autoloader'] )
+\t&& method_exists( $GLOBALS['wp_sqlite_phpunit_autoloader'], 'register' )
+) {
+\tif ( method_exists( $GLOBALS['wp_sqlite_phpunit_autoloader'], 'unregister' ) ) {
+\t\t$GLOBALS['wp_sqlite_phpunit_autoloader']->unregister();
+\t}
+
+\t$GLOBALS['wp_sqlite_phpunit_autoloader']->register( true );
+}
+
+if ( ! method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ) {
+\tfwrite( STDERR, "Error: DuckDB autoload changed the active PHPUnit runner away from the WordPress-compatible runner.\\n" );
+\texit( 1 );
+}
+`
+	);
+}
+
+function verifyPhpunitCompatibilityFiles() {
+	const check = [
+		`require ${ phpSingleQuote( phpunitCompatibilityPrependContainerPath ) };`,
+		'require_once DUCKDB_PHP_AUTOLOAD;',
+		"exit( method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ? 0 : 1 );",
+	].join( ' ' );
+
+	runWordPressDockerCompose( [ 'run', '--rm', 'php', 'php', '-r', check ], { stdio: 'inherit' } );
+}
+
+function addPhpunitPrependArgument( command, prependPath ) {
+	if ( command.includes( '--prepend' ) ) {
+		return command;
+	}
+
+	const prependArgument = `--prepend=${ prependPath }`;
+	const composerArgumentSeparator = ' -- ';
+
+	if ( command.includes( composerArgumentSeparator ) ) {
+		return command.replace(
+			composerArgumentSeparator,
+			`${ composerArgumentSeparator }${ shellQuote( prependArgument ) } `
+		);
+	}
+
+	if ( command.includes( 'composer run wp-test-php-duckdb' ) ) {
+		return `${ command } -- ${ shellQuote( prependArgument ) }`;
+	}
+
+	return `${ command } ${ shellQuote( prependArgument ) }`;
 }
 
 function verifyNativeParserExtension() {
@@ -228,15 +358,20 @@ function shellQuote( value ) {
 	return `'${ String( value ).replace( /'/g, "'\\''" ) }'`;
 }
 
+function phpSingleQuote( value ) {
+	return `'${ String( value ).replace( /\\/g, '\\\\' ).replace( /'/g, "\\'" ) }'`;
+}
+
 try {
 	if ( requiresNativeParserExtension ) {
 		verifyNativeParserExtension();
 	}
 
 	ensureCompatiblePhpunitRunner();
+	const effectivePhpunitCommand = preparePhpunitCommand();
 
 	try {
-		execSync( phpunitCommand, { stdio: 'inherit' } );
+		execSync( effectivePhpunitCommand, { stdio: 'inherit' } );
 		console.log( '\n⚠️ All tests passed, checking if expected errors/failures occurred...' );
 	} catch ( error ) {
 		console.log( '\n⚠️ Some tests errored/failed (expected). Analyzing results...' );
