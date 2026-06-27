@@ -26,9 +26,7 @@ const duckdbAutoloadCompatibilityWrapperPath = path.join( repoRoot, 'wordpress',
 const phpunitCompatibilityPrependContainerPath = '/var/www/phpunit-runner-compat-prepend.php';
 const duckdbAutoloadCompatibilityWrapperContainerPath = '/var/www/phpunit-duckdb-autoload-wrapper.php';
 
-const expectedErrors = [
-	'Tests_DB_Charset::test_invalid_characters_in_query',
-];
+const expectedErrors = [];
 
 const expectedFailures = [
 	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #2',
@@ -51,9 +49,7 @@ const expectedFailures = [
 	'Tests_DB_Charset::test_strip_invalid_text with data set #39',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #40',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #41',
-	'Tests_DB_dbDelta::test_spatial_indices',
 	'Tests_DB::test_mysqli_flush_sync',
-	'Tests_DB::test_query_value_contains_invalid_chars',
 	'Tests_DB::test_replace',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #1',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #2',

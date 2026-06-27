@@ -479,6 +479,55 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 0, $cases['create_after_update_failure']['rows_affected'] );
 	}
 
+	public function test_duckdb_wpdb_rolls_back_only_native_active_transaction_failures(): void {
+		$result = $this->run_transaction_cleanup_state_script();
+		$cases  = $result['cases'];
+
+		foreach ( $cases as $case_name => $case ) {
+			$this->assertTrue( $case['connected'], $case_name );
+			$this->assertFalse( $case['return'], $case_name );
+		}
+
+		$this->assertSame( 'DuckDB query failed: invalid input.', $cases['native_query_marker']['last_error'] );
+		$this->assertSame(
+			array( 'BEGIN TRANSACTION', 'ROLLBACK' ),
+			$cases['native_query_marker']['connection_queries']
+		);
+		$this->assertFalse( $cases['native_query_marker']['in_transaction_after'] );
+
+		$this->assertSame(
+			'Failed to execute DuckDB write: Failed to prepare DuckDB query: syntax error.',
+			$cases['native_prepare_marker']['last_error']
+		);
+		$this->assertSame(
+			array( 'BEGIN TRANSACTION', 'ROLLBACK' ),
+			$cases['native_prepare_marker']['connection_queries']
+		);
+		$this->assertFalse( $cases['native_prepare_marker']['in_transaction_after'] );
+
+		$this->assertSame(
+			'Unsupported INSERT statement in DuckDB driver. INSERT IGNORE is not supported.',
+			$cases['unsupported_error']['last_error']
+		);
+		$this->assertSame( array( 'BEGIN TRANSACTION' ), $cases['unsupported_error']['connection_queries'] );
+		$this->assertTrue( $cases['unsupported_error']['in_transaction_after'] );
+
+		$this->assertSame(
+			'DuckDB driver could not parse MySQL statement: syntax error.',
+			$cases['preflight_error']['last_error']
+		);
+		$this->assertSame( array( 'BEGIN TRANSACTION' ), $cases['preflight_error']['connection_queries'] );
+		$this->assertTrue( $cases['preflight_error']['in_transaction_after'] );
+
+		$this->assertSame( 'Plain runtime failure.', $cases['plain_exception']['last_error'] );
+		$this->assertSame( array( 'BEGIN TRANSACTION' ), $cases['plain_exception']['connection_queries'] );
+		$this->assertTrue( $cases['plain_exception']['in_transaction_after'] );
+
+		$this->assertSame( 'DuckDB query failed: inactive transaction.', $cases['inactive_native_query_marker']['last_error'] );
+		$this->assertSame( array(), $cases['inactive_native_query_marker']['connection_queries'] );
+		$this->assertFalse( $cases['inactive_native_query_marker']['in_transaction_after'] );
+	}
+
 	public function test_duckdb_wpdb_db_connect_sets_filtered_sql_mode(): void {
 		$result = $this->run_sql_mode_boot_state_script( false );
 
@@ -689,6 +738,174 @@ echo json_encode(
 		'last_error'          => $db->last_error,
 		'last_query'          => $db->last_query,
 		'ezsql_error'         => $EZSQL_ERROR,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_transaction_cleanup_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_Transaction_Cleanup_Test_Result {
+	private $columns;
+	private $rows;
+
+	public function __construct( array $columns = array(), array $rows = array() ) {
+		$this->columns = $columns;
+		$this->rows    = $rows;
+	}
+
+	public function columnNames() {
+		return new ArrayIterator( $this->columns );
+	}
+
+	public function rows( $assoc = false ) {
+		return new ArrayIterator( $this->rows );
+	}
+}
+
+class WP_DuckDB_Plugin_Transaction_Cleanup_Test_Client {
+	public $queries = array();
+
+	public function query( $sql ) {
+		$this->queries[] = $sql;
+		return new WP_DuckDB_Plugin_Transaction_Cleanup_Test_Result(
+			array( 'Success' ),
+			array(
+				array( 'Success' => true ),
+			)
+		);
+	}
+}
+
+class WP_DuckDB_Plugin_Transaction_Cleanup_Test_Driver extends WP_DuckDB_Driver {
+	public $queries = array();
+	private $connection;
+	private $failures;
+
+	public function __construct( WP_DuckDB_Connection $connection, array $failures ) {
+		$this->connection = $connection;
+		$this->failures   = $failures;
+	}
+
+	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		$this->queries[] = $sql;
+
+		if ( 'SELECT @@SESSION.sql_mode' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( '@@SESSION.sql_mode' ),
+				array(
+					array( 'NO_ENGINE_SUBSTITUTION' ),
+				),
+				0
+			);
+		}
+
+		if ( "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		if ( isset( $this->failures[ $sql ] ) ) {
+			throw $this->failures[ $sql ];
+		}
+
+		return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	public function get_connection(): WP_DuckDB_Connection {
+		return $this->connection;
+	}
+}
+
+function wp_duckdb_plugin_transaction_cleanup_failure( $case_name ) {
+	switch ( $case_name ) {
+		case 'native_query_marker':
+			return new WP_DuckDB_Driver_Exception(
+				'DuckDB query failed: invalid input.',
+				0,
+				new RuntimeException( 'Native query failure.' )
+			);
+
+		case 'native_prepare_marker':
+			return new WP_DuckDB_Driver_Exception(
+				'Failed to execute DuckDB write: Failed to prepare DuckDB query: syntax error.',
+				0,
+				new RuntimeException( 'Native prepare failure.' )
+			);
+
+		case 'unsupported_error':
+			return new WP_DuckDB_Driver_Exception(
+				'Unsupported INSERT statement in DuckDB driver. INSERT IGNORE is not supported.'
+			);
+
+		case 'preflight_error':
+			return new WP_DuckDB_Driver_Exception( 'DuckDB driver could not parse MySQL statement: syntax error.' );
+
+		case 'plain_exception':
+			return new RuntimeException( 'Plain runtime failure.' );
+
+		case 'inactive_native_query_marker':
+			return new WP_DuckDB_Driver_Exception(
+				'DuckDB query failed: inactive transaction.',
+				0,
+				new RuntimeException( 'Inactive native query failure.' )
+			);
+	}
+
+	throw new RuntimeException( 'Unknown cleanup test case: ' . $case_name );
+}
+
+function wp_duckdb_plugin_transaction_cleanup_case( $case_name, $active_transaction ) {
+	$client     = new WP_DuckDB_Plugin_Transaction_Cleanup_Test_Client();
+	$connection = new WP_DuckDB_Connection( array( 'duckdb' => $client ) );
+	$sql        = 'SELECT ' . $case_name;
+	$driver     = new WP_DuckDB_Plugin_Transaction_Cleanup_Test_Driver(
+		$connection,
+		array(
+			$sql => wp_duckdb_plugin_transaction_cleanup_failure( $case_name ),
+		)
+	);
+
+	$GLOBALS['@duckdb_driver'] = $driver;
+	$db                        = new WP_DuckDB_DB( 'wordpress_test' );
+	$connected                 = $db->db_connect( false );
+	$db->suppress_errors( true );
+
+	if ( $active_transaction ) {
+		$connection->beginTransaction();
+	}
+
+	$query_return = $db->query( $sql );
+
+	return array(
+		'connected'            => $connected,
+		'return'               => $query_return,
+		'last_error'           => $db->last_error,
+		'connection_queries'   => $client->queries,
+		'driver_queries'       => $driver->queries,
+		'in_transaction_after' => $connection->inTransaction(),
+	);
+}
+
+$cases = array(
+	'native_query_marker'           => wp_duckdb_plugin_transaction_cleanup_case( 'native_query_marker', true ),
+	'native_prepare_marker'         => wp_duckdb_plugin_transaction_cleanup_case( 'native_prepare_marker', true ),
+	'unsupported_error'             => wp_duckdb_plugin_transaction_cleanup_case( 'unsupported_error', true ),
+	'preflight_error'               => wp_duckdb_plugin_transaction_cleanup_case( 'preflight_error', true ),
+	'plain_exception'               => wp_duckdb_plugin_transaction_cleanup_case( 'plain_exception', true ),
+	'inactive_native_query_marker'  => wp_duckdb_plugin_transaction_cleanup_case( 'inactive_native_query_marker', false ),
+);
+
+echo json_encode(
+	array(
+		'cases' => $cases,
 	)
 );
 PHP;

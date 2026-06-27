@@ -601,6 +601,7 @@ class WP_DuckDB_DB extends wpdb {
 			}
 		} catch ( Throwable $e ) {
 			$this->last_error = $e->getMessage();
+			$this->rollback_failed_active_duckdb_transaction( $e );
 		}
 
 		++$this->num_queries;
@@ -614,6 +615,85 @@ class WP_DuckDB_DB extends wpdb {
 				array()
 			);
 		}
+	}
+
+	/**
+	 * Roll back active DuckDB transactions after native engine failures.
+	 *
+	 * Unsupported or preflight driver errors should leave caller-managed
+	 * transactions open. Native DuckDB query/prepare errors can leave the
+	 * transaction aborted, so clean up only that narrow failure shape.
+	 *
+	 * @param Throwable $error Query failure.
+	 */
+	private function rollback_failed_active_duckdb_transaction( Throwable $error ) {
+		if ( ! $this->should_rollback_active_duckdb_transaction_on_error( $error ) ) {
+			return;
+		}
+
+		$connection = $this->get_duckdb_connection();
+		if ( ! $connection || ! $connection->inTransaction() ) {
+			return;
+		}
+
+		try {
+			$connection->rollback();
+		} catch ( Throwable $rollback_error ) {
+			if ( '' === $this->last_error ) {
+				$this->last_error = $rollback_error->getMessage();
+			}
+		}
+	}
+
+	/**
+	 * Get the underlying DuckDB connection, when one is still available.
+	 *
+	 * @return WP_DuckDB_Connection|null Connection, or null when unavailable.
+	 */
+	private function get_duckdb_connection() {
+		if ( $this->dbh instanceof WP_DuckDB_Connection ) {
+			return $this->dbh;
+		}
+
+		if ( ! $this->dbh instanceof WP_DuckDB_Driver || ! method_exists( $this->dbh, 'get_connection' ) ) {
+			return null;
+		}
+
+		try {
+			$connection = $this->dbh->get_connection();
+		} catch ( Throwable $e ) {
+			return null;
+		}
+		if ( ! $connection instanceof WP_DuckDB_Connection ) {
+			return null;
+		}
+
+		return $connection;
+	}
+
+	/**
+	 * Check whether a query error means the active DuckDB transaction is unsafe.
+	 *
+	 * @param Throwable $error Query failure.
+	 * @return bool Whether to roll back the active transaction.
+	 */
+	private function should_rollback_active_duckdb_transaction_on_error( Throwable $error ) {
+		for ( $current = $error; null !== $current; $current = $current->getPrevious() ) {
+			$message = $current->getMessage();
+			if (
+				$current instanceof WP_DuckDB_Driver_Exception
+				&& (
+					0 === strpos( $message, 'DuckDB query failed:' )
+					|| 0 === strpos( $message, 'Failed to prepare DuckDB query:' )
+					|| false !== strpos( $message, ': DuckDB query failed:' )
+					|| false !== strpos( $message, ': Failed to prepare DuckDB query:' )
+				)
+			) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

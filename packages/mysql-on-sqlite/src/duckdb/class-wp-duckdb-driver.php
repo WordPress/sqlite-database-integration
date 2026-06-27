@@ -16644,7 +16644,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$name = strtoupper( $tokens[ $index ]->get_value() );
-		if ( ! in_array( $name, array( 'DATE', 'DATEDIFF', 'DATE_ADD', 'DATE_SUB' ), true ) ) {
+		if ( ! in_array( $name, array( 'DATE', 'DATEDIFF', 'DATE_ADD', 'DATE_SUB', 'MONTH', 'YEAR' ), true ) ) {
 			return null;
 		}
 
@@ -16700,6 +16700,26 @@ class WP_DuckDB_Driver {
 
 			$index = $end_index - 1;
 			return 'CAST(CAST((' . $start_sql . ') AS DATE) - CAST((' . $end_sql . ') AS DATE) AS BIGINT)';
+		}
+
+		if ( 'MONTH' === $name || 'YEAR' === $name ) {
+			if ( 1 !== count( $items ) || count( $items[0] ) === 0 ) {
+				return null;
+			}
+
+			$index = $end_index - 1;
+			return strtolower( $name ) . '(TRY_CAST(('
+				. $this->translate_tokens_to_duckdb_sql(
+					$items[0],
+					$rewrite_information_schema_tables,
+					$rewrite_information_schema_columns,
+					$rewrite_information_schema_statistics,
+					$rewrite_information_schema_table_constraints,
+					$rewrite_information_schema_key_column_usage,
+					$rewrite_information_schema_referential_constraints,
+					$rewrite_information_schema_check_constraints
+				)
+				. ') AS TIMESTAMP))';
 		}
 
 		if ( 2 !== count( $items ) || count( $items[0] ) === 0 || count( $items[1] ) < 3 ) {

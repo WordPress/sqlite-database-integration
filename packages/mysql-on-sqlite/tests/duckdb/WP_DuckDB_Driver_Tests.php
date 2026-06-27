@@ -1026,6 +1026,94 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( '2026-06-26', $row['formatted_date'] );
 	}
 
+	public function test_year_and_month_functions_translate_wordpress_datetime_strings_with_try_cast(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				if ( 0 === strpos( $sql, 'CREATE OR REPLACE MACRO ' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				throw new RuntimeException( 'Unexpected query: ' . $sql );
+			}
+		};
+		$driver     = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+		$tokenize   = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$translate  = new ReflectionMethod( WP_DuckDB_Driver::class, 'translate_tokens_to_duckdb_sql' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$translate->setAccessible( true );
+		}
+
+		$tokens = $tokenize->invoke(
+			$driver,
+			"SELECT DISTINCT YEAR( post_date ) AS year, MONTH( post_date ) AS month
+			FROM wp_posts
+			WHERE post_type = 'attachment'
+			ORDER BY post_date DESC"
+		);
+		$sql    = $translate->invoke( $driver, $tokens );
+
+		$this->assertStringContainsString( 'year(TRY_CAST((post_date) AS TIMESTAMP)) AS year', $sql );
+		$this->assertStringContainsString( 'month(TRY_CAST((post_date) AS TIMESTAMP)) AS month', $sql );
+	}
+
+	public function test_year_and_month_functions_try_cast_wordpress_datetime_strings(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				PRIMARY KEY (ID),
+				KEY type_date (post_type, post_date)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_posts (post_date, post_type) VALUES
+				('2026-06-26 14:15:16', 'attachment'),
+				('2026-05-01 00:00:00', 'attachment'),
+				('2026-04-01 00:00:00', 'post')"
+		);
+
+		$rows = $driver->query(
+			"SELECT DISTINCT YEAR(post_date) AS year, MONTH(post_date) AS month
+			FROM wp_posts
+			WHERE post_type = 'attachment'
+			ORDER BY post_date DESC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'year'  => 2026,
+					'month' => 6,
+				),
+				array(
+					'year'  => 2026,
+					'month' => 5,
+				),
+			),
+			$rows
+		);
+
+		$row = $driver->query(
+			"SELECT
+				YEAR('0000-00-00 00:00:00') AS zero_date_year,
+				MONTH('0000-00-00 00:00:00') AS zero_date_month,
+				YEAR(DATE '2026-07-01') AS date_year,
+				MONTH(TIMESTAMP '2026-08-02 03:04:05') AS timestamp_month"
+		)->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertNull( $row['zero_date_year'] );
+		$this->assertNull( $row['zero_date_month'] );
+		$this->assertSame( 2026, $row['date_year'] );
+		$this->assertSame( 8, $row['timestamp_month'] );
+	}
+
 	public function test_create_table_insert_update_delete_show_and_describe(): void {
 		$this->requireDuckDBRuntime();
 

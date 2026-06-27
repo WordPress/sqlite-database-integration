@@ -74,6 +74,7 @@ jobs:
           composer-options: "--optimize-autoloader"
 
       - name: Install DuckDB PHP client
+        timeout-minutes: 8
         run: |
           composer config --no-plugins allow-plugins.satur.io/duckdb-auto true
           composer require --dev --no-plugins --no-interaction --with-all-dependencies satur.io/duckdb-auto
@@ -82,10 +83,12 @@ jobs:
         working-directory: packages/mysql-on-sqlite
 
       - name: Verify DuckDB runtime
+        timeout-minutes: 2
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
 
       - name: Run DuckDB PHPUnit suite
+        timeout-minutes: 10
         env:
           WP_DUCKDB_TESTS: '1'
           WP_DUCKDB_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
@@ -96,7 +99,7 @@ jobs:
   wp-duckdb-test:
     name: WordPress PHPUnit wpdb / DuckDB
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     permissions:
       contents: read # Required to clone the repo.
 
@@ -128,6 +131,7 @@ jobs:
           composer-options: "--optimize-autoloader"
 
       - name: Install DuckDB PHP client
+        timeout-minutes: 8
         run: |
           composer config --no-plugins allow-plugins.satur.io/duckdb-auto true
           composer require --dev --no-plugins --no-interaction --with-all-dependencies satur.io/duckdb-auto
@@ -136,10 +140,12 @@ jobs:
         working-directory: packages/mysql-on-sqlite
 
       - name: Verify DuckDB runtime
+        timeout-minutes: 2
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
 
       - name: Run WordPress wpdb PHPUnit tests with DuckDB
+        timeout-minutes: 15
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
@@ -150,6 +156,7 @@ jobs:
 
       - name: Dump WordPress DuckDB failure diagnostics
         if: failure() || cancelled()
+        timeout-minutes: 5
         shell: bash
         run: |
           set +e
@@ -230,12 +237,13 @@ jobs:
 
       - name: Stop Docker containers
         if: always()
+        timeout-minutes: 5
         run: composer run wp-test-clean
 
   wp-duckdb-e2e-test:
     name: WordPress E2E / DuckDB
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     permissions:
       contents: read # Required to clone the repo.
 
@@ -267,6 +275,7 @@ jobs:
           composer-options: "--optimize-autoloader"
 
       - name: Install DuckDB PHP client
+        timeout-minutes: 8
         run: |
           composer config --no-plugins allow-plugins.satur.io/duckdb-auto true
           composer require --dev --no-plugins --no-interaction --with-all-dependencies satur.io/duckdb-auto
@@ -275,18 +284,22 @@ jobs:
         working-directory: packages/mysql-on-sqlite
 
       - name: Verify DuckDB runtime
+        timeout-minutes: 2
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
 
       - name: Install Playwright browsers
+        timeout-minutes: 10
         run: npx playwright install --with-deps
 
       - name: Prepare WordPress DuckDB end-to-end environment
+        timeout-minutes: 15
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
         run: composer run wp-test-ensure-env-duckdb
 
       - name: Serialize WordPress PHP-FPM for DuckDB end-to-end tests
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           cd wordpress
@@ -316,6 +329,7 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml exec -T php php -r 'exit( extension_loaded( "ffi" ) ? 0 : 1 );'
 
       - name: Install WordPress 500 response diagnostics
+        timeout-minutes: 5
         run: |
           cat > wordpress/src/wp-content/duckdb-e2e-500-diagnostics.php <<'PHP'
           <?php
@@ -434,12 +448,14 @@ jobs:
           ' wordpress/src/wp-content/db.php
 
       - name: Run WordPress end-to-end tests with DuckDB
+        timeout-minutes: 12
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
         run: npm --prefix wordpress run test:e2e --
 
       - name: Dump WordPress DuckDB failure diagnostics
         if: failure() || cancelled()
+        timeout-minutes: 5
         shell: bash
         run: |
           set +e
@@ -520,4 +536,5 @@ jobs:
 
       - name: Stop Docker containers
         if: always()
+        timeout-minutes: 5
         run: composer run wp-test-clean
