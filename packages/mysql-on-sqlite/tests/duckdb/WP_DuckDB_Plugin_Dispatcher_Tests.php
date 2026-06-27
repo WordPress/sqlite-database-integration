@@ -408,6 +408,25 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 13, $cases['insert_after_failure']['insert_id'] );
 	}
 
+	public function test_duckdb_wpdb_suppressed_errors_are_recorded_for_ezsql(): void {
+		$result = $this->run_error_diagnostic_state_script();
+
+		$this->assertTrue( $result['connected'] );
+		$this->assertFalse( $result['old_suppress_errors'] );
+		$this->assertTrue( $result['suppress_errors'] );
+		$this->assertFalse( $result['failed_return'] );
+		$this->assertSame( 'Synthetic select failure.', $result['last_error'] );
+		$this->assertSame( 'SELECT BROKEN', $result['last_query'] );
+		$this->assertCount( 1, $result['ezsql_error'] );
+		$this->assertSame(
+			array(
+				'query'     => 'SELECT BROKEN',
+				'error_str' => 'Synthetic select failure.',
+			),
+			$result['ezsql_error'][0]
+		);
+	}
+
 	public function test_duckdb_wpdb_failure_diagnostics_clear_metadata_and_preserve_non_insert_id(): void {
 		$result = $this->run_query_surface_state_script();
 		$cases  = $result['cases'];
@@ -558,6 +577,67 @@ echo json_encode(
 		'ready'          => $db->ready,
 		'last_error'     => $db->last_error,
 		'driver_queries' => $driver->queries,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_error_diagnostic_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_Error_Diagnostic_Test_Driver extends WP_DuckDB_Driver {
+	public function __construct() {}
+
+	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		if ( 'SELECT @@SESSION.sql_mode' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( '@@SESSION.sql_mode' ),
+				array(
+					array( 'NO_ENGINE_SUBSTITUTION' ),
+				),
+				0
+			);
+		}
+
+		if ( "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		if ( 'SELECT BROKEN' === $sql ) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Synthetic select failure.',
+				'HY000',
+				new RuntimeException( 'Native synthetic select failure.' )
+			);
+		}
+
+		throw new RuntimeException( 'Unexpected query: ' . $sql );
+	}
+}
+
+$EZSQL_ERROR              = array();
+$GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Error_Diagnostic_Test_Driver();
+$db                       = new WP_DuckDB_DB( 'wordpress_test' );
+$connected                = $db->db_connect( false );
+$old_suppress_errors      = $db->suppress_errors( true );
+$failed_return            = $db->query( 'SELECT BROKEN' );
+
+echo json_encode(
+	array(
+		'connected'           => $connected,
+		'old_suppress_errors' => $old_suppress_errors,
+		'suppress_errors'     => $db->suppress_errors,
+		'failed_return'       => $failed_return,
+		'last_error'          => $db->last_error,
+		'last_query'          => $db->last_query,
+		'ezsql_error'         => $EZSQL_ERROR,
 	)
 );
 PHP;
@@ -730,6 +810,7 @@ class WP_DuckDB_Plugin_Insert_Id_Test_Driver extends WP_DuckDB_Driver {
 $GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Insert_Id_Test_Driver();
 $db                        = new WP_DuckDB_DB( 'wordpress_test' );
 $connected                 = $db->db_connect( false );
+$db->suppress_errors( true );
 $insert_return             = $db->query( "INSERT INTO t (name) VALUES ('first')" );
 $insert_id                 = $db->insert_id;
 $replace_return            = $db->query( "REPLACE INTO t (name) VALUES ('second')" );
@@ -1349,6 +1430,7 @@ function wp_duckdb_plugin_query_surface_case( WP_DuckDB_Plugin_Query_Surface_Tes
 $GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Query_Surface_Test_Driver();
 $db                        = new WP_DuckDB_Plugin_Query_Surface_Test_DB( 'wordpress_test' );
 $connected                 = $db->db_connect( false );
+$db->suppress_errors( true );
 $cases                     = array(
 	'select_one_row'       => wp_duckdb_plugin_query_surface_case( $db, 'SELECT 42 AS answer' ),
 	'select_zero_rows'     => wp_duckdb_plugin_query_surface_case( $db, 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' ),
@@ -1511,6 +1593,12 @@ class wpdb {
 		$old_show_errors   = $this->show_errors;
 		$this->show_errors = $show;
 		return $old_show_errors;
+	}
+
+	public function suppress_errors( $suppress = true ) {
+		$old_suppress_errors   = $this->suppress_errors;
+		$this->suppress_errors = (bool) $suppress;
+		return $old_suppress_errors;
 	}
 
 	public function timer_start() {
