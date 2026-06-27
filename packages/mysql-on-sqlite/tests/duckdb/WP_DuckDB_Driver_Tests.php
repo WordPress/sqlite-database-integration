@@ -1888,6 +1888,116 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_update_rewrites_join_using_columns(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, site_id INT, note VARCHAR(20), only_t1 INT)' );
+		$driver->query( 'CREATE TABLE t2 (id INT, site_id INT, replacement VARCHAR(20), flag VARCHAR(20), note VARCHAR(20))' );
+		$driver->query(
+			"INSERT INTO t1 VALUES
+			(1, 10, 'a1', 100),
+			(2, 10, 'a2', 200),
+			(3, 10, 'a3', 300),
+			(1, 20, 'a4', 400)"
+		);
+		$driver->query(
+			"INSERT INTO t2 VALUES
+			(1, 10, 'u1', 'apply', 'b1'),
+			(2, 10, 'u2', 'skip', 'b2'),
+			(3, 10, 'u3', 'apply', 'b3'),
+			(1, 20, 'u4', 'apply', 'b4'),
+			(4, 10, 'u5', 'apply', 'b5')"
+		);
+
+		$target_update = $driver->query(
+			"UPDATE t1 AS a
+			INNER JOIN t2 AS b USING (id, site_id)
+			SET a.note = 'using'
+			WHERE b.id = 4 AND b.site_id = 10"
+		);
+
+		$this->assertSame( 4, $target_update->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'site_id' => 10,
+					'note'    => 'using',
+					'only_t1' => 100,
+				),
+				array(
+					'id'      => 2,
+					'site_id' => 10,
+					'note'    => 'using',
+					'only_t1' => 200,
+				),
+				array(
+					'id'      => 3,
+					'site_id' => 10,
+					'note'    => 'using',
+					'only_t1' => 300,
+				),
+				array(
+					'id'      => 1,
+					'site_id' => 20,
+					'note'    => 'using',
+					'only_t1' => 400,
+				),
+			),
+			$driver->query( 'SELECT id, site_id, note, only_t1 FROM t1 ORDER BY site_id, id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$source_update = $driver->query(
+			"UPDATE t1 a
+			JOIN t2 b USING (id, site_id)
+			SET b.note = 'source-using'
+			WHERE a.id = 2 AND a.site_id = 10"
+		);
+
+		$this->assertSame( 5, $source_update->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'          => 1,
+					'site_id'     => 10,
+					'replacement' => 'u1',
+					'flag'        => 'apply',
+					'note'        => 'source-using',
+				),
+				array(
+					'id'          => 2,
+					'site_id'     => 10,
+					'replacement' => 'u2',
+					'flag'        => 'skip',
+					'note'        => 'source-using',
+				),
+				array(
+					'id'          => 3,
+					'site_id'     => 10,
+					'replacement' => 'u3',
+					'flag'        => 'apply',
+					'note'        => 'source-using',
+				),
+				array(
+					'id'          => 4,
+					'site_id'     => 10,
+					'replacement' => 'u5',
+					'flag'        => 'apply',
+					'note'        => 'source-using',
+				),
+				array(
+					'id'          => 1,
+					'site_id'     => 20,
+					'replacement' => 'u4',
+					'flag'        => 'apply',
+					'note'        => 'source-using',
+				),
+			),
+			$driver->query( 'SELECT id, site_id, replacement, flag, note FROM t2 ORDER BY site_id, id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_joined_update_rewrites_derived_table_claim_query(): void {
 		$this->requireDuckDBRuntime();
 
@@ -2236,24 +2346,52 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					'message' => 'UPDATE statement modifying multiple tables is not supported',
 				),
 				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b USING (id) SET a.note = 'target', b.note = 'source'",
+					'message' => 'UPDATE statement modifying multiple tables is not supported',
+				),
+				array(
 					'sql'     => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 				),
 				array(
 					'sql'     => "UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 				),
 				array(
 					'sql'     => "UPDATE t1 a NATURAL JOIN t2 b SET a.note = 'target'",
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 				),
 				array(
 					'sql'     => "UPDATE t1 a CROSS JOIN t2 b ON a.id = b.id SET a.note = 'target'",
 					'message' => 'CROSS JOIN ... ON is not supported',
 				),
 				array(
-					'sql'     => "UPDATE t1 a JOIN t2 b USING (id) SET a.note = 'target'",
-					'message' => 'JOIN ... USING is not supported',
+					'sql'     => "UPDATE t1 a CROSS JOIN t2 b USING (id) SET a.note = 'target'",
+					'message' => 'CROSS JOIN ... USING is not supported',
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b USING () SET a.note = 'target'",
+					'message' => 'could not parse MySQL statement',
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b USING (id + id) SET a.note = 'target'",
+					'message' => 'could not parse MySQL statement',
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b USING (id, id) SET a.note = 'target'",
+					'message' => "Duplicate JOIN ... USING column 'id'",
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b USING (missing_id) SET a.note = 'target'",
+					'message' => "Unknown JOIN ... USING column 'missing_id'",
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN (SELECT id FROM t2) b USING (id) SET a.note = 'target'",
+					'message' => 'JOIN ... USING requires base table references',
+				),
+				array(
+					'sql'     => "UPDATE t1 a JOIN t2 b USING (id) SET note = 'ambiguous'",
+					'message' => "Ambiguous unqualified UPDATE target column 'note'",
 				),
 				array(
 					'sql'     => "UPDATE t1 a JOIN t2 b ON a.id = b.id SET note = 'ambiguous'",
@@ -3133,15 +3271,15 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a LEFT JOIN t2 b ON a.id = b.id',
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a RIGHT JOIN t2 b ON a.id = b.id',
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a NATURAL JOIN t2 b',
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a CROSS JOIN t2 b ON a.id = b.id',
@@ -3149,7 +3287,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a STRAIGHT_JOIN t2 b ON a.id = b.id',
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a JOIN t2 b USING (missing_id)',

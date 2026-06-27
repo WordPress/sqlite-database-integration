@@ -2861,7 +2861,7 @@ class WP_DuckDB_Driver {
 				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after CROSS.' );
 			} elseif ( WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
 				if ( $this->is_unsupported_joined_update_join_token( $tokens[ $index ] ) ) {
-					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported.' );
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported.' );
 				}
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Table reference options are not supported.' );
 			}
@@ -2876,11 +2876,7 @@ class WP_DuckDB_Driver {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. CROSS JOIN ... USING is not supported.' );
 				}
 
-				if ( 'DELETE' !== $statement ) {
-					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING is not supported.' );
-				}
-
-				$using = $this->parse_joined_delete_using_predicates( $tokens, $index, $left_reference, $source['reference'] );
+				$using = $this->parse_joined_dml_using_predicates( $tokens, $index, $left_reference, $source['reference'], $statement );
 				foreach ( $using['predicates'] as $predicate ) {
 					$join_predicates[] = $predicate;
 				}
@@ -2910,34 +2906,35 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Parse DELETE JOIN ... USING columns into explicit equality predicates.
+	 * Parse JOIN ... USING columns into explicit equality predicates.
 	 *
 	 * @param WP_Parser_Token[] $tokens          Table reference tokens.
 	 * @param int               $index           Index at USING.
 	 * @param array             $left_reference  Left table reference.
 	 * @param array             $right_reference Right table reference.
+	 * @param string            $statement       Statement name for diagnostics.
 	 * @return array{predicates:array<int,string>,next_index:int} Generated predicates and next token index.
 	 */
-	private function parse_joined_delete_using_predicates( array $tokens, int $index, array $left_reference, array $right_reference ): array {
+	private function parse_joined_dml_using_predicates( array $tokens, int $index, array $left_reference, array $right_reference, string $statement ): array {
 		if ( null === $left_reference['table_name'] || null === $right_reference['table_name'] ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. JOIN ... USING requires base table references.' );
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING requires base table references.' );
 		}
 
-		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::USING_SYMBOL, 'Expected USING in joined DELETE statement.' );
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::USING_SYMBOL, 'Expected USING in joined ' . $statement . ' statement.' );
 		++$index;
-		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Unsupported DELETE statement in DuckDB driver. JOIN ... USING requires a column list.' );
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING requires a column list.' );
 
 		$close_index   = $this->skip_balanced_parentheses( $tokens, $index ) - 1;
 		$column_tokens = array_slice( $tokens, $index + 1, $close_index - $index - 1 );
 		if ( count( $column_tokens ) === 0 ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. JOIN ... USING requires a column list.' );
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING requires a column list.' );
 		}
 
 		$seen       = array();
 		$predicates = array();
 		foreach ( $this->split_top_level_comma_items( $column_tokens ) as $item ) {
 			if ( 1 !== count( $item ) ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. JOIN ... USING supports only column names.' );
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING supports only column names.' );
 			}
 
 			$column = $this->identifier_value( $item[0] );
@@ -2954,13 +2951,16 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( "Unknown JOIN ... USING column '{$column}' in DuckDB driver." );
 			}
 
-			$predicates[] = $this->connection->quote_identifier( $left_reference['alias'] )
-				. '.'
-				. $this->connection->quote_identifier( $column )
-				. ' = '
-				. $this->connection->quote_identifier( $right_reference['alias'] )
-				. '.'
-				. $this->connection->quote_identifier( $column );
+			// Match the SQLite UPDATE rewrite, which consumes USING without preserving a join predicate.
+			if ( 'DELETE' === $statement ) {
+				$predicates[] = $this->connection->quote_identifier( $left_reference['alias'] )
+					. '.'
+					. $this->connection->quote_identifier( $column )
+					. ' = '
+					. $this->connection->quote_identifier( $right_reference['alias'] )
+					. '.'
+					. $this->connection->quote_identifier( $column );
+			}
 		}
 
 		return array(

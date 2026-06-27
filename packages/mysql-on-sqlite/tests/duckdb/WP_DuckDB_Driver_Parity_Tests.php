@@ -960,6 +960,21 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
 	}
 
+	public function test_joined_update_using_columns_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30), (4, 'a4', 40)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (5, 'b5', 1)",
+			)
+		);
+
+		$this->assertParityRowCount( "UPDATE t1 a JOIN t2 b USING (id) SET a.note = 'using' WHERE b.id = 5" );
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+	}
+
 	public function test_joined_update_non_first_target_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -1057,7 +1072,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			array(
 				array(
 					'sql'              => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'left'",
-					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 					'sqlite_row_count' => 2,
 					'sqlite_rows'      => array(
 						array(
@@ -1084,7 +1099,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				),
 				array(
 					'sql'              => "UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id SET a.note = 'right'",
-					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 					'sqlite_row_count' => 2,
 					'sqlite_rows'      => array(
 						array(
@@ -1137,35 +1152,8 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 					),
 				),
 				array(
-					'sql'              => "UPDATE t1 a JOIN t2 b USING (id) SET a.note = 'using'",
-					'duckdb_message'   => 'JOIN ... USING is not supported',
-					'sqlite_row_count' => 4,
-					'sqlite_rows'      => array(
-						array(
-							'id'      => '1',
-							'note'    => 'using',
-							'only_t1' => '10',
-						),
-						array(
-							'id'      => '2',
-							'note'    => 'using',
-							'only_t1' => '20',
-						),
-						array(
-							'id'      => '3',
-							'note'    => 'using',
-							'only_t1' => '30',
-						),
-						array(
-							'id'      => '4',
-							'note'    => 'using',
-							'only_t1' => '40',
-						),
-					),
-				),
-				array(
 					'sql'              => "UPDATE t1 a NATURAL JOIN t2 b SET a.note = 'natural'",
-					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON are supported',
+					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
 					'sqlite_row_count' => 4,
 					'sqlite_rows'      => array(
 						array(
