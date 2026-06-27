@@ -28200,6 +28200,7 @@ $$'
 					sprintf(
 						"CREATE TABLE `%s` (
 							`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+							`object_id` bigint(20) unsigned NOT NULL DEFAULT 0,
 							`slug` varchar(64) NOT NULL,
 							`title` varchar(191) NOT NULL COMMENT 'Title note',
 							`status` enum('draft','published') NOT NULL DEFAULT 'draft' COMMENT 'Status note',
@@ -28264,12 +28265,14 @@ $$'
 				'direct information_schema.columns real PostgreSQL',
 				$backend_sql
 			);
-			$this->assertCount( 8, $column_rows );
+			$this->assertCount( 9, $column_rows );
 			$id_column = $this->find_row_by_value( $column_rows, 'COLUMN_NAME', 'id' );
 			$this->assertSame( 'bigint(20) unsigned', $this->get_row_value( $id_column, 'COLUMN_TYPE' ) );
 			$this->assertSame( 'PRI', $this->get_row_value( $id_column, 'COLUMN_KEY' ) );
 			$this->assertSame( 'auto_increment', $this->get_row_value( $id_column, 'EXTRA' ) );
 			$this->assertSame( 'NO', $this->get_row_value( $id_column, 'IS_NULLABLE' ) );
+			$object_id_column = $this->find_row_by_value( $column_rows, 'COLUMN_NAME', 'object_id' );
+			$this->assertSame( 'bigint(20) unsigned', $this->get_row_value( $object_id_column, 'COLUMN_TYPE' ) );
 			$slug_column = $this->find_row_by_value( $column_rows, 'COLUMN_NAME', 'slug' );
 			$this->assertSame( 'varchar(64)', $this->get_row_value( $slug_column, 'COLUMN_TYPE' ) );
 			$this->assertSame( 'UNI', $this->get_row_value( $slug_column, 'COLUMN_KEY' ) );
