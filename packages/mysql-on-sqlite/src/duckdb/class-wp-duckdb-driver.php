@@ -17700,7 +17700,7 @@ class WP_DuckDB_Driver {
 			? $this->auto_increment_column_omitted_from_write( $tokens, $table_index, $metadata['column_name'] )
 			: false;
 		$before_max         = null;
-		if ( null === $before && $column_was_omitted && null !== $table_reference ) {
+		if ( $column_was_omitted && null !== $table_reference ) {
 			$before_max = $this->max_auto_increment_column_value( $table_reference['table_name'], $metadata['column_name'], $table_reference['temporary'] );
 		}
 		if (

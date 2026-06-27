@@ -187,6 +187,111 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_auto_increment_insert_id_falls_back_to_max_when_currval_is_stale(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public $queries = array();
+
+			private $max_reads = 0;
+
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				$this->queries[] = $sql;
+
+				if ( 0 === strpos( $sql, 'CREATE OR REPLACE MACRO ' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				if ( 0 === strpos( $sql, 'CREATE TABLE IF NOT EXISTS "__wp_duckdb_column_metadata"' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				if ( 0 === strpos( $sql, 'CREATE TABLE IF NOT EXISTS "__wp_duckdb_table_metadata"' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				if ( false !== strpos( $sql, "table_type = 'LOCAL TEMPORARY'" ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'table_name' ), array() );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'table_name' ), array( array( 'wp_usermeta' ) ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT table_name, engine, row_format, table_collation, table_comment, create_options, create_time FROM "__wp_duckdb_table_metadata"' ) ) {
+					return new WP_DuckDB_Result_Statement(
+						array( 'table_name', 'engine', 'row_format', 'table_collation', 'table_comment', 'create_options', 'create_time' ),
+						array(
+							array( 'wp_usermeta', 'InnoDB', 'Dynamic', 'utf8mb4_bin', '', '', '2026-06-27 00:00:00' ),
+						)
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment FROM "__wp_duckdb_column_metadata"' ) ) {
+					return new WP_DuckDB_Result_Statement(
+						array( 'ordinal_position', 'column_name', 'column_type', 'is_nullable', 'column_key', 'column_default', 'extra', 'collation_name', 'comment' ),
+						array(
+							array( 1, 'umeta_id', 'bigint(20) unsigned', 'NO', 'PRI', null, 'auto_increment', null, '' ),
+							array( 2, 'user_id', 'bigint(20) unsigned', 'NO', '', '0', '', null, '' ),
+							array( 3, 'meta_key', 'varchar(255)', 'YES', 'MUL', null, '', null, '' ),
+							array( 4, 'meta_value', 'longtext', 'YES', '', null, '', null, '' ),
+						)
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT column_name FROM "__wp_duckdb_column_metadata"' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'column_name' ), array( array( 'umeta_id' ) ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT currval(' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'currval' ), array( array( 17 ) ) );
+				}
+
+				if ( 'SELECT MAX("umeta_id") AS max_value FROM "wp_usermeta"' === $sql ) {
+					++$this->max_reads;
+					return new WP_DuckDB_Result_Statement(
+						array( 'max_value' ),
+						array( array( 1 === $this->max_reads ? 17 : 18 ) )
+					);
+				}
+
+				if (
+					0 === strpos( $sql, 'INSERT INTO "wp_usermeta"' )
+					&& false !== strpos( $sql, '"user_id"' )
+					&& false !== strpos( $sql, '"meta_key"' )
+					&& false !== strpos( $sql, '"meta_value"' )
+					&& false === strpos( $sql, '"umeta_id"' )
+				) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+				}
+
+				throw new RuntimeException( 'Unexpected query: ' . $sql );
+			}
+		};
+		$driver     = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+		$insert     = $driver->query(
+			"INSERT INTO `wp_usermeta` (`user_id`, `meta_key`, `meta_value`) VALUES (1, 'wp_persisted_preferences', 'a:0:{}')"
+		);
+		$query_log  = implode( "\n", $connection->queries );
+		$insert_sql = array_values(
+			array_filter(
+				$connection->queries,
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'INSERT INTO "wp_usermeta"' );
+				}
+			)
+		);
+
+		$this->assertSame( 1, $insert->rowCount() );
+		$this->assertSame( 18, $driver->get_insert_id() );
+		$this->assertCount( 1, $insert_sql );
+		$this->assertStringNotContainsString( '"umeta_id"', $insert_sql[0] );
+		$this->assertSame(
+			2,
+			substr_count( $query_log, 'SELECT MAX("umeta_id") AS max_value FROM "wp_usermeta"' )
+		);
+	}
+
 	public function test_auto_increment_insert_id_recovers_when_row_count_is_zero(): void {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public $queries = array();
