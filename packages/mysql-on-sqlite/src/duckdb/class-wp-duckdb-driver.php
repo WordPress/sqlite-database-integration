@@ -1862,9 +1862,9 @@ class WP_DuckDB_Driver {
 			$index        += 3;
 		}
 
-		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
-		++$index;
-		$this->assert_unqualified_write_allowed_in_current_database();
+		$reference  = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'CREATE TABLE' );
+		$table_name = $reference['requested_table_name'];
+		$index      = $reference['next_index'];
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Expected column list in CREATE TABLE.' );
 		++$index;
 
@@ -2014,12 +2014,11 @@ class WP_DuckDB_Driver {
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in CREATE INDEX statement.' );
 		++$index;
 
-		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
-		++$index;
-		$this->assert_unqualified_write_allowed_in_current_database();
-		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
+		$reference       = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'CREATE INDEX' );
+		$index           = $reference['next_index'];
+		$table_reference = $this->resolve_visible_user_table_reference( $reference['requested_table_name'] );
 		if ( null === $table_reference ) {
-			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in CREATE INDEX statement." );
+			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$reference['requested_table_name']}' in CREATE INDEX statement." );
 		}
 		$table_name = $table_reference['table_name'];
 
@@ -9118,15 +9117,22 @@ class WP_DuckDB_Driver {
 	 */
 	private function execute_show_index( array $tokens ): WP_DuckDB_Result_Statement {
 		if (
-			4 !== count( $tokens )
+			! isset( $tokens[2] )
 			|| ( WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[2]->id && WP_MySQL_Lexer::IN_SYMBOL !== $tokens[2]->id )
 		) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW INDEX statement in DuckDB driver. Use SHOW INDEX FROM table.' );
 		}
 
-		$table_name      = $this->identifier_value( $tokens[3] );
-		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
-		$rows            = null === $table_reference ? array() : $this->index_rows_for_table( $table_reference['table_name'], $table_reference['temporary'] );
+		$requested_reference = $this->parse_metadata_table_reference( $tokens, 3, true );
+		if ( count( $tokens ) !== $requested_reference['next_index'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW INDEX statement in DuckDB driver. Use SHOW INDEX FROM table.' );
+		}
+
+		$rows = array();
+		if ( 0 === strcasecmp( $requested_reference['database'], $this->database ) ) {
+			$table_reference = $this->resolve_visible_user_table_reference( $requested_reference['table_name'] );
+			$rows            = null === $table_reference ? array() : $this->index_rows_for_table( $table_reference['table_name'], $table_reference['temporary'] );
+		}
 
 		return new WP_DuckDB_Result_Statement(
 			array(

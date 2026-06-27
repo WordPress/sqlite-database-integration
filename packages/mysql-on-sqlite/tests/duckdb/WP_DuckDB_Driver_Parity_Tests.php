@@ -2970,6 +2970,60 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 	}
 
+	public function test_qualified_create_table_and_show_indexes_after_use_information_schema_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'USE information_schema',
+				'CREATE TABLE wp.qualified_ddl (
+					id INT PRIMARY KEY,
+					name VARCHAR(20),
+					KEY idx_name (name)
+				)',
+			)
+		);
+
+		$this->assertParityRows( 'SHOW TABLES FROM wp' );
+		$this->assertParityRows( 'SHOW CREATE TABLE wp.qualified_ddl' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM wp.qualified_ddl' );
+
+		foreach (
+			array(
+				'SHOW INDEXES FROM wp.qualified_ddl',
+				'SHOW INDEXES FROM information_schema.qualified_ddl FROM wp',
+				'SHOW INDEXES FROM qualified_ddl FROM wp',
+			) as $sql
+		) {
+			$this->assertParityRowColumns(
+				$sql,
+				array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+			);
+		}
+
+		$this->assertParityRows( 'SHOW INDEXES FROM qualified_ddl' );
+	}
+
+	public function test_qualified_create_index_after_use_information_schema_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE qualified_idx (id INT PRIMARY KEY, name VARCHAR(20))',
+				'USE information_schema',
+				'CREATE INDEX idx_name ON wp.qualified_idx (name)',
+			)
+		);
+
+		$this->assertParityRowColumns(
+			'SHOW INDEXES FROM wp.qualified_idx',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+
+		$this->runParitySetup( array( 'DROP INDEX idx_name ON wp.qualified_idx' ) );
+
+		$this->assertParityRowColumns(
+			'SHOW INDEXES FROM wp.qualified_idx',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+	}
+
 	public function test_alter_table_add_column_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
