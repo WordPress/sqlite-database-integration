@@ -2872,6 +2872,11 @@ class WP_DuckDB_Driver {
 				$join_type = 'CROSS';
 				++$index;
 				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after CROSS.' );
+			} elseif ( WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === $tokens[ $index ]->id ) {
+				if ( 'UPDATE' !== $statement ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported.' );
+				}
+				$join_type = 'STRAIGHT';
 			} elseif ( WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
 				if ( $this->is_unsupported_joined_update_join_token( $tokens[ $index ] ) ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported.' );
@@ -2887,6 +2892,9 @@ class WP_DuckDB_Driver {
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $index ]->id ) {
 				if ( 'CROSS' === $join_type ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. CROSS JOIN ... USING is not supported.' );
+				}
+				if ( 'STRAIGHT' === $join_type ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. STRAIGHT_JOIN ... USING is not supported.' );
 				}
 
 				$using = $this->parse_joined_dml_using_predicates( $tokens, $index, $left_reference, $source['reference'], $statement );
@@ -3073,7 +3081,6 @@ class WP_DuckDB_Driver {
 				WP_MySQL_Lexer::LEFT_SYMBOL,
 				WP_MySQL_Lexer::RIGHT_SYMBOL,
 				WP_MySQL_Lexer::NATURAL_SYMBOL,
-				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
 				WP_MySQL_Lexer::USING_SYMBOL,
 			),
 			true
@@ -3090,6 +3097,7 @@ class WP_DuckDB_Driver {
 		return WP_MySQL_Lexer::JOIN_SYMBOL === $token->id
 			|| WP_MySQL_Lexer::INNER_SYMBOL === $token->id
 			|| WP_MySQL_Lexer::CROSS_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === $token->id
 			|| $this->is_unsupported_joined_update_join_token( $token );
 	}
 

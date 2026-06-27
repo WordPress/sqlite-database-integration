@@ -960,6 +960,25 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
 	}
 
+	public function test_straight_joined_update_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (2, 'b2', 0), (3, 'b3', 1), (4, 'b4', 1)",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"UPDATE t1 a STRAIGHT_JOIN t2 b ON a.id = b.id
+			SET a.note = 'straight', a.only_t1 = a.only_t1 + b.flag
+			WHERE b.flag = 1"
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+	}
+
 	public function test_joined_update_using_columns_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
