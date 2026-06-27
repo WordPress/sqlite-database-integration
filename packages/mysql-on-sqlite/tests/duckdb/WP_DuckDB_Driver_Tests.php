@@ -6,6 +6,62 @@ require_once __DIR__ . '/WP_DuckDB_TestCase.php';
  * @group duckdb
  */
 class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
+	public function test_invalid_byte_string_literals_translate_without_token_value_type_error(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public function __construct() {}
+		};
+		$driver     = ( new ReflectionClass( WP_DuckDB_Driver::class ) )->newInstanceWithoutConstructor();
+
+		foreach (
+			array(
+				'mysql_version'    => WP_DuckDB_Driver::DEFAULT_MYSQL_VERSION,
+				'connection'       => $connection,
+				'database'         => 'wp',
+				'current_database' => 'wp',
+			) as $property => $value
+		) {
+			$reflection_property = new ReflectionProperty( WP_DuckDB_Driver::class, $property );
+			if ( PHP_VERSION_ID < 80100 ) {
+				$reflection_property->setAccessible( true );
+			}
+			$reflection_property->setValue( $driver, $value );
+		}
+
+		$grammar = new ReflectionProperty( WP_DuckDB_Driver::class, 'mysql_grammar' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$grammar->setAccessible( true );
+		}
+		$grammar->setValue( null, new WP_Parser_Grammar( require WP_DuckDB_Driver::MYSQL_GRAMMAR_PATH ) );
+
+		$tokenize  = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$translate = new ReflectionMethod( WP_DuckDB_Driver::class, 'translate_tokens_to_duckdb_sql' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$translate->setAccessible( true );
+		}
+
+		$invalid_byte = "\xA1";
+		$cases        = array(
+			array(
+				"SELECT CONVERT( LEFT( CONVERT( '{$invalid_byte}ord{$invalid_byte}ress' USING binary ), 100 ) USING big5 ) AS x_0",
+				"SELECT LEFT('{$invalid_byte}ord{$invalid_byte}ress', 100) AS x_0",
+			),
+			array(
+				"INSERT INTO wptests_posts (post_status) VALUES ('{$invalid_byte}')",
+				"INSERT INTO wptests_posts(post_status) VALUES ('{$invalid_byte}')",
+			),
+			array(
+				"DELETE FROM `wptests_posts` WHERE `post_status` = '{$invalid_byte}'",
+				"DELETE FROM \"wptests_posts\" WHERE \"post_status\" = '{$invalid_byte}'",
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$tokens = $tokenize->invoke( $driver, $case[0] );
+			$this->assertSame( bin2hex( $case[1] ), bin2hex( $translate->invoke( $driver, $tokens ) ) );
+		}
+	}
+
 	public function test_auto_increment_insert_id_falls_back_to_max_when_currval_is_unavailable(): void {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public $queries = array();
@@ -80,6 +136,83 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame(
 			2,
 			substr_count( implode( "\n", $connection->queries ), 'SELECT MAX("ID") AS max_value FROM "wp_users"' )
+		);
+	}
+
+	public function test_auto_increment_insert_id_recovers_when_row_count_is_zero(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public $queries = array();
+
+			private $max_reads = 0;
+
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				$this->queries[] = $sql;
+
+				if ( 0 === strpos( $sql, 'CREATE OR REPLACE MACRO ' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				if ( false !== strpos( $sql, "table_type = 'LOCAL TEMPORARY'" ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'table_name' ), array() );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'table_name' ), array( array( 'wp_usermeta' ) ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT column_name FROM "__wp_duckdb_column_metadata"' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'column_name' ), array( array( 'umeta_id' ) ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT currval(' ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'currval unavailable' );
+				}
+
+				if ( 'SELECT MAX("umeta_id") AS max_value FROM "wp_usermeta"' === $sql ) {
+					++$this->max_reads;
+					return new WP_DuckDB_Result_Statement(
+						array( 'max_value' ),
+						array( array( 1 === $this->max_reads ? 0 : 1 ) )
+					);
+				}
+
+				if ( 'INSERT INTO "wp_usermeta" ("user_id", "meta_key", "meta_value") VALUES (1, \'wp_persisted_preferences\', \'a:0:{}\')' === $sql ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				throw new RuntimeException( 'Unexpected query: ' . $sql );
+			}
+		};
+		$driver     = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+		$mysql_sql  = "INSERT INTO `wp_usermeta` (`user_id`, `meta_key`, `meta_value`) VALUES (1, 'wp_persisted_preferences', 'a:0:{}')";
+		$duckdb_sql = 'INSERT INTO "wp_usermeta" ("user_id", "meta_key", "meta_value") VALUES (1, \'wp_persisted_preferences\', \'a:0:{}\')';
+
+		$tokenize = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+		}
+		$tokens = $tokenize->invoke( $driver, $mysql_sql );
+
+		$execute = new ReflectionMethod( WP_DuckDB_Driver::class, 'execute_auto_increment_write' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$execute->setAccessible( true );
+		}
+		$result = $execute->invoke(
+			$driver,
+			'wp_usermeta',
+			$duckdb_sql,
+			'Failed to execute DuckDB INSERT',
+			$tokens,
+			2
+		);
+
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$this->assertSame(
+			2,
+			substr_count( implode( "\n", $connection->queries ), 'SELECT MAX("umeta_id") AS max_value FROM "wp_usermeta"' )
 		);
 	}
 
@@ -6226,6 +6359,43 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 
 		$this->fail( 'Expected duplicate insert to fail.' );
+	}
+
+	public function test_insert_id_tracks_wordpress_usermeta_shape(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE wp_usermeta (
+				umeta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				user_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (umeta_id),
+				KEY user_id (user_id),
+				KEY meta_key (meta_key(191))
+			)'
+		);
+
+		$insert = $driver->query(
+			"INSERT INTO `wp_usermeta` (`user_id`, `meta_key`, `meta_value`)
+			VALUES (1, 'wp_persisted_preferences', 'a:0:{}')"
+		);
+
+		$this->assertSame( 1, $insert->rowCount() );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'umeta_id'   => 1,
+					'user_id'    => 1,
+					'meta_key'   => 'wp_persisted_preferences',
+					'meta_value' => 'a:0:{}',
+				),
+			),
+			$driver->query( 'SELECT umeta_id, user_id, meta_key, meta_value FROM wp_usermeta' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
 	}
 
 	public function test_insert_ignore_explicit_auto_increment_insert_id_skips_ignored_rows(): void {

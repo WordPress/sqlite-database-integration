@@ -51,13 +51,51 @@ class WP_DuckDB_DB extends wpdb {
 	}
 
 	/**
-	 * Noop charset setter.
+	 * Determine the best charset and collation to use.
+	 *
+	 * This mirrors wpdb::determine_charset() without requiring a mysqli handle.
+	 *
+	 * @param string $charset Character set.
+	 * @param string $collate Collation.
+	 * @return array{charset:string,collate:string}
+	 */
+	public function determine_charset( $charset, $collate ) {
+		if ( 'utf8' === $charset ) {
+			$charset = 'utf8mb4';
+		}
+
+		if ( 'utf8mb4' === $charset ) {
+			if ( ! $collate || 'utf8_general_ci' === $collate ) {
+				$collate = 'utf8mb4_unicode_ci';
+			} else {
+				$collate = str_replace( 'utf8_', 'utf8mb4_', $collate );
+			}
+		}
+
+		if ( $this->has_cap( 'utf8mb4_520' ) && 'utf8mb4_unicode_ci' === $collate ) {
+			$collate = 'utf8mb4_unicode_520_ci';
+		}
+
+		return compact( 'charset', 'collate' );
+	}
+
+	/**
+	 * Track connection charset state without calling mysqli functions.
 	 *
 	 * @param resource $dbh     Database handle.
 	 * @param string   $charset Optional charset.
 	 * @param string   $collate Optional collation.
 	 */
 	public function set_charset( $dbh, $charset = null, $collate = null ) {
+		if ( ! isset( $charset ) ) {
+			$charset = $this->charset;
+		}
+		if ( ! isset( $collate ) ) {
+			$collate = $this->collate;
+		}
+
+		$this->charset = $charset;
+		$this->collate = $collate ? $collate : $this->get_default_collation_for_charset( $charset );
 	}
 
 	/**
@@ -282,7 +320,8 @@ class WP_DuckDB_DB extends wpdb {
 			return false;
 		}
 
-		$this->ready = true;
+		$this->is_mysql = true;
+		$this->ready    = true;
 		try {
 			$this->set_sql_mode();
 		} catch ( Throwable $e ) {
@@ -393,7 +432,11 @@ class WP_DuckDB_DB extends wpdb {
 		}
 
 		try {
-			$this->last_statement = $this->dbh->query( $query );
+			$this->last_statement = $this->get_connection_collation_statement( $query );
+			if ( ! $this->last_statement ) {
+				$this->last_statement = $this->dbh->query( $query );
+			}
+
 			if ( $this->last_statement->columnCount() > 0 ) {
 				$this->result = $this->normalize_result_rows( $this->last_statement->fetchAll( PDO::FETCH_OBJ ) ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 			} else {
@@ -479,7 +522,18 @@ class WP_DuckDB_DB extends wpdb {
 	 * @return bool
 	 */
 	public function has_cap( $db_cap ) {
-		return 'subqueries' === strtolower( $db_cap );
+		switch ( strtolower( $db_cap ) ) {
+			case 'collation':
+			case 'group_concat':
+			case 'identifier_placeholders':
+			case 'set_charset':
+			case 'subqueries':
+			case 'utf8mb4':
+			case 'utf8mb4_520':
+				return true;
+		}
+
+		return false;
 	}
 
 	/**
@@ -532,6 +586,56 @@ class WP_DuckDB_DB extends wpdb {
 			'TRADITIONAL',
 			'ANSI',
 		);
+	}
+
+	/**
+	 * Return a wpdb-shaped result for the connection collation variable.
+	 *
+	 * The DuckDB driver currently accepts SET NAMES as a bootstrap no-op and
+	 * returns an empty SHOW VARIABLES result. WordPress core asks for this
+	 * variable directly after set_charset().
+	 *
+	 * @param string $query SQL query.
+	 * @return WP_DuckDB_Result_Statement|null Result statement if handled.
+	 */
+	private function get_connection_collation_statement( $query ) {
+		if (
+			! preg_match(
+				"/^\\s*SHOW\\s+(?:GLOBAL\\s+|LOCAL\\s+|SESSION\\s+)?VARIABLES\\s+WHERE\\s+Variable_name\\s*=\\s*(['\"])collation_connection\\1\\s*$/i",
+				$query
+			)
+		) {
+			return null;
+		}
+
+		return new WP_DuckDB_Result_Statement(
+			array( 'Variable_name', 'Value' ),
+			array(
+				array(
+					'collation_connection',
+					$this->collate ? $this->collate : $this->get_default_collation_for_charset( $this->charset ),
+				),
+			)
+		);
+	}
+
+	/**
+	 * Get the default collation name for a charset.
+	 *
+	 * @param string $charset Character set.
+	 * @return string Collation name.
+	 */
+	private function get_default_collation_for_charset( $charset ) {
+		switch ( $charset ) {
+			case 'utf8':
+				return 'utf8_general_ci';
+			case 'utf8mb3':
+				return 'utf8mb3_general_ci';
+			case 'utf8mb4':
+				return 'utf8mb4_unicode_ci';
+		}
+
+		return $charset . '_general_ci';
 	}
 
 	/**

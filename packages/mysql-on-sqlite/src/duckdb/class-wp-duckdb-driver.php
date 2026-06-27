@@ -13194,29 +13194,29 @@ class WP_DuckDB_Driver {
 			if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
 				$identifier = null;
 				if ( $rewrite_information_schema_tables ) {
-					$identifier = $this->information_schema_tables_column_name( $token->get_value() );
+					$identifier = $this->information_schema_tables_column_name( $this->token_value( $token ) );
 				}
 				if ( null === $identifier && $rewrite_information_schema_statistics ) {
-					$identifier = $this->information_schema_statistics_column_name( $token->get_value() );
+					$identifier = $this->information_schema_statistics_column_name( $this->token_value( $token ) );
 				}
 				if ( null === $identifier && $rewrite_information_schema_table_constraints ) {
-					$identifier = $this->information_schema_table_constraints_column_name( $token->get_value() );
+					$identifier = $this->information_schema_table_constraints_column_name( $this->token_value( $token ) );
 				}
 				if ( null === $identifier && $rewrite_information_schema_key_column_usage ) {
-					$identifier = $this->information_schema_key_column_usage_column_name( $token->get_value() );
+					$identifier = $this->information_schema_key_column_usage_column_name( $this->token_value( $token ) );
 				}
 				if ( null === $identifier && $rewrite_information_schema_referential_constraints ) {
-					$identifier = $this->information_schema_referential_constraints_column_name( $token->get_value() );
+					$identifier = $this->information_schema_referential_constraints_column_name( $this->token_value( $token ) );
 				}
 				if ( null === $identifier && $rewrite_information_schema_check_constraints ) {
-					$identifier = $this->information_schema_check_constraints_column_name( $token->get_value() );
+					$identifier = $this->information_schema_check_constraints_column_name( $this->token_value( $token ) );
 				}
-				$pieces[] = $this->connection->quote_identifier( $identifier ?? $token->get_value() );
+				$pieces[] = $this->connection->quote_identifier( $identifier ?? $this->token_value( $token ) );
 				continue;
 			}
 
 			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-				$pieces[] = $this->connection->quote( $token->get_value() );
+				$pieces[] = $this->connection->quote( $this->token_value( $token ) );
 				continue;
 			}
 
@@ -16559,11 +16559,11 @@ class WP_DuckDB_Driver {
 	 */
 	private function translate_token_to_duckdb_sql( WP_Parser_Token $token ): string {
 		if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id ) {
-			return $this->connection->quote_identifier( $token->get_value() );
+			return $this->connection->quote_identifier( $this->token_value( $token ) );
 		}
 
 		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-			return $this->connection->quote( $token->get_value() );
+			return $this->connection->quote( $this->token_value( $token ) );
 		}
 
 		return $token->get_bytes();
@@ -17425,7 +17425,7 @@ class WP_DuckDB_Driver {
 				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $pattern_index ]->id
 				&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $pattern_index ]->id
 			)
-			|| false === strpos( $tokens[ $pattern_index ]->get_value(), '\\' )
+			|| false === strpos( $this->token_value( $tokens[ $pattern_index ] ), '\\' )
 			|| ( isset( $tokens[ $pattern_index + 1 ] ) && WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $pattern_index + 1 ]->id )
 		) {
 			return null;
@@ -17434,7 +17434,7 @@ class WP_DuckDB_Driver {
 		$index = $pattern_index;
 		return $left_operand['sql']
 			. ( $is_not_like ? ' NOT LIKE ' : ' LIKE ' )
-			. $this->connection->quote( $tokens[ $pattern_index ]->get_value() )
+			. $this->connection->quote( $this->token_value( $tokens[ $pattern_index ] ) )
 			. ' ESCAPE '
 			. $this->connection->quote( '\\' );
 	}
@@ -17453,7 +17453,7 @@ class WP_DuckDB_Driver {
 
 		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $tokens[ $index ]->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[ $index ]->id ) {
 			return array(
-				'sql'        => $this->connection->quote( $tokens[ $index ]->get_value() ),
+				'sql'        => $this->connection->quote( $this->token_value( $tokens[ $index ] ) ),
 				'next_index' => $index + 1,
 			);
 		}
@@ -17624,12 +17624,13 @@ class WP_DuckDB_Driver {
 			: $this->explicit_auto_increment_value_for_write( $tokens, $table_index, $metadata['column_name'] );
 		$before             = null === $sequence_name ? null : $this->sequence_currval( $sequence_name );
 
-		$insert_ignore_explicit_ids           = array();
-		$insert_ignore_explicit_ids_existed   = array();
-		$tracks_insert_ignore_explicit_values = null !== $metadata
+		$insert_ignore_write                  = null !== $metadata
 			&& null !== $table_reference
 			&& null !== $table_index
 			&& $this->is_insert_ignore_write( $tokens, $table_index );
+		$insert_ignore_explicit_ids           = array();
+		$insert_ignore_explicit_ids_existed   = array();
+		$tracks_insert_ignore_explicit_values = $insert_ignore_write;
 		if ( $tracks_insert_ignore_explicit_values ) {
 			$insert_ignore_explicit_ids = $this->explicit_auto_increment_values_for_write( $tokens, $table_index, $metadata['column_name'] );
 			foreach ( $insert_ignore_explicit_ids as $insert_ignore_explicit_id ) {
@@ -17660,10 +17661,13 @@ class WP_DuckDB_Driver {
 		}
 		$result = $this->execute_duckdb_query( $sql, $context );
 
-		if ( null !== $sequence_name && $result->rowCount() > 0 ) {
+		if ( null !== $sequence_name && ( $result->rowCount() > 0 || ! $insert_ignore_write ) ) {
 			$after = $this->sequence_currval( $sequence_name );
 			if ( null !== $after && $after !== $before ) {
 				$this->last_insert_id = $after;
+				if ( 0 === $result->rowCount() ) {
+					$result = new WP_DuckDB_Result_Statement( array(), array(), 1 );
+				}
 			} elseif ( null !== $explicit_insert_id ) {
 				if ( $tracks_insert_ignore_explicit_values ) {
 					$explicit_insert_id = $this->inserted_explicit_auto_increment_value_for_insert_ignore(
@@ -17677,10 +17681,15 @@ class WP_DuckDB_Driver {
 				if ( null !== $explicit_insert_id ) {
 					$this->last_insert_id = $explicit_insert_id;
 				}
-			} elseif ( null !== $before_max && $column_was_omitted ) {
-				$after_max = $this->max_auto_increment_column_value( $table_reference['table_name'], $metadata['column_name'], $table_reference['temporary'] );
-				if ( $after_max > $before_max ) {
-					$this->last_insert_id = $after_max;
+			}
+		}
+
+		if ( 0 === $this->last_insert_id && null !== $before_max && $column_was_omitted ) {
+			$after_max = $this->max_auto_increment_column_value( $table_reference['table_name'], $metadata['column_name'], $table_reference['temporary'] );
+			if ( $after_max > $before_max ) {
+				$this->last_insert_id = $after_max;
+				if ( 0 === $result->rowCount() ) {
+					$result = new WP_DuckDB_Result_Statement( array(), array(), 1 );
 				}
 			}
 		}
@@ -20989,6 +20998,67 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Expected a MySQL identifier in DuckDB driver statement.' );
 		}
 		return $token->get_value();
+	}
+
+	/**
+	 * Return a token value with a byte-safe fallback for invalid string bytes.
+	 *
+	 * The shared MySQL token unescaper intentionally uses a Unicode regex. Invalid
+	 * byte sequences make that regex return null, which violates get_value()'s
+	 * string return type before the DuckDB driver can report or translate the SQL.
+	 *
+	 * @param WP_Parser_Token $token MySQL token.
+	 * @return string Token value.
+	 */
+	private function token_value( WP_Parser_Token $token ): string {
+		try {
+			return $token->get_value();
+		} catch ( TypeError $e ) {
+			if (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $token->id
+				&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $token->id
+				&& WP_MySQL_Lexer::BACK_TICK_QUOTED_ID !== $token->id
+			) {
+				throw $e;
+			}
+		}
+
+		return $this->quoted_token_value_from_bytes( $token );
+	}
+
+	/**
+	 * Unescape a quoted token without requiring valid UTF-8.
+	 *
+	 * @param WP_Parser_Token $token Quoted token.
+	 * @return string Unquoted token value.
+	 */
+	private function quoted_token_value_from_bytes( WP_Parser_Token $token ): string {
+		$value = $token->get_bytes();
+		if ( strlen( $value ) < 2 ) {
+			return $value;
+		}
+
+		$quote = $value[0];
+		$value = substr( $value, 1, -1 );
+
+		$backslash    = chr( 92 );
+		$replacements = array(
+			( $backslash . '0' )        => chr( 0 ),
+			( $backslash . "'" )        => chr( 39 ),
+			( $backslash . '"' )        => chr( 34 ),
+			( $backslash . 'b' )        => chr( 8 ),
+			( $backslash . 'n' )        => chr( 10 ),
+			( $backslash . 'r' )        => chr( 13 ),
+			( $backslash . 't' )        => chr( 9 ),
+			( $backslash . 'Z' )        => chr( 26 ),
+			( $backslash . '%' )        => $backslash . $backslash . '%',
+			( $backslash . '_' )        => $backslash . $backslash . '_',
+			( $backslash . $backslash ) => $backslash . $backslash,
+			( $quote . $quote )         => $quote,
+		);
+
+		$value = strtr( $value, $replacements );
+		return preg_replace( '/' . preg_quote( $backslash, '/' ) . '(.)/s', '$1', $value );
 	}
 
 	/**
