@@ -11930,7 +11930,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( array $tokens, int $table_index, int $on_duplicate_index ): string {
 		$insert_shape = $this->parse_on_duplicate_insert_shape( $tokens, $table_index, $on_duplicate_index );
-		$target       = $this->select_on_duplicate_conflict_target( $insert_shape['table_name'], $insert_shape['values_by_column'] );
+		$target       = $this->select_on_duplicate_conflict_target( $insert_shape['table_name'], $insert_shape['temporary'], $insert_shape['values_by_column'] );
 		$update_sql   = $this->translate_on_duplicate_update_tokens_to_duckdb_sql(
 			array_slice( $tokens, $on_duplicate_index + 4 ),
 			$this->write_column_metadata_map( $insert_shape['table_name'], $insert_shape['temporary'] ),
@@ -12040,13 +12040,13 @@ class WP_DuckDB_Driver {
 	 */
 	private function assert_insert_values_do_not_conflict_with_case_insensitive_unique_keys( array $tokens, int $table_index ): void {
 		$insert_shape             = $this->parse_insert_values_shape( $tokens, $table_index, true );
-		$case_insensitive_columns = $this->case_insensitive_column_names( $insert_shape['table_name'] );
+		$case_insensitive_columns = $this->case_insensitive_column_names( $insert_shape['table_name'], $insert_shape['temporary'] );
 		if ( count( $case_insensitive_columns ) === 0 ) {
 			return;
 		}
 
 		foreach ( $insert_shape['rows'] as $values_by_column ) {
-			foreach ( $this->unique_key_column_sets( $insert_shape['table_name'] ) as $column_set ) {
+			foreach ( $this->unique_key_column_sets( $insert_shape['table_name'], $insert_shape['temporary'] ) as $column_set ) {
 				$has_all_values           = true;
 				$has_case_insensitive_key = false;
 				foreach ( $column_set as $column_name ) {
@@ -12064,7 +12064,7 @@ class WP_DuckDB_Driver {
 					continue;
 				}
 
-				if ( $this->insert_values_conflict_with_target( $insert_shape['table_name'], $column_set, $values_by_column ) ) {
+				if ( $this->insert_values_conflict_with_target( $insert_shape['table_name'], $insert_shape['temporary'], $column_set, $values_by_column ) ) {
 					throw new WP_DuckDB_Driver_Exception(
 						'Failed to execute DuckDB INSERT: UNIQUE constraint failed: '
 						. $insert_shape['table_name']
@@ -12082,13 +12082,14 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
 	 * @param int               $table_index        Index of the table token.
 	 * @param bool              $coerce_for_storage Whether values should be coerced for storage.
-	 * @return array{table_name:string,rows:array<int,array<string,string>>}
+	 * @return array{table_name:string,temporary:bool,rows:array<int,array<string,string>>}
 	 */
 	private function parse_insert_values_shape( array $tokens, int $table_index, bool $coerce_for_storage = false ): array {
 		$shape = $this->parse_insert_values_write_shape( $tokens, $table_index, null, $coerce_for_storage );
 
 		return array(
 			'table_name' => $shape['table_name'],
+			'temporary'  => $shape['temporary'],
 			'rows'       => $shape['rows'],
 		);
 	}
@@ -12605,12 +12606,12 @@ class WP_DuckDB_Driver {
 	 */
 	private function execute_replace_values_with_manual_conflict_handling( array $tokens, int $table_index ): ?WP_DuckDB_Result_Statement {
 		$replace_shape            = $this->parse_insert_values_write_shape( $tokens, $table_index, null, true );
-		$case_insensitive_columns = $this->case_insensitive_column_names( $replace_shape['table_name'] );
+		$case_insensitive_columns = $this->case_insensitive_column_names( $replace_shape['table_name'], $replace_shape['temporary'] );
 		if ( count( $replace_shape['rows'] ) === 0 ) {
 			return null;
 		}
 
-		$unique_sets = $this->unique_key_column_sets( $replace_shape['table_name'] );
+		$unique_sets = $this->unique_key_column_sets( $replace_shape['table_name'], $replace_shape['temporary'] );
 		if ( count( $unique_sets ) < 2 && ! $this->has_case_insensitive_unique_key( $unique_sets, $case_insensitive_columns ) ) {
 			return null;
 		}
@@ -12754,14 +12755,15 @@ class WP_DuckDB_Driver {
 	 * Select the conflict target that MySQL would hit for a single inserted row.
 	 *
 	 * @param string               $table_name       Table name.
+	 * @param bool                 $temporary        Whether the target is a temporary table.
 	 * @param array<string,string> $values_by_column Inserted values keyed by lowercase column name.
 	 * @return string[] Conflict target columns.
 	 */
-	private function select_on_duplicate_conflict_target( string $table_name, array $values_by_column ): array {
+	private function select_on_duplicate_conflict_target( string $table_name, bool $temporary, array $values_by_column ): array {
 		$eligible_targets = array();
 		$matched_targets  = array();
 
-		foreach ( $this->unique_key_column_sets( $table_name ) as $column_set ) {
+		foreach ( $this->unique_key_column_sets( $table_name, $temporary ) as $column_set ) {
 			$has_all_values = true;
 			foreach ( $column_set as $column_name ) {
 				if ( ! array_key_exists( strtolower( $column_name ), $values_by_column ) ) {
@@ -12775,7 +12777,7 @@ class WP_DuckDB_Driver {
 			}
 
 			$eligible_targets[] = $column_set;
-			if ( $this->insert_values_conflict_with_target( $table_name, $column_set, $values_by_column ) ) {
+			if ( $this->insert_values_conflict_with_target( $table_name, $temporary, $column_set, $values_by_column ) ) {
 				$matched_targets[] = $column_set;
 			}
 		}
@@ -12798,9 +12800,10 @@ class WP_DuckDB_Driver {
 	 * Read primary and unique secondary key column sets.
 	 *
 	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
 	 * @return array<int,string[]>
 	 */
-	private function unique_key_column_sets( string $table_name ): array {
+	private function unique_key_column_sets( string $table_name, bool $temporary = false ): array {
 		$sets = array();
 
 		$primary = $this->execute_duckdb_query(
@@ -12816,10 +12819,10 @@ class WP_DuckDB_Driver {
 			);
 		}
 
-		$this->ensure_index_metadata_table();
+		$this->ensure_index_metadata_table( $temporary );
 		$secondary = $this->execute_duckdb_query(
 			'SELECT index_name, column_name FROM '
-				. $this->connection->quote_identifier( self::INDEX_METADATA_TABLE )
+				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. ' AND non_unique = 0 ORDER BY index_name, seq_in_index',
@@ -12843,13 +12846,14 @@ class WP_DuckDB_Driver {
 	 * Determine whether the inserted row conflicts with a unique target.
 	 *
 	 * @param string               $table_name       Table name.
+	 * @param bool                 $temporary        Whether the target is a temporary table.
 	 * @param string[]             $column_set       Unique key columns.
 	 * @param array<string,string> $values_by_column Inserted values keyed by lowercase column name.
 	 * @return bool Whether an existing row matches the target values.
 	 */
-	private function insert_values_conflict_with_target( string $table_name, array $column_set, array $values_by_column ): bool {
+	private function insert_values_conflict_with_target( string $table_name, bool $temporary, array $column_set, array $values_by_column ): bool {
 		$where                    = array();
-		$case_insensitive_columns = $this->case_insensitive_column_names( $table_name );
+		$case_insensitive_columns = $this->case_insensitive_column_names( $table_name, $temporary );
 		foreach ( $column_set as $column_name ) {
 			$value_sql = $values_by_column[ strtolower( $column_name ) ];
 			if ( isset( $case_insensitive_columns[ strtolower( $column_name ) ] ) ) {
@@ -12883,12 +12887,13 @@ class WP_DuckDB_Driver {
 	 * Read case-insensitive MySQL-facing text columns for a table.
 	 *
 	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
 	 * @return array<string,bool> Lowercase column-name map.
 	 */
-	private function case_insensitive_column_names( string $table_name ): array {
+	private function case_insensitive_column_names( string $table_name, bool $temporary = false ): array {
 		$columns         = array();
-		$table_collation = $this->table_default_collation( $table_name );
-		foreach ( $this->column_metadata_rows( $table_name ) as $row ) {
+		$table_collation = $this->table_default_collation( $table_name, $temporary );
+		foreach ( $this->column_metadata_rows( $table_name, $temporary ) as $row ) {
 			if ( ! array_key_exists( 'column_name', $row ) || ! array_key_exists( 'collation_name', $row ) ) {
 				continue;
 			}
@@ -13996,7 +14001,7 @@ class WP_DuckDB_Driver {
 		if (
 			null !== $metadata
 			&& null !== $explicit_insert_id
-			&& ! $this->auto_increment_column_has_visible_unique_key( $table_reference['table_name'], $metadata['column_name'] )
+			&& ! $this->auto_increment_column_has_visible_unique_key( $table_reference['table_name'], $metadata['column_name'], $table_reference['temporary'] )
 			&& $this->auto_increment_value_exists( $table_reference['table_name'], $metadata['column_name'], $explicit_insert_id )
 		) {
 			throw new WP_DuckDB_Driver_Exception( 'UNIQUE constraint failed: ' . $table_reference['table_name'] . '.' . $metadata['column_name'] );
@@ -14020,10 +14025,11 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string $table_name  Table name.
 	 * @param string $column_name AUTO_INCREMENT column name.
+	 * @param bool   $temporary   Whether the target is a temporary table.
 	 * @return bool Whether a visible unique key exists.
 	 */
-	private function auto_increment_column_has_visible_unique_key( string $table_name, string $column_name ): bool {
-		foreach ( $this->unique_key_column_sets( $table_name ) as $column_set ) {
+	private function auto_increment_column_has_visible_unique_key( string $table_name, string $column_name, bool $temporary = false ): bool {
+		foreach ( $this->unique_key_column_sets( $table_name, $temporary ) as $column_set ) {
 			if ( array( $column_name ) === $column_set ) {
 				return true;
 			}

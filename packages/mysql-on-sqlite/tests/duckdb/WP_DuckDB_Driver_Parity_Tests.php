@@ -1696,6 +1696,44 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, d, payload FROM temporal_odku_date_conflict ORDER BY id' );
 	}
 
+	public function test_temporary_temporal_odku_date_unique_conflict_uses_coerced_insert_value(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TEMPORARY TABLE tmp_temporal_odku_date_conflict (
+					id INT,
+					d DATE UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO tmp_temporal_odku_date_conflict (id, d, payload) VALUES (1, '2025-10-23', 'old')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO tmp_temporal_odku_date_conflict (id, d, payload) VALUES (2, '2025-10-23 18:30:00', 'new')
+			ON DUPLICATE KEY UPDATE payload = VALUES(payload)"
+		);
+		$this->assertParityRows( 'SELECT id, d, payload FROM tmp_temporal_odku_date_conflict ORDER BY id' );
+	}
+
+	public function test_temporary_temporal_odku_prefers_secondary_unique_conflict_over_nonconflicting_primary(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TEMPORARY TABLE tmp_temporal_odku_secondary_conflict (
+					id INT PRIMARY KEY,
+					d DATE UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO tmp_temporal_odku_secondary_conflict (id, d, payload) VALUES (1, '2025-10-23', 'old')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO tmp_temporal_odku_secondary_conflict (id, d, payload) VALUES (2, '2025-10-23 18:30:00', 'new')
+			ON DUPLICATE KEY UPDATE payload = VALUES(payload)"
+		);
+		$this->assertParityRows( 'SELECT id, d, payload FROM tmp_temporal_odku_secondary_conflict ORDER BY id' );
+	}
+
 	public function test_temporal_odku_omitted_default_unique_conflict_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -1735,6 +1773,27 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				(2, '2025-10-23 18:30:00', 'new')"
 		);
 		$this->assertParityRows( 'SELECT id, d, payload FROM temporal_replace_manual_conflict ORDER BY id' );
+	}
+
+	public function test_temporary_temporal_replace_manual_conflicts_use_storage_coerced_values(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TEMPORARY TABLE tmp_temporal_replace_manual_conflict (
+					id INT UNIQUE,
+					d DATE UNIQUE,
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO tmp_temporal_replace_manual_conflict (id, d, payload) VALUES
+					(1, '2025-10-23', 'old-date'),
+					(2, '2025-10-24', 'old-id')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"REPLACE INTO tmp_temporal_replace_manual_conflict (id, d, payload) VALUES
+				(2, '2025-10-23 18:30:00', 'new')"
+		);
+		$this->assertParityRows( 'SELECT id, d, payload FROM tmp_temporal_replace_manual_conflict ORDER BY id' );
 	}
 
 	public function test_temporal_replace_manual_strict_error_preserves_caller_transaction(): void {
@@ -1873,6 +1932,35 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 
 		$this->assertParityRowCount( "REPLACE INTO ci_items (id, name, payload) VALUES (2, 'first', 'replaced')" );
 		$this->assertParityRows( 'SELECT id, name, payload FROM ci_items ORDER BY id' );
+	}
+
+	public function test_temporary_case_insensitive_unique_conflicts_use_temp_metadata(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TEMPORARY TABLE tmp_ci_items (
+					id INTEGER PRIMARY KEY,
+					name VARCHAR(20) NOT NULL DEFAULT '',
+					payload VARCHAR(20),
+					UNIQUE KEY name (name)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO tmp_ci_items (id, name, payload) VALUES (1, 'first', 'a')",
+			)
+		);
+
+		$this->assertParityErrorContains(
+			"INSERT INTO tmp_ci_items (id, name, payload) VALUES (2, 'FIRST', 'duplicate')",
+			'UNIQUE constraint failed'
+		);
+		$this->assertParityRows( 'SELECT id, name, payload FROM tmp_ci_items ORDER BY id' );
+
+		$this->assertParityRowCount(
+			"INSERT INTO tmp_ci_items (id, name, payload) VALUES (2, 'FIRST', 'updated')
+			ON DUPLICATE KEY UPDATE name = VALUES(name), payload = VALUES(payload)"
+		);
+		$this->assertParityRows( 'SELECT id, name, payload FROM tmp_ci_items ORDER BY id' );
+
+		$this->assertParityRowCount( "REPLACE INTO tmp_ci_items (id, name, payload) VALUES (2, 'first', 'replaced')" );
+		$this->assertParityRows( 'SELECT id, name, payload FROM tmp_ci_items ORDER BY id' );
 	}
 
 	public function test_case_insensitive_composite_unique_conflicts_match_sqlite(): void {
