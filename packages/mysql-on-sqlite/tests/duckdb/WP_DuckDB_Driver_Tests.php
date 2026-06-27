@@ -3951,6 +3951,231 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_enum_set_storage_and_direct_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE enum_set_type_metadata (
+				id INT PRIMARY KEY,
+				status ENUM('red', 'green', 'blue') NOT NULL DEFAULT 'green',
+				flags SET('read', 'write', 'exec') DEFAULT 'read,exec',
+				quoted ENUM('plain', 'b''b', 'longer') DEFAULT 'b''b'
+			)"
+		);
+
+		$driver->query( 'INSERT INTO enum_set_type_metadata (id) VALUES (1)' );
+		$driver->query( "INSERT INTO enum_set_type_metadata (id, status, flags, quoted) VALUES (2, 'purple', 'read,bogus', 'plain')" );
+		$driver->query( "INSERT INTO enum_set_type_metadata (id, status, flags, quoted) VALUES (3, '', '', 'longer')" );
+		$driver->query( "UPDATE enum_set_type_metadata SET status = 'cerulean', flags = 'anything' WHERE id = 3" );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'status' => 'green',
+					'flags'  => 'read,exec',
+					'quoted' => "b'b",
+				),
+				array(
+					'id'     => 2,
+					'status' => 'purple',
+					'flags'  => 'read,bogus',
+					'quoted' => 'plain',
+				),
+				array(
+					'id'     => 3,
+					'status' => 'cerulean',
+					'flags'  => 'anything',
+					'quoted' => 'longer',
+				),
+			),
+			$driver->query( 'SELECT id, status, flags, quoted FROM enum_set_type_metadata ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Field'   => 'status',
+					'Type'    => "enum('red','green','blue')",
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'green',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'flags',
+					'Type'    => "set('read','write','exec')",
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => 'read,exec',
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'quoted',
+					'Type'    => "enum('plain','b''b','longer')",
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => "b'b",
+					'Extra'   => '',
+				),
+			),
+			array_slice( $driver->query( 'SHOW COLUMNS FROM enum_set_type_metadata' )->fetchAll( PDO::FETCH_ASSOC ), 1 )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Field'      => 'status',
+					'Type'       => "enum('red','green','blue')",
+					'Collation'  => 'utf8mb4_0900_ai_ci',
+					'Null'       => 'NO',
+					'Key'        => '',
+					'Default'    => 'green',
+					'Extra'      => '',
+					'Privileges' => 'select,insert,update,references',
+					'Comment'    => '',
+				),
+				array(
+					'Field'      => 'flags',
+					'Type'       => "set('read','write','exec')",
+					'Collation'  => 'utf8mb4_0900_ai_ci',
+					'Null'       => 'YES',
+					'Key'        => '',
+					'Default'    => 'read,exec',
+					'Extra'      => '',
+					'Privileges' => 'select,insert,update,references',
+					'Comment'    => '',
+				),
+				array(
+					'Field'      => 'quoted',
+					'Type'       => "enum('plain','b''b','longer')",
+					'Collation'  => 'utf8mb4_0900_ai_ci',
+					'Null'       => 'YES',
+					'Key'        => '',
+					'Default'    => "b'b",
+					'Extra'      => '',
+					'Privileges' => 'select,insert,update,references',
+					'Comment'    => '',
+				),
+			),
+			array_slice( $driver->query( 'SHOW FULL COLUMNS FROM enum_set_type_metadata' )->fetchAll( PDO::FETCH_ASSOC ), 1 )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'              => 'status',
+					'COLUMN_DEFAULT'           => 'green',
+					'IS_NULLABLE'              => 'NO',
+					'DATA_TYPE'                => 'enum',
+					'CHARACTER_MAXIMUM_LENGTH' => 5,
+					'CHARACTER_OCTET_LENGTH'   => 20,
+					'CHARACTER_SET_NAME'       => 'utf8mb4',
+					'COLLATION_NAME'           => 'utf8mb4_0900_ai_ci',
+					'COLUMN_TYPE'              => "enum('red','green','blue')",
+				),
+				array(
+					'COLUMN_NAME'              => 'flags',
+					'COLUMN_DEFAULT'           => 'read,exec',
+					'IS_NULLABLE'              => 'YES',
+					'DATA_TYPE'                => 'set',
+					'CHARACTER_MAXIMUM_LENGTH' => 15,
+					'CHARACTER_OCTET_LENGTH'   => 60,
+					'CHARACTER_SET_NAME'       => 'utf8mb4',
+					'COLLATION_NAME'           => 'utf8mb4_0900_ai_ci',
+					'COLUMN_TYPE'              => "set('read','write','exec')",
+				),
+				array(
+					'COLUMN_NAME'              => 'quoted',
+					'COLUMN_DEFAULT'           => "b'b",
+					'IS_NULLABLE'              => 'YES',
+					'DATA_TYPE'                => 'enum',
+					'CHARACTER_MAXIMUM_LENGTH' => 6,
+					'CHARACTER_OCTET_LENGTH'   => 24,
+					'CHARACTER_SET_NAME'       => 'utf8mb4',
+					'COLLATION_NAME'           => 'utf8mb4_0900_ai_ci',
+					'COLUMN_TYPE'              => "enum('plain','b''b','longer')",
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE,
+					CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH,
+					CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+				FROM information_schema.columns
+				WHERE table_schema = 'wp'
+					AND table_name = 'enum_set_type_metadata'
+					AND column_name IN ('status', 'flags', 'quoted')
+				ORDER BY ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE enum_set_type_metadata' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringContainsString( "`status` enum('red','green','blue') NOT NULL DEFAULT 'green'", $create_sql );
+		$this->assertStringContainsString( "`flags` set('read','write','exec') DEFAULT 'read,exec'", $create_sql );
+		$this->assertStringContainsString( "`quoted` enum('plain','b''b','longer') DEFAULT 'b''b'", $create_sql );
+		$this->assertStringNotContainsString( 'VARCHAR', $create_sql );
+
+		$result = $driver->query( 'SELECT status, flags, quoted FROM enum_set_type_metadata WHERE 0 = 1' );
+		$this->assertSame( 3, $result->columnCount() );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+
+		$expected_metadata = array(
+			array(
+				'native_type'      => 'STRING',
+				'table'            => 'enum_set_type_metadata',
+				'name'             => 'status',
+				'len'              => 20,
+				'precision'        => 0,
+				'duckdb:decl_type' => "enum('red','green','blue')",
+				'mysqli:orgname'   => 'status',
+				'mysqli:orgtable'  => 'enum_set_type_metadata',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 254,
+			),
+			array(
+				'native_type'      => 'STRING',
+				'table'            => 'enum_set_type_metadata',
+				'name'             => 'flags',
+				'len'              => 60,
+				'precision'        => 0,
+				'duckdb:decl_type' => "set('read','write','exec')",
+				'mysqli:orgname'   => 'flags',
+				'mysqli:orgtable'  => 'enum_set_type_metadata',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 254,
+			),
+			array(
+				'native_type'      => 'STRING',
+				'table'            => 'enum_set_type_metadata',
+				'name'             => 'quoted',
+				'len'              => 24,
+				'precision'        => 0,
+				'duckdb:decl_type' => "enum('plain','b''b','longer')",
+				'mysqli:orgname'   => 'quoted',
+				'mysqli:orgtable'  => 'enum_set_type_metadata',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 254,
+			),
+		);
+
+		foreach ( $expected_metadata as $index => $expected ) {
+			$metadata = $result->getColumnMeta( $index );
+			foreach ( $expected as $key => $value ) {
+				$this->assertArrayHasKey( $key, $metadata, $expected['name'] . ' metadata key ' . $key );
+				$this->assertSame( $value, $metadata[ $key ], $expected['name'] . ' metadata key ' . $key );
+			}
+		}
+	}
+
 	public function test_type_default_charset_metadata_rows_for_supported_mysql_types(): void {
 		$this->requireDuckDBRuntime();
 

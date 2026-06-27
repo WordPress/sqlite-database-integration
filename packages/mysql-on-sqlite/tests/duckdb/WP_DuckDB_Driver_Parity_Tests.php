@@ -3494,6 +3494,52 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_enum_set_type_family_storage_and_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE enum_set_type_family (
+					id INT PRIMARY KEY,
+					status ENUM('red', 'green', 'blue') NOT NULL DEFAULT 'green',
+					flags SET('read', 'write', 'exec') DEFAULT 'read,exec',
+					quoted ENUM('plain', 'b''b', 'longer') DEFAULT 'b''b'
+				)",
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO enum_set_type_family (id) VALUES (1)' );
+		$this->assertParityRowCount( "INSERT INTO enum_set_type_family (id, status, flags, quoted) VALUES (2, 'purple', 'read,bogus', 'plain')" );
+		$this->assertParityRowCount( "INSERT INTO enum_set_type_family (id, status, flags, quoted) VALUES (3, '', '', 'longer')" );
+		$this->assertParityRowCount( "UPDATE enum_set_type_family SET status = 'cerulean', flags = 'anything' WHERE id = 3" );
+
+		$this->assertParityRows( 'SELECT id, status, flags, quoted FROM enum_set_type_family ORDER BY id' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM enum_set_type_family' );
+		$this->assertParityRows( 'SHOW FULL COLUMNS FROM enum_set_type_family' );
+		$this->assertParityRows( 'DESCRIBE enum_set_type_family' );
+		$this->assertParityRows( 'SHOW CREATE TABLE enum_set_type_family' );
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE,
+				CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH,
+				CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name = 'enum_set_type_family'
+			ORDER BY ordinal_position"
+		);
+
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE enum_set_implicit_defaults (
+					id INT PRIMARY KEY,
+					status ENUM('red', 'green') NOT NULL,
+					flags SET('read', 'write') NOT NULL
+				)",
+			)
+		);
+		$this->assertParityRowCount( 'INSERT INTO enum_set_implicit_defaults (id) VALUES (1)' );
+		$this->assertParityRows( 'SELECT id, status, flags FROM enum_set_implicit_defaults ORDER BY id' );
+	}
+
 	public function test_national_character_type_family_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

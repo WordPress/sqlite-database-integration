@@ -90,6 +90,8 @@ class WP_DuckDB_Driver {
 		WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL => 'VARCHAR',
 		WP_MySQL_Lexer::LONGTEXT_SYMBOL   => 'VARCHAR',
 		WP_MySQL_Lexer::JSON_SYMBOL       => 'VARCHAR',
+		WP_MySQL_Lexer::ENUM_SYMBOL       => 'VARCHAR',
+		WP_MySQL_Lexer::SET_SYMBOL        => 'VARCHAR',
 		WP_MySQL_Lexer::DATE_SYMBOL       => 'VARCHAR',
 		WP_MySQL_Lexer::TIME_SYMBOL       => 'VARCHAR',
 		WP_MySQL_Lexer::DATETIME_SYMBOL   => 'VARCHAR',
@@ -108,6 +110,11 @@ class WP_DuckDB_Driver {
 		'time'      => '00:00:00',
 		'datetime'  => '0000-00-00 00:00:00',
 		'timestamp' => '0000-00-00 00:00:00',
+	);
+
+	const STRING_IMPLICIT_DEFAULT_MAP = array(
+		'enum' => '',
+		'set'  => '',
 	);
 
 	/**
@@ -420,6 +427,22 @@ class WP_DuckDB_Driver {
 		}
 
 		return array_values( $tokens );
+	}
+
+	/**
+	 * Tokenize a MySQL fragment without requiring it to be a complete statement.
+	 *
+	 * @param string $fragment MySQL fragment.
+	 * @return WP_Parser_Token[]
+	 */
+	private function tokenize_fragment( string $fragment ): array {
+		$lexer      = new WP_MySQL_Lexer( $fragment, $this->mysql_version );
+		$raw_tokens = class_exists( 'WP_MySQL_Native_Lexer', false ) && $lexer instanceof WP_MySQL_Native_Lexer
+			? $lexer->native_token_stream()
+			: $lexer->remaining_tokens();
+		$tokens     = is_array( $raw_tokens ) ? array_values( $raw_tokens ) : array_values( iterator_to_array( $raw_tokens ) );
+
+		return array_values( $this->without_eof( $tokens ) );
 	}
 
 	/**
@@ -1352,6 +1375,8 @@ class WP_DuckDB_Driver {
 			'mediumtext' => array( 'BLOB', 252, null, 0 ),
 			'longtext'   => array( 'BLOB', 252, null, 0 ),
 			'json'       => array( 'BLOB', 245, 4294967295, 0 ),
+			'enum'       => array( 'STRING', 254, null, 0 ),
+			'set'        => array( 'STRING', 254, null, 0 ),
 			'date'       => array( 'DATE', 10, 10, 0 ),
 			'time'       => array( 'TIME', 11, 10, 0 ),
 			'datetime'   => array( 'DATETIME', 12, 19, 0 ),
@@ -10766,6 +10791,11 @@ class WP_DuckDB_Driver {
 					$this->mysql_column_type_with_base( $column_type, 'char' ),
 					'(1)'
 				);
+
+			case WP_MySQL_Lexer::ENUM_SYMBOL:
+			case WP_MySQL_Lexer::SET_SYMBOL:
+				$canonical = preg_replace( '/^(enum|set)\s+\(/', '$1(', $column_type );
+				return null === $canonical ? $column_type : $canonical;
 		}
 
 		return $column_type;
@@ -10972,6 +11002,8 @@ class WP_DuckDB_Driver {
 				WP_MySQL_Lexer::TINYTEXT_SYMBOL,
 				WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL,
 				WP_MySQL_Lexer::LONGTEXT_SYMBOL,
+				WP_MySQL_Lexer::ENUM_SYMBOL,
+				WP_MySQL_Lexer::SET_SYMBOL,
 				WP_MySQL_Lexer::NCHAR_SYMBOL,
 				WP_MySQL_Lexer::NATIONAL_SYMBOL,
 				WP_MySQL_Lexer::NVARCHAR_SYMBOL,
@@ -13181,7 +13213,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$omitted_defaults = $explicit_columns
-			? $this->omitted_non_strict_temporal_default_writes( $table_name, $temporary, $target_columns )
+			? $this->omitted_non_strict_implicit_default_writes( $table_name, $temporary, $target_columns )
 			: array();
 
 		return array(
@@ -13719,7 +13751,7 @@ class WP_DuckDB_Driver {
 			$values[] = $value_sql;
 		}
 
-		foreach ( $this->omitted_non_strict_temporal_default_writes( $reference['table_name'], $reference['temporary'], $supplied ) as $default_write ) {
+		foreach ( $this->omitted_non_strict_implicit_default_writes( $reference['table_name'], $reference['temporary'], $supplied ) as $default_write ) {
 			$columns[] = $this->connection->quote_identifier( $default_write['column_name'] );
 			$values[]  = $default_write['value_sql'];
 		}
@@ -13897,7 +13929,7 @@ class WP_DuckDB_Driver {
 			}
 			$values_by_column[ strtolower( $column_name ) ] = $value_sql;
 		}
-		foreach ( $this->omitted_non_strict_temporal_default_writes( $reference['table_name'], $reference['temporary'], $columns ) as $default_write ) {
+		foreach ( $this->omitted_non_strict_implicit_default_writes( $reference['table_name'], $reference['temporary'], $columns ) as $default_write ) {
 			$values_by_column[ strtolower( $default_write['column_name'] ) ] = $default_write['value_sql'];
 		}
 
@@ -14016,7 +14048,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$omitted_defaults = $coerce_for_storage
-			? $this->omitted_non_strict_temporal_default_writes( $table_name, $temporary, $columns )
+			? $this->omitted_non_strict_implicit_default_writes( $table_name, $temporary, $columns )
 			: array();
 		$storage_columns  = $columns;
 		foreach ( $omitted_defaults as $default_write ) {
@@ -14248,14 +14280,14 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Return omitted non-strict temporal default writes in table ordinal order.
+	 * Return omitted non-strict implicit default writes in table ordinal order.
 	 *
 	 * @param string   $table_name       Resolved DuckDB table name.
 	 * @param bool     $temporary        Whether the target is temporary.
 	 * @param string[] $supplied_columns MySQL-facing supplied column names.
 	 * @return array<int,array{column_name:string,value_sql:string,data_type:string}>
 	 */
-	private function omitted_non_strict_temporal_default_writes( string $table_name, bool $temporary, array $supplied_columns ): array {
+	private function omitted_non_strict_implicit_default_writes( string $table_name, bool $temporary, array $supplied_columns ): array {
 		if ( $this->is_strict_sql_mode_active() ) {
 			return array();
 		}
@@ -14284,12 +14316,8 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
-			$data_type = $this->mysql_column_data_type( $metadata );
-			if ( ! $this->is_temporal_write_data_type( $data_type ) ) {
-				continue;
-			}
-
-			$implicit_default = $this->temporal_implicit_default( $data_type );
+			$data_type        = $this->mysql_column_data_type( $metadata );
+			$implicit_default = $this->non_strict_implicit_default( $data_type );
 			if ( null === $implicit_default ) {
 				continue;
 			}
@@ -14392,7 +14420,7 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the type is character-backed.
 	 */
 	private function is_character_write_data_type( string $data_type ): bool {
-		return in_array( $data_type, array( 'char', 'varchar', 'text', 'tinytext', 'mediumtext', 'longtext', 'json' ), true );
+		return in_array( $data_type, array( 'char', 'varchar', 'text', 'tinytext', 'mediumtext', 'longtext', 'json', 'enum', 'set' ), true );
 	}
 
 	/**
@@ -14961,6 +14989,20 @@ class WP_DuckDB_Driver {
 	 */
 	private function temporal_implicit_default( string $data_type ): ?string {
 		return self::TEMPORAL_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
+	}
+
+	/**
+	 * Return an implicit default for non-strict omitted NOT NULL writes.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return string|null Implicit default, or null for unsupported types.
+	 */
+	private function non_strict_implicit_default( string $data_type ): ?string {
+		if ( isset( self::STRING_IMPLICIT_DEFAULT_MAP[ $data_type ] ) ) {
+			return self::STRING_IMPLICIT_DEFAULT_MAP[ $data_type ];
+		}
+
+		return $this->temporal_implicit_default( $data_type );
 	}
 
 	/**
@@ -19440,6 +19482,12 @@ class WP_DuckDB_Driver {
 		} elseif ( 'longtext' === $data_type || 'longblob' === $data_type ) {
 			$char_length  = 4294967295;
 			$octet_length = 4294967295;
+		} elseif ( 'enum' === $data_type || 'set' === $data_type ) {
+			$values      = $this->column_type_string_list_values( $normalized, $data_type );
+			$char_length = $this->enum_set_character_maximum_length( $data_type, $values );
+			if ( null !== $char_length ) {
+				$octet_length = $char_length * $this->charset_max_bytes( $charset );
+			}
 		}
 
 		list( $numeric_precision, $numeric_scale ) = $this->numeric_attributes_from_data_type( $data_type, $normalized );
@@ -19491,6 +19539,79 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Extract decoded string-list values from an enum/set column type.
+	 *
+	 * @param string $column_type MySQL-facing column type.
+	 * @param string $data_type   Normalized data type.
+	 * @return string[]|null Decoded string list, or null when the type shape is unsupported.
+	 */
+	private function column_type_string_list_values( string $column_type, string $data_type ): ?array {
+		$tokens = $this->tokenize_fragment( $column_type );
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| ! in_array( $tokens[0]->id, array( WP_MySQL_Lexer::ENUM_SYMBOL, WP_MySQL_Lexer::SET_SYMBOL ), true )
+			|| strtolower( $tokens[0]->get_bytes() ) !== $data_type
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		list( $items, $index ) = $this->collect_parenthesized_items( $tokens, 2 );
+		if ( count( $tokens ) !== $index ) {
+			return null;
+		}
+
+		$values = array();
+		foreach ( $items as $item ) {
+			if (
+				1 !== count( $item )
+				|| (
+					WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $item[0]->id
+					&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $item[0]->id
+				)
+			) {
+				return null;
+			}
+
+			$values[] = $item[0]->get_value();
+		}
+
+		return $values;
+	}
+
+	/**
+	 * Match SQLite-driver enum/set maximum character length derivation.
+	 *
+	 * @param string        $data_type Normalized data type.
+	 * @param string[]|null $values    Decoded enum/set values.
+	 * @return int|null Maximum character length, or null when unavailable.
+	 */
+	private function enum_set_character_maximum_length( string $data_type, ?array $values ): ?int {
+		if ( null === $values ) {
+			return null;
+		}
+
+		$length = 0;
+		foreach ( $values as $value ) {
+			if ( 'enum' === $data_type ) {
+				$length = max( $length, strlen( $value ) );
+			} else {
+				$length += strlen( $value );
+			}
+		}
+
+		if ( 'set' === $data_type ) {
+			if ( 2 === count( $values ) ) {
+				$length += 1;
+			} elseif ( count( $values ) > 2 ) {
+				$length += 2;
+			}
+		}
+
+		return $length;
 	}
 
 	/**
