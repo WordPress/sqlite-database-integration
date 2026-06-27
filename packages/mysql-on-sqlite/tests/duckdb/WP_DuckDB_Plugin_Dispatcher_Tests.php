@@ -397,6 +397,37 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 13, $cases['insert_after_failure']['insert_id'] );
 	}
 
+	public function test_duckdb_wpdb_failure_diagnostics_clear_metadata_and_preserve_non_insert_id(): void {
+		$result = $this->run_query_surface_state_script();
+		$cases  = $result['cases'];
+
+		$this->assertTrue( $result['connected'] );
+
+		$this->assertFalse( $cases['select_failure']['return'] );
+		$this->assertSame( array(), $cases['select_failure']['col_info_names'] );
+		$this->assertSame( 0, $cases['select_failure']['num_rows'] );
+		$this->assertSame( 0, $cases['select_failure']['rows_affected'] );
+
+		$this->assertFalse( $cases['insert_failure']['return'] );
+		$this->assertSame( array(), $cases['insert_failure']['col_info_names'] );
+		$this->assertSame( 0, $cases['insert_failure']['insert_id'] );
+		$this->assertSame( 0, $cases['insert_failure']['num_rows'] );
+		$this->assertSame( 0, $cases['insert_failure']['rows_affected'] );
+
+		$this->assertFalse( $cases['update_failure_after_insert']['return'] );
+		$this->assertSame( 'Synthetic update failure.', $cases['update_failure_after_insert']['last_error'] );
+		$this->assertSame( 13, $cases['update_failure_after_insert']['insert_id'] );
+		$this->assertSame( array(), $cases['update_failure_after_insert']['col_info_names'] );
+		$this->assertSame( 0, $cases['update_failure_after_insert']['num_rows'] );
+		$this->assertSame( 0, $cases['update_failure_after_insert']['rows_affected'] );
+
+		$this->assertTrue( $cases['create_after_update_failure']['return'] );
+		$this->assertSame( '', $cases['create_after_update_failure']['last_error'] );
+		$this->assertSame( array(), $cases['create_after_update_failure']['col_info_names'] );
+		$this->assertSame( 0, $cases['create_after_update_failure']['num_rows'] );
+		$this->assertSame( 0, $cases['create_after_update_failure']['rows_affected'] );
+	}
+
 	public function test_duckdb_wpdb_db_connect_sets_filtered_sql_mode(): void {
 		$result = $this->run_sql_mode_boot_state_script( false );
 
@@ -1234,6 +1265,18 @@ class WP_DuckDB_Plugin_Query_Surface_Test_Driver extends WP_DuckDB_Driver {
 			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
 		}
 
+		if ( "UPDATE wp_posts SET post_title = BROKEN WHERE ID = 13" === $sql ) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Synthetic update failure.',
+				'HY000',
+				new RuntimeException( 'Native synthetic update failure.' )
+			);
+		}
+
+		if ( 'CREATE TABLE wp_surface_after_failure (id INTEGER)' === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
 		throw new RuntimeException( 'Unexpected query: ' . $sql );
 	}
 
@@ -1306,6 +1349,8 @@ $cases                     = array(
 	'select_after_failure' => wp_duckdb_plugin_query_surface_case( $db, 'SELECT 42 AS answer' ),
 	'insert_failure'       => wp_duckdb_plugin_query_surface_case( $db, 'INSERT INTO wp_posts VALUES (BROKEN)' ),
 	'insert_after_failure' => wp_duckdb_plugin_query_surface_case( $db, "INSERT INTO wp_posts (post_title) VALUES ('after-failure')" ),
+	'update_failure_after_insert' => wp_duckdb_plugin_query_surface_case( $db, "UPDATE wp_posts SET post_title = BROKEN WHERE ID = 13" ),
+	'create_after_update_failure' => wp_duckdb_plugin_query_surface_case( $db, 'CREATE TABLE wp_surface_after_failure (id INTEGER)' ),
 );
 
 echo json_encode(

@@ -594,6 +594,97 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_connection_failure_is_exception_first_and_next_success_has_clear_error_state(): void {
+		$success_result = $this->createDuckDBResult( array( 'ok' ), array( array( 1 ) ) );
+		$previous       = new RuntimeException( 'native broken select' );
+		$connection     = new WP_DuckDB_Connection(
+			array(
+				'duckdb' => new class( $success_result, $previous ) {
+					private $success_result;
+					private $previous;
+
+					public function __construct( $success_result, Throwable $previous ) {
+						$this->success_result = $success_result;
+						$this->previous       = $previous;
+					}
+
+					public function query( string $sql ) {
+						if ( 'SELECT BROKEN' === $sql ) {
+							throw $this->previous;
+						}
+
+						if ( 'SELECT 1 AS ok' === $sql ) {
+							return $this->success_result;
+						}
+
+						throw new RuntimeException( 'Unexpected query: ' . $sql );
+					}
+				},
+			)
+		);
+
+		try {
+			$connection->query( 'SELECT BROKEN' );
+			$this->fail( 'Expected WP_DuckDB_Driver_Exception.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringStartsWith( 'DuckDB query failed: native broken select', $e->getMessage() );
+			$this->assertSame( 'HY000', $e->getCode() );
+			$this->assertSame( $previous, $e->getPrevious() );
+		}
+
+		$stmt = $connection->query( 'SELECT 1 AS ok' );
+
+		$this->assertSame( 1, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertSame( array( 'ok' => 1 ), $stmt->fetch( PDO::FETCH_ASSOC ) );
+		$this->assertSame( '00000', $stmt->errorCode() );
+		$this->assertSame( array( '00000', null, null ), $stmt->errorInfo() );
+	}
+
+	public function test_sql_warnings_policy_is_explicitly_unsupported(): void {
+		$empty_result = $this->createDuckDBResult( array(), array() );
+		$duckdb       = new class( $empty_result ) {
+			public $queries = array();
+			private $empty_result;
+
+			public function __construct( $empty_result ) {
+				$this->empty_result = $empty_result;
+			}
+
+			public function query( string $sql ) {
+				$this->queries[] = $sql;
+				return $this->empty_result;
+			}
+		};
+		$driver       = new WP_DuckDB_Driver(
+			array(
+				'connection' => new WP_DuckDB_Connection( array( 'duckdb' => $duckdb ) ),
+			)
+		);
+
+		$cases = array(
+			'SET sql_warnings = ON' => 'Unsupported SET session variable in DuckDB driver: sql_warnings.',
+			'SHOW WARNINGS'         => 'Unsupported SHOW statement in DuckDB driver.',
+			'SHOW ERRORS'           => 'Unsupported SHOW statement in DuckDB driver.',
+		);
+
+		foreach ( $cases as $sql => $message ) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected WP_DuckDB_Driver_Exception for: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage(), $sql );
+			}
+		}
+
+		$this->assertSame(
+			array(
+				'CREATE OR REPLACE MACRO date_format(d, f) AS strftime(d, f)',
+			),
+			$duckdb->queries
+		);
+	}
+
 	public function test_successful_statement_error_info_remains_clear_after_failure_characterization(): void {
 		$stmt = new WP_DuckDB_Result_Statement( array(), array() );
 
