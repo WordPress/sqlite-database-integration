@@ -17911,6 +17911,7 @@ class WP_DuckDB_Driver {
 	 * Find metadata for a table's recorded AUTO_INCREMENT column.
 	 *
 	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
 	 * @return array{column_name:string,sequence_name:string}|null Metadata, or null when no AUTO_INCREMENT column is known.
 	 */
 	private function auto_increment_metadata_for_table( string $table_name, bool $temporary = false ): ?array {
@@ -17923,12 +17924,12 @@ class WP_DuckDB_Driver {
 					. " AND extra = 'auto_increment' ORDER BY ordinal_position LIMIT 1"
 			);
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			return null;
+			return $this->physical_auto_increment_metadata_for_table( $table_name, $temporary );
 		}
 
 		$column_name = $stmt->fetchColumn();
 		if ( false === $column_name || null === $column_name ) {
-			return null;
+			return $this->physical_auto_increment_metadata_for_table( $table_name, $temporary );
 		}
 
 		$column_name = (string) $column_name;
@@ -17936,6 +17937,35 @@ class WP_DuckDB_Driver {
 			'column_name'   => $column_name,
 			'sequence_name' => $this->sequence_name( $table_name, $column_name, $temporary ),
 		);
+	}
+
+	/**
+	 * Find AUTO_INCREMENT metadata from a physical DuckDB nextval() default.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 * @return array{column_name:string,sequence_name:string}|null Metadata, or null when no nextval-backed column is known.
+	 */
+	private function physical_auto_increment_metadata_for_table( string $table_name, bool $temporary = false ): ?array {
+		try {
+			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			return null;
+		}
+
+		foreach ( $metadata_rows as $metadata ) {
+			if ( false === stripos( (string) ( $metadata['extra'] ?? '' ), 'auto_increment' ) ) {
+				continue;
+			}
+
+			$column_name = (string) $metadata['column_name'];
+			return array(
+				'column_name'   => $column_name,
+				'sequence_name' => $this->sequence_name( $table_name, $column_name, $temporary ),
+			);
+		}
+
+		return null;
 	}
 
 	/**

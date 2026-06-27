@@ -264,6 +264,102 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_auto_increment_insert_id_recovers_from_physical_nextval_default_when_metadata_is_stale(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public $queries = array();
+
+			private $currval_reads = 0;
+			private $max_reads     = 0;
+
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				$this->queries[] = $sql;
+
+				if ( 0 === strpos( $sql, 'CREATE OR REPLACE MACRO ' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				if ( false !== strpos( $sql, "table_type = 'LOCAL TEMPORARY'" ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'table_name' ), array() );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'table_name' ), array( array( 'wp_usermeta' ) ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT column_name FROM "__wp_duckdb_column_metadata"' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'column_name' ), array() );
+				}
+
+				if ( "SELECT cid, name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('wp_usermeta') ORDER BY cid" === $sql ) {
+					return new WP_DuckDB_Result_Statement(
+						array( 'cid', 'name', 'type', 'notnull', 'dflt_value', 'pk' ),
+						array(
+							array( 0, 'umeta_id', 'BIGINT', true, "nextval('__wp_duckdb_auto_increment_existing')", 1 ),
+							array( 1, 'user_id', 'BIGINT', false, null, 0 ),
+							array( 2, 'meta_key', 'VARCHAR', false, null, 0 ),
+							array( 3, 'meta_value', 'VARCHAR', false, null, 0 ),
+						)
+					);
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT currval(' ) ) {
+					++$this->currval_reads;
+					if ( 1 === $this->currval_reads ) {
+						throw new WP_DuckDB_Driver_Exception( 'currval unavailable' );
+					}
+
+					return new WP_DuckDB_Result_Statement( array( 'currval' ), array( array( 18 ) ) );
+				}
+
+				if ( 'SELECT MAX("umeta_id") AS max_value FROM "wp_usermeta"' === $sql ) {
+					++$this->max_reads;
+					return new WP_DuckDB_Result_Statement( array( 'max_value' ), array( array( 17 ) ) );
+				}
+
+				if ( 'INSERT INTO "wp_usermeta" ("user_id", "meta_key", "meta_value") VALUES (1, \'wp_persisted_preferences\', \'a:0:{}\')' === $sql ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+				}
+
+				throw new RuntimeException( 'Unexpected query: ' . $sql );
+			}
+		};
+		$driver     = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+		$mysql_sql  = "INSERT INTO `wp_usermeta` (`user_id`, `meta_key`, `meta_value`) VALUES (1, 'wp_persisted_preferences', 'a:0:{}')";
+		$duckdb_sql = 'INSERT INTO "wp_usermeta" ("user_id", "meta_key", "meta_value") VALUES (1, \'wp_persisted_preferences\', \'a:0:{}\')';
+
+		$tokenize = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+		}
+		$tokens = $tokenize->invoke( $driver, $mysql_sql );
+
+		$execute = new ReflectionMethod( WP_DuckDB_Driver::class, 'execute_auto_increment_write' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$execute->setAccessible( true );
+		}
+		$result = $execute->invoke(
+			$driver,
+			'wp_usermeta',
+			$duckdb_sql,
+			'Failed to execute DuckDB INSERT',
+			$tokens,
+			2
+		);
+
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assertSame( 18, $driver->get_insert_id() );
+		$this->assertSame(
+			1,
+			substr_count( implode( "\n", $connection->queries ), "SELECT cid, name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('wp_usermeta') ORDER BY cid" )
+		);
+		$this->assertSame(
+			1,
+			substr_count( implode( "\n", $connection->queries ), 'SELECT MAX("umeta_id") AS max_value FROM "wp_usermeta"' )
+		);
+	}
+
 	public function test_record_found_rows_from_result_preserves_column_metadata(): void {
 		$driver = ( new ReflectionClass( WP_DuckDB_Driver::class ) )->newInstanceWithoutConstructor();
 		$source = new WP_DuckDB_Result_Statement(

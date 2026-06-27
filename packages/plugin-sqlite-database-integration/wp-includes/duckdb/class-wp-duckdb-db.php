@@ -393,6 +393,9 @@ class WP_DuckDB_DB extends wpdb {
 	 */
 	public function query( $query ) {
 		if ( ! $this->ready ) {
+			if ( property_exists( $this, 'check_current_query' ) ) {
+				$this->check_current_query = true;
+			}
 			return false;
 		}
 
@@ -403,7 +406,32 @@ class WP_DuckDB_DB extends wpdb {
 		}
 
 		$this->flush();
-		$this->func_call  = "\$db->query(\"$query\")";
+		$this->func_call = "\$db->query(\"$query\")";
+
+		if (
+			property_exists( $this, 'check_current_query' )
+			&& method_exists( $this, 'check_ascii' )
+			&& method_exists( $this, 'strip_invalid_text_from_query' )
+			&& $this->check_current_query
+			&& ! $this->check_ascii( $query )
+		) {
+			$stripped_query = $this->strip_invalid_text_from_query( $query );
+			$this->flush();
+			if ( $stripped_query !== $query ) {
+				$this->insert_id  = 0;
+				$this->last_query = $query;
+
+				wp_load_translations_early();
+
+				$this->last_error = __( 'WordPress database error: Could not perform query because it contains invalid data.' );
+
+				return false;
+			}
+		}
+
+		if ( property_exists( $this, 'check_current_query' ) ) {
+			$this->check_current_query = true;
+		}
 		$this->last_query = $query;
 
 		$this->_do_query( $query );
