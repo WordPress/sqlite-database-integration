@@ -56,6 +56,13 @@ class WP_PostgreSQL_DB extends wpdb {
 	private $postgresql_column_length_cache = array();
 
 	/**
+	 * Backend query log override for direct drop-in catalog fast paths.
+	 *
+	 * @var array|null
+	 */
+	private $postgresql_query_log_override = null;
+
+	/**
 	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
 	 *
 	 * @var bool
@@ -823,11 +830,11 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
-	 * Load MySQL charset metadata through the PostgreSQL driver's SHOW COLUMNS path.
+	 * Load MySQL charset metadata through the PostgreSQL driver's metadata API.
 	 *
 	 * The driver stores MySQL-facing column metadata as part of CREATE TABLE
 	 * translation. Reusing it keeps wpdb charset checks aligned with DESCRIBE and
-	 * SHOW FULL COLUMNS without depending on the adapter side table being present.
+	 * SHOW FULL COLUMNS without executing a SQL-level SHOW statement internally.
 	 *
 	 * @param string $table Table name.
 	 * @return array|false Column metadata, or false when unavailable.
@@ -842,51 +849,21 @@ class WP_PostgreSQL_DB extends wpdb {
 			return false;
 		}
 
+		if ( ! method_exists( $this->dbh, 'get_mysql_column_charset_metadata_for_table' ) ) {
+			return false;
+		}
+
 		try {
-			$rows = $this->dbh->query(
-				'SHOW FULL COLUMNS FROM ' . $this->quote_postgresql_mysql_identifier( $table_name ),
-				PDO::FETCH_ASSOC
-			);
+			$metadata_rows = $this->dbh->get_mysql_column_charset_metadata_for_table( $table_name );
 		} catch ( Throwable $e ) {
 			return false;
 		}
 
-		if ( ! is_array( $rows ) || empty( $rows ) ) {
-			return false;
-		}
-
-		$metadata_rows = array();
-		foreach ( $rows as $row ) {
-			if ( is_object( $row ) ) {
-				$row = get_object_vars( $row );
-			}
-
-			if ( ! is_array( $row ) || empty( $row['Field'] ) ) {
-				continue;
-			}
-
-			$metadata_rows[] = array(
-				'column_name'    => $row['Field'],
-				'column_type'    => $row['Type'] ?? '',
-				'collation_name' => $row['Collation'] ?? null,
-			);
-		}
-
-		if ( empty( $metadata_rows ) ) {
+		if ( ! is_array( $metadata_rows ) || empty( $metadata_rows ) ) {
 			return false;
 		}
 
 		return $this->format_postgresql_charset_column_rows( $metadata_rows );
-	}
-
-	/**
-	 * Quote an identifier for a MySQL statement handled by the PostgreSQL driver.
-	 *
-	 * @param string $identifier Identifier.
-	 * @return string Backtick-quoted MySQL identifier.
-	 */
-	private function quote_postgresql_mysql_identifier( string $identifier ): string {
-		return '`' . str_replace( '`', '``', $identifier ) . '`';
 	}
 
 	/**
@@ -1880,7 +1857,7 @@ class WP_PostgreSQL_DB extends wpdb {
 			$this->store_postgresql_create_table_charset_metadata( $query );
 		} elseif ( 'drop' === $statement_type ) {
 			$this->delete_postgresql_dropped_table_charset_metadata( $query );
-		} elseif ( in_array( $statement_type, array( 'alter', 'truncate' ), true ) ) {
+		} elseif ( 'alter' === $statement_type ) {
 			$this->clear_all_postgresql_table_charset_cache();
 		}
 
@@ -1906,8 +1883,13 @@ class WP_PostgreSQL_DB extends wpdb {
 			$return_val     = $num_rows;
 		}
 
+		$postgresql_queries                  = $this->postgresql_query_log_override;
+		$this->postgresql_query_log_override = null;
+
 		if ( defined( 'SAVEQUERIES' ) && SAVEQUERIES && isset( $this->queries[ $last_query_count ] ) ) {
-			$this->queries[ $last_query_count ]['postgresql_queries'] = $this->dbh->get_last_postgresql_queries();
+			$this->queries[ $last_query_count ]['postgresql_queries'] = null === $postgresql_queries
+				? $this->dbh->get_last_postgresql_queries()
+				: $postgresql_queries;
 		}
 
 		return $return_val;
@@ -1966,8 +1948,11 @@ class WP_PostgreSQL_DB extends wpdb {
 			$this->timer_start();
 		}
 
+		$this->postgresql_query_log_override = null;
+
 		try {
-			$this->result = $this->dbh->query( $query );
+			$site_health_result = $this->query_postgresql_site_health_table_sizes( $query );
+			$this->result       = null === $site_health_result ? $this->dbh->query( $query ) : $site_health_result;
 		} catch ( Throwable $e ) {
 			$this->last_error = $this->format_error_message( $e );
 		}
@@ -1983,6 +1968,89 @@ class WP_PostgreSQL_DB extends wpdb {
 				array()
 			);
 		}
+	}
+
+	/**
+	 * Fast path for WordPress Site Health's prepared table-size query.
+	 *
+	 * @param string $query Original MySQL query.
+	 * @return array|null Result rows, or null when the query does not match.
+	 */
+	private function query_postgresql_site_health_table_sizes( $query ) {
+		$details = $this->parse_postgresql_site_health_table_size_query( $query );
+		if ( null === $details || ! $this->dbh instanceof WP_PostgreSQL_Driver ) {
+			return null;
+		}
+
+		$schema       = 0 === strcasecmp( $details['schema'], (string) $this->dbname ) ? 'public' : $details['schema'];
+		$placeholders = implode( ', ', array_fill( 0, count( $details['tables'] ), '?' ) );
+		$sql          = 'SELECT c.relname AS "table",
+				CAST(GREATEST(COALESCE(s.n_live_tup, 0), COALESCE(c.reltuples, 0), 0) AS bigint) AS "rows",
+				CAST(pg_catalog.pg_total_relation_size(c.oid) AS bigint) AS "bytes"
+			FROM pg_catalog.pg_class c
+			INNER JOIN pg_catalog.pg_namespace n
+				ON n.oid = c.relnamespace
+			LEFT JOIN pg_catalog.pg_stat_all_tables s
+				ON s.relid = c.oid
+			WHERE n.nspname = ?
+				AND c.relname IN (' . $placeholders . ")
+				AND c.relkind IN ('r', 'p')
+			ORDER BY c.relname";
+		$params       = array_merge( array( $schema ), $details['tables'] );
+		$stmt         = $this->dbh->get_connection()->query( $sql, $params );
+
+		$this->postgresql_query_log_override = array(
+			array(
+				'sql'    => $sql,
+				'params' => $params,
+			),
+		);
+
+		$rows = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_OBJ ) as $row ) {
+			$rows[] = (object) array(
+				'table' => $row->table,
+				'rows'  => $row->rows,
+				'bytes' => $row->bytes,
+			);
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Parse WordPress Site Health's exact prepared information_schema.TABLES query.
+	 *
+	 * @param string $query Original MySQL query.
+	 * @return array|null Parsed schema and table names, or null on non-match.
+	 */
+	private function parse_postgresql_site_health_table_size_query( $query ) {
+		if ( ! is_string( $query ) ) {
+			return null;
+		}
+
+		$quoted = "'(?:''|[^'])*'";
+		if ( ! preg_match( '/\A\s*SELECT\s+TABLE_NAME\s+AS\s+\'table\'\s*,\s*TABLE_ROWS\s+AS\s+\'rows\'\s*,\s*SUM\s*\(\s*data_length\s*\+\s*index_length\s*\)\s+as\s+\'bytes\'\s+FROM\s+information_schema\.TABLES\s+WHERE\s+TABLE_SCHEMA\s*=\s*(?<schema>' . $quoted . ')\s+AND\s+TABLE_NAME\s+IN\s*\((?<tables>\s*' . $quoted . '(?:\s*,\s*' . $quoted . ')*\s*)\)\s+GROUP\s+BY\s+TABLE_NAME\s*;?\s*\z/i', $query, $matches ) ) {
+			return null;
+		}
+
+		preg_match_all( '/' . $quoted . '/', $matches['tables'], $table_matches );
+		$tables = array_map( array( $this, 'unquote_postgresql_site_health_literal' ), $table_matches[0] );
+
+		return empty( $tables ) ? null : array(
+			'schema' => $this->unquote_postgresql_site_health_literal( $matches['schema'] ),
+			'tables' => $tables,
+		);
+	}
+
+	/**
+	 * Unquote a MySQL single-quoted literal from the exact Site Health query.
+	 *
+	 * @param string $literal Quoted literal.
+	 * @return string Unquoted value.
+	 */
+	private function unquote_postgresql_site_health_literal( string $literal ): string {
+		return str_replace( "''", "'", substr( $literal, 1, -1 ) );
 	}
 
 	/**

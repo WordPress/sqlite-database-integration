@@ -2839,6 +2839,125 @@ PHP
 	}
 
 	/**
+	 * Tests the Site Health table-size fast path and SAVEQUERIES catalog logging.
+	 */
+	public function test_query_uses_site_health_table_size_fast_path(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+define( 'SAVEQUERIES', true );
+
+require_once getcwd() . '/bootstrap-postgresql.php';
+
+class wpdb {
+	public $ready = true, $queries = array(), $time_start = 0;
+	public function timer_start() { $this->time_start = microtime( true ); }
+	public function timer_stop() { return microtime( true ) - $this->time_start; }
+	public function get_caller() { return 'wpdb-test'; }
+	public function log_query( $query, ...$args ) { $this->queries[] = array( 'query' => $query ); }
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Site_Health_Connection extends WP_PostgreSQL_Connection {
+	public $pdo;
+	public $queries = array();
+
+	public function __construct() { $this->pdo = new PDO( 'sqlite::memory:' ); }
+
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		$this->queries[] = array( $sql, $params );
+		return $this->pdo->query(
+			"SELECT 'wptests_options' AS \"table\", 12 AS \"rows\", 34 AS \"bytes\" UNION ALL SELECT 'wptests_posts', 56, 78"
+		);
+	}
+}
+
+class WP_PostgreSQL_DB_Site_Health_Driver extends WP_PostgreSQL_Driver {
+	public $connection;
+	public $queries = array();
+	public $last_postgresql_queries = array(
+		array(
+			'sql'    => 'STALE DRIVER SQL',
+			'params' => array( 'stale' ),
+		),
+	);
+
+	public function __construct() { $this->connection = new WP_PostgreSQL_DB_Site_Health_Connection(); }
+
+	public function get_connection(): WP_PostgreSQL_Connection { return $this->connection; }
+
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->queries[] = $query;
+		$this->last_postgresql_queries = array( array( 'sql' => $query ) );
+		return array( (object) array( 'table' => 'fallback' ) );
+	}
+
+	public function get_last_postgresql_queries(): array { return $this->last_postgresql_queries; }
+}
+
+$db = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver          = new WP_PostgreSQL_DB_Site_Health_Driver();
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$db->ready  = true;
+$db->dbname = 'wptests';
+
+$base_query = "SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows', %s as 'bytes' FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'wptests' AND TABLE_NAME IN (%s) GROUP BY TABLE_NAME";
+$exact_query = sprintf( $base_query, 'SUM( data_length + index_length )', "'wptests_options', 'wptests_posts'" );
+$exact_return = $db->query( $exact_query );
+$exact_rows   = array_map( 'get_object_vars', $db->last_result );
+
+$near_miss_query = sprintf( $base_query, 'SUM( data_length + index_length + 0 )', "'wptests_options'" );
+$near_miss_return = $db->query( $near_miss_query );
+
+wp_postgresql_db_test_respond(
+	array(
+		'exact_return'    => $exact_return,
+		'exact_rows'      => $exact_rows,
+		'exact_query'     => $exact_query,
+		'exact_log'       => $db->queries[0],
+		'driver_after'    => $driver->queries,
+		'fast_path_after' => $driver->connection->queries,
+		'near_return'     => $near_miss_return,
+		'near_miss_query' => $near_miss_query,
+		'near_miss_log'   => $db->queries[1],
+	)
+);
+PHP
+		);
+
+		$this->assertSame( 2, $result['exact_return'] );
+		$this->assertSame( array( 'wptests_options', 'wptests_posts' ), array_column( $result['exact_rows'], 'table' ) );
+		$this->assertSame( array( 12, 56 ), array_column( $result['exact_rows'], 'rows' ) );
+		$this->assertSame( array( 34, 78 ), array_column( $result['exact_rows'], 'bytes' ) );
+		$exact_postgresql_query = $result['exact_log']['postgresql_queries'][0];
+		$this->assertSame( $result['exact_query'], $result['exact_log']['query'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_class', $exact_postgresql_query['sql'] );
+		$this->assertStringContainsString( 'pg_catalog.pg_namespace', $exact_postgresql_query['sql'] );
+		$this->assertNotSame( 'STALE DRIVER SQL', $exact_postgresql_query['sql'] );
+		$this->assertSame(
+			array( 'public', 'wptests_options', 'wptests_posts' ),
+			$exact_postgresql_query['params']
+		);
+		$this->assertSame( array( $result['near_miss_query'] ), $result['driver_after'] );
+		$this->assertCount( 1, $result['fast_path_after'] );
+		$this->assertSame(
+			array( 'public', 'wptests_options', 'wptests_posts' ),
+			$result['fast_path_after'][0][1]
+		);
+
+		$this->assertSame( 1, $result['near_return'] );
+		$this->assertSame( $result['near_miss_query'], $result['near_miss_log']['query'] );
+		$this->assertSame(
+			$result['near_miss_query'],
+			$result['near_miss_log']['postgresql_queries'][0]['sql']
+		);
+	}
+
+	/**
 	 * Tests query() detects write statements after leading SQL comments.
 	 */
 	public function test_query_detects_statement_keyword_after_leading_sql_comments(): void {

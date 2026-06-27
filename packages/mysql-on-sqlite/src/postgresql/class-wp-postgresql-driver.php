@@ -433,6 +433,13 @@ class WP_PostgreSQL_Driver {
 	private $mysql_table_schema_introspection_cache = array();
 
 	/**
+	 * Whether the active PostgreSQL session has temporary tables.
+	 *
+	 * @var bool|null
+	 */
+	private $mysql_has_active_temporary_tables = null;
+
+	/**
 	 * Cached MySQL upsert conflict targets keyed by table and inserted columns.
 	 *
 	 * @var array<string, string[]|null>
@@ -452,6 +459,13 @@ class WP_PostgreSQL_Driver {
 	 * @var array<string, array>
 	 */
 	private $mysql_column_metadata_introspection_cache = array();
+
+	/**
+	 * Cached DML identity sequence-repair eligibility keyed by backend schema and table.
+	 *
+	 * @var array<string, array>
+	 */
+	private $mysql_dml_identity_repair_eligibility_cache = array();
 
 	/**
 	 * Cached MySQL unique-index metadata rows keyed by backend schema and table.
@@ -738,6 +752,64 @@ class WP_PostgreSQL_Driver {
 	 */
 	public function get_charset(): string {
 		return $this->charset;
+	}
+
+	/**
+	 * Get MySQL-facing column charset metadata rows for a table.
+	 *
+	 * This is a narrow internal metadata API for the WordPress drop-in. It
+	 * returns the catalog shape consumed by the drop-in instead of public
+	 * SHOW FULL COLUMNS rows.
+	 *
+	 * @param string      $table_name  MySQL table name.
+	 * @param string|null $schema_name Optional MySQL schema. Null uses the current read schema.
+	 * @return array|false Column metadata rows, or false when unavailable.
+	 */
+	public function get_mysql_column_charset_metadata_for_table( string $table_name, ?string $schema_name = null ) {
+		$table_name = trim( $table_name, "`\" \t\n\r\0\x0B" );
+		if ( '' === $table_name ) {
+			return false;
+		}
+
+		$schema_name = null === $schema_name ? null : trim( $schema_name, "`\" \t\n\r\0\x0B" );
+		if ( '' === $schema_name ) {
+			$schema_name = null;
+		}
+
+		try {
+			$backend_schema = $this->get_mysql_read_table_backend_schema( $schema_name );
+			if ( 0 === strcasecmp( $backend_schema, 'information_schema' ) || $this->is_postgresql_internal_schema( $backend_schema ) ) {
+				return false;
+			}
+
+			$resolved_schema = $this->resolve_mysql_table_schema_for_introspection( $backend_schema, $table_name );
+			if ( 0 === strcasecmp( $resolved_schema, 'information_schema' ) ) {
+				return false;
+			}
+
+			$rows = $this->get_cached_mysql_table_catalog_column_metadata_rows( $resolved_schema, $table_name );
+		} catch ( Throwable $e ) {
+			return false;
+		}
+
+		if ( empty( $rows ) ) {
+			return false;
+		}
+
+		$metadata_rows = array();
+		foreach ( $rows as $row ) {
+			if ( empty( $row['column_name'] ) ) {
+				continue;
+			}
+
+			$metadata_rows[] = array(
+				'column_name'    => $row['column_name'],
+				'column_type'    => $row['column_type'] ?? '',
+				'collation_name' => $row['collation_name'] ?? null,
+			);
+		}
+
+		return empty( $metadata_rows ) ? false : $metadata_rows;
 	}
 
 	/**
@@ -1047,12 +1119,18 @@ class WP_PostgreSQL_Driver {
 				$metadata_tables,
 				! empty( $create_table_query['temporary'] ) ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $metadata_schema
 			);
+			if ( ! empty( $create_table_query['temporary'] ) ) {
+				$this->mark_mysql_temporary_table_created( $create_table_query['table'] );
+			}
 			return $result;
 		}
 
 		$this->clear_mysql_metadata_caches();
 		if ( '' !== ( $create_table_query['table_comment'] ?? '' ) ) {
 			$this->sync_postgresql_catalog_table_comment( $metadata_schema, $create_table_query['table'], $create_table_query['table_comment'] );
+		}
+		if ( ! empty( $create_table_query['temporary'] ) ) {
+			$this->mark_mysql_temporary_table_created( $create_table_query['table'] );
 		}
 		return $result;
 	}
@@ -2872,9 +2950,11 @@ class WP_PostgreSQL_Driver {
 	}
 	private function clear_mysql_metadata_caches(): void {
 		$this->mysql_table_schema_introspection_cache          = array();
+		$this->mysql_has_active_temporary_tables               = null;
 		$this->mysql_upsert_conflict_target_cache              = array();
 		$this->mysql_introspection_result_cache                = array();
 		$this->mysql_column_metadata_introspection_cache       = array();
+		$this->mysql_dml_identity_repair_eligibility_cache     = array();
 		$this->mysql_unique_index_metadata_introspection_cache = array();
 		$this->mysql_select_translation_cache                  = array();
 		$this->mysql_sql_calc_found_rows_count_query_cache     = array();
@@ -4069,8 +4149,8 @@ $wp_mysql_primary_index_comment$',
 					ON pa.attrelid = pc.oid
 					AND pa.attname = c.column_name
 					AND pa.attnum > 0
-					WHERE c.table_schema = ?
-						AND c.table_name = ?%2$s
+				WHERE c.table_schema = ?
+					AND c.table_name = ?%2$s
 					ORDER BY c.ordinal_position%3$s',
 			$projection_sql,
 			$column_filter_sql,
@@ -6769,7 +6849,10 @@ $wp_mysql_primary_index_comment$',
 		$drop_query = $this->get_mysql_drop_table_or_view_query( $query, WP_MySQL_Lexer::TABLE_SYMBOL, 'DROP TABLE', true );
 		return null === $drop_query
 			? null
-			: array( 'statements' => $this->get_postgresql_drop_table_or_view_statements( 'DROP TABLE', $drop_query ) );
+			: array(
+				'statements' => $this->get_postgresql_drop_table_or_view_statements( 'DROP TABLE', $drop_query ),
+				'targets'    => $drop_query['targets'],
+			);
 	}
 	private function translate_mysql_drop_view_query( string $query ): ?array {
 		$drop_query = $this->get_mysql_drop_table_or_view_query( $query, WP_MySQL_Lexer::VIEW_SYMBOL, 'DROP VIEW', false );
@@ -7048,6 +7131,13 @@ $wp_mysql_primary_index_comment$',
 			);
 		}
 		return $statements;
+	}
+	private function update_mysql_table_schema_state_after_drop( array $drop_query ): void {
+		foreach ( $drop_query['targets'] as $drop_target ) {
+			if ( null === $drop_target['schema'] ) {
+				$this->forget_mysql_temporary_table( $drop_target['table'] );
+			}
+		}
 	}
 	private function get_postgresql_catalog_on_update_current_timestamp_column_names( string $table_schema, string $table_name ): array {
 		$stmt = $this->connection->query(
@@ -10514,11 +10604,32 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			return $this->mysql_table_schema_introspection_cache[ $cache_key ];
 		}
 
+		if ( ! $this->mysql_connection_has_active_temporary_tables() ) {
+			$this->mysql_table_schema_introspection_cache[ $cache_key ] = $schema_name;
+			return $schema_name;
+		}
+
 		$temporary_schema = $this->get_active_temporary_table_schema( $table_name );
 		$resolved_schema  = null === $temporary_schema ? $schema_name : $temporary_schema;
 
 		$this->mysql_table_schema_introspection_cache[ $cache_key ] = $resolved_schema;
 		return $resolved_schema;
+	}
+	private function mysql_connection_has_active_temporary_tables(): bool {
+		if ( null !== $this->mysql_has_active_temporary_tables ) {
+			return $this->mysql_has_active_temporary_tables;
+		}
+
+		$stmt = $this->connection->query(
+			'SELECT 1
+			FROM pg_catalog.pg_class c
+			WHERE c.relnamespace = pg_my_temp_schema()
+				AND c.relkind IN (\'r\', \'p\')
+			LIMIT 1'
+		);
+
+		$this->mysql_has_active_temporary_tables = false !== $stmt->fetchColumn();
+		return $this->mysql_has_active_temporary_tables;
 	}
 	private function get_active_temporary_table_schema( string $table_name ): ?string {
 		$stmt = $this->connection->query(
@@ -10535,6 +10646,22 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 
 		$schema_name = $stmt->fetchColumn();
 		return false === $schema_name ? null : (string) $schema_name;
+	}
+	private function mark_mysql_temporary_table_created( string $table_name ): void {
+		$this->mysql_has_active_temporary_tables = true;
+		$this->forget_mysql_table_schema_introspection_cache( $table_name );
+	}
+	private function forget_mysql_temporary_table( string $table_name ): void {
+		$this->mysql_has_active_temporary_tables = null;
+		$this->forget_mysql_table_schema_introspection_cache( $table_name );
+	}
+	private function forget_mysql_table_schema_introspection_cache( string $table_name ): void {
+		$cache_key_suffix = "\0" . $table_name;
+		foreach ( array_keys( $this->mysql_table_schema_introspection_cache ) as $cache_key ) {
+			if ( substr( $cache_key, -strlen( $cache_key_suffix ) ) === $cache_key_suffix ) {
+				unset( $this->mysql_table_schema_introspection_cache[ $cache_key ] );
+			}
+		}
 	}
 	private function get_mysql_show_projection_sql( array $columns, array $expressions, string $indent ): string {
 		$fields = array();
@@ -11656,6 +11783,10 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			return;
 		}
 
+		if ( $this->can_skip_mysql_dml_identity_sequence_repair( $dml_query ) ) {
+			return;
+		}
+
 		$explicit_identity_columns = array();
 		if (
 			isset( $dml_query['explicit_identity_columns'] )
@@ -11714,6 +11845,63 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 				$sequence_name
 			);
 		}
+	}
+	private function can_skip_mysql_dml_identity_sequence_repair( array $dml_query ): bool {
+		if (
+			! isset( $dml_query['table_name'], $dml_query['columns'] )
+			|| ! is_array( $dml_query['columns'] )
+		) {
+			return false;
+		}
+
+		$eligibility = $this->get_mysql_dml_identity_sequence_repair_eligibility( (string) $dml_query['table_name'] );
+		if ( null === $eligibility ) {
+			return false;
+		}
+
+		if ( empty( $eligibility['has_auto_increment_columns'] ) ) {
+			return true;
+		}
+
+		foreach ( $eligibility['auto_increment_columns'] as $column_name ) {
+			if ( $this->mysql_dml_column_list_contains_column( $dml_query['columns'], $column_name ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+	private function get_mysql_dml_identity_sequence_repair_eligibility( string $table_name ): ?array {
+		$table_schema = $this->get_mysql_unqualified_dml_table_backend_schema( $table_name );
+		$cache_key    = $table_schema . "\0" . $table_name;
+		if ( array_key_exists( $cache_key, $this->mysql_dml_identity_repair_eligibility_cache ) ) {
+			return $this->mysql_dml_identity_repair_eligibility_cache[ $cache_key ];
+		}
+
+		$metadata = $this->get_mysql_table_catalog_column_metadata_rows( $table_schema, $table_name );
+		if ( empty( $metadata ) ) {
+			return null;
+		}
+
+		$auto_increment_columns = array();
+		foreach ( $metadata as $column_metadata ) {
+			$column_name = (string) ( $column_metadata['column_name'] ?? '' );
+			if ( '' === $column_name ) {
+				return null;
+			}
+
+			if ( $this->is_mysql_auto_increment_column_metadata( $column_metadata ) ) {
+				$auto_increment_columns[] = $column_name;
+			}
+		}
+
+		$eligibility = array(
+			'has_auto_increment_columns' => ! empty( $auto_increment_columns ),
+			'auto_increment_columns'     => $auto_increment_columns,
+		);
+
+		$this->mysql_dml_identity_repair_eligibility_cache[ $cache_key ] = $eligibility;
+		return $eligibility;
 	}
 	private function get_explicit_dml_identity_column_lookup( array $columns, array $values ): array {
 		$explicit_columns = array();
@@ -29030,7 +29218,12 @@ $wp_mysql_%1$s_domain$',
 	}
 	private function mysql_create_table_target_exists( string $schema_name, string $table_name, bool $is_temporary ): bool {
 		if ( $is_temporary ) {
-			return null !== $this->get_active_temporary_table_schema( $table_name );
+			$temporary_schema = $this->get_active_temporary_table_schema( $table_name );
+			if ( null !== $temporary_schema ) {
+				$this->mark_mysql_temporary_table_created( $table_name );
+				return true;
+			}
+			return false;
 		}
 
 		$stmt = $this->connection->query(

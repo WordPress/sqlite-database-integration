@@ -3733,6 +3733,206 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests inserts omitting AUTO_INCREMENT skip identity sequence repair work.
+	 */
+	public function test_real_pgsql_implicit_auto_increment_insert_skips_identity_sequence_repair(): void {
+		$driver = $this->create_real_pgsql_driver( 'wptests', true );
+
+		$driver->query(
+			'CREATE TABLE seq_repair_implicit (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				value longtext NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$logged_sql = array();
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$logged_sql ): void {
+				$logged_sql[] = $sql;
+			}
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_implicit (`value`) VALUES ('first')" ) );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$this->assertSame( 0, $this->count_identity_sequence_repair_metadata_queries( $logged_sql ) );
+		$this->assertSame( array(), $this->get_identity_sequence_repair_queries( $driver->get_last_postgresql_queries() ) );
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_implicit (`value`) VALUES ('second')" ) );
+		$this->assertSame( 2, $driver->get_insert_id() );
+
+		$rows = $driver->query( 'SELECT id, value FROM seq_repair_implicit ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '1', 'first' ),
+				array( '2', 'second' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
+	 * Tests explicit AUTO_INCREMENT inserts still repair the PostgreSQL identity sequence.
+	 */
+	public function test_real_pgsql_explicit_auto_increment_insert_repairs_identity_sequence(): void {
+		$driver = $this->create_real_pgsql_driver( 'wptests', true );
+
+		$driver->query(
+			'CREATE TABLE seq_repair_explicit (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				value longtext NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_explicit (`id`, `value`) VALUES (10, 'explicit')" ) );
+		$this->assertSame( 10, $driver->get_insert_id() );
+
+		$repair_queries = $this->get_identity_sequence_repair_queries( $driver->get_last_postgresql_queries() );
+		$this->assertCount( 1, $repair_queries );
+		$this->assertStringContainsString(
+			'"seq_repair_explicit_id_seq"',
+			$repair_queries[0]['params'][0]
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_explicit (`value`) VALUES ('implicit')" ) );
+		$this->assertSame( 11, $driver->get_insert_id() );
+
+		$rows = $driver->query( 'SELECT id, value FROM seq_repair_explicit ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '10', 'explicit' ),
+				array( '11', 'implicit' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
+	 * Tests explicit DEFAULT AUTO_INCREMENT values still use generated identity values.
+	 */
+	public function test_real_pgsql_default_auto_increment_insert_uses_generated_identity_value(): void {
+		$driver = $this->create_real_pgsql_driver( 'wptests', true );
+
+		$driver->query(
+			'CREATE TABLE seq_repair_default (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				value longtext NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_default (`id`, `value`) VALUES (DEFAULT, 'default')" ) );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$this->assertSame( array(), $this->get_identity_sequence_repair_queries( $driver->get_last_postgresql_queries() ) );
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_default (`value`) VALUES ('implicit')" ) );
+		$this->assertSame( 2, $driver->get_insert_id() );
+
+		$rows = $driver->query( 'SELECT id, value FROM seq_repair_default ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '1', 'default' ),
+				array( '2', 'implicit' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
+	 * Tests inserts into tables without AUTO_INCREMENT skip identity sequence repair work.
+	 */
+	public function test_real_pgsql_insert_into_table_without_auto_increment_uses_identity_eligibility_cache_and_invalidates_on_ddl(): void {
+		$driver = $this->create_real_pgsql_driver( 'wptests', true );
+
+		$driver->query(
+			'CREATE TABLE seq_repair_plain (
+				id int NOT NULL,
+				value longtext NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$logged_sql = array();
+		$driver->get_connection()->set_query_logger(
+			static function ( string $sql ) use ( &$logged_sql ): void {
+				$logged_sql[] = $sql;
+			}
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_plain (`id`, `value`) VALUES (1, 'first')" ) );
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_plain (`id`, `value`) VALUES (2, 'second')" ) );
+		$this->assertSame( 1, $this->count_dml_identity_eligibility_metadata_queries( $logged_sql ) );
+		$this->assertSame( 0, $this->count_identity_sequence_repair_metadata_queries( $logged_sql ) );
+		$this->assertSame( array(), $this->get_identity_sequence_repair_queries( $driver->get_last_postgresql_queries() ) );
+
+		$rows = $driver->query( 'SELECT id, value FROM seq_repair_plain ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '1', 'first' ),
+				array( '2', 'second' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE seq_repair_plain CHANGE COLUMN `id` `id` int NOT NULL AUTO_INCREMENT' ) );
+
+		$logged_sql = array();
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_plain (`id`, `value`) VALUES (10, 'explicit')" ) );
+		$this->assertSame( 10, $driver->get_insert_id() );
+		$this->assertSame( 1, $this->count_dml_identity_eligibility_metadata_queries( $logged_sql ) );
+		$this->assertSame( 1, $this->count_identity_sequence_repair_metadata_queries( $logged_sql ) );
+
+		$repair_queries = $this->get_identity_sequence_repair_queries( $driver->get_last_postgresql_queries() );
+		$this->assertCount( 1, $repair_queries );
+		$this->assertStringContainsString(
+			'"seq_repair_plain_id_seq"',
+			$repair_queries[0]['params'][0]
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO seq_repair_plain (`value`) VALUES ('implicit')" ) );
+		$this->assertSame( 11, $driver->get_insert_id() );
+		$this->assertSame( 1, $this->count_dml_identity_eligibility_metadata_queries( $logged_sql ) );
+		$this->assertSame( 1, $this->count_identity_sequence_repair_metadata_queries( $logged_sql ) );
+
+		$rows = $driver->query( 'SELECT id, value FROM seq_repair_plain ORDER BY id' );
+		$this->assertSame(
+			array(
+				array( '1', 'first' ),
+				array( '2', 'second' ),
+				array( '10', 'explicit' ),
+				array( '11', 'implicit' ),
+			),
+			array_map(
+				static function ( $row ): array {
+					return array( $row->id, $row->value );
+				},
+				$rows
+			)
+		);
+	}
+
+	/**
 	 * Tests WooCommerce-style session upserts with WordPress %i double-quoted table identifiers.
 	 */
 	public function test_double_quoted_table_identifier_upsert_and_select_are_translated(): void {
@@ -18785,6 +18985,178 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests public table reads skip repeated per-table temporary schema probes.
+	 */
+	public function test_real_pgsql_public_table_resolution_skips_per_table_temporary_probe(): void {
+		$dsn = getenv( 'PGSQL_TEST_DSN' );
+		if ( false === $dsn || '' === $dsn ) {
+			$this->markTestSkipped( 'Set PGSQL_TEST_DSN to run the real PostgreSQL public table schema cache test.' );
+		}
+
+		$user     = getenv( 'PGSQL_TEST_USER' );
+		$password = getenv( 'PGSQL_TEST_PASSWORD' );
+		$pdo      = new PDO(
+			$dsn,
+			false === $user ? null : $user,
+			false === $password ? null : $password
+		);
+		$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+
+		$this->assertSame(
+			'pgsql',
+			$pdo->getAttribute( PDO::ATTR_DRIVER_NAME ),
+			'PGSQL_TEST_DSN must use the pgsql PDO driver.'
+		);
+
+		$pdo->exec( 'SET search_path TO public' );
+		$this->drop_public_pgsql_tables_with_prefix( $pdo, 'task1042_cache' );
+
+		$database_name = (string) $pdo->query( 'SELECT current_database()' )->fetchColumn();
+		$connection    = new WP_PostgreSQL_Connection( array( 'pdo' => $pdo ) );
+		$driver        = new WP_PostgreSQL_Driver( $connection, $database_name );
+		$suffix        = strtolower( bin2hex( random_bytes( 4 ) ) );
+		$table_name    = 'task1042_cache_' . $suffix;
+		$dummy_name    = 'task1042_cache_dummy_' . $suffix;
+		$logged_sql    = array();
+
+		$connection->set_query_logger(
+			static function ( string $sql ) use ( &$logged_sql ): void {
+				$logged_sql[] = $sql;
+			}
+		);
+
+		try {
+			$this->assertSame(
+				0,
+				$driver->query(
+					sprintf(
+						'CREATE TABLE `%s` (
+							`id` int NOT NULL,
+							`value` varchar(20) NOT NULL,
+							PRIMARY KEY (`id`)
+						)',
+						$table_name
+					)
+				)
+			);
+			$this->assertSame( 1, $driver->query( "INSERT INTO `{$table_name}` (`id`, `value`) VALUES (1, 'public')" ) );
+
+			/*
+			 * DDL clears metadata caches. The following read should still avoid
+			 * the expensive per-table temporary schema lookup when no temporary
+			 * table exists on the connection.
+			 */
+			$this->assertSame( 0, $driver->query( "CREATE TABLE `{$dummy_name}` (`id` int NOT NULL)" ) );
+			$this->assertSame( 0, $driver->query( "DROP TABLE `{$dummy_name}`" ) );
+
+			$logged_sql = array();
+			$rows       = $driver->query( 'SELECT `value` FROM `' . $table_name . '` WHERE `id` = 1' );
+
+			$this->assertCount( 1, $rows );
+			$this->assertSame( 'public', $this->get_row_value( $rows[0], 'value' ) );
+			$this->assertStringNotContainsString(
+				'SELECT n.nspname',
+				implode( "\n", $logged_sql )
+			);
+		} finally {
+			$pdo->exec( 'SET search_path TO public' );
+			$this->drop_public_pgsql_tables_with_prefix( $pdo, 'task1042_cache' );
+			$this->assertSame( array(), $this->get_public_pgsql_tables_with_prefix( $pdo, 'task1042_cache' ) );
+		}
+	}
+
+	/**
+	 * Tests the direct column metadata API returns SHOW COLUMNS-compatible rows.
+	 */
+	public function test_real_pgsql_column_charset_metadata_api_matches_show_columns_and_resolves_temporary_tables(): void {
+		$driver     = $this->create_real_pgsql_driver();
+		$pdo        = $driver->get_connection()->get_pdo();
+		$suffix     = strtolower( bin2hex( random_bytes( 4 ) ) );
+		$table_name = 'task_direct_meta_' . $suffix;
+
+		$pdo->exec( 'SET search_path TO public' );
+		$this->drop_public_pgsql_tables_with_prefix( $pdo, 'task_direct_meta' );
+
+		try {
+			$this->assertSame(
+				0,
+				$driver->query(
+					sprintf(
+						'CREATE TABLE `%s` (
+							`id` int NOT NULL,
+							`title` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+							`body` text CHARACTER SET big5,
+							`views` int NOT NULL
+						)',
+						$table_name
+					)
+				)
+			);
+
+			$metadata_rows = $driver->get_mysql_column_charset_metadata_for_table( $table_name );
+			$show_rows     = $driver->query( 'SHOW FULL COLUMNS FROM `' . $table_name . '`', PDO::FETCH_ASSOC );
+
+			$this->assertSame(
+				array_map(
+					static function ( array $row ): array {
+						return array(
+							'column_name'    => $row['Field'],
+							'column_type'    => $row['Type'],
+							'collation_name' => $row['Collation'],
+						);
+					},
+					$show_rows
+				),
+				$metadata_rows
+			);
+
+			$title_metadata = $this->find_row_by_value( $metadata_rows, 'column_name', 'title' );
+			$this->assertSame( 'varchar(64)', $this->get_row_value( $title_metadata, 'column_type' ) );
+			$this->assertSame( 'utf8mb4_unicode_ci', $this->get_row_value( $title_metadata, 'collation_name' ) );
+			$views_metadata = $this->find_row_by_value( $metadata_rows, 'column_name', 'views' );
+			$this->assertNull( $this->get_row_value( $views_metadata, 'collation_name' ) );
+
+			$this->assertSame(
+				0,
+				$driver->query(
+					sprintf(
+						'CREATE TEMPORARY TABLE `%s` (
+							`title` text CHARACTER SET big5,
+							`views` int NOT NULL
+						)',
+						$table_name
+					)
+				)
+			);
+
+			$temporary_metadata_rows = $driver->get_mysql_column_charset_metadata_for_table( $table_name );
+			$temporary_show_rows     = $driver->query( 'SHOW FULL COLUMNS FROM `' . $table_name . '`', PDO::FETCH_ASSOC );
+
+			$this->assertSame( array( 'title', 'views' ), array_column( $temporary_metadata_rows, 'column_name' ) );
+			$temp_title_metadata = $this->find_row_by_value( $temporary_metadata_rows, 'column_name', 'title' );
+			$this->assertSame( 'text', $this->get_row_value( $temp_title_metadata, 'column_type' ) );
+			$this->assertSame( 'big5_chinese_ci', $this->get_row_value( $temp_title_metadata, 'collation_name' ) );
+			$this->assertSame(
+				array_map(
+					static function ( array $row ): array {
+						return array(
+							'column_name'    => $row['Field'],
+							'column_type'    => $row['Type'],
+							'collation_name' => $row['Collation'],
+						);
+					},
+					$temporary_show_rows
+				),
+				$temporary_metadata_rows
+			);
+		} finally {
+			$pdo->exec( 'DROP TABLE IF EXISTS pg_temp.' . WP_PostgreSQL_Connection::quote_identifier_value( $table_name ) );
+			$this->drop_public_pgsql_tables_with_prefix( $pdo, 'task_direct_meta' );
+			$this->assertSame( array(), $this->get_public_pgsql_tables_with_prefix( $pdo, 'task_direct_meta' ) );
+		}
+	}
+
+	/**
 	 * Tests real PostgreSQL current-schema CREATE TABLE and VIEW DDL use selected schema.
 	 */
 	public function test_real_pgsql_current_schema_create_table_and_view_ddl_use_selected_schema(): void {
@@ -31674,10 +32046,11 @@ $$'
 
 		foreach (
 			array(
-				'connection'    => $connection,
-				'main_db_name'  => $db_name,
-				'db_name'       => $db_name,
-				'mysql_version' => 80038,
+				'connection'                        => $connection,
+				'main_db_name'                      => $db_name,
+				'db_name'                           => $db_name,
+				'mysql_version'                     => 80038,
+				'mysql_has_active_temporary_tables' => false,
 			) as $property_name => $property_value
 		) {
 			$property = new ReflectionProperty( WP_PostgreSQL_Driver::class, $property_name );
@@ -31866,6 +32239,66 @@ $$'
 		}
 
 		$this->fail( 'Expected PostgreSQL SQL containing: ' . $needle );
+	}
+
+	/**
+	 * Count logged identity sequence repair metadata probes.
+	 *
+	 * @param string[] $logged_sql Logged SQL statements.
+	 * @return int Matching query count.
+	 */
+	private function count_identity_sequence_repair_metadata_queries( array $logged_sql ): int {
+		$count = 0;
+		foreach ( $logged_sql as $sql ) {
+			if (
+				false !== strpos( $sql, 'pg_get_serial_sequence(format' )
+				&& false !== strpos( $sql, 'FROM information_schema.columns c' )
+				&& false !== strpos( $sql, 'seq.relname AS sequence_name' )
+			) {
+				++$count;
+			}
+		}
+		return $count;
+	}
+
+	/**
+	 * Count logged DML identity eligibility metadata probes.
+	 *
+	 * @param string[] $logged_sql Logged SQL statements.
+	 * @return int Matching query count.
+	 */
+	private function count_dml_identity_eligibility_metadata_queries( array $logged_sql ): int {
+		$count = 0;
+		foreach ( $logged_sql as $sql ) {
+			if (
+				false !== strpos( $sql, 'pg_catalog.col_description(pc.oid, pa.attnum)' )
+				&& false !== strpos( $sql, 'FROM information_schema.columns c' )
+				&& false !== strpos( $sql, 'pc.relkind IN (\'r\', \'p\', \'v\', \'m\')' )
+			) {
+				++$count;
+			}
+		}
+		return $count;
+	}
+
+	/**
+	 * Get logged guarded identity sequence repair queries.
+	 *
+	 * @param array[] $queries Logged PostgreSQL query records.
+	 * @return array[] Matching query records.
+	 */
+	private function get_identity_sequence_repair_queries( array $queries ): array {
+		return array_values(
+			array_filter(
+				$queries,
+				static function ( array $query ): bool {
+					return false !== strpos(
+						(string) $query['sql'],
+						'SELECT pg_catalog.setval(CAST(? AS regclass), table_state.max_identity_value, true)'
+					);
+				}
+			)
+		);
 	}
 
 	/**

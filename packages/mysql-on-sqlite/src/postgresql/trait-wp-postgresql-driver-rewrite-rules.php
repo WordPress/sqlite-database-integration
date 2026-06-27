@@ -60,9 +60,15 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 		if ( 'parse_result' === $rule[0] ) {
 			return $this->{$rule[2]}( $parsed_query );
 		}
-		return 'parse_statements' === $rule[0]
-			? $this->execute_postgresql_statements( $parsed_query['statements'] )
-			: $this->execute_mysql_admin_statements( $parsed_query['statements'], $rule[2] );
+		if ( 'parse_statements' === $rule[0] ) {
+			return $this->execute_postgresql_statements( $parsed_query['statements'] );
+		}
+
+		$result = $this->execute_mysql_admin_statements( $parsed_query['statements'], $rule[2] );
+		if ( 'translate_mysql_drop_table_query' === $rule[1] ) {
+			$this->update_mysql_table_schema_state_after_drop( $parsed_query );
+		}
+		return $result;
 	}
 	private function reject_mysql_statement_prefix( string $query, array $token_ids, string $message ): void {
 		$tokens = $this->get_mysql_tokens( $query );
