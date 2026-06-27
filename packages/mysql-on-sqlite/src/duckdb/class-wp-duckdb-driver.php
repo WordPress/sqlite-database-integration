@@ -1303,6 +1303,10 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_create( array $tokens ): WP_DuckDB_Result_Statement {
+		if ( $this->is_create_view_statement( $tokens ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE VIEW statement in DuckDB driver. MySQL view lifecycle metadata is not supported (createView).' );
+		}
+
 		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::TABLE_SYMBOL === $tokens[1]->id ) {
 			return $this->execute_create_table( $tokens );
 		}
@@ -1320,6 +1324,21 @@ class WP_DuckDB_Driver {
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE statement in DuckDB driver. Only CREATE TABLE and CREATE INDEX are supported.' );
+	}
+
+	/**
+	 * Check whether a CREATE statement targets a view.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return bool Whether this is a CREATE VIEW statement.
+	 */
+	private function is_create_view_statement( array $tokens ): bool {
+		$view_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::VIEW_SYMBOL );
+		if ( null === $view_index ) {
+			return false;
+		}
+
+		return null !== $this->find_top_level_token_index( $tokens, $view_index + 1, WP_MySQL_Lexer::AS_SYMBOL );
 	}
 
 	/**
@@ -2453,6 +2472,10 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_drop( array $tokens ): WP_DuckDB_Result_Statement {
+		if ( isset( $tokens[1] ) && WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[1]->id ) {
+			return $this->execute_drop_view( $tokens );
+		}
+
 		if (
 			isset( $tokens[1], $tokens[2] )
 			&& WP_MySQL_Lexer::TEMPORARY_SYMBOL === $tokens[1]->id
@@ -2477,6 +2500,50 @@ class WP_DuckDB_Driver {
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP statement in DuckDB driver. Only DROP TABLE and DROP INDEX are supported.' );
+	}
+
+	/**
+	 * Execute bounded DROP VIEW passthrough for native DuckDB views.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_drop_view( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP.' );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::VIEW_SYMBOL, 'Expected VIEW in DROP VIEW statement.' );
+		++$index;
+
+		$if_exists = false;
+		if (
+			isset( $tokens[ $index + 1 ] )
+			&& WP_MySQL_Lexer::IF_SYMBOL === $tokens[ $index ]->id
+			&& WP_MySQL_Lexer::EXISTS_SYMBOL === $tokens[ $index + 1 ]->id
+		) {
+			$if_exists = true;
+			$index    += 2;
+		}
+
+		$view_tokens = array_slice( $tokens, $index );
+		if ( count( $view_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'DROP VIEW requires a view name.' );
+		}
+		if ( count( $this->split_top_level_comma_items( $view_tokens ) ) > 1 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP VIEW statement in DuckDB driver. Only a single view target is supported.' );
+		}
+
+		$reference = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'DROP VIEW' );
+		if ( count( $tokens ) !== $reference['next_index'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP VIEW statement in DuckDB driver. View aliases and extra options are not supported.' );
+		}
+
+		return $this->execute_duckdb_query(
+			'DROP VIEW '
+				. ( $if_exists ? 'IF EXISTS ' : '' )
+				. $this->connection->quote_identifier( $reference['requested_table_name'] ),
+			'Failed to drop DuckDB view'
+		);
 	}
 
 	/**
@@ -5378,6 +5445,14 @@ class WP_DuckDB_Driver {
 			)
 		) {
 			return $this->execute_show_tables( $tokens );
+		}
+
+		if (
+			isset( $tokens[1], $tokens[2] )
+			&& WP_MySQL_Lexer::CREATE_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::VIEW_SYMBOL === $tokens[2]->id
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW CREATE VIEW statement in DuckDB driver. MySQL view lifecycle metadata is not supported (showStatement > CREATE).' );
 		}
 
 		if (
