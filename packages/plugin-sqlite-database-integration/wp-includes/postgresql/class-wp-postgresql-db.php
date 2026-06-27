@@ -1951,8 +1951,11 @@ class WP_PostgreSQL_DB extends wpdb {
 		$this->postgresql_query_log_override = null;
 
 		try {
-			$site_health_result = $this->query_postgresql_site_health_table_sizes( $query );
-			$this->result       = null === $site_health_result ? $this->dbh->query( $query ) : $site_health_result;
+			$install_state_result = $this->query_postgresql_missing_options_siteurl_probe( $query );
+			$site_health_result   = null === $install_state_result ? $this->query_postgresql_site_health_table_sizes( $query ) : null;
+			$this->result         = null !== $install_state_result
+				? $install_state_result
+				: ( null === $site_health_result ? $this->dbh->query( $query ) : $site_health_result );
 		} catch ( Throwable $e ) {
 			$this->last_error = $this->format_error_message( $e );
 		}
@@ -1968,6 +1971,137 @@ class WP_PostgreSQL_DB extends wpdb {
 				array()
 			);
 		}
+	}
+
+	/**
+	 * Fast path for WordPress install-state siteurl probes against a missing options table.
+	 *
+	 * @param string $query Original MySQL query.
+	 * @return array|null Empty result rows when the current options table is missing, or null on non-match.
+	 */
+	private function query_postgresql_missing_options_siteurl_probe( $query ) {
+		if ( empty( $this->suppress_errors ) || ! isset( $this->options ) || ! $this->has_usable_postgresql_connection() ) {
+			return null;
+		}
+
+		$table = $this->parse_postgresql_options_siteurl_probe_table( $query );
+		if ( null === $table || $this->get_postgresql_metadata_key( (string) $this->options ) !== $this->get_postgresql_metadata_key( $table ) ) {
+			return null;
+		}
+
+		$exists = $this->postgresql_visible_table_exists( $table );
+		if ( null === $exists || $exists ) {
+			$this->postgresql_query_log_override = null;
+			return null;
+		}
+
+		return array();
+	}
+
+	/**
+	 * Parse WordPress' exact current-prefix siteurl install probe.
+	 *
+	 * @param string $query Original MySQL query.
+	 * @return string|null Options table name, or null on non-match.
+	 */
+	private function parse_postgresql_options_siteurl_probe_table( $query ) {
+		if ( ! is_string( $query ) || ! class_exists( 'WP_MySQL_Lexer', false ) ) {
+			return null;
+		}
+
+		$tokens = $this->get_postgresql_mysql_tokens( $query );
+		if (
+			! isset( $tokens[0] )
+			|| WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id
+			|| 'option_value' !== strtolower( (string) $this->get_postgresql_identifier_token_value( $tokens[1] ?? null ) )
+			|| WP_MySQL_Lexer::FROM_SYMBOL !== ( $tokens[2]->id ?? null )
+		) {
+			return null;
+		}
+
+		$position = 3;
+		$table    = $this->get_postgresql_identifier_token_value( $tokens[ $position ] ?? null );
+		if ( null === $table ) {
+			return null;
+		}
+		++$position;
+
+		if ( WP_MySQL_Lexer::DOT_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			$table = $this->get_postgresql_identifier_token_value( $tokens[ $position + 1 ] ?? null );
+			if ( null === $table ) {
+				return null;
+			}
+			$position += 2;
+		}
+
+		if (
+			WP_MySQL_Lexer::WHERE_SYMBOL !== ( $tokens[ $position ]->id ?? null )
+			|| 'option_name' !== strtolower( (string) $this->get_postgresql_identifier_token_value( $tokens[ $position + 1 ] ?? null ) )
+			|| WP_MySQL_Lexer::EQUAL_OPERATOR !== ( $tokens[ $position + 2 ]->id ?? null )
+			|| WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== ( $tokens[ $position + 3 ]->id ?? null )
+			|| 'siteurl' !== (string) $tokens[ $position + 3 ]->get_value()
+		) {
+			return null;
+		}
+		$position += 4;
+
+		if ( WP_MySQL_Lexer::LIMIT_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			if (
+				WP_MySQL_Lexer::INT_NUMBER !== ( $tokens[ $position + 1 ]->id ?? null )
+				|| '1' !== (string) $tokens[ $position + 1 ]->get_value()
+			) {
+				return null;
+			}
+			$position += 2;
+		}
+
+		return $this->is_postgresql_mysql_token_stream_at_end( $tokens, $position ) ? $table : null;
+	}
+
+	/**
+	 * Check whether a token stream is at an optional semicolon and EOF.
+	 *
+	 * @param array $tokens   MySQL token stream.
+	 * @param int   $position Current token position.
+	 * @return bool Whether the remaining tokens are query terminators only.
+	 */
+	private function is_postgresql_mysql_token_stream_at_end( array $tokens, int $position ): bool {
+		if ( WP_MySQL_Lexer::SEMICOLON_SYMBOL === ( $tokens[ $position ]->id ?? null ) ) {
+			++$position;
+		}
+
+		return ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::EOF === $tokens[ $position ]->id;
+	}
+
+	/**
+	 * Check if a relation is visible on the PostgreSQL search path.
+	 *
+	 * @param string $table Table name.
+	 * @return bool|null Whether the relation exists, or null when the catalog check fails.
+	 */
+	private function postgresql_visible_table_exists( string $table ) {
+		$sql    = 'SELECT 1
+			FROM pg_catalog.pg_class c
+			WHERE pg_catalog.pg_table_is_visible(c.oid)
+				AND lower(c.relname) = lower(?)
+				AND c.relkind IN (\'r\', \'p\', \'v\', \'m\')
+			LIMIT 1';
+		$params = array( $this->normalize_postgresql_table_name( $table ) );
+
+		try {
+			$stmt = $this->dbh->get_connection()->query( $sql, $params );
+		} catch ( Throwable $e ) {
+			return null;
+		}
+
+		$this->postgresql_query_log_override = array(
+			array(
+				'sql'    => $sql,
+				'params' => $params,
+			),
+		);
+
+		return false !== $stmt->fetchColumn();
 	}
 
 	/**

@@ -2839,6 +2839,197 @@ PHP
 	}
 
 	/**
+	 * Tests missing active-prefix options table siteurl probes return an empty install state.
+	 */
+	public function test_query_returns_empty_for_missing_current_prefix_siteurl_install_probe(): void {
+		$result = $this->run_isolated_wpdb_script(
+			<<<'PHP'
+require_once getcwd() . '/bootstrap-postgresql.php';
+
+class wpdb {
+	public $ready           = true;
+	public $insert_id       = 0;
+	public $last_query      = null;
+	public $func_call       = null;
+	public $last_error      = '';
+	public $num_queries     = 0;
+	public $last_result     = array();
+	public $col_info        = null;
+	public $rows_affected   = 0;
+	public $num_rows        = 0;
+	public $result          = null;
+	public $suppress_errors = true;
+	public $show_errors     = false;
+	public $options         = 'wp_e2e_options';
+
+	public function get_var( $query = null, $x = 0, $y = 0 ) {
+		if ( $query ) {
+			$this->query( $query );
+		}
+
+		if ( empty( $this->last_result[ $y ] ) ) {
+			return null;
+		}
+
+		$values = array_values( get_object_vars( $this->last_result[ $y ] ) );
+		return ( isset( $values[ $x ] ) && '' !== $values[ $x ] ) ? $values[ $x ] : null;
+	}
+
+	public function get_caller() {
+		return 'wpdb-install-state-test';
+	}
+
+	public function add_placeholder_escape( $query ) {
+		return $query;
+	}
+}
+
+require_once getcwd() . '/../../plugin-sqlite-database-integration/wp-includes/postgresql/class-wp-postgresql-db.php';
+
+class WP_PostgreSQL_DB_Install_State_Fake_Connection extends WP_PostgreSQL_Connection {
+	private $pdo;
+	private $existing_tables;
+	private $queries = array();
+
+	public function __construct( array $existing_tables ) {
+		$this->pdo             = new PDO( 'sqlite::memory:' );
+		$this->existing_tables = array_fill_keys( array_map( 'strtolower', $existing_tables ), true );
+	}
+
+	public function query( string $sql, array $params = array() ): PDOStatement {
+		$this->queries[] = array(
+			'sql'    => $sql,
+			'params' => $params,
+		);
+
+		$table = strtolower( (string) ( $params[0] ?? '' ) );
+		return $this->pdo->query( isset( $this->existing_tables[ $table ] ) ? 'SELECT 1' : 'SELECT 1 WHERE 0' );
+	}
+
+	public function get_pdo(): PDO {
+		return $this->pdo;
+	}
+
+	public function get_recorded_queries(): array {
+		return $this->queries;
+	}
+}
+
+class WP_PostgreSQL_DB_Install_State_Fake_Driver extends WP_PostgreSQL_Driver {
+	private $connection;
+	private $queries = array();
+
+	public function __construct( WP_PostgreSQL_DB_Install_State_Fake_Connection $connection ) {
+		$this->connection = $connection;
+	}
+
+	public function get_connection(): WP_PostgreSQL_Connection {
+		return $this->connection;
+	}
+
+	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
+		$this->queries[] = $query;
+
+		if ( false !== strpos( $query, 'wp_e2e_options' ) ) {
+			throw new RuntimeException( 'relation "wp_e2e_options" does not exist' );
+		}
+
+		return array(
+			(object) array(
+				'option_value' => 'http://existing.example',
+			),
+		);
+	}
+
+	public function get_last_return_value() {
+		return 0;
+	}
+
+	public function get_insert_id() {
+		return 0;
+	}
+
+	public function get_last_postgresql_queries(): array {
+		return array(
+			array(
+				'sql'    => end( $this->queries ),
+				'params' => array(),
+			),
+		);
+	}
+
+	public function get_recorded_queries(): array {
+		return $this->queries;
+	}
+}
+
+$connection = new WP_PostgreSQL_DB_Install_State_Fake_Connection( array( 'wp_options' ) );
+$driver     = new WP_PostgreSQL_DB_Install_State_Fake_Driver( $connection );
+$db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
+
+$driver_property = new ReflectionProperty( WP_PostgreSQL_DB::class, 'dbh' );
+$driver_property->setAccessible( true );
+$driver_property->setValue( $db, $driver );
+
+$db->ready           = true;
+$db->suppress_errors = true;
+$db->options         = 'wp_e2e_options';
+
+$current_prefix_siteurl = $db->get_var( "SELECT option_value FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1" );
+$current_prefix_result  = array(
+	'siteurl'              => $current_prefix_siteurl,
+	'last_error'           => $db->last_error,
+	'num_rows'             => $db->num_rows,
+	'last_result'          => $db->last_result,
+	'driver_queries'       => $driver->get_recorded_queries(),
+	'catalog_query_params' => $connection->get_recorded_queries()[0]['params'] ?? null,
+);
+
+$db->options = 'wp_options';
+$existing_prefix_siteurl = $db->get_var( "SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1" );
+$existing_prefix_result  = array(
+	'siteurl'              => $existing_prefix_siteurl,
+	'last_error'           => $db->last_error,
+	'num_rows'             => $db->num_rows,
+	'last_result_value'    => $db->last_result[0]->option_value ?? null,
+	'driver_queries'       => $driver->get_recorded_queries(),
+	'catalog_query_params' => $connection->get_recorded_queries()[1]['params'] ?? null,
+);
+
+wp_postgresql_db_test_respond(
+	array(
+		'current_prefix'  => $current_prefix_result,
+		'existing_prefix' => $existing_prefix_result,
+	)
+);
+PHP
+		);
+
+		$this->assertSame(
+			array(
+				'siteurl'              => null,
+				'last_error'           => '',
+				'num_rows'             => 0,
+				'last_result'          => array(),
+				'driver_queries'       => array(),
+				'catalog_query_params' => array( 'wp_e2e_options' ),
+			),
+			$result['current_prefix']
+		);
+		$this->assertSame( 'http://existing.example', $result['existing_prefix']['siteurl'] );
+		$this->assertSame( '', $result['existing_prefix']['last_error'] );
+		$this->assertSame( 1, $result['existing_prefix']['num_rows'] );
+		$this->assertSame( 'http://existing.example', $result['existing_prefix']['last_result_value'] );
+		$this->assertSame(
+			array(
+				"SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1",
+			),
+			$result['existing_prefix']['driver_queries']
+		);
+		$this->assertSame( array( 'wp_options' ), $result['existing_prefix']['catalog_query_params'] );
+	}
+
+	/**
 	 * Tests the Site Health table-size fast path and SAVEQUERIES catalog logging.
 	 */
 	public function test_query_uses_site_health_table_size_fast_path(): void {

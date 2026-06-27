@@ -23992,6 +23992,54 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests missing current-prefix install metadata probes return empty result sets.
+	 */
+	public function test_real_pgsql_missing_install_state_metadata_probes_return_empty_results(): void {
+		$driver         = $this->create_driver();
+		$schema_name    = $driver->query( 'SELECT DATABASE()' )[0]->{'DATABASE()'};
+		$suffix         = strtolower( bin2hex( random_bytes( 4 ) ) );
+		$existing_table = 'taskbz_' . $suffix . '_wp_options';
+		$missing_table  = 'taskbz_' . $suffix . '_wp_e2e_options';
+		$existing_like  = "'taskbz\\\\_{$suffix}\\\\_wp\\\\_options'";
+		$missing_like   = "'taskbz\\\\_{$suffix}\\\\_wp\\\\_e2e\\\\_options'";
+		$tables_column  = 'Tables_in_' . $schema_name;
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				sprintf(
+					"CREATE TABLE `%s` (
+						`option_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+						`option_name` varchar(191) NOT NULL DEFAULT '',
+						`option_value` longtext NOT NULL,
+						PRIMARY KEY (`option_id`),
+						UNIQUE KEY `option_name` (`option_name`)
+					) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+					$existing_table
+				)
+			)
+		);
+		$this->assertSame(
+			1,
+			$driver->query(
+				sprintf(
+					"INSERT INTO `%s` (`option_name`, `option_value`) VALUES ('siteurl', 'http://old-prefix.example')",
+					$existing_table
+				)
+			)
+		);
+
+		$this->assertSame( array(), $driver->query( 'DESCRIBE `' . $missing_table . '`' ) );
+		$this->assertSame( array(), $driver->query( 'SHOW COLUMNS FROM `' . $missing_table . '`' ) );
+		$this->assertSame( array(), $driver->query( 'SHOW TABLES LIKE ' . $missing_like ) );
+
+		$existing_tables = $driver->query( 'SHOW TABLES LIKE ' . $existing_like );
+		$this->assertCount( 1, $existing_tables );
+		$this->assertSame( $tables_column, $driver->get_last_column_meta()[0]['name'] );
+		$this->assertSame( $existing_table, $existing_tables[0]->{$tables_column} );
+	}
+
+	/**
 	 * Tests SHOW FULL COLUMNS WHERE LIKE does not push down newline-overmatching patterns.
 	 */
 	public function test_real_pgsql_show_columns_full_where_like_percent_uses_php_newline_semantics(): void {
