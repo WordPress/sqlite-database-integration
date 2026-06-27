@@ -1951,7 +1951,7 @@ class WP_PostgreSQL_DB extends wpdb {
 		$this->postgresql_query_log_override = null;
 
 		try {
-			$install_state_result = $this->query_postgresql_missing_options_siteurl_probe( $query );
+			$install_state_result = $this->query_postgresql_missing_options_value_probe( $query );
 			$site_health_result   = null === $install_state_result ? $this->query_postgresql_site_health_table_sizes( $query ) : null;
 			$this->result         = null !== $install_state_result
 				? $install_state_result
@@ -1974,17 +1974,17 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
-	 * Fast path for WordPress install-state siteurl probes against a missing options table.
+	 * Fast path for WordPress install-state option probes against a missing options table.
 	 *
 	 * @param string $query Original MySQL query.
 	 * @return array|null Empty result rows when the current options table is missing, or null on non-match.
 	 */
-	private function query_postgresql_missing_options_siteurl_probe( $query ) {
+	private function query_postgresql_missing_options_value_probe( $query ) {
 		if ( empty( $this->suppress_errors ) || ! isset( $this->options ) || ! $this->has_usable_postgresql_connection() ) {
 			return null;
 		}
 
-		$table = $this->parse_postgresql_options_siteurl_probe_table( $query );
+		$table = $this->parse_postgresql_options_value_probe_table( $query );
 		if ( null === $table || $this->get_postgresql_metadata_key( (string) $this->options ) !== $this->get_postgresql_metadata_key( $table ) ) {
 			return null;
 		}
@@ -1999,12 +1999,12 @@ class WP_PostgreSQL_DB extends wpdb {
 	}
 
 	/**
-	 * Parse WordPress' exact current-prefix siteurl install probe.
+	 * Parse WordPress' exact current-prefix option-value install probe.
 	 *
 	 * @param string $query Original MySQL query.
 	 * @return string|null Options table name, or null on non-match.
 	 */
-	private function parse_postgresql_options_siteurl_probe_table( $query ) {
+	private function parse_postgresql_options_value_probe_table( $query ) {
 		if ( ! is_string( $query ) || ! class_exists( 'WP_MySQL_Lexer', false ) ) {
 			return null;
 		}
@@ -2039,7 +2039,6 @@ class WP_PostgreSQL_DB extends wpdb {
 			|| 'option_name' !== strtolower( (string) $this->get_postgresql_identifier_token_value( $tokens[ $position + 1 ] ?? null ) )
 			|| WP_MySQL_Lexer::EQUAL_OPERATOR !== ( $tokens[ $position + 2 ]->id ?? null )
 			|| WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== ( $tokens[ $position + 3 ]->id ?? null )
-			|| 'siteurl' !== (string) $tokens[ $position + 3 ]->get_value()
 		) {
 			return null;
 		}

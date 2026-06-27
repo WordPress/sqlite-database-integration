@@ -2839,9 +2839,9 @@ PHP
 	}
 
 	/**
-	 * Tests missing active-prefix options table siteurl probes return an empty install state.
+	 * Tests missing active-prefix options table option probes return an empty install state.
 	 */
-	public function test_query_returns_empty_for_missing_current_prefix_siteurl_install_probe(): void {
+	public function test_query_returns_empty_for_missing_current_prefix_options_install_probes(): void {
 		$result = $this->run_isolated_wpdb_script(
 			<<<'PHP'
 require_once getcwd() . '/bootstrap-postgresql.php';
@@ -2861,19 +2861,6 @@ class wpdb {
 	public $suppress_errors = true;
 	public $show_errors     = false;
 	public $options         = 'wp_e2e_options';
-
-	public function get_var( $query = null, $x = 0, $y = 0 ) {
-		if ( $query ) {
-			$this->query( $query );
-		}
-
-		if ( empty( $this->last_result[ $y ] ) ) {
-			return null;
-		}
-
-		$values = array_values( get_object_vars( $this->last_result[ $y ] ) );
-		return ( isset( $values[ $x ] ) && '' !== $values[ $x ] ) ? $values[ $x ] : null;
-	}
 
 	public function get_caller() {
 		return 'wpdb-install-state-test';
@@ -2963,6 +2950,41 @@ class WP_PostgreSQL_DB_Install_State_Fake_Driver extends WP_PostgreSQL_Driver {
 	}
 }
 
+function wp_postgresql_db_install_probe_result(
+	WP_PostgreSQL_DB $db,
+	WP_PostgreSQL_DB_Install_State_Fake_Driver $driver,
+	WP_PostgreSQL_DB_Install_State_Fake_Connection $connection,
+	string $query,
+	bool $suppress_errors = true
+): array {
+	$driver_query_count  = count( $driver->get_recorded_queries() );
+	$catalog_query_count = count( $connection->get_recorded_queries() );
+	$error_count         = count( $GLOBALS['EZSQL_ERROR'] );
+
+	$db->suppress_errors = $suppress_errors;
+	$return              = $db->query( $query );
+
+	$catalog_queries = array_slice( $connection->get_recorded_queries(), $catalog_query_count );
+
+	return array(
+		'return'               => $return,
+		'last_error'           => $db->last_error,
+		'num_rows'             => $db->num_rows,
+		'last_result'          => array_map( 'get_object_vars', $db->last_result ),
+		'driver_queries'       => array_slice( $driver->get_recorded_queries(), $driver_query_count ),
+		'catalog_query_params' => array_map(
+			static function ( $catalog_query ) {
+				return $catalog_query['params'];
+			},
+			$catalog_queries
+		),
+		'errors'               => array_slice( $GLOBALS['EZSQL_ERROR'], $error_count ),
+	);
+}
+
+global $EZSQL_ERROR;
+$EZSQL_ERROR = array();
+
 $connection = new WP_PostgreSQL_DB_Install_State_Fake_Connection( array( 'wp_options' ) );
 $driver     = new WP_PostgreSQL_DB_Install_State_Fake_Driver( $connection );
 $db         = ( new ReflectionClass( WP_PostgreSQL_DB::class ) )->newInstanceWithoutConstructor();
@@ -2975,58 +2997,135 @@ $db->ready           = true;
 $db->suppress_errors = true;
 $db->options         = 'wp_e2e_options';
 
-$current_prefix_siteurl = $db->get_var( "SELECT option_value FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1" );
-$current_prefix_result  = array(
-	'siteurl'              => $current_prefix_siteurl,
-	'last_error'           => $db->last_error,
-	'num_rows'             => $db->num_rows,
-	'last_result'          => $db->last_result,
-	'driver_queries'       => $driver->get_recorded_queries(),
-	'catalog_query_params' => $connection->get_recorded_queries()[0]['params'] ?? null,
+$missing_queries = array(
+	'siteurl_limit'     => "SELECT option_value FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
+	'home_no_limit'     => "SELECT option_value FROM wp_e2e_options WHERE option_name = 'home'",
+	'permalink_limit'   => "SELECT option_value FROM `wp_e2e_options` WHERE `option_name` = 'permalink_structure' LIMIT 1",
+	'timezone_no_limit' => "SELECT `option_value` FROM `wp_e2e_options` WHERE `option_name` = 'timezone_string'",
 );
 
-$db->options = 'wp_options';
-$existing_prefix_siteurl = $db->get_var( "SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1" );
-$existing_prefix_result  = array(
-	'siteurl'              => $existing_prefix_siteurl,
-	'last_error'           => $db->last_error,
-	'num_rows'             => $db->num_rows,
-	'last_result_value'    => $db->last_result[0]->option_value ?? null,
-	'driver_queries'       => $driver->get_recorded_queries(),
-	'catalog_query_params' => $connection->get_recorded_queries()[1]['params'] ?? null,
+$missing_results = array();
+foreach ( $missing_queries as $name => $query ) {
+	$missing_results[ $name ] = wp_postgresql_db_install_probe_result( $db, $driver, $connection, $query );
+}
+
+$old_prefix_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	"SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1"
+);
+
+$db->options            = 'wp_options';
+$existing_active_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	"SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1"
+);
+
+$db->options = 'wp_e2e_options';
+$near_miss_queries = array(
+	'different_selected_column' => "SELECT option_name FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
+	'different_predicate'       => "SELECT option_value FROM wp_e2e_options WHERE autoload = 'yes' LIMIT 1",
+	'alias'                     => "SELECT option_value FROM wp_e2e_options o WHERE option_name = 'siteurl' LIMIT 1",
+	'join'                      => "SELECT option_value FROM wp_e2e_options INNER JOIN wp_posts ON wp_posts.ID = wp_e2e_options.option_id WHERE option_name = 'siteurl' LIMIT 1",
+);
+
+$near_miss_results = array();
+foreach ( $near_miss_queries as $name => $query ) {
+	$near_miss_results[ $name ] = wp_postgresql_db_install_probe_result( $db, $driver, $connection, $query );
+}
+
+$unsuppressed_result = wp_postgresql_db_install_probe_result(
+	$db,
+	$driver,
+	$connection,
+	"SELECT option_value FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
+	false
 );
 
 wp_postgresql_db_test_respond(
 	array(
-		'current_prefix'  => $current_prefix_result,
-		'existing_prefix' => $existing_prefix_result,
+		'missing_queries'     => $missing_queries,
+		'missing_results'     => $missing_results,
+		'old_prefix_result'   => $old_prefix_result,
+		'existing_active'     => $existing_active_result,
+		'near_miss_queries'   => $near_miss_queries,
+		'near_miss_results'   => $near_miss_results,
+		'unsuppressed_result' => $unsuppressed_result,
 	)
 );
 PHP
 		);
 
+		foreach ( $result['missing_results'] as $name => $case_result ) {
+			$this->assertSame( 0, $case_result['return'], $name );
+			$this->assertSame( '', $case_result['last_error'], $name );
+			$this->assertSame( 0, $case_result['num_rows'], $name );
+			$this->assertSame( array(), $case_result['last_result'], $name );
+			$this->assertSame( array(), $case_result['driver_queries'], $name );
+			$this->assertSame( array( array( 'wp_e2e_options' ) ), $case_result['catalog_query_params'], $name );
+			$this->assertSame( array(), $case_result['errors'], $name );
+		}
+
+		$this->assertSame( 1, $result['old_prefix_result']['return'] );
 		$this->assertSame(
 			array(
-				'siteurl'              => null,
-				'last_error'           => '',
-				'num_rows'             => 0,
-				'last_result'          => array(),
-				'driver_queries'       => array(),
-				'catalog_query_params' => array( 'wp_e2e_options' ),
+				array(
+					'option_value' => 'http://existing.example',
+				),
 			),
-			$result['current_prefix']
+			$result['old_prefix_result']['last_result']
 		);
-		$this->assertSame( 'http://existing.example', $result['existing_prefix']['siteurl'] );
-		$this->assertSame( '', $result['existing_prefix']['last_error'] );
-		$this->assertSame( 1, $result['existing_prefix']['num_rows'] );
-		$this->assertSame( 'http://existing.example', $result['existing_prefix']['last_result_value'] );
 		$this->assertSame(
 			array(
 				"SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1",
 			),
-			$result['existing_prefix']['driver_queries']
+			$result['old_prefix_result']['driver_queries']
 		);
-		$this->assertSame( array( 'wp_options' ), $result['existing_prefix']['catalog_query_params'] );
+		$this->assertSame( array(), $result['old_prefix_result']['catalog_query_params'] );
+
+		$this->assertSame( 1, $result['existing_active']['return'] );
+		$this->assertSame(
+			array(
+				array(
+					'option_value' => 'http://existing.example',
+				),
+			),
+			$result['existing_active']['last_result']
+		);
+		$this->assertSame(
+			array(
+				"SELECT option_value FROM wp_options WHERE option_name = 'siteurl' LIMIT 1",
+			),
+			$result['existing_active']['driver_queries']
+		);
+		$this->assertSame( array( array( 'wp_options' ) ), $result['existing_active']['catalog_query_params'] );
+
+		foreach ( $result['near_miss_results'] as $name => $case_result ) {
+			$this->assertFalse( $case_result['return'], $name );
+			$this->assertSame( 'relation "wp_e2e_options" does not exist', $case_result['last_error'], $name );
+			$this->assertSame( array( $result['near_miss_queries'][ $name ] ), $case_result['driver_queries'], $name );
+			$this->assertSame( array(), $case_result['catalog_query_params'], $name );
+			$this->assertSame( $result['near_miss_queries'][ $name ], $case_result['errors'][0]['query'], $name );
+			$this->assertSame( 'relation "wp_e2e_options" does not exist', $case_result['errors'][0]['error_str'], $name );
+		}
+
+		$this->assertFalse( $result['unsuppressed_result']['return'] );
+		$this->assertSame( 'relation "wp_e2e_options" does not exist', $result['unsuppressed_result']['last_error'] );
+		$this->assertSame(
+			array(
+				"SELECT option_value FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
+			),
+			$result['unsuppressed_result']['driver_queries']
+		);
+		$this->assertSame( array(), $result['unsuppressed_result']['catalog_query_params'] );
+		$this->assertSame(
+			"SELECT option_value FROM wp_e2e_options WHERE option_name = 'siteurl' LIMIT 1",
+			$result['unsuppressed_result']['errors'][0]['query']
+		);
+		$this->assertSame( 'relation "wp_e2e_options" does not exist', $result['unsuppressed_result']['errors'][0]['error_str'] );
 	}
 
 	/**
