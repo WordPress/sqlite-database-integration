@@ -4567,6 +4567,11 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			if ( $this->is_alter_table_add_primary_key_item( $alter_item ) ) {
+				$result = $this->execute_alter_table_add_primary_key( $table_name, $alter_item, $temporary );
+				continue;
+			}
+
 			$result = $this->is_create_table_index_item( $alter_item )
 				? $this->execute_alter_table_add_index( $table_name, $alter_item, $temporary )
 				: $this->execute_alter_table_add_column( $table_name, $alter_item, $temporary );
@@ -4593,6 +4598,9 @@ class WP_DuckDB_Driver {
 			}
 			if ( $this->is_alter_table_foreign_key_rebuild_action( $table_name, $action, $temporary ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions.' );
+			}
+			if ( $this->is_alter_table_add_primary_key_action( $action ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD PRIMARY KEY cannot be combined with other ALTER TABLE actions.' );
 			}
 			if ( $this->is_alter_table_drop_primary_key_action( $action ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP PRIMARY KEY cannot be combined with other ALTER TABLE actions.' );
@@ -4809,6 +4817,7 @@ class WP_DuckDB_Driver {
 		$items                = $this->alter_table_add_items_for_constraint_detection( $tokens );
 		$contains_check       = false;
 		$contains_foreign_key = false;
+		$contains_primary_key = false;
 		foreach ( $items as $item ) {
 			if ( $this->is_create_table_check_constraint( $item ) ) {
 				$contains_check = true;
@@ -4816,17 +4825,28 @@ class WP_DuckDB_Driver {
 			if ( $this->is_create_table_foreign_key_constraint( $item ) ) {
 				$contains_foreign_key = true;
 			}
+			if ( $this->is_table_primary_key_item( $item ) ) {
+				$contains_primary_key = true;
+			}
 		}
 
-		if ( $contains_check || $contains_foreign_key ) {
+		if ( $contains_check || $contains_foreign_key || $contains_primary_key ) {
 			$parenthesized_end = count( $tokens );
 			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id ) {
 				list( , $parenthesized_end ) = $this->collect_parenthesized_items( $tokens, 1 );
 			}
 
-			if ( 1 !== count( $items ) || count( $tokens ) !== $parenthesized_end || ( $contains_check && $contains_foreign_key ) ) {
+			if (
+				1 !== count( $items )
+				|| count( $tokens ) !== $parenthesized_end
+				|| ( $contains_check && $contains_foreign_key )
+				|| ( $contains_primary_key && ( $contains_check || $contains_foreign_key ) )
+			) {
 				if ( $contains_foreign_key && ! $contains_check ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD FOREIGN KEY constraint is supported.' );
+				}
+				if ( $contains_primary_key && ! $contains_check && ! $contains_foreign_key ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD PRIMARY KEY constraint is supported.' );
 				}
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD CHECK constraint is supported.' );
 			}
@@ -4846,6 +4866,12 @@ class WP_DuckDB_Driver {
 				$foreign_key          = $this->translate_table_foreign_key_constraint( $table_name, $item, $foreign_key_names );
 				$foreign_key_metadata = $foreign_key['metadata'];
 				$this->assert_alter_table_foreign_key_rebuild_supported( $table_name, $foreign_key_metadata, 'ADD/DROP FOREIGN KEY', $temporary, true );
+				continue;
+			}
+
+			if ( $this->is_table_primary_key_item( $item ) ) {
+				$primary_key_columns = $this->alter_table_primary_key_columns( $item );
+				$this->assert_alter_table_add_primary_key_supported( $table_name, $primary_key_columns, $temporary );
 				continue;
 			}
 
@@ -4889,6 +4915,63 @@ class WP_DuckDB_Driver {
 
 		list( $items, ) = $this->collect_parenthesized_items( $tokens, 1 );
 		return $items;
+	}
+
+	/**
+	 * Check whether an ALTER TABLE action adds a PRIMARY KEY.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens.
+	 * @return bool Whether this is ADD PRIMARY KEY.
+	 */
+	private function is_alter_table_add_primary_key_action( array $tokens ): bool {
+		return isset( $tokens[0] )
+			&& WP_MySQL_Lexer::ADD_SYMBOL === $tokens[0]->id
+			&& $this->is_alter_table_add_primary_key_item( array_slice( $tokens, 1 ) );
+	}
+
+	/**
+	 * Check whether ADD action tokens contain a supported PRIMARY KEY item.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 * @return bool Whether this is ADD PRIMARY KEY.
+	 */
+	private function is_alter_table_add_primary_key_item( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		if ( $this->is_table_primary_key_item( $tokens ) ) {
+			return true;
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		list( $items, $index ) = $this->collect_parenthesized_items( $tokens, 1 );
+		return 1 === count( $items )
+			&& count( $tokens ) === $index
+			&& $this->is_table_primary_key_item( $items[0] );
+	}
+
+	/**
+	 * Check whether tokens start with a table-level PRIMARY KEY item.
+	 *
+	 * @param WP_Parser_Token[] $tokens Item tokens.
+	 * @return bool Whether this is a table-level PRIMARY KEY.
+	 */
+	private function is_table_primary_key_item( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[0]->id ) {
+			return true;
+		}
+
+		return isset( $tokens[2] )
+			&& WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::PRIMARY_SYMBOL === $tokens[2]->id;
 	}
 
 	/**
@@ -5144,6 +5227,186 @@ class WP_DuckDB_Driver {
 				return $this->empty_ddl_result();
 			}
 		);
+	}
+
+	/**
+	 * Execute ALTER TABLE ... ADD PRIMARY KEY.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens after ADD.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_add_primary_key( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$item                = $this->single_alter_table_add_primary_key_item( $tokens );
+		$primary_key_columns = $this->alter_table_primary_key_columns( $item );
+		$this->assert_alter_table_add_primary_key_supported( $table_name, $primary_key_columns, $temporary );
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $table_name, $primary_key_columns, $temporary ): WP_DuckDB_Result_Statement {
+				$this->rebuild_table_from_metadata_plan(
+					$table_name,
+					$this->column_metadata_rows_with_primary_key_not_null(
+						$this->table_column_metadata_rows( $table_name, $temporary ),
+						$primary_key_columns
+					),
+					$primary_key_columns,
+					$this->secondary_index_definitions_for_table( $table_name, $temporary ),
+					$this->check_constraint_metadata_rows( $table_name, $temporary ),
+					$this->show_create_table_foreign_key_groups( $table_name, $temporary ),
+					$this->table_auto_increment_value( $table_name, $temporary ),
+					'ADD PRIMARY KEY',
+					$temporary
+				);
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
+	 * Return the single PRIMARY KEY item from a supported ALTER TABLE ... ADD PRIMARY KEY action.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 * @return WP_Parser_Token[] PRIMARY KEY constraint tokens.
+	 */
+	private function single_alter_table_add_primary_key_item( array $tokens ): array {
+		if ( ! isset( $tokens[0] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD PRIMARY KEY requires a PRIMARY KEY constraint.' );
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[0]->id ) {
+			return $tokens;
+		}
+
+		list( $items, $index ) = $this->collect_parenthesized_items( $tokens, 1 );
+		if ( 1 !== count( $items ) || count( $tokens ) !== $index || ! $this->is_table_primary_key_item( $items[0] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD PRIMARY KEY constraint is supported.' );
+		}
+
+		return $items[0];
+	}
+
+	/**
+	 * Read ALTER TABLE ADD PRIMARY KEY columns, accepting optional CONSTRAINT name.
+	 *
+	 * @param WP_Parser_Token[] $tokens PRIMARY KEY item tokens.
+	 * @return string[] Primary key column names.
+	 */
+	private function alter_table_primary_key_columns( array $tokens ): array {
+		if ( isset( $tokens[0] ) && WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[0]->id ) {
+			$this->identifier_value( $tokens[1] ?? null );
+			$tokens = array_slice( $tokens, 2 );
+		}
+
+		return $this->table_primary_key_columns( $tokens );
+	}
+
+	/**
+	 * Mark planned PRIMARY KEY columns as NOT NULL in MySQL-facing metadata.
+	 *
+	 * @param array<int,array<string,mixed>> $metadata            Column metadata rows.
+	 * @param string[]                      $primary_key_columns Primary key columns.
+	 * @return array<int,array<string,mixed>> Updated column metadata rows.
+	 */
+	private function column_metadata_rows_with_primary_key_not_null( array $metadata, array $primary_key_columns ): array {
+		$primary_key_map = array();
+		foreach ( $primary_key_columns as $column_name ) {
+			$primary_key_map[ strtolower( $column_name ) ] = true;
+		}
+
+		foreach ( $metadata as &$column ) {
+			if ( isset( $primary_key_map[ strtolower( (string) $column['column_name'] ) ] ) ) {
+				$column['is_nullable'] = 'NO';
+			}
+		}
+		unset( $column );
+
+		return $metadata;
+	}
+
+	/**
+	 * Validate ALTER TABLE ... ADD PRIMARY KEY before mutation.
+	 *
+	 * @param string   $table_name          Table name.
+	 * @param string[] $primary_key_columns Planned primary key columns.
+	 * @param bool     $temporary           Whether the target is a temporary table.
+	 */
+	private function assert_alter_table_add_primary_key_supported( string $table_name, array $primary_key_columns, bool $temporary = false ): void {
+		$this->assert_no_active_transaction_for_table_rebuild( 'ADD PRIMARY KEY' );
+		if ( count( $primary_key_columns ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported PRIMARY KEY constraint in DuckDB driver.' );
+		}
+		if ( count( $this->primary_key_index_rows( $table_name ) ) > 0 ) {
+			throw new WP_DuckDB_Driver_Exception( "Duplicate primary key on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+		$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'ADD PRIMARY KEY', $temporary );
+
+		$metadata_by_column = array();
+		foreach ( $this->table_column_metadata_rows( $table_name, $temporary ) as $column ) {
+			$metadata_by_column[ strtolower( (string) $column['column_name'] ) ] = $column;
+		}
+
+		$seen_columns = array();
+		foreach ( $primary_key_columns as $column_name ) {
+			$normalized_column_name = strtolower( $column_name );
+			if ( isset( $seen_columns[ $normalized_column_name ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Duplicate column name '{$column_name}' in PRIMARY KEY constraint." );
+			}
+			$seen_columns[ $normalized_column_name ] = true;
+
+			if ( ! isset( $metadata_by_column[ $normalized_column_name ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Unknown column '{$column_name}' on table '{$this->database}.{$table_name}' in PRIMARY KEY constraint." );
+			}
+		}
+
+		$this->assert_alter_table_add_primary_key_existing_rows_valid( $table_name, $primary_key_columns );
+	}
+
+	/**
+	 * Validate existing rows before adding a PRIMARY KEY.
+	 *
+	 * @param string   $table_name          Table name.
+	 * @param string[] $primary_key_columns Planned primary key columns.
+	 */
+	private function assert_alter_table_add_primary_key_existing_rows_valid( string $table_name, array $primary_key_columns ): void {
+		$null_predicates = array_map(
+			function ( string $column_name ): string {
+				return $this->connection->quote_identifier( $column_name ) . ' IS NULL';
+			},
+			$primary_key_columns
+		);
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT 1 FROM '
+				. $this->connection->quote_identifier( $table_name )
+				. ' WHERE '
+				. implode( ' OR ', $null_predicates )
+				. ' LIMIT 1',
+			'Failed to validate existing DuckDB PRIMARY KEY rows'
+		);
+		if ( false !== $stmt->fetch( PDO::FETCH_NUM ) ) {
+			throw new WP_DuckDB_Driver_Exception( "Cannot add PRIMARY KEY on table '{$this->database}.{$table_name}' because existing rows contain NULL values." );
+		}
+
+		$quoted_columns = array_map(
+			function ( string $column_name ): string {
+				return $this->connection->quote_identifier( $column_name );
+			},
+			$primary_key_columns
+		);
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT 1 FROM '
+				. $this->connection->quote_identifier( $table_name )
+				. ' GROUP BY '
+				. implode( ', ', $quoted_columns )
+				. ' HAVING COUNT(*) > 1 LIMIT 1',
+			'Failed to validate existing DuckDB PRIMARY KEY rows'
+		);
+		if ( false !== $stmt->fetch( PDO::FETCH_NUM ) ) {
+			throw new WP_DuckDB_Driver_Exception( "Cannot add PRIMARY KEY on table '{$this->database}.{$table_name}' because existing rows contain duplicate key values." );
+		}
 	}
 
 	/**

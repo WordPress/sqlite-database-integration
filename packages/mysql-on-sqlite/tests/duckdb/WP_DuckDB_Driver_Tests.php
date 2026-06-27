@@ -7218,6 +7218,309 @@ SQL,
 		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_tx' ) );
 	}
 
+	public function test_alter_table_add_primary_key_rebuilds_table_metadata_and_enforcement(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE add_pk_direct (
+				id INT,
+				name VARCHAR(20) NOT NULL,
+				amount INT,
+				UNIQUE KEY name_unique (name),
+				KEY amount_idx (amount),
+				CONSTRAINT amount_positive CHECK (amount > 0)
+			)'
+		);
+		$driver->query( "INSERT INTO add_pk_direct (id, name, amount) VALUES (1, 'a', 10), (2, 'b', 20)" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE add_pk_direct ADD PRIMARY KEY (id)' )->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'name'   => 'a',
+					'amount' => 10,
+				),
+				array(
+					'id'     => 2,
+					'name'   => 'b',
+					'amount' => 20,
+				),
+			),
+			$driver->query( 'SELECT id, name, amount FROM add_pk_direct ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$columns = $driver->query( 'SHOW COLUMNS FROM add_pk_direct' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( 'PRI', array_column( $columns, 'Key', 'Field' )['id'] );
+		$this->assertSame( 'NO', array_column( $columns, 'Null', 'Field' )['id'] );
+		$this->assertSame( 'UNI', array_column( $columns, 'Key', 'Field' )['name'] );
+		$this->assertSame( 'MUL', array_column( $columns, 'Key', 'Field' )['amount'] );
+
+		$index_rows = $driver->query( 'SHOW INDEX FROM add_pk_direct' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertContains( 'PRIMARY', array_column( $index_rows, 'Key_name' ) );
+		$this->assertContains( 'name_unique', array_column( $index_rows, 'Key_name' ) );
+		$this->assertContains( 'amount_idx', array_column( $index_rows, 'Key_name' ) );
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE add_pk_direct' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringContainsString( 'PRIMARY KEY (`id`)', $create_sql );
+		$this->assertStringContainsString( 'UNIQUE KEY `name_unique` (`name`)', $create_sql );
+		$this->assertStringContainsString( 'KEY `amount_idx` (`amount`)', $create_sql );
+		$this->assertStringContainsString( 'CONSTRAINT `amount_positive` CHECK (amount > 0)', $create_sql );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'PRIMARY',
+					'CONSTRAINT_TYPE' => 'PRIMARY KEY',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp'
+					AND table_name = 'add_pk_direct'
+					AND constraint_name = 'PRIMARY'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'  => 'PRIMARY',
+					'COLUMN_NAME'      => 'id',
+					'ORDINAL_POSITION' => 1,
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp'
+					AND table_name = 'add_pk_direct'
+					AND constraint_name = 'PRIMARY'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'INDEX_NAME'  => 'PRIMARY',
+					'COLUMN_NAME' => 'id',
+					'NON_UNIQUE'  => 0,
+				),
+			),
+			$driver->query(
+				"SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp'
+					AND table_name = 'add_pk_direct'
+					AND index_name = 'PRIMARY'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		foreach (
+			array(
+				"INSERT INTO add_pk_direct (id, name, amount) VALUES (1, 'duplicate', 30)",
+				"INSERT INTO add_pk_direct (id, name, amount) VALUES (NULL, 'null-id', 30)",
+				"UPDATE add_pk_direct SET id = 1 WHERE name = 'b'",
+				"UPDATE add_pk_direct SET id = NULL WHERE name = 'b'",
+				"INSERT INTO add_pk_direct (id, name, amount) VALUES (3, 'a', 30)",
+				"INSERT INTO add_pk_direct (id, name, amount) VALUES (4, 'd', 0)",
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected added PRIMARY KEY, secondary UNIQUE, or CHECK enforcement to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( 'Failed to execute DuckDB', $e->getMessage() );
+			}
+		}
+	}
+
+	public function test_alter_table_add_composite_primary_key_supports_named_constraints(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE add_pk_composite (site_id INT NOT NULL, option_id INT NOT NULL, label VARCHAR(20))' );
+		$driver->query( "INSERT INTO add_pk_composite (site_id, option_id, label) VALUES (1, 1, 'a'), (1, 2, 'b')" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE add_pk_composite ADD CONSTRAINT ignored_name PRIMARY KEY (site_id, option_id)' )->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'Key_name'     => 'PRIMARY',
+					'Seq_in_index' => 1,
+					'Column_name'  => 'site_id',
+				),
+				array(
+					'Key_name'     => 'PRIMARY',
+					'Seq_in_index' => 2,
+					'Column_name'  => 'option_id',
+				),
+			),
+			array_map(
+				function ( array $row ): array {
+					return array(
+						'Key_name'     => $row['Key_name'],
+						'Seq_in_index' => $row['Seq_in_index'],
+						'Column_name'  => $row['Column_name'],
+					);
+				},
+				$driver->query( 'SHOW INDEX FROM add_pk_composite' )->fetchAll( PDO::FETCH_ASSOC )
+			)
+		);
+		$this->assertStringContainsString(
+			'PRIMARY KEY (`site_id`, `option_id`)',
+			$driver->query( 'SHOW CREATE TABLE add_pk_composite' )->fetch( PDO::FETCH_ASSOC )['Create Table']
+		);
+
+		try {
+			$driver->query( "INSERT INTO add_pk_composite (site_id, option_id, label) VALUES (1, 1, 'duplicate')" );
+			$this->fail( 'Expected composite PRIMARY KEY to reject duplicate rows.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_add_primary_key_rejects_invalid_existing_state_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE add_pk_duplicate (id INT, name VARCHAR(20), KEY name_idx (name))' );
+		$driver->query( "INSERT INTO add_pk_duplicate (id, name) VALUES (1, 'a'), (1, 'b')" );
+		$driver->query( 'CREATE TABLE add_pk_null (id INT, name VARCHAR(20), KEY name_idx (name))' );
+		$driver->query( "INSERT INTO add_pk_null (id, name) VALUES (1, 'a'), (NULL, 'b')" );
+		$driver->query( 'CREATE TABLE add_pk_existing (id INT PRIMARY KEY, name VARCHAR(20))' );
+		$driver->query( "INSERT INTO add_pk_existing (id, name) VALUES (1, 'a')" );
+
+		foreach (
+			array(
+				'add_pk_duplicate' => array(
+					'sql'     => 'ALTER TABLE add_pk_duplicate ADD PRIMARY KEY (id)',
+					'message' => 'duplicate key values',
+				),
+				'add_pk_null'      => array(
+					'sql'     => 'ALTER TABLE add_pk_null ADD PRIMARY KEY (id)',
+					'message' => 'NULL values',
+				),
+				'add_pk_existing'  => array(
+					'sql'     => 'ALTER TABLE add_pk_existing ADD PRIMARY KEY (name)',
+					'message' => 'Duplicate primary key',
+				),
+				'add_pk_missing'   => array(
+					'sql'     => 'ALTER TABLE add_pk_duplicate ADD PRIMARY KEY (missing_id)',
+					'message' => "Unknown column 'missing_id'",
+				),
+			) as $table_name => $case
+		) {
+			$snapshot_table = 'add_pk_missing' === $table_name ? 'add_pk_duplicate' : $table_name;
+			$before         = $this->alter_table_check_lifecycle_snapshot( $driver, $snapshot_table );
+
+			try {
+				$driver->query( $case['sql'] );
+				$this->fail( 'Expected invalid ADD PRIMARY KEY state to reject SQL: ' . $case['sql'] );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $case['message'], $e->getMessage() );
+			}
+
+			$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, $snapshot_table ) );
+		}
+	}
+
+	public function test_alter_table_add_primary_key_rejects_active_transaction_and_multi_action_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE add_pk_guard (id INT NOT NULL, name VARCHAR(20))' );
+		$driver->query( "INSERT INTO add_pk_guard (id, name) VALUES (1, 'a')" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'add_pk_guard' );
+
+		$driver->query( 'BEGIN' );
+		try {
+			$driver->query( 'ALTER TABLE add_pk_guard ADD PRIMARY KEY (id)' );
+			$this->fail( 'Expected active transaction ADD PRIMARY KEY rebuild rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'ADD PRIMARY KEY cannot run inside an active DuckDB transaction', $e->getMessage() );
+		}
+		$driver->query( 'ROLLBACK' );
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'add_pk_guard' ) );
+
+		foreach (
+			array(
+				'ALTER TABLE add_pk_guard ADD PRIMARY KEY (id), ADD COLUMN should_not_exist INT',
+				'ALTER TABLE add_pk_guard ADD COLUMN should_not_exist INT, ADD PRIMARY KEY (id)',
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected multi-action ADD PRIMARY KEY rejection for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( 'ADD PRIMARY KEY cannot be combined with other ALTER TABLE actions', $e->getMessage() );
+			}
+
+			$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'add_pk_guard' ) );
+		}
+	}
+
+	public function test_alter_table_add_primary_key_targets_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE add_pk_shadow (id INT, label VARCHAR(20))' );
+		$driver->query( "INSERT INTO add_pk_shadow (id, label) VALUES (1, 'persistent')" );
+		$driver->query( 'CREATE TEMPORARY TABLE add_pk_shadow (id INT, label VARCHAR(20))' );
+		$driver->query( "INSERT INTO add_pk_shadow (id, label) VALUES (2, 'temporary')" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE add_pk_shadow ADD PRIMARY KEY (id)' )->rowCount() );
+		$this->assertContains( 'PRIMARY', array_column( $driver->query( 'SHOW INDEX FROM add_pk_shadow' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' ) );
+
+		try {
+			$driver->query( "INSERT INTO add_pk_shadow (id, label) VALUES (2, 'duplicate-temp')" );
+			$this->fail( 'Expected temporary shadow table PRIMARY KEY to reject duplicate rows.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		$driver->query( 'DROP TEMPORARY TABLE add_pk_shadow' );
+		$this->assertNotContains( 'PRIMARY', array_column( $driver->query( 'SHOW INDEX FROM add_pk_shadow' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' ) );
+		$this->assertSame(
+			array(
+				array(
+					'id'    => 1,
+					'label' => 'persistent',
+				),
+			),
+			$driver->query( 'SELECT id, label FROM add_pk_shadow ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_alter_table_drop_primary_key_preserves_rows_metadata_and_secondary_enforcement(): void {
 		$this->requireDuckDBRuntime();
 
