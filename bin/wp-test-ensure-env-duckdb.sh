@@ -117,12 +117,12 @@ start_wordpress_environment() {
 verify_service_ffi() {
 	local service="$1"
 
-	if ! ( cd "$WP_DIR" && docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm "$service" php -m ) | grep -qi '^FFI$'; then
+	if ! ( cd "$WP_DIR" && docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm "$service" php -r 'exit( extension_loaded( "ffi" ) ? 0 : 1 );' ); then
 		echo "Error: PHP FFI extension is not loaded in the WordPress $service container." >&2
 		exit 1
 	fi
 
-	if ! ( cd "$WP_DIR" && docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm "$service" php -i ) | grep -Eiq '^ffi\.enable => (1|on|true) => (1|on|true)$'; then
+	if ! ( cd "$WP_DIR" && docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm "$service" php -r '$value = strtolower( (string) ini_get( "ffi.enable" ) ); exit( in_array( $value, array( "1", "on", "true" ), true ) ? 0 : 1 );' ); then
 		echo "Error: PHP FFI is not enabled in the WordPress $service container." >&2
 		exit 1
 	fi
