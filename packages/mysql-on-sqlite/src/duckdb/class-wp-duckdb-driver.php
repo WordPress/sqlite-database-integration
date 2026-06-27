@@ -475,11 +475,8 @@ class WP_DuckDB_Driver {
 	 * @throws WP_DuckDB_Driver_Exception When parsing fails or multiple statements are supplied.
 	 */
 	private function tokenize_and_validate( string $query ): array {
-		$lexer      = new WP_MySQL_Lexer( $query, $this->mysql_version );
-		$raw_tokens = class_exists( 'WP_MySQL_Native_Lexer', false ) && $lexer instanceof WP_MySQL_Native_Lexer
-			? $lexer->native_token_stream()
-			: $lexer->remaining_tokens();
-		$tokens     = is_array( $raw_tokens ) ? array_values( $raw_tokens ) : array_values( iterator_to_array( $raw_tokens ) );
+		$lexer  = new WP_MySQL_Lexer( $query, $this->mysql_version );
+		$tokens = $this->lexer_tokens_to_array( $lexer );
 
 		$this->assert_single_statement( $tokens );
 		$this->parse_tokens( $tokens );
@@ -499,13 +496,29 @@ class WP_DuckDB_Driver {
 	 * @return WP_Parser_Token[]
 	 */
 	private function tokenize_fragment( string $fragment ): array {
-		$lexer      = new WP_MySQL_Lexer( $fragment, $this->mysql_version );
-		$raw_tokens = class_exists( 'WP_MySQL_Native_Lexer', false ) && $lexer instanceof WP_MySQL_Native_Lexer
-			? $lexer->native_token_stream()
-			: $lexer->remaining_tokens();
-		$tokens     = is_array( $raw_tokens ) ? array_values( $raw_tokens ) : array_values( iterator_to_array( $raw_tokens ) );
+		$lexer  = new WP_MySQL_Lexer( $fragment, $this->mysql_version );
+		$tokens = $this->lexer_tokens_to_array( $lexer );
 
 		return array_values( $this->without_eof( $tokens ) );
+	}
+
+	/**
+	 * Get lexer tokens as a PHP array.
+	 *
+	 * @param WP_MySQL_Lexer $lexer MySQL lexer.
+	 * @return WP_Parser_Token[]
+	 */
+	private function lexer_tokens_to_array( WP_MySQL_Lexer $lexer ): array {
+		$tokens = $lexer->remaining_tokens();
+		if ( is_array( $tokens ) ) {
+			return array_values( $tokens );
+		}
+
+		if ( $tokens instanceof Traversable ) {
+			return array_values( iterator_to_array( $tokens ) );
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'DuckDB driver could not tokenize MySQL statement.' );
 	}
 
 	/**

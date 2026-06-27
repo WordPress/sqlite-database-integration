@@ -540,14 +540,14 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	 */
 	private function assert_valid_column_index( int $column ): void {
 		if ( $column < 0 ) {
-			if ( class_exists( 'ValueError' ) ) {
+			if ( PHP_VERSION_ID >= 80000 ) {
 				throw new ValueError( 'Column index must be greater than or equal to 0' );
 			}
 			throw new PDOException( 'Invalid column index' );
 		}
 
 		if ( $column >= count( $this->columns ) ) {
-			if ( class_exists( 'ValueError' ) ) {
+			if ( PHP_VERSION_ID >= 80000 ) {
 				throw new ValueError( 'Invalid column index' );
 			}
 			throw new PDOException( 'Invalid column index' );
