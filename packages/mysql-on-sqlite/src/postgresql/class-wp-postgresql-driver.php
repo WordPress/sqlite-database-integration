@@ -915,8 +915,10 @@ class WP_PostgreSQL_Driver {
 			$this->last_column_count               = $column_count;
 			$this->last_column_meta_statement      = $stmt;
 			$this->last_column_meta_excluded_names = array();
-			$this->last_result                     = $this->decode_postgresql_text_for_mysql_in_result(
-				$stmt->fetchAll( $fetch_mode, ...$fetch_mode_args )
+			$this->last_result                     = $this->fetch_and_decode_postgresql_result_rows(
+				$stmt,
+				$fetch_mode,
+				$fetch_mode_args
 			);
 			if ( $sql_calc_found_rows_window ) {
 				$found_rows = $this->extract_sql_calc_found_rows_window_result( $this->last_result );
@@ -1683,6 +1685,41 @@ class WP_PostgreSQL_Driver {
 			}
 			unset( $cache[ $first_key ] );
 		}
+	}
+	private function fetch_and_decode_postgresql_result_rows( PDOStatement $stmt, $fetch_mode, array $fetch_mode_args ): array {
+		if ( ! $this->can_fetch_postgresql_result_rows_incrementally( $fetch_mode, $fetch_mode_args ) ) {
+			return $this->decode_postgresql_text_for_mysql_in_result(
+				$stmt->fetchAll( $fetch_mode, ...$fetch_mode_args )
+			);
+		}
+
+		$rows = array();
+		while ( false !== ( $row = $stmt->fetch( $fetch_mode ) ) ) {
+			$rows[] = $this->decode_postgresql_text_for_mysql_in_result( $row );
+		}
+		return $rows;
+	}
+	private function can_fetch_postgresql_result_rows_incrementally( $fetch_mode, array $fetch_mode_args ): bool {
+		if ( ! empty( $fetch_mode_args ) ) {
+			return false;
+		}
+
+		$fetch_mode       = (int) $fetch_mode;
+		$base_fetch_style = $fetch_mode & self::PDO_FETCH_STYLE_MASK;
+		if ( $fetch_mode !== $base_fetch_style ) {
+			return false;
+		}
+
+		return in_array(
+			$base_fetch_style,
+			array(
+				PDO::FETCH_OBJ,
+				PDO::FETCH_ASSOC,
+				PDO::FETCH_NUM,
+				PDO::FETCH_BOTH,
+			),
+			true
+		);
 	}
 	private function decode_postgresql_text_for_mysql_in_result( $value ) {
 		if ( is_string( $value ) ) {
