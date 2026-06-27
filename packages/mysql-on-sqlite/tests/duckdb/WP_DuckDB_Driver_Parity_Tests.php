@@ -3134,6 +3134,57 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_alias_storage_type_family_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE alias_storage_types (
+					id INT PRIMARY KEY,
+					real_col REAL,
+					dec_col DEC,
+					dec_ps_col DEC(10,2),
+					fixed_col FIXED,
+					binary_col BINARY,
+					binary_len_col BINARY(8),
+					varbinary_col VARBINARY(16)
+				)',
+				"INSERT INTO alias_storage_types
+					(id, real_col, dec_col, dec_ps_col, fixed_col, binary_col, binary_len_col, varbinary_col)
+				VALUES
+					(1, '3.5', '4', 5.25, '6', B'01000001', 0x6263, x'646566')",
+			)
+		);
+
+		$this->assertParityRows( 'SHOW COLUMNS FROM alias_storage_types' );
+		$this->assertParityRows( 'SHOW FULL COLUMNS FROM alias_storage_types' );
+		$this->assertParityRows( 'DESCRIBE alias_storage_types' );
+		$this->assertParityRows( 'SHOW CREATE TABLE alias_storage_types' );
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+				CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
+				CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name = 'alias_storage_types'
+			ORDER BY ordinal_position"
+		);
+		$this->assertParityRows(
+			'SELECT id,
+				CAST(real_col * 10 AS SIGNED) AS real_x10,
+				CAST(dec_col AS SIGNED) AS dec_int,
+				CAST(dec_ps_col * 100 AS SIGNED) AS dec_ps_cents,
+				CAST(fixed_col AS SIGNED) AS fixed_int
+			FROM alias_storage_types
+			ORDER BY id'
+		);
+		$this->assertParityRows(
+			'SELECT LOWER(HEX(binary_col)) AS binary_hex,
+				LOWER(HEX(binary_len_col)) AS binary_len_hex,
+				LOWER(HEX(varbinary_col)) AS varbinary_hex
+			FROM alias_storage_types
+			ORDER BY id'
+		);
+	}
+
 	public function test_information_schema_statistics_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

@@ -72,7 +72,10 @@ class WP_DuckDB_Driver {
 		WP_MySQL_Lexer::BIGINT_SYMBOL     => 'BIGINT',
 		WP_MySQL_Lexer::FLOAT_SYMBOL      => 'FLOAT',
 		WP_MySQL_Lexer::DOUBLE_SYMBOL     => 'DOUBLE',
+		WP_MySQL_Lexer::REAL_SYMBOL       => 'DOUBLE',
 		WP_MySQL_Lexer::DECIMAL_SYMBOL    => 'DECIMAL',
+		WP_MySQL_Lexer::DEC_SYMBOL        => 'DECIMAL',
+		WP_MySQL_Lexer::FIXED_SYMBOL      => 'DECIMAL',
 		WP_MySQL_Lexer::NUMERIC_SYMBOL    => 'DECIMAL',
 		WP_MySQL_Lexer::CHAR_SYMBOL       => 'VARCHAR',
 		WP_MySQL_Lexer::VARCHAR_SYMBOL    => 'VARCHAR',
@@ -88,6 +91,8 @@ class WP_DuckDB_Driver {
 		WP_MySQL_Lexer::TINYBLOB_SYMBOL   => 'BLOB',
 		WP_MySQL_Lexer::MEDIUMBLOB_SYMBOL => 'BLOB',
 		WP_MySQL_Lexer::LONGBLOB_SYMBOL   => 'BLOB',
+		WP_MySQL_Lexer::BINARY_SYMBOL     => 'BLOB',
+		WP_MySQL_Lexer::VARBINARY_SYMBOL  => 'BLOB',
 	);
 
 	const TEMPORAL_IMPLICIT_DEFAULT_MAP = array(
@@ -10302,7 +10307,81 @@ class WP_DuckDB_Driver {
 			break;
 		}
 
-		return strtolower( $this->join_sql_pieces( $pieces ) );
+		return $this->canonical_mysql_column_type(
+			strtolower( $this->join_sql_pieces( $pieces ) ),
+			$tokens[ $type_index ]
+		);
+	}
+
+	/**
+	 * Canonicalize MySQL-facing column types to match SQLite driver metadata.
+	 *
+	 * @param string          $column_type MySQL-facing column type.
+	 * @param WP_Parser_Token $type_token  Type token.
+	 * @return string Canonical column type.
+	 */
+	private function canonical_mysql_column_type( string $column_type, WP_Parser_Token $type_token ): string {
+		$column_type = preg_replace( '/,\s+/', ',', $column_type );
+		if ( null === $column_type ) {
+			$column_type = '';
+		}
+
+		switch ( $type_token->id ) {
+			case WP_MySQL_Lexer::REAL_SYMBOL:
+				return $this->mysql_column_type_with_base( $column_type, 'double' );
+
+			case WP_MySQL_Lexer::DECIMAL_SYMBOL:
+			case WP_MySQL_Lexer::DEC_SYMBOL:
+			case WP_MySQL_Lexer::NUMERIC_SYMBOL:
+			case WP_MySQL_Lexer::FIXED_SYMBOL:
+				return $this->mysql_column_type_with_default_attributes(
+					$this->mysql_column_type_with_base( $column_type, 'decimal' ),
+					'(10,0)'
+				);
+
+			case WP_MySQL_Lexer::BINARY_SYMBOL:
+				return $this->mysql_column_type_with_default_attributes(
+					$this->mysql_column_type_with_base( $column_type, 'binary' ),
+					'(1)'
+				);
+
+			case WP_MySQL_Lexer::VARBINARY_SYMBOL:
+				return $this->mysql_column_type_with_base( $column_type, 'varbinary' );
+		}
+
+		return $column_type;
+	}
+
+	/**
+	 * Replace the leading type name in a MySQL column type.
+	 *
+	 * @param string $column_type MySQL-facing column type.
+	 * @param string $base_type   Canonical base type.
+	 * @return string Column type with canonical base.
+	 */
+	private function mysql_column_type_with_base( string $column_type, string $base_type ): string {
+		$canonical = preg_replace( '/^[a-z]+/', $base_type, $column_type, 1 );
+		return null === $canonical ? $column_type : $canonical;
+	}
+
+	/**
+	 * Add default type attributes before unsigned/zerofill modifiers.
+	 *
+	 * @param string $column_type MySQL-facing column type.
+	 * @param string $attributes  Default attributes, including parentheses.
+	 * @return string Column type with default attributes when absent.
+	 */
+	private function mysql_column_type_with_default_attributes( string $column_type, string $attributes ): string {
+		if ( false !== strpos( $column_type, '(' ) ) {
+			return $column_type;
+		}
+
+		if ( preg_match( '/\s+(?:unsigned|zerofill)\b/', $column_type, $matches, PREG_OFFSET_CAPTURE ) ) {
+			$offset = $matches[0][1];
+			return substr( $column_type, 0, $offset ) . $attributes . substr( $column_type, $offset );
+		}
+
+		return $column_type . $attributes;
 	}
 
 	/**
@@ -13658,7 +13737,7 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the type is blob-backed.
 	 */
 	private function is_blob_write_data_type( string $data_type ): bool {
-		return in_array( $data_type, array( 'blob', 'tinyblob', 'mediumblob', 'longblob' ), true );
+		return in_array( $data_type, array( 'binary', 'varbinary', 'blob', 'tinyblob', 'mediumblob', 'longblob' ), true );
 	}
 
 	/**
@@ -18293,6 +18372,9 @@ class WP_DuckDB_Driver {
 		if ( in_array( $data_type, array( 'char', 'varchar' ), true ) ) {
 			$char_length  = $length ?? 1;
 			$octet_length = $char_length * $this->charset_max_bytes( $charset );
+		} elseif ( in_array( $data_type, array( 'binary', 'varbinary' ), true ) ) {
+			$char_length  = $length ?? 1;
+			$octet_length = $char_length;
 		} elseif ( 'tinytext' === $data_type || 'tinyblob' === $data_type ) {
 			$char_length  = 255;
 			$octet_length = 255;
@@ -18335,6 +18417,10 @@ class WP_DuckDB_Driver {
 		$map = array(
 			'integer' => 'int',
 			'boolean' => 'tinyint',
+			'real'    => 'double',
+			'dec'     => 'decimal',
+			'fixed'   => 'decimal',
+			'numeric' => 'decimal',
 		);
 
 		return $map[ $data_type ] ?? $data_type;
@@ -18368,12 +18454,18 @@ class WP_DuckDB_Driver {
 			'mediumint' => 7,
 			'int'       => 10,
 			'bigint'    => false === strpos( $column_type, 'unsigned' ) ? 19 : 20,
-			'float'     => 12,
-			'double'    => 22,
 		);
 
 		if ( array_key_exists( $data_type, $precision_map ) ) {
 			return array( $precision_map[ $data_type ], 0 );
+		}
+
+		if ( 'float' === $data_type || 'double' === $data_type ) {
+			if ( preg_match( '/\((\d+)(?:\s*,\s*(\d+))?\)/', $column_type, $matches ) ) {
+				return array( (int) $matches[1], isset( $matches[2] ) ? (int) $matches[2] : null );
+			}
+
+			return array( 'float' === $data_type ? 12 : 22, null );
 		}
 
 		if ( 'decimal' === $data_type ) {

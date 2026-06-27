@@ -3211,6 +3211,317 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_alias_storage_type_family_metadata_and_writes(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alias_storage_types (
+				id INT PRIMARY KEY,
+				real_col REAL,
+				dec_col DEC,
+				dec_ps_col DEC(10,2),
+				fixed_col FIXED,
+				binary_col BINARY,
+				binary_len_col BINARY(8),
+				varbinary_col VARBINARY(16)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO alias_storage_types
+				(id, real_col, dec_col, dec_ps_col, fixed_col, binary_col, binary_len_col, varbinary_col)
+			VALUES
+				(1, '3.5', '4', 5.25, '6', B'01000001', 0x6263, x'646566')"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'id'         => 1,
+					'real_col'   => 3.5,
+					'dec_col'    => 4.0,
+					'dec_ps_col' => 5.25,
+					'fixed_col'  => 6.0,
+				),
+			),
+			$driver->query(
+				'SELECT id, real_col, dec_col, dec_ps_col, fixed_col
+				FROM alias_storage_types'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'binary_hex'     => '41',
+					'binary_len_hex' => '6263',
+					'varbinary_hex'  => '646566',
+				),
+			),
+			$driver->query(
+				'SELECT LOWER(HEX(binary_col)) AS binary_hex,
+					LOWER(HEX(binary_len_col)) AS binary_len_hex,
+					LOWER(HEX(varbinary_col)) AS varbinary_hex
+				FROM alias_storage_types'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$show_columns = array_slice( $driver->query( 'SHOW COLUMNS FROM alias_storage_types' )->fetchAll( PDO::FETCH_ASSOC ), 1 );
+		$this->assertSame(
+			array(
+				array(
+					'Field'   => 'real_col',
+					'Type'    => 'double',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'dec_col',
+					'Type'    => 'decimal(10,0)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'dec_ps_col',
+					'Type'    => 'decimal(10,2)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'fixed_col',
+					'Type'    => 'decimal(10,0)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'binary_col',
+					'Type'    => 'binary(1)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'binary_len_col',
+					'Type'    => 'binary(8)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				array(
+					'Field'   => 'varbinary_col',
+					'Type'    => 'varbinary(16)',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$show_columns
+		);
+		$this->assertSame(
+			$show_columns,
+			array_slice( $driver->query( 'DESCRIBE alias_storage_types' )->fetchAll( PDO::FETCH_ASSOC ), 1 )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'              => 'real_col',
+					'DATA_TYPE'                => 'double',
+					'CHARACTER_MAXIMUM_LENGTH' => null,
+					'CHARACTER_OCTET_LENGTH'   => null,
+					'NUMERIC_PRECISION'        => 22,
+					'NUMERIC_SCALE'            => null,
+					'CHARACTER_SET_NAME'       => null,
+					'COLLATION_NAME'           => null,
+					'COLUMN_TYPE'              => 'double',
+				),
+				array(
+					'COLUMN_NAME'              => 'dec_col',
+					'DATA_TYPE'                => 'decimal',
+					'CHARACTER_MAXIMUM_LENGTH' => null,
+					'CHARACTER_OCTET_LENGTH'   => null,
+					'NUMERIC_PRECISION'        => 10,
+					'NUMERIC_SCALE'            => 0,
+					'CHARACTER_SET_NAME'       => null,
+					'COLLATION_NAME'           => null,
+					'COLUMN_TYPE'              => 'decimal(10,0)',
+				),
+				array(
+					'COLUMN_NAME'              => 'dec_ps_col',
+					'DATA_TYPE'                => 'decimal',
+					'CHARACTER_MAXIMUM_LENGTH' => null,
+					'CHARACTER_OCTET_LENGTH'   => null,
+					'NUMERIC_PRECISION'        => 10,
+					'NUMERIC_SCALE'            => 2,
+					'CHARACTER_SET_NAME'       => null,
+					'COLLATION_NAME'           => null,
+					'COLUMN_TYPE'              => 'decimal(10,2)',
+				),
+				array(
+					'COLUMN_NAME'              => 'fixed_col',
+					'DATA_TYPE'                => 'decimal',
+					'CHARACTER_MAXIMUM_LENGTH' => null,
+					'CHARACTER_OCTET_LENGTH'   => null,
+					'NUMERIC_PRECISION'        => 10,
+					'NUMERIC_SCALE'            => 0,
+					'CHARACTER_SET_NAME'       => null,
+					'COLLATION_NAME'           => null,
+					'COLUMN_TYPE'              => 'decimal(10,0)',
+				),
+				array(
+					'COLUMN_NAME'              => 'binary_col',
+					'DATA_TYPE'                => 'binary',
+					'CHARACTER_MAXIMUM_LENGTH' => 1,
+					'CHARACTER_OCTET_LENGTH'   => 1,
+					'NUMERIC_PRECISION'        => null,
+					'NUMERIC_SCALE'            => null,
+					'CHARACTER_SET_NAME'       => null,
+					'COLLATION_NAME'           => null,
+					'COLUMN_TYPE'              => 'binary(1)',
+				),
+				array(
+					'COLUMN_NAME'              => 'binary_len_col',
+					'DATA_TYPE'                => 'binary',
+					'CHARACTER_MAXIMUM_LENGTH' => 8,
+					'CHARACTER_OCTET_LENGTH'   => 8,
+					'NUMERIC_PRECISION'        => null,
+					'NUMERIC_SCALE'            => null,
+					'CHARACTER_SET_NAME'       => null,
+					'COLLATION_NAME'           => null,
+					'COLUMN_TYPE'              => 'binary(8)',
+				),
+				array(
+					'COLUMN_NAME'              => 'varbinary_col',
+					'DATA_TYPE'                => 'varbinary',
+					'CHARACTER_MAXIMUM_LENGTH' => 16,
+					'CHARACTER_OCTET_LENGTH'   => 16,
+					'NUMERIC_PRECISION'        => null,
+					'NUMERIC_SCALE'            => null,
+					'CHARACTER_SET_NAME'       => null,
+					'COLLATION_NAME'           => null,
+					'COLUMN_TYPE'              => 'varbinary(16)',
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+					CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
+					CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+				FROM information_schema.columns
+				WHERE table_schema = 'wp'
+					AND table_name = 'alias_storage_types'
+					AND column_name <> 'id'
+				ORDER BY ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$result            = $driver->query(
+			'SELECT real_col, dec_col, dec_ps_col, fixed_col, binary_col, binary_len_col, varbinary_col
+			FROM alias_storage_types
+			WHERE 0 = 1'
+		);
+		$expected_metadata = array(
+			array(
+				'name'             => 'real_col',
+				'native_type'      => 'DOUBLE',
+				'len'              => 22,
+				'precision'        => 31,
+				'duckdb:decl_type' => 'double',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 5,
+			),
+			array(
+				'name'             => 'dec_col',
+				'native_type'      => 'NEWDECIMAL',
+				'len'              => 10,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'decimal(10,0)',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 246,
+			),
+			array(
+				'name'             => 'dec_ps_col',
+				'native_type'      => 'NEWDECIMAL',
+				'len'              => 12,
+				'precision'        => 2,
+				'duckdb:decl_type' => 'decimal(10,2)',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 246,
+			),
+			array(
+				'name'             => 'fixed_col',
+				'native_type'      => 'NEWDECIMAL',
+				'len'              => 10,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'decimal(10,0)',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 246,
+			),
+			array(
+				'name'             => 'binary_col',
+				'native_type'      => 'BLOB',
+				'len'              => 1,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'binary(1)',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 254,
+			),
+			array(
+				'name'             => 'binary_len_col',
+				'native_type'      => 'BLOB',
+				'len'              => 8,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'binary(8)',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 254,
+			),
+			array(
+				'name'             => 'varbinary_col',
+				'native_type'      => 'BLOB',
+				'len'              => 16,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'varbinary(16)',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 253,
+			),
+		);
+		foreach ( $expected_metadata as $index => $expected ) {
+			$metadata = $result->getColumnMeta( $index );
+			foreach ( $expected as $key => $value ) {
+				$this->assertSame( $value, $metadata[ $key ], $expected['name'] . ' metadata key ' . $key );
+			}
+		}
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE alias_storage_types' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		foreach (
+			array(
+				'`real_col` double',
+				'`dec_col` decimal(10,0)',
+				'`dec_ps_col` decimal(10,2)',
+				'`fixed_col` decimal(10,0)',
+				'`binary_col` binary(1)',
+				'`binary_len_col` binary(8)',
+				'`varbinary_col` varbinary(16)',
+			) as $expected_fragment
+		) {
+			$this->assertStringContainsString( $expected_fragment, $create_sql );
+		}
+	}
+
 	public function test_expression_and_admin_result_metadata_provider_documents_name_only_contract(): void {
 		$this->requireDuckDBRuntime();
 
@@ -9719,7 +10030,7 @@ SQL,
 				'name'             => 'price',
 				'len'              => 12,
 				'precision'        => 2,
-				'duckdb:decl_type' => 'decimal(10, 2)',
+				'duckdb:decl_type' => 'decimal(10,2)',
 				'mysqli:orgname'   => 'price',
 				'mysqli:orgtable'  => 'metadata_type_matrix',
 				'mysqli:db'        => 'wp',
@@ -9859,7 +10170,7 @@ SQL,
 			),
 			array(
 				'Field'   => 'price',
-				'Type'    => 'decimal(10, 2)',
+				'Type'    => 'decimal(10,2)',
 				'Null'    => 'YES',
 				'Key'     => '',
 				'Default' => '1.25',
@@ -10046,7 +10357,7 @@ SQL,
 				'CHARACTER_MAXIMUM_LENGTH' => null,
 				'CHARACTER_OCTET_LENGTH'   => null,
 				'NUMERIC_PRECISION'        => 22,
-				'NUMERIC_SCALE'            => 0,
+				'NUMERIC_SCALE'            => null,
 				'DATETIME_PRECISION'       => null,
 				'CHARACTER_SET_NAME'       => null,
 				'COLLATION_NAME'           => null,
@@ -10067,7 +10378,7 @@ SQL,
 				'DATETIME_PRECISION'       => null,
 				'CHARACTER_SET_NAME'       => null,
 				'COLLATION_NAME'           => null,
-				'COLUMN_TYPE'              => 'decimal(10, 2)',
+				'COLUMN_TYPE'              => 'decimal(10,2)',
 				'COLUMN_KEY'               => '',
 				'EXTRA'                    => '',
 				'COLUMN_COMMENT'           => '',
