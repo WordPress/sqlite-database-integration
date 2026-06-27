@@ -15648,6 +15648,148 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests CREATE metadata can preseed SHOW CREATE TABLE row shape without a backend read.
+	 */
+	public function test_show_create_table_metadata_preseed_shape_matches_create_builder(): void {
+		$driver   = $this->create_backendless_driver();
+		$table    = 'wptests_show_create_preseed_shape';
+		$metadata = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata(
+			"CREATE TABLE `{$table}` (
+				`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'ID note',
+				`title` varchar(191) CHARACTER SET big5 NOT NULL DEFAULT '' COMMENT 'Title note',
+				`created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				`rating` int(11) NOT NULL DEFAULT 0,
+				PRIMARY KEY (`id`),
+				UNIQUE KEY `title_unique` (`title`(12) DESC) COMMENT 'Title key',
+				CONSTRAINT `rating_positive` CHECK (`rating` >= 0)
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='Table note'",
+			true
+		);
+		$this->assertCount( 1, $metadata );
+
+		$convert_metadata = Closure::bind(
+			function ( array $metadata ): ?array {
+				return $this->get_show_create_table_metadata_from_create_metadata( $metadata );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$build_create     = Closure::bind(
+			function ( string $table, array $metadata ): string {
+				return $this->get_mysql_create_table_statement_from_metadata(
+					$table,
+					$metadata['columns'],
+					$metadata['indexes'],
+					$metadata['foreign_keys'],
+					$metadata['checks'],
+					$metadata['table']['comment'],
+					false,
+					$metadata['table']['collation']
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		if ( ! $convert_metadata instanceof Closure || ! $build_create instanceof Closure ) {
+			throw new RuntimeException( 'Could not bind SHOW CREATE TABLE metadata preseed helpers.' );
+		}
+
+		$show_create_metadata = $convert_metadata( $metadata[0] );
+		$this->assertIsArray( $show_create_metadata );
+		$this->assertSame( array( 'id', 'title', 'created_at', 'rating' ), array_column( $show_create_metadata['columns'], 'column_name' ) );
+		$this->assertSame( 'bigint(20) unsigned', $show_create_metadata['columns'][0]['column_type'] );
+		$this->assertSame( 'auto_increment', $show_create_metadata['columns'][0]['extra'] );
+		$this->assertSame( 'ID note', $show_create_metadata['columns'][0]['column_comment'] );
+		$this->assertSame( 'big5_chinese_ci', $show_create_metadata['columns'][1]['collation_name'] );
+		$this->assertSame( 'title_unique', $show_create_metadata['indexes'][1]['key_name'] );
+		$this->assertSame( 'D', $show_create_metadata['indexes'][1]['collation'] );
+		$this->assertSame( '12', $show_create_metadata['indexes'][1]['sub_part'] );
+		$this->assertSame( 'rating_positive', $show_create_metadata['checks'][0]['constraint_name'] );
+		$this->assertSame( 'utf8mb4_unicode_ci', $show_create_metadata['table']['collation'] );
+
+		$create_sql = $build_create( $table, $show_create_metadata );
+		$this->assertStringContainsString( '`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT \'ID note\'', $create_sql );
+		$this->assertStringContainsString( 'UNIQUE KEY `title_unique` (`title`(12) DESC) COMMENT \'Title key\'', $create_sql );
+		$this->assertStringContainsString( 'CONSTRAINT `rating_positive` CHECK ("rating" >= 0)', $create_sql );
+		$this->assertStringContainsString( "COMMENT='Table note'", $create_sql );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE preseed serves the first hit without backend queries.
+	 */
+	public function test_show_create_table_metadata_preseed_avoids_first_hit_backend_queries(): void {
+		$connection     = new WP_PostgreSQL_Query_Spy_Connection();
+		$driver         = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+		$table          = 'wptests_show_create_preseed_hot_path';
+		$metadata_query = "CREATE TABLE `{$table}` (
+			`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			`title` varchar(191) NOT NULL DEFAULT '',
+			PRIMARY KEY (`id`),
+			KEY `title_prefix` (`title`(12))
+		) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+		$metadata       = ( new WP_PostgreSQL_Create_Table_Translator() )->extract_schema_metadata( $metadata_query, true );
+
+		$seed_metadata = Closure::bind(
+			function ( array $metadata_tables, string $metadata_query ): void {
+				$this->seed_mysql_show_create_table_metadata_introspection_cache_for_created_tables(
+					$metadata_tables,
+					'public',
+					$metadata_query
+				);
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		if ( ! $seed_metadata instanceof Closure ) {
+			throw new RuntimeException( 'Could not bind SHOW CREATE TABLE metadata preseed seeder.' );
+		}
+
+		$seed_metadata( $metadata, $metadata_query );
+
+		$rows = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+
+		$this->assertSame( 0, $connection->get_query_count() );
+		$this->assertCount( 1, $rows );
+		$this->assertStringContainsString( 'CREATE TABLE `' . $table . '`', (string) $this->get_row_value( $rows[0], 'Create Table' ) );
+		$this->assertStringContainsString( 'KEY `title_prefix` (`title`(12))', (string) $this->get_row_value( $rows[0], 'Create Table' ) );
+	}
+
+	/**
+	 * Tests SHOW CREATE TABLE uses preseeded metadata and matches catalog fallback.
+	 */
+	public function test_show_create_table_uses_preseeded_metadata_without_catalog_queries_and_matches_catalog(): void {
+		list( $driver, $connection ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                       = 'wptests_show_create_preseed_perf';
+
+		$this->assertSame( 0, $driver->query( $this->get_create_metadata_preseed_fixture_sql( $table ) ) );
+
+		$connection->clear_queries();
+		$preseed_rows    = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$preseed_queries = $connection->get_queries();
+
+		$this->assertCount( 1, $preseed_rows );
+		$this->assertSame( array(), $preseed_queries );
+
+		$this->clear_driver_mysql_metadata_caches( $driver );
+		$connection->clear_queries();
+		$catalog_rows    = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$catalog_queries = $connection->get_queries();
+
+		$this->assertEquals( $catalog_rows, $preseed_rows );
+		$this->assertGreaterThanOrEqual( 5, count( $catalog_queries ) );
+
+		$this->assertSame( 0, $driver->query( "ALTER TABLE `{$table}` ADD COLUMN `after_alter` varchar(20)" ) );
+		$connection->clear_queries();
+		$altered_rows    = $driver->query( 'SHOW CREATE TABLE `' . $table . '`' );
+		$altered_queries = $connection->get_queries();
+
+		$this->assertGreaterThanOrEqual( 5, count( $altered_queries ) );
+		$this->assertStringContainsString( '`after_alter` varchar(20)', (string) $this->get_row_value( $altered_rows[0], 'Create Table' ) );
+	}
+
+	/**
 	 * Tests factored catalog metadata keeps temp schemas and column lookup case rules.
 	 */
 	public function test_catalog_metadata_factored_sql_preserves_temp_table_and_column_lookup_case_rules(): void {
@@ -32576,6 +32718,13 @@ $$'
 
 		$connection = new class( array( 'pdo' => $pdo ) ) extends WP_PostgreSQL_Connection {
 			/**
+			 * Captured backend queries.
+			 *
+			 * @var array[]
+			 */
+			private $queries = array();
+
+			/**
 			 * Captured full-table column catalog metadata reads.
 			 *
 			 * @var array[]
@@ -32590,6 +32739,11 @@ $$'
 			 * @return PDOStatement Statement.
 			 */
 			public function query( string $sql, array $params = array() ): PDOStatement {
+				$this->queries[] = array(
+					'sql'    => $sql,
+					'params' => $params,
+				);
+
 				if (
 					false !== strpos( $sql, 'FROM information_schema.columns c' )
 					&& false !== strpos( $sql, 'pg_catalog.col_description(pc.oid, pa.attnum)' )
@@ -32601,6 +32755,22 @@ $$'
 				}
 
 				return parent::query( $sql, $params );
+			}
+
+			/**
+			 * Get captured backend queries.
+			 *
+			 * @return array[] Backend queries.
+			 */
+			public function get_queries(): array {
+				return $this->queries;
+			}
+
+			/**
+			 * Clear captured backend queries.
+			 */
+			public function clear_queries(): void {
+				$this->queries = array();
 			}
 
 			/**

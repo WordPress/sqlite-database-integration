@@ -461,6 +461,13 @@ class WP_PostgreSQL_Driver {
 	private $mysql_column_metadata_introspection_cache = array();
 
 	/**
+	 * Cached SHOW CREATE TABLE metadata keyed by backend schema and table.
+	 *
+	 * @var array<string, array>
+	 */
+	private $mysql_show_create_table_metadata_introspection_cache = array();
+
+	/**
 	 * Cached DML identity sequence-repair eligibility keyed by backend schema and table.
 	 *
 	 * @var array<string, array>
@@ -1128,6 +1135,11 @@ class WP_PostgreSQL_Driver {
 				! empty( $create_table_query['temporary'] ) ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $metadata_schema
 			);
 			$this->seed_mysql_column_metadata_introspection_cache_for_created_tables(
+				$metadata_tables,
+				! empty( $create_table_query['temporary'] ) ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $metadata_schema,
+				$metadata_query
+			);
+			$this->seed_mysql_show_create_table_metadata_introspection_cache_for_created_tables(
 				$metadata_tables,
 				! empty( $create_table_query['temporary'] ) ? array( $this, 'get_temporary_schema_for_metadata_table' ) : $metadata_schema,
 				$metadata_query
@@ -3240,16 +3252,17 @@ class WP_PostgreSQL_Driver {
 		return $this->last_result;
 	}
 	private function clear_mysql_metadata_caches(): void {
-		$this->mysql_table_schema_introspection_cache          = array();
-		$this->mysql_has_active_temporary_tables               = null;
-		$this->mysql_upsert_conflict_target_cache              = array();
-		$this->mysql_introspection_result_cache                = array();
-		$this->mysql_column_metadata_introspection_cache       = array();
-		$this->mysql_dml_identity_repair_eligibility_cache     = array();
-		$this->mysql_unique_index_metadata_introspection_cache = array();
-		$this->mysql_select_translation_cache                  = array();
-		$this->mysql_meta_priming_select_template_cache        = array();
-		$this->mysql_sql_calc_found_rows_count_query_cache     = array();
+		$this->mysql_table_schema_introspection_cache               = array();
+		$this->mysql_has_active_temporary_tables                    = null;
+		$this->mysql_upsert_conflict_target_cache                   = array();
+		$this->mysql_introspection_result_cache                     = array();
+		$this->mysql_column_metadata_introspection_cache            = array();
+		$this->mysql_show_create_table_metadata_introspection_cache = array();
+		$this->mysql_dml_identity_repair_eligibility_cache          = array();
+		$this->mysql_unique_index_metadata_introspection_cache      = array();
+		$this->mysql_select_translation_cache                       = array();
+		$this->mysql_meta_priming_select_template_cache             = array();
+		$this->mysql_sql_calc_found_rows_count_query_cache          = array();
 	}
 
 	private function get_postgresql_catalog_mysql_schema_metadata_or_fail( string $query ): array {
@@ -3444,6 +3457,248 @@ class WP_PostgreSQL_Driver {
 
 			$this->mysql_column_metadata_introspection_cache[ $schema_name . "\0" . $metadata['table_name'] ] = $rows;
 		}
+	}
+	private function seed_mysql_show_create_table_metadata_introspection_cache_for_created_tables( array $metadata_tables, $table_schema, string $metadata_query ): void {
+		if ( $this->mysql_create_metadata_query_has_explicit_default_null( $metadata_query ) ) {
+			return;
+		}
+
+		foreach ( $metadata_tables as $metadata ) {
+			if ( empty( $metadata['table_name'] ) || ! is_string( $metadata['table_name'] ) ) {
+				continue;
+			}
+
+			$schema_name = is_callable( $table_schema )
+				? (string) call_user_func( $table_schema, $metadata['table_name'] )
+				: (string) $table_schema;
+			if ( '' === $schema_name ) {
+				continue;
+			}
+
+			$show_create_metadata = $this->get_show_create_table_metadata_from_create_metadata( $metadata );
+			if ( null === $show_create_metadata ) {
+				continue;
+			}
+
+			$table_name = $metadata['table_name'];
+			$this->mysql_show_create_table_metadata_introspection_cache[ $schema_name . "\0" . $table_name ] = $show_create_metadata;
+			if ( 'public' !== $schema_name && ! $this->is_mysql_temporary_schema_name( $schema_name ) ) {
+				continue;
+			}
+
+			$this->mysql_table_schema_introspection_cache[ 'public' . "\0" . $table_name ] = $schema_name;
+		}
+	}
+	private function get_show_create_table_metadata_from_create_metadata( array $metadata ): ?array {
+		$columns = $this->get_show_create_table_column_metadata_rows_from_create_metadata( $metadata['columns'] ?? array() );
+		if ( null === $columns ) {
+			return null;
+		}
+
+		$indexes      = $this->get_show_create_table_index_metadata_rows_from_create_metadata( $metadata['indexes'] ?? array() );
+		$foreign_keys = $this->get_show_create_table_foreign_key_metadata_rows_from_create_metadata( $metadata['foreign_keys'] ?? array() );
+		$checks       = $this->get_show_create_table_check_metadata_rows_from_create_metadata( $metadata['checks'] ?? array() );
+		if ( null === $indexes || null === $foreign_keys || null === $checks ) {
+			return null;
+		}
+
+		return array(
+			'columns'      => $columns,
+			'indexes'      => $indexes,
+			'foreign_keys' => $foreign_keys,
+			'checks'       => $checks,
+			'table'        => array(
+				'comment'   => (string) ( $metadata['comment'] ?? '' ),
+				'collation' => (string) ( $metadata['collation'] ?? self::DEFAULT_MYSQL_COLLATION ),
+			),
+		);
+	}
+	private function get_show_create_table_column_metadata_rows_from_create_metadata( array $columns ): ?array {
+		if ( empty( $columns ) ) {
+			return null;
+		}
+
+		$rows              = array();
+		$column_name_index = array();
+		$expected_ordinal  = 1;
+		foreach ( $columns as $column ) {
+			if ( ! is_array( $column ) ) {
+				return null;
+			}
+
+			foreach ( array( 'name', 'type', 'charset', 'collation', 'nullable', 'default', 'extra', 'comment', 'ordinal' ) as $required_field ) {
+				if ( ! array_key_exists( $required_field, $column ) ) {
+					return null;
+				}
+			}
+
+			$column_name = (string) $column['name'];
+			$column_type = (string) $column['type'];
+			if (
+				'' === $column_name
+				|| '' === trim( $column_type )
+				|| (int) $column['ordinal'] !== $expected_ordinal
+				|| ! $this->is_postgresql_catalog_recoverable_mysql_column_type( $column_type )
+				|| ! $this->is_postgresql_catalog_recoverable_mysql_column_extra( $column['extra'], $column )
+			) {
+				return null;
+			}
+
+			$column_name_key = strtolower( $column_name );
+			if ( isset( $column_name_index[ $column_name_key ] ) ) {
+				return null;
+			}
+
+			$is_nullable = strtoupper( (string) $column['nullable'] );
+			if ( ! in_array( $is_nullable, array( 'YES', 'NO' ), true ) ) {
+				return null;
+			}
+
+			$column_default = $column['default'];
+			if ( null !== $column_default && ! is_scalar( $column_default ) ) {
+				return null;
+			}
+
+			$column_name_index[ $column_name_key ] = true;
+			$rows[]                                = array(
+				'column_name'        => $column_name,
+				'ordinal_position'   => (string) $expected_ordinal,
+				'column_type'        => $column_type,
+				'character_set_name' => null === $column['charset'] ? null : (string) $column['charset'],
+				'collation_name'     => null === $column['collation'] ? null : (string) $column['collation'],
+				'is_nullable'        => $is_nullable,
+				'column_default'     => null === $column_default ? null : (string) $column_default,
+				'extra'              => (string) $column['extra'],
+				'column_comment'     => (string) $column['comment'],
+			);
+			++$expected_ordinal;
+		}
+		return $rows;
+	}
+	private function get_show_create_table_index_metadata_rows_from_create_metadata( array $indexes ): ?array {
+		foreach ( $indexes as $index ) {
+			if ( ! is_array( $index ) ) {
+				return null;
+			}
+		}
+
+		usort(
+			$indexes,
+			static function ( array $left, array $right ): int {
+				$left_primary  = 'PRIMARY' === strtoupper( (string) ( $left['name'] ?? '' ) ) ? 0 : 1;
+				$right_primary = 'PRIMARY' === strtoupper( (string) ( $right['name'] ?? '' ) ) ? 0 : 1;
+				if ( $left_primary !== $right_primary ) {
+					return $left_primary <=> $right_primary;
+				}
+
+				$left_unique  = '0' === (string) ( $left['non_unique'] ?? '1' ) ? 0 : 1;
+				$right_unique = '0' === (string) ( $right['non_unique'] ?? '1' ) ? 0 : 1;
+				if ( $left_unique !== $right_unique ) {
+					return $left_unique <=> $right_unique;
+				}
+
+				return (int) ( $left['ordinal'] ?? 0 ) <=> (int) ( $right['ordinal'] ?? 0 );
+			}
+		);
+
+		$rows = array();
+		foreach ( $indexes as $index ) {
+			foreach ( array( 'name', 'ordinal', 'non_unique', 'index_type', 'comment', 'columns' ) as $required_field ) {
+				if ( ! array_key_exists( $required_field, $index ) ) {
+					return null;
+				}
+			}
+
+			if ( ! is_array( $index['columns'] ) || ! $this->is_postgresql_catalog_recoverable_mysql_index_metadata( $index ) ) {
+				return null;
+			}
+
+			foreach ( $index['columns'] as $column ) {
+				if ( ! is_array( $column ) || ! array_key_exists( 'column_name', $column ) || ! array_key_exists( 'seq_in_index', $column ) ) {
+					return null;
+				}
+
+				$rows[] = array(
+					'key_name'      => (string) $index['name'],
+					'index_ordinal' => (string) $index['ordinal'],
+					'seq_in_index'  => (string) $column['seq_in_index'],
+					'column_name'   => (string) $column['column_name'],
+					'non_unique'    => (string) $index['non_unique'],
+					'index_type'    => (string) $index['index_type'],
+					'collation'     => null === ( $column['collation'] ?? null ) ? null : (string) $column['collation'],
+					'sub_part'      => null === ( $column['sub_part'] ?? null ) ? null : (string) $column['sub_part'],
+					'index_comment' => (string) $index['comment'],
+				);
+			}
+		}
+		return $rows;
+	}
+	private function get_show_create_table_foreign_key_metadata_rows_from_create_metadata( array $foreign_keys ): ?array {
+		$rows               = array();
+		$constraint_ordinal = 1;
+		foreach ( $foreign_keys as $foreign_key ) {
+			if ( ! is_array( $foreign_key ) ) {
+				return null;
+			}
+
+			foreach ( array( 'name', 'columns', 'referenced_table', 'referenced_columns', 'update_rule', 'delete_rule' ) as $required_field ) {
+				if ( ! array_key_exists( $required_field, $foreign_key ) ) {
+					return null;
+				}
+			}
+
+			if (
+				! is_array( $foreign_key['columns'] )
+				|| ! is_array( $foreign_key['referenced_columns'] )
+				|| count( $foreign_key['columns'] ) !== count( $foreign_key['referenced_columns'] )
+			) {
+				return null;
+			}
+
+			foreach ( $foreign_key['columns'] as $offset => $column_name ) {
+				$rows[] = array(
+					'constraint_name'         => (string) $foreign_key['name'],
+					'constraint_ordinal'      => (string) $constraint_ordinal,
+					'seq_in_index'            => (string) ( $offset + 1 ),
+					'column_name'             => (string) $column_name,
+					'referenced_table_schema' => null === ( $foreign_key['referenced_schema'] ?? null ) ? null : (string) $foreign_key['referenced_schema'],
+					'referenced_table_name'   => (string) $foreign_key['referenced_table'],
+					'referenced_column_name'  => (string) $foreign_key['referenced_columns'][ $offset ],
+					'update_rule'             => (string) $foreign_key['update_rule'],
+					'delete_rule'             => (string) $foreign_key['delete_rule'],
+				);
+			}
+			++$constraint_ordinal;
+		}
+		return $rows;
+	}
+	private function get_show_create_table_check_metadata_rows_from_create_metadata( array $checks ): ?array {
+		$rows               = array();
+		$constraint_ordinal = 1;
+		foreach ( $checks as $check ) {
+			if ( ! is_array( $check ) ) {
+				return null;
+			}
+
+			foreach ( array( 'name', 'check_clause', 'enforced' ) as $required_field ) {
+				if ( ! array_key_exists( $required_field, $check ) ) {
+					return null;
+				}
+			}
+
+			if ( ! $this->is_postgresql_catalog_recoverable_mysql_check_metadata( $check ) ) {
+				return null;
+			}
+
+			$rows[] = array(
+				'constraint_name'    => (string) $check['name'],
+				'constraint_ordinal' => (string) $constraint_ordinal,
+				'check_clause'       => (string) $check['check_clause'],
+				'enforced'           => (string) $check['enforced'],
+			);
+			++$constraint_ordinal;
+		}
+		return $rows;
 	}
 	private function mysql_create_metadata_query_has_explicit_default_null( string $metadata_query ): bool {
 		$tokens = $this->get_mysql_tokens( $metadata_query );
@@ -9904,6 +10159,13 @@ FROM ' . $descriptor['from'];
 		return $result;
 	}
 	private function get_show_create_table_metadata( string $schema_name, string $table_name, bool $log_queries = true, bool $include_foreign_keys = true ): array {
+		if ( $include_foreign_keys ) {
+			$cache_key = $schema_name . "\0" . $table_name;
+			if ( isset( $this->mysql_show_create_table_metadata_introspection_cache[ $cache_key ] ) ) {
+				return $this->mysql_show_create_table_metadata_introspection_cache[ $cache_key ];
+			}
+		}
+
 		$logged_queries = $this->last_postgresql_queries;
 		try {
 			return $this->get_mysql_key_value_array( 'columns', $this->get_show_create_table_metadata_rows( 'columns', $schema_name, $table_name, $log_queries ), 'indexes', $this->get_show_create_table_metadata_rows( 'indexes', $schema_name, $table_name, $log_queries ), 'foreign_keys', $include_foreign_keys ? $this->get_show_create_table_metadata_rows( 'foreign_keys', $schema_name, $table_name, $log_queries ) : array(), 'checks', $this->get_show_create_table_metadata_rows( 'checks', $schema_name, $table_name, $log_queries ), 'table', $this->get_show_create_table_table_metadata( $schema_name, $table_name, $log_queries ) );
