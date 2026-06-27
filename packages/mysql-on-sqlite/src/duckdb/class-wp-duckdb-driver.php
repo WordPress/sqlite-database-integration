@@ -374,7 +374,7 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
-			$this->found_rows = 0;
+			$this->found_rows                             = 0;
 			$this->session_system_variables['autocommit'] = (int) $matches[1];
 			return $this->empty_ddl_result();
 		}
