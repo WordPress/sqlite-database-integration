@@ -3652,6 +3652,98 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRowCount( "INSERT INTO alter_check_gap (id, label) VALUES (-1, 'after_drop')" );
 	}
 
+	public function test_alter_table_add_unique_constraint_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE alter_unique_gap (
+					id INT PRIMARY KEY,
+					tenant_id INT,
+					slug VARCHAR(50),
+					name VARCHAR(50)
+				)',
+				"INSERT INTO alter_unique_gap (id, tenant_id, slug, name) VALUES
+					(1, 1, 'home', 'Home'),
+					(2, 1, 'about', 'About')",
+				'ALTER TABLE alter_unique_gap ADD CONSTRAINT name_unique UNIQUE (name)',
+				'ALTER TABLE alter_unique_gap ADD CONSTRAINT tenant_slug_unique UNIQUE (tenant_id, slug)',
+			)
+		);
+
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM alter_unique_gap',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRowColumns(
+			'SHOW COLUMNS FROM alter_unique_gap',
+			array( 'Field', 'Key' )
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'alter_unique_gap'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'alter_unique_gap'
+			ORDER BY index_name, seq_in_index"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp'
+				AND table_name = 'alter_unique_gap'
+				AND referenced_table_name IS NULL
+			ORDER BY constraint_name, ordinal_position"
+		);
+	}
+
+	public function test_alter_table_drop_unique_constraint_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE alter_unique_drop_gap (
+					id INT PRIMARY KEY,
+					name VARCHAR(50)
+				)',
+				"INSERT INTO alter_unique_drop_gap (id, name) VALUES (1, 'first'), (2, 'second')",
+				'ALTER TABLE alter_unique_drop_gap ADD CONSTRAINT name_unique UNIQUE (name)',
+			)
+		);
+
+		$this->assertParityRowCount( 'ALTER TABLE alter_unique_drop_gap DROP CONSTRAINT name_unique' );
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM alter_unique_drop_gap',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
+		);
+		$this->assertParityRowColumns(
+			'SHOW COLUMNS FROM alter_unique_drop_gap',
+			array( 'Field', 'Key' )
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'alter_unique_drop_gap'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'alter_unique_drop_gap'
+			ORDER BY index_name, seq_in_index"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp'
+				AND table_name = 'alter_unique_drop_gap'
+				AND referenced_table_name IS NULL
+			ORDER BY constraint_name, ordinal_position"
+		);
+		$this->assertParityRowCount( "INSERT INTO alter_unique_drop_gap (id, name) VALUES (3, 'first')" );
+		$this->assertParityRows( 'SELECT id, name FROM alter_unique_drop_gap ORDER BY id' );
+	}
+
 	public function test_unique_key_foreign_key_metadata_documents_current_duckdb_gap(): void {
 		$sqlite_driver = new WP_SQLite_Driver(
 			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),

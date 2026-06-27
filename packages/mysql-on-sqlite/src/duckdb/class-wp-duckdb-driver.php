@@ -5280,6 +5280,11 @@ class WP_DuckDB_Driver {
 					continue;
 				}
 
+				if ( $this->is_alter_table_drop_unique_constraint_action( $table_name, $action, $temporary ) ) {
+					$result = $this->execute_alter_table_drop_unique_constraint( $table_name, $action, $temporary );
+					continue;
+				}
+
 				if ( $this->is_alter_table_drop_check_constraint_action( $action ) ) {
 					$result = $this->execute_alter_table_drop_check_constraint( $table_name, $action, $temporary );
 					continue;
@@ -5321,6 +5326,11 @@ class WP_DuckDB_Driver {
 
 			if ( $this->is_alter_table_add_primary_key_item( $alter_item ) ) {
 				$result = $this->execute_alter_table_add_primary_key( $table_name, $alter_item, $temporary );
+				continue;
+			}
+
+			if ( $this->is_alter_table_add_unique_constraint_action( $alter_item ) ) {
+				$result = $this->execute_alter_table_add_unique_constraint( $table_name, $alter_item, $temporary );
 				continue;
 			}
 
@@ -5526,8 +5536,14 @@ class WP_DuckDB_Driver {
 			if ( $this->is_alter_table_add_primary_key_action( $action ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD PRIMARY KEY cannot be combined with other ALTER TABLE actions.' );
 			}
+			if ( WP_MySQL_Lexer::ADD_SYMBOL === $action[0]->id && $this->is_alter_table_add_unique_constraint_action( array_slice( $action, 1 ) ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD UNIQUE constraint cannot be combined with other ALTER TABLE actions.' );
+			}
 			if ( $this->is_alter_table_drop_primary_key_action( $action ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP PRIMARY KEY cannot be combined with other ALTER TABLE actions.' );
+			}
+			if ( $this->is_alter_table_drop_unique_constraint_action( $table_name, $action, $temporary ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP UNIQUE constraint cannot be combined with other ALTER TABLE actions.' );
 			}
 			if ( $this->is_alter_table_drop_column_rebuild_action( $table_name, $action, $temporary ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN requiring a table rebuild cannot be combined with other ALTER TABLE actions.' );
@@ -5813,6 +5829,7 @@ class WP_DuckDB_Driver {
 		$contains_check       = false;
 		$contains_foreign_key = false;
 		$contains_primary_key = false;
+		$contains_unique      = false;
 		foreach ( $items as $item ) {
 			if ( $this->is_create_table_check_constraint( $item ) ) {
 				$contains_check = true;
@@ -5823,9 +5840,12 @@ class WP_DuckDB_Driver {
 			if ( $this->is_table_primary_key_item( $item ) ) {
 				$contains_primary_key = true;
 			}
+			if ( $this->is_alter_table_add_unique_constraint_item( $item ) ) {
+				$contains_unique = true;
+			}
 		}
 
-		if ( $contains_check || $contains_foreign_key || $contains_primary_key ) {
+		if ( $contains_check || $contains_foreign_key || $contains_primary_key || $contains_unique ) {
 			$parenthesized_end = count( $tokens );
 			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id ) {
 				list( , $parenthesized_end ) = $this->collect_parenthesized_items( $tokens, 1 );
@@ -5836,12 +5856,16 @@ class WP_DuckDB_Driver {
 				|| count( $tokens ) !== $parenthesized_end
 				|| ( $contains_check && $contains_foreign_key )
 				|| ( $contains_primary_key && ( $contains_check || $contains_foreign_key ) )
+				|| ( $contains_unique && ( $contains_check || $contains_foreign_key || $contains_primary_key ) )
 			) {
 				if ( $contains_foreign_key && ! $contains_check ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD FOREIGN KEY constraint is supported.' );
 				}
 				if ( $contains_primary_key && ! $contains_check && ! $contains_foreign_key ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD PRIMARY KEY constraint is supported.' );
+				}
+				if ( $contains_unique && ! $contains_check && ! $contains_foreign_key && ! $contains_primary_key ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD UNIQUE constraint is supported.' );
 				}
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD CHECK constraint is supported.' );
 			}
@@ -5867,6 +5891,12 @@ class WP_DuckDB_Driver {
 			if ( $this->is_table_primary_key_item( $item ) ) {
 				$primary_key_columns = $this->alter_table_primary_key_columns( $item );
 				$this->assert_alter_table_add_primary_key_supported( $table_name, $primary_key_columns, $temporary );
+				continue;
+			}
+
+			if ( $this->is_alter_table_add_unique_constraint_item( $item ) ) {
+				$index_definition = $this->translate_create_table_index( $table_name, $this->alter_table_unique_constraint_index_tokens( $item ), $temporary );
+				$this->assert_alter_table_add_unique_constraint_supported( $table_name, $index_definition, $temporary );
 				continue;
 			}
 
@@ -6023,6 +6053,13 @@ class WP_DuckDB_Driver {
 				unset( $foreign_key_names[ strtolower( $constraint_name ) ] );
 				return;
 			}
+			if ( 'UNIQUE' === $constraint_type ) {
+				$index_name = $this->resolve_secondary_index_name( $table_name, $constraint_name, $temporary );
+				if ( null === $index_name ) {
+					throw new WP_DuckDB_Driver_Exception( "Unknown constraint '{$constraint_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+				}
+				return;
+			}
 			if ( 'CHECK' !== $constraint_type ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CONSTRAINT currently supports CHECK and FOREIGN KEY constraints only.' );
 			}
@@ -6148,6 +6185,38 @@ class WP_DuckDB_Driver {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Check whether ALTER TABLE ... ADD targets a named UNIQUE constraint.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 * @return bool Whether this is an ADD UNIQUE constraint action.
+	 */
+	private function is_alter_table_add_unique_constraint_action( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		foreach ( $this->alter_table_add_items_for_constraint_detection( $tokens ) as $item ) {
+			if ( $this->is_alter_table_add_unique_constraint_item( $item ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a table item is CONSTRAINT name UNIQUE.
+	 *
+	 * @param WP_Parser_Token[] $tokens Item tokens.
+	 * @return bool Whether this is a named UNIQUE constraint.
+	 */
+	private function is_alter_table_add_unique_constraint_item( array $tokens ): bool {
+		return isset( $tokens[0], $tokens[2] )
+			&& WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[0]->id
+			&& WP_MySQL_Lexer::UNIQUE_SYMBOL === $tokens[2]->id;
 	}
 
 	/**
@@ -6359,6 +6428,103 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute ALTER TABLE ... ADD CONSTRAINT name UNIQUE.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens after ADD.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_add_unique_constraint( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$item             = $this->single_alter_table_add_unique_constraint_item( $tokens );
+		$index_definition = $this->translate_create_table_index( $table_name, $this->alter_table_unique_constraint_index_tokens( $item ), $temporary );
+		$this->assert_alter_table_add_unique_constraint_supported( $table_name, $index_definition, $temporary );
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $table_name, $index_definition, $temporary ): WP_DuckDB_Result_Statement {
+				$this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB UNIQUE constraint index' );
+				$this->record_index_metadata( $index_definition );
+				$this->refresh_column_key_metadata( $table_name, $temporary );
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
+	 * Return the single UNIQUE item from a supported ALTER TABLE ... ADD UNIQUE constraint action.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 * @return WP_Parser_Token[] UNIQUE constraint tokens.
+	 */
+	private function single_alter_table_add_unique_constraint_item( array $tokens ): array {
+		if ( ! isset( $tokens[0] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD UNIQUE requires a UNIQUE constraint.' );
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[0]->id ) {
+			return $tokens;
+		}
+
+		list( $items, $index ) = $this->collect_parenthesized_items( $tokens, 1 );
+		if ( 1 !== count( $items ) || count( $tokens ) !== $index || ! $this->is_alter_table_add_unique_constraint_item( $items[0] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD UNIQUE constraint is supported.' );
+		}
+
+		return $items[0];
+	}
+
+	/**
+	 * Normalize CONSTRAINT name UNIQUE tokens into the secondary-index token shape.
+	 *
+	 * @param WP_Parser_Token[] $tokens UNIQUE constraint tokens.
+	 * @return WP_Parser_Token[] UNIQUE index tokens.
+	 */
+	private function alter_table_unique_constraint_index_tokens( array $tokens ): array {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CONSTRAINT_SYMBOL, 'Expected CONSTRAINT in ALTER TABLE ADD UNIQUE action.' );
+		++$index;
+
+		$constraint_name_token = $tokens[ $index ] ?? null;
+		$this->identifier_value( $constraint_name_token );
+		++$index;
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::UNIQUE_SYMBOL, 'Expected UNIQUE in ALTER TABLE ADD CONSTRAINT action.' );
+		$index_tokens = array_slice( $tokens, $index );
+		$name_index   = 1;
+
+		if (
+			isset( $index_tokens[ $name_index ] )
+			&& ( WP_MySQL_Lexer::KEY_SYMBOL === $index_tokens[ $name_index ]->id || WP_MySQL_Lexer::INDEX_SYMBOL === $index_tokens[ $name_index ]->id )
+		) {
+			++$name_index;
+		}
+
+		$name_index = $this->skip_optional_index_type( $index_tokens, $name_index );
+		if ( isset( $index_tokens[ $name_index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $index_tokens[ $name_index ]->id ) {
+			array_splice( $index_tokens, $name_index, 0, array( $constraint_name_token ) );
+		}
+
+		return $index_tokens;
+	}
+
+	/**
+	 * Validate ALTER TABLE ... ADD UNIQUE before mutation.
+	 *
+	 * @param string                                                                 $table_name       Table name.
+	 * @param array{table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Planned index definition.
+	 * @param bool                                                                   $temporary        Whether the target is a temporary table.
+	 */
+	private function assert_alter_table_add_unique_constraint_supported( string $table_name, array $index_definition, bool $temporary = false ): void {
+		if ( ! $index_definition['unique'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD UNIQUE constraint requires a UNIQUE index definition.' );
+		}
+
+		$this->assert_secondary_index_name_available( $table_name, $index_definition['index_name'], $temporary );
+		$this->assert_secondary_index_columns_exist( $table_name, $index_definition, 'UNIQUE constraint', $temporary );
+	}
+
+	/**
 	 * Validate existing rows before adding a PRIMARY KEY.
 	 *
 	 * @param string   $table_name          Table name.
@@ -6471,6 +6637,26 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether ALTER TABLE ... DROP CONSTRAINT targets a UNIQUE constraint.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     Action tokens starting at DROP.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return bool Whether this is a DROP UNIQUE constraint action.
+	 */
+	private function is_alter_table_drop_unique_constraint_action( string $table_name, array $tokens, bool $temporary = false ): bool {
+		if (
+			! isset( $tokens[1] )
+			|| WP_MySQL_Lexer::CONSTRAINT_SYMBOL !== $tokens[1]->id
+		) {
+			return false;
+		}
+
+		$constraint_name = $this->parse_alter_table_drop_constraint_name( $tokens );
+		return 'UNIQUE' === $this->resolve_alter_table_drop_constraint_type( $table_name, $constraint_name, $temporary );
+	}
+
+	/**
 	 * Execute ALTER TABLE ... DROP CHECK or DROP CONSTRAINT for CHECK constraints.
 	 *
 	 * @param string            $table_name Table name.
@@ -6545,6 +6731,30 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute ALTER TABLE ... DROP CONSTRAINT for UNIQUE constraints.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens starting at DROP.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_drop_unique_constraint( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$constraint_name = $this->parse_alter_table_drop_constraint_name( $tokens );
+		$index_name      = $this->resolve_secondary_index_name( $table_name, $constraint_name, $temporary );
+		if ( null === $index_name ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown constraint '{$constraint_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $table_name, $index_name, $temporary ): WP_DuckDB_Result_Statement {
+				$this->drop_secondary_index( $table_name, $index_name, $temporary );
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
 	 * Resolve a recorded CHECK constraint row by name.
 	 *
 	 * @param string $table_name      Table name.
@@ -6581,6 +6791,29 @@ class WP_DuckDB_Driver {
 
 		if ( count( $tokens ) !== $index ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CHECK options are not supported.' );
+		}
+
+		return $constraint_name;
+	}
+
+	/**
+	 * Parse ALTER TABLE ... DROP CONSTRAINT name.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens starting at DROP.
+	 * @return string Constraint name.
+	 */
+	private function parse_alter_table_drop_constraint_name( array $tokens ): string {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP in ALTER TABLE action.' );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CONSTRAINT_SYMBOL, 'Expected CONSTRAINT in ALTER TABLE DROP action.' );
+		++$index;
+
+		$constraint_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CONSTRAINT options are not supported.' );
 		}
 
 		return $constraint_name;
@@ -16518,6 +16751,49 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Reject duplicate secondary index names before CREATE INDEX IF NOT EXISTS can drift metadata.
+	 *
+	 * @param string $table_name       Table name.
+	 * @param string $mysql_index_name MySQL-facing index name.
+	 * @param bool   $temporary        Whether the target is a temporary table.
+	 */
+	private function assert_secondary_index_name_available( string $table_name, string $mysql_index_name, bool $temporary = false ): void {
+		if ( null !== $this->resolve_secondary_index_name( $table_name, $mysql_index_name, $temporary ) ) {
+			throw new WP_DuckDB_Driver_Exception( "Duplicate key name '{$mysql_index_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+	}
+
+	/**
+	 * Reject unknown or repeated secondary-index columns before mutating physical indexes.
+	 *
+	 * @param string                                                                 $table_name       Table name.
+	 * @param array{columns:array<int,array{name:string,sub_part:int|null}>}          $index_definition Planned index definition.
+	 * @param string                                                                 $context          Error context.
+	 * @param bool                                                                   $temporary        Whether the target is a temporary table.
+	 */
+	private function assert_secondary_index_columns_exist( string $table_name, array $index_definition, string $context, bool $temporary = false ): void {
+		$metadata_by_column = array();
+		foreach ( $this->table_column_metadata_rows( $table_name, $temporary ) as $column ) {
+			$metadata_by_column[ strtolower( (string) $column['column_name'] ) ] = true;
+		}
+
+		$seen_columns = array();
+		foreach ( $index_definition['columns'] as $column ) {
+			$column_name            = (string) $column['name'];
+			$normalized_column_name = strtolower( $column_name );
+
+			if ( isset( $seen_columns[ $normalized_column_name ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Duplicate column name '{$column_name}' in {$context}." );
+			}
+			$seen_columns[ $normalized_column_name ] = true;
+
+			if ( ! isset( $metadata_by_column[ $normalized_column_name ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Unknown column '{$column_name}' on table '{$this->database}.{$table_name}' in {$context}." );
+			}
+		}
 	}
 
 	/**

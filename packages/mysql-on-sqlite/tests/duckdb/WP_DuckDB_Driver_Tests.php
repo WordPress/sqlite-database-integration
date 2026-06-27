@@ -4701,6 +4701,290 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( "INSERT INTO wp_options (option_name, option_value) VALUES ('siteurl', 'duplicate')" );
 	}
 
+	public function test_alter_table_add_unique_constraint_updates_metadata_and_enforces_uniqueness(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE alter_unique_add (
+				id INT PRIMARY KEY,
+				name VARCHAR(50),
+				slug VARCHAR(50)
+			)'
+		);
+		$driver->query( "INSERT INTO alter_unique_add (id, name, slug) VALUES (1, 'first', 'a'), (2, 'second', 'b')" );
+
+		$result = $driver->query( 'ALTER TABLE alter_unique_add ADD CONSTRAINT name_unique UNIQUE (name)' );
+
+		$this->assertSame( 0, $result->rowCount() );
+		$this->assertSame(
+			array( 'PRIMARY', 'name_unique' ),
+			array_column( $driver->query( 'SHOW INDEX FROM alter_unique_add' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' )
+		);
+		$this->assertSame(
+			array(
+				'id'   => 'PRI',
+				'name' => 'UNI',
+				'slug' => '',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM alter_unique_add' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+
+		$show_create = $driver->query( 'SHOW CREATE TABLE alter_unique_add' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertStringContainsString( 'UNIQUE KEY `name_unique` (`name`)', $show_create['Create Table'] );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'name_unique',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp'
+					AND table_name = 'alter_unique_add'
+					AND constraint_name = 'name_unique'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'INDEX_NAME'   => 'name_unique',
+					'NON_UNIQUE'   => 0,
+					'SEQ_IN_INDEX' => 1,
+					'COLUMN_NAME'  => 'name',
+				),
+			),
+			$driver->query(
+				"SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp'
+					AND table_name = 'alter_unique_add'
+					AND index_name = 'name_unique'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'  => 'name_unique',
+					'COLUMN_NAME'      => 'name',
+					'ORDINAL_POSITION' => 1,
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp'
+					AND table_name = 'alter_unique_add'
+					AND constraint_name = 'name_unique'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		try {
+			$driver->query( "INSERT INTO alter_unique_add (id, name, slug) VALUES (3, 'first', 'duplicate')" );
+			$this->fail( 'Expected duplicate INSERT to fail after ADD UNIQUE constraint.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( "UPDATE alter_unique_add SET name = 'first' WHERE id = 2" );
+			$this->fail( 'Expected duplicate UPDATE to fail after ADD UNIQUE constraint.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB UPDATE', $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_add_composite_unique_constraint_updates_key_column_usage(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE alter_unique_composite (
+				tenant_id INT,
+				slug VARCHAR(50),
+				label VARCHAR(50)
+			)'
+		);
+		$driver->query( "INSERT INTO alter_unique_composite (tenant_id, slug, label) VALUES (1, 'home', 'Home'), (1, 'about', 'About')" );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE alter_unique_composite ADD CONSTRAINT tenant_slug_unique UNIQUE (tenant_id, slug)' )->rowCount()
+		);
+
+		$statistics = $driver->query(
+			"SELECT INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX, NON_UNIQUE
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp'
+				AND table_name = 'alter_unique_composite'
+				AND index_name = 'tenant_slug_unique'
+			ORDER BY seq_in_index"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'tenant_id', 'slug' ), array_column( $statistics, 'COLUMN_NAME' ) );
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $statistics, 'SEQ_IN_INDEX' ) ) );
+		$this->assertSame( array( 0, 0 ), array_map( 'intval', array_column( $statistics, 'NON_UNIQUE' ) ) );
+
+		$key_column_usage = $driver->query(
+			"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp'
+				AND table_name = 'alter_unique_composite'
+				AND constraint_name = 'tenant_slug_unique'
+			ORDER BY ordinal_position"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'tenant_id', 'slug' ), array_column( $key_column_usage, 'COLUMN_NAME' ) );
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $key_column_usage, 'ORDINAL_POSITION' ) ) );
+	}
+
+	public function test_alter_table_add_unique_constraint_failures_do_not_mutate_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE alter_unique_guard (id INT PRIMARY KEY, name VARCHAR(50), slug VARCHAR(50))' );
+		$driver->query( "INSERT INTO alter_unique_guard (id, name, slug) VALUES (1, 'same', 'a'), (2, 'same', 'b')" );
+
+		$before = $this->alter_table_unique_constraint_snapshot( $driver, 'alter_unique_guard' );
+		try {
+			$driver->query( 'ALTER TABLE alter_unique_guard ADD CONSTRAINT name_unique UNIQUE (name)' );
+			$this->fail( 'Expected ADD UNIQUE constraint to reject duplicate existing values.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to create DuckDB UNIQUE constraint index', $e->getMessage() );
+		}
+		$this->assertSame( $before, $this->alter_table_unique_constraint_snapshot( $driver, 'alter_unique_guard' ) );
+
+		try {
+			$driver->query( 'ALTER TABLE alter_unique_guard ADD CONSTRAINT missing_unique UNIQUE (missing_column)' );
+			$this->fail( 'Expected ADD UNIQUE constraint to reject unknown columns.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Unknown column 'missing_column'", $e->getMessage() );
+		}
+		$this->assertSame( $before, $this->alter_table_unique_constraint_snapshot( $driver, 'alter_unique_guard' ) );
+	}
+
+	public function test_alter_table_add_unique_constraint_name_precedence_and_duplicate_names(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE alter_unique_precedence (id INT PRIMARY KEY, name VARCHAR(50))' );
+		$driver->query( "INSERT INTO alter_unique_precedence (id, name) VALUES (1, 'first'), (2, 'second')" );
+
+		$driver->query( 'ALTER TABLE alter_unique_precedence ADD CONSTRAINT constraint_name UNIQUE KEY index_name (name)' );
+		$this->assertSame(
+			array( 'PRIMARY', 'index_name' ),
+			array_column( $driver->query( 'SHOW INDEX FROM alter_unique_precedence' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'index_name',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp'
+					AND table_name = 'alter_unique_precedence'
+					AND constraint_type = 'UNIQUE'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE alter_unique_precedence DROP CONSTRAINT constraint_name' );
+			$this->fail( 'Expected DROP CONSTRAINT to use the explicit index name, not the constraint label.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Unknown constraint 'constraint_name'", $e->getMessage() );
+		}
+
+		$before = $this->alter_table_unique_constraint_snapshot( $driver, 'alter_unique_precedence' );
+		try {
+			$driver->query( 'ALTER TABLE alter_unique_precedence ADD CONSTRAINT other_name UNIQUE KEY index_name (name)' );
+			$this->fail( 'Expected ADD UNIQUE constraint to reject duplicate explicit index names.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Duplicate key name 'index_name'", $e->getMessage() );
+		}
+		$this->assertSame( $before, $this->alter_table_unique_constraint_snapshot( $driver, 'alter_unique_precedence' ) );
+	}
+
+	public function test_alter_table_drop_unique_constraint_removes_metadata_and_enforcement(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE alter_unique_drop (id INT PRIMARY KEY, name VARCHAR(50))' );
+		$driver->query( "INSERT INTO alter_unique_drop (id, name) VALUES (1, 'first'), (2, 'second')" );
+		$driver->query( 'ALTER TABLE alter_unique_drop ADD CONSTRAINT name_unique UNIQUE (name)' );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_unique_drop DROP CONSTRAINT name_unique' )->rowCount() );
+		$this->assertSame(
+			array( 'PRIMARY' ),
+			array_column( $driver->query( 'SHOW INDEX FROM alter_unique_drop' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' )
+		);
+		$this->assertSame(
+			array(
+				'id'   => 'PRI',
+				'name' => '',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM alter_unique_drop' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp'
+					AND table_name = 'alter_unique_drop'
+					AND constraint_name = 'name_unique'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT INDEX_NAME
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp'
+					AND table_name = 'alter_unique_drop'
+					AND index_name = 'name_unique'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame( 1, $driver->query( "INSERT INTO alter_unique_drop (id, name) VALUES (3, 'first')" )->rowCount() );
+	}
+
+	public function test_alter_table_drop_unique_constraint_missing_and_ambiguous_names_do_not_mutate(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE alter_unique_ambiguous (
+				id INT PRIMARY KEY,
+				name VARCHAR(50),
+				CONSTRAINT shared_name CHECK (id >= 0)
+			)'
+		);
+		$driver->query( "INSERT INTO alter_unique_ambiguous (id, name) VALUES (1, 'first'), (2, 'second')" );
+		$driver->query( 'ALTER TABLE alter_unique_ambiguous ADD CONSTRAINT shared_name UNIQUE (name)' );
+
+		$before = $this->alter_table_unique_constraint_snapshot( $driver, 'alter_unique_ambiguous' );
+		try {
+			$driver->query( 'ALTER TABLE alter_unique_ambiguous DROP CONSTRAINT missing_name' );
+			$this->fail( 'Expected DROP CONSTRAINT missing name to reject.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Unknown constraint 'missing_name'", $e->getMessage() );
+		}
+		$this->assertSame( $before, $this->alter_table_unique_constraint_snapshot( $driver, 'alter_unique_ambiguous' ) );
+
+		try {
+			$driver->query( 'ALTER TABLE alter_unique_ambiguous DROP CONSTRAINT shared_name' );
+			$this->fail( 'Expected DROP CONSTRAINT with cross-type duplicate names to be ambiguous.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Ambiguous constraint 'shared_name'", $e->getMessage() );
+		}
+		$this->assertSame( $before, $this->alter_table_unique_constraint_snapshot( $driver, 'alter_unique_ambiguous' ) );
+	}
+
 	public function test_alter_table_add_column_updates_data_and_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -9990,10 +10274,8 @@ SQL,
 
 		foreach (
 			array(
-				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_unique UNIQUE KEY (id)' => 'ADD CONSTRAINT is not supported',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN score INT CHECK (score >= 0)' => 'Inline CHECK constraints are only supported in CREATE TABLE',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN parent_ref INT REFERENCES alter_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
-				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT id_unique' => 'DROP CONSTRAINT currently supports CHECK and FOREIGN KEY constraints only',
 			) as $sql => $message
 		) {
 			try {
@@ -10059,7 +10341,7 @@ SQL,
 				'ALTER TABLE alter_constraint_guard ADD CHECK (id >= 0), ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD/DROP CHECK cannot be combined with other ALTER TABLE actions',
 				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY existing_fk, ADD COLUMN should_not_exist INT DEFAULT 2' => 'ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions',
-				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_unique UNIQUE KEY (id)' => 'ADD CONSTRAINT is not supported',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_unique UNIQUE KEY (id)' => 'ADD UNIQUE constraint cannot be combined with other ALTER TABLE actions',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, DROP CONSTRAINT existing_fk' => 'ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD COLUMN inline_check INT CHECK (inline_check >= 0)' => 'Inline CHECK constraints are only supported in CREATE TABLE',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD COLUMN inline_parent INT REFERENCES alter_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
@@ -10861,6 +11143,35 @@ SQL,
 					AND referenced_table_name IS NOT NULL
 				ORDER BY table_name, constraint_name, ordinal_position"
 			)->fetchAll( PDO::FETCH_ASSOC ),
+		);
+	}
+
+	private function alter_table_unique_constraint_snapshot( WP_DuckDB_Driver $driver, string $table_name ): array {
+		return array(
+			'columns'           => $driver->query( 'SHOW COLUMNS FROM ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+			'rows'              => $driver->query( 'SELECT * FROM ' . $table_name . ' ORDER BY 1' )->fetchAll( PDO::FETCH_ASSOC ),
+			'indexes'           => $driver->query( 'SHOW INDEX FROM ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+			'table_constraints' => $driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = '{$table_name}'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'statistics'        => $driver->query(
+				"SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp' AND table_name = '{$table_name}'
+				ORDER BY index_name, seq_in_index"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'key_column_usage'  => $driver->query(
+				"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp'
+					AND table_name = '{$table_name}'
+					AND referenced_table_name IS NULL
+				ORDER BY constraint_name, ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'show_create'       => $driver->query( 'SHOW CREATE TABLE ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
 		);
 	}
 
