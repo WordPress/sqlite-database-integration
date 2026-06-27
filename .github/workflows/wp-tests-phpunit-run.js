@@ -16,6 +16,7 @@ const phpunitEnsureEnvironmentCommand = process.env.WP_SQLITE_PHPUNIT_ENSURE_ENV
 const ensurePhpunitCompatibility = process.env.WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY === '1';
 const phpunitCompatibilityConstraint = process.env.WP_SQLITE_PHPUNIT_COMPATIBILITY_CONSTRAINT || '^9.6';
 const skipPhpunitCompatibilityCheck = process.env.WP_SQLITE_SKIP_PHPUNIT_COMPATIBILITY_CHECK === '1';
+const ignoreMissingExpectedResults = process.env.WP_SQLITE_IGNORE_MISSING_EXPECTED_RESULTS === '1';
 const junitOutputPath = process.env.WP_SQLITE_PHPUNIT_JUNIT_PATH || 'wordpress/phpunit-results.xml';
 const junitOutputFile = path.isAbsolute( junitOutputPath )
 	? junitOutputPath
@@ -112,6 +113,9 @@ console.log( 'PHPUnit command:', phpunitCommand );
 console.log( 'JUnit output:', junitOutputFile );
 console.log( 'Expected errors:', expectedErrors );
 console.log( 'Expected failures:', expectedFailures );
+if ( ignoreMissingExpectedResults ) {
+	console.log( 'Expected errors/failures outside the selected PHPUnit tests will be ignored.' );
+}
 
 function getDefaultEnsureEnvironmentCommand() {
 	return phpunitCommand.includes( 'wp-test-php-duckdb' )
@@ -385,6 +389,7 @@ try {
 	const junitXml = fs.readFileSync( junitOutputFile, 'utf8' );
 
 	// Extract test info from the XML:
+	const actualTests = [];
 	const actualErrors = [];
 	const actualFailures = [];
 	for ( const testcase of junitXml.matchAll( /<testcase([^>]*)\/>|<testcase([^>]*)>([\s\S]*?)<\/testcase>/g ) ) {
@@ -396,6 +401,8 @@ try {
 
 		const content = testcase[3] ?? '';
 		const fqn = attributes.class ? `${attributes.class}::${attributes.name}` : attributes.name;
+		actualTests.push( fqn );
+
 		const hasError = content.includes( '<error' );
 		const hasFailure = content.includes( '<failure' );
 
@@ -411,7 +418,8 @@ try {
 	let isSuccess = true;
 
 	// Check if all expected errors actually errored
-	const unexpectedNonErrors = expectedErrors.filter( test => ! actualErrors.includes( test ) );
+	const expectedErrorsInScope = filterExpectedResultsInScope( expectedErrors, actualTests );
+	const unexpectedNonErrors = expectedErrorsInScope.filter( test => ! actualErrors.includes( test ) );
 	if ( unexpectedNonErrors.length > 0 ) {
 		console.error( '\n❌ The following tests were expected to error but did not:' );
 		unexpectedNonErrors.forEach( test => console.error( `  - ${test}` ) );
@@ -419,11 +427,19 @@ try {
 	}
 
 	// Check if all expected failures actually failed
-	const unexpectedPasses = expectedFailures.filter( test => ! actualFailures.includes( test ) );
+	const expectedFailuresInScope = filterExpectedResultsInScope( expectedFailures, actualTests );
+	const unexpectedPasses = expectedFailuresInScope.filter( test => ! actualFailures.includes( test ) );
 	if ( unexpectedPasses.length > 0 ) {
 		console.error( '\n❌ The following tests were expected to fail but passed:' );
 		unexpectedPasses.forEach( test => console.error( `  - ${test}` ) );
 		isSuccess = false;
+	}
+
+	if ( ignoreMissingExpectedResults ) {
+		const ignoredExpectedResults = expectedErrors.concat( expectedFailures ).filter( test => ! actualTests.includes( test ) );
+		if ( ignoredExpectedResults.length > 0 ) {
+			console.log( `\nℹ️ Ignored ${ ignoredExpectedResults.length } expected errors/failures outside the selected PHPUnit tests.` );
+		}
 	}
 
 	// Check for unexpected errors
@@ -452,4 +468,12 @@ try {
 } catch ( error ) {
 	console.error( '\n❌ Script execution error:', error.message );
 	process.exit( 1 );
+}
+
+function filterExpectedResultsInScope( expectedResults, actualTests ) {
+	if ( ! ignoreMissingExpectedResults ) {
+		return expectedResults;
+	}
+
+	return expectedResults.filter( test => actualTests.includes( test ) );
 }

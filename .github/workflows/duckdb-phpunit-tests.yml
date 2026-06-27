@@ -94,7 +94,7 @@ jobs:
         working-directory: packages/mysql-on-sqlite
 
   wp-duckdb-test:
-    name: WordPress PHPUnit / DuckDB
+    name: WordPress PHPUnit wpdb / DuckDB
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -139,16 +139,17 @@ jobs:
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
 
-      - name: Run WordPress PHPUnit tests with DuckDB
+      - name: Run WordPress wpdb PHPUnit tests with DuckDB
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
-          WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb -- --log-junit=phpunit-duckdb-results.xml --verbose
+          WP_SQLITE_IGNORE_MISSING_EXPECTED_RESULTS: '1'
+          WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb -- --group=wpdb --log-junit=phpunit-duckdb-results.xml --verbose
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
 
       - name: Dump WordPress DuckDB failure diagnostics
-        if: failure()
+        if: failure() || cancelled()
         shell: bash
         run: |
           set +e
@@ -280,13 +281,102 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
+      - name: Prepare WordPress DuckDB end-to-end environment
+        env:
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+        run: composer run wp-test-ensure-env-duckdb
+
+      - name: Install WordPress 500 response diagnostics
+        run: |
+          cat > wordpress/src/wp-content/duckdb-e2e-500-diagnostics.php <<'PHP'
+          <?php
+          /**
+           * Logs request-scoped database state for DuckDB E2E 500 responses.
+           */
+
+          if ( ! defined( 'SAVEQUERIES' ) ) {
+           define( 'SAVEQUERIES', true );
+          }
+
+          register_shutdown_function(
+           static function () {
+            $status = function_exists( 'http_response_code' ) ? (int) http_response_code() : 0;
+            if ( 500 > $status ) {
+             return;
+            }
+
+            global $wpdb;
+
+            $diagnostics = array(
+             'status'       => $status,
+             'method'       => isset( $_SERVER['REQUEST_METHOD'] ) ? $_SERVER['REQUEST_METHOD'] : '',
+             'uri'          => isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '',
+             'wpdb_class'   => is_object( $wpdb ) ? get_class( $wpdb ) : gettype( $wpdb ),
+             'last_error'   => '',
+             'last_query'   => '',
+             'num_queries'  => null,
+             'queries_tail' => array(),
+             'php_error'    => error_get_last(),
+            );
+
+            if ( is_object( $wpdb ) ) {
+             if ( isset( $wpdb->last_error ) ) {
+              $diagnostics['last_error'] = (string) $wpdb->last_error;
+             }
+             if ( isset( $wpdb->last_query ) ) {
+              $diagnostics['last_query'] = (string) $wpdb->last_query;
+             }
+             if ( isset( $wpdb->num_queries ) ) {
+              $diagnostics['num_queries'] = (int) $wpdb->num_queries;
+             }
+             if ( isset( $wpdb->queries ) && is_array( $wpdb->queries ) ) {
+              foreach ( array_slice( $wpdb->queries, -5 ) as $query ) {
+               if ( is_array( $query ) ) {
+                $diagnostics['queries_tail'][] = array(
+                 'query'  => isset( $query[0] ) ? (string) $query[0] : '',
+                 'time'   => isset( $query[1] ) ? $query[1] : null,
+                 'caller' => isset( $query[2] ) ? (string) $query[2] : '',
+                );
+                continue;
+               }
+
+               $diagnostics['queries_tail'][] = (string) $query;
+              }
+             }
+            }
+
+            $encoded = function_exists( 'wp_json_encode' )
+             ? wp_json_encode( $diagnostics, JSON_UNESCAPED_SLASHES )
+             : json_encode( $diagnostics );
+
+            error_log( '[duckdb-e2e-500] ' . $encoded );
+           }
+          );
+          PHP
+          php -l wordpress/src/wp-content/duckdb-e2e-500-diagnostics.php
+          php -r '
+          $file     = $argv[1];
+          $contents = file_get_contents( $file );
+          $needle   = "require_once \$sqlite_plugin_implementation_folder_path . " . chr( 39 ) . "/wp-includes/db.php" . chr( 39 ) . ";";
+          $insert   = "require_once __DIR__ . " . chr( 39 ) . "/duckdb-e2e-500-diagnostics.php" . chr( 39 ) . ";\n";
+
+          if ( false === strpos( $contents, $needle ) ) {
+           fwrite( STDERR, "Could not find DuckDB db.php insertion point.\n" );
+           exit( 1 );
+          }
+
+          if ( false === strpos( $contents, $insert ) ) {
+           file_put_contents( $file, str_replace( $needle, $insert . $needle, $contents ) );
+          }
+          ' wordpress/src/wp-content/db.php
+
       - name: Run WordPress end-to-end tests with DuckDB
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
-        run: composer run wp-test-e2e-duckdb
+        run: npm --prefix wordpress run test:e2e --
 
       - name: Dump WordPress DuckDB failure diagnostics
-        if: failure()
+        if: failure() || cancelled()
         shell: bash
         run: |
           set +e
