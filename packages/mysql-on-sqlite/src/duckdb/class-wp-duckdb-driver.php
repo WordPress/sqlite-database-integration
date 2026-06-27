@@ -1915,7 +1915,7 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( $this->is_create_table_check_constraint( $item ) ) {
-				$check_constraint    = $this->translate_table_check_constraint( $table_name, $item, $check_names );
+				$check_constraint = $this->translate_table_check_constraint( $table_name, $item, $check_names );
 				if ( null !== $check_constraint['sql'] ) {
 					$constraints[] = $check_constraint['sql'];
 				}
@@ -10380,11 +10380,11 @@ class WP_DuckDB_Driver {
 					if ( ! $include_inline_constraints ) {
 						throw new WP_DuckDB_Driver_Exception( 'Unsupported inline CHECK constraint in DuckDB driver. Inline CHECK constraints are only supported in CREATE TABLE.' );
 					}
-					$check         = $this->translate_inline_check_constraint( $table_name, $tokens, $index, $check_names );
+					$check = $this->translate_inline_check_constraint( $table_name, $tokens, $index, $check_names );
 					if ( null !== $check['sql'] ) {
 						$constraints[] = $check['sql'];
 					}
-					$checks[]      = $check['metadata'];
+					$checks[] = $check['metadata'];
 					break;
 				case WP_MySQL_Lexer::REFERENCES_SYMBOL:
 					if ( ! $include_inline_constraints ) {
@@ -10498,7 +10498,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'CHECK constraint requires an expression in the DuckDB driver.' );
 		}
 
-		$index = $expression_end;
+		$index    = $expression_end;
 		$enforced = 'YES';
 		if ( isset( $tokens[ $index ] ) ) {
 			if (
@@ -10950,7 +10950,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'CHECK constraint requires an expression in the DuckDB driver.' );
 		}
 
-		$index = $expression_end;
+		$index    = $expression_end;
 		$enforced = 'YES';
 		if ( isset( $tokens[ $index ] ) ) {
 			if (
