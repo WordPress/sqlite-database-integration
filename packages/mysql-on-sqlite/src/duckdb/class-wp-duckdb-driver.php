@@ -2047,13 +2047,7 @@ class WP_DuckDB_Driver {
 			if ( $ignore ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT statement in DuckDB driver. INSERT IGNORE ... ON DUPLICATE KEY UPDATE is not supported.' );
 			}
-			return $this->execute_auto_increment_write(
-				$this->identifier_value( $tokens[ $index ] ?? null ),
-				$this->translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( $tokens, $index, $on_duplicate_index ),
-				'Failed to execute DuckDB INSERT',
-				$tokens,
-				$index
-			);
+			return $this->execute_insert_on_duplicate_key_update( $tokens, $index, $on_duplicate_index );
 		}
 
 		if ( ! $ignore ) {
@@ -2066,6 +2060,33 @@ class WP_DuckDB_Driver {
 			'Failed to execute DuckDB INSERT',
 			$tokens,
 			$index
+		);
+	}
+
+	/**
+	 * Execute INSERT ... ON DUPLICATE KEY UPDATE.
+	 *
+	 * Duplicate-update branches must not expose DuckDB sequence values consumed
+	 * by the attempted insert as MySQL insert ids.
+	 *
+	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
+	 * @param int               $table_index        Index of the table token.
+	 * @param int               $on_duplicate_index Index of the ON token.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_insert_on_duplicate_key_update( array $tokens, int $table_index, int $on_duplicate_index ): WP_DuckDB_Result_Statement {
+		$translation = $this->translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( $tokens, $table_index, $on_duplicate_index );
+
+		if ( $translation['matched'] ) {
+			return $this->execute_duckdb_query( $translation['sql'], 'Failed to execute DuckDB INSERT' );
+		}
+
+		return $this->execute_auto_increment_write(
+			$this->identifier_value( $tokens[ $table_index ] ?? null ),
+			$translation['sql'],
+			'Failed to execute DuckDB INSERT',
+			$tokens,
+			$table_index
 		);
 	}
 
@@ -12546,9 +12567,9 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
 	 * @param int               $table_index        Index of the table token.
 	 * @param int               $on_duplicate_index Index of the ON token.
-	 * @return string DuckDB SQL.
+	 * @return array{sql:string,matched:bool} DuckDB SQL and whether the incoming values matched an existing unique key.
 	 */
-	private function translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( array $tokens, int $table_index, int $on_duplicate_index ): string {
+	private function translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( array $tokens, int $table_index, int $on_duplicate_index ): array {
 		$insert_shape = $this->parse_on_duplicate_insert_shape( $tokens, $table_index, $on_duplicate_index );
 		$target       = $this->select_on_duplicate_conflict_target( $insert_shape['table_name'], $insert_shape['temporary'], $insert_shape['values_by_column'] );
 		$update_sql   = $this->translate_on_duplicate_update_tokens_to_duckdb_sql(
@@ -12562,7 +12583,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. UPDATE list is required.' );
 		}
 
-		return $this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $table_index, false, 'INSERT', $on_duplicate_index )
+		$sql = $this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $table_index, false, 'INSERT', $on_duplicate_index )
 			. ' ON CONFLICT ('
 			. implode(
 				', ',
@@ -12570,11 +12591,16 @@ class WP_DuckDB_Driver {
 					function ( string $column_name ): string {
 						return $this->connection->quote_identifier( $column_name );
 					},
-					$target
+					$target['columns']
 				)
 			)
 			. ') DO UPDATE SET '
 			. $update_sql;
+
+		return array(
+			'sql'     => $sql,
+			'matched' => $target['matched'],
+		);
 	}
 
 	/**
@@ -13377,7 +13403,7 @@ class WP_DuckDB_Driver {
 	 * @param string               $table_name       Table name.
 	 * @param bool                 $temporary        Whether the target is a temporary table.
 	 * @param array<string,string> $values_by_column Inserted values keyed by lowercase column name.
-	 * @return string[] Conflict target columns.
+	 * @return array{columns:string[],matched:bool} Conflict target columns and whether an existing row matched.
 	 */
 	private function select_on_duplicate_conflict_target( string $table_name, bool $temporary, array $values_by_column ): array {
 		$eligible_targets = array();
@@ -13403,14 +13429,20 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( 1 === count( $matched_targets ) ) {
-			return $matched_targets[0];
+			return array(
+				'columns' => $matched_targets[0],
+				'matched' => true,
+			);
 		}
 		if ( count( $matched_targets ) > 1 ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values match multiple unique key targets.' );
 		}
 
 		if ( count( $eligible_targets ) > 0 ) {
-			return $eligible_targets[0];
+			return array(
+				'columns' => $eligible_targets[0],
+				'matched' => false,
+			);
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values do not include a unique key target.' );

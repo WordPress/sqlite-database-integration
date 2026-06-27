@@ -3725,6 +3725,103 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->fail( 'Expected duplicate insert to fail.' );
 	}
 
+	public function test_insert_id_tracks_on_duplicate_key_update_policy(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE odku_auto_items (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				slug VARCHAR(100) UNIQUE,
+				alias VARCHAR(100) UNIQUE,
+				hits INTEGER NOT NULL DEFAULT 0
+			)'
+		);
+
+		$driver->query( "INSERT INTO odku_auto_items (slug, alias, hits) VALUES ('existing', 'alias-existing', 1)" );
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$driver->query(
+			"INSERT INTO odku_auto_items (slug, alias, hits)
+			VALUES ('generated', 'alias-generated', 2)
+			ON DUPLICATE KEY UPDATE hits = VALUES(hits)"
+		);
+		$this->assertSame( 2, $driver->get_insert_id() );
+
+		$driver->query(
+			"INSERT INTO odku_auto_items (id, slug, alias, hits)
+			VALUES (42, 'explicit', 'alias-explicit', 4)
+			ON DUPLICATE KEY UPDATE hits = VALUES(hits)"
+		);
+		$this->assertSame( 42, $driver->get_insert_id() );
+
+		$driver->query(
+			"INSERT INTO odku_auto_items (id, slug, alias, hits)
+			VALUES (1, 'primary-change', 'alias-primary-change', 7)
+			ON DUPLICATE KEY UPDATE slug = VALUES(slug), alias = VALUES(alias), hits = VALUES(hits)"
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$driver->query(
+			"INSERT INTO odku_auto_items (slug, alias, hits)
+			VALUES ('primary-change', 'alias-unused-update', 3)
+			ON DUPLICATE KEY UPDATE hits = hits + VALUES(hits)"
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$driver->query(
+			"INSERT INTO odku_auto_items (slug, alias, hits)
+			VALUES ('primary-change', 'alias-unused-noop', 99)
+			ON DUPLICATE KEY UPDATE hits = hits"
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$driver->query( "INSERT INTO odku_auto_items (id, slug, alias) VALUES (100, 'before-failure', 'alias-before-failure')" );
+		$this->assertSame( 100, $driver->get_insert_id() );
+
+		try {
+			$driver->query(
+				"INSERT INTO odku_auto_items (slug, alias, hits)
+				VALUES ('primary-change', 'alias-generated', 13)
+				ON DUPLICATE KEY UPDATE alias = VALUES(alias)"
+			);
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertSame( 0, $driver->get_insert_id() );
+			$this->assertSame(
+				array(
+					array(
+						'id'    => 1,
+						'slug'  => 'primary-change',
+						'alias' => 'alias-primary-change',
+						'hits'  => 10,
+					),
+					array(
+						'id'    => 2,
+						'slug'  => 'generated',
+						'alias' => 'alias-generated',
+						'hits'  => 2,
+					),
+					array(
+						'id'    => 42,
+						'slug'  => 'explicit',
+						'alias' => 'alias-explicit',
+						'hits'  => 4,
+					),
+					array(
+						'id'    => 100,
+						'slug'  => 'before-failure',
+						'alias' => 'alias-before-failure',
+						'hits'  => 0,
+					),
+				),
+				$driver->query( 'SELECT id, slug, alias, hits FROM odku_auto_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+			return;
+		}
+
+		$this->fail( 'Expected duplicate ODKU update to violate the alias unique key.' );
+	}
+
 	public function test_insert_on_duplicate_key_update_values_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 
