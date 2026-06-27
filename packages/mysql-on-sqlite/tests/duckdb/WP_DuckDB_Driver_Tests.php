@@ -9852,7 +9852,8 @@ CREATE TABLE `metadata` (
   KEY `autoload` (`autoload`),
   KEY `option_value_prefix` (`option_value`(12))
 ) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Options table'
-SQL,
+SQL
+			,
 			$metadata_rows[0]['Create Table']
 		);
 
@@ -9869,7 +9870,8 @@ CREATE TABLE `composite_pk` (
   PRIMARY KEY (`site_id`, `option_id`),
   UNIQUE KEY `unique_site_option` (`site_id`, `option_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-SQL,
+SQL
+			,
 			$composite_rows[0]['Create Table']
 		);
 
@@ -9880,7 +9882,8 @@ CREATE TABLE `plain` (
   `id` int DEFAULT NULL,
   `name` text DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-SQL,
+SQL
+			,
 			$plain_rows[0]['Create Table']
 		);
 
