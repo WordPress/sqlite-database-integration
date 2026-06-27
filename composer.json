@@ -68,9 +68,7 @@
 			"cd wordpress && if [ -z \"$(node tools/local-env/scripts/docker.js ps -q)\" ]; then cd ..; composer run wp-test-start; fi"
 		],
 		"wp-test-ensure-env-duckdb": [
-			"if [ ! -f wordpress/src/wp-load.php ] || ! grep -q \"define( 'DB_ENGINE', 'duckdb' );\" wordpress/src/wp-content/db.php 2>/dev/null; then composer run wp-setup-duckdb; fi",
-			"@putenv COMPOSE_IGNORE_ORPHANS=true",
-			"cd wordpress && if [ -z \"$(node tools/local-env/scripts/docker.js ps -q)\" ]; then cd ..; composer run wp-test-start; fi"
+			"./bin/wp-test-ensure-env-duckdb.sh @no_additional_args"
 		],
 		"wp-test-php": [
 			"@wp-test-ensure-env @no_additional_args",
