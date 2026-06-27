@@ -147,6 +147,86 @@ jobs:
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
 
+      - name: Dump WordPress DuckDB failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+
+          if [ ! -d wordpress ]; then
+            echo "wordpress directory is not present; skipping Docker and debug log diagnostics."
+            exit 0
+          fi
+
+          echo "::group::Docker compose status"
+          (
+            cd wordpress || exit 0
+            docker ps -a --format 'table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Names}}' || true
+            docker compose -f docker-compose.yml -f docker-compose.override.yml ps || true
+            docker compose -f docker-compose.yml -f docker-compose.override.yml config --services || true
+          ) || true
+          echo "::endgroup::"
+
+          echo "::group::Docker compose logs"
+          (
+            cd wordpress || exit 0
+            docker compose -f docker-compose.yml -f docker-compose.override.yml logs --no-color --tail=200 || true
+          ) || true
+          echo "::endgroup::"
+
+          echo "::group::WordPress container debug logs"
+          (
+            cd wordpress || exit 0
+            services="$(docker compose -f docker-compose.yml -f docker-compose.override.yml config --services 2>/dev/null || true)"
+            for service in php cli wordpress-develop; do
+              if printf '%s\n' "$services" | grep -qx "$service"; then
+                echo "===== $service debug.log tails ====="
+                docker compose -f docker-compose.yml -f docker-compose.override.yml exec -T "$service" sh -lc 'for log_file in /var/www/src/wp-content/debug.log /var/www/build/wp-content/debug.log /var/www/html/wp-content/debug.log; do if [ -f "$log_file" ]; then echo "===== $log_file ====="; tail -n 200 "$log_file"; fi; done' || true
+              fi
+            done
+          ) || true
+          echo "::endgroup::"
+
+          echo "::group::Local WordPress debug logs"
+          mapfile -t debug_logs < <(
+            find wordpress \
+              -path '*/node_modules' -prune -o \
+              -path '*/vendor' -prune -o \
+              -name 'debug.log' -type f -print 2>/dev/null \
+              | sort \
+              | head -20
+          )
+          if [ "${#debug_logs[@]}" -eq 0 ]; then
+            echo "No debug.log files found under wordpress/."
+          fi
+          for log_file in "${debug_logs[@]}"; do
+            echo "===== $log_file ====="
+            tail -n 200 "$log_file" || true
+          done
+          echo "::endgroup::"
+
+          echo "::group::WordPress DuckDB runtime probes"
+          (
+            cd wordpress || exit 0
+            services="$(docker compose -f docker-compose.yml -f docker-compose.override.yml config --services 2>/dev/null || true)"
+            if printf '%s\n' "$services" | grep -qx 'php'; then
+              docker compose -f docker-compose.yml -f docker-compose.override.yml exec -T php sh -lc 'for file in /var/www/src/wp-config.php /var/www/src/wp-content/db.php; do if [ -f "$file" ]; then echo "===== $file selected constants ====="; grep -nE "DB_ENGINE|DATABASE_TYPE|DUCKDB|WP_DEBUG" "$file" || true; fi; done' || true
+            fi
+            if printf '%s\n' "$services" | grep -qx 'cli'; then
+              docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm cli wp --path=/var/www/src eval 'global $wpdb; echo "wpdb_class=" . get_class( $wpdb ) . PHP_EOL; echo "db_engine=" . ( defined( "DB_ENGINE" ) ? DB_ENGINE : "<undefined>" ) . PHP_EOL; echo "last_error=" . $wpdb->last_error . PHP_EOL;' || true
+            fi
+            curl -i -sS -X POST \
+              --data-urlencode 'log=admin' \
+              --data-urlencode 'pwd=password' \
+              --data-urlencode 'wp-submit=Log In' \
+              http://localhost:8889/wp-login.php \
+              | sed -E 's/(Set-Cookie: [^=]+=)[^;]*/\1<redacted>/Ig' \
+              | sed -n '1,180p' || true
+          ) || true
+          echo "::endgroup::"
+
+          true
+
       - name: Stop Docker containers
         if: always()
         run: composer run wp-test-clean
@@ -204,6 +284,86 @@ jobs:
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
         run: composer run wp-test-e2e-duckdb
+
+      - name: Dump WordPress DuckDB failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+
+          if [ ! -d wordpress ]; then
+            echo "wordpress directory is not present; skipping Docker and debug log diagnostics."
+            exit 0
+          fi
+
+          echo "::group::Docker compose status"
+          (
+            cd wordpress || exit 0
+            docker ps -a --format 'table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Names}}' || true
+            docker compose -f docker-compose.yml -f docker-compose.override.yml ps || true
+            docker compose -f docker-compose.yml -f docker-compose.override.yml config --services || true
+          ) || true
+          echo "::endgroup::"
+
+          echo "::group::Docker compose logs"
+          (
+            cd wordpress || exit 0
+            docker compose -f docker-compose.yml -f docker-compose.override.yml logs --no-color --tail=200 || true
+          ) || true
+          echo "::endgroup::"
+
+          echo "::group::WordPress container debug logs"
+          (
+            cd wordpress || exit 0
+            services="$(docker compose -f docker-compose.yml -f docker-compose.override.yml config --services 2>/dev/null || true)"
+            for service in php cli wordpress-develop; do
+              if printf '%s\n' "$services" | grep -qx "$service"; then
+                echo "===== $service debug.log tails ====="
+                docker compose -f docker-compose.yml -f docker-compose.override.yml exec -T "$service" sh -lc 'for log_file in /var/www/src/wp-content/debug.log /var/www/build/wp-content/debug.log /var/www/html/wp-content/debug.log; do if [ -f "$log_file" ]; then echo "===== $log_file ====="; tail -n 200 "$log_file"; fi; done' || true
+              fi
+            done
+          ) || true
+          echo "::endgroup::"
+
+          echo "::group::Local WordPress debug logs"
+          mapfile -t debug_logs < <(
+            find wordpress \
+              -path '*/node_modules' -prune -o \
+              -path '*/vendor' -prune -o \
+              -name 'debug.log' -type f -print 2>/dev/null \
+              | sort \
+              | head -20
+          )
+          if [ "${#debug_logs[@]}" -eq 0 ]; then
+            echo "No debug.log files found under wordpress/."
+          fi
+          for log_file in "${debug_logs[@]}"; do
+            echo "===== $log_file ====="
+            tail -n 200 "$log_file" || true
+          done
+          echo "::endgroup::"
+
+          echo "::group::WordPress DuckDB runtime probes"
+          (
+            cd wordpress || exit 0
+            services="$(docker compose -f docker-compose.yml -f docker-compose.override.yml config --services 2>/dev/null || true)"
+            if printf '%s\n' "$services" | grep -qx 'php'; then
+              docker compose -f docker-compose.yml -f docker-compose.override.yml exec -T php sh -lc 'for file in /var/www/src/wp-config.php /var/www/src/wp-content/db.php; do if [ -f "$file" ]; then echo "===== $file selected constants ====="; grep -nE "DB_ENGINE|DATABASE_TYPE|DUCKDB|WP_DEBUG" "$file" || true; fi; done' || true
+            fi
+            if printf '%s\n' "$services" | grep -qx 'cli'; then
+              docker compose -f docker-compose.yml -f docker-compose.override.yml run --rm cli wp --path=/var/www/src eval 'global $wpdb; echo "wpdb_class=" . get_class( $wpdb ) . PHP_EOL; echo "db_engine=" . ( defined( "DB_ENGINE" ) ? DB_ENGINE : "<undefined>" ) . PHP_EOL; echo "last_error=" . $wpdb->last_error . PHP_EOL;' || true
+            fi
+            curl -i -sS -X POST \
+              --data-urlencode 'log=admin' \
+              --data-urlencode 'pwd=password' \
+              --data-urlencode 'wp-submit=Log In' \
+              http://localhost:8889/wp-login.php \
+              | sed -E 's/(Set-Cookie: [^=]+=)[^;]*/\1<redacted>/Ig' \
+              | sed -n '1,180p' || true
+          ) || true
+          echo "::endgroup::"
+
+          true
 
       - name: Stop Docker containers
         if: always()

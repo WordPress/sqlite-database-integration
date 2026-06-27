@@ -149,15 +149,29 @@ function ensureCompatiblePhpunitRunner() {
 	console.log(
 		`PHPUnit\\TextUI\\TestRunner::run() is unavailable; constraining PHPUnit to ${ phpunitCompatibilityConstraint }...`
 	);
-	execSync(
-		`cd wordpress && node tools/local-env/scripts/docker.js run --rm php composer update --no-interaction --no-progress --with ${ shellQuote( `phpunit/phpunit:${ phpunitCompatibilityConstraint }` ) }`,
-		{ stdio: 'inherit' }
-	);
+	ensureWordPressGitSafeDirectory();
+	installCompatiblePhpunitRunner();
 
 	if ( ! hasCompatiblePhpunitRunner() ) {
-		console.error( 'Error: WordPress PHPUnit runner is still incompatible after Composer update.' );
+		console.error( 'Error: WordPress PHPUnit runner is still incompatible after Composer require.' );
 		process.exit( 1 );
 	}
+}
+
+function ensureWordPressGitSafeDirectory() {
+	execSync(
+		`cd wordpress && node tools/local-env/scripts/docker.js run --rm php sh -lc ${ shellQuote( 'if command -v git >/dev/null 2>&1; then git config --global --add safe.directory /var/www; fi' ) }`,
+		{ stdio: 'inherit' }
+	);
+}
+
+function installCompatiblePhpunitRunner() {
+	const phpunitPackage = `phpunit/phpunit:${ phpunitCompatibilityConstraint }`;
+
+	execSync(
+		`cd wordpress && node tools/local-env/scripts/docker.js run --rm php composer require --dev --no-interaction --no-progress --with-all-dependencies ${ shellQuote( phpunitPackage ) }`,
+		{ stdio: 'inherit' }
+	);
 }
 
 function hasCompatiblePhpunitRunner() {
