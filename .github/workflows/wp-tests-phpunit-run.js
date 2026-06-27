@@ -12,6 +12,7 @@ const path = require( 'path' );
 const repoRoot = path.join( __dirname, '..', '..' );
 const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
 const phpunitCommand = process.env.WP_SQLITE_PHPUNIT_COMMAND || 'composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose';
+const isDuckDBPhpunitRun = phpunitCommand.includes( 'wp-test-php-duckdb' );
 const phpunitEnsureEnvironmentCommand = process.env.WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND || getDefaultEnsureEnvironmentCommand();
 const ensurePhpunitCompatibility = process.env.WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY === '1';
 const phpunitCompatibilityConstraint = process.env.WP_SQLITE_PHPUNIT_COMPATIBILITY_CONSTRAINT || '^9.6';
@@ -26,13 +27,41 @@ const duckdbAutoloadCompatibilityWrapperPath = path.join( repoRoot, 'wordpress',
 const phpunitCompatibilityPrependContainerPath = '/var/www/phpunit-runner-compat-prepend.php';
 const duckdbAutoloadCompatibilityWrapperContainerPath = '/var/www/phpunit-duckdb-autoload-wrapper.php';
 
-const expectedErrors = [];
+const sqliteExpectedErrors = [
+	'Tests_DB_Charset::test_invalid_characters_in_query',
+	'Tests_DB_Charset::test_set_charset_changes_the_connection_collation',
+];
 
-const expectedFailures = [
+const sqliteExpectedFailures = [
 	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #2',
 	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #3',
 	'Tests_Comment::test_wp_new_comment_respects_comment_field_lengths',
 	'Tests_Comment::test_wp_update_comment',
+	'Tests_DB_Charset::test_get_column_charset with data set #0',
+	'Tests_DB_Charset::test_get_column_charset with data set #1',
+	'Tests_DB_Charset::test_get_column_charset with data set #2',
+	'Tests_DB_Charset::test_get_column_charset with data set #3',
+	'Tests_DB_Charset::test_get_column_charset with data set #4',
+	'Tests_DB_Charset::test_get_column_charset with data set #5',
+	'Tests_DB_Charset::test_get_column_charset with data set #6',
+	'Tests_DB_Charset::test_get_column_charset with data set #7',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #0',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #1',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #2',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #3',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #4',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #5',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #6',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #7',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #0',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #1',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #2',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #3',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #4',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #5',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #6',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #7',
+	'Tests_DB_Charset::test_process_field_charsets_on_nonexistent_table',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #21',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #22',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #23',
@@ -49,8 +78,23 @@ const expectedFailures = [
 	'Tests_DB_Charset::test_strip_invalid_text with data set #39',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #40',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #41',
+	'Tests_DB_Charset::test_strip_invalid_text_for_column_bails_if_ascii_input_too_long',
+	'Tests_DB_dbDelta::test_spatial_indices',
+	'Tests_DB::test_charset_switched_to_utf8mb4',
+	'Tests_DB::test_close',
+	'Tests_DB::test_delete_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_has_cap',
+	'Tests_DB::test_insert_value_too_long_for_field with data set &quot;too long&quot;',
 	'Tests_DB::test_mysqli_flush_sync',
+	'Tests_DB::test_non_unicode_collations',
+	'Tests_DB::test_pre_get_col_charset_filter',
+	'Tests_DB::test_process_fields_on_nonexistent_table',
+	'Tests_DB::test_process_fields_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_query_value_contains_invalid_chars',
+	'Tests_DB::test_replace_value_too_long_for_field with data set &quot;too long&quot;',
 	'Tests_DB::test_replace',
+	'Tests_DB::test_supports_collation',
+	'Tests_DB::test_update_value_too_long_for_field with data set &quot;too long&quot;',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #1',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #2',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #3',
@@ -62,11 +106,60 @@ const expectedFailures = [
 	'WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query',
 ];
 
+const duckdbExpectedFailuresToPrune = new Set( [
+	'Tests_DB_Charset::test_get_column_charset with data set #0',
+	'Tests_DB_Charset::test_get_column_charset with data set #1',
+	'Tests_DB_Charset::test_get_column_charset with data set #2',
+	'Tests_DB_Charset::test_get_column_charset with data set #3',
+	'Tests_DB_Charset::test_get_column_charset with data set #4',
+	'Tests_DB_Charset::test_get_column_charset with data set #5',
+	'Tests_DB_Charset::test_get_column_charset with data set #6',
+	'Tests_DB_Charset::test_get_column_charset with data set #7',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #0',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #1',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #2',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #3',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #4',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #5',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #6',
+	'Tests_DB_Charset::test_get_column_charset_is_mysql_undefined with data set #7',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #0',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #1',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #2',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #3',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #4',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #5',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #6',
+	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #7',
+	'Tests_DB_Charset::test_process_field_charsets_on_nonexistent_table',
+	'Tests_DB_Charset::test_strip_invalid_text_for_column_bails_if_ascii_input_too_long',
+	'Tests_DB_dbDelta::test_spatial_indices',
+	'Tests_DB::test_charset_switched_to_utf8mb4',
+	'Tests_DB::test_close',
+	'Tests_DB::test_delete_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_has_cap',
+	'Tests_DB::test_insert_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_non_unicode_collations',
+	'Tests_DB::test_pre_get_col_charset_filter',
+	'Tests_DB::test_process_fields_on_nonexistent_table',
+	'Tests_DB::test_process_fields_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_query_value_contains_invalid_chars',
+	'Tests_DB::test_replace_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_supports_collation',
+	'Tests_DB::test_update_value_too_long_for_field with data set &quot;too long&quot;',
+] );
+
+const expectedErrors = isDuckDBPhpunitRun ? [] : sqliteExpectedErrors;
+const expectedFailures = isDuckDBPhpunitRun
+	? sqliteExpectedFailures.filter( test => ! duckdbExpectedFailuresToPrune.has( test ) )
+	: sqliteExpectedFailures;
+
 console.log( 'Running WordPress PHPUnit tests with expected failures tracking...' );
 if ( requiresNativeParserExtension ) {
 	console.log( 'Native parser extension is required for this PHPUnit run.' );
 }
 console.log( 'PHPUnit command:', phpunitCommand );
+console.log( 'Expected-result mode:', isDuckDBPhpunitRun ? 'duckdb' : 'sqlite' );
 console.log( 'JUnit output:', junitOutputFile );
 console.log( 'Expected errors:', expectedErrors );
 console.log( 'Expected failures:', expectedFailures );
@@ -75,7 +168,7 @@ if ( ignoreMissingExpectedResults ) {
 }
 
 function getDefaultEnsureEnvironmentCommand() {
-	return phpunitCommand.includes( 'wp-test-php-duckdb' )
+	return isDuckDBPhpunitRun
 		? 'composer run wp-test-ensure-env-duckdb'
 		: 'composer run wp-test-ensure-env';
 }
@@ -105,7 +198,7 @@ function shouldPreloadCompatiblePhpunitRunner() {
 	return (
 		ensurePhpunitCompatibility &&
 		! skipPhpunitCompatibilityCheck &&
-		phpunitCommand.includes( 'wp-test-php-duckdb' )
+		isDuckDBPhpunitRun
 	);
 }
 
