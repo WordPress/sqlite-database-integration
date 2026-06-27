@@ -12029,6 +12029,7 @@ SQL,
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY, other_id INT)' );
+		$driver->query( 'INSERT INTO parents (id, other_id) VALUES (1, 10)' );
 
 		foreach (
 			array(
@@ -12037,18 +12038,44 @@ SQL,
 				'CREATE TABLE child_inline_missing_list (parent_id INT REFERENCES parents)' => 'Expected FOREIGN KEY referenced column list',
 			) as $sql => $message
 		) {
+			$before = array(
+				'tables'               => $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ),
+				'parent_rows'          => $driver->query( 'SELECT id, other_id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'foreign_key_metadata' => $this->foreign_key_rejection_metadata_snapshot( $driver ),
+			);
+
 			try {
 				$driver->query( $sql );
 				$this->fail( 'Expected unsupported inline REFERENCES shape to reject SQL: ' . $sql );
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
 				$this->assertStringContainsString( $message, $e->getMessage() );
 			}
+
+			$this->assertSame(
+				$before,
+				array(
+					'tables'               => $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ),
+					'parent_rows'          => $driver->query( 'SELECT id, other_id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+					'foreign_key_metadata' => $this->foreign_key_rejection_metadata_snapshot( $driver ),
+				),
+				'Unsupported inline REFERENCES shape created schema, metadata, or data for SQL: ' . $sql
+			);
 		}
 
 		$this->assertSame(
 			array( array( 'Tables_in_wp' => 'parents' ) ),
 			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
 		);
+		$this->assertSame(
+			array(
+				array(
+					'id'       => 1,
+					'other_id' => 10,
+				),
+			),
+			$driver->query( 'SELECT id, other_id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assert_duckdb_connection_usable( $driver );
 	}
 
 	public function test_unsupported_alter_table_add_auto_increment_throws_driver_exception(): void {
