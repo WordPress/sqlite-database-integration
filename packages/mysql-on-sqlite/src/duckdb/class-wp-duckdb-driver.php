@@ -113,6 +113,11 @@ class WP_DuckDB_Driver {
 	private $database;
 
 	/**
+	 * @var string
+	 */
+	private $current_database;
+
+	/**
 	 * @var int
 	 */
 	private $mysql_version;
@@ -206,6 +211,7 @@ class WP_DuckDB_Driver {
 		if ( '' === $this->database ) {
 			throw new InvalidArgumentException( 'DuckDB driver option "database" must not be empty.' );
 		}
+		$this->current_database = $this->database;
 
 		if ( isset( $options['connection'] ) ) {
 			if ( ! $options['connection'] instanceof WP_DuckDB_Connection ) {
@@ -266,6 +272,9 @@ class WP_DuckDB_Driver {
 				case WP_MySQL_Lexer::SET_SYMBOL:
 					$this->found_rows = 0;
 					return $this->execute_set_statement( $tokens );
+				case WP_MySQL_Lexer::USE_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_use_statement( $tokens );
 				case WP_MySQL_Lexer::SELECT_SYMBOL:
 					return $this->execute_select( $tokens );
 				case WP_MySQL_Lexer::CREATE_SYMBOL:
@@ -1119,6 +1128,8 @@ class WP_DuckDB_Driver {
 			if ( 0 === strcasecmp( $database, 'information_schema' ) || 0 !== strcasecmp( $database, $this->database ) ) {
 				return null;
 			}
+		} elseif ( $this->is_information_schema_current_database() ) {
+			return null;
 		}
 
 		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
@@ -1853,6 +1864,7 @@ class WP_DuckDB_Driver {
 
 		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
+		$this->assert_unqualified_write_allowed_in_current_database();
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Expected column list in CREATE TABLE.' );
 		++$index;
 
@@ -2004,6 +2016,7 @@ class WP_DuckDB_Driver {
 
 		$table_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
+		$this->assert_unqualified_write_allowed_in_current_database();
 		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
 		if ( null === $table_reference ) {
 			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in CREATE INDEX statement." );
@@ -2622,6 +2635,8 @@ class WP_DuckDB_Driver {
 			if ( 0 !== strcasecmp( $database, $this->database ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Only the current database is supported.' );
 			}
+		} else {
+			$this->assert_unqualified_write_allowed_in_current_database();
 		}
 
 		if ( $this->is_duckdb_internal_table_name( $table_name ) ) {
@@ -2764,6 +2779,8 @@ class WP_DuckDB_Driver {
 			if ( 0 !== strcasecmp( $database, $this->database ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only the current database is supported.' );
 			}
+		} else {
+			$this->assert_unqualified_write_allowed_in_current_database();
 		}
 
 		if ( $this->is_duckdb_internal_table_name( $table_name ) ) {
@@ -3047,6 +3064,22 @@ class WP_DuckDB_Driver {
 			) {
 				return true;
 			}
+
+			foreach (
+				array(
+					'tables',
+					'columns',
+					'statistics',
+					'table_constraints',
+					'key_column_usage',
+					'referential_constraints',
+					'check_constraints',
+				) as $information_schema_table
+			) {
+				if ( null !== $this->information_schema_reference_length( $tokens, $index, $information_schema_table ) ) {
+					return true;
+				}
+			}
 		}
 
 		return false;
@@ -3328,6 +3361,8 @@ class WP_DuckDB_Driver {
 			if ( 0 !== strcasecmp( $database, $this->database ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only the current database is supported.' );
 			}
+		} else {
+			$this->assert_unqualified_write_allowed_in_current_database();
 		}
 
 		$alias = null;
@@ -3392,6 +3427,8 @@ class WP_DuckDB_Driver {
 			if ( 0 !== strcasecmp( $database, $this->database ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only the current database is supported.' );
 			}
+		} else {
+			$this->assert_unqualified_write_allowed_in_current_database();
 		}
 
 		if ( $this->is_duckdb_internal_table_name( $table_name ) ) {
@@ -3466,6 +3503,39 @@ class WP_DuckDB_Driver {
 	 */
 	private function empty_ddl_result(): WP_DuckDB_Result_Statement {
 		return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Execute USE database for the configured database and information_schema.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_use_statement( array $tokens ): WP_DuckDB_Result_Statement {
+		$this->expect_token( $tokens, 0, WP_MySQL_Lexer::USE_SYMBOL, 'Expected USE.' );
+		$database = $this->identifier_value( $tokens[1] ?? null );
+
+		if ( 2 !== count( $tokens ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported USE statement in DuckDB driver. Use USE database.' );
+		}
+
+		if ( 0 === strcasecmp( $database, 'information_schema' ) ) {
+			$this->current_database = 'information_schema';
+			return $this->empty_ddl_result();
+		}
+
+		if ( 0 === strcasecmp( $database, $this->database ) ) {
+			$this->current_database = $this->database;
+			return $this->empty_ddl_result();
+		}
+
+		throw new WP_DuckDB_Driver_Exception(
+			sprintf(
+				"can't use schema '%s', only '%s' and 'information_schema' are supported",
+				$database,
+				$this->database
+			)
+		);
 	}
 
 	/**
@@ -8597,17 +8667,16 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW CREATE TABLE statement in DuckDB driver. Use SHOW CREATE TABLE [database.]table.' );
 		}
 
-		if ( null !== $database ) {
-			if ( 0 === strcasecmp( $database, 'information_schema' ) ) {
-				throw new WP_DuckDB_Driver_Exception( sprintf( "SHOW command denied to user 'duckdb'@'%%' for table '%s'", $table_name ) );
-			}
+		$effective_database = null === $database ? $this->current_database : $database;
+		if ( 0 === strcasecmp( $effective_database, 'information_schema' ) ) {
+			throw new WP_DuckDB_Driver_Exception( sprintf( "SHOW command denied to user 'duckdb'@'%%' for table '%s'", $table_name ) );
+		}
 
-			if ( 0 !== strcasecmp( $database, $this->database ) ) {
-				return new WP_DuckDB_Result_Statement(
-					array( 'Table', 'Create Table' ),
-					array()
-				);
-			}
+		if ( 0 !== strcasecmp( $effective_database, $this->database ) ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'Table', 'Create Table' ),
+				array()
+			);
 		}
 
 		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
@@ -8783,7 +8852,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function execute_show_table_status( array $tokens ): WP_DuckDB_Result_Statement {
 		$index    = 3;
-		$database = $this->database;
+		$database = $this->current_database;
 
 		if (
 			isset( $tokens[ $index ] )
@@ -8939,7 +9008,7 @@ class WP_DuckDB_Driver {
 	 * @return array{database:string,table_name:string,database_explicit:bool,next_index:int}
 	 */
 	private function parse_metadata_table_reference( array $tokens, int $index, bool $allow_database_clause ): array {
-		$database          = $this->database;
+		$database          = $this->current_database;
 		$database_explicit = false;
 		$table_name        = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
@@ -8989,7 +9058,7 @@ class WP_DuckDB_Driver {
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::TABLES_SYMBOL, 'Expected TABLES in SHOW TABLES statement.' );
 		++$index;
 
-		$database = $this->database;
+		$database = $this->current_database;
 		if (
 			isset( $tokens[ $index ] )
 			&& ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::IN_SYMBOL === $tokens[ $index ]->id )
@@ -11079,39 +11148,51 @@ class WP_DuckDB_Driver {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
 			$token = $tokens[ $index ];
 
-			if ( $rewrite_information_schema_tables && $this->is_information_schema_tables_reference( $tokens, $index ) ) {
+			if ( $this->is_configured_database_select_table_qualifier( $tokens, $index ) ) {
+				++$index;
+				continue;
+			}
+
+			$information_schema_reference_length = $this->information_schema_tables_reference_length( $tokens, $index );
+			if ( $rewrite_information_schema_tables && null !== $information_schema_reference_length ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_TABLES_TABLE );
-				$index   += 2;
+				$index   += $information_schema_reference_length - 1;
 				continue;
 			}
-			if ( $rewrite_information_schema_columns && $this->is_information_schema_columns_reference( $tokens, $index ) ) {
+			$information_schema_reference_length = $this->information_schema_columns_reference_length( $tokens, $index );
+			if ( $rewrite_information_schema_columns && null !== $information_schema_reference_length ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_COLUMNS_TABLE );
-				$index   += 2;
+				$index   += $information_schema_reference_length - 1;
 				continue;
 			}
-			if ( $rewrite_information_schema_statistics && $this->is_information_schema_statistics_reference( $tokens, $index ) ) {
+			$information_schema_reference_length = $this->information_schema_statistics_reference_length( $tokens, $index );
+			if ( $rewrite_information_schema_statistics && null !== $information_schema_reference_length ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_STATISTICS_TABLE );
-				$index   += 2;
+				$index   += $information_schema_reference_length - 1;
 				continue;
 			}
-			if ( $rewrite_information_schema_table_constraints && $this->is_information_schema_table_constraints_reference( $tokens, $index ) ) {
+			$information_schema_reference_length = $this->information_schema_table_constraints_reference_length( $tokens, $index );
+			if ( $rewrite_information_schema_table_constraints && null !== $information_schema_reference_length ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE );
-				$index   += 2;
+				$index   += $information_schema_reference_length - 1;
 				continue;
 			}
-			if ( $rewrite_information_schema_key_column_usage && $this->is_information_schema_key_column_usage_reference( $tokens, $index ) ) {
+			$information_schema_reference_length = $this->information_schema_key_column_usage_reference_length( $tokens, $index );
+			if ( $rewrite_information_schema_key_column_usage && null !== $information_schema_reference_length ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE );
-				$index   += 2;
+				$index   += $information_schema_reference_length - 1;
 				continue;
 			}
-			if ( $rewrite_information_schema_referential_constraints && $this->is_information_schema_referential_constraints_reference( $tokens, $index ) ) {
+			$information_schema_reference_length = $this->information_schema_referential_constraints_reference_length( $tokens, $index );
+			if ( $rewrite_information_schema_referential_constraints && null !== $information_schema_reference_length ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_REFERENTIAL_CONSTRAINTS_TABLE );
-				$index   += 2;
+				$index   += $information_schema_reference_length - 1;
 				continue;
 			}
-			if ( $rewrite_information_schema_check_constraints && $this->is_information_schema_check_constraints_reference( $tokens, $index ) ) {
+			$information_schema_reference_length = $this->information_schema_check_constraints_reference_length( $tokens, $index );
+			if ( $rewrite_information_schema_check_constraints && null !== $information_schema_reference_length ) {
 				$pieces[] = $this->connection->quote_identifier( self::INFO_SCHEMA_CHECK_CONSTRAINTS_TABLE );
-				$index   += 2;
+				$index   += $information_schema_reference_length - 1;
 				continue;
 			}
 
@@ -11166,7 +11247,7 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( $this->is_empty_function_call( $tokens, $index, 'DATABASE' ) ) {
-				$pieces[] = $this->connection->quote( $this->database );
+				$pieces[] = $this->connection->quote( $this->current_database );
 				$index   += 2;
 				continue;
 			}
@@ -12925,6 +13006,8 @@ class WP_DuckDB_Driver {
 	 * @return array{table_name:string,temporary:bool}
 	 */
 	private function resolve_write_table_reference( string $requested_table_name ): array {
+		$this->assert_unqualified_write_allowed_in_current_database();
+
 		$reference = $this->resolve_visible_user_table_reference( $requested_table_name );
 		if ( null !== $reference ) {
 			return $reference;
@@ -15867,6 +15950,125 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether the current database is information_schema.
+	 *
+	 * @return bool Whether information_schema is selected.
+	 */
+	private function is_information_schema_current_database(): bool {
+		return 0 === strcasecmp( $this->current_database, 'information_schema' );
+	}
+
+	/**
+	 * Build a stable information_schema access-denied exception.
+	 *
+	 * @return WP_DuckDB_Driver_Exception Exception.
+	 */
+	private function new_information_schema_access_denied_exception(): WP_DuckDB_Driver_Exception {
+		return new WP_DuckDB_Driver_Exception( "Access denied for user 'duckdb'@'%' to database 'information_schema'" );
+	}
+
+	/**
+	 * Assert that an unqualified write target is not implicitly information_schema.
+	 */
+	private function assert_unqualified_write_allowed_in_current_database(): void {
+		if ( $this->is_information_schema_current_database() ) {
+			throw $this->new_information_schema_access_denied_exception();
+		}
+	}
+
+	/**
+	 * Check whether a token is an identifier with the requested value.
+	 *
+	 * @param WP_Parser_Token|null $token      Token.
+	 * @param string               $identifier Identifier value.
+	 * @return bool Whether the token matches.
+	 */
+	private function token_identifier_equals( $token, string $identifier ): bool {
+		return $token instanceof WP_Parser_Token
+			&& ! $this->is_non_identifier_token( $token )
+			&& 0 === strcasecmp( $token->get_value(), $identifier );
+	}
+
+	/**
+	 * Return the token count for a reference to an information_schema table.
+	 *
+	 * @param WP_Parser_Token[] $tokens     Token stream.
+	 * @param int               $index      Token offset.
+	 * @param string            $table_name information_schema table name.
+	 * @return int|null Token count, or null when there is no reference.
+	 */
+	private function information_schema_reference_length( array $tokens, int $index, string $table_name ): ?int {
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& $this->token_identifier_equals( $tokens[ $index ], 'information_schema' )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& $this->token_identifier_equals( $tokens[ $index + 2 ], $table_name )
+		) {
+			return 3;
+		}
+
+		if (
+			$this->is_information_schema_current_database()
+			&& $this->token_identifier_equals( $tokens[ $index ] ?? null, $table_name )
+			&& $this->is_unqualified_information_schema_table_reference_context( $tokens, $index )
+		) {
+			return 1;
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether an unqualified token appears in a table-reference position.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return bool Whether this position can be an unqualified table reference.
+	 */
+	private function is_unqualified_information_schema_table_reference_context( array $tokens, int $index ): bool {
+		if (
+			( isset( $tokens[ $index - 1 ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index - 1 ]->id )
+			|| ( isset( $tokens[ $index + 1 ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id )
+		) {
+			return false;
+		}
+
+		if ( ! isset( $tokens[ $index - 1 ] ) ) {
+			return false;
+		}
+
+		return in_array(
+			$tokens[ $index - 1 ]->id,
+			array(
+				WP_MySQL_Lexer::FROM_SYMBOL,
+				WP_MySQL_Lexer::JOIN_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a SELECT token starts an explicit configured-database table qualifier.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return bool Whether the configured database qualifier should be stripped.
+	 */
+	private function is_configured_database_select_table_qualifier( array $tokens, int $index ): bool {
+		if (
+			! isset( $tokens[ $index - 1 ], $tokens[ $index + 2 ] )
+			|| ! in_array( $tokens[ $index - 1 ]->id, array( WP_MySQL_Lexer::FROM_SYMBOL, WP_MySQL_Lexer::JOIN_SYMBOL ), true )
+			|| ! $this->token_identifier_equals( $tokens[ $index ], $this->database )
+			|| WP_MySQL_Lexer::DOT_SYMBOL !== $tokens[ $index + 1 ]->id
+			|| $this->is_non_identifier_token( $tokens[ $index + 2 ] )
+		) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
 	 * Read recorded MySQL column metadata.
 	 *
 	 * @param string $table_name Table name.
@@ -15895,7 +16097,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function uses_information_schema_tables( array $tokens ): bool {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
-			if ( $this->is_information_schema_tables_reference( $tokens, $index ) ) {
+			if ( null !== $this->information_schema_tables_reference_length( $tokens, $index ) ) {
 				return true;
 			}
 		}
@@ -15911,10 +16113,18 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the sequence is information_schema.tables.
 	 */
 	private function is_information_schema_tables_reference( array $tokens, int $index ): bool {
-		return isset( $tokens[ $index + 2 ] )
-			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
-			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'tables' );
+		return null !== $this->information_schema_tables_reference_length( $tokens, $index );
+	}
+
+	/**
+	 * Return token count for information_schema.tables at an offset.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return int|null Token count, or null when absent.
+	 */
+	private function information_schema_tables_reference_length( array $tokens, int $index ): ?int {
+		return $this->information_schema_reference_length( $tokens, $index, 'tables' );
 	}
 
 	/**
@@ -15925,7 +16135,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function uses_information_schema_columns( array $tokens ): bool {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
-			if ( $this->is_information_schema_columns_reference( $tokens, $index ) ) {
+			if ( null !== $this->information_schema_columns_reference_length( $tokens, $index ) ) {
 				return true;
 			}
 		}
@@ -15941,10 +16151,18 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the sequence is information_schema.columns.
 	 */
 	private function is_information_schema_columns_reference( array $tokens, int $index ): bool {
-		return isset( $tokens[ $index + 2 ] )
-			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
-			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'columns' );
+		return null !== $this->information_schema_columns_reference_length( $tokens, $index );
+	}
+
+	/**
+	 * Return token count for information_schema.columns at an offset.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return int|null Token count, or null when absent.
+	 */
+	private function information_schema_columns_reference_length( array $tokens, int $index ): ?int {
+		return $this->information_schema_reference_length( $tokens, $index, 'columns' );
 	}
 
 	/**
@@ -15955,7 +16173,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function uses_information_schema_statistics( array $tokens ): bool {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
-			if ( $this->is_information_schema_statistics_reference( $tokens, $index ) ) {
+			if ( null !== $this->information_schema_statistics_reference_length( $tokens, $index ) ) {
 				return true;
 			}
 		}
@@ -15971,10 +16189,18 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the sequence is information_schema.statistics.
 	 */
 	private function is_information_schema_statistics_reference( array $tokens, int $index ): bool {
-		return isset( $tokens[ $index + 2 ] )
-			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
-			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'statistics' );
+		return null !== $this->information_schema_statistics_reference_length( $tokens, $index );
+	}
+
+	/**
+	 * Return token count for information_schema.statistics at an offset.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return int|null Token count, or null when absent.
+	 */
+	private function information_schema_statistics_reference_length( array $tokens, int $index ): ?int {
+		return $this->information_schema_reference_length( $tokens, $index, 'statistics' );
 	}
 
 	/**
@@ -15985,7 +16211,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function uses_information_schema_table_constraints( array $tokens ): bool {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
-			if ( $this->is_information_schema_table_constraints_reference( $tokens, $index ) ) {
+			if ( null !== $this->information_schema_table_constraints_reference_length( $tokens, $index ) ) {
 				return true;
 			}
 		}
@@ -16001,10 +16227,18 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the sequence is information_schema.table_constraints.
 	 */
 	private function is_information_schema_table_constraints_reference( array $tokens, int $index ): bool {
-		return isset( $tokens[ $index + 2 ] )
-			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
-			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'table_constraints' );
+		return null !== $this->information_schema_table_constraints_reference_length( $tokens, $index );
+	}
+
+	/**
+	 * Return token count for information_schema.table_constraints at an offset.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return int|null Token count, or null when absent.
+	 */
+	private function information_schema_table_constraints_reference_length( array $tokens, int $index ): ?int {
+		return $this->information_schema_reference_length( $tokens, $index, 'table_constraints' );
 	}
 
 	/**
@@ -16015,7 +16249,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function uses_information_schema_key_column_usage( array $tokens ): bool {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
-			if ( $this->is_information_schema_key_column_usage_reference( $tokens, $index ) ) {
+			if ( null !== $this->information_schema_key_column_usage_reference_length( $tokens, $index ) ) {
 				return true;
 			}
 		}
@@ -16031,10 +16265,18 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the sequence is information_schema.key_column_usage.
 	 */
 	private function is_information_schema_key_column_usage_reference( array $tokens, int $index ): bool {
-		return isset( $tokens[ $index + 2 ] )
-			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
-			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'key_column_usage' );
+		return null !== $this->information_schema_key_column_usage_reference_length( $tokens, $index );
+	}
+
+	/**
+	 * Return token count for information_schema.key_column_usage at an offset.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return int|null Token count, or null when absent.
+	 */
+	private function information_schema_key_column_usage_reference_length( array $tokens, int $index ): ?int {
+		return $this->information_schema_reference_length( $tokens, $index, 'key_column_usage' );
 	}
 
 	/**
@@ -16045,7 +16287,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function uses_information_schema_referential_constraints( array $tokens ): bool {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
-			if ( $this->is_information_schema_referential_constraints_reference( $tokens, $index ) ) {
+			if ( null !== $this->information_schema_referential_constraints_reference_length( $tokens, $index ) ) {
 				return true;
 			}
 		}
@@ -16061,10 +16303,18 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the sequence is information_schema.referential_constraints.
 	 */
 	private function is_information_schema_referential_constraints_reference( array $tokens, int $index ): bool {
-		return isset( $tokens[ $index + 2 ] )
-			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
-			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'referential_constraints' );
+		return null !== $this->information_schema_referential_constraints_reference_length( $tokens, $index );
+	}
+
+	/**
+	 * Return token count for information_schema.referential_constraints at an offset.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return int|null Token count, or null when absent.
+	 */
+	private function information_schema_referential_constraints_reference_length( array $tokens, int $index ): ?int {
+		return $this->information_schema_reference_length( $tokens, $index, 'referential_constraints' );
 	}
 
 	/**
@@ -16075,7 +16325,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function uses_information_schema_check_constraints( array $tokens ): bool {
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
-			if ( $this->is_information_schema_check_constraints_reference( $tokens, $index ) ) {
+			if ( null !== $this->information_schema_check_constraints_reference_length( $tokens, $index ) ) {
 				return true;
 			}
 		}
@@ -16091,10 +16341,18 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the sequence is information_schema.check_constraints.
 	 */
 	private function is_information_schema_check_constraints_reference( array $tokens, int $index ): bool {
-		return isset( $tokens[ $index + 2 ] )
-			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), 'information_schema' )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
-			&& 0 === strcasecmp( $tokens[ $index + 2 ]->get_value(), 'check_constraints' );
+		return null !== $this->information_schema_check_constraints_reference_length( $tokens, $index );
+	}
+
+	/**
+	 * Return token count for information_schema.check_constraints at an offset.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token offset.
+	 * @return int|null Token count, or null when absent.
+	 */
+	private function information_schema_check_constraints_reference_length( array $tokens, int $index ): ?int {
+		return $this->information_schema_reference_length( $tokens, $index, 'check_constraints' );
 	}
 
 	/**

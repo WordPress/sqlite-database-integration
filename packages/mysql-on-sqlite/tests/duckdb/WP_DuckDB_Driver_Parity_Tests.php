@@ -234,6 +234,44 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SHOW LOCAL VARIABLES WHERE Variable_name = 'version'" );
 	}
 
+	public function test_use_information_schema_collision_state_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE tables (id INT)',
+				'INSERT INTO tables (id) VALUES (1), (2)',
+			)
+		);
+
+		$this->assertParityRows( 'SELECT DATABASE() AS db' );
+		$this->assertParityRows( 'SELECT id FROM tables ORDER BY id' );
+		$this->assertParityRows(
+			"SELECT TABLE_SCHEMA, TABLE_NAME
+			FROM information_schema.tables
+			WHERE TABLE_NAME = 'tables'
+			ORDER BY TABLE_SCHEMA, TABLE_NAME"
+		);
+
+		$this->runParitySetup( array( 'USE information_schema' ) );
+
+		$this->assertParityRows( 'SELECT DATABASE() AS db' );
+		$this->assertParityRows(
+			"SELECT TABLE_SCHEMA, TABLE_NAME
+			FROM tables
+			WHERE TABLE_NAME = 'tables'
+			ORDER BY TABLE_SCHEMA, TABLE_NAME"
+		);
+		$this->assertParityRows( 'SELECT id FROM wp.tables ORDER BY id' );
+		$this->assertParityRows( "SHOW TABLES LIKE 'tables'" );
+		$this->assertParityErrorContains( "INSERT INTO tables (TABLE_NAME) VALUES ('x')", 'Access denied' );
+
+		$this->runParitySetup( array( 'USE wp' ) );
+
+		$this->assertParityRows( 'SELECT DATABASE() AS db' );
+		$this->assertParityRows( 'SELECT id FROM tables ORDER BY id' );
+		$this->assertParityRows( "SHOW TABLES LIKE 'tables'" );
+		$this->assertParityErrorContains( 'USE other', "can't use schema" );
+	}
+
 	public function test_show_admin_metadata_found_rows_match_sqlite(): void {
 		foreach (
 			array(
