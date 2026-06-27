@@ -1211,6 +1211,38 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_aliased_sql_mode_select_expressions_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( "SET SESSION sql_mode = 'STRICT_TRANS_TABLES, NO_ZERO_DATE, NO_ZERO_IN_DATE'" );
+
+		foreach (
+			array(
+				array(
+					'sql'   => 'SELECT @@SESSION.sql_mode AS sql_mode',
+					'alias' => 'sql_mode',
+				),
+				array(
+					'sql'   => 'SELECT @@sql_mode AS mode',
+					'alias' => 'mode',
+				),
+				array(
+					'sql'   => 'SELECT @@ SESSION.sql_mode AS spaced_sql_mode',
+					'alias' => 'spaced_sql_mode',
+				),
+			) as $case
+		) {
+			$read = $driver->query( $case['sql'] );
+			$this->assertSame( array( 'name' => $case['alias'] ), $read->getColumnMeta( 0 ) );
+			$this->assertSame(
+				array( $case['alias'] => 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE' ),
+				$read->fetch( PDO::FETCH_ASSOC )
+			);
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		}
+	}
+
 	public function test_builtin_system_variables_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

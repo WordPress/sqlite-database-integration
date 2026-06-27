@@ -1621,26 +1621,46 @@ class WP_DuckDB_Driver {
 		}
 
 		$session_scoped = false;
-		if ( 2 === count( $tokens ) ) {
-			$name = $this->session_system_variable_name( $tokens[1] );
-		} elseif (
-			4 === count( $tokens )
+		if (
+			isset( $tokens[3] )
 			&& WP_MySQL_Lexer::SESSION_SYMBOL === $tokens[1]->id
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[2]->id
 		) {
 			$name           = $this->session_system_variable_name( $tokens[3] );
 			$session_scoped = true;
+			$index          = 4;
 		} else {
-			return null;
+			$name  = $this->session_system_variable_name( $tokens[1] );
+			$index = 2;
 		}
 
 		if ( null === $name || ! $this->is_supported_session_system_variable_reference( $name, $session_scoped ) ) {
 			return null;
 		}
 
+		$alias = $this->concatenate_token_bytes( array_slice( $tokens, 0, $index ) );
+		if ( isset( $tokens[ $index ] ) ) {
+			if ( 'sql_mode' !== $name ) {
+				return null;
+			}
+
+			if ( WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				$alias = $this->identifier_value( $tokens[ $index ] ?? null );
+				++$index;
+			} else {
+				$alias = $this->identifier_value( $tokens[ $index ] );
+				++$index;
+			}
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			return null;
+		}
+
 		return array(
 			'name'  => $name,
-			'alias' => $this->concatenate_token_bytes( $tokens ),
+			'alias' => $alias,
 		);
 	}
 

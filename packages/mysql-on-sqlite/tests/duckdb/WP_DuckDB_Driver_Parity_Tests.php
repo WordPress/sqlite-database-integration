@@ -356,6 +356,9 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRowCount( 'SET CHARACTER SET utf8mb4' );
 
 		$this->assertParityRows( 'SELECT @@SESSION.sql_mode, @@sql_mode' );
+		$this->assertParityRows( 'SELECT @@SESSION.sql_mode AS sql_mode' );
+		$this->assertParityRows( 'SELECT @@sql_mode AS mode' );
+		$this->assertParityRows( 'SELECT @@ SESSION.sql_mode AS spaced_sql_mode' );
 
 		$this->assertParityRowCount( 'SET NAMES utf8mb4, autocommit = 0' );
 		$this->assertParityRows( 'SELECT @@autocommit' );
