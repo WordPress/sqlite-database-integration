@@ -1235,6 +1235,30 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_check_table_status_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE check_items (id INT)',
+				'CREATE TABLE check_second (id INT)',
+				'CREATE TEMPORARY TABLE check_temp_only (id INT)',
+				'INSERT INTO check_items VALUES (1)',
+			)
+		);
+
+		$this->assertParityRows( 'SELECT id FROM check_items' );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+		$this->assertParityRows( 'CHECK TABLE check_items' );
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+		$this->assertParityRows( 'CHECK TABLE wp.check_items' );
+		$this->assertParityRows( 'CHECK TABLES check_items' );
+		$this->assertParityRows( 'CHECK TABLE check_items QUICK FAST MEDIUM EXTENDED CHANGED FOR UPGRADE' );
+		$this->assertParityRows( 'CHECK TABLE check_items, check_second' );
+		$this->assertParityRows( 'CHECK TABLE check_temp_only' );
+		$this->assertParityRows( 'CHECK TABLE missing_check_table' );
+		$this->assertParityRows( 'CHECK TABLE check_items, missing_check_table' );
+		$this->assertParityErrorContains( 'CHECK TABLE information_schema.tables', "to database 'information_schema'" );
+	}
+
 	public function test_show_table_status_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

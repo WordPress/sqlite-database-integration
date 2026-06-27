@@ -3459,6 +3459,201 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal );
 	}
 
+	public function test_check_table_returns_mysql_shaped_status_rows(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE check_items (id INT)' );
+		$driver->query( 'CREATE TABLE check_second (id INT)' );
+		$driver->query( 'CREATE TEMPORARY TABLE check_temp_only (id INT)' );
+		$driver->query( 'INSERT INTO check_items VALUES (1)' );
+
+		$driver->query( 'SELECT id FROM check_items' );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$check = $driver->query( 'CHECK TABLE check_items' );
+		$this->assertSame( 4, $check->columnCount() );
+		$this->assertSame( array( 'name' => 'Table' ), $check->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => 'Op' ), $check->getColumnMeta( 1 ) );
+		$this->assertSame( array( 'name' => 'Msg_type' ), $check->getColumnMeta( 2 ) );
+		$this->assertSame( array( 'name' => 'Msg_text' ), $check->getColumnMeta( 3 ) );
+		$this->assertSame( 0, $check->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'Table'    => 'wp.check_items',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$check->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Table'    => 'wp.check_items',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$driver->query( 'CHECK TABLE wp.check_items' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Table'    => 'wp.check_items',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$driver->query( 'CHECK TABLES check_items' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Table'    => 'wp.check_items',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$driver->query(
+				'CHECK TABLE check_items QUICK FAST MEDIUM EXTENDED CHANGED FOR UPGRADE'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Table'    => 'wp.check_items',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+				array(
+					'Table'    => 'wp.check_second',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$driver->query( 'CHECK TABLE check_items, check_second' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Table'    => 'wp.check_temp_only',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+			),
+			$driver->query( 'CHECK TABLE check_temp_only' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT TABLE_NAME
+				FROM information_schema.tables
+				WHERE TABLE_NAME = 'check_temp_only'
+					OR TABLE_NAME LIKE '__wp_duckdb_%'
+				ORDER BY TABLE_NAME"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Table'    => 'wp.missing_check_table',
+					'Op'       => 'check',
+					'Msg_type' => 'Error',
+					'Msg_text' => "Table 'missing_check_table' doesn't exist",
+				),
+				array(
+					'Table'    => 'wp.missing_check_table',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'Operation failed',
+				),
+			),
+			$driver->query( 'CHECK TABLE missing_check_table' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'Table'    => 'wp.check_items',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'OK',
+				),
+				array(
+					'Table'    => 'wp.missing_check_table',
+					'Op'       => 'check',
+					'Msg_type' => 'Error',
+					'Msg_text' => "Table 'missing_check_table' doesn't exist",
+				),
+				array(
+					'Table'    => 'wp.missing_check_table',
+					'Op'       => 'check',
+					'Msg_type' => 'status',
+					'Msg_text' => 'Operation failed',
+				),
+			),
+			$driver->query( 'CHECK TABLE check_items, missing_check_table' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_check_table_rejects_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE check_items (id INT)' );
+
+		foreach (
+			array(
+				'CHECK TABLE check_items QUICK junk'      => 'DuckDB driver could not parse MySQL statement',
+				'CHECK TABLE check_items FOR'             => 'DuckDB driver could not parse MySQL statement',
+				'CHECK TABLE other_database.check_items'  => 'Only the current database is supported',
+				'CHECK TABLE __wp_duckdb_column_metadata' => 'Internal DuckDB metadata tables cannot be modified',
+				'CHECK TABLE information_schema.tables'   =>
+					"Access denied for user 'duckdb'@'%' to database 'information_schema'",
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected CHECK TABLE rejection for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+		}
+	}
+
 	public function test_show_create_table_reconstructs_mysql_shaped_ddl(): void {
 		$this->requireDuckDBRuntime();
 

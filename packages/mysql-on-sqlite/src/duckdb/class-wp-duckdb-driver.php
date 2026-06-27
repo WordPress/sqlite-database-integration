@@ -274,6 +274,9 @@ class WP_DuckDB_Driver {
 				case WP_MySQL_Lexer::ALTER_SYMBOL:
 					$this->found_rows = 0;
 					return $this->execute_alter_table( $tokens );
+				case WP_MySQL_Lexer::CHECK_SYMBOL:
+					$this->found_rows = 0;
+					return $this->execute_check_table( $tokens );
 				case WP_MySQL_Lexer::SHOW_SYMBOL:
 					return $this->record_found_rows_from_result( $this->execute_show( $tokens ) );
 				case WP_MySQL_Lexer::DESCRIBE_SYMBOL:
@@ -3320,6 +3323,167 @@ class WP_DuckDB_Driver {
 		$this->table_lock_active = false;
 
 		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Execute CHECK TABLE as a MySQL-shaped no-op status report.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_check_table( array $tokens ): WP_DuckDB_Result_Statement {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CHECK_SYMBOL, 'Expected CHECK.' );
+		++$index;
+		if (
+			! isset( $tokens[ $index ] )
+			|| ( WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $index ]->id && WP_MySQL_Lexer::TABLES_SYMBOL !== $tokens[ $index ]->id )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Expected TABLE in CHECK TABLE statement.' );
+		}
+		++$index;
+
+		if ( ! isset( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'CHECK TABLE requires at least one table name.' );
+		}
+
+		$requested_table_names = array();
+		while ( $index < count( $tokens ) ) {
+			$reference               = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'CHECK TABLE' );
+			$requested_table_names[] = $reference['requested_table_name'];
+			$index                   = $reference['next_index'];
+
+			if ( $index >= count( $tokens ) ) {
+				break;
+			}
+
+			if ( $this->is_check_table_option_start_token( $tokens[ $index ] ) ) {
+				$index = $this->consume_check_table_options( $tokens, $index );
+				break;
+			}
+
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $index ]->id ) {
+				throw new WP_DuckDB_Driver_Exception(
+					'Unsupported CHECK TABLE statement in DuckDB driver. Only table names followed by optional CHECK options are supported.'
+				);
+			}
+			++$index;
+
+			if ( $index >= count( $tokens ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Expected table name after comma in CHECK TABLE statement.' );
+			}
+		}
+
+		$rows = array();
+		foreach ( $requested_table_names as $requested_table_name ) {
+			$rows = array_merge( $rows, $this->check_table_status_rows( $requested_table_name ) );
+		}
+
+		return new WP_DuckDB_Result_Statement(
+			array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			$rows
+		);
+	}
+
+	/**
+	 * Consume legal CHECK TABLE options.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index of the first option token.
+	 * @return int Index after the consumed options.
+	 */
+	private function consume_check_table_options( array $tokens, int $index ): int {
+		while ( $index < count( $tokens ) ) {
+			if (
+				in_array(
+					$tokens[ $index ]->id,
+					array(
+						WP_MySQL_Lexer::QUICK_SYMBOL,
+						WP_MySQL_Lexer::FAST_SYMBOL,
+						WP_MySQL_Lexer::MEDIUM_SYMBOL,
+						WP_MySQL_Lexer::EXTENDED_SYMBOL,
+						WP_MySQL_Lexer::CHANGED_SYMBOL,
+					),
+					true
+				)
+			) {
+				++$index;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::FOR_SYMBOL === $tokens[ $index ]->id ) {
+				if ( ! isset( $tokens[ $index + 1 ] ) || WP_MySQL_Lexer::UPGRADE_SYMBOL !== $tokens[ $index + 1 ]->id ) {
+					throw new WP_DuckDB_Driver_Exception(
+						'Unsupported CHECK TABLE statement in DuckDB driver. FOR must be followed by UPGRADE.'
+					);
+				}
+				$index += 2;
+				continue;
+			}
+
+			throw new WP_DuckDB_Driver_Exception(
+				'Unsupported CHECK TABLE statement in DuckDB driver. Only QUICK, FAST, MEDIUM, EXTENDED, CHANGED, and FOR UPGRADE options are supported.'
+			);
+		}
+
+		return $index;
+	}
+
+	/**
+	 * Check whether a token can begin CHECK TABLE options.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token starts CHECK TABLE options.
+	 */
+	private function is_check_table_option_start_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::QUICK_SYMBOL,
+				WP_MySQL_Lexer::FAST_SYMBOL,
+				WP_MySQL_Lexer::MEDIUM_SYMBOL,
+				WP_MySQL_Lexer::EXTENDED_SYMBOL,
+				WP_MySQL_Lexer::CHANGED_SYMBOL,
+				WP_MySQL_Lexer::FOR_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Build CHECK TABLE result rows for one requested table.
+	 *
+	 * @param string $requested_table_name Requested table name.
+	 * @return array<int,array<int,string>>
+	 */
+	private function check_table_status_rows( string $requested_table_name ): array {
+		$table_label = $this->database . '.' . $requested_table_name;
+
+		if ( null === $this->resolve_visible_user_table_reference( $requested_table_name ) ) {
+			return array(
+				array(
+					$table_label,
+					'check',
+					'Error',
+					"Table '{$requested_table_name}' doesn't exist",
+				),
+				array(
+					$table_label,
+					'check',
+					'status',
+					'Operation failed',
+				),
+			);
+		}
+
+		return array(
+			array(
+				$table_label,
+				'check',
+				'status',
+				'OK',
+			),
+		);
 	}
 
 	/**
