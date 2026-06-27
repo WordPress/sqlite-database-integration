@@ -93,6 +93,7 @@ class WP_DuckDB_Driver {
 		WP_MySQL_Lexer::TIME_SYMBOL       => 'VARCHAR',
 		WP_MySQL_Lexer::DATETIME_SYMBOL   => 'VARCHAR',
 		WP_MySQL_Lexer::TIMESTAMP_SYMBOL  => 'VARCHAR',
+		WP_MySQL_Lexer::YEAR_SYMBOL       => 'VARCHAR',
 		WP_MySQL_Lexer::BLOB_SYMBOL       => 'BLOB',
 		WP_MySQL_Lexer::TINYBLOB_SYMBOL   => 'BLOB',
 		WP_MySQL_Lexer::MEDIUMBLOB_SYMBOL => 'BLOB',

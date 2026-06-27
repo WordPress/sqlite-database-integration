@@ -3458,6 +3458,37 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_year_type_family_storage_and_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE year_type_family (
+					id INT PRIMARY KEY,
+					observed YEAR,
+					required YEAR NOT NULL DEFAULT '0000'
+				)",
+			)
+		);
+
+		$this->assertParityRowCount( "INSERT INTO year_type_family (id, observed, required) VALUES (1, '2024', '2020')" );
+		$this->assertParityRowCount( 'INSERT INTO year_type_family (id, observed) VALUES (2, 2025)' );
+		$this->assertParityRowCount( "UPDATE year_type_family SET observed = '2026' WHERE id = 2" );
+
+		$this->assertParityRows( 'SELECT id, observed, required FROM year_type_family ORDER BY id' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM year_type_family' );
+		$this->assertParityRows( 'SHOW FULL COLUMNS FROM year_type_family' );
+		$this->assertParityRows( 'DESCRIBE year_type_family' );
+		$this->assertParityRows( 'SHOW CREATE TABLE year_type_family' );
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, COLUMN_DEFAULT, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+				CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
+				DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name = 'year_type_family'
+			ORDER BY ordinal_position"
+		);
+	}
+
 	public function test_national_character_type_family_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
