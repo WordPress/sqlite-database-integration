@@ -11956,6 +11956,74 @@ SQL,
 		);
 	}
 
+	public function test_unsupported_table_level_foreign_key_shapes_throw_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY, other_id INT)' );
+		$driver->query( 'INSERT INTO parents (id, other_id) VALUES (1, 10)' );
+
+		foreach (
+			array(
+				'CREATE TABLE child_schema_fk (
+					parent_id INT,
+					CONSTRAINT fk_schema FOREIGN KEY (parent_id) REFERENCES wp.parents (id)
+				)' => 'Schema-qualified references are not supported',
+				'CREATE TABLE child_composite_fk (
+					parent_id INT,
+					other_id INT,
+					CONSTRAINT fk_composite FOREIGN KEY (parent_id, other_id) REFERENCES parents (id, other_id)
+				)' => 'Only single-column foreign keys are supported',
+				'CREATE TABLE child_composite_ref_fk (
+					parent_id INT,
+					CONSTRAINT fk_composite_ref FOREIGN KEY (parent_id) REFERENCES parents (id, other_id)
+				)' => 'Only single-column foreign keys are supported',
+				'CREATE TABLE child_missing_ref_list (
+					parent_id INT,
+					CONSTRAINT fk_missing_ref FOREIGN KEY (parent_id) REFERENCES parents
+				)' => 'Expected FOREIGN KEY referenced column list',
+			) as $sql => $message
+		) {
+			$before = array(
+				'tables'               => $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ),
+				'parent_rows'          => $driver->query( 'SELECT id, other_id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'foreign_key_metadata' => $this->foreign_key_rejection_metadata_snapshot( $driver ),
+			);
+
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected unsupported table-level FOREIGN KEY shape to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+
+			$this->assertSame(
+				$before,
+				array(
+					'tables'               => $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ),
+					'parent_rows'          => $driver->query( 'SELECT id, other_id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+					'foreign_key_metadata' => $this->foreign_key_rejection_metadata_snapshot( $driver ),
+				),
+				'Unsupported table-level FOREIGN KEY shape created schema, metadata, or data for SQL: ' . $sql
+			);
+		}
+
+		$this->assertSame(
+			array( array( 'Tables_in_wp' => 'parents' ) ),
+			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'       => 1,
+					'other_id' => 10,
+				),
+			),
+			$driver->query( 'SELECT id, other_id FROM parents ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assert_duckdb_connection_usable( $driver );
+	}
+
 	public function test_unsupported_inline_references_shapes_throw_before_mutation(): void {
 		$this->requireDuckDBRuntime();
 
