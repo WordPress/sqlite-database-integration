@@ -1442,6 +1442,65 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( $this->temporal_select_sql( 'temporal_modes_empty' ) );
 	}
 
+	public function test_temporal_comma_space_sql_mode_rejects_zero_dates_in_duckdb(): void {
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( "SET SESSION sql_mode = 'STRICT_TRANS_TABLES, NO_ZERO_DATE, NO_ZERO_IN_DATE'" );
+		$row = $driver->query( 'SELECT @@SESSION.sql_mode' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE', $row['@@SESSION.sql_mode'] );
+
+		$this->create_duckdb_temporal_mode_table( $driver, 'temporal_comma_space_modes' );
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"INSERT INTO temporal_comma_space_modes (id, d, payload) VALUES (1, '0000-00-00', 'zero-date')",
+			"Incorrect date value: '0000-00-00'"
+		);
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"INSERT INTO temporal_comma_space_modes (id, dt, payload) VALUES (1, '2020-00-15 00:00:00', 'zero-in-date')",
+			"Incorrect datetime value: '2020-00-15 00:00:00'"
+		);
+
+		$row = $driver->query( 'SELECT COUNT(*) AS row_count FROM temporal_comma_space_modes' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 0, (int) $row['row_count'] );
+	}
+
+	public function test_temporal_traditional_sql_mode_rejects_zero_dates_in_duckdb(): void {
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( "SET SESSION sql_mode = 'TRADITIONAL'" );
+		$row = $driver->query( 'SELECT @@SESSION.sql_mode' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertStringContainsString( 'STRICT_TRANS_TABLES', $row['@@SESSION.sql_mode'] );
+		$this->assertStringContainsString( 'STRICT_ALL_TABLES', $row['@@SESSION.sql_mode'] );
+		$this->assertStringContainsString( 'NO_ZERO_DATE', $row['@@SESSION.sql_mode'] );
+		$this->assertStringContainsString( 'NO_ZERO_IN_DATE', $row['@@SESSION.sql_mode'] );
+
+		$this->create_duckdb_temporal_mode_table( $driver, 'temporal_traditional_mode' );
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"INSERT INTO temporal_traditional_mode (id, d, payload) VALUES (1, '0000-00-00', 'zero-date')",
+			"Incorrect date value: '0000-00-00'"
+		);
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"INSERT INTO temporal_traditional_mode (id, ts, payload) VALUES (1, '2020-01-00 00:00:00', 'zero-in-date')",
+			"Incorrect timestamp value: '2020-01-00 00:00:00'"
+		);
+
+		$row = $driver->query( 'SELECT COUNT(*) AS row_count FROM temporal_traditional_mode' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 0, (int) $row['row_count'] );
+	}
+
 	public function test_temporal_non_strict_implicit_defaults_match_sqlite(): void {
 		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
 		$this->create_temporal_write_table(
@@ -3027,6 +3086,29 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		foreach ( $select_queries as $select_query ) {
 			$this->assertParityRows( $select_query );
 		}
+	}
+
+	private function create_duckdb_temporal_mode_table( WP_DuckDB_Driver $driver, string $table_name ): void {
+		$driver->query(
+			'CREATE TABLE ' . $table_name . ' (
+				id INT PRIMARY KEY,
+				d DATE NULL,
+				dt DATETIME NULL,
+				ts TIMESTAMP NULL,
+				payload VARCHAR(40)
+			)'
+		);
+	}
+
+	private function assert_duckdb_error_contains( WP_DuckDB_Driver $driver, string $sql, string $needle ): void {
+		try {
+			$driver->query( $sql );
+		} catch ( Throwable $e ) {
+			$this->assertStringContainsString( $needle, $e->getMessage() );
+			return;
+		}
+
+		$this->fail( 'DuckDB query should have failed for SQL: ' . $sql );
 	}
 
 	private function createJoinedUpdateGapDrivers(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

@@ -50,6 +50,17 @@ class WP_DuckDB_Driver {
 		'version_comment' => true,
 	);
 
+	const SQL_MODE_ALIASES = array(
+		'TRADITIONAL' => array(
+			'STRICT_TRANS_TABLES',
+			'STRICT_ALL_TABLES',
+			'NO_ZERO_IN_DATE',
+			'NO_ZERO_DATE',
+			'ERROR_FOR_DIVISION_BY_ZERO',
+			'NO_ENGINE_SUBSTITUTION',
+		),
+	);
+
 	const DATA_TYPE_MAP = array(
 		WP_MySQL_Lexer::BOOL_SYMBOL       => 'BOOLEAN',
 		WP_MySQL_Lexer::BOOLEAN_SYMBOL    => 'BOOLEAN',
@@ -3527,7 +3538,7 @@ class WP_DuckDB_Driver {
 
 		$value = $this->normalize_set_session_system_variable_value_tokens( $name, array_slice( $tokens, $index ) );
 		if ( 'sql_mode' === $name ) {
-			$this->active_sql_modes = '' === $value ? array() : explode( ',', (string) $value );
+			$this->active_sql_modes = $this->normalize_sql_modes( (string) $value );
 		} else {
 			$this->session_system_variables[ $name ] = $value;
 		}
@@ -3777,7 +3788,7 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-			return strtoupper( $token->get_value() );
+			return implode( ',', $this->normalize_sql_modes( $token->get_value() ) );
 		}
 
 		if ( 'default' === strtolower( $token->get_value() ) ) {
@@ -3785,10 +3796,34 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( ! $this->is_non_identifier_token( $token ) ) {
-			return strtoupper( $token->get_value() );
+			return implode( ',', $this->normalize_sql_modes( $token->get_value() ) );
 		}
 
 		throw $this->new_unsupported_set_session_system_variable_value_exception( 'sql_mode' );
+	}
+
+	/**
+	 * Normalize a comma-separated SQL mode string.
+	 *
+	 * @param string $value SQL mode value.
+	 * @return string[] Normalized modes.
+	 */
+	private function normalize_sql_modes( string $value ): array {
+		$modes = array();
+		foreach ( explode( ',', strtoupper( $value ) ) as $mode ) {
+			$mode = trim( $mode );
+			if ( '' === $mode ) {
+				continue;
+			}
+
+			foreach ( self::SQL_MODE_ALIASES[ $mode ] ?? array( $mode ) as $expanded_mode ) {
+				if ( ! in_array( $expanded_mode, $modes, true ) ) {
+					$modes[] = $expanded_mode;
+				}
+			}
+		}
+
+		return $modes;
 	}
 
 	/**
