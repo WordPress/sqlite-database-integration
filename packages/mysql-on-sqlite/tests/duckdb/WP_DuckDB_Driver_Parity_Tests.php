@@ -18,6 +18,48 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SELECT SUBSTR('abcdef', 2, 3) AS short_substr, SUBSTRING('abcdef', 2, 3) AS long_substring" );
 	}
 
+	public function test_select_cast_convert_binary_expressions_match_sqlite(): void {
+		foreach (
+			array(
+				"SELECT CAST('42' AS SIGNED) AS v",
+				"SELECT CAST('-10' AS SIGNED) AS v",
+				"SELECT CAST('3.5' AS DECIMAL(10,2)) AS v",
+				'SELECT CAST(123 AS CHAR) AS v',
+				"SELECT CAST('abc' AS BINARY) = 'abc' AS v",
+				"SELECT CONVERT('abc', BINARY) = 'abc' AS v",
+				"SELECT CONVERT('abc', CHAR) AS v",
+				"SELECT CONVERT('-10', SIGNED) AS v",
+				"SELECT CONVERT('Customer' USING utf8mb4) AS v",
+				"SELECT CONVERT('Customer' USING utf8mb4) COLLATE utf8mb4_bin AS v",
+				"SELECT BINARY 'abc' = 'abc' AS v",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
+	public function test_select_like_binary_expressions_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE expr_strings (name VARCHAR(20))',
+				"INSERT INTO expr_strings (name) VALUES ('abc'), ('ABC'), ('a_c'), ('a%c'), ('ábC')",
+			)
+		);
+
+		foreach (
+			array(
+				"SELECT name FROM expr_strings WHERE BINARY name = 'ABC' ORDER BY name",
+				"SELECT name FROM expr_strings WHERE name LIKE BINARY 'A%' ORDER BY name",
+				"SELECT name FROM expr_strings WHERE name NOT LIKE BINARY 'A%' ORDER BY name",
+				"SELECT name FROM expr_strings WHERE name LIKE BINARY 'a\\_%' ORDER BY name",
+				"SELECT name FROM expr_strings WHERE name LIKE BINARY 'a\\%%' ORDER BY name",
+				'SELECT name FROM expr_strings ORDER BY BINARY name',
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
 	public function test_create_insert_select_update_delete_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

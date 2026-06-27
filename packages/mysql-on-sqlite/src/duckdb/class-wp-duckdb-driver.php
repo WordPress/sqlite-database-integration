@@ -9052,15 +9052,94 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$binary_comparison = $this->translate_binary_comparison_predicate(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $binary_comparison ) {
+				$pieces[] = $binary_comparison;
+				continue;
+			}
+
+			$cast_expression = $this->translate_cast_expression(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $cast_expression ) {
+				$pieces[] = $cast_expression;
+				continue;
+			}
+
+			$convert_expression = $this->translate_convert_expression(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $convert_expression ) {
+				$pieces[] = $convert_expression;
+				continue;
+			}
+
+			$binary_expression = $this->translate_binary_expression(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $binary_expression ) {
+				$pieces[] = $binary_expression;
+				continue;
+			}
+
 			$unix_timestamp_comparison = $this->translate_unix_timestamp_comparison( $tokens, $index );
 			if ( null !== $unix_timestamp_comparison ) {
 				$pieces[] = $unix_timestamp_comparison;
 				continue;
 			}
 
+			$like_binary_predicate = $this->translate_like_binary_predicate( $tokens, $index );
+			if ( null !== $like_binary_predicate ) {
+				$pieces[] = $like_binary_predicate;
+				continue;
+			}
+
 			$like_escape_predicate = $this->translate_like_escape_predicate( $tokens, $index );
 			if ( null !== $like_escape_predicate ) {
 				$pieces[] = $like_escape_predicate;
+				continue;
+			}
+
+			if (
+				WP_MySQL_Lexer::COLLATE_SYMBOL === $token->id
+				&& isset( $tokens[ $index + 1 ] )
+				&& $this->is_mysql_expression_collation( $tokens[ $index + 1 ] )
+			) {
+				++$index;
 				continue;
 			}
 
@@ -10174,6 +10253,511 @@ class WP_DuckDB_Driver {
 		}
 
 		return $token->get_bytes();
+	}
+
+	/**
+	 * Translate MySQL CAST(expr AS type) expressions.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when the token does not start CAST().
+	 */
+	private function translate_cast_expression(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if (
+			! isset( $tokens[ $index + 1 ] )
+			|| WP_MySQL_Lexer::CAST_SYMBOL !== $tokens[ $index ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$as_index  = $this->find_top_level_token_index( $body, 0, WP_MySQL_Lexer::AS_SYMBOL );
+		if ( null === $as_index ) {
+			return null;
+		}
+
+		$expr_tokens = array_slice( $body, 0, $as_index );
+		$type_tokens = array_slice( $body, $as_index + 1 );
+		if ( count( $expr_tokens ) === 0 || count( $type_tokens ) === 0 ) {
+			return null;
+		}
+
+		$expr_sql = $this->translate_tokens_to_duckdb_sql(
+			$expr_tokens,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		$type_sql = $this->translate_cast_type_to_duckdb_sql( $type_tokens );
+
+		$index = $end_index - 1;
+		if ( $this->cast_type_has_token( $type_tokens, WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
+			return 'CAST(' . $expr_sql . ' AS VARCHAR)';
+		}
+		return 'CAST(' . $expr_sql . ' AS ' . $type_sql . ')';
+	}
+
+	/**
+	 * Translate MySQL CONVERT(expr, type) and CONVERT(expr USING charset).
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when the token does not start CONVERT().
+	 */
+	private function translate_convert_expression(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if (
+			! isset( $tokens[ $index + 1 ] )
+			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[ $index ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$end_index   = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body        = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$using_index = $this->find_top_level_token_index( $body, 0, WP_MySQL_Lexer::USING_SYMBOL );
+		$items       = null === $using_index ? $this->split_top_level_comma_items( $body ) : array();
+
+		if ( null !== $using_index ) {
+			$expr_tokens = array_slice( $body, 0, $using_index );
+			if ( count( $expr_tokens ) === 0 ) {
+				return null;
+			}
+
+			$index = $end_index - 1;
+			return $this->translate_tokens_to_duckdb_sql(
+				$expr_tokens,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+		}
+
+		if ( 2 !== count( $items ) || count( $items[0] ) === 0 || count( $items[1] ) === 0 ) {
+			return null;
+		}
+
+		$expr_sql = $this->translate_tokens_to_duckdb_sql(
+			$items[0],
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		$type_sql = $this->translate_cast_type_to_duckdb_sql( $items[1] );
+
+		$index = $end_index - 1;
+		if ( $this->cast_type_has_token( $items[1], WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
+			return 'CAST(' . $expr_sql . ' AS VARCHAR)';
+		}
+		return 'CAST(' . $expr_sql . ' AS ' . $type_sql . ')';
+	}
+
+	/**
+	 * Translate equality predicates where one side is explicitly BINARY.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when no supported predicate starts here.
+	 */
+	private function translate_binary_comparison_predicate(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if ( WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $index ]->id ) {
+			list( $left_tokens, $operator_index ) = $this->collect_binary_operand_tokens( $tokens, $index + 1 );
+			if (
+				count( $left_tokens ) === 0
+				|| ! isset( $tokens[ $operator_index + 1 ] )
+				|| ! in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::EQUAL_OPERATOR, WP_MySQL_Lexer::NOT_EQUAL_OPERATOR ), true )
+			) {
+				return null;
+			}
+
+			list( $right_tokens, $next_index ) = $this->collect_binary_operand_tokens( $tokens, $operator_index + 1 );
+			if ( count( $right_tokens ) === 0 ) {
+				return null;
+			}
+
+			$index = $next_index - 1;
+			return $this->binary_string_hash_sql(
+				$left_tokens,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			)
+				. ' '
+				. $tokens[ $operator_index ]->get_bytes()
+				. ' '
+				. $this->binary_string_hash_sql(
+					$right_tokens,
+					$rewrite_information_schema_tables,
+					$rewrite_information_schema_columns,
+					$rewrite_information_schema_statistics,
+					$rewrite_information_schema_table_constraints,
+					$rewrite_information_schema_key_column_usage,
+					$rewrite_information_schema_referential_constraints,
+					$rewrite_information_schema_check_constraints
+				);
+		}
+
+		if (
+			isset( $tokens[ $index + 2 ], $tokens[ $index + 3 ] )
+			&& ! $this->is_non_identifier_token( $tokens[ $index ] )
+			&& in_array( $tokens[ $index + 1 ]->id, array( WP_MySQL_Lexer::EQUAL_OPERATOR, WP_MySQL_Lexer::NOT_EQUAL_OPERATOR ), true )
+			&& WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $index + 2 ]->id
+		) {
+			$left_tokens    = array( $tokens[ $index ] );
+			$operator_token = $tokens[ $index + 1 ];
+
+			list( $right_tokens, $next_index ) = $this->collect_binary_operand_tokens( $tokens, $index + 3 );
+			if ( count( $right_tokens ) === 0 ) {
+				return null;
+			}
+
+			$index = $next_index - 1;
+			return $this->binary_string_hash_sql(
+				$left_tokens,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			)
+				. ' '
+				. $operator_token->get_bytes()
+				. ' '
+				. $this->binary_string_hash_sql(
+					$right_tokens,
+					$rewrite_information_schema_tables,
+					$rewrite_information_schema_columns,
+					$rewrite_information_schema_statistics,
+					$rewrite_information_schema_table_constraints,
+					$rewrite_information_schema_key_column_usage,
+					$rewrite_information_schema_referential_constraints,
+					$rewrite_information_schema_check_constraints
+				);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Build an exact string comparison key for a BINARY predicate operand.
+	 *
+	 * @param WP_Parser_Token[] $tokens Operand tokens.
+	 * @return string DuckDB SQL.
+	 */
+	private function binary_string_hash_sql(
+		array $tokens,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): string {
+		return 'md5(CAST(('
+			. $this->translate_tokens_to_duckdb_sql(
+				$tokens,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			)
+			. ') AS VARCHAR))';
+	}
+
+	/**
+	 * Translate MySQL unary BINARY expr to a case-sensitive text expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when the token does not start unary BINARY.
+	 */
+	private function translate_binary_expression(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if ( WP_MySQL_Lexer::BINARY_SYMBOL !== $tokens[ $index ]->id || ! isset( $tokens[ $index + 1 ] ) ) {
+			return null;
+		}
+
+		list( $operand_tokens, $next_index ) = $this->collect_binary_operand_tokens( $tokens, $index + 1 );
+		if ( count( $operand_tokens ) === 0 ) {
+			return null;
+		}
+
+		$operand_sql = $this->translate_tokens_to_duckdb_sql(
+			$operand_tokens,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+
+		$index = $next_index - 1;
+		return 'hex(encode(CAST(' . $operand_sql . ' AS VARCHAR)))';
+	}
+
+	/**
+	 * Translate a compact MySQL cast type to a DuckDB type with SQLite parity.
+	 *
+	 * @param WP_Parser_Token[] $type_tokens Cast type tokens.
+	 * @return string DuckDB type.
+	 */
+	private function translate_cast_type_to_duckdb_sql( array $type_tokens ): string {
+		foreach ( $type_tokens as $token ) {
+			switch ( $token->id ) {
+				case WP_MySQL_Lexer::BINARY_SYMBOL:
+				case WP_MySQL_Lexer::CHAR_SYMBOL:
+				case WP_MySQL_Lexer::NCHAR_SYMBOL:
+				case WP_MySQL_Lexer::NATIONAL_SYMBOL:
+				case WP_MySQL_Lexer::VARCHAR_SYMBOL:
+				case WP_MySQL_Lexer::DATE_SYMBOL:
+				case WP_MySQL_Lexer::TIME_SYMBOL:
+				case WP_MySQL_Lexer::DATETIME_SYMBOL:
+				case WP_MySQL_Lexer::JSON_SYMBOL:
+					return 'VARCHAR';
+				case WP_MySQL_Lexer::SIGNED_SYMBOL:
+				case WP_MySQL_Lexer::UNSIGNED_SYMBOL:
+					return 'BIGINT';
+				case WP_MySQL_Lexer::DECIMAL_SYMBOL:
+				case WP_MySQL_Lexer::FLOAT_SYMBOL:
+				case WP_MySQL_Lexer::REAL_SYMBOL:
+				case WP_MySQL_Lexer::DOUBLE_SYMBOL:
+					return 'DOUBLE';
+			}
+		}
+
+		return $this->translate_tokens_to_duckdb_sql( $type_tokens );
+	}
+
+	/**
+	 * Check whether a cast type contains a token.
+	 *
+	 * @param WP_Parser_Token[] $type_tokens Cast type tokens.
+	 * @param int               $token_id    Token ID.
+	 * @return bool Whether the token is present.
+	 */
+	private function cast_type_has_token( array $type_tokens, int $token_id ): bool {
+		foreach ( $type_tokens as $token ) {
+			if ( $token_id === $token->id ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Collect the operand for a unary BINARY expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Operand start index.
+	 * @return array{0: WP_Parser_Token[], 1: int} Operand tokens and next index.
+	 */
+	private function collect_binary_operand_tokens( array $tokens, int $index ): array {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return array( array(), $index );
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+			$next_index = $this->skip_balanced_parentheses( $tokens, $index );
+			return array( array_slice( $tokens, $index, $next_index - $index ), $next_index );
+		}
+
+		if (
+			isset( $tokens[ $index + 1 ] )
+			&& in_array( $tokens[ $index ]->id, array( WP_MySQL_Lexer::CAST_SYMBOL, WP_MySQL_Lexer::CONVERT_SYMBOL ), true )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index + 1 ]->id
+		) {
+			$next_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+			return array( array_slice( $tokens, $index, $next_index - $index ), $next_index );
+		}
+
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& ! $this->is_non_identifier_token( $tokens[ $index ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
+		) {
+			return array( array_slice( $tokens, $index, 3 ), $index + 3 );
+		}
+
+		return array( array( $tokens[ $index ] ), $index + 1 );
+	}
+
+	/**
+	 * Translate MySQL LIKE BINARY predicates with literal patterns.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated predicate, or null when the pattern does not match.
+	 */
+	private function translate_like_binary_predicate( array $tokens, int &$index ): ?string {
+		if ( ! isset( $tokens[ $index ] ) || $this->is_non_identifier_token( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		$operator_index = $index + 1;
+		$left_tokens    = array( $tokens[ $index ] );
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
+		) {
+			$left_tokens    = array( $tokens[ $index ], $tokens[ $index + 1 ], $tokens[ $index + 2 ] );
+			$operator_index = $index + 3;
+		}
+
+		$is_not_like   = false;
+		$pattern_index = $operator_index + 2;
+		if (
+			isset( $tokens[ $operator_index + 2 ] )
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $operator_index ]->id
+			&& WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $operator_index + 1 ]->id
+		) {
+			$is_not_like = false;
+		} elseif (
+			isset( $tokens[ $operator_index + 3 ] )
+			&& in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true )
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $operator_index + 1 ]->id
+			&& WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[ $operator_index + 2 ]->id
+		) {
+			$is_not_like   = true;
+			$pattern_index = $operator_index + 3;
+		} else {
+			return null;
+		}
+
+		if (
+			! isset( $tokens[ $pattern_index ] )
+			|| (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[ $pattern_index ]->id
+				&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[ $pattern_index ]->id
+			)
+		) {
+			return null;
+		}
+
+		$left_sql  = $this->translate_tokens_to_duckdb_sql( $left_tokens );
+		$index     = $pattern_index;
+		$predicate = 'regexp_full_match(CAST('
+			. $left_sql
+			. ' AS VARCHAR), '
+			. $this->connection->quote( $this->like_pattern_to_regex_pattern( $tokens[ $pattern_index ]->get_value() ) )
+			. ')';
+
+		return $is_not_like ? '(NOT ' . $predicate . ')' : $predicate;
+	}
+
+	/**
+	 * Convert a MySQL LIKE pattern to a full-match regular expression.
+	 *
+	 * @param string $pattern LIKE pattern.
+	 * @return string Regular expression pattern.
+	 */
+	private function like_pattern_to_regex_pattern( string $pattern ): string {
+		$chars = preg_split( '//u', $pattern, -1, PREG_SPLIT_NO_EMPTY );
+		if ( false === $chars ) {
+			$chars = str_split( $pattern );
+		}
+
+		$regex = '^';
+		for ( $index = 0; $index < count( $chars ); ++$index ) {
+			$char = $chars[ $index ];
+			if ( '\\' === $char && isset( $chars[ $index + 1 ] ) ) {
+				$regex .= preg_quote( $chars[ $index + 1 ], '/' );
+				++$index;
+				continue;
+			}
+			if ( '%' === $char ) {
+				$regex .= '.*';
+				continue;
+			}
+			if ( '_' === $char ) {
+				$regex .= '.';
+				continue;
+			}
+			$regex .= preg_quote( $char, '/' );
+		}
+
+		return $regex . '$';
+	}
+
+	/**
+	 * Check whether a collation token is a MySQL expression collation unsupported by DuckDB.
+	 *
+	 * @param WP_Parser_Token $token Collation token.
+	 * @return bool Whether the collation should be treated as a no-op.
+	 */
+	private function is_mysql_expression_collation( WP_Parser_Token $token ): bool {
+		if ( $this->is_non_identifier_token( $token ) ) {
+			return false;
+		}
+
+		$collation = strtolower( $token->get_value() );
+		return 1 === preg_match( '/^(utf8|utf8mb3|utf8mb4|latin1)[a-z0-9_]*$/', $collation );
 	}
 
 	/**
