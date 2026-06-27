@@ -2500,6 +2500,28 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( 'CREATE TABLE t1 (id INT)' );
 		$driver->query( 'CREATE TABLE t2 (id INT)' );
 		$driver->query( 'CREATE TABLE has_rowid (rowid INT, id INT)' );
+		$driver->query( 'INSERT INTO t1 VALUES (1), (2)' );
+		$driver->query( 'INSERT INTO t2 VALUES (1), (3)' );
+		$driver->query( 'INSERT INTO has_rowid VALUES (101, 1), (102, 2)' );
+
+		$expected_t1_rows        = array(
+			array( 'id' => 1 ),
+			array( 'id' => 2 ),
+		);
+		$expected_t2_rows        = array(
+			array( 'id' => 1 ),
+			array( 'id' => 3 ),
+		);
+		$expected_has_rowid_rows = array(
+			array(
+				'rowid' => 101,
+				'id'    => 1,
+			),
+			array(
+				'rowid' => 102,
+				'id'    => 2,
+			),
+		);
 
 		foreach (
 			array(
@@ -2571,6 +2593,22 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
 				$this->assertStringContainsString( $rejection['message'], $e->getMessage() );
 			}
+
+			$this->assertSame(
+				$expected_t1_rows,
+				$driver->query( 'SELECT id FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'Rejected multi-table DELETE mutated t1 for SQL: ' . $rejection['sql']
+			);
+			$this->assertSame(
+				$expected_t2_rows,
+				$driver->query( 'SELECT id FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'Rejected multi-table DELETE mutated t2 for SQL: ' . $rejection['sql']
+			);
+			$this->assertSame(
+				$expected_has_rowid_rows,
+				$driver->query( 'SELECT rowid, id FROM has_rowid ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+				'Rejected multi-table DELETE mutated has_rowid for SQL: ' . $rejection['sql']
+			);
 		}
 	}
 
