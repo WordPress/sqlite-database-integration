@@ -177,6 +177,24 @@ class WP_PostgreSQL_Driver {
 		array( 'substr substring', 2, 3, 'substring', null ),
 	);
 
+	private const MYSQL_SIMPLE_COMMON_FUNCTION_REWRITE_DESCRIPTORS = array(
+		array( 'char_length character_length', 1, 1, 'template', 'CHAR_LENGTH(CAST(%s AS text))' ),
+		array( 'ifnull', 2, 2, 'template', 'COALESCE(%s, %s)' ),
+		array( 'instr', 2, 2, 'template', 'STRPOS(CAST(%s AS text), CAST(%s AS text))' ),
+		array( 'isnull', 1, 1, 'template', 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END' ),
+		array( 'lcase lower', 1, 1, 'template', 'LOWER(CAST(%s AS text))' ),
+		array( 'locate locate_2', 2, 2, 'template', 'STRPOS(CAST(%2$s AS text), CAST(%1$s AS text))' ),
+		array( 'ltrim', 1, 1, 'template', "LTRIM(CAST(%s AS text), ' ')" ),
+		array( 'md5', 1, 1, 'template', 'MD5(CAST(%s AS text))' ),
+		array( 'nullif', 2, 2, 'template', 'NULLIF(%s, %s)' ),
+		array( 'replace', 3, 3, 'template', 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))' ),
+		array( 'reverse', 1, 1, 'template', 'REVERSE(CAST(%s AS text))' ),
+		array( 'rtrim', 1, 1, 'template', "RTRIM(CAST(%s AS text), ' ')" ),
+		array( 'ucase upper', 1, 1, 'template', 'UPPER(CAST(%s AS text))' ),
+		array( 'concat', 1, null, 'cast_join', ' || ' ),
+		array( 'coalesce', 1, null, 'variadic_template', 'COALESCE(%s)' ),
+	);
+
 	private const MYSQL_VIEW_SELECT_VALIDATION_SCANNERS = array( array( 'contains_mysql_index_hint_syntax' ), array( 'contains_unsupported_mysql_date_arithmetic_function_query' ), array( 'contains_unsupported_mysql_fulltext_search_query' ), array( 'contains_unsupported_mysql_range_scanner_query', array( array( 'contains_unsupported_mysql_common_function' ) ) ), array( 'contains_unsupported_mysql_group_concat_function_query' ), array( 'contains_unsupported_mysql_week_function_query' ), array( 'contains_unsupported_mysql_extract_function_query' ) );
 
 	private const MYSQL_TYPED_CAST_OR_CONVERT_REWRITE_TYPES = array( 'cast' => array( 'integer', 'date_time', 'date', 'binary' ) ) + array( 'convert' => array( 'integer', 'character', 'binary', 'decimal', 'date' ) );
@@ -27516,32 +27534,28 @@ END',
 		);
 	}
 	private function get_postgresql_mysql_common_function_sql( string $function_name, array $argument_sql ): ?string {
+		$simple_sql = $this->get_postgresql_mysql_common_function_sql_from_descriptors(
+			$function_name,
+			$argument_sql,
+			self::MYSQL_SIMPLE_COMMON_FUNCTION_REWRITE_DESCRIPTORS
+		);
+		if ( null !== $simple_sql ) {
+			return $simple_sql;
+		}
+
 		$count       = count( $argument_sql );
 		$descriptors = array(
-			'char_length character_length'               => array( 1, 1, 'template', 'CHAR_LENGTH(CAST(%s AS text))' ),
 			'hex'                                        => array( 1, 1, 'template', "UPPER(ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'hex'))" ),
-			'ifnull'                                     => array( 2, 2, 'template', 'COALESCE(%s, %s)' ),
 			'inet_aton'                                  => array( 1, 1, 'template', 'CASE WHEN CAST(%1$s AS text) IS NULL THEN NULL ELSE ((CAST(SPLIT_PART(CAST(%1$s AS text), \'.\', 1) AS bigint) << 24) + (CAST(SPLIT_PART(CAST(%1$s AS text), \'.\', 2) AS bigint) << 16) + (CAST(SPLIT_PART(CAST(%1$s AS text), \'.\', 3) AS bigint) << 8) + CAST(SPLIT_PART(CAST(%1$s AS text), \'.\', 4) AS bigint)) END' ),
 			'inet_ntoa'                                  => array( 1, 1, 'template', 'CASE WHEN CAST(%1$s AS bigint) IS NULL THEN NULL ELSE (((CAST(%1$s AS bigint) >> 24) & 255)::text || \'.\' || ((CAST(%1$s AS bigint) >> 16) & 255)::text || \'.\' || ((CAST(%1$s AS bigint) >> 8) & 255)::text || \'.\' || (CAST(%1$s AS bigint) & 255)::text) END' ),
-			'instr'                                      => array( 2, 2, 'template', 'STRPOS(CAST(%s AS text), CAST(%s AS text))' ),
-			'isnull'                                     => array( 1, 1, 'template', 'CASE WHEN %s IS NULL THEN 1 ELSE 0 END' ),
 			'is_uuid'                                    => array( 1, 1, 'template', 'CASE WHEN CAST(%1$s AS text) IS NULL THEN NULL WHEN CAST(%1$s AS text) ~* ' . $this->connection->quote( '^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\})$' ) . ' THEN 1 ELSE 0 END' ),
-			'lcase lower'                                => array( 1, 1, 'template', 'LOWER(CAST(%s AS text))' ),
 			'left'                                       => array( 2, 2, 'template', 'LEFT(CAST(%s AS text), CAST(%s AS integer))' ),
-			'locate locate_2'                            => array( 2, 2, 'template', 'STRPOS(CAST(%2$s AS text), CAST(%1$s AS text))' ),
-			'ltrim'                                      => array( 1, 1, 'template', "LTRIM(CAST(%s AS text), ' ')" ),
-			'md5'                                        => array( 1, 1, 'template', 'MD5(CAST(%s AS text))' ),
-			'nullif'                                     => array( 2, 2, 'template', 'NULLIF(%s, %s)' ),
 			'repeat'                                     => array( 2, 2, 'template', 'CASE WHEN %1$s IS NULL OR %2$s IS NULL THEN NULL ELSE REPEAT(CAST(%1$s AS text), GREATEST(CAST(%2$s AS integer), 0)) END' ),
-			'replace'                                    => array( 3, 3, 'template', 'REPLACE(CAST(%s AS text), CAST(%s AS text), CAST(%s AS text))' ),
 			'regexp'                                     => array( 2, 2, 'template', 'CASE WHEN CAST(%1$s AS text) IS NULL OR CAST(%2$s AS text) IS NULL THEN NULL WHEN CAST(%2$s AS text) ~* CAST(%1$s AS text) THEN 1 ELSE 0 END' ),
-			'reverse'                                    => array( 1, 1, 'template', 'REVERSE(CAST(%s AS text))' ),
 			'right'                                      => array( 2, 2, 'template', 'RIGHT(CAST(%s AS text), CAST(%s AS integer))' ),
-			'rtrim'                                      => array( 1, 1, 'template', "RTRIM(CAST(%s AS text), ' ')" ),
 			'space'                                      => array( 1, 1, 'template', "CASE WHEN %1\$s IS NULL THEN NULL ELSE REPEAT(' ', GREATEST(CAST(%1\$s AS integer), 0)) END" ),
 			'to_base64'                                  => array( 1, 1, 'template', "ENCODE(CONVERT_TO(CAST(%s AS text), 'UTF8'), 'base64')" ),
 			'trim'                                       => array( 1, 1, 'template', "BTRIM(CAST(%s AS text), ' ')" ),
-			'ucase upper'                                => array( 1, 1, 'template', 'UPPER(CAST(%s AS text))' ),
 			'unhex'                                      => array( 1, 1, 'template', "CONVERT_FROM(DECODE(CAST(%s AS text), 'hex'), 'UTF8')" ),
 			'concat_ws'                                  => array( 2, null, 'method', 'get_postgresql_mysql_concat_ws_sql' ),
 			'elt'                                        => array( 2, null, 'method', 'get_postgresql_mysql_elt_sql' ),
@@ -27566,12 +27580,10 @@ END',
 			'dayname'                                    => array( 1, 1, 'temporal_name', 'DOW', explode( ' ', 'Sunday Monday Tuesday Wednesday Thursday Friday Saturday' ) ),
 			'monthname'                                  => array( 1, 1, 'temporal_name', 'MONTH', array_combine( range( 1, 12 ), explode( ' ', 'January February March April May June July August September October November December' ) ) ),
 			'ascii'                                      => array( 1, 1, 'ascii' ),
-			'concat'                                     => array( 1, null, 'cast_join', ' || ' ),
 			'utc_time'                                   => array( 0, 1, 'utc_time' ),
 			'current_timestamp localtime localtimestamp now utc_timestamp' => array( 0, 1, 'current_timestamp' ),
 			'lpad rpad'                                  => array( 3, 3, 'pad' ),
 			'last_insert_id'                             => array( 0, 0, 'last_insert_id' ),
-			'coalesce'                                   => array( 1, null, 'variadic_template', 'COALESCE(%s)' ),
 			'least greatest'                             => array( 2, null, 'null_sensitive_variadic' ),
 			'from_base64'                                => array( 1, 1, 'from_base64' ),
 			'datediff'                                   => array( 2, 2, 'datediff' ),
@@ -27583,6 +27595,15 @@ END',
 		foreach ( $descriptors as $names => $descriptor ) {
 			if ( $this->is_mysql_common_function_descriptor_match( $function_name, $count, $names, $descriptor[0], $descriptor[1] ) ) {
 				return $this->render_postgresql_mysql_common_function_sql_descriptor( $function_name, $argument_sql, $descriptor );
+			}
+		}
+		return null;
+	}
+	private function get_postgresql_mysql_common_function_sql_from_descriptors( string $function_name, array $argument_sql, array $descriptors ): ?string {
+		$count = count( $argument_sql );
+		foreach ( $descriptors as $descriptor ) {
+			if ( $this->is_mysql_common_function_descriptor_match( $function_name, $count, $descriptor[0], $descriptor[1], $descriptor[2] ) ) {
+				return $this->render_postgresql_mysql_common_function_sql_descriptor( $function_name, $argument_sql, array_slice( $descriptor, 1 ) );
 			}
 		}
 		return null;

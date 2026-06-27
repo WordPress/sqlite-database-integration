@@ -9846,6 +9846,113 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests table-driven simple function rewrites preserve runtime behavior.
+	 */
+	public function test_simple_common_function_rewrite_descriptors_preserve_runtime_behavior(): void {
+		$driver = $this->create_driver();
+
+		$rows = $driver->query(
+			"SELECT
+				MD5('abc') AS md5_hash,
+				LOWER('ABC') AS lower_value,
+				UPPER('abc') AS upper_value,
+				IFNULL(NULL, 'fallback') AS ifnull_value,
+				NULLIF('same', 'same') AS nullif_value,
+				COALESCE(NULL, 'first', 'second') AS coalesce_value,
+				CONCAT('wp', '_', 'db') AS concat_value,
+				CHAR_LENGTH('hello') AS char_length_value,
+				LOCATE('or', 'WordPress') AS locate_value,
+				INSTR('WordPress', 'Press') AS instr_value,
+				REVERSE('desserts') AS reverse_value,
+				LTRIM('  left') AS ltrim_value,
+				RTRIM('right  ') AS rtrim_value,
+				REPLACE('banana', 'na', 'NA') AS replace_value,
+				ISNULL(NULL) AS isnull_value"
+		);
+
+		$this->assertSame( '900150983cd24fb0d6963f7d28e17f72', $rows[0]->md5_hash );
+		$this->assertSame( 'abc', $rows[0]->lower_value );
+		$this->assertSame( 'ABC', $rows[0]->upper_value );
+		$this->assertSame( 'fallback', $rows[0]->ifnull_value );
+		$this->assertNull( $rows[0]->nullif_value );
+		$this->assertSame( 'first', $rows[0]->coalesce_value );
+		$this->assertSame( 'wp_db', $rows[0]->concat_value );
+		$this->assertSame( '5', $rows[0]->char_length_value );
+		$this->assertSame( '2', $rows[0]->locate_value );
+		$this->assertSame( '5', $rows[0]->instr_value );
+		$this->assertSame( 'stressed', $rows[0]->reverse_value );
+		$this->assertSame( 'left', $rows[0]->ltrim_value );
+		$this->assertSame( 'right', $rows[0]->rtrim_value );
+		$this->assertSame( 'baNANA', $rows[0]->replace_value );
+		$this->assertSame( '1', $rows[0]->isnull_value );
+
+		$sql = $this->get_last_single_postgresql_sql( $driver );
+		$this->assertStringContainsString( "COALESCE(NULL, 'fallback') AS ifnull_value", $sql );
+		$this->assertStringContainsString( "(CAST('wp' AS text) || CAST('_' AS text) || CAST('db' AS text)) AS concat_value", $sql );
+		$this->assertStringContainsString( "STRPOS(CAST('WordPress' AS text), CAST('or' AS text)) AS locate_value", $sql );
+		$this->assertStringNotContainsString( 'IFNULL', $sql );
+		$this->assertStringNotContainsString( 'CONCAT(', $sql );
+	}
+
+	/**
+	 * Tests nested table-driven simple function rewrites share the recursive translator.
+	 */
+	public function test_nested_simple_common_function_rewrite_descriptors_translate_recursively(): void {
+		$driver = $this->create_backendless_driver();
+
+		$sql = $this->translate_driver_query_with_private_method(
+			$driver,
+			'translate_mysql_compatible_query',
+			"SELECT LOWER(IFNULL(NULL, CONCAT('WP', '_', MD5('abc')))) AS nested_value"
+		);
+
+		$this->assertNotNull( $sql );
+		$this->assertStringContainsString( 'LOWER(CAST(COALESCE(NULL,', $sql );
+		$this->assertStringContainsString( "CAST('WP' AS text) || CAST('_' AS text) || CAST(MD5(CAST('abc' AS text)) AS text)", $sql );
+		$this->assertStringContainsString( 'AS nested_value', $sql );
+		$this->assertStringNotContainsString( 'IFNULL', $sql );
+		$this->assertStringNotContainsString( 'CONCAT(', $sql );
+	}
+
+	/**
+	 * Tests unsupported table-driven simple function forms fail before backend execution.
+	 */
+	public function test_simple_common_function_rewrite_descriptors_reject_unsupported_forms_before_backend_execution(): void {
+		$queries = array(
+			'SELECT LOWER() AS value',
+			"SELECT LOWER('a', 'b') AS value",
+			'SELECT IFNULL(NULL) AS value',
+			'SELECT CONCAT() AS value',
+			'SELECT COALESCE() AS value',
+			"SELECT LOCATE('needle', 'haystack', 1, 2) AS value",
+		);
+
+		foreach ( $queries as $query ) {
+			$connection = new WP_PostgreSQL_Query_Spy_Connection();
+			$driver     = new WP_PostgreSQL_Driver( $connection, 'wptests' );
+
+			$this->assertNull(
+				$this->translate_driver_query_with_private_method(
+					$driver,
+					'translate_mysql_compatible_query',
+					$query
+				),
+				$query
+			);
+
+			try {
+				$driver->query( $query );
+				$this->fail( 'Expected unsupported simple runtime function form to fail closed.' );
+			} catch ( InvalidArgumentException $e ) {
+				$this->assertSame( 'Unsupported MySQL runtime function form.', $e->getMessage(), $query );
+			}
+
+			$this->assertSame( 0, $connection->get_query_count(), $query );
+			$this->assertSame( array(), $driver->get_last_postgresql_queries(), $query );
+		}
+	}
+
+	/**
 	 * Tests common MySQL runtime functions from the SQLite compatibility layer are translated.
 	 */
 	public function test_common_mysql_runtime_functions_are_translated_to_postgresql(): void {
@@ -34296,6 +34403,18 @@ class WP_PostgreSQL_Query_Spy_Connection extends WP_PostgreSQL_Connection {
 	 */
 	public function get_pdo(): PDO {
 		return $this->pdo;
+	}
+
+	/**
+	 * Quote a value without requiring a real backend connection.
+	 *
+	 * @param mixed $value Value to quote.
+	 * @param int   $type  PDO parameter type.
+	 * @return string Quoted value.
+	 */
+	public function quote( $value, int $type = PDO::PARAM_STR ): string {
+		unset( $type );
+		return "'" . str_replace( "'", "''", (string) $value ) . "'";
 	}
 
 	/**
