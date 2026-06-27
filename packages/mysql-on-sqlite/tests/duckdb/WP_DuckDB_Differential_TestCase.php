@@ -96,6 +96,40 @@ abstract class WP_DuckDB_Differential_TestCase extends WP_DuckDB_TestCase {
 	}
 
 	/**
+	 * Assert SQLite accepts a statement while DuckDB explicitly rejects it.
+	 *
+	 * @param string $sql    SQL query.
+	 * @param string $needle Expected DuckDB message fragment.
+	 */
+	protected function assertDuckDBRejectsWhileSqliteAccepts( string $sql, string $needle ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$sqlite_message = $this->query_sqlite_error_message( $sql );
+		$duckdb_message = $this->query_duckdb_error_message( $sql );
+
+		$this->assertNull( $sqlite_message, 'SQLite query should have succeeded for SQL: ' . $sql );
+		$this->assertIsString( $duckdb_message, 'DuckDB query should have failed for SQL: ' . $sql );
+		$this->assertStringContainsString( $needle, $duckdb_message, 'DuckDB error mismatch for SQL: ' . $sql );
+	}
+
+	/**
+	 * Assert a rejected DuckDB statement leaves observable rows unchanged.
+	 *
+	 * @param string $sql       SQL query.
+	 * @param string $needle    Expected DuckDB message fragment.
+	 * @param string $state_sql Query used to observe DuckDB state before and after.
+	 */
+	protected function assertDuckDBRejectsWithoutMutatingRows( string $sql, string $needle, string $state_sql ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$before = $this->normalize_rows( $this->query_duckdb_rows( $state_sql ) );
+
+		$this->assertDuckDBRejectsWhileSqliteAccepts( $sql, $needle );
+
+		$this->assertSame(
+			$before,
+			$this->normalize_rows( $this->query_duckdb_rows( $state_sql ) ),
+			'DuckDB rows changed after rejected SQL: ' . $sql
+		);
+	}
+
+	/**
 	 * Execute setup SQL on both engines.
 	 *
 	 * @param string[] $queries Setup queries.

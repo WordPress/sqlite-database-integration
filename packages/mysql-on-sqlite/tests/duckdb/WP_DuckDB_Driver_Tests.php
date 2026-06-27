@@ -286,6 +286,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'message' => 'top-level SELECT expression',
 			),
 			array(
+				'sql'     => 'SELECT id FROM t ORDER BY RAND(1)',
+				'message' => 'top-level SELECT expression',
+			),
+			array(
 				'sql'     => 'SELECT id FROM t WHERE RAND(1) < 1',
 				'message' => 'top-level SELECT expression',
 			),
@@ -310,6 +314,29 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
 			$this->assertStringContainsString( 'literal numeric, string, or NULL seeds', $e->getMessage() );
 		}
+	}
+
+	public function test_seeded_rand_where_rejection_does_not_mutate_rows_or_state(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_where_reject (id INT, value DOUBLE)' );
+		$driver->query( 'INSERT INTO seeded_rand_where_reject (id, value) VALUES (1, 0.0), (2, 0.0), (3, 0.0)' );
+
+		$before = $driver->query( 'SELECT id, value FROM seeded_rand_where_reject ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+
+		try {
+			$driver->query( 'UPDATE seeded_rand_where_reject SET value = 9 WHERE RAND(1) < 0.5' );
+			$this->fail( 'Expected unsupported seeded RAND() WHERE context to fail.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'top-level SELECT expression', $e->getMessage() );
+		}
+
+		$after = $driver->query( 'SELECT id, value FROM seeded_rand_where_reject ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $before, $after );
+
+		$row = $driver->query( 'SELECT RAND(1) AS r' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row['r'], 1e-12 );
 	}
 
 	public function test_date_format_function_is_emulated(): void {

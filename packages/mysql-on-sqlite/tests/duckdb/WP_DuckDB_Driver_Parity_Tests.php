@@ -89,6 +89,29 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_out ORDER BY id' );
 	}
 
+	public function test_seeded_rand_where_and_order_by_contexts_have_explicit_rejection_contract(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_rand_ctx (id INT, value DOUBLE)',
+				'INSERT INTO seeded_rand_ctx (id, value) VALUES (1, 0.0), (2, 0.0), (3, 0.0)',
+			)
+		);
+
+		$this->assertDuckDBRejectsWhileSqliteAccepts(
+			'SELECT id FROM seeded_rand_ctx WHERE RAND(1) < 0.5 ORDER BY id',
+			'top-level SELECT expression'
+		);
+		$this->assertDuckDBRejectsWhileSqliteAccepts(
+			'SELECT id FROM seeded_rand_ctx ORDER BY RAND(1)',
+			'top-level SELECT expression'
+		);
+		$this->assertDuckDBRejectsWithoutMutatingRows(
+			'UPDATE seeded_rand_ctx SET value = 9 WHERE RAND(1) < 0.5',
+			'top-level SELECT expression',
+			'SELECT id, value FROM seeded_rand_ctx ORDER BY id'
+		);
+	}
+
 	public function test_select_cast_convert_binary_expressions_match_sqlite(): void {
 		foreach (
 			array(
