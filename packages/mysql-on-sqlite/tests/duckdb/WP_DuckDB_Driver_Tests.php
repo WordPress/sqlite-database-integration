@@ -1787,6 +1787,49 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_wordpress_phpunit_boilerplate_statements_accept_fast_path_forms(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE tx_fast_path (id INT)' );
+
+		$set = $driver->query( " \n SET   autocommit=0; \t" );
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		$this->assertSame(
+			array( '@@autocommit' => 0 ),
+			$driver->query( 'SELECT @@autocommit' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'start transaction;' );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'BEGIN TRANSACTION' ), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'INSERT INTO tx_fast_path (id) VALUES (1)' );
+		$driver->query( 'commit work;' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'COMMIT' ), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'BEGIN;' );
+		$driver->query( 'INSERT INTO tx_fast_path (id) VALUES (2)' );
+		$driver->query( 'rollback WORK;' );
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$this->assertSame( array( 'ROLLBACK' ), $driver->get_last_duckdb_queries() );
+		$this->assertSame(
+			array( array( 'id' => 1 ) ),
+			$driver->query( 'SELECT id FROM tx_fast_path ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'BEGIN' );
+		$this->assertDriverQueryRejected(
+			$driver,
+			'ROLLBACK TO sp1;',
+			'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.'
+		);
+		$driver->query( 'ROLLBACK' );
+	}
+
 	public function test_native_error_rolls_back_active_transaction_before_dbdelta_insert(): void {
 		$this->requireDuckDBRuntime();
 

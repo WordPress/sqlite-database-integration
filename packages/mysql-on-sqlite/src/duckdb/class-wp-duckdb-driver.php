@@ -276,6 +276,11 @@ class WP_DuckDB_Driver {
 		$this->last_insert_id      = 0;
 
 		try {
+			$fast_path_result = $this->execute_fast_path_statement( $query );
+			if ( null !== $fast_path_result ) {
+				return $fast_path_result;
+			}
+
 			$tokens = $this->tokenize_and_validate( $query );
 			if ( count( $tokens ) === 0 ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported DuckDB MySQL-emulation statement: empty query.' );
@@ -351,6 +356,85 @@ class WP_DuckDB_Driver {
 			$this->rollback_failed_active_transaction( $e );
 			throw $e;
 		}
+	}
+
+	/**
+	 * Execute high-frequency WordPress PHPUnit boilerplate without full parsing.
+	 *
+	 * The full MySQL parser is still used for every non-exact form so richer
+	 * transaction, SET, and savepoint statements keep their existing validation.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		$normalized = $this->normalize_fast_path_statement( $query );
+		if ( null === $normalized ) {
+			return null;
+		}
+
+		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
+			$this->found_rows = 0;
+			$this->session_system_variables['autocommit'] = (int) $matches[1];
+			return $this->empty_ddl_result();
+		}
+
+		if ( 0 === strcasecmp( $normalized, 'BEGIN' ) ) {
+			$this->found_rows = 0;
+			$this->begin_user_transaction();
+			return $this->empty_ddl_result();
+		}
+
+		if ( 0 === strcasecmp( $normalized, 'START TRANSACTION' ) ) {
+			$this->found_rows = 0;
+			$this->begin_user_transaction();
+			return $this->empty_ddl_result();
+		}
+
+		if ( 0 === strcasecmp( $normalized, 'COMMIT' ) || 0 === strcasecmp( $normalized, 'COMMIT WORK' ) ) {
+			$this->found_rows = 0;
+			if ( $this->connection->inTransaction() ) {
+				$this->last_duckdb_queries[] = 'COMMIT';
+				$this->connection->commit();
+			}
+			$this->table_lock_active = false;
+			return $this->empty_ddl_result();
+		}
+
+		if ( 0 === strcasecmp( $normalized, 'ROLLBACK' ) || 0 === strcasecmp( $normalized, 'ROLLBACK WORK' ) ) {
+			$this->found_rows = 0;
+			if ( $this->connection->inTransaction() ) {
+				$this->last_duckdb_queries[] = 'ROLLBACK';
+				$this->connection->rollback();
+			}
+			$this->table_lock_active = false;
+			return $this->empty_ddl_result();
+		}
+
+		return null;
+	}
+
+	/**
+	 * Normalize a statement only enough for exact fast-path comparisons.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string|null Normalized query, or null when empty.
+	 */
+	private function normalize_fast_path_statement( string $query ): ?string {
+		$normalized = trim( $query );
+		if ( '' === $normalized ) {
+			return null;
+		}
+
+		if ( ';' === substr( $normalized, -1 ) ) {
+			$normalized = trim( substr( $normalized, 0, -1 ) );
+		}
+
+		if ( '' === $normalized || false !== strpos( $normalized, ';' ) ) {
+			return null;
+		}
+
+		return preg_replace( '/\s+/', ' ', $normalized );
 	}
 
 	/**
