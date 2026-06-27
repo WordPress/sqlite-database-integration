@@ -1760,7 +1760,7 @@ class WP_DuckDB_Driver {
 	 * Parse supported joined UPDATE shapes.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
-	 * @return array{target:array{alias:string,explicit_alias:bool,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>}|null Parsed shape, or null for single-table UPDATE.
+	 * @return array{target:array{alias:string,explicit_alias:bool,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>}|null Parsed shape, or null for single-table UPDATE.
 	 */
 	private function parse_joined_update_shape( array $tokens ): ?array {
 		if ( ! isset( $tokens[1] ) ) {
@@ -1820,7 +1820,7 @@ class WP_DuckDB_Driver {
 	/**
 	 * Execute a parsed joined UPDATE.
 	 *
-	 * @param array{target:array{alias:string,explicit_alias:bool,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>} $shape Parsed shape.
+	 * @param array{target:array{alias:string,explicit_alias:bool,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>,update_tokens:array<int,WP_Parser_Token>,where_tokens:array<int,WP_Parser_Token>} $shape Parsed shape.
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_joined_update( array $shape ): WP_DuckDB_Result_Statement {
@@ -1848,7 +1848,7 @@ class WP_DuckDB_Driver {
 			$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $shape['where_tokens'] );
 		}
 		foreach ( $shape['join_predicates'] as $predicate ) {
-			$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $predicate );
+			$where_clauses[] = $this->joined_dml_predicate_sql( $predicate );
 		}
 		if ( count( $where_clauses ) > 0 ) {
 			$sql .= ' WHERE (' . implode( ') AND (', $where_clauses ) . ')';
@@ -1898,7 +1898,7 @@ class WP_DuckDB_Driver {
 	 * Parse supported multi-table DELETE shapes.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
-	 * @return array{targets:array<int,array{alias:string,column:string,table_name:string,temporary:bool}>,from_sql:string,join_predicates:array<int,array<int,WP_Parser_Token>>,where_tokens:array<int,WP_Parser_Token>,temp_table:string}|null Parsed shape, or null for single-table DELETE.
+	 * @return array{targets:array<int,array{alias:string,column:string,table_name:string,temporary:bool}>,from_sql:string,join_predicates:array<int,array<int,WP_Parser_Token>|string>,where_tokens:array<int,WP_Parser_Token>,temp_table:string}|null Parsed shape, or null for single-table DELETE.
 	 */
 	private function parse_multi_table_delete_shape( array $tokens ): ?array {
 		if ( ! isset( $tokens[1] ) ) {
@@ -1980,7 +1980,7 @@ class WP_DuckDB_Driver {
 	/**
 	 * Execute a parsed multi-table DELETE.
 	 *
-	 * @param array{targets:array<int,array{alias:string,column:string,table_name:string,temporary:bool}>,from_sql:string,join_predicates:array<int,array<int,WP_Parser_Token>>,where_tokens:array<int,WP_Parser_Token>,temp_table:string} $shape Parsed shape.
+	 * @param array{targets:array<int,array{alias:string,column:string,table_name:string,temporary:bool}>,from_sql:string,join_predicates:array<int,array<int,WP_Parser_Token>|string>,where_tokens:array<int,WP_Parser_Token>,temp_table:string} $shape Parsed shape.
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_multi_table_delete( array $shape ): WP_DuckDB_Result_Statement {
@@ -2010,7 +2010,7 @@ class WP_DuckDB_Driver {
 					$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $shape['where_tokens'] );
 				}
 				foreach ( $shape['join_predicates'] as $predicate ) {
-					$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $predicate );
+					$where_clauses[] = $this->joined_dml_predicate_sql( $predicate );
 				}
 				if ( count( $where_clauses ) > 0 ) {
 					$sql .= ' WHERE (' . implode( ') AND (', $where_clauses ) . ')';
@@ -2048,6 +2048,20 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Translate a joined DML predicate into DuckDB SQL.
+	 *
+	 * @param array<int,WP_Parser_Token>|string $predicate Predicate token list or generated SQL.
+	 * @return string DuckDB SQL.
+	 */
+	private function joined_dml_predicate_sql( $predicate ): string {
+		if ( is_string( $predicate ) ) {
+			return $predicate;
+		}
+
+		return $this->translate_tokens_to_duckdb_sql( $predicate );
+	}
+
+	/**
 	 * Parse a multi-table DELETE target alias list.
 	 *
 	 * @param WP_Parser_Token[] $tokens Target alias tokens.
@@ -2075,7 +2089,7 @@ class WP_DuckDB_Driver {
 	 * Parse comma-separated table references for a bounded multi-table DELETE.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
-	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>>} SQL and references keyed by lowercase alias.
+	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>} SQL and references keyed by lowercase alias.
 	 */
 	private function parse_multi_delete_table_references( array $tokens ): array {
 		if ( $this->contains_top_level_join_token( $tokens ) ) {
@@ -2112,7 +2126,7 @@ class WP_DuckDB_Driver {
 	 * Parse joined table references for a bounded multi-table DELETE.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
-	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>>} SQL and references keyed by lowercase alias.
+	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>} SQL and references keyed by lowercase alias.
 	 */
 	private function parse_joined_multi_delete_table_references( array $tokens ): array {
 		$joined_references = $this->parse_joined_update_table_references( $tokens, 'DELETE', false );
@@ -2213,7 +2227,7 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
 	 * @param string            $statement Statement name for diagnostics.
 	 * @param bool              $first_factor_must_be_base Whether the first table factor must be a base table.
-	 * @return array{target:array{alias:string,explicit_alias:bool,sql:string,table_name:string|null,requested_table_name:string,temporary:bool},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null,temporary:bool,requested_table_name:string}>,join_predicates:array<int,array<int,WP_Parser_Token>>}
+	 * @return array{target:array{alias:string,explicit_alias:bool,sql:string,table_name:string|null,requested_table_name:string,temporary:bool},sources:array<int,array{alias:string,explicit_alias:bool,sql:string,table_name:string|null,temporary:bool,requested_table_name:string}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>}
 	 */
 	private function parse_joined_update_table_references( array $tokens, string $statement = 'UPDATE', bool $first_factor_must_be_base = true ): array {
 		$items           = $this->split_top_level_comma_items( $tokens );
@@ -2227,11 +2241,11 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Derived tables cannot be ' . ( 'UPDATE' === $statement ? 'updated' : 'deleted' ) . '.' );
 		}
 
-		$this->parse_joined_update_join_chain( $target_item, $target_factor['next_index'], $sources, $join_predicates, $statement );
+		$this->parse_joined_update_join_chain( $target_item, $target_factor['next_index'], $target, $sources, $join_predicates, $statement );
 		foreach ( $items as $item ) {
 			$source    = $this->parse_joined_update_table_factor( $item, 0, true, false, $statement );
 			$sources[] = $source['reference'];
-			$this->parse_joined_update_join_chain( $item, $source['next_index'], $sources, $join_predicates, $statement );
+			$this->parse_joined_update_join_chain( $item, $source['next_index'], $source['reference'], $sources, $join_predicates, $statement );
 		}
 
 		return array(
@@ -2361,11 +2375,12 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param WP_Parser_Token[] $tokens          Table reference tokens.
 	 * @param int               $index           Current index.
+	 * @param array             $left_reference  Left table reference for the current join.
 	 * @param array             $sources         Source references.
-	 * @param array             $join_predicates Join predicate token lists.
+	 * @param array             $join_predicates Join predicate token lists or generated SQL strings.
 	 * @param string            $statement       Statement name for diagnostics.
 	 */
-	private function parse_joined_update_join_chain( array $tokens, int $index, array &$sources, array &$join_predicates, string $statement = 'UPDATE' ): void {
+	private function parse_joined_update_join_chain( array $tokens, int $index, array $left_reference, array &$sources, array &$join_predicates, string $statement = 'UPDATE' ): void {
 		while ( $index < count( $tokens ) ) {
 			if ( WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
@@ -2383,7 +2398,17 @@ class WP_DuckDB_Driver {
 			$index     = $source['next_index'];
 
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $index ]->id ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING is not supported.' );
+				if ( 'DELETE' !== $statement ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING is not supported.' );
+				}
+
+				$using = $this->parse_joined_delete_using_predicates( $tokens, $index, $left_reference, $source['reference'] );
+				foreach ( $using['predicates'] as $predicate ) {
+					$join_predicates[] = $predicate;
+				}
+				$index          = $using['next_index'];
+				$left_reference = $source['reference'];
+				continue;
 			}
 
 			$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in joined ' . $statement . ' statement.' );
@@ -2394,7 +2419,68 @@ class WP_DuckDB_Driver {
 			}
 			$join_predicates[] = array_slice( $tokens, $index, $predicate_end - $index );
 			$index             = $predicate_end;
+			$left_reference    = $source['reference'];
 		}
+	}
+
+	/**
+	 * Parse DELETE JOIN ... USING columns into explicit equality predicates.
+	 *
+	 * @param WP_Parser_Token[] $tokens          Table reference tokens.
+	 * @param int               $index           Index at USING.
+	 * @param array             $left_reference  Left table reference.
+	 * @param array             $right_reference Right table reference.
+	 * @return array{predicates:array<int,string>,next_index:int} Generated predicates and next token index.
+	 */
+	private function parse_joined_delete_using_predicates( array $tokens, int $index, array $left_reference, array $right_reference ): array {
+		if ( null === $left_reference['table_name'] || null === $right_reference['table_name'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. JOIN ... USING requires base table references.' );
+		}
+
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::USING_SYMBOL, 'Expected USING in joined DELETE statement.' );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Unsupported DELETE statement in DuckDB driver. JOIN ... USING requires a column list.' );
+
+		$close_index   = $this->skip_balanced_parentheses( $tokens, $index ) - 1;
+		$column_tokens = array_slice( $tokens, $index + 1, $close_index - $index - 1 );
+		if ( count( $column_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. JOIN ... USING requires a column list.' );
+		}
+
+		$seen       = array();
+		$predicates = array();
+		foreach ( $this->split_top_level_comma_items( $column_tokens ) as $item ) {
+			if ( 1 !== count( $item ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. JOIN ... USING supports only column names.' );
+			}
+
+			$column = $this->identifier_value( $item[0] );
+			$key    = strtolower( $column );
+			if ( isset( $seen[ $key ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Duplicate JOIN ... USING column '{$column}' in DuckDB driver." );
+			}
+			$seen[ $key ] = true;
+
+			if (
+				! $this->table_has_column( $left_reference['table_name'], $column, $left_reference['temporary'] )
+				|| ! $this->table_has_column( $right_reference['table_name'], $column, $right_reference['temporary'] )
+			) {
+				throw new WP_DuckDB_Driver_Exception( "Unknown JOIN ... USING column '{$column}' in DuckDB driver." );
+			}
+
+			$predicates[] = $this->connection->quote_identifier( $left_reference['alias'] )
+				. '.'
+				. $this->connection->quote_identifier( $column )
+				. ' = '
+				. $this->connection->quote_identifier( $right_reference['alias'] )
+				. '.'
+				. $this->connection->quote_identifier( $column );
+		}
+
+		return array(
+			'predicates' => $predicates,
+			'next_index' => $close_index + 1,
+		);
 	}
 
 	/**

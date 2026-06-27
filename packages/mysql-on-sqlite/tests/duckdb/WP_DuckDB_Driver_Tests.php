@@ -2428,6 +2428,82 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_delete_rewrites_join_using_columns(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, flag VARCHAR(20), note VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'drop', 'x'), (3, 'drop', 'z'), (4, 'keep', 'other')" );
+
+		$single_target_delete = $driver->query(
+			"DELETE a FROM t1 a
+			JOIN t2 b USING (id)
+			WHERE b.flag = 'drop'"
+		);
+
+		$this->assertSame( 2, $single_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'flag' => 'drop',
+				),
+				array(
+					'id'   => 3,
+					'flag' => 'drop',
+				),
+				array(
+					'id'   => 4,
+					'flag' => 'keep',
+				),
+			),
+			$driver->query( 'SELECT id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, flag VARCHAR(20), note VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'drop', 'x'), (3, 'drop', 'z'), (4, 'keep', 'other')" );
+
+		$multi_target_delete = $driver->query(
+			"DELETE a, b FROM t1 a
+			JOIN t2 b USING (id)
+			WHERE b.flag = 'drop'"
+		);
+
+		$this->assertSame( 4, $multi_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 4,
+					'flag' => 'keep',
+				),
+			),
+			$driver->query( 'SELECT id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_single_target_joined_delete_rewrites_join_using_and_alias_forms(): void {
 		$this->requireDuckDBRuntime();
 
@@ -2670,8 +2746,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
 				),
 				array(
-					'sql'     => 'DELETE a, b FROM t1 a JOIN t2 b USING (id)',
-					'message' => 'JOIN ... USING is not supported',
+					'sql'     => 'DELETE a, b FROM t1 a JOIN t2 b USING (missing_id)',
+					'message' => "Unknown JOIN ... USING column 'missing_id'",
 				),
 				array(
 					'sql'     => 'DELETE t1 FROM t1 a JOIN t2 b ON a.id = b.id',

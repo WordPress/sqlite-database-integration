@@ -97,6 +97,97 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_result_statement_fetch_all_group_and_unique_modes_match_pdo_shape(): void {
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'kind', 'name', 'visits' ),
+			array(
+				array( 'core', 'Ada', 1 ),
+				array( 'plugin', 'Grace', 2 ),
+				array( 'core', 'Linus', 3 ),
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'core'   => array(
+					array(
+						'name'   => 'Ada',
+						'visits' => 1,
+					),
+					array(
+						'name'   => 'Linus',
+						'visits' => 3,
+					),
+				),
+				'plugin' => array(
+					array(
+						'name'   => 'Grace',
+						'visits' => 2,
+					),
+				),
+			),
+			$stmt->fetchAll( PDO::FETCH_GROUP | PDO::FETCH_ASSOC )
+		);
+		$this->assertFalse( $stmt->fetch() );
+
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'kind', 'name', 'visits' ),
+			array(
+				array( 'core', 'Ada', 1 ),
+				array( 'plugin', 'Grace', 2 ),
+				array( 'core', 'Linus', 3 ),
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'core'   => array(
+					'name'   => 'Linus',
+					'visits' => 3,
+				),
+				'plugin' => array(
+					'name'   => 'Grace',
+					'visits' => 2,
+				),
+			),
+			$stmt->fetchAll( PDO::FETCH_UNIQUE | PDO::FETCH_ASSOC )
+		);
+
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'kind', 'name' ),
+			array(
+				array( 'core', 'Ada' ),
+				array( 'plugin', 'Grace' ),
+				array( 'core', 'Linus' ),
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'core'   => array( 'Ada', 'Linus' ),
+				'plugin' => array( 'Grace' ),
+			),
+			$stmt->fetchAll( PDO::FETCH_GROUP | PDO::FETCH_COLUMN )
+		);
+
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'kind', 'name' ),
+			array(
+				array( 'core', 'Ada' ),
+				array( 'plugin', 'Grace' ),
+				array( 'core', 'Linus' ),
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'core'   => 'Linus',
+				'plugin' => 'Grace',
+			),
+			$stmt->fetchAll( PDO::FETCH_UNIQUE | PDO::FETCH_COLUMN )
+		);
+	}
+
 	public function test_result_statement_cursor_and_metadata_methods_match_pdo_shape(): void {
 		$stmt = new WP_DuckDB_Result_Statement(
 			array( 'id', 'name' ),

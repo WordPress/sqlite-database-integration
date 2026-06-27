@@ -1000,6 +1000,25 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, note FROM t2 ORDER BY id' );
 	}
 
+	public function test_joined_delete_using_columns_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20))',
+				'CREATE TABLE t2 (id INT, flag VARCHAR(20), note VARCHAR(20))',
+				"INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+				"INSERT INTO t2 VALUES (1, 'drop', 'x'), (3, 'drop', 'z'), (4, 'keep', 'other')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE a FROM t1 a
+			JOIN t2 b USING (id)
+			WHERE b.flag = 'drop'"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, flag FROM t2 ORDER BY id' );
+	}
+
 	public function test_single_target_joined_delete_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

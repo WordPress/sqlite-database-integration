@@ -159,6 +159,10 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 		}
 		$fetch_args = null === $mode ? $this->default_fetch_args : $args;
 
+		if ( $this->is_keyed_fetch_all_mode( (int) $fetch_mode ) ) {
+			return $this->fetch_all_keyed( (int) $fetch_mode, $fetch_args );
+		}
+
 		if ( PDO::FETCH_COLUMN === $fetch_mode ) {
 			$column = isset( $fetch_args[0] ) ? (int) $fetch_args[0] : 0;
 			$this->assert_valid_column_index( $column );
@@ -171,16 +175,7 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 		}
 
 		if ( PDO::FETCH_KEY_PAIR === $fetch_mode ) {
-			$this->assert_valid_column_index( 0 );
-			$this->assert_valid_column_index( 1 );
-
-			$rows = array();
-			while ( isset( $this->rows[ $this->cursor ] ) ) {
-				$row = $this->rows[ $this->cursor ];
-				++$this->cursor;
-				$rows[ $row[0] ] = $row[1];
-			}
-			return $rows;
+			return $this->fetch_all_key_pair();
 		}
 
 		$rows = array();
@@ -308,15 +303,28 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 			$args = $this->default_fetch_args;
 		}
 
+		return $this->format_row_with_columns( $row, $this->columns, $mode, $args );
+	}
+
+	/**
+	 * Format a row for a fetch mode using a specific column list.
+	 *
+	 * @param array            $row     Numeric row.
+	 * @param string[]         $columns Column names keyed by column offset.
+	 * @param int              $mode    Fetch mode.
+	 * @param array<int,mixed> $args    Fetch mode arguments.
+	 * @return mixed
+	 */
+	private function format_row_with_columns( array $row, array $columns, int $mode, array $args = array() ) {
 		switch ( $mode ) {
 			case PDO::FETCH_ASSOC:
-				return $this->assoc_row( $row );
+				return $this->assoc_row( $row, $columns );
 			case PDO::FETCH_NAMED:
-				return $this->named_row( $row );
+				return $this->named_row( $row, $columns );
 			case PDO::FETCH_NUM:
-				return $row;
+				return array_values( $row );
 			case PDO::FETCH_OBJ:
-				return (object) $this->assoc_row( $row );
+				return (object) $this->assoc_row( $row, $columns );
 			case PDO::FETCH_COLUMN:
 				$column = isset( $args[0] ) ? (int) $args[0] : 0;
 				$this->assert_valid_column_index( $column );
@@ -324,28 +332,145 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 			case PDO::FETCH_CLASS:
 				$class            = isset( $args[0] ) ? $args[0] : 'stdClass';
 				$constructor_args = isset( $args[1] ) && is_array( $args[1] ) ? $args[1] : array();
-				return $this->class_row( $row, $class, $constructor_args );
+				return $this->class_row( $row, $class, $constructor_args, $columns );
 			case PDO::FETCH_FUNC:
 				if ( ! isset( $args[0] ) || ! is_callable( $args[0] ) ) {
 					throw new TypeError( 'PDO::FETCH_FUNC requires a callable fetch argument.' );
 				}
-				return call_user_func_array( $args[0], $row );
+				return call_user_func_array( $args[0], array_values( $row ) );
 			case PDO::FETCH_BOTH:
 			default:
-				return $this->both_row( $row );
+				return $this->both_row( $row, $columns );
 		}
+	}
+
+	/**
+	 * Check whether a fetchAll mode uses the PDO keyed-result modifiers.
+	 *
+	 * @param int $mode Fetch mode.
+	 * @return bool
+	 */
+	private function is_keyed_fetch_all_mode( int $mode ): bool {
+		return ( PDO::FETCH_GROUP === ( $mode & PDO::FETCH_GROUP ) )
+			|| ( PDO::FETCH_UNIQUE === ( $mode & PDO::FETCH_UNIQUE ) );
+	}
+
+	/**
+	 * Fetch all rows keyed by a result column.
+	 *
+	 * @param int              $mode Fetch mode.
+	 * @param array<int,mixed> $args Fetch mode arguments.
+	 * @return array
+	 */
+	private function fetch_all_keyed( int $mode, array $args ): array {
+		$unique    = PDO::FETCH_UNIQUE === ( $mode & PDO::FETCH_UNIQUE );
+		$base_mode = $mode & ~( PDO::FETCH_GROUP | PDO::FETCH_UNIQUE );
+
+		if ( 0 === $base_mode ) {
+			$base_mode = $this->default_fetch_mode;
+		}
+		$base_mode = $base_mode & ~( PDO::FETCH_GROUP | PDO::FETCH_UNIQUE );
+		if ( 0 === $base_mode ) {
+			$base_mode = PDO::FETCH_BOTH;
+		}
+
+		if ( PDO::FETCH_KEY_PAIR === $base_mode ) {
+			return $this->fetch_all_key_pair();
+		}
+
+		if ( PDO::FETCH_COLUMN === $base_mode ) {
+			return $this->fetch_all_keyed_column( $unique, $args );
+		}
+
+		$this->assert_valid_column_index( 0 );
+
+		$rows = array();
+		while ( isset( $this->rows[ $this->cursor ] ) ) {
+			$row = $this->rows[ $this->cursor ];
+			++$this->cursor;
+
+			$key     = $row[0];
+			$columns = $this->columns;
+			unset( $row[0], $columns[0] );
+
+			$value = $this->format_row_with_columns( $row, $columns, $base_mode, $args );
+			if ( $unique ) {
+				$rows[ $key ] = $value;
+			} else {
+				$rows[ $key ][] = $value;
+			}
+		}
+		return $rows;
+	}
+
+	/**
+	 * Fetch keyed rows for PDO::FETCH_COLUMN combinations.
+	 *
+	 * @param bool             $unique Whether the mode uses PDO::FETCH_UNIQUE.
+	 * @param array<int,mixed> $args   Fetch mode arguments.
+	 * @return array
+	 */
+	private function fetch_all_keyed_column( bool $unique, array $args ): array {
+		if ( $unique ) {
+			$key_column   = 0;
+			$value_column = isset( $args[0] ) ? (int) $args[0] : 1;
+		} else {
+			$key_column   = isset( $args[0] ) ? (int) $args[0] : 0;
+			$value_column = isset( $args[0] ) ? 0 : 1;
+		}
+
+		$this->assert_valid_column_index( $key_column );
+		$this->assert_valid_column_index( $value_column );
+
+		$rows = array();
+		while ( isset( $this->rows[ $this->cursor ] ) ) {
+			$row = $this->rows[ $this->cursor ];
+			++$this->cursor;
+
+			$key   = $row[ $key_column ];
+			$value = $row[ $value_column ];
+			if ( $unique ) {
+				$rows[ $key ] = $value;
+			} else {
+				$rows[ $key ][] = $value;
+			}
+		}
+		return $rows;
+	}
+
+	/**
+	 * Fetch all rows as key-value pairs.
+	 *
+	 * @return array
+	 */
+	private function fetch_all_key_pair(): array {
+		$this->assert_valid_column_index( 0 );
+		$this->assert_valid_column_index( 1 );
+
+		$rows = array();
+		while ( isset( $this->rows[ $this->cursor ] ) ) {
+			$row = $this->rows[ $this->cursor ];
+			++$this->cursor;
+			$rows[ $row[0] ] = $row[1];
+		}
+		return $rows;
 	}
 
 	/**
 	 * Build an associative row.
 	 *
 	 * @param array $row Numeric row.
+	 * @param string[]|null $columns Column names keyed by column offset.
 	 * @return array
 	 */
-	private function assoc_row( array $row ): array {
+	private function assoc_row( array $row, $columns = null ): array {
+		if ( null === $columns ) {
+			$columns = $this->columns;
+		}
+
 		$assoc = array();
-		foreach ( $this->columns as $index => $name ) {
-			$assoc[ $name ] = $row[ $index ] ?? null;
+		foreach ( $columns as $index => $name ) {
+			$assoc[ $name ] = array_key_exists( $index, $row ) ? $row[ $index ] : null;
 		}
 		return $assoc;
 	}
@@ -354,12 +479,17 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	 * Build a PDO::FETCH_NAMED row.
 	 *
 	 * @param array $row Numeric row.
+	 * @param string[]|null $columns Column names keyed by column offset.
 	 * @return array
 	 */
-	private function named_row( array $row ): array {
+	private function named_row( array $row, $columns = null ): array {
+		if ( null === $columns ) {
+			$columns = $this->columns;
+		}
+
 		$named = array();
-		foreach ( $this->columns as $index => $name ) {
-			$value = $row[ $index ] ?? null;
+		foreach ( $columns as $index => $name ) {
+			$value = array_key_exists( $index, $row ) ? $row[ $index ] : null;
 			if ( ! array_key_exists( $name, $named ) ) {
 				$named[ $name ] = $value;
 			} elseif ( is_array( $named[ $name ] ) ) {
@@ -375,10 +505,11 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	 * Build a PDO::FETCH_BOTH row.
 	 *
 	 * @param array $row Numeric row.
+	 * @param string[]|null $columns Column names keyed by column offset.
 	 * @return array
 	 */
-	private function both_row( array $row ): array {
-		$both = $this->assoc_row( $row );
+	private function both_row( array $row, $columns = null ): array {
+		$both = $this->assoc_row( $row, $columns );
 		foreach ( $row as $index => $value ) {
 			$both[ $index ] = $value;
 		}
@@ -391,11 +522,12 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	 * @param array            $row              Numeric row.
 	 * @param string           $class            Class name.
 	 * @param array<int,mixed> $constructor_args Constructor arguments.
+	 * @param string[]|null    $columns          Column names keyed by column offset.
 	 * @return object
 	 */
-	private function class_row( array $row, string $class, array $constructor_args ): object {
+	private function class_row( array $row, string $class, array $constructor_args, $columns = null ): object {
 		$object = new $class( ...$constructor_args );
-		foreach ( $this->assoc_row( $row ) as $name => $value ) {
+		foreach ( $this->assoc_row( $row, $columns ) as $name => $value ) {
 			$object->$name = $value;
 		}
 		return $object;
