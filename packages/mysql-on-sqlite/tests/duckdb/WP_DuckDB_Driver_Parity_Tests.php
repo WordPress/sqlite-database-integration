@@ -1342,6 +1342,54 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW CREATE TABLE inline_fk_child_default' );
 	}
 
+	public function test_alter_table_check_constraint_actions_document_current_duckdb_gap(): void {
+		$sqlite_driver = new WP_SQLite_Driver(
+			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
+			'wp'
+		);
+		$duckdb_driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$create_sql = 'CREATE TABLE alter_check_gap (id INT, CONSTRAINT existing_check CHECK (id >= 0))';
+		$sqlite_driver->query( $create_sql, PDO::FETCH_ASSOC );
+		$duckdb_driver->query( $create_sql );
+
+		$sqlite_driver->query( 'ALTER TABLE alter_check_gap ADD CONSTRAINT added_check CHECK (id < 10)', PDO::FETCH_ASSOC );
+		$sqlite_create = $sqlite_driver->query( 'SHOW CREATE TABLE alter_check_gap', PDO::FETCH_ASSOC );
+		$this->assertStringContainsString( 'added_check', $sqlite_create[0]['Create Table'] );
+
+		$duckdb_before = $duckdb_driver->query( 'SHOW CREATE TABLE alter_check_gap' )->fetchAll( PDO::FETCH_ASSOC );
+		try {
+			$duckdb_driver->query( 'ALTER TABLE alter_check_gap ADD CONSTRAINT added_check CHECK (id < 10)' );
+			$this->fail( 'Expected DuckDB to reject ALTER TABLE ADD CHECK.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'ADD CHECK is not supported', $e->getMessage() );
+		}
+		$this->assertSame(
+			$duckdb_before,
+			$duckdb_driver->query( 'SHOW CREATE TABLE alter_check_gap' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$sqlite_driver->query( 'ALTER TABLE alter_check_gap DROP CHECK existing_check', PDO::FETCH_ASSOC );
+		$sqlite_create = $sqlite_driver->query( 'SHOW CREATE TABLE alter_check_gap', PDO::FETCH_ASSOC );
+		$this->assertStringNotContainsString( 'existing_check', $sqlite_create[0]['Create Table'] );
+
+		try {
+			$duckdb_driver->query( 'ALTER TABLE alter_check_gap DROP CHECK existing_check' );
+			$this->fail( 'Expected DuckDB to reject ALTER TABLE DROP CHECK.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'DROP CHECK is not supported', $e->getMessage() );
+		}
+		$this->assertSame(
+			$duckdb_before,
+			$duckdb_driver->query( 'SHOW CREATE TABLE alter_check_gap' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_unique_key_foreign_key_metadata_documents_current_duckdb_gap(): void {
 		$sqlite_driver = new WP_SQLite_Driver(
 			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),

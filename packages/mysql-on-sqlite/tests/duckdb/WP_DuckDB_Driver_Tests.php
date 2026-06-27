@@ -5695,6 +5695,125 @@ SQL,
 		$driver->query( 'ALTER TABLE users ADD COLUMN id INT PRIMARY KEY' );
 	}
 
+	public function test_unsupported_alter_table_constraint_actions_throw_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE alter_parent (id INT PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO alter_parent (id) VALUES (1)' );
+		$driver->query(
+			'CREATE TABLE alter_constraint_guard (
+				id INT,
+				parent_id INT,
+				`check` INT,
+				`constraint` INT,
+				`foreign` INT,
+				CONSTRAINT existing_check CHECK (id >= 0),
+				CONSTRAINT existing_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)
+			)'
+		);
+		$driver->query( 'INSERT INTO alter_constraint_guard (id, parent_id, `check`, `constraint`, `foreign`) VALUES (1, 1, 7, 8, 9)' );
+
+		$before = $this->alter_table_constraint_guard_snapshot( $driver );
+
+		foreach (
+			array(
+				'ALTER TABLE alter_constraint_guard ADD CHECK (id >= 0)' => 'ADD CHECK is not supported',
+				'ALTER TABLE alter_constraint_guard ADD (CHECK (id >= 0))' => 'ADD CHECK is not supported',
+				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_check CHECK (id >= 0)' => 'ADD CHECK is not supported',
+				'ALTER TABLE alter_constraint_guard ADD FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
+				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
+				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_unique UNIQUE KEY (id)' => 'ADD CONSTRAINT is not supported',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN score INT CHECK (score >= 0)' => 'Inline CHECK constraints are only supported in CREATE TABLE',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN parent_ref INT REFERENCES alter_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
+				'ALTER TABLE alter_constraint_guard DROP CHECK existing_check' => 'DROP CHECK is not supported',
+				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT existing_check' => 'DROP CONSTRAINT is not supported',
+				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY existing_fk' => 'DROP FOREIGN KEY is not supported',
+				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY' => 'DROP FOREIGN KEY is not supported',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected unsupported ALTER TABLE constraint action to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+
+			$this->assertSame(
+				$before,
+				$this->alter_table_constraint_guard_snapshot( $driver ),
+				'ALTER TABLE constraint rejection mutated schema or data for SQL: ' . $sql
+			);
+		}
+
+		foreach (
+			array(
+				'ALTER TABLE alter_constraint_guard DROP CHECK',
+				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT',
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected malformed ALTER TABLE constraint action to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( 'DuckDB driver could not parse MySQL statement', $e->getMessage() );
+			}
+
+			$this->assertSame(
+				$before,
+				$this->alter_table_constraint_guard_snapshot( $driver ),
+				'Malformed ALTER TABLE constraint rejection mutated schema or data for SQL: ' . $sql
+			);
+		}
+	}
+
+	public function test_unsupported_alter_table_constraint_actions_in_multi_action_statements_throw_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE alter_parent (id INT PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO alter_parent (id) VALUES (1)' );
+		$driver->query(
+			'CREATE TABLE alter_constraint_guard (
+				id INT,
+				parent_id INT,
+				`check` INT,
+				`constraint` INT,
+				`foreign` INT,
+				CONSTRAINT existing_check CHECK (id >= 0),
+				CONSTRAINT existing_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)
+			)'
+		);
+		$driver->query( 'INSERT INTO alter_constraint_guard (id, parent_id, `check`, `constraint`, `foreign`) VALUES (1, 1, 7, 8, 9)' );
+
+		$before = $this->alter_table_constraint_guard_snapshot( $driver );
+
+		foreach (
+			array(
+				'ALTER TABLE alter_constraint_guard ADD CHECK (id >= 0), ADD COLUMN should_not_exist INT DEFAULT 2' => 'ADD CHECK is not supported',
+				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY existing_fk, ADD COLUMN should_not_exist INT DEFAULT 2' => 'DROP FOREIGN KEY is not supported',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CHECK (id >= 0)' => 'ADD CHECK is not supported',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, DROP CONSTRAINT existing_check' => 'DROP CONSTRAINT is not supported',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD COLUMN inline_check INT CHECK (inline_check >= 0)' => 'Inline CHECK constraints are only supported in CREATE TABLE',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD COLUMN inline_parent INT REFERENCES alter_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected multi-action ALTER TABLE constraint action to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+
+			$this->assertSame(
+				$before,
+				$this->alter_table_constraint_guard_snapshot( $driver ),
+				'Multi-action ALTER TABLE constraint rejection mutated schema or data for SQL: ' . $sql
+			);
+		}
+	}
+
 	public function test_unsupported_create_table_check_constraint_not_enforced_throws_driver_exception(): void {
 		$this->requireDuckDBRuntime();
 
@@ -5798,6 +5917,32 @@ SQL,
 		$this->expectException( WP_DuckDB_Driver_Exception::class );
 		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN NOT NULL requires a DEFAULT for non-empty tables.' );
 		$driver->query( 'ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL' );
+	}
+
+	private function alter_table_constraint_guard_snapshot( WP_DuckDB_Driver $driver ): array {
+		return array(
+			'columns'                 => array_column( $driver->query( 'SHOW COLUMNS FROM alter_constraint_guard' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' ),
+			'rows'                    => $driver->query( 'SELECT id, parent_id, `check`, `constraint`, `foreign` FROM alter_constraint_guard' )->fetchAll( PDO::FETCH_ASSOC ),
+			'table_constraints'       => $driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'alter_constraint_guard'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'check_constraints'       => $driver->query(
+				"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+				FROM information_schema.check_constraints
+				WHERE constraint_schema = 'wp' AND constraint_name = 'existing_check'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'referential_constraints' => $driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME, UPDATE_RULE, DELETE_RULE
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp' AND table_name = 'alter_constraint_guard'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'show_create'             => $driver->query( 'SHOW CREATE TABLE alter_constraint_guard' )->fetchAll( PDO::FETCH_ASSOC ),
+		);
 	}
 
 	private function assertDriverQueryRejected( WP_DuckDB_Driver $driver, string $sql ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

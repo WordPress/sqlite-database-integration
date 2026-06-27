@@ -4442,6 +4442,8 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN, ADD INDEX, DROP COLUMN, and DROP INDEX are supported.' );
 		}
 
+		$this->reject_unsupported_alter_table_constraint_actions( $actions );
+
 		$result = null;
 		foreach ( $actions as $action ) {
 			if ( ! isset( $action[0] ) ) {
@@ -4479,6 +4481,142 @@ class WP_DuckDB_Driver {
 		}
 
 		return $result ?? new WP_DuckDB_Result_Statement( array(), array(), 0 );
+	}
+
+	/**
+	 * Reject unsupported ALTER TABLE CHECK/FOREIGN KEY/CONSTRAINT actions before mutation.
+	 *
+	 * @param array<int,WP_Parser_Token[]> $actions ALTER action token groups.
+	 */
+	private function reject_unsupported_alter_table_constraint_actions( array $actions ): void {
+		foreach ( $actions as $action ) {
+			if ( ! isset( $action[0] ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Empty action.' );
+			}
+
+			$this->reject_unsupported_alter_table_constraint_action( $action );
+		}
+	}
+
+	/**
+	 * Reject unsupported ALTER TABLE CHECK/FOREIGN KEY/CONSTRAINT actions before mutation.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens.
+	 */
+	private function reject_unsupported_alter_table_constraint_action( array $tokens ): void {
+		if ( ! isset( $tokens[0] ) ) {
+			return;
+		}
+
+		if ( WP_MySQL_Lexer::ADD_SYMBOL === $tokens[0]->id ) {
+			$this->reject_unsupported_alter_table_add_constraint_action( array_slice( $tokens, 1 ) );
+			return;
+		}
+
+		if ( WP_MySQL_Lexer::DROP_SYMBOL === $tokens[0]->id ) {
+			$this->reject_unsupported_alter_table_drop_constraint_action( $tokens );
+			return;
+		}
+
+		if (
+			WP_MySQL_Lexer::CHANGE_SYMBOL === $tokens[0]->id
+			|| WP_MySQL_Lexer::MODIFY_SYMBOL === $tokens[0]->id
+		) {
+			$this->reject_unsupported_alter_table_inline_constraint_action( $tokens );
+		}
+	}
+
+	/**
+	 * Reject unsupported ALTER TABLE ... ADD constraint actions before ADD COLUMN fallback.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 */
+	private function reject_unsupported_alter_table_add_constraint_action( array $tokens ): void {
+		if ( ! isset( $tokens[0] ) ) {
+			return;
+		}
+
+		if ( WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[0]->id ) {
+			$this->reject_unsupported_alter_table_inline_constraint_action( array_slice( $tokens, 1 ) );
+			return;
+		}
+
+		foreach ( $this->alter_table_add_items_for_constraint_detection( $tokens ) as $item ) {
+			if ( $this->is_create_table_check_constraint( $item ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD CHECK is not supported.' );
+			}
+
+			if ( $this->is_create_table_foreign_key_constraint( $item ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD FOREIGN KEY is not supported.' );
+			}
+
+			if ( isset( $item[0] ) && WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $item[0]->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD CONSTRAINT is not supported.' );
+			}
+
+			if ( ! $this->is_create_table_index_item( $item ) ) {
+				$this->reject_unsupported_alter_table_inline_constraint_action( $item );
+			}
+		}
+	}
+
+	/**
+	 * Reject unsupported inline CHECK/REFERENCES constraints before mutation.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens.
+	 */
+	private function reject_unsupported_alter_table_inline_constraint_action( array $tokens ): void {
+		foreach ( $tokens as $token ) {
+			if ( WP_MySQL_Lexer::CHECK_SYMBOL === $token->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported inline CHECK constraint in DuckDB driver. Inline CHECK constraints are only supported in CREATE TABLE.' );
+			}
+
+			if ( WP_MySQL_Lexer::REFERENCES_SYMBOL === $token->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported inline REFERENCES constraint in DuckDB driver. Inline REFERENCES constraints are only supported in CREATE TABLE.' );
+			}
+		}
+	}
+
+	/**
+	 * Return ADD action item(s) for constraint detection.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 * @return array<int,WP_Parser_Token[]>
+	 */
+	private function alter_table_add_items_for_constraint_detection( array $tokens ): array {
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[0]->id ) {
+			return array( $tokens );
+		}
+
+		list( $items, ) = $this->collect_parenthesized_items( $tokens, 1 );
+		return $items;
+	}
+
+	/**
+	 * Reject unsupported ALTER TABLE ... DROP constraint actions before DROP COLUMN fallback.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens starting at DROP.
+	 */
+	private function reject_unsupported_alter_table_drop_constraint_action( array $tokens ): void {
+		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[1]->id ) {
+			return;
+		}
+
+		if ( WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[1]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CHECK is not supported.' );
+		}
+
+		if ( WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[1]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CONSTRAINT is not supported.' );
+		}
+
+		if (
+			WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[1]->id
+			&& isset( $tokens[2] )
+			&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[2]->id
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP FOREIGN KEY is not supported.' );
+		}
 	}
 
 	/**
