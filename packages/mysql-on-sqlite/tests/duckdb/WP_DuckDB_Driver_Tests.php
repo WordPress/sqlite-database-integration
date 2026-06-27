@@ -9254,23 +9254,50 @@ SQL,
 				'database' => 'wp',
 			)
 		);
-		$driver->query( 'CREATE TABLE change_pk (id INT NOT NULL, note VARCHAR(20), PRIMARY KEY (id))' );
-		$driver->query( 'CREATE TABLE change_auto (id BIGINT NOT NULL AUTO_INCREMENT, note VARCHAR(20))' );
-		$driver->query( 'CREATE TABLE change_inline_unique (name VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE change_pk (id INT NOT NULL, note VARCHAR(20), UNIQUE KEY note_unique (note), PRIMARY KEY (id))' );
+		$driver->query( "INSERT INTO change_pk (id, note) VALUES (1, 'one'), (2, 'two')" );
+		$driver->query( 'CREATE TABLE change_auto (id BIGINT NOT NULL AUTO_INCREMENT, note VARCHAR(20), UNIQUE KEY note_unique (note))' );
+		$driver->query( "INSERT INTO change_auto (note) VALUES ('one'), ('two')" );
+		$driver->query( 'CREATE TABLE change_inline_auto (id BIGINT NOT NULL, note VARCHAR(20), UNIQUE KEY note_unique (note))' );
+		$driver->query( "INSERT INTO change_inline_auto (id, note) VALUES (1, 'one'), (2, 'two')" );
+		$driver->query( 'CREATE TABLE change_inline_primary (id INT NOT NULL, note VARCHAR(20), KEY note_idx (note))' );
+		$driver->query( "INSERT INTO change_inline_primary (id, note) VALUES (1, 'one'), (2, 'two')" );
+		$driver->query( 'CREATE TABLE change_inline_unique (id INT NOT NULL, name VARCHAR(20), PRIMARY KEY (id))' );
+		$driver->query( "INSERT INTO change_inline_unique (id, name) VALUES (1, 'one'), (2, 'two')" );
 
 		foreach (
 			array(
-				'ALTER TABLE change_pk CHANGE id item_id INT NOT NULL' => 'primary key column requires a table rebuild',
-				'ALTER TABLE change_auto MODIFY id BIGINT NOT NULL' => 'AUTO_INCREMENT column requires a table rebuild',
-				'ALTER TABLE change_inline_unique MODIFY name VARCHAR(20) UNIQUE' => 'inline UNIQUE is not supported',
-			) as $sql => $message
+				'change_pk'             => array(
+					'sql'     => 'ALTER TABLE change_pk CHANGE id item_id INT NOT NULL',
+					'message' => 'primary key column requires a table rebuild',
+				),
+				'change_auto'           => array(
+					'sql'     => 'ALTER TABLE change_auto MODIFY id BIGINT NOT NULL',
+					'message' => 'AUTO_INCREMENT column requires a table rebuild',
+				),
+				'change_inline_auto'    => array(
+					'sql'     => 'ALTER TABLE change_inline_auto MODIFY id BIGINT NOT NULL AUTO_INCREMENT',
+					'message' => 'CHANGE/MODIFY AUTO_INCREMENT requires a table rebuild',
+				),
+				'change_inline_primary' => array(
+					'sql'     => 'ALTER TABLE change_inline_primary CHANGE id item_id INT NOT NULL PRIMARY KEY',
+					'message' => 'CHANGE/MODIFY inline PRIMARY KEY is not supported',
+				),
+				'change_inline_unique'  => array(
+					'sql'     => 'ALTER TABLE change_inline_unique MODIFY name VARCHAR(20) UNIQUE',
+					'message' => 'CHANGE/MODIFY inline UNIQUE is not supported',
+				),
+			) as $table_name => $case
 		) {
-			try {
-				$driver->query( $sql );
-				$this->fail( 'Expected CHANGE/MODIFY protection to reject SQL: ' . $sql );
-			} catch ( WP_DuckDB_Driver_Exception $e ) {
-				$this->assertStringContainsString( $message, $e->getMessage() );
-			}
+			$before = $this->alter_table_inline_constraint_guard_snapshot( $driver, $table_name );
+
+			$this->assertDriverQueryRejected( $driver, $case['sql'], $case['message'] );
+			$this->assertSame(
+				$before,
+				$this->alter_table_inline_constraint_guard_snapshot( $driver, $table_name ),
+				'CHANGE/MODIFY rejection mutated state for SQL: ' . $case['sql']
+			);
+			$this->assert_duckdb_connection_usable( $driver );
 		}
 	}
 
@@ -9513,12 +9540,109 @@ SQL,
 	public function test_unsupported_alter_table_add_column_constraints_throw_driver_exception(): void {
 		$this->requireDuckDBRuntime();
 
-		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
-		$driver->query( 'CREATE TABLE users (name VARCHAR(100))' );
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE add_column_primary_guard (
+				name VARCHAR(100) NOT NULL,
+				slug VARCHAR(100),
+				UNIQUE KEY name_unique (name),
+				KEY slug_idx (slug)
+			)'
+		);
+		$driver->query( "INSERT INTO add_column_primary_guard (name, slug) VALUES ('Ada', 'ada'), ('Grace', 'grace')" );
 
-		$this->expectException( WP_DuckDB_Driver_Exception::class );
-		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN PRIMARY KEY is not supported.' );
-		$driver->query( 'ALTER TABLE users ADD COLUMN id INT PRIMARY KEY' );
+		$before = $this->alter_table_inline_constraint_guard_snapshot( $driver, 'add_column_primary_guard' );
+		$this->assertDriverQueryRejected(
+			$driver,
+			'ALTER TABLE add_column_primary_guard ADD COLUMN id INT PRIMARY KEY',
+			'ADD COLUMN PRIMARY KEY is not supported'
+		);
+
+		$this->assertSame( $before, $this->alter_table_inline_constraint_guard_snapshot( $driver, 'add_column_primary_guard' ) );
+		$this->assert_duckdb_connection_usable( $driver );
+	}
+
+	public function test_alter_table_add_column_inline_unique_updates_metadata_and_enforces_uniqueness(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE add_column_unique_inline (id INT NOT NULL, name VARCHAR(20), PRIMARY KEY (id))' );
+		$driver->query( "INSERT INTO add_column_unique_inline (id, name) VALUES (1, 'one'), (2, 'two')" );
+
+		$result = $driver->query( 'ALTER TABLE add_column_unique_inline ADD COLUMN slug VARCHAR(20) UNIQUE' );
+
+		$this->assertSame( 0, $result->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'one',
+					'slug' => null,
+				),
+				array(
+					'id'   => 2,
+					'name' => 'two',
+					'slug' => null,
+				),
+			),
+			$driver->query( 'SELECT id, name, slug FROM add_column_unique_inline ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				'id'   => 'PRI',
+				'name' => '',
+				'slug' => 'UNI',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM add_column_unique_inline' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+
+		$snapshot = $this->alter_table_inline_constraint_guard_snapshot( $driver, 'add_column_unique_inline' );
+		$this->assertContains( 'slug', array_column( $snapshot['indexes'], 'Key_name' ) );
+		$this->assertStringContainsString( 'UNIQUE KEY `slug` (`slug`)', $snapshot['show_create'][0]['Create Table'] );
+		$this->assertContains(
+			array(
+				'CONSTRAINT_NAME' => 'slug',
+				'CONSTRAINT_TYPE' => 'UNIQUE',
+				'ENFORCED'        => 'YES',
+			),
+			$snapshot['table_constraints']
+		);
+		$this->assertContains(
+			array(
+				'INDEX_NAME'   => 'slug',
+				'NON_UNIQUE'   => 0,
+				'SEQ_IN_INDEX' => 1,
+				'COLUMN_NAME'  => 'slug',
+			),
+			$snapshot['statistics']
+		);
+		$this->assertContains(
+			array(
+				'CONSTRAINT_NAME'  => 'slug',
+				'COLUMN_NAME'      => 'slug',
+				'ORDINAL_POSITION' => 1,
+			),
+			$snapshot['key_column_usage']
+		);
+
+		$driver->query( "UPDATE add_column_unique_inline SET slug = 'one' WHERE id = 1" );
+		$driver->query( "UPDATE add_column_unique_inline SET slug = 'two' WHERE id = 2" );
+		$this->assertDriverQueryRejected(
+			$driver,
+			"INSERT INTO add_column_unique_inline (id, name, slug) VALUES (3, 'duplicate', 'one')",
+			'Failed to execute DuckDB INSERT'
+		);
+		$this->assert_duckdb_connection_usable( $driver );
 	}
 
 	public function test_alter_table_add_check_constraint_rebuilds_table_metadata_and_indexes(): void {
@@ -11481,12 +11605,31 @@ SQL,
 	public function test_unsupported_alter_table_add_auto_increment_throws_driver_exception(): void {
 		$this->requireDuckDBRuntime();
 
-		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
-		$driver->query( 'CREATE TABLE users (name VARCHAR(100))' );
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE add_column_auto_guard (
+				name VARCHAR(100) NOT NULL,
+				slug VARCHAR(100),
+				UNIQUE KEY name_unique (name),
+				KEY slug_idx (slug)
+			)'
+		);
+		$driver->query( "INSERT INTO add_column_auto_guard (name, slug) VALUES ('Ada', 'ada'), ('Grace', 'grace')" );
 
-		$this->expectException( WP_DuckDB_Driver_Exception::class );
-		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN AUTO_INCREMENT is not supported.' );
-		$driver->query( 'ALTER TABLE users ADD COLUMN id BIGINT AUTO_INCREMENT' );
+		$before = $this->alter_table_inline_constraint_guard_snapshot( $driver, 'add_column_auto_guard' );
+		$this->assertDriverQueryRejected(
+			$driver,
+			'ALTER TABLE add_column_auto_guard ADD COLUMN id BIGINT AUTO_INCREMENT',
+			'ADD COLUMN AUTO_INCREMENT is not supported'
+		);
+
+		$this->assertSame( $before, $this->alter_table_inline_constraint_guard_snapshot( $driver, 'add_column_auto_guard' ) );
+		$this->assert_duckdb_connection_usable( $driver );
 	}
 
 	public function test_unsupported_alter_table_add_not_null_without_default_on_non_empty_table_throws_driver_exception(): void {
@@ -12078,6 +12221,18 @@ SQL,
 		);
 	}
 
+	private function alter_table_inline_constraint_guard_snapshot( WP_DuckDB_Driver $driver, string $table_name ): array {
+		$snapshot                   = $this->alter_table_unique_constraint_snapshot( $driver, $table_name );
+		$snapshot['auto_increment'] = $driver->query(
+			"SELECT `AUTO_INCREMENT`
+			FROM information_schema.tables
+			WHERE table_schema = 'wp' AND table_name = '{$table_name}'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$snapshot['status']         = $driver->query( "SHOW TABLE STATUS LIKE '{$table_name}'" )->fetchAll( PDO::FETCH_ASSOC );
+
+		return $snapshot;
+	}
+
 	private function alter_table_foreign_key_lifecycle_snapshot( WP_DuckDB_Driver $driver, string $table_name ): array {
 		return array(
 			'columns'                 => $driver->query( 'SHOW COLUMNS FROM ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
@@ -12236,6 +12391,17 @@ SQL,
 				$this->assertStringContainsString( $message_substring, $e->getMessage() );
 			}
 		}
+	}
+
+	private function assert_duckdb_connection_usable( WP_DuckDB_Driver $driver ): void {
+		$this->assertSame(
+			array(
+				array(
+					'still_usable' => 1,
+				),
+			),
+			$driver->query( 'SELECT 1 AS still_usable' )->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	private function lastDuckDBQuery( WP_DuckDB_Driver $driver ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
