@@ -3509,9 +3509,27 @@ class WP_PostgreSQL_Driver {
 			'checks'       => $checks,
 			'table'        => array(
 				'comment'   => (string) ( $metadata['comment'] ?? '' ),
-				'collation' => (string) ( $metadata['collation'] ?? self::DEFAULT_MYSQL_COLLATION ),
+				'collation' => $this->get_show_create_table_collation_from_create_metadata(
+					(string) ( $metadata['collation'] ?? self::DEFAULT_MYSQL_COLLATION ),
+					$columns
+				),
 			),
 		);
+	}
+	private function get_show_create_table_collation_from_create_metadata( string $table_collation, array $columns ): string {
+		$table_collation = strtolower( trim( $table_collation ) );
+		if ( '' !== $table_collation && self::DEFAULT_MYSQL_COLLATION !== $table_collation ) {
+			return $table_collation;
+		}
+
+		foreach ( $columns as $column ) {
+			$column_collation = $column['collation_name'] ?? null;
+			if ( is_string( $column_collation ) && '' !== $column_collation ) {
+				return $column_collation;
+			}
+		}
+
+		return '' === $table_collation ? self::DEFAULT_MYSQL_COLLATION : $table_collation;
 	}
 	private function get_show_create_table_column_metadata_rows_from_create_metadata( array $columns ): ?array {
 		if ( empty( $columns ) ) {

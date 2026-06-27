@@ -15706,7 +15706,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'D', $show_create_metadata['indexes'][1]['collation'] );
 		$this->assertSame( '12', $show_create_metadata['indexes'][1]['sub_part'] );
 		$this->assertSame( 'rating_positive', $show_create_metadata['checks'][0]['constraint_name'] );
-		$this->assertSame( 'utf8mb4_unicode_ci', $show_create_metadata['table']['collation'] );
+		$this->assertSame( 'big5_chinese_ci', $show_create_metadata['table']['collation'] );
 
 		$create_sql = $build_create( $table, $show_create_metadata );
 		$this->assertStringContainsString( '`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT \'ID note\'', $create_sql );
