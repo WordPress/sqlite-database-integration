@@ -1817,7 +1817,7 @@ class WP_DuckDB_Driver {
 	 * Parse supported multi-table DELETE shapes.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
-	 * @return array{targets:array<int,array{alias:string,column:string,table_name:string}>,from_sql:string,where_tokens:array<int,WP_Parser_Token>,temp_table:string}|null Parsed shape, or null for single-table DELETE.
+	 * @return array{targets:array<int,array{alias:string,column:string,table_name:string,temporary:bool}>,from_sql:string,join_predicates:array<int,array<int,WP_Parser_Token>>,where_tokens:array<int,WP_Parser_Token>,temp_table:string}|null Parsed shape, or null for single-table DELETE.
 	 */
 	private function parse_multi_table_delete_shape( array $tokens ): ?array {
 		if ( ! isset( $tokens[1] ) ) {
@@ -1836,7 +1836,8 @@ class WP_DuckDB_Driver {
 		$table_ref_start  = null;
 		$first_clause_pos = null;
 
-		if ( WP_MySQL_Lexer::FROM_SYMBOL === $tokens[1]->id ) {
+		$using_form = WP_MySQL_Lexer::FROM_SYMBOL === $tokens[1]->id;
+		if ( $using_form ) {
 			$using_index = $this->find_top_level_token_index( $tokens, 2, WP_MySQL_Lexer::USING_SYMBOL );
 			if ( null === $using_index ) {
 				return null;
@@ -1863,9 +1864,13 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Multi-table DELETE requires target aliases and table references.' );
 		}
 
-		$target_aliases = $this->parse_multi_delete_target_aliases( $target_tokens );
-		$references     = $this->parse_multi_delete_table_references( $table_ref_tokens );
-		$targets        = array();
+		$target_aliases           = $this->parse_multi_delete_target_aliases( $target_tokens );
+		$joined_rejection_message = $using_form
+			? 'Unsupported DELETE statement in DuckDB driver. Joined table references in DELETE ... USING are not supported yet.'
+			: 'Unsupported DELETE statement in DuckDB driver. Joined table references in multi-target DELETE are not supported yet.';
+		$allow_joined             = 1 === count( $target_aliases );
+		$references               = $this->parse_multi_delete_table_references( $table_ref_tokens, $allow_joined, $joined_rejection_message );
+		$targets                  = array();
 		foreach ( $target_aliases as $offset => $target_alias ) {
 			$key = strtolower( $target_alias );
 			if ( ! isset( $references['by_alias'][ $key ] ) ) {
@@ -1887,17 +1892,18 @@ class WP_DuckDB_Driver {
 		}
 
 		return array(
-			'targets'      => $targets,
-			'from_sql'     => $references['sql'],
-			'where_tokens' => $where_tokens,
-			'temp_table'   => '__wp_duckdb_dml_delete_' . substr( hash( 'sha256', (string) $this->last_mysql_query ), 0, 16 ),
+			'targets'         => $targets,
+			'from_sql'        => $references['sql'],
+			'join_predicates' => $references['join_predicates'],
+			'where_tokens'    => $where_tokens,
+			'temp_table'      => '__wp_duckdb_dml_delete_' . substr( hash( 'sha256', (string) $this->last_mysql_query ), 0, 16 ),
 		);
 	}
 
 	/**
 	 * Execute a parsed multi-table DELETE.
 	 *
-	 * @param array{targets:array<int,array{alias:string,column:string,table_name:string}>,from_sql:string,where_tokens:array<int,WP_Parser_Token>,temp_table:string} $shape Parsed shape.
+	 * @param array{targets:array<int,array{alias:string,column:string,table_name:string,temporary:bool}>,from_sql:string,join_predicates:array<int,array<int,WP_Parser_Token>>,where_tokens:array<int,WP_Parser_Token>,temp_table:string} $shape Parsed shape.
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_multi_table_delete( array $shape ): WP_DuckDB_Result_Statement {
@@ -1916,14 +1922,21 @@ class WP_DuckDB_Driver {
 						. $this->connection->quote_identifier( $target['column'] );
 				}
 
-				$sql = 'CREATE TEMP TABLE '
+				$sql           = 'CREATE TEMP TABLE '
 					. $this->connection->quote_identifier( $temp_table )
 					. ' AS SELECT DISTINCT '
 					. implode( ', ', $select_list )
 					. ' FROM '
 					. $shape['from_sql'];
+				$where_clauses = array();
 				if ( count( $shape['where_tokens'] ) > 0 ) {
-					$sql .= ' WHERE ' . $this->translate_tokens_to_duckdb_sql( $shape['where_tokens'] );
+					$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $shape['where_tokens'] );
+				}
+				foreach ( $shape['join_predicates'] as $predicate ) {
+					$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $predicate );
+				}
+				if ( count( $where_clauses ) > 0 ) {
+					$sql .= ' WHERE (' . implode( ') AND (', $where_clauses ) . ')';
 				}
 
 				$this->execute_duckdb_query( $sql, 'Failed to collect DuckDB multi-table DELETE targets' );
@@ -1985,11 +1998,16 @@ class WP_DuckDB_Driver {
 	 * Parse comma-separated table references for a bounded multi-table DELETE.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
-	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string}>} SQL and references keyed by lowercase alias.
+	 * @param bool              $allow_joined             Whether joined single-target table references are allowed.
+	 * @param string            $joined_rejection_message Message for unsupported joined references.
+	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>>} SQL and references keyed by lowercase alias.
 	 */
-	private function parse_multi_delete_table_references( array $tokens ): array {
+	private function parse_multi_delete_table_references( array $tokens, bool $allow_joined = false, string $joined_rejection_message = 'Unsupported DELETE statement in DuckDB driver. Joined table references in multi-target DELETE are not supported yet.' ): array {
 		if ( $this->contains_top_level_join_token( $tokens ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Joined table references in multi-table DELETE are not supported yet.' );
+			if ( $allow_joined ) {
+				return $this->parse_joined_single_delete_table_references( $tokens );
+			}
+			throw new WP_DuckDB_Driver_Exception( $joined_rejection_message );
 		}
 
 		$sql_items = array();
@@ -2012,8 +2030,51 @@ class WP_DuckDB_Driver {
 		}
 
 		return array(
-			'sql'      => implode( ', ', $sql_items ),
-			'by_alias' => $by_alias,
+			'sql'             => implode( ', ', $sql_items ),
+			'by_alias'        => $by_alias,
+			'join_predicates' => array(),
+		);
+	}
+
+	/**
+	 * Parse joined table references for a bounded single-target DELETE.
+	 *
+	 * @param WP_Parser_Token[] $tokens Table reference tokens.
+	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>>} SQL and references keyed by lowercase alias.
+	 */
+	private function parse_joined_single_delete_table_references( array $tokens ): array {
+		$joined_references = $this->parse_joined_update_table_references( $tokens, 'DELETE', false );
+		$references        = array_merge( array( $joined_references['target'] ), $joined_references['sources'] );
+		$sql_items         = array();
+		$by_alias          = array();
+		$seen_aliases      = array();
+
+		foreach ( $references as $reference ) {
+			$key = strtolower( $reference['alias'] );
+			if ( isset( $seen_aliases[ $key ] ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Duplicate table alias '{$reference['alias']}' in DELETE statement." );
+			}
+			$seen_aliases[ $key ] = true;
+		}
+
+		foreach ( $references as $reference ) {
+			if ( null === $reference['table_name'] ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Derived table sources are not supported.' );
+			}
+
+			$key              = strtolower( $reference['alias'] );
+			$by_alias[ $key ] = array(
+				'alias'      => $reference['alias'],
+				'table_name' => $reference['table_name'],
+				'temporary'  => $reference['temporary'],
+			);
+			$sql_items[]      = $reference['sql'];
+		}
+
+		return array(
+			'sql'             => implode( ', ', $sql_items ),
+			'by_alias'        => $by_alias,
+			'join_predicates' => $joined_references['join_predicates'],
 		);
 	}
 
@@ -2078,30 +2139,33 @@ class WP_DuckDB_Driver {
 	 * Parse joined UPDATE table references.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
-	 * @return array{target:array{alias:string,table_name:string,requested_table_name:string},sources:array<int,array{alias:string,sql:string,table_name:string|null}>,join_predicates:array<int,array<int,WP_Parser_Token>>}
+	 * @param string            $statement Statement name for diagnostics.
+	 * @param bool              $first_factor_must_be_base Whether the first table factor must be a base table.
+	 * @return array{target:array{alias:string,sql:string,table_name:string|null,requested_table_name:string,temporary:bool},sources:array<int,array{alias:string,sql:string,table_name:string|null,temporary:bool,requested_table_name:string}>,join_predicates:array<int,array<int,WP_Parser_Token>>}
 	 */
-	private function parse_joined_update_table_references( array $tokens ): array {
+	private function parse_joined_update_table_references( array $tokens, string $statement = 'UPDATE', bool $first_factor_must_be_base = true ): array {
 		$items           = $this->split_top_level_comma_items( $tokens );
 		$target_item     = array_shift( $items );
-		$target_factor   = $this->parse_joined_update_table_factor( $target_item, 0, false, true );
+		$target_factor   = $this->parse_joined_update_table_factor( $target_item, 0, ! $first_factor_must_be_base, true, $statement );
 		$target          = $target_factor['reference'];
 		$sources         = array();
 		$join_predicates = array();
 
-		if ( null === $target['table_name'] ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Derived tables cannot be updated.' );
+		if ( $first_factor_must_be_base && null === $target['table_name'] ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Derived tables cannot be ' . ( 'UPDATE' === $statement ? 'updated' : 'deleted' ) . '.' );
 		}
 
-		$this->parse_joined_update_join_chain( $target_item, $target_factor['next_index'], $sources, $join_predicates );
+		$this->parse_joined_update_join_chain( $target_item, $target_factor['next_index'], $sources, $join_predicates, $statement );
 		foreach ( $items as $item ) {
-			$source    = $this->parse_joined_update_table_factor( $item, 0, true, false );
+			$source    = $this->parse_joined_update_table_factor( $item, 0, true, false, $statement );
 			$sources[] = $source['reference'];
-			$this->parse_joined_update_join_chain( $item, $source['next_index'], $sources, $join_predicates );
+			$this->parse_joined_update_join_chain( $item, $source['next_index'], $sources, $join_predicates, $statement );
 		}
 
 		return array(
 			'target'          => array(
 				'alias'                => $target['alias'],
+				'sql'                  => $target['sql'],
 				'table_name'           => $target['table_name'],
 				'temporary'            => $target['temporary'],
 				'requested_table_name' => $target['requested_table_name'],
@@ -2118,22 +2182,23 @@ class WP_DuckDB_Driver {
 	 * @param int               $index         Current index.
 	 * @param bool              $allow_derived Whether derived tables are allowed.
 	 * @param bool              $is_target     Whether this factor is the UPDATE target.
-	 * @return array{reference:array{alias:string,sql:string,table_name:string|null,requested_table_name:string},next_index:int}
+	 * @param string            $statement     Statement name for diagnostics.
+	 * @return array{reference:array{alias:string,sql:string,table_name:string|null,temporary:bool,requested_table_name:string},next_index:int}
 	 */
-	private function parse_joined_update_table_factor( array $tokens, int $index, bool $allow_derived, bool $is_target ): array {
+	private function parse_joined_update_table_factor( array $tokens, int $index, bool $allow_derived, bool $is_target, string $statement = 'UPDATE' ): array {
 		if ( ! isset( $tokens[ $index ] ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Expected table reference.' );
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Expected table reference.' );
 		}
 
 		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
 			if ( ! $allow_derived ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Derived tables cannot be updated.' );
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Derived tables cannot be ' . ( 'UPDATE' === $statement ? 'updated' : 'deleted' ) . '.' );
 			}
 
 			$close_index = $this->skip_balanced_parentheses( $tokens, $index ) - 1;
 			$inner       = array_slice( $tokens, $index + 1, $close_index - $index - 1 );
 			if ( ! isset( $inner[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $inner[0]->id ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only derived SELECT sources are supported.' );
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only derived SELECT sources are supported.' );
 			}
 			if ( $this->contains_information_schema_reference( $inner ) ) {
 				throw new WP_DuckDB_Driver_Exception( "Access denied for user 'duckdb'@'%' to database 'information_schema'" );
@@ -2176,17 +2241,17 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( 0 !== strcasecmp( $database, $this->database ) ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only the current database is supported.' );
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only the current database is supported.' );
 			}
 		}
 
 		if ( $this->is_duckdb_internal_table_name( $table_name ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Internal DuckDB metadata tables cannot be modified.' );
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Internal DuckDB metadata tables cannot be modified.' );
 		}
 
 		$table_reference = $this->resolve_visible_user_table_reference( $table_name );
 		if ( null === $table_reference ) {
-			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in UPDATE statement." );
+			throw new WP_DuckDB_Driver_Exception( "Unknown table '{$this->database}.{$table_name}' in {$statement} statement." );
 		}
 
 		$alias = $table_name;
@@ -2220,33 +2285,34 @@ class WP_DuckDB_Driver {
 	 * @param int               $index           Current index.
 	 * @param array             $sources         Source references.
 	 * @param array             $join_predicates Join predicate token lists.
+	 * @param string            $statement       Statement name for diagnostics.
 	 */
-	private function parse_joined_update_join_chain( array $tokens, int $index, array &$sources, array &$join_predicates ): void {
+	private function parse_joined_update_join_chain( array $tokens, int $index, array &$sources, array &$join_predicates, string $statement = 'UPDATE' ): void {
 		while ( $index < count( $tokens ) ) {
 			if ( WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
 				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after INNER.' );
 			} elseif ( WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
 				if ( $this->is_unsupported_joined_update_join_token( $tokens[ $index ] ) ) {
-					throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only comma joins and INNER JOIN ... ON are supported.' );
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins and INNER JOIN ... ON are supported.' );
 				}
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Table reference options are not supported.' );
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Table reference options are not supported.' );
 			}
 
 			++$index;
-			$source    = $this->parse_joined_update_table_factor( $tokens, $index, true, false );
+			$source    = $this->parse_joined_update_table_factor( $tokens, $index, true, false, $statement );
 			$sources[] = $source['reference'];
 			$index     = $source['next_index'];
 
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::USING_SYMBOL === $tokens[ $index ]->id ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. JOIN ... USING is not supported.' );
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN ... USING is not supported.' );
 			}
 
-			$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in joined UPDATE statement.' );
+			$this->expect_token( $tokens, $index, WP_MySQL_Lexer::ON_SYMBOL, 'Expected ON in joined ' . $statement . ' statement.' );
 			++$index;
 			$predicate_end = $this->find_next_joined_update_join_index( $tokens, $index ) ?? count( $tokens );
 			if ( $predicate_end === $index ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. JOIN predicate is required.' );
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. JOIN predicate is required.' );
 			}
 			$join_predicates[] = array_slice( $tokens, $index, $predicate_end - $index );
 			$index             = $predicate_end;
