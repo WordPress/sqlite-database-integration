@@ -22,6 +22,16 @@ class WP_DuckDB_DB extends wpdb {
 	protected $dbh;
 
 	/**
+	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
+	 *
+	 * This property mirrors "wpdb::$allow_unsafe_unquoted_parameters" because
+	 * some tests access it externally using PHP reflection.
+	 *
+	 * @var bool
+	 */
+	private $allow_unsafe_unquoted_parameters = true;
+
+	/**
 	 * Last DuckDB statement.
 	 *
 	 * @var WP_DuckDB_Result_Statement|null
@@ -294,6 +304,33 @@ class WP_DuckDB_DB extends wpdb {
 	}
 
 	/**
+	 * Prepares a SQL query for safe execution.
+	 *
+	 * See "wpdb::prepare()". This override only fixes a WPDB test issue.
+	 *
+	 * @param string      $query Query statement with `sprintf()`-like placeholders.
+	 * @param array|mixed $args  The array of variables or the first variable to substitute.
+	 * @param mixed       ...$args Further variables to substitute when using individual arguments.
+	 * @return string|void Sanitized query string, if there is a query to prepare.
+	 */
+	public function prepare( $query, ...$args ) {
+		/*
+		 * Sync "$allow_unsafe_unquoted_parameters" with the WPDB parent property.
+		 * This is only needed because some WPDB tests access the private property
+		 * externally via PHP reflection.
+		 */
+		$wpdb_allow_unsafe_unquoted_parameters = $this->__get( 'allow_unsafe_unquoted_parameters' );
+		if ( $wpdb_allow_unsafe_unquoted_parameters !== $this->allow_unsafe_unquoted_parameters ) {
+			$property = new ReflectionProperty( 'wpdb', 'allow_unsafe_unquoted_parameters' );
+			$property->setAccessible( true );
+			$property->setValue( $this, $this->allow_unsafe_unquoted_parameters );
+			$property->setAccessible( false );
+		}
+
+		return parent::prepare( $query, ...$args );
+	}
+
+	/**
 	 * Perform a query.
 	 *
 	 * @param string $query Database query.
@@ -355,7 +392,7 @@ class WP_DuckDB_DB extends wpdb {
 		try {
 			$this->last_statement = $this->dbh->query( $query );
 			if ( $this->last_statement->columnCount() > 0 ) {
-				$this->result = $this->last_statement->fetchAll( PDO::FETCH_OBJ ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+				$this->result = $this->normalize_result_rows( $this->last_statement->fetchAll( PDO::FETCH_OBJ ) ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 			} else {
 				$this->result = null;
 			}
@@ -374,6 +411,24 @@ class WP_DuckDB_DB extends wpdb {
 				array()
 			);
 		}
+	}
+
+	/**
+	 * Normalize fetched DuckDB rows to MySQL/PDO-style scalar values.
+	 *
+	 * @param array<int,object> $rows Result rows.
+	 * @return array<int,object> Normalized result rows.
+	 */
+	private function normalize_result_rows( array $rows ) {
+		foreach ( $rows as $row ) {
+			foreach ( get_object_vars( $row ) as $name => $value ) {
+				if ( is_bool( $value ) ) {
+					$row->$name = $value ? '1' : '0';
+				}
+			}
+		}
+
+		return $rows;
 	}
 
 	/**

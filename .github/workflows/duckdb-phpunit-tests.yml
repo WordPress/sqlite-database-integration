@@ -286,6 +286,35 @@ jobs:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
         run: composer run wp-test-ensure-env-duckdb
 
+      - name: Serialize WordPress PHP-FPM for DuckDB end-to-end tests
+        run: |
+          set -euo pipefail
+          cd wordpress
+          cat > docker-compose.duckdb-e2e.yml <<'YAML'
+          services:
+            php:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  if [ "$$LOCAL_PHP_MEMCACHED" = true ]; then
+                    cp -n /var/www/tests/phpunit/includes/object-cache.php /var/www/src/wp-content/object-cache.php
+                  else
+                    rm -f /var/www/src/wp-content/object-cache.php
+                  fi
+                  pool_config=/usr/local/etc/php-fpm.d/www.conf
+                  sed -ri 's/^[[:space:]]*pm[[:space:]]*=.*/pm = static/' "$pool_config"
+                  sed -ri 's/^[[:space:]]*pm\.max_children[[:space:]]*=.*/pm.max_children = 1/' "$pool_config"
+                  grep -Eq '^[[:space:]]*pm[[:space:]]*=[[:space:]]*static' "$pool_config"
+                  grep -Eq '^[[:space:]]*pm\.max_children[[:space:]]*=[[:space:]]*1' "$pool_config"
+                  php-fpm -tt
+                  exec php-fpm
+          YAML
+          docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml up -d --no-deps --force-recreate php
+          docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml exec -T php sh -lc 'grep -Eq "^[[:space:]]*pm[[:space:]]*=[[:space:]]*static" /usr/local/etc/php-fpm.d/www.conf && grep -Eq "^[[:space:]]*pm\\.max_children[[:space:]]*=[[:space:]]*1" /usr/local/etc/php-fpm.d/www.conf'
+          docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml exec -T php php -r 'exit( extension_loaded( "ffi" ) ? 0 : 1 );'
+
       - name: Install WordPress 500 response diagnostics
         run: |
           cat > wordpress/src/wp-content/duckdb-e2e-500-diagnostics.php <<'PHP'
