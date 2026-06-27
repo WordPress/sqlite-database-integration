@@ -2615,11 +2615,13 @@ class WP_DuckDB_Driver {
 			++$index;
 		}
 
+		$index_type = 'BTREE';
 		if (
 			isset( $tokens[ $index ] )
 			&& ( WP_MySQL_Lexer::FULLTEXT_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::SPATIAL_SYMBOL === $tokens[ $index ]->id )
 		) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE INDEX type in DuckDB driver: ' . $tokens[ $index ]->get_bytes() . '.' );
+			$index_type = strtoupper( $tokens[ $index ]->get_bytes() );
+			++$index;
 		}
 
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::INDEX_SYMBOL, 'Expected INDEX in CREATE INDEX statement.' );
@@ -2644,7 +2646,7 @@ class WP_DuckDB_Driver {
 		list( $columns, $column_metadata, $index ) = $this->translate_index_column_list( $tokens, $index );
 		$this->assert_supported_index_options( $tokens, $index );
 
-		$index_definition = $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata, $table_reference['temporary'] );
+		$index_definition = $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata, $table_reference['temporary'], $index_type );
 		$result           = $this->execute_duckdb_query( $index_definition['sql'], 'Failed to create DuckDB index' );
 		$this->record_index_metadata( $index_definition );
 
@@ -7983,7 +7985,7 @@ class WP_DuckDB_Driver {
 	/**
 	 * Build SHOW CREATE index groups from secondary index definitions.
 	 *
-	 * @param array<int,array{index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Index definitions.
+	 * @param array<int,array{index_name:string,unique:bool,index_type?:string,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Index definitions.
 	 * @return array<int,array{name:string,non_unique:int,index_type:string,index_comment:string,columns:array<int,array{name:string,sub_part:int|null,collation:string}>}>
 	 */
 	private function show_create_table_index_groups_from_definitions( array $index_definitions ): array {
@@ -7992,7 +7994,7 @@ class WP_DuckDB_Driver {
 			$groups[] = array(
 				'name'          => $index_definition['index_name'],
 				'non_unique'    => $index_definition['unique'] ? 0 : 1,
-				'index_type'    => 'BTREE',
+				'index_type'    => $index_definition['index_type'] ?? 'BTREE',
 				'index_comment' => '',
 				'columns'       => array_map(
 					function ( array $column ): array {
@@ -8620,9 +8622,9 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string                                                                 $table_name        Table name.
 	 * @param string                                                                 $column_name       Dropped column name.
-	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Current index definitions.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,index_type?:string,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Current index definitions.
 	 * @param bool                                                                   $temporary        Whether the target is a temporary table.
-	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}>
+	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,index_type:string,columns:array<int,array{name:string,sub_part:int|null}>}>
 	 */
 	private function secondary_index_definitions_after_column_drop( string $table_name, string $column_name, array $index_definitions, bool $temporary = false ): array {
 		$rebuilt_indexes = array();
@@ -8657,7 +8659,8 @@ class WP_DuckDB_Driver {
 					$column_metadata
 				),
 				$column_metadata,
-				$temporary
+				$temporary,
+				$index_definition['index_type'] ?? 'BTREE'
 			);
 		}
 
@@ -8915,9 +8918,9 @@ class WP_DuckDB_Driver {
 	 * @param string                                                                 $table_name        Table name.
 	 * @param string                                                                 $old_column_name   Old column name.
 	 * @param string                                                                 $new_column_name   New column name.
-	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Current index definitions.
+	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,index_type?:string,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Current index definitions.
 	 * @param bool                                                                   $temporary        Whether the target is a temporary table.
-	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}>
+	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,index_type:string,columns:array<int,array{name:string,sub_part:int|null}>}>
 	 */
 	private function secondary_index_definitions_after_column_rename( string $table_name, string $old_column_name, string $new_column_name, array $index_definitions, bool $temporary = false ): array {
 		$rebuilt_indexes = array();
@@ -8944,7 +8947,8 @@ class WP_DuckDB_Driver {
 					$column_metadata
 				),
 				$column_metadata,
-				$temporary
+				$temporary,
+				$index_definition['index_type'] ?? 'BTREE'
 			);
 		}
 
@@ -10312,9 +10316,23 @@ class WP_DuckDB_Driver {
 		}
 
 		$requested_reference = $this->parse_metadata_table_reference( $tokens, 3, true );
-		if ( count( $tokens ) !== $requested_reference['next_index'] ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW INDEX statement in DuckDB driver. Use SHOW INDEX FROM table.' );
-		}
+		$columns             = array(
+			'Table',
+			'Non_unique',
+			'Key_name',
+			'Seq_in_index',
+			'Column_name',
+			'Collation',
+			'Cardinality',
+			'Sub_part',
+			'Packed',
+			'Null',
+			'Index_type',
+			'Comment',
+			'Index_comment',
+			'Visible',
+			'Expression',
+		);
 
 		$rows = array();
 		if ( 0 === strcasecmp( $requested_reference['database'], $this->database ) ) {
@@ -10322,24 +10340,16 @@ class WP_DuckDB_Driver {
 			$rows            = null === $table_reference ? array() : $this->index_rows_for_table( $table_reference['table_name'], $table_reference['temporary'] );
 		}
 
+		if ( count( $tokens ) !== $requested_reference['next_index'] ) {
+			if ( count( $rows ) === 0 ) {
+				$this->consume_show_like_or_where_clause( $tokens, $requested_reference['next_index'], 'SHOW INDEX', 'Key_name', $columns );
+			} else {
+				return $this->execute_static_show_metadata_statement( $columns, $rows, 'Key_name', $tokens, $requested_reference['next_index'], 'SHOW INDEX' );
+			}
+		}
+
 		return new WP_DuckDB_Result_Statement(
-			array(
-				'Table',
-				'Non_unique',
-				'Key_name',
-				'Seq_in_index',
-				'Column_name',
-				'Collation',
-				'Cardinality',
-				'Sub_part',
-				'Packed',
-				'Null',
-				'Index_type',
-				'Comment',
-				'Index_comment',
-				'Visible',
-				'Expression',
-			),
+			$columns,
 			$rows
 		);
 	}
@@ -10512,7 +10522,14 @@ class WP_DuckDB_Driver {
 		if ( 'PRIMARY' === $index_group['name'] ) {
 			$sql = '  PRIMARY KEY (' . implode( ', ', $columns ) . ')';
 		} else {
-			$sql  = '  ' . ( 0 === $index_group['non_unique'] ? 'UNIQUE KEY ' : 'KEY ' );
+			$index_type = strtoupper( $index_group['index_type'] );
+			if ( 0 === $index_group['non_unique'] ) {
+				$sql = '  UNIQUE KEY ';
+			} elseif ( 'FULLTEXT' === $index_type || 'SPATIAL' === $index_type ) {
+				$sql = '  ' . $index_type . ' KEY ';
+			} else {
+				$sql = '  KEY ';
+			}
 			$sql .= $this->quote_mysql_identifier( $index_group['name'] );
 			$sql .= ' (' . implode( ', ', $columns ) . ')';
 		}
@@ -10561,7 +10578,7 @@ class WP_DuckDB_Driver {
 		$this->ensure_index_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
-			'SELECT index_name, non_unique, seq_in_index, column_name, sub_part FROM '
+			'SELECT index_name, non_unique, seq_in_index, column_name, sub_part, index_type FROM '
 				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
@@ -10577,7 +10594,8 @@ class WP_DuckDB_Driver {
 				(string) $row['index_name'],
 				(int) $row['seq_in_index'],
 				(string) $row['column_name'],
-				null === $row['sub_part'] ? null : (int) $row['sub_part']
+				null === $row['sub_part'] ? null : (int) $row['sub_part'],
+				null === $row['index_type'] ? 'BTREE' : (string) $row['index_type']
 			);
 		}
 
@@ -10593,9 +10611,10 @@ class WP_DuckDB_Driver {
 	 * @param int      $seq_in_index Sequence in index.
 	 * @param string   $column_name  Column name.
 	 * @param int|null $sub_part     Optional prefix length.
+	 * @param string   $index_type   MySQL-facing index type.
 	 * @return array<int,mixed>
 	 */
-	private function show_index_row( string $table_name, int $non_unique, string $key_name, int $seq_in_index, string $column_name, ?int $sub_part ): array {
+	private function show_index_row( string $table_name, int $non_unique, string $key_name, int $seq_in_index, string $column_name, ?int $sub_part, string $index_type = 'BTREE' ): array {
 		return array(
 			$table_name,
 			$non_unique,
@@ -10607,7 +10626,7 @@ class WP_DuckDB_Driver {
 			$sub_part,
 			null,
 			'',
-			'BTREE',
+			$index_type,
 			'',
 			'',
 			'YES',
@@ -12235,14 +12254,16 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string            $table_name Table name.
 	 * @param WP_Parser_Token[] $tokens     Index definition tokens.
-	 * @return array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}
+	 * @return array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,index_type:string,columns:array<int,array{name:string,sub_part:int|null}>}
 	 */
 	private function translate_create_table_index( string $table_name, array $tokens, bool $temporary = false ): array {
-		$index  = 0;
-		$unique = false;
+		$index      = 0;
+		$unique     = false;
+		$index_type = 'BTREE';
 
 		if ( WP_MySQL_Lexer::FULLTEXT_SYMBOL === $tokens[0]->id || WP_MySQL_Lexer::SPATIAL_SYMBOL === $tokens[0]->id ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE index type in DuckDB driver: ' . $tokens[0]->get_bytes() . '.' );
+			$index_type = strtoupper( $tokens[0]->get_bytes() );
+			++$index;
 		}
 
 		if ( WP_MySQL_Lexer::UNIQUE_SYMBOL === $tokens[ $index ]->id ) {
@@ -12277,7 +12298,7 @@ class WP_DuckDB_Driver {
 			$mysql_index_name = 'unnamed_' . substr( hash( 'sha256', serialize( $column_metadata ) ), 0, 8 );
 		}
 
-		return $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata, $temporary );
+		return $this->build_secondary_index_definition( $table_name, $mysql_index_name, $unique, $columns, $column_metadata, $temporary, $index_type );
 	}
 
 	/**
@@ -12288,9 +12309,13 @@ class WP_DuckDB_Driver {
 	 * @param bool                                                                   $unique           Whether the index is unique.
 	 * @param string[]                                                               $columns          DuckDB column SQL fragments.
 	 * @param array<int,array{name:string,sub_part:int|null}>                        $column_metadata  MySQL column metadata.
-	 * @return array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,columns:array<int,array{name:string,sub_part:int|null}>}
+	 * @param bool                                                                   $temporary        Whether the index is for a temporary table.
+	 * @param string                                                                 $index_type       MySQL-facing index type.
+	 * @return array{sql:string,table_name:string,index_name:string,unique:bool,temporary:bool,index_type:string,columns:array<int,array{name:string,sub_part:int|null}>}
 	 */
-	private function build_secondary_index_definition( string $table_name, string $mysql_index_name, bool $unique, array $columns, array $column_metadata, bool $temporary = false ): array {
+	private function build_secondary_index_definition( string $table_name, string $mysql_index_name, bool $unique, array $columns, array $column_metadata, bool $temporary = false, string $index_type = 'BTREE' ): array {
+		$index_type = strtoupper( $index_type );
+
 		return array(
 			'sql'        => 'CREATE '
 				. ( $unique ? 'UNIQUE ' : '' )
@@ -12305,6 +12330,7 @@ class WP_DuckDB_Driver {
 			'index_name' => $mysql_index_name,
 			'unique'     => $unique,
 			'temporary'  => $temporary,
+			'index_type' => $index_type,
 			'columns'    => $column_metadata,
 		);
 	}
@@ -17189,21 +17215,12 @@ class WP_DuckDB_Driver {
 	 * @return string|null Translated predicate, or null when the pattern does not match.
 	 */
 	private function translate_like_escape_predicate( array $tokens, int &$index ): ?string {
-		if ( ! isset( $tokens[ $index ] ) || $this->is_non_identifier_token( $tokens[ $index ] ) ) {
+		$left_operand = $this->like_escape_left_operand_sql( $tokens, $index );
+		if ( null === $left_operand ) {
 			return null;
 		}
 
-		$operator_index = $index + 1;
-		$left_tokens    = array( $tokens[ $index ] );
-		if (
-			isset( $tokens[ $index + 2 ] )
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
-			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
-		) {
-			$left_tokens    = array( $tokens[ $index ], $tokens[ $index + 2 ] );
-			$operator_index = $index + 3;
-		}
-
+		$operator_index = $left_operand['next_index'];
 		if ( ! isset( $tokens[ $operator_index ] ) ) {
 			return null;
 		}
@@ -17235,18 +17252,54 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$left_sql = 1 === count( $left_tokens )
-			? $this->connection->quote_identifier( $this->identifier_value( $left_tokens[0] ) )
-			: $this->connection->quote_identifier( $this->identifier_value( $left_tokens[0] ) )
-				. '.'
-				. $this->connection->quote_identifier( $this->identifier_value( $left_tokens[1] ) );
-
 		$index = $pattern_index;
-		return $left_sql
+		return $left_operand['sql']
 			. ( $is_not_like ? ' NOT LIKE ' : ' LIKE ' )
 			. $this->connection->quote( $tokens[ $pattern_index ]->get_value() )
 			. ' ESCAPE '
 			. $this->connection->quote( '\\' );
+	}
+
+	/**
+	 * Build the left operand for a simple MySQL LIKE predicate.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Operand start index.
+	 * @return array{sql:string,next_index:int}|null Operand SQL and next token index.
+	 */
+	private function like_escape_left_operand_sql( array $tokens, int $index ): ?array {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $tokens[ $index ]->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[ $index ]->id ) {
+			return array(
+				'sql'        => $this->connection->quote( $tokens[ $index ]->get_value() ),
+				'next_index' => $index + 1,
+			);
+		}
+
+		if ( $this->is_non_identifier_token( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
+		) {
+			return array(
+				'sql'        => $this->connection->quote_identifier( $this->identifier_value( $tokens[ $index ] ) )
+					. '.'
+					. $this->connection->quote_identifier( $this->identifier_value( $tokens[ $index + 2 ] ) ),
+				'next_index' => $index + 3,
+			);
+		}
+
+		return array(
+			'sql'        => $this->connection->quote_identifier( $this->identifier_value( $tokens[ $index ] ) ),
+			'next_index' => $index + 1,
+		);
 	}
 
 	/**
@@ -17733,14 +17786,29 @@ class WP_DuckDB_Driver {
 	 * Ensure the internal index metadata table exists.
 	 */
 	private function ensure_index_metadata_table( bool $temporary = false ): void {
+		$table_name = $this->index_metadata_table_name( $temporary );
 		$this->execute_duckdb_query(
 			'CREATE '
 				. ( $temporary ? 'TEMP ' : '' )
 				. 'TABLE IF NOT EXISTS '
-				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
-				. ' (table_name VARCHAR, index_name VARCHAR, non_unique INTEGER, seq_in_index INTEGER, column_name VARCHAR, sub_part INTEGER)',
+				. $this->connection->quote_identifier( $table_name )
+				. ' (table_name VARCHAR, index_name VARCHAR, non_unique INTEGER, seq_in_index INTEGER, column_name VARCHAR, sub_part INTEGER, index_type VARCHAR)',
 			'Failed to initialize DuckDB index metadata'
 		);
+
+		$columns = $this->execute_duckdb_query(
+			'SELECT name FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ") WHERE name = 'index_type'",
+			'Failed to inspect DuckDB index metadata schema'
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		if ( count( $columns ) === 0 ) {
+			$this->execute_duckdb_query(
+				'ALTER TABLE '
+					. $this->connection->quote_identifier( $table_name )
+					. " ADD COLUMN index_type VARCHAR DEFAULT 'BTREE'",
+				'Failed to upgrade DuckDB index metadata'
+			);
+		}
 	}
 
 	/**
@@ -17852,7 +17920,7 @@ class WP_DuckDB_Driver {
 	/**
 	 * Record MySQL index metadata for SHOW INDEX.
 	 *
-	 * @param array{table_name:string,index_name:string,unique:bool,temporary?:bool,columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Index definition.
+	 * @param array{table_name:string,index_name:string,unique:bool,temporary?:bool,index_type?:string,columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Index definition.
 	 */
 	private function record_index_metadata( array $index_definition ): void {
 		$temporary = isset( $index_definition['temporary'] ) && (bool) $index_definition['temporary'];
@@ -17860,6 +17928,7 @@ class WP_DuckDB_Driver {
 
 		$table_name = $index_definition['table_name'];
 		$index_name = $index_definition['index_name'];
+		$index_type = $index_definition['index_type'] ?? 'BTREE';
 
 		$this->execute_duckdb_query(
 			'DELETE FROM '
@@ -17875,7 +17944,7 @@ class WP_DuckDB_Driver {
 			$this->execute_duckdb_query(
 				'INSERT INTO '
 					. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
-					. ' (table_name, index_name, non_unique, seq_in_index, column_name, sub_part) VALUES ('
+					. ' (table_name, index_name, non_unique, seq_in_index, column_name, sub_part, index_type) VALUES ('
 					. $this->connection->quote( $table_name )
 					. ', '
 					. $this->connection->quote( $index_name )
@@ -17887,6 +17956,8 @@ class WP_DuckDB_Driver {
 					. $this->connection->quote( $column['name'] )
 					. ', '
 					. $this->connection->quote( $column['sub_part'] )
+					. ', '
+					. $this->connection->quote( $index_type )
 					. ')',
 				'Failed to store DuckDB index metadata'
 			);
@@ -17929,13 +18000,13 @@ class WP_DuckDB_Driver {
 	 * Read recorded secondary index definitions for a table.
 	 *
 	 * @param string $table_name Table name.
-	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>
+	 * @return array<int,array{sql:string,table_name:string,index_name:string,unique:bool,index_type:string,columns:array<int,array{name:string,sub_part:int|null}>}>
 	 */
 	private function secondary_index_definitions_for_table( string $table_name, bool $temporary = false ): array {
 		$this->ensure_index_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
-			'SELECT index_name, non_unique, seq_in_index, column_name, sub_part FROM '
+			'SELECT index_name, non_unique, seq_in_index, column_name, sub_part, index_type FROM '
 				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
@@ -17948,8 +18019,9 @@ class WP_DuckDB_Driver {
 			$index_name = (string) $row['index_name'];
 			if ( ! isset( $grouped[ $index_name ] ) ) {
 				$grouped[ $index_name ] = array(
-					'unique'  => 0 === (int) $row['non_unique'],
-					'columns' => array(),
+					'unique'     => 0 === (int) $row['non_unique'],
+					'index_type' => null === $row['index_type'] ? 'BTREE' : (string) $row['index_type'],
+					'columns'    => array(),
 				);
 			}
 			$grouped[ $index_name ]['columns'][] = array(
@@ -17971,7 +18043,8 @@ class WP_DuckDB_Driver {
 					$definition['columns']
 				),
 				$definition['columns'],
-				$temporary
+				$temporary,
+				$definition['index_type']
 			);
 		}
 

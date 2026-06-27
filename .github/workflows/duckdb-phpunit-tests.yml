@@ -303,10 +303,10 @@ jobs:
                     rm -f /var/www/src/wp-content/object-cache.php
                   fi
                   pool_config=/usr/local/etc/php-fpm.d/www.conf
-                  sed -ri 's/^[[:space:]]*pm[[:space:]]*=.*/pm = static/' "$pool_config"
-                  sed -ri 's/^[[:space:]]*pm\.max_children[[:space:]]*=.*/pm.max_children = 1/' "$pool_config"
-                  grep -Eq '^[[:space:]]*pm[[:space:]]*=[[:space:]]*static' "$pool_config"
-                  grep -Eq '^[[:space:]]*pm\.max_children[[:space:]]*=[[:space:]]*1' "$pool_config"
+                  sed -ri 's/^[[:space:]]*pm[[:space:]]*=.*/pm = static/' "$$pool_config"
+                  sed -ri 's/^[[:space:]]*pm\.max_children[[:space:]]*=.*/pm.max_children = 1/' "$$pool_config"
+                  grep -Eq '^[[:space:]]*pm[[:space:]]*=[[:space:]]*static' "$$pool_config"
+                  grep -Eq '^[[:space:]]*pm\.max_children[[:space:]]*=[[:space:]]*1' "$$pool_config"
                   php-fpm -tt
                   exec php-fpm
           YAML

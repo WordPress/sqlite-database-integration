@@ -2763,6 +2763,85 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringContainsString( " ESCAPE '\\'", $this->lastDuckDBQuery( $driver ) );
 	}
 
+	public function test_escaped_like_literal_predicates_are_translated_without_duckdb_runtime(): void {
+		$duckdb = new class() {
+			public function query( string $sql ) {
+				return new class() {
+					public function columnNames(): ArrayIterator { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+						return new ArrayIterator( array( 'matched' ) );
+					}
+
+					public function rows( bool $assoc ): array {
+						return array( array( 'matched' => 1 ) );
+					}
+				};
+			}
+		};
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => new WP_DuckDB_Connection( array( 'duckdb' => $duckdb ) ),
+			)
+		);
+
+		$backslash = chr( 92 );
+		$cases     = array(
+			array(
+				'mysql'  => "SELECT 'a{$backslash}{$backslash}aa' LIKE 'a{$backslash}{$backslash}{$backslash}{$backslash}aa' AS matched",
+				'duckdb' => "SELECT 'a{$backslash}aa' LIKE 'a{$backslash}{$backslash}aa' ESCAPE '{$backslash}' AS matched",
+			),
+			array(
+				'mysql'  => "SELECT 'a%aa' LIKE 'a{$backslash}{$backslash}%aa' AS matched",
+				'duckdb' => "SELECT 'a%aa' LIKE 'a{$backslash}%aa' ESCAPE '{$backslash}' AS matched",
+			),
+			array(
+				'mysql'  => "SELECT 'a_aa' LIKE 'a{$backslash}{$backslash}_aa' AS matched",
+				'duckdb' => "SELECT 'a_aa' LIKE 'a{$backslash}_aa' ESCAPE '{$backslash}' AS matched",
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$driver->query( $case['mysql'] );
+
+			$this->assertSame( array( $case['duckdb'] ), $driver->get_last_duckdb_queries() );
+		}
+	}
+
+	public function test_escaped_like_literal_predicates_use_mysql_backslash_semantics(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver    = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$backslash = chr( 92 );
+		$cases     = array(
+			'literal backslash matches itself'   => array(
+				"SELECT 'a{$backslash}{$backslash}aa' LIKE 'a{$backslash}{$backslash}{$backslash}{$backslash}aa' AS matched",
+				true,
+			),
+			'literal percent matches itself'     => array(
+				"SELECT 'a%aa' LIKE 'a{$backslash}{$backslash}%aa' AS matched",
+				true,
+			),
+			'literal percent is not wildcard'    => array(
+				"SELECT 'aaaa' LIKE 'a{$backslash}{$backslash}%aa' AS matched",
+				false,
+			),
+			'literal underscore matches itself'  => array(
+				"SELECT 'a_aa' LIKE 'a{$backslash}{$backslash}_aa' AS matched",
+				true,
+			),
+			'literal underscore is not wildcard' => array(
+				"SELECT 'aaaa' LIKE 'a{$backslash}{$backslash}_aa' AS matched",
+				false,
+			),
+		);
+
+		foreach ( $cases as $message => $case ) {
+			$row = $driver->query( $case[0] )->fetch( PDO::FETCH_ASSOC );
+
+			$this->assertSame( $case[1], (bool) $row['matched'], $message );
+			$this->assertStringContainsString( " ESCAPE '\\'", $this->lastDuckDBQuery( $driver ), $message );
+		}
+	}
+
 	public function test_sql_calc_found_rows_and_found_rows_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -6442,6 +6521,40 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$indexes = $driver->query( 'SHOW INDEX FROM wp_posts' )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( 'PRIMARY', 'post_name' ), array_column( $indexes, 'Key_name' ) );
 		$this->assertSame( 191, $indexes[1]['Sub_part'] );
+	}
+
+	public function test_mysql_fulltext_spatial_and_show_index_where_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE wp_search (
+				id BIGINT(20) UNSIGNED NOT NULL,
+				content LONGTEXT NOT NULL,
+				shape GEOMETRYCOLLECTION NOT NULL,
+				KEY a_key (content(191)),
+				FULLTEXT KEY content_fulltext (content),
+				SPATIAL KEY shape_spatial (shape)
+			)'
+		);
+
+		$indexes      = $driver->query( 'SHOW INDEX FROM wp_search' )->fetchAll( PDO::FETCH_ASSOC );
+		$index_types  = array_column( $indexes, 'Index_type', 'Key_name' );
+		$index_prefix = array_column( $indexes, 'Sub_part', 'Key_name' );
+
+		$this->assertSame( 'BTREE', $index_types['a_key'] );
+		$this->assertSame( 'FULLTEXT', $index_types['content_fulltext'] );
+		$this->assertSame( 'SPATIAL', $index_types['shape_spatial'] );
+		$this->assertSame( 191, $index_prefix['a_key'] );
+
+		$filtered = $driver->query( "SHOW INDEXES FROM wp_search WHERE Key_name='a_key';" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $filtered );
+		$this->assertSame( 'a_key', $filtered[0]['Key_name'] );
+		$this->assertSame( 191, $filtered[0]['Sub_part'] );
+
+		$create_table = $driver->query( 'SHOW CREATE TABLE wp_search' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertStringContainsString( 'FULLTEXT KEY `content_fulltext` (`content`)', $create_table['Create Table'] );
+		$this->assertStringContainsString( 'SPATIAL KEY `shape_spatial` (`shape`)', $create_table['Create Table'] );
 	}
 
 	public function test_alter_table_add_unique_index_is_supported(): void {
