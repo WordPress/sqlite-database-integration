@@ -65,10 +65,10 @@ class WP_DuckDB_DB extends wpdb {
 	 *
 	 * @param string $table  Table name.
 	 * @param string $column Column name.
-	 * @return string
+	 * @return string|false|WP_Error
 	 */
 	public function get_col_charset( $table, $column ) {
-		return 'utf8mb4';
+		return parent::get_col_charset( $table, $column );
 	}
 
 	/**

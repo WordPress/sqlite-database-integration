@@ -2542,6 +2542,7 @@ class WP_DuckDB_Driver {
 				false,
 				$temporary,
 				$auto_increment_seed,
+				$table_metadata['column_default_collation'],
 				$table_metadata['table_collation'],
 				$check_names,
 				$foreign_key_names
@@ -6064,9 +6065,6 @@ class WP_DuckDB_Driver {
 				WP_MySQL_Lexer::CHANGE_SYMBOL === $action[0]->id
 				|| WP_MySQL_Lexer::MODIFY_SYMBOL === $action[0]->id
 			) {
-				if ( $this->contains_auto_increment_token( $action ) ) {
-					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY AUTO_INCREMENT requires a table rebuild.' );
-				}
 				continue;
 			}
 
@@ -6281,8 +6279,21 @@ class WP_DuckDB_Driver {
 			return false;
 		}
 
-		list( , $sequence_sql, , $metadata ) = $this->translate_create_table_column( $table_name, $definition_tokens, false, true, $temporary, null, $this->table_default_collation( $table_name, $temporary ) );
-		if ( null !== $sequence_sql || 'auto_increment' === $metadata['extra'] || 'PRI' === $metadata['column_key'] || 'UNI' === $metadata['column_key'] ) {
+		list( , $sequence_sql, , $metadata ) = $this->translate_create_table_column(
+			$table_name,
+			$definition_tokens,
+			false,
+			true,
+			$temporary,
+			null,
+			$this->table_default_column_collation( $table_name, $temporary ),
+			$this->table_default_collation( $table_name, $temporary )
+		);
+		$definition_has_auto_increment       = $this->alter_table_change_modify_definition_has_auto_increment( $sequence_sql, $metadata );
+		if ( $definition_has_auto_increment ) {
+			return true;
+		}
+		if ( 'PRI' === $metadata['column_key'] || 'UNI' === $metadata['column_key'] ) {
 			return false;
 		}
 
@@ -6294,12 +6305,8 @@ class WP_DuckDB_Driver {
 			return false;
 		}
 
-		$auto_increment = $this->auto_increment_metadata_for_table( $table_name, $temporary );
-		if (
-			( null !== $auto_increment && 0 === strcasecmp( $auto_increment['column_name'], $current_column_name ) )
-			|| 'auto_increment' === $current_column['extra']
-		) {
-			return false;
+		if ( $this->alter_table_change_modify_column_is_auto_increment( $table_name, $current_column, $temporary ) ) {
+			return true;
 		}
 
 		$physical_column      = $this->physical_column_info_row( $table_name, $current_column_name );
@@ -8822,8 +8829,9 @@ class WP_DuckDB_Driver {
 	 * @param array<int,array<string,mixed>> $metadata_rows   Current table metadata rows.
 	 * @param string                         $new_column_name Requested new column name.
 	 * @param bool                           $temporary       Whether the target is a temporary table.
+	 * @param bool                           $allow_auto_increment_rebuild Whether same-name AUTO_INCREMENT rebuild is allowed.
 	 */
-	private function assert_alter_table_change_column_supported( string $table_name, array $current_column, array $metadata_rows, string $new_column_name, bool $temporary = false ): void {
+	private function assert_alter_table_change_column_supported( string $table_name, array $current_column, array $metadata_rows, string $new_column_name, bool $temporary = false, bool $allow_auto_increment_rebuild = false ): void {
 		$current_column_name = (string) $current_column['column_name'];
 		foreach ( $metadata_rows as $column ) {
 			if (
@@ -8843,11 +8851,7 @@ class WP_DuckDB_Driver {
 			}
 		}
 
-		$auto_increment = $this->auto_increment_metadata_for_table( $table_name, $temporary );
-		if (
-			( null !== $auto_increment && 0 === strcasecmp( $auto_increment['column_name'], $current_column_name ) )
-			|| 'auto_increment' === $current_column['extra']
-		) {
+		if ( ! $allow_auto_increment_rebuild && $this->alter_table_change_modify_column_is_auto_increment( $table_name, $current_column, $temporary ) ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY on an AUTO_INCREMENT column requires a table rebuild.' );
 		}
 	}
@@ -8977,6 +8981,61 @@ class WP_DuckDB_Driver {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Check whether a CHANGE/MODIFY definition declares AUTO_INCREMENT.
+	 *
+	 * @param string|null         $sequence_sql AUTO_INCREMENT sequence DDL, if any.
+	 * @param array<string,mixed> $metadata     Planned column metadata.
+	 * @return bool Whether AUTO_INCREMENT is declared.
+	 */
+	private function alter_table_change_modify_definition_has_auto_increment( ?string $sequence_sql, array $metadata ): bool {
+		return null !== $sequence_sql || 'auto_increment' === $metadata['extra'];
+	}
+
+	/**
+	 * Check whether the current CHANGE/MODIFY target is AUTO_INCREMENT.
+	 *
+	 * @param string              $table_name     Table name.
+	 * @param array<string,mixed> $current_column Current column metadata.
+	 * @param bool                $temporary      Whether the target is a temporary table.
+	 * @return bool Whether the current column is AUTO_INCREMENT.
+	 */
+	private function alter_table_change_modify_column_is_auto_increment( string $table_name, array $current_column, bool $temporary = false ): bool {
+		$current_column_name = (string) $current_column['column_name'];
+		$auto_increment      = $this->auto_increment_metadata_for_table( $table_name, $temporary );
+
+		return ( null !== $auto_increment && 0 === strcasecmp( $auto_increment['column_name'], $current_column_name ) )
+			|| 'auto_increment' === $current_column['extra'];
+	}
+
+	/**
+	 * Validate support for a CHANGE/MODIFY AUTO_INCREMENT rebuild.
+	 *
+	 * @param string              $table_name          Table name.
+	 * @param array<string,mixed> $current_column      Current column metadata.
+	 * @param string              $new_column_name     Requested new column name.
+	 * @param array<string,mixed> $metadata            Planned column metadata.
+	 * @param array<int,array>    $inline_indexes      Planned inline indexes.
+	 * @param bool                $temporary           Whether the target is a temporary table.
+	 * @return bool Whether the action should rebuild for AUTO_INCREMENT.
+	 */
+	private function assert_alter_table_change_modify_auto_increment_rebuild_supported( string $table_name, array $current_column, string $new_column_name, array $metadata, array $inline_indexes, bool $temporary = false ): bool {
+		if ( ! $this->alter_table_change_modify_column_is_auto_increment( $table_name, $current_column, $temporary ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY AUTO_INCREMENT requires a table rebuild.' );
+		}
+
+		if (
+			0 !== strcasecmp( (string) $current_column['column_name'], $new_column_name )
+			|| 'PRI' === $metadata['column_key']
+			|| 'UNI' === $metadata['column_key']
+			|| count( $inline_indexes ) > 0
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY AUTO_INCREMENT requires a table rebuild.' );
+		}
+
+		return true;
 	}
 
 	/**
@@ -9135,7 +9194,16 @@ class WP_DuckDB_Driver {
 			$tokens = $items[0];
 		}
 
-		list( $column_sql, $sequence_sql, $indexes, $metadata ) = $this->translate_create_table_column( $table_name, $tokens, false, true, $temporary, null, $this->table_default_collation( $table_name, $temporary ) );
+		list( $column_sql, $sequence_sql, $indexes, $metadata ) = $this->translate_create_table_column(
+			$table_name,
+			$tokens,
+			false,
+			true,
+			$temporary,
+			null,
+			$this->table_default_column_collation( $table_name, $temporary ),
+			$this->table_default_collation( $table_name, $temporary )
+		);
 		if ( 'PRI' === $metadata['column_key'] ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN PRIMARY KEY is not supported.' );
 		}
@@ -9261,24 +9329,35 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_alter_table_change_or_modify_column( string $table_name, string $old_column_name, array $definition_tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
-		list( , $sequence_sql, $inline_indexes, $metadata ) = $this->translate_create_table_column( $table_name, $definition_tokens, false, true, $temporary, null, $this->table_default_collation( $table_name, $temporary ) );
-		if ( null !== $sequence_sql || 'auto_increment' === $metadata['extra'] ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY AUTO_INCREMENT requires a table rebuild.' );
-		}
-		if ( 'PRI' === $metadata['column_key'] ) {
+		list( , $sequence_sql, $inline_indexes, $metadata ) = $this->translate_create_table_column(
+			$table_name,
+			$definition_tokens,
+			false,
+			true,
+			$temporary,
+			null,
+			$this->table_default_column_collation( $table_name, $temporary ),
+			$this->table_default_collation( $table_name, $temporary )
+		);
+
+		$definition_has_auto_increment = $this->alter_table_change_modify_definition_has_auto_increment( $sequence_sql, $metadata );
+		if ( ! $definition_has_auto_increment && 'PRI' === $metadata['column_key'] ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY inline PRIMARY KEY is not supported.' );
 		}
-		if ( 'UNI' === $metadata['column_key'] || count( $inline_indexes ) > 0 ) {
+		if ( ! $definition_has_auto_increment && ( 'UNI' === $metadata['column_key'] || count( $inline_indexes ) > 0 ) ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY inline UNIQUE is not supported.' );
 		}
 
-		$stored_metadata_rows = $this->column_metadata_rows( $table_name, $temporary );
-		$metadata_rows        = count( $stored_metadata_rows ) > 0 ? $stored_metadata_rows : $this->pragma_column_metadata_rows( $table_name );
-		$current_column       = $this->resolve_alter_table_change_column_metadata( $table_name, $old_column_name, $metadata_rows );
-		$current_column_name  = (string) $current_column['column_name'];
-		$new_column_name      = (string) $metadata['column_name'];
+		$stored_metadata_rows   = $this->column_metadata_rows( $table_name, $temporary );
+		$metadata_rows          = count( $stored_metadata_rows ) > 0 ? $stored_metadata_rows : $this->pragma_column_metadata_rows( $table_name );
+		$current_column         = $this->resolve_alter_table_change_column_metadata( $table_name, $old_column_name, $metadata_rows );
+		$current_column_name    = (string) $current_column['column_name'];
+		$new_column_name        = (string) $metadata['column_name'];
+		$auto_increment_rebuild = $definition_has_auto_increment
+			? $this->assert_alter_table_change_modify_auto_increment_rebuild_supported( $table_name, $current_column, $new_column_name, $metadata, $inline_indexes, $temporary )
+			: false;
 
-		$this->assert_alter_table_change_column_supported( $table_name, $current_column, $metadata_rows, $new_column_name, $temporary );
+		$this->assert_alter_table_change_column_supported( $table_name, $current_column, $metadata_rows, $new_column_name, $temporary, $auto_increment_rebuild );
 
 		$physical_column      = $this->physical_column_info_row( $table_name, $current_column_name );
 		$rename_column        = 0 !== strcasecmp( $current_column_name, $new_column_name );
@@ -9292,7 +9371,7 @@ class WP_DuckDB_Driver {
 		$has_physical_changes = $rename_column || $type_change || $default_change || $nullability_change;
 		$targets_key_column   = $this->alter_table_change_modify_column_targets_key( $table_name, $current_column_name, $index_definitions );
 
-		if ( ! $rename_column && $has_physical_changes && $targets_key_column ) {
+		if ( ! $rename_column && ( $auto_increment_rebuild || ( $has_physical_changes && $targets_key_column ) ) ) {
 			$this->assert_alter_table_change_modify_column_rebuild_supported(
 				$table_name,
 				$current_column_name,
@@ -10934,12 +11013,13 @@ class WP_DuckDB_Driver {
 	 * @param bool              $allow_position_options     Whether to accept FIRST/AFTER position hints.
 	 * @param bool              $temporary                  Whether the target is a temporary table.
 	 * @param int|null          $auto_increment_seed        Optional AUTO_INCREMENT table option.
-	 * @param string|null       $default_collation_name     Effective table collation for text columns without an explicit collation.
+	 * @param string|null       $default_collation_name          Default MySQL metadata collation for text columns without an explicit collation.
+	 * @param string|null       $physical_default_collation_name Effective physical collation for text columns without an explicit collation.
 	 * @param array<string,bool>|null $check_names       Existing MySQL-facing CHECK names, keyed lowercase.
 	 * @param array<string,bool>|null $foreign_key_names Existing FOREIGN KEY names, keyed lowercase.
 	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>,3:array<string,mixed>,4:array<int,string>,5:array<int,array{constraint_name:string,check_clause:string,enforced:string}>,6:array<int,array{constraint_name:string,columns:string[],referenced_table_name:string,referenced_columns:string[],update_rule:string,delete_rule:string}>}
 	 */
-	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false, ?int $auto_increment_seed = null, ?string $default_collation_name = null, ?array &$check_names = null, ?array &$foreign_key_names = null ): array {
+	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false, ?int $auto_increment_seed = null, ?string $default_collation_name = null, ?string $physical_default_collation_name = null, ?array &$check_names = null, ?array &$foreign_key_names = null ): array {
 		$index       = 0;
 		$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
@@ -11078,8 +11158,8 @@ class WP_DuckDB_Driver {
 			$duck_type = 'BIGINT';
 		}
 
-		$metadata_collation_name = $this->mysql_column_collation_from_tokens( $tokens, $type_token );
-		$physical_collation_name = $this->mysql_column_collation_from_tokens( $tokens, $type_token, $default_collation_name );
+		$metadata_collation_name = $this->mysql_column_collation_from_tokens( $tokens, $type_token, $default_collation_name );
+		$physical_collation_name = $this->mysql_column_collation_from_tokens( $tokens, $type_token, null !== $physical_default_collation_name ? $physical_default_collation_name : $default_collation_name );
 		$column_sql              = $this->connection->quote_identifier( $column_name ) . ' ' . $duck_type;
 		$sequence                = null;
 
@@ -11557,21 +11637,85 @@ class WP_DuckDB_Driver {
 	 * @return string|null Collation name.
 	 */
 	private function mysql_column_collation_from_tokens( array $tokens, WP_Parser_Token $type_token, ?string $default_collation_name = null ): ?string {
-		for ( $index = 0; $index < count( $tokens ); ++$index ) {
-			if ( WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $index ]->id ) {
-				return $this->option_value( $tokens, $index + 1 );
-			}
-		}
-
 		if ( ! $this->mysql_type_has_collation( $type_token ) ) {
 			return null;
+		}
+
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::COLLATE_SYMBOL === $tokens[ $index ]->id ) {
+				return $this->normalize_mysql_metadata_identifier(
+					$this->option_value( $tokens, $index + 1 ),
+					'column COLLATE'
+				);
+			}
 		}
 
 		if ( $this->mysql_type_uses_national_charset( $type_token ) ) {
 			return 'utf8_general_ci';
 		}
 
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::CHARSET_SYMBOL === $tokens[ $index ]->id ) {
+				return $this->mysql_default_collation_for_charset(
+					$this->option_value( $tokens, $index + 1 ),
+					'column CHARSET'
+				);
+			}
+
+			if (
+				( WP_MySQL_Lexer::CHAR_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::CHARACTER_SYMBOL === $tokens[ $index ]->id )
+				&& isset( $tokens[ $index + 1 ] )
+				&& WP_MySQL_Lexer::SET_SYMBOL === $tokens[ $index + 1 ]->id
+			) {
+				return $this->mysql_default_collation_for_charset(
+					$this->option_value( $tokens, $index + 2 ),
+					'column CHARACTER SET'
+				);
+			}
+		}
+
 		return null !== $default_collation_name && '' !== $default_collation_name ? $default_collation_name : 'utf8mb4_0900_ai_ci';
+	}
+
+	/**
+	 * Resolve a MySQL default collation for charset-only declarations.
+	 *
+	 * @param string|null $charset Character set option value.
+	 * @param string      $context User-facing parser context.
+	 * @return string Collation name.
+	 */
+	private function mysql_default_collation_for_charset( ?string $charset, string $context ): string {
+		$charset = $this->normalize_mysql_metadata_identifier( $charset, $context );
+
+		$default_collations = array(
+			'ascii'   => 'ascii_general_ci',
+			'big5'    => 'big5_chinese_ci',
+			'binary'  => 'binary',
+			'cp1251'  => 'cp1251_general_ci',
+			'koi8r'   => 'koi8r_general_ci',
+			'latin1'  => 'latin1_swedish_ci',
+			'utf8'    => 'utf8_general_ci',
+			'utf8mb3' => 'utf8_general_ci',
+			'utf8mb4' => 'utf8mb4_0900_ai_ci',
+		);
+
+		return $default_collations[ $charset ] ?? $charset . '_general_ci';
+	}
+
+	/**
+	 * Normalize MySQL charset/collation metadata identifiers.
+	 *
+	 * @param string|null $identifier Identifier option value.
+	 * @param string      $context    User-facing parser context.
+	 * @return string Normalized identifier.
+	 */
+	private function normalize_mysql_metadata_identifier( ?string $identifier, string $context ): string {
+		$identifier = strtolower( trim( (string) $identifier ) );
+		if ( '' === $identifier || ! preg_match( '/^[a-z0-9_]+$/', $identifier ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $context . ' value in DuckDB driver.' );
+		}
+
+		return $identifier;
 	}
 
 	/**
@@ -12464,14 +12608,15 @@ class WP_DuckDB_Driver {
 	 * Parse supported CREATE TABLE tail options into MySQL-facing metadata.
 	 *
 	 * @param WP_Parser_Token[] $tokens Tail tokens after the column list.
-	 * @return array{engine:string,row_format:string,table_collation:string,table_comment:string,create_options:string,auto_increment:int|null}
+	 * @return array{engine:string,row_format:string,table_collation:string,column_default_collation:string,table_comment:string,create_options:string,auto_increment:int|null}
 	 */
 	private function parse_create_table_options( array $tokens ): array {
-		$engine          = 'InnoDB';
-		$table_collation = 'utf8mb4_0900_ai_ci';
-		$table_comment   = '';
-		$auto_increment  = null;
-		$index           = 0;
+		$engine                   = 'InnoDB';
+		$table_collation          = 'utf8mb4_0900_ai_ci';
+		$column_default_collation = 'utf8mb4_0900_ai_ci';
+		$table_comment            = '';
+		$auto_increment           = null;
+		$index                    = 0;
 		while ( $index < count( $tokens ) ) {
 			$token = $tokens[ $index ];
 			if ( WP_MySQL_Lexer::DEFAULT_SYMBOL === $token->id ) {
@@ -12486,7 +12631,10 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( WP_MySQL_Lexer::COLLATE_SYMBOL === $token->id ) {
-				$table_collation = strtolower( (string) $this->option_value( $tokens, $index + 1 ) );
+				$table_collation = $this->normalize_mysql_metadata_identifier(
+					$this->option_value( $tokens, $index + 1 ),
+					'CREATE TABLE COLLATE'
+				);
 				$index           = $this->skip_option_value( $tokens, $index + 1 );
 				continue;
 			}
@@ -12497,10 +12645,17 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
-			if (
-				WP_MySQL_Lexer::CHARSET_SYMBOL === $token->id
-				|| WP_MySQL_Lexer::ROW_FORMAT_SYMBOL === $token->id
-			) {
+			if ( WP_MySQL_Lexer::CHARSET_SYMBOL === $token->id ) {
+				$column_default_collation = $this->mysql_default_collation_for_charset(
+					$this->option_value( $tokens, $index + 1 ),
+					'CREATE TABLE CHARSET'
+				);
+				$table_collation          = $column_default_collation;
+				$index                    = $this->skip_option_value( $tokens, $index + 1 );
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::ROW_FORMAT_SYMBOL === $token->id ) {
 				$index = $this->skip_option_value( $tokens, $index + 1 );
 				continue;
 			}
@@ -12515,19 +12670,25 @@ class WP_DuckDB_Driver {
 				if ( ! isset( $tokens[ $index + 1 ] ) || WP_MySQL_Lexer::SET_SYMBOL !== $tokens[ $index + 1 ]->id ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE option in DuckDB driver: ' . $token->get_bytes() . '.' );
 				}
-				$index = $this->skip_option_value( $tokens, $index + 2 );
+				$column_default_collation = $this->mysql_default_collation_for_charset(
+					$this->option_value( $tokens, $index + 2 ),
+					'CREATE TABLE CHARACTER SET'
+				);
+				$table_collation          = $column_default_collation;
+				$index                    = $this->skip_option_value( $tokens, $index + 2 );
 				continue;
 			}
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE option in DuckDB driver: ' . $token->get_bytes() . '.' );
 		}
 
 		return array(
-			'engine'          => $engine,
-			'row_format'      => 'MyISAM' === $engine ? 'Fixed' : 'Dynamic',
-			'table_collation' => $table_collation,
-			'table_comment'   => $table_comment,
-			'create_options'  => '',
-			'auto_increment'  => $auto_increment,
+			'engine'                   => $engine,
+			'row_format'               => 'MyISAM' === $engine ? 'Fixed' : 'Dynamic',
+			'table_collation'          => $table_collation,
+			'column_default_collation' => $column_default_collation,
+			'table_comment'            => $table_comment,
+			'create_options'           => '',
+			'auto_increment'           => $auto_increment,
 		);
 	}
 
@@ -17444,6 +17605,33 @@ class WP_DuckDB_Driver {
 			? null
 			: $this->explicit_auto_increment_value_for_write( $tokens, $table_index, $metadata['column_name'] );
 		$before             = null === $sequence_name ? null : $this->sequence_currval( $sequence_name );
+
+		$insert_ignore_explicit_ids           = array();
+		$insert_ignore_explicit_ids_existed   = array();
+		$tracks_insert_ignore_explicit_values = null !== $metadata
+			&& null !== $table_reference
+			&& null !== $table_index
+			&& $this->is_insert_ignore_write( $tokens, $table_index );
+		if ( $tracks_insert_ignore_explicit_values ) {
+			$insert_ignore_explicit_ids = $this->explicit_auto_increment_values_for_write( $tokens, $table_index, $metadata['column_name'] );
+			foreach ( $insert_ignore_explicit_ids as $insert_ignore_explicit_id ) {
+				$key = (string) $insert_ignore_explicit_id;
+				if ( ! array_key_exists( $key, $insert_ignore_explicit_ids_existed ) ) {
+					$insert_ignore_explicit_ids_existed[ $key ] = $this->auto_increment_value_exists(
+						$table_reference['table_name'],
+						$metadata['column_name'],
+						$insert_ignore_explicit_id
+					);
+				}
+			}
+		}
+		$column_was_omitted = null !== $metadata && null !== $table_index
+			? $this->auto_increment_column_omitted_from_write( $tokens, $table_index, $metadata['column_name'] )
+			: false;
+		$before_max         = null;
+		if ( null === $before && $column_was_omitted && null !== $table_reference ) {
+			$before_max = $this->max_auto_increment_column_value( $table_reference['table_name'], $metadata['column_name'], $table_reference['temporary'] );
+		}
 		if (
 			null !== $metadata
 			&& null !== $explicit_insert_id
@@ -17459,11 +17647,147 @@ class WP_DuckDB_Driver {
 			if ( null !== $after && $after !== $before ) {
 				$this->last_insert_id = $after;
 			} elseif ( null !== $explicit_insert_id ) {
-				$this->last_insert_id = $explicit_insert_id;
+				if ( $tracks_insert_ignore_explicit_values ) {
+					$explicit_insert_id = $this->inserted_explicit_auto_increment_value_for_insert_ignore(
+						$table_reference['table_name'],
+						$metadata['column_name'],
+						$insert_ignore_explicit_ids,
+						$insert_ignore_explicit_ids_existed,
+						$table_reference['temporary']
+					);
+				}
+				if ( null !== $explicit_insert_id ) {
+					$this->last_insert_id = $explicit_insert_id;
+				}
+			} elseif ( null !== $before_max && $column_was_omitted ) {
+				$after_max = $this->max_auto_increment_column_value( $table_reference['table_name'], $metadata['column_name'], $table_reference['temporary'] );
+				if ( $after_max > $before_max ) {
+					$this->last_insert_id = $after_max;
+				}
 			}
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Check whether an INSERT write uses IGNORE.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL token stream.
+	 * @param int               $table_index Index of the table token.
+	 * @return bool Whether the statement is INSERT IGNORE.
+	 */
+	private function is_insert_ignore_write( array $tokens, int $table_index ): bool {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		for ( $index = 1; $index < $table_index; ++$index ) {
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::IGNORE_SYMBOL === $tokens[ $index ]->id ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Find the last explicit AUTO_INCREMENT value inserted by INSERT IGNORE.
+	 *
+	 * @param string             $table_name   Table name.
+	 * @param string             $column_name  AUTO_INCREMENT column name.
+	 * @param int[]              $explicit_ids Explicit AUTO_INCREMENT IDs in statement order.
+	 * @param array<string,bool> $ids_existed  Whether each explicit ID existed before the write.
+	 * @param bool               $temporary    Whether the target is a temporary table.
+	 * @return int|null Last inserted explicit AUTO_INCREMENT value.
+	 */
+	private function inserted_explicit_auto_increment_value_for_insert_ignore( string $table_name, string $column_name, array $explicit_ids, array $ids_existed, bool $temporary = false ): ?int {
+		for ( $index = count( $explicit_ids ) - 1; $index >= 0; --$index ) {
+			$explicit_id = $explicit_ids[ $index ];
+			if ( ! empty( $ids_existed[ (string) $explicit_id ] ) ) {
+				continue;
+			}
+			if ( $this->auto_increment_value_exists( $table_name, $column_name, $explicit_id ) ) {
+				return $explicit_id;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether an INSERT/REPLACE omits the AUTO_INCREMENT column.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL token stream.
+	 * @param int               $table_index Index of the table token.
+	 * @param string            $column_name AUTO_INCREMENT column name.
+	 * @return bool Whether the statement omits the AUTO_INCREMENT column.
+	 */
+	private function auto_increment_column_omitted_from_write( array $tokens, int $table_index, string $column_name ): bool {
+		$set_index = $this->find_insert_set_index( $tokens, $table_index );
+		if ( null !== $set_index ) {
+			return ! $this->insert_set_assignments_include_column( array_slice( $tokens, $set_index + 1 ), $column_name );
+		}
+
+		$index = $table_index + 1;
+		if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index ]->id ) {
+			return false;
+		}
+
+		list( $column_items ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
+		foreach ( $column_items as $column_tokens ) {
+			if ( 1 === count( $column_tokens ) && 0 === strcasecmp( $this->identifier_value( $column_tokens[0] ), $column_name ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether an INSERT ... SET assignment list includes a column.
+	 *
+	 * @param WP_Parser_Token[] $tokens      Assignment tokens after SET.
+	 * @param string            $column_name Column name.
+	 * @return bool Whether the column is assigned.
+	 */
+	private function insert_set_assignments_include_column( array $tokens, string $column_name ): bool {
+		$index = 0;
+
+		while ( $index < count( $tokens ) ) {
+			$current_column = $this->identifier_value( $tokens[ $index ] ?? null );
+			if ( 0 === strcasecmp( $current_column, $column_name ) ) {
+				return true;
+			}
+			++$index;
+
+			if (
+				! isset( $tokens[ $index ] )
+				|| ( WP_MySQL_Lexer::EQUAL_OPERATOR !== $tokens[ $index ]->id && WP_MySQL_Lexer::ASSIGN_OPERATOR !== $tokens[ $index ]->id )
+			) {
+				return false;
+			}
+			++$index;
+
+			$depth = 0;
+			while ( $index < count( $tokens ) ) {
+				if ( 0 === $depth && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+					break;
+				}
+				if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+					++$depth;
+				} elseif ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+					--$depth;
+				}
+				++$index;
+			}
+
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -17587,14 +17911,32 @@ class WP_DuckDB_Driver {
 	 * @return int|null Explicit value, or null when the statement uses generated/default values.
 	 */
 	private function explicit_auto_increment_value_for_write( array $tokens, int $table_index, string $column_name ): ?int {
+		$explicit_values = $this->explicit_auto_increment_values_for_write( $tokens, $table_index, $column_name );
+		if ( count( $explicit_values ) > 0 ) {
+			return $explicit_values[ count( $explicit_values ) - 1 ];
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse explicit literal values assigned to an AUTO_INCREMENT column.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL token stream.
+	 * @param int               $table_index Index of the table token.
+	 * @param string            $column_name AUTO_INCREMENT column name.
+	 * @return int[] Explicit values in statement order.
+	 */
+	private function explicit_auto_increment_values_for_write( array $tokens, int $table_index, string $column_name ): array {
 		$set_index = $this->find_insert_set_index( $tokens, $table_index );
 		if ( null !== $set_index ) {
-			return $this->explicit_auto_increment_value_for_set_assignments( array_slice( $tokens, $set_index + 1 ), $column_name );
+			$explicit_value = $this->explicit_auto_increment_value_for_set_assignments( array_slice( $tokens, $set_index + 1 ), $column_name );
+			return null === $explicit_value ? array() : array( $explicit_value );
 		}
 
 		$index = $table_index + 1;
 		if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index ]->id ) {
-			return null;
+			return array();
 		}
 
 		list( $column_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
@@ -17607,17 +17949,17 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( null === $column_offset || ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $index ]->id ) {
-			return null;
+			return array();
 		}
 		++$index;
 
-		$explicit_value = null;
+		$explicit_values = array();
 		while ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
 			list( $value_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
 			if ( isset( $value_items[ $column_offset ] ) ) {
 				$value = $this->integer_literal_value( $value_items[ $column_offset ] );
 				if ( null !== $value ) {
-					$explicit_value = $value;
+					$explicit_values[] = $value;
 				}
 			}
 
@@ -17628,7 +17970,7 @@ class WP_DuckDB_Driver {
 			break;
 		}
 
-		return $explicit_value;
+		return $explicit_values;
 	}
 
 	/**
@@ -19160,6 +19502,22 @@ class WP_DuckDB_Driver {
 	 * @param bool   $temporary  Whether the target is a temporary table.
 	 * @return string MySQL collation name.
 	 */
+	private function table_default_column_collation( string $table_name, bool $temporary = false ): string {
+		$charset = $this->character_set_from_collation( $this->table_default_collation( $table_name, $temporary ) );
+		if ( null === $charset ) {
+			return 'utf8mb4_0900_ai_ci';
+		}
+
+		return $this->mysql_default_collation_for_charset( $charset, 'table default charset' );
+	}
+
+	/**
+	 * Read the effective default table collation for physical text columns.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 * @return string MySQL collation name.
+	 */
 	private function table_default_collation( string $table_name, bool $temporary = false ): string {
 		$metadata = $this->table_metadata_by_table( $temporary );
 		if ( isset( $metadata[ $table_name ]['table_collation'] ) && '' !== $metadata[ $table_name ]['table_collation'] ) {
@@ -20577,6 +20935,9 @@ class WP_DuckDB_Driver {
 		}
 		if ( 'utf8' === $charset || 'utf8mb3' === $charset ) {
 			return 3;
+		}
+		if ( 'big5' === $charset ) {
+			return 2;
 		}
 
 		return 1;

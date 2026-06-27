@@ -6,6 +6,83 @@ require_once __DIR__ . '/WP_DuckDB_TestCase.php';
  * @group duckdb
  */
 class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
+	public function test_auto_increment_insert_id_falls_back_to_max_when_currval_is_unavailable(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public $queries = array();
+
+			private $max_reads = 0;
+
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				$this->queries[] = $sql;
+
+				if ( 0 === strpos( $sql, 'CREATE OR REPLACE MACRO ' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				if ( false !== strpos( $sql, "table_type = 'LOCAL TEMPORARY'" ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'table_name' ), array() );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'table_name' ), array( array( 'wp_users' ) ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT column_name FROM "__wp_duckdb_column_metadata"' ) ) {
+					return new WP_DuckDB_Result_Statement( array( 'column_name' ), array( array( 'ID' ) ) );
+				}
+
+				if ( 0 === strpos( $sql, 'SELECT currval(' ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'currval unavailable' );
+				}
+
+				if ( 'SELECT MAX("ID") AS max_value FROM "wp_users"' === $sql ) {
+					++$this->max_reads;
+					return new WP_DuckDB_Result_Statement(
+						array( 'max_value' ),
+						array( array( 1 === $this->max_reads ? 1 : 2 ) )
+					);
+				}
+
+				if ( 'INSERT INTO "wp_users" ("display_name") VALUES (\'Walter Sobchak\')' === $sql ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+				}
+
+				throw new RuntimeException( 'Unexpected query: ' . $sql );
+			}
+		};
+		$driver     = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+		$mysql_sql  = "INSERT INTO wp_users (display_name) VALUES ('Walter Sobchak')";
+		$duckdb_sql = 'INSERT INTO "wp_users" ("display_name") VALUES (\'Walter Sobchak\')';
+
+		$tokenize = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+		}
+		$tokens = $tokenize->invoke( $driver, $mysql_sql );
+
+		$execute = new ReflectionMethod( WP_DuckDB_Driver::class, 'execute_auto_increment_write' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$execute->setAccessible( true );
+		}
+		$result = $execute->invoke(
+			$driver,
+			'wp_users',
+			$duckdb_sql,
+			'Failed to execute DuckDB INSERT',
+			$tokens,
+			2
+		);
+
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assertSame( 2, $driver->get_insert_id() );
+		$this->assertSame(
+			2,
+			substr_count( implode( "\n", $connection->queries ), 'SELECT MAX("ID") AS max_value FROM "wp_users"' )
+		);
+	}
+
 	public function test_record_found_rows_from_result_preserves_column_metadata(): void {
 		$driver = ( new ReflectionClass( WP_DuckDB_Driver::class ) )->newInstanceWithoutConstructor();
 		$source = new WP_DuckDB_Result_Statement(
@@ -6151,6 +6228,93 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->fail( 'Expected duplicate insert to fail.' );
 	}
 
+	public function test_insert_ignore_explicit_auto_increment_insert_id_skips_ignored_rows(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE ignore_primary_before (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(100) UNIQUE
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE ignore_primary_after (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(100) UNIQUE
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE ignore_secondary_after (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(100) UNIQUE
+			)'
+		);
+
+		$driver->query( "INSERT INTO ignore_primary_before (id, name) VALUES (3, 'existing')" );
+		$inserted_before_ignored = $driver->query(
+			"INSERT IGNORE INTO ignore_primary_before (id, name)
+			VALUES (2, 'inserted'), (3, 'ignored-primary')"
+		);
+		$this->assertSame( 1, $inserted_before_ignored->rowCount() );
+		$this->assertSame( 2, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'name' => 'inserted',
+				),
+				array(
+					'id'   => 3,
+					'name' => 'existing',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM ignore_primary_before ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( "INSERT INTO ignore_primary_after (id, name) VALUES (1, 'existing')" );
+		$inserted_after_ignored = $driver->query(
+			"INSERT IGNORE INTO ignore_primary_after (id, name)
+			VALUES (4, 'inserted'), (1, 'ignored-primary')"
+		);
+		$this->assertSame( 1, $inserted_after_ignored->rowCount() );
+		$this->assertSame( 4, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'existing',
+				),
+				array(
+					'id'   => 4,
+					'name' => 'inserted',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM ignore_primary_after ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( "INSERT INTO ignore_secondary_after (id, name) VALUES (1, 'taken')" );
+		$inserted_before_secondary_conflict = $driver->query(
+			"INSERT IGNORE INTO ignore_secondary_after (id, name)
+			VALUES (5, 'inserted'), (6, 'taken')"
+		);
+		$this->assertSame( 1, $inserted_before_secondary_conflict->rowCount() );
+		$this->assertSame( 5, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'taken',
+				),
+				array(
+					'id'   => 5,
+					'name' => 'inserted',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM ignore_secondary_after ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_serial_alias_tracks_generated_insert_id_and_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -7039,6 +7203,100 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			WHERE table_name LIKE '__wp_duckdb_%'"
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array(), $internal );
+	}
+
+	public function test_create_table_charset_metadata_tracks_table_and_column_declarations(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE charset_metadata (
+				id INT,
+				ascii_default VARCHAR(10),
+				big5_col VARCHAR(50) CHARACTER SET big5,
+				koi8r_col TEXT CHARACTER SET koi8r,
+				utf8_col VARCHAR(50) CHARSET utf8,
+				utf8mb4_col VARCHAR(50) CHARACTER SET utf8mb4,
+				binary_col BINARY,
+				blob_col BLOB
+			) DEFAULT CHARSET=ascii'
+		);
+		$driver->query(
+			'CREATE TABLE charset_collate_metadata (
+				name VARCHAR(10),
+				explicit_name VARCHAR(10) COLLATE utf8mb4_unicode_ci
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+		$driver->query( 'ALTER TABLE charset_collate_metadata ADD COLUMN added_name VARCHAR(10)' );
+
+		$this->assertSame(
+			array(
+				'id'            => null,
+				'ascii_default' => 'ascii_general_ci',
+				'big5_col'      => 'big5_chinese_ci',
+				'koi8r_col'     => 'koi8r_general_ci',
+				'utf8_col'      => 'utf8_general_ci',
+				'utf8mb4_col'   => 'utf8mb4_0900_ai_ci',
+				'binary_col'    => null,
+				'blob_col'      => null,
+			),
+			array_column(
+				$driver->query( 'SHOW FULL COLUMNS FROM charset_metadata' )->fetchAll( PDO::FETCH_ASSOC ),
+				'Collation',
+				'Field'
+			)
+		);
+		$this->assertSame(
+			array(
+				array(
+					'TABLE_COLLATION' => 'utf8mb4_unicode_ci',
+				),
+				array(
+					'TABLE_COLLATION' => 'ascii_general_ci',
+				),
+			),
+			$driver->query(
+				"SELECT table_collation
+				FROM information_schema.tables
+				WHERE table_schema = 'wp'
+					AND table_name IN ('charset_metadata', 'charset_collate_metadata')
+				ORDER BY table_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'        => 'name',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_0900_ai_ci',
+				),
+				array(
+					'COLUMN_NAME'        => 'explicit_name',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_unicode_ci',
+				),
+				array(
+					'COLUMN_NAME'        => 'added_name',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$driver->query(
+				"SELECT column_name, character_set_name, collation_name
+				FROM information_schema.columns
+				WHERE table_schema = 'wp'
+					AND table_name = 'charset_collate_metadata'
+				ORDER BY ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE charset_metadata' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringContainsString( 'DEFAULT CHARSET=ascii COLLATE=ascii_general_ci', $create_sql );
 	}
 
 	public function test_information_schema_statistics_exposes_mysql_shaped_index_metadata(): void {
@@ -10291,6 +10549,80 @@ SQL,
 		try {
 			$driver->query( "INSERT INTO change_key_rebuild (id, code, payload) VALUES (4, 10, 'duplicate')" );
 			$this->fail( 'Expected rebuilt UNIQUE index to remain enforced.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_change_existing_auto_increment_column_rebuilds(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE dbdelta_auto_increment (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				slug VARCHAR(50) NOT NULL,
+				payload VARCHAR(50),
+				PRIMARY KEY (id),
+				UNIQUE KEY slug_unique (slug)
+			) AUTO_INCREMENT=5'
+		);
+		$driver->query( "INSERT INTO dbdelta_auto_increment (slug, payload) VALUES ('alpha', 'one'), ('bravo', 'two')" );
+
+		$result  = $driver->query( 'ALTER TABLE dbdelta_auto_increment CHANGE COLUMN id id int(11) NOT NULL AUTO_INCREMENT' );
+		$queries = implode( "\n", $driver->get_last_duckdb_queries() );
+		$driver->query( "INSERT INTO dbdelta_auto_increment (slug, payload) VALUES ('charlie', 'three')" );
+
+		$this->assertSame( 0, $result->rowCount() );
+		$this->assertStringContainsString( 'CREATE TEMP TABLE "__wp_duckdb_rebuild_', $queries );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 5,
+					'slug'    => 'alpha',
+					'payload' => 'one',
+				),
+				array(
+					'id'      => 6,
+					'slug'    => 'bravo',
+					'payload' => 'two',
+				),
+				array(
+					'id'      => 7,
+					'slug'    => 'charlie',
+					'payload' => 'three',
+				),
+			),
+			$driver->query( 'SELECT id, slug, payload FROM dbdelta_auto_increment ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$columns = array_column( $driver->query( 'SHOW FULL COLUMNS FROM dbdelta_auto_increment' )->fetchAll( PDO::FETCH_ASSOC ), null, 'Field' );
+		$this->assertSame( 'int(11)', $columns['id']['Type'] );
+		$this->assertSame( 'NO', $columns['id']['Null'] );
+		$this->assertSame( 'PRI', $columns['id']['Key'] );
+		$this->assertSame( 'auto_increment', $columns['id']['Extra'] );
+
+		$this->assertSame(
+			array( array( 'AUTO_INCREMENT' => 8 ) ),
+			$driver->query(
+				"SELECT `AUTO_INCREMENT`
+				FROM information_schema.tables
+				WHERE table_schema = 'wp' AND table_name = 'dbdelta_auto_increment'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString(
+			'`id` int(11) NOT NULL AUTO_INCREMENT',
+			$driver->query( 'SHOW CREATE TABLE dbdelta_auto_increment' )->fetch( PDO::FETCH_ASSOC )['Create Table']
+		);
+
+		try {
+			$driver->query( "INSERT INTO dbdelta_auto_increment (slug, payload) VALUES ('alpha', 'duplicate')" );
+			$this->fail( 'Expected rebuilt UNIQUE index to remain enforced after AUTO_INCREMENT CHANGE COLUMN.' );
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
 			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
 		}
