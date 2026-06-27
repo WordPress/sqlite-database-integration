@@ -47,6 +47,11 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	private $default_fetch_mode = PDO::FETCH_BOTH;
 
 	/**
+	 * @var array<int,mixed>
+	 */
+	private $default_fetch_args = array();
+
+	/**
 	 * @param string[]                         $columns       Column names.
 	 * @param array<int,array<mixed>>           $rows          Numeric rows.
 	 * @param int                              $affected_rows Affected row count.
@@ -92,7 +97,13 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	 * @return bool
 	 */
 	public function setFetchMode( $mode, ...$args ): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
-		$this->default_fetch_mode = (int) $mode;
+		$mode = (int) $mode;
+		if ( defined( 'PDO::FETCH_DEFAULT' ) && PDO::FETCH_DEFAULT === $mode ) {
+			$mode = PDO::FETCH_BOTH;
+		}
+
+		$this->default_fetch_mode = $mode;
+		$this->default_fetch_args = $args;
 		return true;
 	}
 
@@ -128,7 +139,10 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 		$row = $this->rows[ $this->cursor ];
 		++$this->cursor;
 
-		return $this->format_row( $row, $mode ?? $this->default_fetch_mode );
+		$fetch_mode = $mode ?? $this->default_fetch_mode;
+		$fetch_args = null === $mode ? $this->default_fetch_args : array();
+
+		return $this->format_row( $row, $fetch_mode, $fetch_args );
 	}
 
 	/**
@@ -139,9 +153,41 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	 * @return array
 	 */
 	public function fetchAll( $mode = null, ...$args ): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$fetch_mode = $mode ?? $this->default_fetch_mode;
+		if ( defined( 'PDO::FETCH_DEFAULT' ) && PDO::FETCH_DEFAULT === $fetch_mode ) {
+			$fetch_mode = $this->default_fetch_mode;
+		}
+		$fetch_args = null === $mode ? $this->default_fetch_args : $args;
+
+		if ( PDO::FETCH_COLUMN === $fetch_mode ) {
+			$column = isset( $fetch_args[0] ) ? (int) $fetch_args[0] : 0;
+			$this->assert_valid_column_index( $column );
+
+			$rows = array();
+			while ( isset( $this->rows[ $this->cursor ] ) ) {
+				$rows[] = $this->fetchColumn( $column );
+			}
+			return $rows;
+		}
+
+		if ( PDO::FETCH_KEY_PAIR === $fetch_mode ) {
+			$this->assert_valid_column_index( 0 );
+			$this->assert_valid_column_index( 1 );
+
+			$rows = array();
+			while ( isset( $this->rows[ $this->cursor ] ) ) {
+				$row = $this->rows[ $this->cursor ];
+				++$this->cursor;
+				$rows[ $row[0] ] = $row[1];
+			}
+			return $rows;
+		}
+
 		$rows = array();
-		while ( false !== ( $row = $this->fetch( $mode ) ) ) {
-			$rows[] = $row;
+		while ( isset( $this->rows[ $this->cursor ] ) ) {
+			$row = $this->rows[ $this->cursor ];
+			++$this->cursor;
+			$rows[] = $this->format_row( $row, $fetch_mode, $fetch_args );
 		}
 		return $rows;
 	}
@@ -153,6 +199,9 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	 * @return mixed
 	 */
 	public function fetchColumn( $column = 0 ) { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$column = (int) $column;
+		$this->assert_valid_column_index( $column );
+
 		if ( ! isset( $this->rows[ $this->cursor ] ) ) {
 			return false;
 		}
@@ -160,7 +209,7 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 		$row = $this->rows[ $this->cursor ];
 		++$this->cursor;
 
-		return $row[ (int) $column ] ?? false;
+		return array_key_exists( $column, $row ) ? $row[ $column ] : false;
 	}
 
 	/**
@@ -198,6 +247,43 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	}
 
 	/**
+	 * Close the cursor.
+	 *
+	 * @return bool
+	 */
+	public function closeCursor(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$this->cursor = count( $this->rows );
+		return true;
+	}
+
+	/**
+	 * DuckDB results do not expose multiple rowsets.
+	 *
+	 * @return false
+	 */
+	public function nextRowset(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return false;
+	}
+
+	/**
+	 * Return the statement error code.
+	 *
+	 * @return string
+	 */
+	public function errorCode(): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return '00000';
+	}
+
+	/**
+	 * Return the statement error info tuple.
+	 *
+	 * @return array{0:string,1:null,2:null}
+	 */
+	public function errorInfo(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return array( '00000', null, null );
+	}
+
+	/**
 	 * Return rows as an iterator from the current cursor.
 	 *
 	 * @return Traversable
@@ -211,24 +297,39 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	/**
 	 * Format a row for a fetch mode.
 	 *
-	 * @param array $row  Numeric row.
-	 * @param int   $mode Fetch mode.
+	 * @param array            $row  Numeric row.
+	 * @param int              $mode Fetch mode.
+	 * @param array<int,mixed> $args Fetch mode arguments.
 	 * @return mixed
 	 */
-	private function format_row( array $row, int $mode ) {
+	private function format_row( array $row, int $mode, array $args = array() ) {
 		if ( defined( 'PDO::FETCH_DEFAULT' ) && PDO::FETCH_DEFAULT === $mode ) {
 			$mode = $this->default_fetch_mode;
+			$args = $this->default_fetch_args;
 		}
 
 		switch ( $mode ) {
 			case PDO::FETCH_ASSOC:
 				return $this->assoc_row( $row );
+			case PDO::FETCH_NAMED:
+				return $this->named_row( $row );
 			case PDO::FETCH_NUM:
 				return $row;
 			case PDO::FETCH_OBJ:
 				return (object) $this->assoc_row( $row );
 			case PDO::FETCH_COLUMN:
-				return $row[0] ?? false;
+				$column = isset( $args[0] ) ? (int) $args[0] : 0;
+				$this->assert_valid_column_index( $column );
+				return array_key_exists( $column, $row ) ? $row[ $column ] : false;
+			case PDO::FETCH_CLASS:
+				$class            = isset( $args[0] ) ? $args[0] : 'stdClass';
+				$constructor_args = isset( $args[1] ) && is_array( $args[1] ) ? $args[1] : array();
+				return $this->class_row( $row, $class, $constructor_args );
+			case PDO::FETCH_FUNC:
+				if ( ! isset( $args[0] ) || ! is_callable( $args[0] ) ) {
+					throw new TypeError( 'PDO::FETCH_FUNC requires a callable fetch argument.' );
+				}
+				return call_user_func_array( $args[0], $row );
 			case PDO::FETCH_BOTH:
 			default:
 				return $this->both_row( $row );
@@ -250,6 +351,27 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	}
 
 	/**
+	 * Build a PDO::FETCH_NAMED row.
+	 *
+	 * @param array $row Numeric row.
+	 * @return array
+	 */
+	private function named_row( array $row ): array {
+		$named = array();
+		foreach ( $this->columns as $index => $name ) {
+			$value = $row[ $index ] ?? null;
+			if ( ! array_key_exists( $name, $named ) ) {
+				$named[ $name ] = $value;
+			} elseif ( is_array( $named[ $name ] ) ) {
+				$named[ $name ][] = $value;
+			} else {
+				$named[ $name ] = array( $named[ $name ], $value );
+			}
+		}
+		return $named;
+	}
+
+	/**
 	 * Build a PDO::FETCH_BOTH row.
 	 *
 	 * @param array $row Numeric row.
@@ -261,5 +383,42 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 			$both[ $index ] = $value;
 		}
 		return $both;
+	}
+
+	/**
+	 * Build a PDO::FETCH_CLASS row.
+	 *
+	 * @param array            $row              Numeric row.
+	 * @param string           $class            Class name.
+	 * @param array<int,mixed> $constructor_args Constructor arguments.
+	 * @return object
+	 */
+	private function class_row( array $row, string $class, array $constructor_args ): object {
+		$object = new $class( ...$constructor_args );
+		foreach ( $this->assoc_row( $row ) as $name => $value ) {
+			$object->$name = $value;
+		}
+		return $object;
+	}
+
+	/**
+	 * Validate a zero-based column index.
+	 *
+	 * @param int $column Column index.
+	 */
+	private function assert_valid_column_index( int $column ): void {
+		if ( $column < 0 ) {
+			if ( class_exists( 'ValueError' ) ) {
+				throw new ValueError( 'Column index must be greater than or equal to 0' );
+			}
+			throw new PDOException( 'Invalid column index' );
+		}
+
+		if ( $column >= count( $this->columns ) ) {
+			if ( class_exists( 'ValueError' ) ) {
+				throw new ValueError( 'Invalid column index' );
+			}
+			throw new PDOException( 'Invalid column index' );
+		}
 	}
 }

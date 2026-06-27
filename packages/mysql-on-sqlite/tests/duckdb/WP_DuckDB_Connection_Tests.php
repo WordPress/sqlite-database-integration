@@ -6,6 +6,136 @@ require_once __DIR__ . '/WP_DuckDB_TestCase.php';
  * @group duckdb
  */
 class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
+	public function test_result_statement_fetch_named_preserves_duplicate_columns(): void {
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'id', 'id', 'name' ),
+			array(
+				array( 1, 2, 'Ada' ),
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'id'   => array( 1, 2 ),
+				'name' => 'Ada',
+			),
+			$stmt->fetch( PDO::FETCH_NAMED )
+		);
+		$this->assertFalse( $stmt->fetch() );
+	}
+
+	public function test_result_statement_fetch_column_preserves_nulls_and_validates_indexes(): void {
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'id', 'label' ),
+			array(
+				array( 1, 'first' ),
+				array( 2, null ),
+			)
+		);
+
+		$this->assertSame( 'first', $stmt->fetchColumn( 1 ) );
+		$this->assertNull( $stmt->fetchColumn( 1 ) );
+		$this->assertFalse( $stmt->fetchColumn( 1 ) );
+
+		$stmt = new WP_DuckDB_Result_Statement( array( 'id' ), array( array( 1 ) ) );
+		if ( PHP_VERSION_ID < 80000 ) {
+			$this->expectException( PDOException::class );
+			$this->expectExceptionMessage( 'Invalid column index' );
+		} else {
+			$this->expectException( ValueError::class );
+			$this->expectExceptionMessage( 'Invalid column index' );
+		}
+		$stmt->fetchColumn( 1 );
+	}
+
+	public function test_result_statement_fetch_all_column_key_pair_class_and_func_modes(): void {
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'id', 'name' ),
+			array(
+				array( 1, 'Ada' ),
+				array( 2, 'Grace' ),
+			)
+		);
+		$this->assertSame( array( 'Ada', 'Grace' ), $stmt->fetchAll( PDO::FETCH_COLUMN, 1 ) );
+
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'id', 'name' ),
+			array(
+				array( 1, 'Ada' ),
+				array( 2, 'Grace' ),
+			)
+		);
+		$this->assertSame(
+			array(
+				1 => 'Ada',
+				2 => 'Grace',
+			),
+			$stmt->fetchAll( PDO::FETCH_KEY_PAIR )
+		);
+
+		$stmt = new WP_DuckDB_Result_Statement( array( 'name' ), array( array( 'Ada' ) ) );
+		$rows = $stmt->fetchAll( PDO::FETCH_CLASS, stdClass::class );
+		$this->assertCount( 1, $rows );
+		$this->assertInstanceOf( stdClass::class, $rows[0] );
+		$this->assertSame( 'Ada', $rows[0]->name );
+
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'first', 'second' ),
+			array(
+				array( 'a', 'b' ),
+				array( 'c', 'd' ),
+			)
+		);
+		$this->assertSame(
+			array( 'a:b', 'c:d' ),
+			$stmt->fetchAll(
+				PDO::FETCH_FUNC,
+				function ( $first, $second ) {
+					return $first . ':' . $second;
+				}
+			)
+		);
+	}
+
+	public function test_result_statement_cursor_and_metadata_methods_match_pdo_shape(): void {
+		$stmt = new WP_DuckDB_Result_Statement(
+			array( 'id', 'name' ),
+			array(
+				array( 1, 'Ada' ),
+				array( 2, 'Grace' ),
+			),
+			0,
+			array(
+				array(
+					'name'              => 'id',
+					'native_type'       => 'BIGINT',
+					'mysqli:orgname'    => 'id',
+					'mysqli:orgtable'   => 'users',
+					'mysqli:custom_key' => 'preserved',
+				),
+			)
+		);
+
+		$this->assertSame( 2, $stmt->columnCount() );
+		$this->assertSame(
+			array(
+				'name'              => 'id',
+				'native_type'       => 'BIGINT',
+				'mysqli:orgname'    => 'id',
+				'mysqli:orgtable'   => 'users',
+				'mysqli:custom_key' => 'preserved',
+			),
+			$stmt->getColumnMeta( 0 )
+		);
+		$this->assertSame( array( 'name' => 'name' ), $stmt->getColumnMeta( 1 ) );
+		$this->assertFalse( $stmt->getColumnMeta( 2 ) );
+		$this->assertSame( '00000', $stmt->errorCode() );
+		$this->assertSame( array( '00000', null, null ), $stmt->errorInfo() );
+		$this->assertFalse( $stmt->nextRowset() );
+		$this->assertTrue( $stmt->closeCursor() );
+		$this->assertFalse( $stmt->fetch() );
+	}
+
 	public function test_in_memory_connection_executes_query(): void {
 		$this->requireDuckDBRuntime();
 
