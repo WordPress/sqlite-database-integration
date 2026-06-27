@@ -50,6 +50,10 @@ class WP_DuckDB_Driver {
 		'version_comment' => true,
 	);
 
+	const BIT_SIGNED_BIGINT_MAX_DECIMAL = '9223372036854775807';
+	const BIT_SIGNED_BIGINT_MAX_HEX     = '7fffffffffffffff';
+	const BIT_SIGNED_BIGINT_MAX_BITS    = 63;
+
 	const SQL_MODE_ALIASES = array(
 		'TRADITIONAL' => array(
 			'STRICT_TRANS_TABLES',
@@ -62,6 +66,7 @@ class WP_DuckDB_Driver {
 	);
 
 	const DATA_TYPE_MAP = array(
+		WP_MySQL_Lexer::BIT_SYMBOL        => 'BIGINT',
 		WP_MySQL_Lexer::BOOL_SYMBOL       => 'BOOLEAN',
 		WP_MySQL_Lexer::BOOLEAN_SYMBOL    => 'BOOLEAN',
 		WP_MySQL_Lexer::TINYINT_SYMBOL    => 'TINYINT',
@@ -10219,6 +10224,7 @@ class WP_DuckDB_Driver {
 		$unique_key     = false;
 		$auto_increment = false;
 		$default_sql    = null;
+		$default_mysql  = null;
 		$constraints    = array();
 		$checks         = array();
 		$foreign_keys   = array();
@@ -10245,7 +10251,13 @@ class WP_DuckDB_Driver {
 					break;
 				case WP_MySQL_Lexer::DEFAULT_SYMBOL:
 					++$index;
-					$default_sql = $this->translate_default_literal( $tokens, $index );
+					if ( WP_MySQL_Lexer::BIT_SYMBOL === $type_token->id ) {
+						$default       = $this->translate_bit_default_literal( $tokens, $index );
+						$default_sql   = $default['sql'];
+						$default_mysql = $default['mysql'];
+					} else {
+						$default_sql = $this->translate_default_literal( $tokens, $index );
+					}
 					break;
 				case WP_MySQL_Lexer::PRIMARY_SYMBOL:
 					$this->expect_token( $tokens, $index + 1, WP_MySQL_Lexer::KEY_SYMBOL, 'Expected KEY after PRIMARY in column definition.' );
@@ -10374,12 +10386,17 @@ class WP_DuckDB_Driver {
 			);
 		}
 
+		$column_default = null;
+		if ( ! $auto_increment && null !== $default_sql ) {
+			$column_default = null !== $default_mysql ? $default_mysql : $this->normalize_describe_default( $default_sql );
+		}
+
 		$metadata = array(
 			'column_name'    => $column_name,
 			'column_type'    => $this->mysql_column_type_from_tokens( $tokens, $type_index ),
 			'is_nullable'    => $not_null ? 'NO' : 'YES',
 			'column_key'     => $primary_key ? 'PRI' : ( $unique_key ? 'UNI' : '' ),
-			'column_default' => $auto_increment || null === $default_sql ? null : $this->normalize_describe_default( $default_sql ),
+			'column_default' => $column_default,
 			'extra'          => $auto_increment ? 'auto_increment' : '',
 			'collation_name' => $metadata_collation_name,
 			'comment'        => $this->mysql_column_comment_from_tokens( $tokens ),
@@ -10595,6 +10612,12 @@ class WP_DuckDB_Driver {
 		}
 
 		switch ( $type_token->id ) {
+			case WP_MySQL_Lexer::BIT_SYMBOL:
+				return $this->mysql_column_type_with_default_attributes(
+					$this->mysql_column_type_with_base( $column_type, 'bit' ),
+					'(1)'
+				);
+
 			case WP_MySQL_Lexer::REAL_SYMBOL:
 				return $this->mysql_column_type_with_base( $column_type, 'double' );
 
@@ -11671,6 +11694,39 @@ class WP_DuckDB_Driver {
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Only DEFAULT literals are supported by the DuckDB driver.' );
+	}
+
+	/**
+	 * Translate a BIT DEFAULT literal and advance the index.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, passed by reference.
+	 * @return array{sql:string,mysql:string|null} DuckDB SQL literal and MySQL-facing metadata literal.
+	 */
+	private function translate_bit_default_literal( array $tokens, int &$index ): array {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'DEFAULT requires a literal in the DuckDB driver.' );
+		}
+
+		$consumed = 1;
+		$literal  = $this->bit_literal_sql_and_default_from_tokens( array( $tokens[ $index ] ) );
+		if (
+			null === $literal
+			&& isset( $tokens[ $index + 1 ] )
+			&& WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[ $index ]->id
+			&& $this->is_number_token( $tokens[ $index + 1 ] )
+		) {
+			$consumed = 2;
+			$literal  = $this->bit_literal_sql_and_default_from_numeric_string( $tokens[ $index + 1 ]->get_bytes() );
+		}
+
+		if ( null === $literal ) {
+			throw new WP_DuckDB_Driver_Exception( 'Only BIT DEFAULT literals are supported by the DuckDB driver.' );
+		}
+
+		$index += $consumed;
+
+		return $literal;
 	}
 
 	/**
@@ -12770,6 +12826,10 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether token-aware coercion is needed.
 	 */
 	private function select_item_requires_text_blob_write_coercion( string $target_data_type, array $item_tokens ): bool {
+		if ( 'bit' === $target_data_type ) {
+			return null !== $this->bit_literal_value_sql( $item_tokens );
+		}
+
 		if ( $this->is_character_write_data_type( $target_data_type ) ) {
 			return $this->is_boolean_literal_tokens( $item_tokens ) || null !== $this->binary_literal_write_hex_sql( $item_tokens );
 		}
@@ -14028,6 +14088,26 @@ class WP_DuckDB_Driver {
 			return $this->coerce_blob_write_value_sql( $value_tokens, $value_sql );
 		}
 
+		if ( 'bit' === $data_type ) {
+			$bit_sql = $this->bit_literal_value_sql( $value_tokens );
+			if ( null !== $bit_sql ) {
+				return $bit_sql;
+			}
+
+			if ( ! $this->is_strict_sql_mode_active() ) {
+				$value_sql = $this->coerce_numeric_write_value_sql( $data_type, $value_sql );
+				if (
+					$coalesce_non_strict_not_null
+					&& isset( $metadata['is_nullable'] )
+					&& 'NO' === strtoupper( (string) $metadata['is_nullable'] )
+				) {
+					$value_sql = 'COALESCE(' . $value_sql . ', 0)';
+				}
+			}
+
+			return $value_sql;
+		}
+
 		if ( $this->is_numeric_write_data_type( $data_type ) && ! $this->is_strict_sql_mode_active() ) {
 			$value_sql = $this->coerce_numeric_write_value_sql( $data_type, $value_sql );
 			if (
@@ -14167,6 +14247,8 @@ class WP_DuckDB_Driver {
 	 */
 	private function numeric_write_cast_type( string $data_type ): string {
 		switch ( $data_type ) {
+			case 'bit':
+				return 'BIGINT';
 			case 'tinyint':
 				return 'TINYINT';
 			case 'smallint':
@@ -14188,6 +14270,348 @@ class WP_DuckDB_Driver {
 			default:
 				return 'DOUBLE';
 		}
+	}
+
+	/**
+	 * Return an integer storage literal for a MySQL BIT value token list.
+	 *
+	 * @param WP_Parser_Token[] $value_tokens RHS value tokens.
+	 * @return string|null Integer SQL literal, or null for non-BIT literals.
+	 */
+	private function bit_literal_value_sql( array $value_tokens ): ?string {
+		$literal = $this->bit_literal_sql_and_default_from_tokens( $value_tokens );
+		if ( null === $literal ) {
+			return null;
+		}
+
+		return $literal['sql'];
+	}
+
+	/**
+	 * Return DuckDB storage and MySQL metadata literals for a BIT value token list.
+	 *
+	 * @param WP_Parser_Token[] $value_tokens Value tokens.
+	 * @return array{sql:string,mysql:string|null}|null Literal pair, or null when unsupported.
+	 */
+	private function bit_literal_sql_and_default_from_tokens( array $value_tokens ): ?array {
+		if (
+			2 === count( $value_tokens )
+			&& $this->is_sign_token( $value_tokens[0] )
+			&& $this->is_number_token( $value_tokens[1] )
+		) {
+			if ( WP_MySQL_Lexer::MINUS_OPERATOR === $value_tokens[0]->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Only non-negative integer BIT literals within signed BIGINT range are supported by the DuckDB driver.' );
+			}
+
+			return $this->bit_literal_sql_and_default_from_numeric_string( $value_tokens[1]->get_bytes() );
+		}
+
+		if ( 1 !== count( $value_tokens ) ) {
+			return null;
+		}
+
+		$token = $value_tokens[0];
+		if ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id || WP_MySQL_Lexer::NULL2_SYMBOL === $token->id ) {
+			return array(
+				'sql'   => 'NULL',
+				'mysql' => null,
+			);
+		}
+
+		if ( WP_MySQL_Lexer::TRUE_SYMBOL === $token->id ) {
+			return array(
+				'sql'   => '1',
+				'mysql' => "b'1'",
+			);
+		}
+
+		if ( WP_MySQL_Lexer::FALSE_SYMBOL === $token->id ) {
+			return array(
+				'sql'   => '0',
+				'mysql' => "b'0'",
+			);
+		}
+
+		if ( $this->is_number_token( $token ) ) {
+			return $this->bit_literal_sql_and_default_from_numeric_string( $token->get_bytes() );
+		}
+
+		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+			return $this->bit_literal_sql_and_default_from_numeric_string( $token->get_value() );
+		}
+
+		if ( WP_MySQL_Lexer::BIN_NUMBER === $token->id ) {
+			$bits = $this->bit_literal_bits_from_binary_token( $token );
+			if ( null === $bits ) {
+				return null;
+			}
+			return $this->bit_literal_sql_and_default_from_bits( $bits );
+		}
+
+		if ( WP_MySQL_Lexer::HEX_NUMBER === $token->id ) {
+			$hex = $this->bit_literal_hex_from_hex_token( $token );
+			if ( null === $hex ) {
+				return null;
+			}
+			return $this->bit_literal_sql_and_default_from_hex( $hex );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Return DuckDB storage and MySQL metadata literals for a numeric BIT value.
+	 *
+	 * @param string $value Numeric value.
+	 * @return array{sql:string,mysql:string}|null Literal pair, or null when unsupported.
+	 */
+	private function bit_literal_sql_and_default_from_numeric_string( string $value ): ?array {
+		$value = trim( $value );
+		if ( ! preg_match( '/^\+?\d+\z/', $value ) ) {
+			if ( is_numeric( $value ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Only non-negative integer BIT literals within signed BIGINT range are supported by the DuckDB driver.' );
+			}
+			return null;
+		}
+
+		$decimal = $this->normalize_unsigned_decimal_string( ltrim( $value, '+' ) );
+		$this->assert_bit_decimal_within_signed_bigint( $decimal );
+
+		return $this->bit_literal_sql_and_default_from_decimal_string( $decimal );
+	}
+
+	/**
+	 * Return DuckDB storage and MySQL metadata literals for BIT bits.
+	 *
+	 * @param string $bits Binary digits.
+	 * @return array{sql:string,mysql:string} Literal pair.
+	 */
+	private function bit_literal_sql_and_default_from_bits( string $bits ): array {
+		$normalized = ltrim( $bits, '0' );
+		if ( '' === $normalized ) {
+			$normalized = '0';
+		}
+		if ( strlen( $normalized ) > self::BIT_SIGNED_BIGINT_MAX_BITS ) {
+			throw new WP_DuckDB_Driver_Exception( 'BIT literal exceeds signed BIGINT range in DuckDB driver.' );
+		}
+
+		return array(
+			'sql'   => $this->decimal_string_from_bits( $normalized ),
+			'mysql' => "b'{$normalized}'",
+		);
+	}
+
+	/**
+	 * Return DuckDB storage and MySQL metadata literals for BIT hex digits.
+	 *
+	 * @param string $hex Hex digits.
+	 * @return array{sql:string,mysql:string} Literal pair.
+	 */
+	private function bit_literal_sql_and_default_from_hex( string $hex ): array {
+		$normalized = strtolower( ltrim( $hex, '0' ) );
+		if ( '' === $normalized ) {
+			$normalized = '0';
+		}
+		if (
+			strlen( $normalized ) > strlen( self::BIT_SIGNED_BIGINT_MAX_HEX )
+			|| (
+				strlen( $normalized ) === strlen( self::BIT_SIGNED_BIGINT_MAX_HEX )
+				&& strcmp( $normalized, self::BIT_SIGNED_BIGINT_MAX_HEX ) > 0
+			)
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'BIT literal exceeds signed BIGINT range in DuckDB driver.' );
+		}
+
+		return $this->bit_literal_sql_and_default_from_bits( $this->bits_from_hex_string( $normalized ) );
+	}
+
+	/**
+	 * Return DuckDB storage and MySQL metadata literals for a normalized decimal BIT integer.
+	 *
+	 * @param string $decimal Normalized non-negative decimal value.
+	 * @return array{sql:string,mysql:string} Literal pair.
+	 */
+	private function bit_literal_sql_and_default_from_decimal_string( string $decimal ): array {
+		return array(
+			'sql'   => $decimal,
+			'mysql' => "b'" . $this->bits_from_decimal_string( $decimal ) . "'",
+		);
+	}
+
+	/**
+	 * Normalize unsigned decimal digits.
+	 *
+	 * @param string $decimal Decimal digits.
+	 * @return string Normalized decimal digits.
+	 */
+	private function normalize_unsigned_decimal_string( string $decimal ): string {
+		$normalized = ltrim( $decimal, '0' );
+		return '' === $normalized ? '0' : $normalized;
+	}
+
+	/**
+	 * Assert that a normalized decimal BIT value fits signed BIGINT storage.
+	 *
+	 * @param string $decimal Normalized non-negative decimal value.
+	 */
+	private function assert_bit_decimal_within_signed_bigint( string $decimal ): void {
+		if (
+			strlen( $decimal ) > strlen( self::BIT_SIGNED_BIGINT_MAX_DECIMAL )
+			|| (
+				strlen( $decimal ) === strlen( self::BIT_SIGNED_BIGINT_MAX_DECIMAL )
+				&& strcmp( $decimal, self::BIT_SIGNED_BIGINT_MAX_DECIMAL ) > 0
+			)
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'BIT literal exceeds signed BIGINT range in DuckDB driver.' );
+		}
+	}
+
+	/**
+	 * Convert a bounded bit string to normalized decimal digits.
+	 *
+	 * @param string $bits Binary digits.
+	 * @return string Decimal digits.
+	 */
+	private function decimal_string_from_bits( string $bits ): string {
+		$decimal = '0';
+		for ( $index = 0; $index < strlen( $bits ); ++$index ) {
+			$decimal = $this->decimal_string_double_and_add( $decimal, '1' === $bits[ $index ] ? 1 : 0 );
+		}
+
+		return $decimal;
+	}
+
+	/**
+	 * Convert normalized decimal digits to a bit string.
+	 *
+	 * @param string $decimal Normalized decimal digits.
+	 * @return string Binary digits.
+	 */
+	private function bits_from_decimal_string( string $decimal ): string {
+		if ( '0' === $decimal ) {
+			return '0';
+		}
+
+		$bits = '';
+		while ( '0' !== $decimal ) {
+			list( $decimal, $remainder ) = $this->decimal_string_divide_by_two( $decimal );
+			$bits                        = (string) $remainder . $bits;
+		}
+
+		return $bits;
+	}
+
+	/**
+	 * Convert normalized hex digits to a normalized bit string.
+	 *
+	 * @param string $hex Hex digits.
+	 * @return string Binary digits.
+	 */
+	private function bits_from_hex_string( string $hex ): string {
+		$bits = '';
+		$map  = array(
+			'0' => '0000',
+			'1' => '0001',
+			'2' => '0010',
+			'3' => '0011',
+			'4' => '0100',
+			'5' => '0101',
+			'6' => '0110',
+			'7' => '0111',
+			'8' => '1000',
+			'9' => '1001',
+			'a' => '1010',
+			'b' => '1011',
+			'c' => '1100',
+			'd' => '1101',
+			'e' => '1110',
+			'f' => '1111',
+		);
+
+		for ( $index = 0; $index < strlen( $hex ); ++$index ) {
+			$bits .= $map[ $hex[ $index ] ];
+		}
+
+		$normalized = ltrim( $bits, '0' );
+		return '' === $normalized ? '0' : $normalized;
+	}
+
+	/**
+	 * Double decimal digits and add one binary digit.
+	 *
+	 * @param string $decimal Normalized decimal digits.
+	 * @param int    $add     Either 0 or 1.
+	 * @return string Normalized decimal digits.
+	 */
+	private function decimal_string_double_and_add( string $decimal, int $add ): string {
+		$result = '';
+		$carry  = $add;
+		for ( $index = strlen( $decimal ) - 1; $index >= 0; --$index ) {
+			$value  = ( (int) $decimal[ $index ] * 2 ) + $carry;
+			$result = (string) ( $value % 10 ) . $result;
+			$carry  = intdiv( $value, 10 );
+		}
+		if ( $carry > 0 ) {
+			$result = (string) $carry . $result;
+		}
+
+		return $this->normalize_unsigned_decimal_string( $result );
+	}
+
+	/**
+	 * Divide decimal digits by two.
+	 *
+	 * @param string $decimal Normalized decimal digits.
+	 * @return array{0:string,1:int} Quotient digits and remainder.
+	 */
+	private function decimal_string_divide_by_two( string $decimal ): array {
+		$quotient  = '';
+		$remainder = 0;
+		for ( $index = 0; $index < strlen( $decimal ); ++$index ) {
+			$value     = ( $remainder * 10 ) + (int) $decimal[ $index ];
+			$quotient .= (string) intdiv( $value, 2 );
+			$remainder = $value % 2;
+		}
+
+		return array( $this->normalize_unsigned_decimal_string( $quotient ), $remainder );
+	}
+
+	/**
+	 * Extract bits from a MySQL bit literal token.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return string|null Bit string, or null when unsupported.
+	 */
+	private function bit_literal_bits_from_binary_token( WP_Parser_Token $token ): ?string {
+		$value = $token->get_value();
+		if ( strlen( $value ) >= 2 && '0' === $value[0] && 'b' === strtolower( $value[1] ) ) {
+			$bits = substr( $value, 2 );
+		} elseif ( strlen( $value ) >= 3 && 'b' === strtolower( $value[0] ) && "'" === $value[1] ) {
+			$bits = substr( $value, 2, -1 );
+		} else {
+			return null;
+		}
+
+		return 1 === preg_match( '/\A[01]*\z/', $bits ) ? $bits : null;
+	}
+
+	/**
+	 * Extract hex digits from a MySQL hex literal token.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return string|null Hex string, or null when unsupported.
+	 */
+	private function bit_literal_hex_from_hex_token( WP_Parser_Token $token ): ?string {
+		$value = $token->get_value();
+		if ( strlen( $value ) >= 2 && '0' === $value[0] && 'x' === strtolower( $value[1] ) ) {
+			$hex = substr( $value, 2 );
+		} elseif ( strlen( $value ) >= 3 && 'x' === strtolower( $value[0] ) && "'" === $value[1] ) {
+			$hex = substr( $value, 2, -1 );
+		} else {
+			return null;
+		}
+
+		return 1 === preg_match( '/\A[0-9a-fA-F]*\z/', $hex ) ? $hex : null;
 	}
 
 	/**
@@ -18837,6 +19261,10 @@ class WP_DuckDB_Driver {
 	 * @return array{0:int|null,1:int|null}
 	 */
 	private function numeric_attributes_from_data_type( string $data_type, string $column_type ): array {
+		if ( 'bit' === $data_type ) {
+			return array( $this->column_type_length( $column_type ) ?? 1, null );
+		}
+
 		$precision_map = array(
 			'tinyint'   => 3,
 			'smallint'  => 5,

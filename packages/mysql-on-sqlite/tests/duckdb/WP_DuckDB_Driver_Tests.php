@@ -3721,6 +3721,297 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_bit_type_family_metadata_defaults_and_writes(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE bit_type_family (
+				id INT PRIMARY KEY,
+				plain BIT,
+				flags BIT(4) DEFAULT b'0101',
+				from_hex BIT(8) DEFAULT 0x0a,
+				quoted_zero BIT(1) DEFAULT '0',
+				integer_five BIT(4) DEFAULT 5,
+				truthy BIT(1) DEFAULT TRUE,
+				falsey BIT(1) DEFAULT FALSE
+			)"
+		);
+		$driver->query( "INSERT INTO bit_type_family (id, plain) VALUES (1, b'0011')" );
+		$driver->query(
+			"INSERT INTO bit_type_family
+				(id, plain, flags, from_hex, quoted_zero, integer_five, truthy, falsey)
+			VALUES
+				(2, 0b0100, x'05', 0x06, 1, '7', FALSE, TRUE)"
+		);
+		$driver->query(
+			"INSERT INTO bit_type_family
+				(id, plain, flags, from_hex, quoted_zero, integer_five, truthy, falsey)
+			VALUES
+				(3, '7', 8, b'00001001', 0, 10, TRUE, FALSE)"
+		);
+		$driver->query(
+			"UPDATE bit_type_family
+			SET plain = b'1010',
+				flags = 0x0b,
+				from_hex = 12,
+				truthy = TRUE,
+				falsey = FALSE
+			WHERE id = 3"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'id'           => 1,
+					'plain'        => 3,
+					'flags'        => 5,
+					'from_hex'     => 10,
+					'quoted_zero'  => 0,
+					'integer_five' => 5,
+					'truthy'       => 1,
+					'falsey'       => 0,
+				),
+				array(
+					'id'           => 2,
+					'plain'        => 4,
+					'flags'        => 5,
+					'from_hex'     => 6,
+					'quoted_zero'  => 1,
+					'integer_five' => 7,
+					'truthy'       => 0,
+					'falsey'       => 1,
+				),
+				array(
+					'id'           => 3,
+					'plain'        => 10,
+					'flags'        => 11,
+					'from_hex'     => 12,
+					'quoted_zero'  => 0,
+					'integer_five' => 10,
+					'truthy'       => 1,
+					'falsey'       => 0,
+				),
+			),
+			$driver->query(
+				'SELECT id, plain, flags, from_hex, quoted_zero, integer_five, truthy, falsey
+				FROM bit_type_family
+				ORDER BY id'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$show_columns = array_column(
+			$driver->query( 'SHOW COLUMNS FROM bit_type_family' )->fetchAll( PDO::FETCH_ASSOC ),
+			null,
+			'Field'
+		);
+		$this->assertSame( 'bit(1)', $show_columns['plain']['Type'] );
+		$this->assertSame( 'bit(4)', $show_columns['flags']['Type'] );
+		$this->assertSame( 'bit(8)', $show_columns['from_hex']['Type'] );
+		$this->assertNull( $show_columns['plain']['Default'] );
+		$this->assertSame( "b'101'", $show_columns['flags']['Default'] );
+		$this->assertSame( "b'1010'", $show_columns['from_hex']['Default'] );
+		$this->assertSame( "b'0'", $show_columns['quoted_zero']['Default'] );
+		$this->assertSame( "b'101'", $show_columns['integer_five']['Default'] );
+		$this->assertSame( "b'1'", $show_columns['truthy']['Default'] );
+		$this->assertSame( "b'0'", $show_columns['falsey']['Default'] );
+		$this->assertSame(
+			$driver->query( 'SHOW COLUMNS FROM bit_type_family' )->fetchAll( PDO::FETCH_ASSOC ),
+			$driver->query( 'DESCRIBE bit_type_family' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'        => 'plain',
+					'COLUMN_DEFAULT'     => null,
+					'DATA_TYPE'          => 'bit',
+					'NUMERIC_PRECISION'  => 1,
+					'NUMERIC_SCALE'      => null,
+					'CHARACTER_SET_NAME' => null,
+					'COLLATION_NAME'     => null,
+					'COLUMN_TYPE'        => 'bit(1)',
+				),
+				array(
+					'COLUMN_NAME'        => 'flags',
+					'COLUMN_DEFAULT'     => "b'101'",
+					'DATA_TYPE'          => 'bit',
+					'NUMERIC_PRECISION'  => 4,
+					'NUMERIC_SCALE'      => null,
+					'CHARACTER_SET_NAME' => null,
+					'COLLATION_NAME'     => null,
+					'COLUMN_TYPE'        => 'bit(4)',
+				),
+				array(
+					'COLUMN_NAME'        => 'from_hex',
+					'COLUMN_DEFAULT'     => "b'1010'",
+					'DATA_TYPE'          => 'bit',
+					'NUMERIC_PRECISION'  => 8,
+					'NUMERIC_SCALE'      => null,
+					'CHARACTER_SET_NAME' => null,
+					'COLLATION_NAME'     => null,
+					'COLUMN_TYPE'        => 'bit(8)',
+				),
+				array(
+					'COLUMN_NAME'        => 'quoted_zero',
+					'COLUMN_DEFAULT'     => "b'0'",
+					'DATA_TYPE'          => 'bit',
+					'NUMERIC_PRECISION'  => 1,
+					'NUMERIC_SCALE'      => null,
+					'CHARACTER_SET_NAME' => null,
+					'COLLATION_NAME'     => null,
+					'COLUMN_TYPE'        => 'bit(1)',
+				),
+				array(
+					'COLUMN_NAME'        => 'integer_five',
+					'COLUMN_DEFAULT'     => "b'101'",
+					'DATA_TYPE'          => 'bit',
+					'NUMERIC_PRECISION'  => 4,
+					'NUMERIC_SCALE'      => null,
+					'CHARACTER_SET_NAME' => null,
+					'COLLATION_NAME'     => null,
+					'COLUMN_TYPE'        => 'bit(4)',
+				),
+				array(
+					'COLUMN_NAME'        => 'truthy',
+					'COLUMN_DEFAULT'     => "b'1'",
+					'DATA_TYPE'          => 'bit',
+					'NUMERIC_PRECISION'  => 1,
+					'NUMERIC_SCALE'      => null,
+					'CHARACTER_SET_NAME' => null,
+					'COLLATION_NAME'     => null,
+					'COLUMN_TYPE'        => 'bit(1)',
+				),
+				array(
+					'COLUMN_NAME'        => 'falsey',
+					'COLUMN_DEFAULT'     => "b'0'",
+					'DATA_TYPE'          => 'bit',
+					'NUMERIC_PRECISION'  => 1,
+					'NUMERIC_SCALE'      => null,
+					'CHARACTER_SET_NAME' => null,
+					'COLLATION_NAME'     => null,
+					'COLUMN_TYPE'        => 'bit(1)',
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, COLUMN_DEFAULT, DATA_TYPE, NUMERIC_PRECISION,
+					NUMERIC_SCALE, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+				FROM information_schema.columns
+				WHERE table_schema = 'wp'
+					AND table_name = 'bit_type_family'
+					AND column_name <> 'id'
+				ORDER BY ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$result            = $driver->query( 'SELECT plain, flags FROM bit_type_family WHERE 0 = 1' );
+		$expected_metadata = array(
+			array(
+				'name'             => 'plain',
+				'native_type'      => 'BIT',
+				'len'              => 1,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'bit(1)',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 16,
+			),
+			array(
+				'name'             => 'flags',
+				'native_type'      => 'BIT',
+				'len'              => 1,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'bit(4)',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 16,
+			),
+		);
+		foreach ( $expected_metadata as $index => $expected ) {
+			$metadata = $result->getColumnMeta( $index );
+			foreach ( $expected as $key => $value ) {
+				$this->assertSame( $value, $metadata[ $key ], $expected['name'] . ' metadata key ' . $key );
+			}
+		}
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE bit_type_family' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		foreach (
+			array(
+				'`plain` bit(1) DEFAULT NULL',
+				"`flags` bit(4) DEFAULT b'101'",
+				"`from_hex` bit(8) DEFAULT b'1010'",
+				"`quoted_zero` bit(1) DEFAULT b'0'",
+				"`integer_five` bit(4) DEFAULT b'101'",
+				"`truthy` bit(1) DEFAULT b'1'",
+				"`falsey` bit(1) DEFAULT b'0'",
+			) as $expected_fragment
+		) {
+			$this->assertStringContainsString( $expected_fragment, $create_sql );
+		}
+	}
+
+	public function test_bit_type_family_rejects_out_of_range_literals_without_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$max_bits       = str_repeat( '1', 63 );
+		$too_large_bits = str_repeat( '1', 64 );
+		$driver->query( "CREATE TABLE bit_boundary (id INT PRIMARY KEY, value BIT(63) DEFAULT b'{$max_bits}')" );
+		$driver->query( 'INSERT INTO bit_boundary (id, value) VALUES (1, 0x7fffffffffffffff)' );
+		$row = $driver->query( 'SELECT value FROM bit_boundary' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( '9223372036854775807', (string) $row['value'] );
+
+		try {
+			$driver->query( "CREATE TABLE bit_default_overflow (value BIT(64) DEFAULT b'{$too_large_bits}')" );
+			$this->fail( 'Expected oversized BIT default to be rejected.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'BIT literal exceeds signed BIGINT range', $e->getMessage() );
+		}
+		$this->assertSame(
+			array(),
+			$driver->query( "SHOW TABLES LIKE 'bit_default_overflow'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'CREATE TABLE bit_write_overflow (id INT PRIMARY KEY, value BIT)' );
+		$driver->query( "INSERT INTO bit_write_overflow (id, value) VALUES (1, b'101')" );
+
+		foreach (
+			array(
+				"INSERT INTO bit_write_overflow (id, value) VALUES (2, 1), (3, b'{$too_large_bits}')",
+				'INSERT INTO bit_write_overflow (id, value) VALUES (2, 9223372036854775808)',
+				'INSERT INTO bit_write_overflow (id, value) VALUES (2, +9223372036854775808)',
+				"INSERT INTO bit_write_overflow (id, value) VALUES (2, '9223372036854775808')",
+				'UPDATE bit_write_overflow SET value = 0x8000000000000000 WHERE id = 1',
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected oversized BIT write to be rejected for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( 'BIT literal exceeds signed BIGINT range', $e->getMessage() );
+			}
+
+			$this->assertSame(
+				array(
+					array(
+						'id'    => 1,
+						'value' => 5,
+					),
+				),
+				$driver->query( 'SELECT id, value FROM bit_write_overflow ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
+	}
+
 	public function test_expression_and_admin_result_metadata_provider_documents_name_only_contract(): void {
 		$this->requireDuckDBRuntime();
 

@@ -3289,6 +3289,58 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_bit_type_family_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE bit_type_family (
+					id INT PRIMARY KEY,
+					plain BIT,
+					flags BIT(4) DEFAULT b'0101',
+					from_hex BIT(8) DEFAULT 0x0a,
+					quoted_zero BIT(1) DEFAULT '0',
+					integer_five BIT(4) DEFAULT 5,
+					truthy BIT(1) DEFAULT TRUE,
+					falsey BIT(1) DEFAULT FALSE
+				)",
+				'INSERT INTO bit_type_family (id, plain) VALUES (1, 3)',
+				"INSERT INTO bit_type_family
+					(id, plain, flags, from_hex, quoted_zero, integer_five, truthy, falsey)
+				VALUES
+					(2, 4, 5, 6, 1, '7', FALSE, TRUE)",
+				"INSERT INTO bit_type_family
+					(id, plain, flags, from_hex, quoted_zero, integer_five, truthy, falsey)
+				VALUES
+					(3, '7', 8, 9, 0, 10, TRUE, FALSE)",
+				'UPDATE bit_type_family
+				SET plain = 10,
+					flags = 11,
+					from_hex = 12,
+					truthy = TRUE,
+					falsey = FALSE
+				WHERE id = 3',
+			)
+		);
+
+		$this->assertParityRows( 'SHOW COLUMNS FROM bit_type_family' );
+		$this->assertParityRows( 'SHOW FULL COLUMNS FROM bit_type_family' );
+		$this->assertParityRows( 'DESCRIBE bit_type_family' );
+		$this->assertParityRows( 'SHOW CREATE TABLE bit_type_family' );
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, COLUMN_DEFAULT, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+				CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
+				CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name = 'bit_type_family'
+			ORDER BY ordinal_position"
+		);
+		$this->assertParityRows(
+			'SELECT id, plain, flags, from_hex, quoted_zero, integer_five, truthy, falsey
+			FROM bit_type_family
+			ORDER BY id'
+		);
+	}
+
 	public function test_information_schema_statistics_metadata_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
