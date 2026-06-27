@@ -649,35 +649,98 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 	public function test_savepoint_sql_is_rejected_without_mutating_active_transaction(): void {
 		$this->requireDuckDBRuntime();
 
-		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
-		$driver->query( 'CREATE TABLE tx_savepoint_state (id INT)' );
-
-		$driver->query( 'BEGIN' );
-		$driver->query( 'INSERT INTO tx_savepoint_state (id) VALUES (1)' );
-
 		foreach (
 			array(
-				'SAVEPOINT sp1',
-				'ROLLBACK TO sp1',
-				'ROLLBACK TO SAVEPOINT sp1',
-				'RELEASE SAVEPOINT sp1',
-			) as $sql
+				array(
+					'sql'     => 'SAVEPOINT sp1',
+					'message' => 'Unsupported DuckDB MySQL-emulation statement: SAVEPOINT.',
+					'finish'  => 'COMMIT',
+				),
+				array(
+					'sql'     => 'ROLLBACK TO sp1',
+					'message' => 'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.',
+					'finish'  => 'ROLLBACK',
+				),
+				array(
+					'sql'     => 'ROLLBACK TO SAVEPOINT sp1',
+					'message' => 'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.',
+					'finish'  => 'COMMIT',
+				),
+				array(
+					'sql'     => 'ROLLBACK WORK TO sp1',
+					'message' => 'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.',
+					'finish'  => 'ROLLBACK',
+				),
+				array(
+					'sql'     => 'ROLLBACK WORK TO SAVEPOINT sp1',
+					'message' => 'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.',
+					'finish'  => 'COMMIT',
+				),
+				array(
+					'sql'     => 'RELEASE SAVEPOINT sp1',
+					'message' => 'Unsupported DuckDB MySQL-emulation statement: RELEASE.',
+					'finish'  => 'ROLLBACK',
+				),
+			) as $case
 		) {
-			$this->assertDriverQueryRejected( $driver, $sql );
+			$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+			$driver->query( 'CREATE TABLE tx_savepoint_state (id INT)' );
+
+			$driver->query( 'BEGIN' );
+			$driver->query( 'INSERT INTO tx_savepoint_state (id) VALUES (1)' );
+
+			$this->assertDriverQueryRejected( $driver, $case['sql'], $case['message'] );
 			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 			$this->assertTrue( $driver->get_connection()->inTransaction() );
 			$this->assertSame(
 				array( array( 'id' => 1 ) ),
 				$driver->query( 'SELECT id FROM tx_savepoint_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 			);
-		}
 
-		$driver->query( 'ROLLBACK' );
-		$this->assertFalse( $driver->get_connection()->inTransaction() );
-		$this->assertSame(
-			array(),
-			$driver->query( 'SELECT id FROM tx_savepoint_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
-		);
+			$driver->query( 'INSERT INTO tx_savepoint_state (id) VALUES (2)' );
+			$this->assertTrue( $driver->get_connection()->inTransaction() );
+			$this->assertSame(
+				array(
+					array( 'id' => 1 ),
+					array( 'id' => 2 ),
+				),
+				$driver->query( 'SELECT id FROM tx_savepoint_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$this->assertDriverQueryRejected(
+				$driver,
+				'ALTER TABLE tx_savepoint_state ADD PRIMARY KEY (id)',
+				'ADD PRIMARY KEY cannot run inside an active DuckDB transaction'
+			);
+			foreach ( $driver->get_last_duckdb_queries() as $duckdb_sql ) {
+				$this->assertStringNotContainsString( 'ALTER TABLE', $duckdb_sql );
+				$this->assertStringNotContainsString( 'ADD PRIMARY KEY', $duckdb_sql );
+				$this->assertStringNotContainsString( 'COMMIT', $duckdb_sql );
+				$this->assertStringNotContainsString( 'ROLLBACK', $duckdb_sql );
+			}
+			$this->assertTrue( $driver->get_connection()->inTransaction() );
+			$this->assertSame( '', $driver->query( 'DESCRIBE tx_savepoint_state' )->fetch( PDO::FETCH_ASSOC )['Key'] );
+			$driver->query( 'INSERT INTO tx_savepoint_state (id) VALUES (3)' );
+			$this->assertTrue( $driver->get_connection()->inTransaction() );
+
+			$driver->query( $case['finish'] );
+			$this->assertFalse( $driver->get_connection()->inTransaction() );
+			if ( 'COMMIT' === $case['finish'] ) {
+				$this->assertSame(
+					array(
+						array( 'id' => 1 ),
+						array( 'id' => 2 ),
+						array( 'id' => 3 ),
+					),
+					$driver->query( 'SELECT id FROM tx_savepoint_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+				);
+			} else {
+				$this->assertSame(
+					array(),
+					$driver->query( 'SELECT id FROM tx_savepoint_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+				);
+			}
+		}
 	}
 
 	public function test_session_boolean_variables_are_emulated(): void {
@@ -8435,12 +8498,15 @@ SQL,
 		);
 	}
 
-	private function assertDriverQueryRejected( WP_DuckDB_Driver $driver, string $sql ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+	private function assertDriverQueryRejected( WP_DuckDB_Driver $driver, string $sql, string $message_substring = '' ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 		try {
 			$driver->query( $sql );
 			$this->fail( 'Expected DuckDB driver rejection for SQL: ' . $sql );
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
 			$this->assertNotSame( '', $e->getMessage() );
+			if ( '' !== $message_substring ) {
+				$this->assertStringContainsString( $message_substring, $e->getMessage() );
+			}
 		}
 	}
 
