@@ -88,6 +88,7 @@ class WP_DuckDB_Driver {
 		WP_MySQL_Lexer::TINYTEXT_SYMBOL   => 'VARCHAR',
 		WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL => 'VARCHAR',
 		WP_MySQL_Lexer::LONGTEXT_SYMBOL   => 'VARCHAR',
+		WP_MySQL_Lexer::JSON_SYMBOL       => 'VARCHAR',
 		WP_MySQL_Lexer::DATE_SYMBOL       => 'VARCHAR',
 		WP_MySQL_Lexer::TIME_SYMBOL       => 'VARCHAR',
 		WP_MySQL_Lexer::DATETIME_SYMBOL   => 'VARCHAR',
@@ -1440,6 +1441,10 @@ class WP_DuckDB_Driver {
 	 * @return int MySQLi charset number.
 	 */
 	private function mysql_result_column_charsetnr( string $data_type, $collation_name ): int {
+		if ( 'json' === $data_type ) {
+			return 255;
+		}
+
 		$charset = $this->character_set_from_collation( $collation_name );
 		if (
 			null !== $charset
@@ -14385,7 +14390,7 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the type is character-backed.
 	 */
 	private function is_character_write_data_type( string $data_type ): bool {
-		return in_array( $data_type, array( 'char', 'varchar', 'text', 'tinytext', 'mediumtext', 'longtext' ), true );
+		return in_array( $data_type, array( 'char', 'varchar', 'text', 'tinytext', 'mediumtext', 'longtext', 'json' ), true );
 	}
 
 	/**

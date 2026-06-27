@@ -3856,6 +3856,101 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertFalse( $result->getColumnMeta( 13 ) );
 	}
 
+	public function test_json_column_storage_and_direct_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query(
+			"CREATE TABLE json_type_metadata (
+				id INT PRIMARY KEY,
+				data JSON,
+				required JSON NOT NULL DEFAULT 'null'
+			)"
+		);
+		$driver->query( "INSERT INTO json_type_metadata (id, data, required) VALUES (1, '{\"a\":1}', '{\"required\":true}')" );
+		$driver->query( 'INSERT INTO json_type_metadata (id, data) VALUES (2, TRUE)' );
+		$driver->query( 'INSERT INTO json_type_metadata (id, data) VALUES (3, 0x62)' );
+		$driver->query( "INSERT INTO json_type_metadata (id, data) VALUES (4, x'63')" );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'       => 1,
+					'data'     => '{"a":1}',
+					'required' => '{"required":true}',
+				),
+				array(
+					'id'       => 2,
+					'data'     => '1',
+					'required' => 'null',
+				),
+				array(
+					'id'       => 3,
+					'data'     => 'b',
+					'required' => 'null',
+				),
+				array(
+					'id'       => 4,
+					'data'     => 'c',
+					'required' => 'null',
+				),
+			),
+			$driver->query( 'SELECT id, data, required FROM json_type_metadata ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$result   = $driver->query( 'SELECT data FROM json_type_metadata WHERE id = 1' );
+		$metadata = $result->getColumnMeta( 0 );
+		$this->assertSame( array( array( 'data' => '{"a":1}' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+
+		$expected = array(
+			'native_type'      => 'BLOB',
+			'table'            => 'json_type_metadata',
+			'name'             => 'data',
+			'len'              => 4294967295,
+			'precision'        => 0,
+			'duckdb:decl_type' => 'json',
+			'mysqli:orgname'   => 'data',
+			'mysqli:orgtable'  => 'json_type_metadata',
+			'mysqli:db'        => 'wp',
+			'mysqli:charsetnr' => 255,
+			'mysqli:type'      => 245,
+		);
+
+		foreach ( $expected as $key => $value ) {
+			$this->assertArrayHasKey( $key, $metadata );
+			$this->assertSame( $value, $metadata[ $key ], 'JSON metadata key ' . $key );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'              => 'data',
+					'DATA_TYPE'                => 'json',
+					'CHARACTER_MAXIMUM_LENGTH' => null,
+					'CHARACTER_OCTET_LENGTH'   => null,
+					'CHARACTER_SET_NAME'       => null,
+					'COLLATION_NAME'           => null,
+					'COLUMN_TYPE'              => 'json',
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+					CHARACTER_OCTET_LENGTH, CHARACTER_SET_NAME, COLLATION_NAME,
+					COLUMN_TYPE
+				FROM information_schema.columns
+				WHERE table_schema = 'wp'
+					AND table_name = 'json_type_metadata'
+					AND column_name = 'data'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_type_default_charset_metadata_rows_for_supported_mysql_types(): void {
 		$this->requireDuckDBRuntime();
 

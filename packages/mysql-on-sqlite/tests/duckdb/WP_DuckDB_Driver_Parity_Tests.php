@@ -3425,6 +3425,39 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_json_type_family_storage_and_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE json_type_family (
+					id INT PRIMARY KEY,
+					data JSON,
+					required JSON NOT NULL DEFAULT 'null'
+				)",
+			)
+		);
+
+		$this->assertParityRowCount( "INSERT INTO json_type_family (id, data, required) VALUES (1, '{\"a\":1}', '{\"required\":true}')" );
+		$this->assertParityRowCount( 'INSERT INTO json_type_family (id, data) VALUES (2, TRUE)' );
+		$this->assertParityRowCount( 'INSERT INTO json_type_family (id, data) VALUES (3, 0x62)' );
+		$this->assertParityRowCount( "INSERT INTO json_type_family (id, data) VALUES (4, x'63')" );
+		$this->assertParityRowCount( 'INSERT INTO json_type_family (id) VALUES (5)' );
+		$this->assertParityRowCount( 'UPDATE json_type_family SET data = 123.456 WHERE id = 5' );
+
+		$this->assertParityRows( 'SELECT id, data, required FROM json_type_family ORDER BY id' );
+		$this->assertParityRows( 'SHOW COLUMNS FROM json_type_family' );
+		$this->assertParityRows( 'SHOW FULL COLUMNS FROM json_type_family' );
+		$this->assertParityRows( 'SHOW CREATE TABLE json_type_family' );
+		$this->assertParityRows(
+			"SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH,
+				CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
+				CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name = 'json_type_family'
+			ORDER BY ordinal_position"
+		);
+	}
+
 	public function test_national_character_type_family_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
