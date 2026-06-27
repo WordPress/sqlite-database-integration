@@ -11884,8 +11884,10 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_insert_select_with_temporal_coercion( array $tokens, int $table_index, int $select_index, bool $ignore ): WP_DuckDB_Result_Statement {
-		$shape = $this->parse_insert_select_target_shape( $tokens, $table_index, $select_index );
-		if ( ! $this->insert_select_shape_requires_temporal_coercion( $shape ) ) {
+		$shape                = $this->parse_insert_select_target_shape( $tokens, $table_index, $select_index );
+		$text_blob_write_plan = $this->insert_select_text_blob_coercion_plan( $shape );
+		$requires_write_stage = $this->insert_select_shape_requires_temporal_coercion( $shape ) || null !== $text_blob_write_plan;
+		if ( ! $requires_write_stage ) {
 			return $this->execute_auto_increment_write(
 				$shape['requested_table_name'],
 				$this->translate_insert_select_tokens_to_duckdb_sql( $tokens, $table_index, $ignore ),
@@ -11895,11 +11897,19 @@ class WP_DuckDB_Driver {
 			);
 		}
 
-		$source_sql = $this->translate_tokens_to_duckdb_sql( $shape['source_tokens'] );
+		$source_sql = null === $text_blob_write_plan
+			? $this->translate_tokens_to_duckdb_sql( $shape['source_tokens'] )
+			: $text_blob_write_plan['source_sql'];
 		$stage      = $this->create_select_write_stage( $source_sql, 'insert_select_src' );
 
 		try {
-			$projection = $this->build_insert_select_projection( $shape, $stage['columns'], true, 'INSERT' );
+			$projection = $this->build_insert_select_projection(
+				$shape,
+				$stage['columns'],
+				true,
+				'INSERT',
+				null === $text_blob_write_plan ? array() : $text_blob_write_plan['precoerced_offsets']
+			);
 			$this->validate_staged_temporal_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB INSERT SELECT values' );
 
 			return $this->execute_auto_increment_write(
@@ -11938,8 +11948,12 @@ class WP_DuckDB_Driver {
 		$unique_sets              = $this->unique_key_column_sets( $shape['table_name'], $shape['temporary'] );
 		$case_insensitive_columns = $this->case_insensitive_column_names( $shape['table_name'], $shape['temporary'] );
 		$manual_conflicts         = $this->replace_select_requires_manual_conflict_handling( $unique_sets, $case_insensitive_columns );
+		$text_blob_write_plan     = $this->insert_select_text_blob_coercion_plan( $shape );
+		$requires_write_stage     = $manual_conflicts
+			|| $this->insert_select_shape_requires_temporal_coercion( $shape )
+			|| null !== $text_blob_write_plan;
 
-		if ( ! $manual_conflicts && ! $this->insert_select_shape_requires_temporal_coercion( $shape ) ) {
+		if ( ! $requires_write_stage ) {
 			return $this->execute_auto_increment_write(
 				$shape['requested_table_name'],
 				$this->translate_replace_tokens_to_duckdb_sql( $tokens ),
@@ -11949,12 +11963,20 @@ class WP_DuckDB_Driver {
 			);
 		}
 
-		$source_sql  = $this->translate_tokens_to_duckdb_sql( $shape['source_tokens'] );
+		$source_sql  = null === $text_blob_write_plan
+			? $this->translate_tokens_to_duckdb_sql( $shape['source_tokens'] )
+			: $text_blob_write_plan['source_sql'];
 		$stage       = $this->create_select_write_stage( $source_sql, 'replace_select_src' );
 		$write_stage = null;
 
 		try {
-			$projection = $this->build_insert_select_projection( $shape, $stage['columns'], true, 'REPLACE' );
+			$projection = $this->build_insert_select_projection(
+				$shape,
+				$stage['columns'],
+				true,
+				'REPLACE',
+				null === $text_blob_write_plan ? array() : $text_blob_write_plan['precoerced_offsets']
+			);
 			$this->validate_staged_temporal_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB REPLACE SELECT values' );
 
 			if ( $manual_conflicts ) {
@@ -11999,6 +12021,267 @@ class WP_DuckDB_Driver {
 			}
 			$this->drop_select_write_stage( $stage['table_name'] );
 		}
+	}
+
+	/**
+	 * Build a narrow literal coercion plan for INSERT/REPLACE ... SELECT text/blob targets.
+	 *
+	 * @param array{target_columns:string[],target_metadata:array<int,array<string,mixed>>,source_tokens:array<int,WP_Parser_Token>} $shape Target shape.
+	 * @return array{source_sql:string,precoerced_offsets:array<int,bool>}|null Coercion plan, or null when outside the supported slice.
+	 */
+	private function insert_select_text_blob_coercion_plan( array $shape ): ?array {
+		$select_items = $this->simple_insert_select_items( $shape['source_tokens'] );
+		if ( null === $select_items || count( $select_items ) !== count( $shape['target_columns'] ) ) {
+			return null;
+		}
+
+		$precoerced_offsets = array();
+		$stage_items        = array();
+		foreach ( $select_items as $offset => $item_tokens ) {
+			$source_sql = $this->translate_tokens_to_duckdb_sql( $item_tokens );
+			$metadata   = $shape['target_metadata'][ $offset ];
+			if ( $this->select_item_requires_text_blob_write_coercion( $this->mysql_column_data_type( $metadata ), $item_tokens ) ) {
+				$source_sql                    = $this->coerce_write_value_for_column_sql( $metadata, $item_tokens, $source_sql, true );
+				$precoerced_offsets[ $offset ] = true;
+			}
+
+			$stage_items[] = $source_sql
+				. ' AS '
+				. $this->connection->quote_identifier( $this->insert_select_write_stage_column_name( $offset ) );
+		}
+
+		if ( count( $precoerced_offsets ) === 0 ) {
+			return null;
+		}
+
+		$list_end = $this->top_level_select_list_end( $shape['source_tokens'] );
+		$tail_sql = $this->translate_tokens_to_duckdb_sql( array_slice( $shape['source_tokens'], $list_end ) );
+
+		return array(
+			'source_sql'         => 'SELECT ' . implode( ', ', $stage_items ) . ( '' === $tail_sql ? '' : ' ' . $tail_sql ),
+			'precoerced_offsets' => $precoerced_offsets,
+		);
+	}
+
+	/**
+	 * Return expression token lists for a simple single-block SELECT.
+	 *
+	 * @param WP_Parser_Token[] $source_tokens SELECT tokens.
+	 * @return array<int,array<int,WP_Parser_Token>>|null Expression tokens, or null when outside the supported slice.
+	 */
+	private function simple_insert_select_items( array $source_tokens ): ?array {
+		if ( ! isset( $source_tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $source_tokens[0]->id ) {
+			return null;
+		}
+		if ( $this->insert_select_has_top_level_set_operator( $source_tokens ) ) {
+			return null;
+		}
+		if ( isset( $source_tokens[1] ) && $this->is_unsupported_simple_insert_select_option( $source_tokens[1] ) ) {
+			return null;
+		}
+
+		$list_end = $this->top_level_select_list_end( $source_tokens );
+		if ( $list_end <= 1 ) {
+			return null;
+		}
+
+		$items = array();
+		foreach ( $this->split_top_level_select_item_ranges( $source_tokens, 1, $list_end ) as $range ) {
+			if ( $this->select_item_is_wildcard( $range['tokens'] ) ) {
+				return null;
+			}
+
+			$item_tokens = $this->strip_simple_select_item_alias( $range['tokens'] );
+			if ( null === $item_tokens || count( $item_tokens ) === 0 ) {
+				return null;
+			}
+
+			$items[] = $item_tokens;
+		}
+
+		return count( $items ) > 0 ? $items : null;
+	}
+
+	/**
+	 * Check whether a SELECT token stream contains a top-level set operator.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @return bool Whether a set operator is present.
+	 */
+	private function insert_select_has_top_level_set_operator( array $tokens ): bool {
+		return $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::UNION_SYMBOL )
+			|| $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::INTERSECT_SYMBOL )
+			|| $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::EXCEPT_SYMBOL );
+	}
+
+	/**
+	 * Check whether a SELECT option keeps this statement outside the narrow literal slice.
+	 *
+	 * @param WP_Parser_Token $token Token after SELECT.
+	 * @return bool Whether the option is unsupported.
+	 */
+	private function is_unsupported_simple_insert_select_option( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::ALL_SYMBOL,
+				WP_MySQL_Lexer::DISTINCT_SYMBOL,
+				WP_MySQL_Lexer::DISTINCTROW_SYMBOL,
+				WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL,
+				WP_MySQL_Lexer::SQL_BIG_RESULT_SYMBOL,
+				WP_MySQL_Lexer::SQL_BUFFER_RESULT_SYMBOL,
+				WP_MySQL_Lexer::SQL_CACHE_SYMBOL,
+				WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL,
+				WP_MySQL_Lexer::SQL_NO_CACHE_SYMBOL,
+				WP_MySQL_Lexer::SQL_SMALL_RESULT_SYMBOL,
+				WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Strip a supported explicit SELECT-list alias.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return array<int,WP_Parser_Token>|null Expression tokens, or null for unsupported alias shape.
+	 */
+	private function strip_simple_select_item_alias( array $tokens ): ?array {
+		$as_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::AS_SYMBOL );
+		if ( null === $as_index ) {
+			if ( $this->select_item_has_implicit_alias( $tokens ) ) {
+				return null;
+			}
+			return $tokens;
+		}
+
+		if ( 0 === $as_index || count( $tokens ) !== $as_index + 2 ) {
+			return null;
+		}
+
+		$this->identifier_value( $tokens[ $as_index + 1 ] );
+		return array_slice( $tokens, 0, $as_index );
+	}
+
+	/**
+	 * Check whether a SELECT item appears to have an unsupported implicit alias.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return bool Whether the item has an implicit alias.
+	 */
+	private function select_item_has_implicit_alias( array $tokens ): bool {
+		if ( count( $tokens ) < 2 ) {
+			return false;
+		}
+
+		$last_token = $tokens[ count( $tokens ) - 1 ];
+		if ( ! $this->is_unquoted_or_backtick_identifier_token( $last_token ) ) {
+			return false;
+		}
+
+		return ! $this->is_qualified_identifier_tokens( $tokens );
+	}
+
+	/**
+	 * Check whether a token can serve as a simple identifier.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token is an identifier.
+	 */
+	private function is_unquoted_or_backtick_identifier_token( WP_Parser_Token $token ): bool {
+		return WP_MySQL_Lexer::IDENTIFIER === $token->id || WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id;
+	}
+
+	/**
+	 * Check whether tokens are a simple qualified identifier path.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return bool Whether tokens are an identifier path.
+	 */
+	private function is_qualified_identifier_tokens( array $tokens ): bool {
+		foreach ( $tokens as $offset => $token ) {
+			if ( 0 === $offset % 2 ) {
+				if ( ! $this->is_unquoted_or_backtick_identifier_token( $token ) ) {
+					return false;
+				}
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::DOT_SYMBOL !== $token->id ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether a target SELECT item needs token-aware text/blob write coercion.
+	 *
+	 * @param string            $target_data_type MySQL target data type.
+	 * @param WP_Parser_Token[] $item_tokens      SELECT item expression tokens.
+	 * @return bool Whether token-aware coercion is needed.
+	 */
+	private function select_item_requires_text_blob_write_coercion( string $target_data_type, array $item_tokens ): bool {
+		if ( $this->is_character_write_data_type( $target_data_type ) ) {
+			return $this->is_boolean_literal_tokens( $item_tokens ) || null !== $this->binary_literal_write_hex_sql( $item_tokens );
+		}
+
+		if ( ! $this->is_blob_write_data_type( $target_data_type ) ) {
+			return false;
+		}
+
+		return $this->is_boolean_literal_tokens( $item_tokens )
+			|| null !== $this->binary_literal_write_hex_sql( $item_tokens )
+			|| $this->is_string_literal_tokens( $item_tokens )
+			|| $this->is_signed_or_unsigned_number_literal_tokens( $item_tokens );
+	}
+
+	/**
+	 * Check whether tokens are TRUE or FALSE.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return bool Whether tokens are a boolean literal.
+	 */
+	private function is_boolean_literal_tokens( array $tokens ): bool {
+		return 1 === count( $tokens )
+			&& ( WP_MySQL_Lexer::TRUE_SYMBOL === $tokens[0]->id || WP_MySQL_Lexer::FALSE_SYMBOL === $tokens[0]->id );
+	}
+
+	/**
+	 * Check whether tokens are a string literal.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return bool Whether tokens are a quoted string literal.
+	 */
+	private function is_string_literal_tokens( array $tokens ): bool {
+		return 1 === count( $tokens )
+			&& ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $tokens[0]->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[0]->id );
+	}
+
+	/**
+	 * Check whether tokens are an unsigned or signed number literal.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return bool Whether tokens are a number literal.
+	 */
+	private function is_signed_or_unsigned_number_literal_tokens( array $tokens ): bool {
+		return ( 1 === count( $tokens ) && $this->is_number_token( $tokens[0] ) )
+			|| (
+				2 === count( $tokens )
+				&& $this->is_sign_token( $tokens[0] )
+				&& $this->is_number_token( $tokens[1] )
+			);
+	}
+
+	/**
+	 * Return the generated source stage column name for an INSERT/REPLACE SELECT offset.
+	 *
+	 * @param int $offset SELECT-list offset.
+	 * @return string Stage column name.
+	 */
+	private function insert_select_write_stage_column_name( int $offset ): string {
+		return '__wp_write_' . $offset;
 	}
 
 	/**
@@ -12397,12 +12680,13 @@ class WP_DuckDB_Driver {
 	 * Build INSERT/REPLACE SELECT target columns, source projections, and validations.
 	 *
 	 * @param array{target_columns:string[],target_metadata:array<int,array<string,mixed>>,omitted_defaults:array<int,array{column_name:string,value_sql:string,data_type:string}>} $shape Target shape.
-	 * @param string[] $stage_columns Ordered staged SELECT output columns.
-	 * @param bool     $coalesce_select_nulls Whether non-strict temporal NOT NULL NULLs should become implicit defaults.
-	 * @param string   $statement Statement name for errors.
+	 * @param string[]        $stage_columns       Ordered staged SELECT output columns.
+	 * @param bool            $coalesce_select_nulls Whether non-strict temporal NOT NULL NULLs should become implicit defaults.
+	 * @param string          $statement           Statement name for errors.
+	 * @param array<int,bool> $precoerced_offsets  SELECT offsets already coerced for storage in the stage.
 	 * @return array{columns:string[],expressions:string[],validations:array<int,array{data_type:string,invalid_display_sql:string}>}
 	 */
-	private function build_insert_select_projection( array $shape, array $stage_columns, bool $coalesce_select_nulls, string $statement ): array {
+	private function build_insert_select_projection( array $shape, array $stage_columns, bool $coalesce_select_nulls, string $statement, array $precoerced_offsets = array() ): array {
 		if ( count( $stage_columns ) !== count( $shape['target_columns'] ) ) {
 			throw new WP_DuckDB_Driver_Exception( $statement . ' ... SELECT column count does not match target column count in DuckDB driver.' );
 		}
@@ -12422,12 +12706,14 @@ class WP_DuckDB_Driver {
 			}
 
 			$columns[]     = $column_name;
-			$expressions[] = $this->coerce_write_value_for_column_sql(
-				$metadata,
-				array(),
-				$source_sql,
-				$coalesce_select_nulls
-			);
+			$expressions[] = isset( $precoerced_offsets[ $offset ] )
+				? $source_sql
+				: $this->coerce_write_value_for_column_sql(
+					$metadata,
+					array(),
+					$source_sql,
+					$coalesce_select_nulls
+				);
 		}
 
 		foreach ( $shape['omitted_defaults'] as $default_write ) {

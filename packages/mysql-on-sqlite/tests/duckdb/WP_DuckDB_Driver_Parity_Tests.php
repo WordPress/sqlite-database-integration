@@ -1457,6 +1457,99 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name FROM items ORDER BY id' );
 	}
 
+	public function test_insert_select_text_and_blob_write_coercions_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE insert_select_write_coercions (id INTEGER PRIMARY KEY, text_value TEXT, blob_value BLOB)',
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 1, TRUE, TRUE' );
+		$this->assertParityRowCount( 'INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 2, FALSE, FALSE' );
+		$this->assertParityRowCount( 'INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 3, 0x62, 0x62' );
+		$this->assertParityRowCount( "INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 4, x'63', x'63'" );
+		$this->assertParityRowCount( "INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 5, b'01100100', b'01100100'" );
+		$this->assertParityRowCount( 'INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 6, 0b01100101, 0b01100101' );
+		$this->assertParityRowCount( 'INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 7, 123.456, 123.456' );
+		$this->assertParityRowCount( 'INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 8, -7, -7' );
+		$this->assertParityRowCount( "INSERT INTO insert_select_write_coercions (id, text_value, blob_value) SELECT 9, 'plain' AS text_alias, 'plain' AS blob_alias" );
+		$this->assertParityRows( 'SELECT id, text_value, blob_value FROM insert_select_write_coercions ORDER BY id' );
+	}
+
+	public function test_insert_select_text_blob_with_temporal_staging_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE insert_select_temporal_write_coercions (
+					id INTEGER PRIMARY KEY,
+					d DATE,
+					text_value TEXT,
+					blob_value BLOB
+				)',
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO insert_select_temporal_write_coercions (id, d, text_value, blob_value)
+			SELECT 1, '2025-01-01', TRUE, TRUE"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO insert_select_temporal_write_coercions (id, d, text_value, blob_value)
+			SELECT 2, '2025-01-02', 0x62, 0x62"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO insert_select_temporal_write_coercions (id, d, text_value, blob_value)
+			SELECT 3, '2025-01-03', x'63', x'63'"
+		);
+		$this->assertParityRows( 'SELECT id, d, text_value, blob_value FROM insert_select_temporal_write_coercions ORDER BY id' );
+	}
+
+	public function test_insert_ignore_select_text_and_blob_write_coercions_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE insert_ignore_select_write_coercions (id INTEGER PRIMARY KEY, text_value TEXT, blob_value BLOB)',
+				"INSERT INTO insert_ignore_select_write_coercions VALUES (1, 'old', 'old')",
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT IGNORE INTO insert_ignore_select_write_coercions (id, text_value, blob_value) SELECT 1, TRUE, TRUE' );
+		$this->assertParityRows( 'SELECT id, text_value, blob_value FROM insert_ignore_select_write_coercions ORDER BY id' );
+		$this->assertParityRowCount( 'INSERT IGNORE INTO insert_ignore_select_write_coercions (id, text_value, blob_value) SELECT 2, TRUE, TRUE' );
+		$this->assertParityRows( 'SELECT id, text_value, blob_value FROM insert_ignore_select_write_coercions ORDER BY id' );
+	}
+
+	public function test_replace_select_text_and_blob_write_coercions_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE replace_select_write_coercions (id INTEGER PRIMARY KEY, text_value TEXT, blob_value BLOB)',
+				"INSERT INTO replace_select_write_coercions VALUES (1, 'old', 'old')",
+			)
+		);
+
+		$this->assertParityRowCount( 'REPLACE INTO replace_select_write_coercions (id, text_value, blob_value) SELECT 1, TRUE, TRUE' );
+		$this->assertParityRowCount( "REPLACE INTO replace_select_write_coercions (id, text_value, blob_value) SELECT 2, x'63', x'63'" );
+		$this->assertParityRows( 'SELECT id, text_value, blob_value FROM replace_select_write_coercions ORDER BY id' );
+	}
+
+	public function test_replace_select_manual_conflict_text_and_blob_write_coercions_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE replace_select_manual_write_coercions (
+					id INTEGER PRIMARY KEY,
+					u INTEGER UNIQUE,
+					text_value TEXT,
+					blob_value BLOB
+				)',
+				"INSERT INTO replace_select_manual_write_coercions VALUES (1, 1, 'old', 'old')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'REPLACE INTO replace_select_manual_write_coercions (id, u, text_value, blob_value)
+			SELECT 2, 1, TRUE, TRUE'
+		);
+		$this->assertParityRows( 'SELECT id, u, text_value, blob_value FROM replace_select_manual_write_coercions ORDER BY id' );
+	}
+
 	public function test_regexp_and_not_regexp_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
