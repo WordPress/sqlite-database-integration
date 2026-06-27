@@ -12,6 +12,10 @@ const path = require( 'path' );
 const repoRoot = path.join( __dirname, '..', '..' );
 const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
 const phpunitCommand = process.env.WP_SQLITE_PHPUNIT_COMMAND || 'composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose';
+const phpunitEnsureEnvironmentCommand = process.env.WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND || getDefaultEnsureEnvironmentCommand();
+const ensurePhpunitCompatibility = process.env.WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY === '1';
+const phpunitCompatibilityConstraint = process.env.WP_SQLITE_PHPUNIT_COMPATIBILITY_CONSTRAINT || '^9.6';
+const skipPhpunitCompatibilityCheck = process.env.WP_SQLITE_SKIP_PHPUNIT_COMPATIBILITY_CHECK === '1';
 const junitOutputPath = process.env.WP_SQLITE_PHPUNIT_JUNIT_PATH || 'wordpress/phpunit-results.xml';
 const junitOutputFile = path.isAbsolute( junitOutputPath )
 	? junitOutputPath
@@ -105,6 +109,12 @@ console.log( 'JUnit output:', junitOutputFile );
 console.log( 'Expected errors:', expectedErrors );
 console.log( 'Expected failures:', expectedFailures );
 
+function getDefaultEnsureEnvironmentCommand() {
+	return phpunitCommand.includes( 'wp-test-php-duckdb' )
+		? 'composer run wp-test-ensure-env-duckdb'
+		: 'composer run wp-test-ensure-env';
+}
+
 function verifyNativeParserExtension() {
 	const verifier = path.join( __dirname, '..', '..', 'wordpress', 'native-verify-extension.php' );
 	if ( ! fs.existsSync( verifier ) ) {
@@ -119,10 +129,61 @@ function verifyNativeParserExtension() {
 	);
 }
 
+function ensureCompatiblePhpunitRunner() {
+	if ( ! ensurePhpunitCompatibility ) {
+		return;
+	}
+
+	if ( skipPhpunitCompatibilityCheck ) {
+		console.log( 'Skipping WordPress PHPUnit runner compatibility check.' );
+		return;
+	}
+
+	console.log( 'Ensuring WordPress PHPUnit test environment is available...' );
+	execSync( phpunitEnsureEnvironmentCommand, { stdio: 'inherit' } );
+
+	if ( hasCompatiblePhpunitRunner() ) {
+		return;
+	}
+
+	console.log(
+		`PHPUnit\\TextUI\\TestRunner::run() is unavailable; constraining PHPUnit to ${ phpunitCompatibilityConstraint }...`
+	);
+	execSync(
+		`cd wordpress && node tools/local-env/scripts/docker.js run --rm php composer update --no-interaction --no-progress --with ${ shellQuote( `phpunit/phpunit:${ phpunitCompatibilityConstraint }` ) }`,
+		{ stdio: 'inherit' }
+	);
+
+	if ( ! hasCompatiblePhpunitRunner() ) {
+		console.error( 'Error: WordPress PHPUnit runner is still incompatible after Composer update.' );
+		process.exit( 1 );
+	}
+}
+
+function hasCompatiblePhpunitRunner() {
+	const check = "require 'vendor/autoload.php'; exit( method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ? 0 : 1 );";
+
+	try {
+		execSync(
+			`cd wordpress && node tools/local-env/scripts/docker.js run --rm php php -r ${ shellQuote( check ) }`,
+			{ stdio: 'ignore' }
+		);
+		return true;
+	} catch ( error ) {
+		return false;
+	}
+}
+
+function shellQuote( value ) {
+	return `'${ String( value ).replace( /'/g, "'\\''" ) }'`;
+}
+
 try {
 	if ( requiresNativeParserExtension ) {
 		verifyNativeParserExtension();
 	}
+
+	ensureCompatiblePhpunitRunner();
 
 	try {
 		execSync( phpunitCommand, { stdio: 'inherit' } );
