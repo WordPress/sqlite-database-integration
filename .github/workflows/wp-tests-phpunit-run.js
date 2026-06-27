@@ -18,6 +18,7 @@ const ensurePhpunitCompatibility = process.env.WP_SQLITE_ENSURE_PHPUNIT_COMPATIB
 const phpunitCompatibilityConstraint = process.env.WP_SQLITE_PHPUNIT_COMPATIBILITY_CONSTRAINT || '^9.6';
 const skipPhpunitCompatibilityCheck = process.env.WP_SQLITE_SKIP_PHPUNIT_COMPATIBILITY_CHECK === '1';
 const ignoreMissingExpectedResults = process.env.WP_SQLITE_IGNORE_MISSING_EXPECTED_RESULTS === '1';
+const disableExpectedResults = process.env.WP_SQLITE_DISABLE_EXPECTED_RESULTS === '1';
 const junitOutputPath = process.env.WP_SQLITE_PHPUNIT_JUNIT_PATH || 'wordpress/phpunit-results.xml';
 const junitOutputFile = path.isAbsolute( junitOutputPath )
 	? junitOutputPath
@@ -149,10 +150,16 @@ const duckdbExpectedFailuresToPrune = new Set( [
 	'Tests_DB::test_update_value_too_long_for_field with data set &quot;too long&quot;',
 ] );
 
-const expectedErrors = isDuckDBPhpunitRun ? [] : sqliteExpectedErrors;
-const expectedFailures = isDuckDBPhpunitRun
-	? sqliteExpectedFailures.filter( test => ! duckdbExpectedFailuresToPrune.has( test ) )
-	: sqliteExpectedFailures;
+const expectedErrors = disableExpectedResults
+	? []
+	: ( isDuckDBPhpunitRun ? [] : sqliteExpectedErrors );
+const expectedFailures = disableExpectedResults
+	? []
+	: (
+		isDuckDBPhpunitRun
+			? sqliteExpectedFailures.filter( test => ! duckdbExpectedFailuresToPrune.has( test ) )
+			: sqliteExpectedFailures
+	);
 
 console.log( 'Running WordPress PHPUnit tests with expected failures tracking...' );
 if ( requiresNativeParserExtension ) {
@@ -160,6 +167,9 @@ if ( requiresNativeParserExtension ) {
 }
 console.log( 'PHPUnit command:', phpunitCommand );
 console.log( 'Expected-result mode:', isDuckDBPhpunitRun ? 'duckdb' : 'sqlite' );
+if ( disableExpectedResults ) {
+	console.log( 'Expected-result allowlist disabled.' );
+}
 console.log( 'JUnit output:', junitOutputFile );
 console.log( 'Expected errors:', expectedErrors );
 console.log( 'Expected failures:', expectedFailures );
