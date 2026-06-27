@@ -13117,6 +13117,19 @@ class WP_DuckDB_Driver {
 			return $this->coerce_blob_write_value_sql( $value_tokens, $value_sql );
 		}
 
+		if ( $this->is_numeric_write_data_type( $data_type ) && ! $this->is_strict_sql_mode_active() ) {
+			$value_sql = $this->coerce_numeric_write_value_sql( $data_type, $value_sql );
+			if (
+				$coalesce_non_strict_not_null
+				&& isset( $metadata['is_nullable'] )
+				&& 'NO' === strtoupper( (string) $metadata['is_nullable'] )
+			) {
+				$value_sql = 'COALESCE(' . $value_sql . ', 0)';
+			}
+
+			return $value_sql;
+		}
+
 		if ( ! $this->is_temporal_write_data_type( $data_type ) ) {
 			return $value_sql;
 		}
@@ -13163,6 +13176,33 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a data type needs non-strict numeric write coercion.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return bool Whether the type is numeric-backed.
+	 */
+	private function is_numeric_write_data_type( string $data_type ): bool {
+		return in_array(
+			$data_type,
+			array(
+				'tinyint',
+				'smallint',
+				'mediumint',
+				'int',
+				'bigint',
+				'float',
+				'double',
+				'real',
+				'decimal',
+				'dec',
+				'fixed',
+				'numeric',
+			),
+			true
+		);
+	}
+
+	/**
 	 * Coerce a write value to MySQL/SQLite-like text storage.
 	 *
 	 * @param WP_Parser_Token[] $value_tokens RHS value tokens.
@@ -13192,6 +13232,51 @@ class WP_DuckDB_Driver {
 		}
 
 		return 'CAST(' . $this->write_value_display_sql( $value_tokens, $value_sql ) . ' AS BLOB)';
+	}
+
+	/**
+	 * Coerce a write value to MySQL/SQLite-like numeric storage in non-strict mode.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @param string $value_sql Translated RHS SQL.
+	 * @return string Coerced value SQL.
+	 */
+	private function coerce_numeric_write_value_sql( string $data_type, string $value_sql ): string {
+		return 'CASE'
+			. ' WHEN (' . $value_sql . ') IS NULL THEN NULL'
+			. ' ELSE COALESCE(TRY_CAST((' . $value_sql . ') AS ' . $this->numeric_write_cast_type( $data_type ) . '), 0)'
+			. ' END';
+	}
+
+	/**
+	 * Return the DuckDB cast target for a MySQL numeric data type.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return string DuckDB type.
+	 */
+	private function numeric_write_cast_type( string $data_type ): string {
+		switch ( $data_type ) {
+			case 'tinyint':
+				return 'TINYINT';
+			case 'smallint':
+				return 'SMALLINT';
+			case 'mediumint':
+			case 'int':
+				return 'INTEGER';
+			case 'bigint':
+				return 'BIGINT';
+			case 'float':
+				return 'FLOAT';
+			case 'decimal':
+			case 'dec':
+			case 'fixed':
+			case 'numeric':
+				return 'DECIMAL';
+			case 'double':
+			case 'real':
+			default:
+				return 'DOUBLE';
+		}
 	}
 
 	/**

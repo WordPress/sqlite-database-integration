@@ -152,6 +152,210 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, text_value, blob_value FROM write_coercions ORDER BY id' );
 	}
 
+	public function test_non_strict_numeric_write_coercions_match_sqlite(): void {
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE numeric_write_coercions (
+					id INT PRIMARY KEY,
+					int_value INT,
+					decimal_value DECIMAL(10,2),
+					float_value FLOAT
+				)',
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO numeric_write_coercions (id, int_value, decimal_value, float_value) VALUES
+				(1, 'test', 'test', 'test'),
+				(2, '', '', '')"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO numeric_write_coercions SET
+				id = 3,
+				int_value = 'set-value',
+				decimal_value = 'set-value',
+				float_value = 'set-value'"
+		);
+		$this->assertParityRowCount(
+			'INSERT INTO numeric_write_coercions (id, int_value, decimal_value, float_value)
+			VALUES (4, 7, 8.25, 9.5)'
+		);
+		$this->assertParityRowCount(
+			"UPDATE numeric_write_coercions
+			SET int_value = 'update-value',
+				decimal_value = 'update-value',
+				float_value = 'update-value'
+			WHERE id = 4"
+		);
+		$this->assertParityRowCount(
+			"REPLACE INTO numeric_write_coercions (id, int_value, decimal_value, float_value)
+			VALUES (2, 'replace-value', 'replace-value', 'replace-value')"
+		);
+		$this->assertParityRowCount(
+			'INSERT INTO numeric_write_coercions (id, int_value, decimal_value, float_value)
+			VALUES (3, 10, 11.25, 12.5)
+			ON DUPLICATE KEY UPDATE
+				int_value = "odku-value",
+				decimal_value = "odku-value",
+				float_value = "odku-value"'
+		);
+		$this->assertParityRowCount(
+			'INSERT INTO numeric_write_coercions (id, int_value, decimal_value, float_value)
+			VALUES (5, "odku-insert", "odku-insert", "odku-insert")
+			ON DUPLICATE KEY UPDATE int_value = VALUES(int_value)'
+		);
+
+		$this->assertParityRows( 'SELECT id, int_value, decimal_value, float_value FROM numeric_write_coercions ORDER BY id' );
+	}
+
+	public function test_non_strict_numeric_update_null_not_null_matches_sqlite(): void {
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE numeric_not_null_coercions (
+					id INT PRIMARY KEY,
+					int_value INT NOT NULL,
+					decimal_value DECIMAL(10,2) NOT NULL,
+					float_value FLOAT NOT NULL
+				)',
+				'INSERT INTO numeric_not_null_coercions (id, int_value, decimal_value, float_value)
+					VALUES (1, 7, 8.25, 9.5)',
+			)
+		);
+
+		$this->assertParityRowCount(
+			'UPDATE numeric_not_null_coercions
+			SET int_value = NULL,
+				decimal_value = NULL,
+				float_value = NULL
+			WHERE id = 1'
+		);
+		$this->assertParityRows( 'SELECT id, int_value, decimal_value, float_value FROM numeric_not_null_coercions ORDER BY id' );
+		$this->assertParityErrorContains(
+			'INSERT INTO numeric_not_null_coercions (id, int_value, decimal_value, float_value)
+			VALUES (2, NULL, NULL, NULL)',
+			'NOT NULL'
+		);
+		$this->assertParityRows( 'SELECT id, int_value, decimal_value, float_value FROM numeric_not_null_coercions ORDER BY id' );
+
+		$this->assertParityRowCount(
+			'UPDATE numeric_not_null_coercions
+			SET int_value = 7,
+				decimal_value = 8.25,
+				float_value = 9.5
+			WHERE id = 1'
+		);
+		$this->assertParityErrorContains(
+			'INSERT INTO numeric_not_null_coercions (id, int_value, decimal_value, float_value)
+			VALUES (1, 10, 11.25, 12.5)
+			ON DUPLICATE KEY UPDATE int_value = NULL',
+			'NOT NULL'
+		);
+		$this->assertParityRows( 'SELECT id, int_value, decimal_value, float_value FROM numeric_not_null_coercions ORDER BY id' );
+	}
+
+	public function test_strict_numeric_write_errors_preserve_duckdb_rows(): void {
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query(
+			'CREATE TABLE strict_numeric_write_coercions (
+				id INT PRIMARY KEY,
+				int_value INT,
+				decimal_value DECIMAL(10,2),
+				float_value FLOAT
+			)'
+		);
+		$driver->query(
+			'INSERT INTO strict_numeric_write_coercions (id, int_value, decimal_value, float_value)
+			VALUES (1, 7, 8.25, 9.5)'
+		);
+
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"INSERT INTO strict_numeric_write_coercions (id, int_value, decimal_value, float_value)
+			VALUES (2, 'test', 'test', 'test')",
+			'Failed to execute DuckDB INSERT'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'            => 1,
+					'int_value'     => 7,
+					'decimal_value' => 8.25,
+					'float_value'   => 9.5,
+				),
+			),
+			$driver->query( 'SELECT id, int_value, decimal_value, float_value FROM strict_numeric_write_coercions ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"REPLACE INTO strict_numeric_write_coercions (id, int_value, decimal_value, float_value)
+			VALUES (1, 'test', 'test', 'test')",
+			'Failed to execute DuckDB REPLACE'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'            => 1,
+					'int_value'     => 7,
+					'decimal_value' => 8.25,
+					'float_value'   => 9.5,
+				),
+			),
+			$driver->query( 'SELECT id, int_value, decimal_value, float_value FROM strict_numeric_write_coercions ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"INSERT INTO strict_numeric_write_coercions (id, int_value, decimal_value, float_value)
+			VALUES (1, 10, 11.25, 12.5)
+			ON DUPLICATE KEY UPDATE
+				int_value = 'test',
+				decimal_value = 'test',
+				float_value = 'test'",
+			'Failed to execute DuckDB INSERT'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'            => 1,
+					'int_value'     => 7,
+					'decimal_value' => 8.25,
+					'float_value'   => 9.5,
+				),
+			),
+			$driver->query( 'SELECT id, int_value, decimal_value, float_value FROM strict_numeric_write_coercions ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"UPDATE strict_numeric_write_coercions
+			SET int_value = 'test',
+				decimal_value = 'test',
+				float_value = 'test'
+			WHERE id = 1",
+			'Failed to execute DuckDB UPDATE'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'            => 1,
+					'int_value'     => 7,
+					'decimal_value' => 8.25,
+					'float_value'   => 9.5,
+				),
+			),
+			$driver->query( 'SELECT id, int_value, decimal_value, float_value FROM strict_numeric_write_coercions ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_show_full_tables_sql_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
