@@ -13012,7 +13012,7 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Coerce a target-column value for temporal storage when needed.
+	 * Coerce a target-column value for storage when needed.
 	 *
 	 * @param array<string,mixed>  $metadata                     Column metadata.
 	 * @param WP_Parser_Token[]    $value_tokens                 RHS value tokens.
@@ -13022,7 +13022,19 @@ class WP_DuckDB_Driver {
 	 */
 	private function coerce_write_value_for_column_sql( array $metadata, array $value_tokens, string $value_sql, bool $coalesce_non_strict_not_null ): string {
 		$data_type = $this->mysql_column_data_type( $metadata );
-		if ( ! $this->is_temporal_write_data_type( $data_type ) || $this->is_default_value_tokens( $value_tokens ) ) {
+		if ( $this->is_default_value_tokens( $value_tokens ) ) {
+			return $value_sql;
+		}
+
+		if ( $this->is_character_write_data_type( $data_type ) ) {
+			return $this->coerce_character_write_value_sql( $value_tokens, $value_sql );
+		}
+
+		if ( $this->is_blob_write_data_type( $data_type ) ) {
+			return $this->coerce_blob_write_value_sql( $value_tokens, $value_sql );
+		}
+
+		if ( ! $this->is_temporal_write_data_type( $data_type ) ) {
 			return $value_sql;
 		}
 
@@ -13045,6 +13057,112 @@ class WP_DuckDB_Driver {
 		}
 
 		return $value_sql;
+	}
+
+	/**
+	 * Check whether a data type needs character write coercion.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return bool Whether the type is character-backed.
+	 */
+	private function is_character_write_data_type( string $data_type ): bool {
+		return in_array( $data_type, array( 'char', 'varchar', 'text', 'tinytext', 'mediumtext', 'longtext' ), true );
+	}
+
+	/**
+	 * Check whether a data type needs blob write coercion.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return bool Whether the type is blob-backed.
+	 */
+	private function is_blob_write_data_type( string $data_type ): bool {
+		return in_array( $data_type, array( 'blob', 'tinyblob', 'mediumblob', 'longblob' ), true );
+	}
+
+	/**
+	 * Coerce a write value to MySQL/SQLite-like text storage.
+	 *
+	 * @param WP_Parser_Token[] $value_tokens RHS value tokens.
+	 * @param string            $value_sql    Translated RHS SQL.
+	 * @return string Coerced value SQL.
+	 */
+	private function coerce_character_write_value_sql( array $value_tokens, string $value_sql ): string {
+		$hex_sql = $this->binary_literal_write_hex_sql( $value_tokens );
+		if ( null !== $hex_sql ) {
+			return 'decode(from_hex(' . $hex_sql . '))';
+		}
+
+		return $this->write_value_display_sql( $value_tokens, $value_sql );
+	}
+
+	/**
+	 * Coerce a write value to MySQL/SQLite-like blob storage.
+	 *
+	 * @param WP_Parser_Token[] $value_tokens RHS value tokens.
+	 * @param string            $value_sql    Translated RHS SQL.
+	 * @return string Coerced value SQL.
+	 */
+	private function coerce_blob_write_value_sql( array $value_tokens, string $value_sql ): string {
+		$hex_sql = $this->binary_literal_write_hex_sql( $value_tokens );
+		if ( null !== $hex_sql ) {
+			return 'from_hex(' . $hex_sql . ')';
+		}
+
+		return 'CAST(' . $this->write_value_display_sql( $value_tokens, $value_sql ) . ' AS BLOB)';
+	}
+
+	/**
+	 * Return a quoted hex string for a MySQL binary literal token.
+	 *
+	 * @param WP_Parser_Token[] $value_tokens RHS value tokens.
+	 * @return string|null Quoted hex string SQL, or null for non-binary literals.
+	 */
+	private function binary_literal_write_hex_sql( array $value_tokens ): ?string {
+		if ( 1 !== count( $value_tokens ) ) {
+			return null;
+		}
+
+		$token = $value_tokens[0];
+		$value = $token->get_value();
+		if ( WP_MySQL_Lexer::HEX_NUMBER === $token->id ) {
+			if ( strlen( $value ) >= 2 && '0' === $value[0] && 'x' === strtolower( $value[1] ) ) {
+				return $this->connection->quote( substr( $value, 2 ) );
+			}
+
+			if ( strlen( $value ) >= 3 && 'x' === strtolower( $value[0] ) && "'" === $value[1] ) {
+				return $this->connection->quote( substr( $value, 2, -1 ) );
+			}
+
+			return null;
+		}
+
+		if ( WP_MySQL_Lexer::BIN_NUMBER !== $token->id ) {
+			return null;
+		}
+
+		if ( strlen( $value ) >= 2 && '0' === $value[0] && 'b' === strtolower( $value[1] ) ) {
+			$bits = substr( $value, 2 );
+		} elseif ( strlen( $value ) >= 3 && 'b' === strtolower( $value[0] ) && "'" === $value[1] ) {
+			$bits = substr( $value, 2, -1 );
+		} else {
+			return null;
+		}
+
+		if ( '' === $bits ) {
+			return $this->connection->quote( '' );
+		}
+
+		$bits = str_pad( $bits, (int) ceil( strlen( $bits ) / 4 ) * 4, '0', STR_PAD_LEFT );
+		$hex  = '';
+		for ( $offset = 0; $offset < strlen( $bits ); $offset += 4 ) {
+			$hex .= dechex( bindec( substr( $bits, $offset, 4 ) ) );
+		}
+
+		if ( 1 === strlen( $hex ) % 2 ) {
+			$hex = '0' . $hex;
+		}
+
+		return $this->connection->quote( $hex );
 	}
 
 	/**

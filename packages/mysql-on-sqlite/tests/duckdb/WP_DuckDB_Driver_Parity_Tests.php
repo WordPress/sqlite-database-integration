@@ -129,6 +129,29 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_non_temporal_text_and_blob_write_coercions_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE write_coercions (id INTEGER PRIMARY KEY, text_value TEXT, blob_value BLOB)',
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO write_coercions (id, text_value, blob_value) VALUES
+				(1, TRUE, TRUE),
+				(2, 0x62, 0x62),
+				(3, x'63', x'63'),
+				(4, 123.456, 123.456)"
+		);
+		$this->assertParityRows( 'SELECT id, text_value, blob_value FROM write_coercions ORDER BY id' );
+
+		$this->assertParityRowCount( 'UPDATE write_coercions SET text_value = FALSE, blob_value = FALSE WHERE id = 4' );
+		$this->assertParityRows( 'SELECT id, text_value, blob_value FROM write_coercions ORDER BY id' );
+
+		$this->assertParityRowCount( "REPLACE INTO write_coercions (id, text_value, blob_value) VALUES (2, x'64', x'65')" );
+		$this->assertParityRows( 'SELECT id, text_value, blob_value FROM write_coercions ORDER BY id' );
+	}
+
 	public function test_show_full_tables_sql_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

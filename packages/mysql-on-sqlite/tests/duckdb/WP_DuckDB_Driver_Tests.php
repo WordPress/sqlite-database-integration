@@ -3873,7 +3873,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 		$this->assertSame( 1, $duplicate_primary->rowCount() );
 		$this->assertSame(
-			'INSERT INTO items(id, name, hits) VALUES (1, \'renamed\', 7) ON CONFLICT ("id") DO UPDATE SET name = excluded."name", hits = excluded."hits"',
+			'INSERT INTO items(id, name, hits) VALUES (1, \'renamed\', 7) ON CONFLICT ("id") DO UPDATE SET name = CAST((excluded."name") AS VARCHAR), hits = excluded."hits"',
 			$this->lastDuckDBQuery( $driver )
 		);
 
