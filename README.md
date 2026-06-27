@@ -57,6 +57,11 @@ composer run wp-test-start              # Start WordPress environment (Docker)
 composer run wp-test-php                # Run WordPress PHPUnit tests
 composer run wp-test-e2e                # Run WordPress E2E tests (Playwright)
 composer run wp-test-clean              # Clean up WordPress environment (Docker and DB)
+
+# Optional DuckDB verification
+DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php composer run wp-smoke-duckdb-local
+DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php composer run wp-test-php-duckdb
+DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php composer run wp-test-e2e-duckdb
 ```
 
 ## Optional: Native MySQL Parser Extension
@@ -70,12 +75,12 @@ Latest local measurement (Apple Silicon macOS, PHP 8.4.5 CLI, 2026-05-26): the n
 
 ## Optional: DuckDB backend
 
-DuckDB support is experimental and is not part of the default SQLite runtime or
-default CI matrix. It uses the third-party DuckDB PHP client documented by
-DuckDB. That client uses FFI, requires PHP 8.3 or newer and `ext-ffi`, and
-DuckDB recommends the automatic Composer install with `satur.io/duckdb-auto`.
-See the [DuckDB PHP client docs](https://duckdb.org/docs/lts/clients/php) and
-the [saturio/duckdb-php installation docs](https://duckdb-php.readthedocs.io/en/latest/installation/).
+DuckDB support is experimental and is not part of the default SQLite runtime. It
+uses the third-party DuckDB PHP client documented by DuckDB. That client uses
+FFI, requires PHP 8.3 or newer and `ext-ffi`, and DuckDB recommends the
+automatic Composer install with `satur.io/duckdb-auto`. See the
+[DuckDB PHP client docs](https://duckdb.org/docs/lts/clients/php) and the
+[saturio/duckdb-php installation docs](https://duckdb-php.readthedocs.io/en/latest/installation/).
 
 Install the DuckDB PHP client outside the default project dependency graph, then
 point this project at that Composer autoloader. The commands below install
@@ -106,7 +111,7 @@ define( 'DUCKDB_PHP_AUTOLOAD', '/tmp/wp-duckdb-php/vendor/autoload.php' );
 If your local WordPress launcher maps environment variables into `wp-config.php`,
 set `DB_ENGINE=duckdb` and `DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php`.
 
-Exact local verification commands for this branch:
+Exact verification commands for this branch:
 
 ```bash
 cd packages/mysql-on-sqlite
@@ -118,13 +123,46 @@ DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php \
 composer run test -- --group duckdb
 ```
 
+The root WordPress scripts exercise the generated DuckDB drop-in path:
+
+```bash
+DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php \
+composer run wp-smoke-duckdb-local
+
+DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php \
+composer run wp-test-php-duckdb
+
+DUCKDB_PHP_AUTOLOAD=/tmp/wp-duckdb-php/vendor/autoload.php \
+composer run wp-test-e2e-duckdb
+```
+
+`wp-smoke-duckdb-local` is a non-Docker smoke for the generated WordPress
+drop-in and a simple `$wpdb` query. The WordPress PHPUnit and E2E scripts use
+`wp-test-ensure-env-duckdb`, which creates or reuses a DuckDB-configured
+WordPress checkout and starts the local Docker environment before running the
+tests.
+
+DuckDB CI is isolated in `.github/workflows/duckdb-phpunit-tests.yml`. It
+installs the optional DuckDB PHP client at runtime, verifies the FFI-backed
+runtime, and runs three paths:
+
+- package PHPUnit: `php -d ffi.enable=true ./vendor/bin/phpunit -c ./phpunit.xml.dist --group duckdb`;
+- WordPress PHPUnit: `node .github/workflows/wp-tests-phpunit-run.js` with
+  `WP_SQLITE_PHPUNIT_COMMAND` set to `composer run wp-test-php-duckdb -- --log-junit=phpunit-duckdb-results.xml --verbose`;
+- WordPress E2E: `composer run wp-test-e2e-duckdb`.
+
 Current limitations:
 - DuckDB support is a first-stage adapter. It is intended for targeted local
   verification and isolated CI, not production WordPress traffic.
 - The branch currently verifies runtime gating, connections, query execution,
   persistence, result handling, prepared statements, a focused MySQL-to-DuckDB
-  driver subset, and WordPress-style schema DDL including secondary indexes. It
-  does not yet run the full WordPress PHPUnit or E2E suites against DuckDB.
+  driver subset, WordPress-style schema DDL including secondary indexes, and
+  dedicated WordPress PHPUnit/E2E CI paths. Local full WordPress acceptance
+  still requires Docker; when Docker is unavailable, only package PHPUnit and
+  the non-Docker smoke can be proven locally.
+- Remaining DuckDB parity gaps include savepoints, broader foreign-key, view,
+  and spatial function semantics, seeded `RAND()` in complex query contexts,
+  richer origin metadata, and `SHOW WARNINGS`/`SHOW ERRORS`.
 - DuckDB's concurrency model allows one process to read and write, or multiple
   read-only processes. The DuckDB docs state that automatic writes from multiple
   processes are not supported and that many small transactions are not its
