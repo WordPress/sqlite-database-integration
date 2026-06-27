@@ -1908,6 +1908,93 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_multi_target_joined_delete_rewrites_join_using_and_alias_forms(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, target_id INT, flag VARCHAR(20), note VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e'), (6, 'f'), (7, 'g')" );
+		$driver->query(
+			"INSERT INTO t2 VALUES
+			(10, 1, 'drop', 'x'),
+			(11, 1, 'drop', 'duplicate'),
+			(12, 2, 'keep', 'y'),
+			(13, 3, 'drop', 'z'),
+			(14, 4, 'drop', 'w'),
+			(15, 5, 'drop', 'as-alias'),
+			(16, 6, 'drop', 'same-table'),
+			(17, 7, 'keep', 'survivor')"
+		);
+
+		$duplicate_match = $driver->query(
+			"DELETE a, b FROM t1 a
+			JOIN t2 b ON b.target_id = a.id
+			WHERE b.flag = 'drop' AND a.id = 1"
+		);
+		$this->assertSame( 3, $duplicate_match->rowCount() );
+
+		$using_delete = $driver->query(
+			"DELETE FROM a, b USING t1 a
+			JOIN t2 b ON b.target_id = a.id
+			WHERE b.flag = 'drop' AND a.id = 3"
+		);
+		$this->assertSame( 2, $using_delete->rowCount() );
+
+		$table_name_target = $driver->query(
+			"DELETE t1, t2 FROM t1
+			INNER JOIN t2 ON t2.target_id = t1.id
+			WHERE t2.flag = 'drop' AND t1.id = 4"
+		);
+		$this->assertSame( 2, $table_name_target->rowCount() );
+
+		$as_alias_target = $driver->query(
+			"DELETE a, b FROM t1 AS a
+			JOIN t2 AS b ON b.target_id = a.id
+			WHERE b.flag = 'drop' AND a.id = 5"
+		);
+		$this->assertSame( 2, $as_alias_target->rowCount() );
+
+		$same_base_aliases = $driver->query(
+			'DELETE parent, child FROM t1 parent
+			JOIN t1 child ON child.id = 6
+			WHERE parent.id = 2'
+		);
+		$this->assertSame( 2, $same_base_aliases->rowCount() );
+
+		$same_base_overlap = $driver->query(
+			'DELETE left_alias, right_alias FROM t1 left_alias
+			JOIN t1 right_alias ON right_alias.id = left_alias.id
+			WHERE left_alias.id = 7'
+		);
+		$this->assertSame( 1, $same_base_overlap->rowCount() );
+
+		$this->assertSame(
+			array(),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'        => 12,
+					'target_id' => 2,
+					'flag'      => 'keep',
+				),
+				array(
+					'id'        => 16,
+					'target_id' => 6,
+					'flag'      => 'drop',
+				),
+				array(
+					'id'        => 17,
+					'target_id' => 7,
+					'flag'      => 'keep',
+				),
+			),
+			$driver->query( 'SELECT id, target_id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_multi_table_delete_rejects_unsupported_shapes(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1919,35 +2006,27 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		foreach (
 			array(
 				array(
-					'sql'     => 'DELETE a, b FROM t1 a JOIN t2 b ON a.id = b.id',
-					'message' => 'Joined table references in multi-target DELETE are not supported yet',
-				),
-				array(
-					'sql'     => 'DELETE FROM a, b USING t1 a JOIN t2 b ON a.id = b.id',
-					'message' => 'Joined table references in DELETE ... USING are not supported yet',
-				),
-				array(
-					'sql'     => 'DELETE a FROM t1 a LEFT JOIN t2 b ON a.id = b.id',
+					'sql'     => 'DELETE a, b FROM t1 a LEFT JOIN t2 b ON a.id = b.id',
 					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
 				),
 				array(
-					'sql'     => 'DELETE a FROM t1 a RIGHT JOIN t2 b ON a.id = b.id',
+					'sql'     => 'DELETE a, b FROM t1 a RIGHT JOIN t2 b ON a.id = b.id',
 					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
 				),
 				array(
-					'sql'     => 'DELETE a FROM t1 a CROSS JOIN t2 b',
+					'sql'     => 'DELETE a, b FROM t1 a CROSS JOIN t2 b',
 					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
 				),
 				array(
-					'sql'     => 'DELETE a FROM t1 a NATURAL JOIN t2 b',
+					'sql'     => 'DELETE a, b FROM t1 a NATURAL JOIN t2 b',
 					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
 				),
 				array(
-					'sql'     => 'DELETE a FROM t1 a STRAIGHT_JOIN t2 b ON a.id = b.id',
+					'sql'     => 'DELETE a, b FROM t1 a STRAIGHT_JOIN t2 b ON a.id = b.id',
 					'message' => 'Only comma joins and INNER JOIN ... ON are supported',
 				),
 				array(
-					'sql'     => 'DELETE a FROM t1 a JOIN t2 b USING (id)',
+					'sql'     => 'DELETE a, b FROM t1 a JOIN t2 b USING (id)',
 					'message' => 'JOIN ... USING is not supported',
 				),
 				array(
@@ -1963,7 +2042,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					'message' => "Duplicate table alias 'a'",
 				),
 				array(
-					'sql'     => 'DELETE a FROM t1 a JOIN (SELECT id FROM t2) b ON a.id = b.id',
+					'sql'     => 'DELETE a, b FROM t1 a JOIN (SELECT id FROM t2) b ON a.id = b.id',
 					'message' => 'Derived table sources are not supported',
 				),
 				array(
@@ -1975,8 +2054,12 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					'message' => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
 				),
 				array(
-					'sql'     => 'DELETE r FROM has_rowid r JOIN t2 b ON r.id = b.id WHERE r.id = 1',
+					'sql'     => 'DELETE r, b FROM has_rowid r JOIN t2 b ON r.id = b.id WHERE r.id = 1',
 					'message' => 'ORDER BY/LIMIT rewrites require a table without a user-defined rowid column.',
+				),
+				array(
+					'sql'     => 'DELETE a, m FROM t1 a JOIN __wp_duckdb_column_metadata m ON a.id = m.id',
+					'message' => 'Internal DuckDB metadata tables cannot be modified',
 				),
 				array(
 					'sql'     => 'DELETE a FROM t1 a JOIN t2 b ON a.id = b.id ORDER BY a.id LIMIT 1',

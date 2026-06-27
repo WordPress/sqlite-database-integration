@@ -695,6 +695,56 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, target_id, flag FROM t2 ORDER BY id' );
 	}
 
+	public function test_multi_target_joined_delete_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20))',
+				'CREATE TABLE t2 (id INT, target_id INT, flag VARCHAR(20), note VARCHAR(20))',
+				"INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e'), (6, 'f')",
+				"INSERT INTO t2 VALUES
+					(10, 1, 'drop', 'x'),
+					(11, 1, 'drop', 'duplicate'),
+					(12, 2, 'keep', 'y'),
+					(13, 3, 'drop', 'z'),
+					(14, 4, 'drop', 'w'),
+					(15, 5, 'same-table', 's'),
+					(16, 6, 'keep', 'q')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE a, b FROM t1 a
+			JOIN t2 b ON b.target_id = a.id
+			WHERE b.flag = 'drop' AND a.id = 1"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, target_id, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount(
+			"DELETE FROM a, b USING t1 a
+			JOIN t2 b ON b.target_id = a.id
+			WHERE b.flag = 'drop' AND a.id = 3"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, target_id, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount(
+			"DELETE t1, t2 FROM t1
+			INNER JOIN t2 ON t2.target_id = t1.id
+			WHERE t2.flag = 'drop' AND t1.id = 4"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, target_id, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount(
+			'DELETE parent, child FROM t1 parent
+			JOIN t1 child ON child.id = 5
+			WHERE parent.id = 2'
+		);
+		$this->assertParityRows( 'SELECT id, note FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, target_id, flag FROM t2 ORDER BY id' );
+	}
+
 	public function test_insert_set_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

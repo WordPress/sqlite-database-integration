@@ -1864,13 +1864,9 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Multi-table DELETE requires target aliases and table references.' );
 		}
 
-		$target_aliases           = $this->parse_multi_delete_target_aliases( $target_tokens );
-		$joined_rejection_message = $using_form
-			? 'Unsupported DELETE statement in DuckDB driver. Joined table references in DELETE ... USING are not supported yet.'
-			: 'Unsupported DELETE statement in DuckDB driver. Joined table references in multi-target DELETE are not supported yet.';
-		$allow_joined             = 1 === count( $target_aliases );
-		$references               = $this->parse_multi_delete_table_references( $table_ref_tokens, $allow_joined, $joined_rejection_message );
-		$targets                  = array();
+		$target_aliases = $this->parse_multi_delete_target_aliases( $target_tokens );
+		$references     = $this->parse_multi_delete_table_references( $table_ref_tokens );
+		$targets        = array();
 		foreach ( $target_aliases as $offset => $target_alias ) {
 			$key = strtolower( $target_alias );
 			if ( ! isset( $references['by_alias'][ $key ] ) ) {
@@ -1998,16 +1994,11 @@ class WP_DuckDB_Driver {
 	 * Parse comma-separated table references for a bounded multi-table DELETE.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
-	 * @param bool              $allow_joined             Whether joined single-target table references are allowed.
-	 * @param string            $joined_rejection_message Message for unsupported joined references.
 	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>>} SQL and references keyed by lowercase alias.
 	 */
-	private function parse_multi_delete_table_references( array $tokens, bool $allow_joined = false, string $joined_rejection_message = 'Unsupported DELETE statement in DuckDB driver. Joined table references in multi-target DELETE are not supported yet.' ): array {
+	private function parse_multi_delete_table_references( array $tokens ): array {
 		if ( $this->contains_top_level_join_token( $tokens ) ) {
-			if ( $allow_joined ) {
-				return $this->parse_joined_single_delete_table_references( $tokens );
-			}
-			throw new WP_DuckDB_Driver_Exception( $joined_rejection_message );
+			return $this->parse_joined_multi_delete_table_references( $tokens );
 		}
 
 		$sql_items = array();
@@ -2037,12 +2028,12 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Parse joined table references for a bounded single-target DELETE.
+	 * Parse joined table references for a bounded multi-table DELETE.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
 	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>>} SQL and references keyed by lowercase alias.
 	 */
-	private function parse_joined_single_delete_table_references( array $tokens ): array {
+	private function parse_joined_multi_delete_table_references( array $tokens ): array {
 		$joined_references = $this->parse_joined_update_table_references( $tokens, 'DELETE', false );
 		$references        = array_merge( array( $joined_references['target'] ), $joined_references['sources'] );
 		$sql_items         = array();
