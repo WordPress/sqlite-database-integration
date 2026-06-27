@@ -963,6 +963,16 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Format a deterministic seeded RAND() value as a DuckDB numeric literal.
+	 *
+	 * @param float $value RAND() value.
+	 * @return string SQL numeric literal.
+	 */
+	private function seeded_rand_numeric_literal( float $value ): string {
+		return sprintf( '%.17g', $value );
+	}
+
+	/**
 	 * Derive bounded result metadata for SELECT column_list FROM single_table.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
@@ -2093,7 +2103,7 @@ class WP_DuckDB_Driver {
 
 		return $this->execute_auto_increment_write(
 			$this->identifier_value( $tokens[ $index ] ?? null ),
-			$this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $index, $ignore ),
+			$this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $index, $ignore, 'INSERT', null, true ),
 			'Failed to execute DuckDB INSERT',
 			$tokens,
 			$index
@@ -12160,7 +12170,7 @@ class WP_DuckDB_Driver {
 	 * @return string DuckDB SQL.
 	 */
 	private function translate_insert_ignore_tokens_to_duckdb_sql( array $tokens, int $table_index ): string {
-		return $this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $table_index, true );
+		return $this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $table_index, true, 'INSERT', null, true );
 	}
 
 	/**
@@ -13103,11 +13113,12 @@ class WP_DuckDB_Driver {
 	 * @param bool              $ignore      Whether INSERT IGNORE was used.
 	 * @param string            $verb        DuckDB INSERT verb.
 	 * @param int|null          $end_index   Optional token index where VALUES input ends.
+	 * @param bool              $rewrite_seeded_rand_literals Whether literal seeded RAND() calls are supported in VALUES.
 	 * @return string DuckDB SQL.
 	 */
-	private function translate_insert_values_tokens_to_duckdb_sql( array $tokens, int $table_index, bool $ignore, string $verb = 'INSERT', ?int $end_index = null ): string {
-		$shape = $this->parse_insert_values_write_shape( $tokens, $table_index, $end_index, true );
-		if ( ! $shape['requires_coercion'] ) {
+	private function translate_insert_values_tokens_to_duckdb_sql( array $tokens, int $table_index, bool $ignore, string $verb = 'INSERT', ?int $end_index = null, bool $rewrite_seeded_rand_literals = false ): string {
+		$shape = $this->parse_insert_values_write_shape( $tokens, $table_index, $end_index, true, $rewrite_seeded_rand_literals );
+		if ( ! $shape['requires_coercion'] && ! $shape['requires_seeded_rand_rewrite'] ) {
 			return $verb
 				. ( $ignore ? ' OR IGNORE' : '' )
 				. ' INTO '
@@ -13376,7 +13387,7 @@ class WP_DuckDB_Driver {
 	 * @param int               $table_index Index of the table token.
 	 */
 	private function assert_insert_values_do_not_conflict_with_case_insensitive_unique_keys( array $tokens, int $table_index ): void {
-		$insert_shape             = $this->parse_insert_values_shape( $tokens, $table_index, true );
+		$insert_shape             = $this->parse_insert_values_shape( $tokens, $table_index, true, true );
 		$case_insensitive_columns = $this->case_insensitive_column_names( $insert_shape['table_name'], $insert_shape['temporary'] );
 		if ( count( $case_insensitive_columns ) === 0 ) {
 			return;
@@ -13416,13 +13427,14 @@ class WP_DuckDB_Driver {
 	/**
 	 * Parse a supported INSERT ... VALUES shape into per-row value SQL.
 	 *
-	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
-	 * @param int               $table_index        Index of the table token.
-	 * @param bool              $coerce_for_storage Whether values should be coerced for storage.
+	 * @param WP_Parser_Token[] $tokens                       MySQL tokens.
+	 * @param int               $table_index                  Index of the table token.
+	 * @param bool              $coerce_for_storage           Whether values should be coerced for storage.
+	 * @param bool              $rewrite_seeded_rand_literals Whether literal seeded RAND() calls are supported in VALUES.
 	 * @return array{table_name:string,temporary:bool,rows:array<int,array<string,string>>}
 	 */
-	private function parse_insert_values_shape( array $tokens, int $table_index, bool $coerce_for_storage = false ): array {
-		$shape = $this->parse_insert_values_write_shape( $tokens, $table_index, null, $coerce_for_storage );
+	private function parse_insert_values_shape( array $tokens, int $table_index, bool $coerce_for_storage = false, bool $rewrite_seeded_rand_literals = false ): array {
+		$shape = $this->parse_insert_values_write_shape( $tokens, $table_index, null, $coerce_for_storage, $rewrite_seeded_rand_literals );
 
 		return array(
 			'table_name' => $shape['table_name'],
@@ -13434,13 +13446,14 @@ class WP_DuckDB_Driver {
 	/**
 	 * Parse a supported INSERT/REPLACE ... VALUES shape into ordered and keyed value SQL.
 	 *
-	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
-	 * @param int               $table_index        Index of the table token.
-	 * @param int|null          $end_index          Optional token index where VALUES input ends.
-	 * @param bool              $coerce_for_storage Whether values should be coerced for storage.
-	 * @return array{table_name:string,temporary:bool,columns:string[],rows:array<int,array<string,string>>,ordered_rows:array<int,string[]>,coerced_value_rows:array<int,string[]>,temporal_validation_rows:array<int,array<int,array<string,string>>>,requires_coercion:bool}
+	 * @param WP_Parser_Token[] $tokens                       MySQL tokens.
+	 * @param int               $table_index                  Index of the table token.
+	 * @param int|null          $end_index                    Optional token index where VALUES input ends.
+	 * @param bool              $coerce_for_storage           Whether values should be coerced for storage.
+	 * @param bool              $rewrite_seeded_rand_literals Whether literal seeded RAND() calls are supported in VALUES.
+	 * @return array{table_name:string,temporary:bool,columns:string[],rows:array<int,array<string,string>>,ordered_rows:array<int,string[]>,coerced_value_rows:array<int,string[]>,temporal_validation_rows:array<int,array<int,array<string,string>>>,requires_coercion:bool,requires_seeded_rand_rewrite:bool}
 	 */
-	private function parse_insert_values_write_shape( array $tokens, int $table_index, ?int $end_index = null, bool $coerce_for_storage = false ): array {
+	private function parse_insert_values_write_shape( array $tokens, int $table_index, ?int $end_index = null, bool $coerce_for_storage = false, bool $rewrite_seeded_rand_literals = false ): array {
 		if ( null !== $end_index ) {
 			$tokens = array_slice( $tokens, 0, $end_index );
 		}
@@ -13457,32 +13470,14 @@ class WP_DuckDB_Driver {
 			list( $column_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
 			foreach ( $column_items as $column_tokens ) {
 				if ( 1 !== count( $column_tokens ) ) {
-					return array(
-						'table_name'               => $table_name,
-						'temporary'                => $temporary,
-						'columns'                  => array(),
-						'rows'                     => array(),
-						'ordered_rows'             => array(),
-						'coerced_value_rows'       => array(),
-						'temporal_validation_rows' => array(),
-						'requires_coercion'        => false,
-					);
+					return $this->empty_insert_values_write_shape( $table_name, $temporary );
 				}
 				$columns[] = $this->identifier_value( $column_tokens[0] );
 			}
 		} else {
 			foreach ( $this->table_column_metadata_rows( $table_name, $temporary ) as $row ) {
 				if ( ! array_key_exists( 'column_name', $row ) ) {
-					return array(
-						'table_name'               => $table_name,
-						'temporary'                => $temporary,
-						'columns'                  => array(),
-						'rows'                     => array(),
-						'ordered_rows'             => array(),
-						'coerced_value_rows'       => array(),
-						'temporal_validation_rows' => array(),
-						'requires_coercion'        => false,
-					);
+					return $this->empty_insert_values_write_shape( $table_name, $temporary );
 				}
 				$columns[] = (string) $row['column_name'];
 			}
@@ -13497,37 +13492,21 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( count( $columns ) === 0 || ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $index ]->id ) {
-			return array(
-				'table_name'               => $table_name,
-				'temporary'                => $temporary,
-				'columns'                  => array(),
-				'rows'                     => array(),
-				'ordered_rows'             => array(),
-				'coerced_value_rows'       => array(),
-				'temporal_validation_rows' => array(),
-				'requires_coercion'        => false,
-			);
+			return $this->empty_insert_values_write_shape( $table_name, $temporary );
 		}
 		++$index;
 
-		$rows                     = array();
-		$ordered_rows             = array();
-		$coerced_value_rows       = array();
-		$temporal_validation_rows = array();
-		$requires_coercion        = false;
+		$rows                         = array();
+		$ordered_rows                 = array();
+		$coerced_value_rows           = array();
+		$temporal_validation_rows     = array();
+		$requires_coercion            = false;
+		$requires_seeded_rand_rewrite = false;
+		$seeded_rand_state            = array();
 		while ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
 			list( $value_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
 			if ( count( $columns ) !== count( $value_items ) ) {
-				return array(
-					'table_name'               => $table_name,
-					'temporary'                => $temporary,
-					'columns'                  => array(),
-					'rows'                     => array(),
-					'ordered_rows'             => array(),
-					'coerced_value_rows'       => array(),
-					'temporal_validation_rows' => array(),
-					'requires_coercion'        => false,
-				);
+				return $this->empty_insert_values_write_shape( $table_name, $temporary );
 			}
 
 			$values_by_column  = array();
@@ -13535,7 +13514,12 @@ class WP_DuckDB_Driver {
 			$coerced_values    = array();
 			$validation_values = array();
 			foreach ( $columns as $offset => $column_name ) {
-				$value_sql = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
+				$value_sql = $this->translate_insert_values_value_tokens_to_duckdb_sql(
+					$value_items[ $offset ],
+					$rewrite_seeded_rand_literals,
+					$seeded_rand_state,
+					$requires_seeded_rand_rewrite
+				);
 				if ( $coerce_for_storage && isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
 					$validation = $this->temporal_write_validation_for_column(
 						$metadata_map[ strtolower( $column_name ) ],
@@ -13578,15 +13562,119 @@ class WP_DuckDB_Driver {
 		}
 
 		return array(
-			'table_name'               => $table_name,
-			'temporary'                => $temporary,
-			'columns'                  => $storage_columns,
-			'rows'                     => $rows,
-			'ordered_rows'             => $ordered_rows,
-			'coerced_value_rows'       => $coerced_value_rows,
-			'temporal_validation_rows' => $temporal_validation_rows,
-			'requires_coercion'        => $requires_coercion || count( $omitted_defaults ) > 0,
+			'table_name'                   => $table_name,
+			'temporary'                    => $temporary,
+			'columns'                      => $storage_columns,
+			'rows'                         => $rows,
+			'ordered_rows'                 => $ordered_rows,
+			'coerced_value_rows'           => $coerced_value_rows,
+			'temporal_validation_rows'     => $temporal_validation_rows,
+			'requires_coercion'            => $requires_coercion || count( $omitted_defaults ) > 0,
+			'requires_seeded_rand_rewrite' => $requires_seeded_rand_rewrite,
 		);
+	}
+
+	/**
+	 * Return an empty INSERT/REPLACE VALUES write shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is temporary.
+	 * @return array{table_name:string,temporary:bool,columns:string[],rows:array<int,array<string,string>>,ordered_rows:array<int,string[]>,coerced_value_rows:array<int,string[]>,temporal_validation_rows:array<int,array<int,array<string,string>>>,requires_coercion:bool,requires_seeded_rand_rewrite:bool}
+	 */
+	private function empty_insert_values_write_shape( string $table_name, bool $temporary ): array {
+		return array(
+			'table_name'                   => $table_name,
+			'temporary'                    => $temporary,
+			'columns'                      => array(),
+			'rows'                         => array(),
+			'ordered_rows'                 => array(),
+			'coerced_value_rows'           => array(),
+			'temporal_validation_rows'     => array(),
+			'requires_coercion'            => false,
+			'requires_seeded_rand_rewrite' => false,
+		);
+	}
+
+	/**
+	 * Translate one INSERT/REPLACE VALUES value expression, optionally rewriting literal seeded RAND() calls.
+	 *
+	 * @param WP_Parser_Token[] $tokens                       Value expression tokens.
+	 * @param bool              $rewrite_seeded_rand_literals Whether literal seeded RAND() calls are supported.
+	 * @param array             $seeded_rand_state            Per-statement seeded RAND() state.
+	 * @param bool              $requires_seeded_rand_rewrite Whether any value required a seeded RAND() rewrite.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_insert_values_value_tokens_to_duckdb_sql( array $tokens, bool $rewrite_seeded_rand_literals, array &$seeded_rand_state, bool &$requires_seeded_rand_rewrite ): string {
+		if ( ! $rewrite_seeded_rand_literals ) {
+			return $this->translate_tokens_to_duckdb_sql( $tokens );
+		}
+
+		$seeded_rand_rewrites = $this->seeded_rand_insert_values_rewrite_map( $tokens, $seeded_rand_state );
+		if ( count( $seeded_rand_rewrites ) === 0 ) {
+			return $this->translate_tokens_to_duckdb_sql( $tokens );
+		}
+
+		$requires_seeded_rand_rewrite = true;
+		return $this->translate_tokens_to_duckdb_sql(
+			$tokens,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			$seeded_rand_rewrites
+		);
+	}
+
+	/**
+	 * Build deterministic literal rewrites for seeded RAND() calls in INSERT VALUES.
+	 *
+	 * @param WP_Parser_Token[] $tokens            Value expression tokens.
+	 * @param array             $seeded_rand_state Per-statement seeded RAND() state.
+	 * @return array<int,array{end:int,replacement:string}>
+	 */
+	private function seeded_rand_insert_values_rewrite_map( array $tokens, array &$seeded_rand_state ): array {
+		$rewrites = array();
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if (
+				! isset( $tokens[ $index + 2 ] )
+				|| $this->is_non_identifier_token( $tokens[ $index ] )
+				|| 0 !== strcasecmp( $tokens[ $index ]->get_value(), 'RAND' )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+			) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index + 2 ]->id ) {
+				$index += 2;
+				continue;
+			}
+
+			$close_index = $this->matching_parenthesis_index( $tokens, $index + 1 );
+			if ( null === $close_index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unbalanced parentheses in DuckDB driver statement.' );
+			}
+
+			$seed_tokens = array_slice( $tokens, $index + 2, $close_index - $index - 2 );
+			if ( count( $this->split_top_level_comma_items( $seed_tokens ) ) !== 1 ) {
+				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB INSERT ... VALUES supports exactly one seed argument.' );
+			}
+
+			$seed = $this->parse_seeded_rand_literal_seed( $seed_tokens );
+			if ( null === $seed ) {
+				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB INSERT ... VALUES supports only literal numeric, string, or NULL seeds.' );
+			}
+
+			$rewrites[ $index ] = array(
+				'end'         => $close_index,
+				'replacement' => $this->seeded_rand_numeric_literal( $this->next_seeded_rand_value( $seed, $seeded_rand_state ) ),
+			);
+			$index              = $close_index;
+		}
+
+		return $rewrites;
 	}
 
 	/**
@@ -15424,7 +15512,7 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param WP_Parser_Token[] $tokens               Token stream.
 	 * @param int               $index                Current token index, advanced on match.
-	 * @param array<int,array{column:int,start:int,end:int,seed:int,replacement:string}> $seeded_rand_rewrites Allowed rewrites.
+	 * @param array<int,array{end:int,replacement:string}> $seeded_rand_rewrites Allowed rewrites.
 	 * @return string|null Replacement SQL, or null when the current token is not RAND(seed).
 	 */
 	private function translate_seeded_rand_function_call( array $tokens, int &$index, array $seeded_rand_rewrites ): ?string {

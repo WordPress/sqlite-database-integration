@@ -72,6 +72,23 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, RAND(3) AS r FROM seeded_rand_rows ORDER BY id' );
 	}
 
+	public function test_insert_values_seeded_rand_literals_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_rand_out (id INT, value DOUBLE, other DOUBLE)',
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO seeded_rand_out (id, value, other) VALUES (1, RAND(1), RAND(1)), (2, RAND(1), RAND(1))' );
+		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_out ORDER BY id' );
+
+		$this->assertParityRowCount( 'INSERT INTO seeded_rand_out (id, value, other) VALUES (3, RAND(1), RAND(NULL))' );
+		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_out ORDER BY id' );
+
+		$this->assertParityRowCount( 'INSERT INTO seeded_rand_out (id, value, other) VALUES (4, RAND(1) + 0, 0 + RAND(1))' );
+		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_out ORDER BY id' );
+	}
+
 	public function test_select_cast_convert_binary_expressions_match_sqlite(): void {
 		foreach (
 			array(

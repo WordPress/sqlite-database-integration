@@ -227,6 +227,34 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_insert_values_seeded_rand_literals_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_values (id INT, value DOUBLE, other DOUBLE)' );
+
+		$driver->query( 'INSERT INTO seeded_rand_values (id, value, other) VALUES (1, RAND(1), RAND(1)), (2, RAND(1), RAND(1))' );
+		$rows = $driver->query( 'SELECT id, value, other FROM seeded_rand_values ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertCount( 2, $rows );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $rows[0]['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.87161418038571, (float) $rows[0]['other'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.14186032129625, (float) $rows[1]['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.09445909605777, (float) $rows[1]['other'], 1e-12 );
+
+		$driver->query( 'INSERT INTO seeded_rand_values (id, value, other) VALUES (3, RAND(1), RAND(NULL))' );
+		$row = $driver->query( 'SELECT value, other FROM seeded_rand_values WHERE id = 3' )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.15522042769494, (float) $row['other'], 1e-12 );
+
+		$driver->query( 'INSERT INTO seeded_rand_values (id, value, other) VALUES (4, RAND(1) + 0, 0 + RAND(1))' );
+		$row = $driver->query( 'SELECT value, other FROM seeded_rand_values WHERE id = 4' )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.87161418038571, (float) $row['other'], 1e-12 );
+	}
+
 	public function test_select_seeded_rand_unsupported_shapes_are_rejected(): void {
 		$this->requireDuckDBRuntime();
 
@@ -265,10 +293,6 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'sql'     => 'UPDATE t SET value = RAND(1)',
 				'message' => 'top-level SELECT expression',
 			),
-			array(
-				'sql'     => 'INSERT INTO t (value) VALUES (RAND(1))',
-				'message' => 'top-level SELECT expression',
-			),
 		);
 
 		foreach ( $unsupported_contexts as $case ) {
@@ -278,6 +302,13 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
 				$this->assertStringContainsString( $case['message'], $e->getMessage(), $case['sql'] );
 			}
+		}
+
+		try {
+			$driver->query( 'INSERT INTO t (value) VALUES (RAND(CAST(1 AS SIGNED)))' );
+			$this->fail( 'Expected unsupported non-literal INSERT VALUES seeded RAND() shape to fail.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'literal numeric, string, or NULL seeds', $e->getMessage() );
 		}
 	}
 
