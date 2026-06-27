@@ -4511,7 +4511,8 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD COLUMN, ADD INDEX, DROP COLUMN, and DROP INDEX are supported.' );
 		}
 
-		$this->reject_unsupported_alter_table_constraint_actions( $actions );
+		$this->validate_alter_table_check_rebuild_action_combination( $table_name, $actions, $temporary );
+		$this->validate_alter_table_constraint_actions( $table_name, $actions, $temporary );
 
 		$result = null;
 		foreach ( $actions as $action ) {
@@ -4520,6 +4521,11 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( WP_MySQL_Lexer::DROP_SYMBOL === $action[0]->id ) {
+				if ( $this->is_alter_table_drop_check_constraint_action( $action ) ) {
+					$result = $this->execute_alter_table_drop_check_constraint( $table_name, $action, $temporary );
+					continue;
+				}
+
 				$result = $this->is_alter_table_drop_index_action( $action )
 					? $this->execute_alter_table_drop_index( $table_name, $action, $temporary )
 					: $this->execute_alter_table_drop_column( $table_name, $action, $temporary );
@@ -4544,6 +4550,11 @@ class WP_DuckDB_Driver {
 			$this->expect_token( $action, 0, WP_MySQL_Lexer::ADD_SYMBOL, 'Unsupported ALTER TABLE statement in DuckDB driver. Only ADD, DROP, CHANGE, MODIFY, and AUTO_INCREMENT actions are supported.' );
 			$alter_item = array_slice( $action, 1 );
 
+			if ( $this->is_alter_table_add_check_constraint_action( $alter_item ) ) {
+				$result = $this->execute_alter_table_add_check_constraint( $table_name, $alter_item, $temporary );
+				continue;
+			}
+
 			$result = $this->is_create_table_index_item( $alter_item )
 				? $this->execute_alter_table_add_index( $table_name, $alter_item, $temporary )
 				: $this->execute_alter_table_add_column( $table_name, $alter_item, $temporary );
@@ -4553,37 +4564,130 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Reject unsupported ALTER TABLE CHECK/FOREIGN KEY/CONSTRAINT actions before mutation.
+	 * Reject combined ALTER TABLE CHECK rebuild actions before any mutation.
 	 *
+	 * @param string                         $table_name Table name.
 	 * @param array<int,WP_Parser_Token[]> $actions ALTER action token groups.
+	 * @param bool                           $temporary  Whether the target is a temporary table.
 	 */
-	private function reject_unsupported_alter_table_constraint_actions( array $actions ): void {
+	private function validate_alter_table_check_rebuild_action_combination( string $table_name, array $actions, bool $temporary = false ): void {
+		if ( count( $actions ) <= 1 ) {
+			return;
+		}
+
+		foreach ( $actions as $action ) {
+			if ( $this->is_alter_table_check_rebuild_action( $table_name, $action, $temporary ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD/DROP CHECK cannot be combined with other ALTER TABLE actions.' );
+			}
+		}
+	}
+
+	/**
+	 * Check whether an ALTER action requires a CHECK table rebuild.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return bool Whether the action rebuilds CHECK constraints.
+	 */
+	private function is_alter_table_check_rebuild_action( string $table_name, array $tokens, bool $temporary = false ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::ADD_SYMBOL === $tokens[0]->id ) {
+			return $this->is_alter_table_add_check_constraint_action( array_slice( $tokens, 1 ) );
+		}
+
+		if (
+			WP_MySQL_Lexer::DROP_SYMBOL !== $tokens[0]->id
+			|| ! $this->is_alter_table_drop_check_constraint_action( $tokens )
+		) {
+			return false;
+		}
+
+		if ( WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[1]->id ) {
+			$constraint_name = $this->parse_alter_table_drop_check_constraint_name( $tokens, WP_MySQL_Lexer::CONSTRAINT_SYMBOL );
+			return 'CHECK' === $this->resolve_alter_table_drop_constraint_type( $table_name, $constraint_name, $temporary );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Validate ALTER TABLE CHECK/FOREIGN KEY/CONSTRAINT actions before mutation.
+	 *
+	 * @param string                         $table_name Table name.
+	 * @param array<int,WP_Parser_Token[]> $actions ALTER action token groups.
+	 * @param bool                           $temporary  Whether the target is a temporary table.
+	 */
+	private function validate_alter_table_constraint_actions( string $table_name, array $actions, bool $temporary = false ): void {
+		$check_names        = array();
+		$check_names_loaded = false;
+
 		foreach ( $actions as $action ) {
 			if ( ! isset( $action[0] ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Empty action.' );
 			}
 
-			$this->reject_unsupported_alter_table_constraint_action( $action );
+			$this->validate_alter_table_constraint_action( $table_name, $action, $check_names, $check_names_loaded, $temporary );
 		}
 	}
 
 	/**
-	 * Reject unsupported ALTER TABLE CHECK/FOREIGN KEY/CONSTRAINT actions before mutation.
+	 * Return recorded CHECK constraint names keyed lowercase.
 	 *
-	 * @param WP_Parser_Token[] $tokens ALTER action tokens.
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 * @return array<string,bool> CHECK names keyed lowercase.
 	 */
-	private function reject_unsupported_alter_table_constraint_action( array $tokens ): void {
+	private function check_constraint_name_map( string $table_name, bool $temporary = false ): array {
+		$names = array();
+		foreach ( $this->check_constraint_metadata_rows( $table_name, $temporary ) as $check_constraint ) {
+			$names[ strtolower( (string) $check_constraint['constraint_name'] ) ] = true;
+		}
+
+		return $names;
+	}
+
+	/**
+	 * Load recorded CHECK constraint names once for ALTER TABLE preflight.
+	 *
+	 * @param string             $table_name         Table name.
+	 * @param array<string,bool> $check_names        CHECK names keyed lowercase.
+	 * @param bool               $check_names_loaded Whether the map has already been loaded.
+	 * @param bool               $temporary          Whether the target is a temporary table.
+	 */
+	private function ensure_alter_table_check_constraint_name_map( string $table_name, array &$check_names, bool &$check_names_loaded, bool $temporary = false ): void {
+		if ( $check_names_loaded ) {
+			return;
+		}
+
+		$check_names        = $this->check_constraint_name_map( $table_name, $temporary );
+		$check_names_loaded = true;
+	}
+
+	/**
+	 * Validate ALTER TABLE CHECK/FOREIGN KEY/CONSTRAINT actions before mutation.
+	 *
+	 * @param string             $table_name  Table name.
+	 * @param WP_Parser_Token[]  $tokens      ALTER action tokens.
+	 * @param array<string,bool> $check_names Existing and planned CHECK names, keyed lowercase.
+	 * @param bool               $check_names_loaded Whether CHECK names have been loaded.
+	 * @param bool               $temporary   Whether the target is a temporary table.
+	 */
+	private function validate_alter_table_constraint_action( string $table_name, array $tokens, array &$check_names, bool &$check_names_loaded, bool $temporary = false ): void {
 		if ( ! isset( $tokens[0] ) ) {
 			return;
 		}
 
 		if ( WP_MySQL_Lexer::ADD_SYMBOL === $tokens[0]->id ) {
-			$this->reject_unsupported_alter_table_add_constraint_action( array_slice( $tokens, 1 ) );
+			$this->validate_alter_table_add_constraint_action( $table_name, array_slice( $tokens, 1 ), $check_names, $check_names_loaded, $temporary );
 			return;
 		}
 
 		if ( WP_MySQL_Lexer::DROP_SYMBOL === $tokens[0]->id ) {
-			$this->reject_unsupported_alter_table_drop_constraint_action( $tokens );
+			$this->validate_alter_table_drop_constraint_action( $table_name, $tokens, $check_names, $check_names_loaded, $temporary );
 			return;
 		}
 
@@ -4596,11 +4700,15 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Reject unsupported ALTER TABLE ... ADD constraint actions before ADD COLUMN fallback.
+	 * Validate ALTER TABLE ... ADD constraint actions before ADD COLUMN fallback.
 	 *
-	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 * @param string             $table_name  Table name.
+	 * @param WP_Parser_Token[]  $tokens      ALTER action tokens after ADD.
+	 * @param array<string,bool> $check_names Existing and planned CHECK names, keyed lowercase.
+	 * @param bool               $check_names_loaded Whether CHECK names have been loaded.
+	 * @param bool               $temporary   Whether the target is a temporary table.
 	 */
-	private function reject_unsupported_alter_table_add_constraint_action( array $tokens ): void {
+	private function validate_alter_table_add_constraint_action( string $table_name, array $tokens, array &$check_names, bool &$check_names_loaded, bool $temporary = false ): void {
 		if ( ! isset( $tokens[0] ) ) {
 			return;
 		}
@@ -4610,9 +4718,33 @@ class WP_DuckDB_Driver {
 			return;
 		}
 
-		foreach ( $this->alter_table_add_items_for_constraint_detection( $tokens ) as $item ) {
+		$items          = $this->alter_table_add_items_for_constraint_detection( $tokens );
+		$contains_check = false;
+		foreach ( $items as $item ) {
 			if ( $this->is_create_table_check_constraint( $item ) ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD CHECK is not supported.' );
+				$contains_check = true;
+				break;
+			}
+		}
+
+		if ( $contains_check ) {
+			$parenthesized_end = count( $tokens );
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id ) {
+				list( , $parenthesized_end ) = $this->collect_parenthesized_items( $tokens, 1 );
+			}
+
+			if ( 1 !== count( $items ) || count( $tokens ) !== $parenthesized_end ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD CHECK constraint is supported.' );
+			}
+		}
+
+		foreach ( $items as $item ) {
+			if ( $this->is_create_table_check_constraint( $item ) ) {
+				$this->assert_no_active_transaction_for_alter_table_check_rebuild();
+				$this->assert_not_referenced_parent_for_alter_table_check_rebuild( $table_name, $temporary );
+				$this->ensure_alter_table_check_constraint_name_map( $table_name, $check_names, $check_names_loaded, $temporary );
+				$this->translate_table_check_constraint( $table_name, $item, $check_names );
+				continue;
 			}
 
 			if ( $this->is_create_table_foreign_key_constraint( $item ) ) {
@@ -4662,21 +4794,43 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Reject unsupported ALTER TABLE ... DROP constraint actions before DROP COLUMN fallback.
+	 * Validate ALTER TABLE ... DROP constraint actions before DROP COLUMN fallback.
 	 *
-	 * @param WP_Parser_Token[] $tokens ALTER action tokens starting at DROP.
+	 * @param string             $table_name  Table name.
+	 * @param WP_Parser_Token[]  $tokens      ALTER action tokens starting at DROP.
+	 * @param array<string,bool> $check_names Existing and planned CHECK names, keyed lowercase.
+	 * @param bool               $check_names_loaded Whether CHECK names have been loaded.
+	 * @param bool               $temporary   Whether the target is a temporary table.
 	 */
-	private function reject_unsupported_alter_table_drop_constraint_action( array $tokens ): void {
+	private function validate_alter_table_drop_constraint_action( string $table_name, array $tokens, array &$check_names, bool &$check_names_loaded, bool $temporary = false ): void {
 		if ( ! isset( $tokens[1] ) || WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[1]->id ) {
 			return;
 		}
 
 		if ( WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[1]->id ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CHECK is not supported.' );
+			$constraint_name = $this->parse_alter_table_drop_check_constraint_name( $tokens, WP_MySQL_Lexer::CHECK_SYMBOL );
+			$check           = $this->resolve_check_constraint_metadata_row( $table_name, $constraint_name, $temporary );
+			if ( null === $check ) {
+				return;
+			}
+			$this->assert_no_active_transaction_for_alter_table_check_rebuild();
+			$this->assert_not_referenced_parent_for_alter_table_check_rebuild( $table_name, $temporary );
+			$this->ensure_alter_table_check_constraint_name_map( $table_name, $check_names, $check_names_loaded, $temporary );
+			unset( $check_names[ strtolower( (string) $check['constraint_name'] ) ] );
+			return;
 		}
 
 		if ( WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[1]->id ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CONSTRAINT is not supported.' );
+			$constraint_name = $this->parse_alter_table_drop_check_constraint_name( $tokens, WP_MySQL_Lexer::CONSTRAINT_SYMBOL );
+			$constraint_type = $this->resolve_alter_table_drop_constraint_type( $table_name, $constraint_name, $temporary );
+			if ( 'CHECK' !== $constraint_type ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CONSTRAINT currently supports CHECK constraints only.' );
+			}
+			$this->assert_no_active_transaction_for_alter_table_check_rebuild();
+			$this->assert_not_referenced_parent_for_alter_table_check_rebuild( $table_name, $temporary );
+			$this->ensure_alter_table_check_constraint_name_map( $table_name, $check_names, $check_names_loaded, $temporary );
+			unset( $check_names[ strtolower( $constraint_name ) ] );
+			return;
 		}
 
 		if (
@@ -4686,6 +4840,352 @@ class WP_DuckDB_Driver {
 		) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP FOREIGN KEY is not supported.' );
 		}
+	}
+
+	/**
+	 * Reject CHECK table rebuilds inside an active transaction.
+	 */
+	private function assert_no_active_transaction_for_alter_table_check_rebuild(): void {
+		if ( $this->connection->inTransaction() ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD/DROP CHECK cannot run inside an active DuckDB transaction.' );
+		}
+	}
+
+	/**
+	 * Reject CHECK rebuilds on referenced parent tables before mutation.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 */
+	private function assert_not_referenced_parent_for_alter_table_check_rebuild( string $table_name, bool $temporary = false ): void {
+		foreach ( $this->foreign_key_references_to_table( $table_name, $temporary ) as $reference ) {
+			throw new WP_DuckDB_Driver_Exception(
+				"Unsupported ALTER TABLE statement in DuckDB driver. ADD/DROP CHECK on table '{$this->database}.{$table_name}' is not supported because it is referenced by FOREIGN KEY '{$reference['constraint_name']}' on table '{$reference['table_name']}'."
+			);
+		}
+	}
+
+	/**
+	 * Return recorded foreign keys that reference a table.
+	 *
+	 * @param string $table_name Referenced table name.
+	 * @param bool   $temporary  Whether the referenced table is temporary.
+	 * @return array<int,array{table_name:string,constraint_name:string}>
+	 */
+	private function foreign_key_references_to_table( string $table_name, bool $temporary = false ): array {
+		$references = array();
+		$table_sets = array(
+			array(
+				'temporary' => false,
+				'tables'    => $this->user_table_names(),
+			),
+			array(
+				'temporary' => true,
+				'tables'    => $this->temporary_user_table_names(),
+			),
+		);
+
+		foreach ( $table_sets as $table_set ) {
+			if ( $temporary && ! $table_set['temporary'] ) {
+				continue;
+			}
+
+			foreach ( $table_set['tables'] as $candidate_table_name ) {
+				foreach ( $this->foreign_key_metadata_rows( $candidate_table_name, $table_set['temporary'] ) as $foreign_key ) {
+					if ( 0 === strcasecmp( (string) $foreign_key['referenced_table_name'], $table_name ) ) {
+						$references[] = array(
+							'table_name'      => $candidate_table_name,
+							'constraint_name' => (string) $foreign_key['constraint_name'],
+						);
+					}
+				}
+			}
+		}
+
+		return $references;
+	}
+
+	/**
+	 * Check whether ALTER TABLE ... ADD targets a CHECK constraint.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 * @return bool Whether this is an ADD CHECK action.
+	 */
+	private function is_alter_table_add_check_constraint_action( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) ) {
+			return false;
+		}
+
+		foreach ( $this->alter_table_add_items_for_constraint_detection( $tokens ) as $item ) {
+			if ( $this->is_create_table_check_constraint( $item ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Execute ALTER TABLE ... ADD CHECK.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens after ADD.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_add_check_constraint( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$item        = $this->single_alter_table_add_check_constraint_item( $tokens );
+		$check_names = $this->check_constraint_name_map( $table_name, $temporary );
+		$check       = $this->translate_table_check_constraint( $table_name, $item, $check_names );
+		$metadata    = $this->check_constraint_metadata_rows( $table_name, $temporary );
+		$metadata[]  = $check['metadata'];
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $table_name, $metadata, $temporary ): WP_DuckDB_Result_Statement {
+				$this->rebuild_table_with_check_constraints( $table_name, $metadata, $temporary );
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
+	 * Return the single CHECK item from a supported ALTER TABLE ... ADD CHECK action.
+	 *
+	 * @param WP_Parser_Token[] $tokens ALTER action tokens after ADD.
+	 * @return WP_Parser_Token[] CHECK constraint tokens.
+	 */
+	private function single_alter_table_add_check_constraint_item( array $tokens ): array {
+		if ( ! isset( $tokens[0] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD CHECK requires a CHECK constraint.' );
+		}
+
+		if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[0]->id ) {
+			return $tokens;
+		}
+
+		list( $items, $index ) = $this->collect_parenthesized_items( $tokens, 1 );
+		if ( 1 !== count( $items ) || count( $tokens ) !== $index || ! $this->is_create_table_check_constraint( $items[0] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. Only a single ADD CHECK constraint is supported.' );
+		}
+
+		return $items[0];
+	}
+
+	/**
+	 * Check whether ALTER TABLE ... DROP targets a CHECK constraint.
+	 *
+	 * @param WP_Parser_Token[] $tokens Action tokens starting at DROP.
+	 * @return bool Whether this is a DROP CHECK/CONSTRAINT action.
+	 */
+	private function is_alter_table_drop_check_constraint_action( array $tokens ): bool {
+		return isset( $tokens[1] )
+			&& (
+				WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[1]->id
+				|| WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[1]->id
+			);
+	}
+
+	/**
+	 * Execute ALTER TABLE ... DROP CHECK or DROP CONSTRAINT for CHECK constraints.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens starting at DROP.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_alter_table_drop_check_constraint( string $table_name, array $tokens, bool $temporary = false ): WP_DuckDB_Result_Statement {
+		$constraint_name = $this->parse_alter_table_drop_check_constraint_name( $tokens, $tokens[1]->id );
+		$check           = $this->resolve_check_constraint_metadata_row( $table_name, $constraint_name, $temporary );
+		if ( null === $check ) {
+			if ( WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[1]->id ) {
+				return $this->empty_ddl_result();
+			}
+			throw new WP_DuckDB_Driver_Exception( "Unknown CHECK constraint '{$constraint_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+
+		$metadata = array_values(
+			array_filter(
+				$this->check_constraint_metadata_rows( $table_name, $temporary ),
+				function ( array $constraint ) use ( $check ): bool {
+					return 0 !== strcasecmp( (string) $constraint['constraint_name'], (string) $check['constraint_name'] );
+				}
+			)
+		);
+
+		return $this->execute_schema_lifecycle_change(
+			function () use ( $table_name, $metadata, $temporary ): WP_DuckDB_Result_Statement {
+				$this->rebuild_table_with_check_constraints( $table_name, $metadata, $temporary );
+				$this->invalidate_information_schema_compatibility_tables();
+				return $this->empty_ddl_result();
+			}
+		);
+	}
+
+	/**
+	 * Resolve a recorded CHECK constraint row by name.
+	 *
+	 * @param string $table_name      Table name.
+	 * @param string $constraint_name Constraint name.
+	 * @param bool   $temporary       Whether the target is a temporary table.
+	 * @return array<string,mixed>|null CHECK metadata row, or null when not found.
+	 */
+	private function resolve_check_constraint_metadata_row( string $table_name, string $constraint_name, bool $temporary = false ): ?array {
+		foreach ( $this->check_constraint_metadata_rows( $table_name, $temporary ) as $check_constraint ) {
+			if ( 0 === strcasecmp( (string) $check_constraint['constraint_name'], $constraint_name ) ) {
+				return $check_constraint;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse ALTER TABLE ... DROP CHECK|CONSTRAINT name.
+	 *
+	 * @param WP_Parser_Token[] $tokens         ALTER action tokens starting at DROP.
+	 * @param int               $constraint_id  Expected CHECK or CONSTRAINT token id.
+	 * @return string Constraint name.
+	 */
+	private function parse_alter_table_drop_check_constraint_name( array $tokens, int $constraint_id ): string {
+		$index = 0;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::DROP_SYMBOL, 'Expected DROP in ALTER TABLE action.' );
+		++$index;
+		$this->expect_token( $tokens, $index, $constraint_id, 'Expected CHECK or CONSTRAINT in ALTER TABLE DROP action.' );
+		++$index;
+
+		$constraint_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP CHECK options are not supported.' );
+		}
+
+		return $constraint_name;
+	}
+
+	/**
+	 * Resolve the type of a generic ALTER TABLE ... DROP CONSTRAINT target.
+	 *
+	 * @param string $table_name      Table name.
+	 * @param string $constraint_name Constraint name.
+	 * @param bool   $temporary       Whether the target is a temporary table.
+	 * @return string Constraint type.
+	 */
+	private function resolve_alter_table_drop_constraint_type( string $table_name, string $constraint_name, bool $temporary = false ): string {
+		$types = $this->constraint_types_for_name( $table_name, $constraint_name, $temporary );
+
+		if ( count( $types ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown constraint '{$constraint_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+
+		if ( count( $types ) > 1 ) {
+			throw new WP_DuckDB_Driver_Exception( "Ambiguous constraint '{$constraint_name}' on table '{$this->database}.{$table_name}' in DuckDB driver." );
+		}
+
+		return $types[0];
+	}
+
+	/**
+	 * Return MySQL-facing constraint types matching a name.
+	 *
+	 * @param string $table_name      Table name.
+	 * @param string $constraint_name Constraint name.
+	 * @param bool   $temporary       Whether the target is a temporary table.
+	 * @return string[] Matching constraint types.
+	 */
+	private function constraint_types_for_name( string $table_name, string $constraint_name, bool $temporary = false ): array {
+		$types = array();
+
+		if ( 0 === strcasecmp( $constraint_name, 'PRIMARY' ) && count( $this->primary_key_index_rows( $table_name ) ) > 0 ) {
+			$types['PRIMARY KEY'] = 'PRIMARY KEY';
+		}
+
+		foreach ( $this->secondary_index_rows( $table_name, $temporary ) as $index_row ) {
+			if ( 0 === (int) $index_row[1] && 0 === strcasecmp( (string) $index_row[2], $constraint_name ) ) {
+				$types['UNIQUE'] = 'UNIQUE';
+			}
+		}
+
+		foreach ( $this->foreign_key_metadata_rows( $table_name, $temporary ) as $foreign_key ) {
+			if ( 0 === strcasecmp( (string) $foreign_key['constraint_name'], $constraint_name ) ) {
+				$types['FOREIGN KEY'] = 'FOREIGN KEY';
+			}
+		}
+
+		foreach ( $this->check_constraint_metadata_rows( $table_name, $temporary ) as $check_constraint ) {
+			if ( 0 === strcasecmp( (string) $check_constraint['constraint_name'], $constraint_name ) ) {
+				$types['CHECK'] = 'CHECK';
+			}
+		}
+
+		return array_values( $types );
+	}
+
+	/**
+	 * Rebuild a table with a new CHECK constraint metadata set.
+	 *
+	 * @param string                         $table_name        Table name.
+	 * @param array<int,array<string,mixed>> $check_constraints New CHECK metadata rows.
+	 * @param bool                           $temporary         Whether the target is a temporary table.
+	 */
+	private function rebuild_table_with_check_constraints( string $table_name, array $check_constraints, bool $temporary = false ): void {
+		$sequence_names = $this->auto_increment_sequences_for_table( $table_name, $temporary );
+		$metadata_rows  = $this->table_column_metadata_rows( $table_name, $temporary );
+		$column_names   = array_map(
+			function ( array $column ): string {
+				return (string) $column['column_name'];
+			},
+			$metadata_rows
+		);
+		$quoted_columns = implode(
+			', ',
+			array_map(
+				function ( string $column_name ): string {
+					return $this->connection->quote_identifier( $column_name );
+				},
+				$column_names
+			)
+		);
+		$backup_table   = '__wp_duckdb_check_rebuild_' . substr( hash( 'sha256', $table_name . "\0" . microtime( true ) . "\0" . mt_rand() ), 0, 16 );
+
+		$this->record_check_metadata( $table_name, $check_constraints, $temporary );
+		$create_sql = $this->mysql_create_table_statement( $table_name, $table_name, $temporary );
+
+		$this->execute_duckdb_query(
+			'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $backup_table ),
+			'Failed to reset DuckDB CHECK rebuild backup table'
+		);
+		$this->execute_duckdb_query(
+			'CREATE TEMP TABLE '
+				. $this->connection->quote_identifier( $backup_table )
+				. ' AS SELECT '
+				. $quoted_columns
+				. ' FROM '
+				. $this->connection->quote_identifier( $table_name ),
+			'Failed to back up DuckDB table for CHECK rebuild'
+		);
+		$this->execute_duckdb_query(
+			'DROP TABLE ' . $this->connection->quote_identifier( $table_name ),
+			'Failed to rebuild DuckDB CHECK table'
+		);
+		$this->drop_auto_increment_sequences( $sequence_names );
+		$this->execute_create_table( $this->tokenize_and_validate( $create_sql ) );
+		$this->execute_duckdb_query(
+			'INSERT INTO '
+				. $this->connection->quote_identifier( $table_name )
+				. ' ('
+				. $quoted_columns
+				. ') SELECT '
+				. $quoted_columns
+				. ' FROM '
+				. $this->connection->quote_identifier( $backup_table ),
+			'Failed to restore DuckDB table rows after CHECK rebuild'
+		);
+		$this->execute_duckdb_query(
+			'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $backup_table ),
+			'Failed to drop DuckDB CHECK rebuild backup table'
+		);
 	}
 
 	/**

@@ -5956,6 +5956,677 @@ SQL,
 		$driver->query( 'ALTER TABLE users ADD COLUMN id INT PRIMARY KEY' );
 	}
 
+	public function test_alter_table_add_check_constraint_rebuilds_table_metadata_and_indexes(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_lifecycle (
+				id INT,
+				amount INT,
+				label VARCHAR(20),
+				CONSTRAINT existing_check CHECK (amount >= 0),
+				UNIQUE KEY label_unique (label),
+				KEY amount_idx (amount)
+			)'
+		);
+		$driver->query( "INSERT INTO alter_check_lifecycle (id, amount, label) VALUES (1, 10, 'a'), (2, 20, 'b')" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_check_lifecycle ADD CONSTRAINT amount_limit CHECK (amount < 100)' )->rowCount() );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_check_lifecycle ADD CHECK (id IS NULL OR id >= 0)' )->rowCount() );
+
+		$constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'alter_check_lifecycle'
+			ORDER BY constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'alter_check_lifecycle_chk_1',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'amount_limit',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'existing_check',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'label_unique',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$constraints
+		);
+
+		$check_clauses = array_column(
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+				FROM information_schema.check_constraints
+				WHERE constraint_schema = 'wp'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'CHECK_CLAUSE',
+			'CONSTRAINT_NAME'
+		);
+		$this->assertSame(
+			array(
+				'alter_check_lifecycle_chk_1' => 'id IS NULL OR id >= 0',
+				'amount_limit'                => 'amount < 100',
+				'existing_check'              => 'amount >= 0',
+			),
+			$check_clauses
+		);
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE alter_check_lifecycle' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringContainsString( 'CONSTRAINT `existing_check` CHECK (amount >= 0)', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'CONSTRAINT `amount_limit` CHECK (amount < 100)', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'CONSTRAINT `alter_check_lifecycle_chk_1` CHECK (id IS NULL OR id >= 0)', $create_rows[0]['Create Table'] );
+
+		$this->assertSame(
+			array( 'amount_idx', 'label_unique' ),
+			array_values( array_unique( array_column( $driver->query( 'SHOW INDEX FROM alter_check_lifecycle' )->fetchAll( PDO::FETCH_ASSOC ), 'Key_name' ) ) )
+		);
+
+		$driver->query( "INSERT INTO alter_check_lifecycle (id, amount, label) VALUES (3, 30, 'c')" );
+
+		try {
+			$driver->query( "INSERT INTO alter_check_lifecycle (id, amount, label) VALUES (4, 150, 'd')" );
+			$this->fail( 'Expected added CHECK constraint to reject future inserts.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( "UPDATE alter_check_lifecycle SET amount = -1 WHERE label = 'c'" );
+			$this->fail( 'Expected preserved CHECK constraint to reject future updates.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( "INSERT INTO alter_check_lifecycle (id, amount, label) VALUES (5, 50, 'a')" );
+			$this->fail( 'Expected rebuilt unique index to reject duplicate labels.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_add_check_constraint_violation_rolls_back_schema_data_and_indexes(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_rollback (
+				id INT,
+				amount INT,
+				label VARCHAR(20),
+				CONSTRAINT existing_check CHECK (amount >= 0),
+				UNIQUE KEY label_unique (label),
+				KEY amount_idx (amount)
+			)'
+		);
+		$driver->query( "INSERT INTO alter_check_rollback (id, amount, label) VALUES (1, 25, 'a')" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_rollback' );
+
+		try {
+			$driver->query( 'ALTER TABLE alter_check_rollback ADD CONSTRAINT too_small CHECK (amount < 10)' );
+			$this->fail( 'Expected ADD CHECK to reject existing rows that violate the new constraint.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_rollback' ) );
+
+		$driver->query( "INSERT INTO alter_check_rollback (id, amount, label) VALUES (2, 30, 'b')" );
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'amount' => 25,
+					'label'  => 'a',
+				),
+				array(
+					'id'     => 2,
+					'amount' => 30,
+					'label'  => 'b',
+				),
+			),
+			$driver->query( 'SELECT id, amount, label FROM alter_check_rollback ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_add_check_rollback_preserves_auto_increment_sequence_state(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_auto_increment (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				amount INT,
+				CONSTRAINT amount_positive CHECK (amount > 0)
+			)'
+		);
+		$driver->query( 'INSERT INTO alter_check_auto_increment (amount) VALUES (10), (20)' );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_auto_increment' );
+
+		try {
+			$driver->query( 'ALTER TABLE alter_check_auto_increment ADD CONSTRAINT too_small CHECK (amount < 15)' );
+			$this->fail( 'Expected ADD CHECK to reject existing rows that violate the new constraint.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_auto_increment' ) );
+
+		$driver->query( 'INSERT INTO alter_check_auto_increment (amount) VALUES (30)' );
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'amount' => 10,
+				),
+				array(
+					'id'     => 2,
+					'amount' => 20,
+				),
+				array(
+					'id'     => 3,
+					'amount' => 30,
+				),
+			),
+			$driver->query( 'SELECT id, amount FROM alter_check_auto_increment ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_check_rebuild_preserves_auto_increment_sequence_state(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_auto_increment_rebuild (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				amount INT,
+				CONSTRAINT amount_positive CHECK (amount > 0)
+			)'
+		);
+		$driver->query( 'INSERT INTO alter_check_auto_increment_rebuild (amount) VALUES (10), (20)' );
+		$driver->query( 'ALTER TABLE alter_check_auto_increment_rebuild ADD CONSTRAINT amount_limit CHECK (amount < 100)' );
+		$driver->query( 'INSERT INTO alter_check_auto_increment_rebuild (amount) VALUES (30)' );
+		$driver->query( 'ALTER TABLE alter_check_auto_increment_rebuild DROP CHECK amount_limit' );
+		$driver->query( 'INSERT INTO alter_check_auto_increment_rebuild (amount) VALUES (40)' );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'amount' => 10,
+				),
+				array(
+					'id'     => 2,
+					'amount' => 20,
+				),
+				array(
+					'id'     => 3,
+					'amount' => 30,
+				),
+				array(
+					'id'     => 4,
+					'amount' => 40,
+				),
+			),
+			$driver->query( 'SELECT id, amount FROM alter_check_auto_increment_rebuild ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_drop_check_constraint_rebuilds_table_and_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_drop (
+				id INT,
+				label VARCHAR(20),
+				CONSTRAINT c1 CHECK (id > 0),
+				CONSTRAINT c2 CHECK (id < 10),
+				KEY id_idx (id)
+			)'
+		);
+		$driver->query( "INSERT INTO alter_check_drop (id, label) VALUES (5, 'a')" );
+
+		try {
+			$driver->query( "INSERT INTO alter_check_drop (id, label) VALUES (0, 'blocked')" );
+			$this->fail( 'Expected original CHECK constraint to reject invalid rows.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_check_drop DROP CONSTRAINT c1' )->rowCount() );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_check_drop DROP CHECK c2' )->rowCount() );
+
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'alter_check_drop' AND constraint_type = 'CHECK'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME
+				FROM information_schema.check_constraints
+				WHERE constraint_schema = 'wp'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE alter_check_drop' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringNotContainsString( 'CONSTRAINT `c1`', $create_rows[0]['Create Table'] );
+		$this->assertStringNotContainsString( 'CONSTRAINT `c2`', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'KEY `id_idx` (`id`)', $create_rows[0]['Create Table'] );
+
+		$driver->query( "INSERT INTO alter_check_drop (id, label) VALUES (0, 'after_drop'), (20, 'also_after_drop')" );
+		$this->assertSame(
+			array(
+				array( 'id' => 0 ),
+				array( 'id' => 5 ),
+				array( 'id' => 20 ),
+			),
+			$driver->query( 'SELECT id FROM alter_check_drop ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_check_constraint_actions_target_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE shadow_check (id INT, amount INT, CONSTRAINT persistent_positive CHECK (amount > 0))' );
+		$driver->query( 'INSERT INTO shadow_check (id, amount) VALUES (1, 10)' );
+		$driver->query( 'CREATE TEMPORARY TABLE shadow_check (id INT, amount INT, CONSTRAINT temp_non_negative CHECK (id >= 0))' );
+		$driver->query( 'INSERT INTO shadow_check (id, amount) VALUES (2, 20)' );
+
+		$driver->query( 'ALTER TABLE shadow_check ADD CONSTRAINT temp_amount_limit CHECK (amount < 100)' );
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE shadow_check' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringStartsWith( 'CREATE TEMPORARY TABLE `shadow_check`', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'CONSTRAINT `temp_non_negative` CHECK (id >= 0)', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'CONSTRAINT `temp_amount_limit` CHECK (amount < 100)', $create_rows[0]['Create Table'] );
+		$this->assertStringNotContainsString( 'persistent_positive', $create_rows[0]['Create Table'] );
+
+		try {
+			$driver->query( 'INSERT INTO shadow_check (id, amount) VALUES (3, 150)' );
+			$this->fail( 'Expected temporary CHECK constraint to reject invalid rows.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$driver->query( 'ALTER TABLE shadow_check DROP CHECK temp_non_negative' );
+		$driver->query( 'INSERT INTO shadow_check (id, amount) VALUES (-1, 30)' );
+		$driver->query( 'DROP TEMPORARY TABLE shadow_check' );
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE shadow_check' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringStartsWith( 'CREATE TABLE `shadow_check`', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'CONSTRAINT `persistent_positive` CHECK (amount > 0)', $create_rows[0]['Create Table'] );
+		$this->assertStringNotContainsString( 'temp_amount_limit', $create_rows[0]['Create Table'] );
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'amount' => 10,
+				),
+			),
+			$driver->query( 'SELECT id, amount FROM shadow_check ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_add_drop_check_rejects_duplicate_and_missing_names_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_names (
+				id INT,
+				amount INT,
+				CONSTRAINT existing_check CHECK (amount >= 0),
+				KEY amount_idx (amount)
+			)'
+		);
+		$driver->query( 'INSERT INTO alter_check_names (id, amount) VALUES (1, 10)' );
+
+		foreach (
+			array(
+				'ALTER TABLE alter_check_names ADD CONSTRAINT existing_check CHECK (id > 0)' => 'Duplicate CHECK constraint name',
+				'ALTER TABLE alter_check_names ADD CONSTRAINT EXISTING_CHECK CHECK (id > 0)' => 'Duplicate CHECK constraint name',
+				'ALTER TABLE alter_check_names DROP CONSTRAINT missing_check' => "Unknown constraint 'missing_check'",
+			) as $sql => $message
+		) {
+			$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_names' );
+
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected ALTER TABLE CHECK name rejection for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+
+			$this->assertSame(
+				$before,
+				$this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_names' ),
+				'ALTER TABLE CHECK name rejection mutated schema or data for SQL: ' . $sql
+			);
+		}
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_names' );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_check_names DROP CHECK missing_check' )->rowCount() );
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_names' ) );
+	}
+
+	public function test_alter_table_add_check_allows_names_used_by_other_constraint_types(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_check_name_parent (id INT PRIMARY KEY)' );
+		$driver->query(
+			'CREATE TABLE alter_check_name_reuse (
+				id INT,
+				parent_id INT,
+				UNIQUE KEY reused_unique (id),
+				CONSTRAINT reused_fk FOREIGN KEY (parent_id) REFERENCES alter_check_name_parent (id)
+			)'
+		);
+		$driver->query( 'ALTER TABLE alter_check_name_reuse ADD CONSTRAINT reused_unique CHECK (id > 0)' );
+		$driver->query( 'ALTER TABLE alter_check_name_reuse ADD CONSTRAINT reused_fk CHECK (parent_id IS NULL OR parent_id > 0)' );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'reused_fk',
+					'CONSTRAINT_TYPE' => 'CHECK',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'reused_unique',
+					'CONSTRAINT_TYPE' => 'CHECK',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'reused_fk',
+					'CONSTRAINT_TYPE' => 'FOREIGN KEY',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'reused_unique',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'alter_check_name_reuse'
+				ORDER BY constraint_type, constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		try {
+			$driver->query( 'ALTER TABLE alter_check_name_reuse DROP CONSTRAINT reused_fk' );
+			$this->fail( 'Expected generic DROP CONSTRAINT with cross-type duplicate names to be ambiguous.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Ambiguous constraint 'reused_fk'", $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_check_constraint_actions_reject_multi_action_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_check_multi (id INT, amount INT, CONSTRAINT amount_positive CHECK (amount > 0))' );
+		$driver->query( 'INSERT INTO alter_check_multi (id, amount) VALUES (1, 20)' );
+
+		foreach (
+			array(
+				'ALTER TABLE alter_check_multi ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT too_small CHECK (amount < 10)',
+				'ALTER TABLE alter_check_multi ADD CONSTRAINT too_small CHECK (amount < 10), DROP COLUMN amount',
+				'ALTER TABLE alter_check_multi DROP CHECK amount_positive, ADD COLUMN should_not_exist INT DEFAULT 2',
+			) as $sql
+		) {
+			$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_multi' );
+
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected multi-action ALTER TABLE CHECK rebuild rejection for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( 'ADD/DROP CHECK cannot be combined with other ALTER TABLE actions', $e->getMessage() );
+			}
+
+			$this->assertSame(
+				$before,
+				$this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_multi' ),
+				'Multi-action ALTER TABLE CHECK rebuild rejection mutated schema or data for SQL: ' . $sql
+			);
+		}
+	}
+
+	public function test_alter_table_check_rebuild_preserves_foreign_keys(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_check_fk_parent (id INT PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO alter_check_fk_parent (id) VALUES (1)' );
+		$driver->query(
+			'CREATE TABLE alter_check_fk_child (
+				id INT,
+				parent_id INT,
+				amount INT,
+				CONSTRAINT child_fk FOREIGN KEY (parent_id) REFERENCES alter_check_fk_parent (id),
+				CONSTRAINT amount_positive CHECK (amount > 0)
+			)'
+		);
+		$driver->query( 'INSERT INTO alter_check_fk_child (id, parent_id, amount) VALUES (1, 1, 10)' );
+
+		$driver->query( 'ALTER TABLE alter_check_fk_child ADD CONSTRAINT amount_limit CHECK (amount < 100)' );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'amount_limit',
+					'CONSTRAINT_TYPE' => 'CHECK',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CONSTRAINT_TYPE' => 'CHECK',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'child_fk',
+					'CONSTRAINT_TYPE' => 'FOREIGN KEY',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'alter_check_fk_child'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString(
+			'CONSTRAINT `child_fk` FOREIGN KEY (`parent_id`) REFERENCES `alter_check_fk_parent` (`id`)',
+			$driver->query( 'SHOW CREATE TABLE alter_check_fk_child' )->fetch( PDO::FETCH_ASSOC )['Create Table']
+		);
+
+		try {
+			$driver->query( 'INSERT INTO alter_check_fk_child (id, parent_id, amount) VALUES (2, 2, 20)' );
+			$this->fail( 'Expected rebuilt foreign key to reject missing parent rows.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		$driver->query( 'ALTER TABLE alter_check_fk_child DROP CHECK amount_limit' );
+
+		try {
+			$driver->query( 'INSERT INTO alter_check_fk_child (id, parent_id, amount) VALUES (3, 3, 30)' );
+			$this->fail( 'Expected foreign key to remain enforced after DROP CHECK rebuild.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		$driver->query( 'INSERT INTO alter_check_fk_child (id, parent_id, amount) VALUES (4, 1, 150)' );
+		$this->assertSame(
+			array(
+				array(
+					'id'        => 1,
+					'parent_id' => 1,
+					'amount'    => 10,
+				),
+				array(
+					'id'        => 4,
+					'parent_id' => 1,
+					'amount'    => 150,
+				),
+			),
+			$driver->query( 'SELECT id, parent_id, amount FROM alter_check_fk_child ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_check_rebuild_rejects_referenced_parent_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_parent_guard (
+				id INT PRIMARY KEY,
+				amount INT,
+				CONSTRAINT parent_positive CHECK (amount > 0)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_child_guard (
+				id INT,
+				parent_id INT,
+				CONSTRAINT child_parent_fk FOREIGN KEY (parent_id) REFERENCES alter_check_parent_guard (id)
+			)'
+		);
+
+		$before = $this->alter_table_referenced_parent_snapshot( $driver );
+
+		try {
+			$driver->query( 'ALTER TABLE alter_check_parent_guard ADD CONSTRAINT parent_limit CHECK (amount < 100)' );
+			$this->fail( 'Expected referenced parent ADD CHECK rebuild to be rejected before mutation.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'referenced by FOREIGN KEY', $e->getMessage() );
+		}
+
+		$this->assertSame( $before, $this->alter_table_referenced_parent_snapshot( $driver ) );
+
+		$driver->query( 'INSERT INTO alter_check_parent_guard (id, amount) VALUES (1, 10)' );
+		$driver->query( 'INSERT INTO alter_check_child_guard (id, parent_id) VALUES (10, 1)' );
+		$before = $this->alter_table_referenced_parent_snapshot( $driver );
+
+		try {
+			$driver->query( 'ALTER TABLE alter_check_parent_guard DROP CHECK parent_positive' );
+			$this->fail( 'Expected referenced parent DROP CHECK rebuild to be rejected before mutation.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'referenced by FOREIGN KEY', $e->getMessage() );
+		}
+
+		$this->assertSame( $before, $this->alter_table_referenced_parent_snapshot( $driver ) );
+	}
+
+	public function test_alter_table_add_drop_check_rejects_active_transactions_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_check_tx (id INT, CONSTRAINT c1 CHECK (id >= 0), KEY id_idx (id))' );
+		$driver->query( 'INSERT INTO alter_check_tx (id) VALUES (1)' );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_tx' );
+
+		$driver->query( 'BEGIN' );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_check_tx DROP CHECK missing_check' )->rowCount() );
+		foreach (
+			array(
+				'ALTER TABLE alter_check_tx ADD CONSTRAINT c2 CHECK (id < 10)',
+				'ALTER TABLE alter_check_tx DROP CHECK c1',
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected active transaction CHECK rebuild rejection for SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( 'cannot run inside an active DuckDB transaction', $e->getMessage() );
+			}
+		}
+		$driver->query( 'ROLLBACK' );
+
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_tx' ) );
+	}
+
 	public function test_unsupported_alter_table_constraint_actions_throw_before_mutation(): void {
 		$this->requireDuckDBRuntime();
 
@@ -5970,7 +6641,8 @@ SQL,
 				`constraint` INT,
 				`foreign` INT,
 				CONSTRAINT existing_check CHECK (id >= 0),
-				CONSTRAINT existing_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)
+				CONSTRAINT existing_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id),
+				UNIQUE KEY id_unique (id)
 			)'
 		);
 		$driver->query( 'INSERT INTO alter_constraint_guard (id, parent_id, `check`, `constraint`, `foreign`) VALUES (1, 1, 7, 8, 9)' );
@@ -5979,16 +6651,13 @@ SQL,
 
 		foreach (
 			array(
-				'ALTER TABLE alter_constraint_guard ADD CHECK (id >= 0)' => 'ADD CHECK is not supported',
-				'ALTER TABLE alter_constraint_guard ADD (CHECK (id >= 0))' => 'ADD CHECK is not supported',
-				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_check CHECK (id >= 0)' => 'ADD CHECK is not supported',
 				'ALTER TABLE alter_constraint_guard ADD FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
 				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
 				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_unique UNIQUE KEY (id)' => 'ADD CONSTRAINT is not supported',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN score INT CHECK (score >= 0)' => 'Inline CHECK constraints are only supported in CREATE TABLE',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN parent_ref INT REFERENCES alter_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
-				'ALTER TABLE alter_constraint_guard DROP CHECK existing_check' => 'DROP CHECK is not supported',
-				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT existing_check' => 'DROP CONSTRAINT is not supported',
+				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT id_unique' => 'DROP CONSTRAINT currently supports CHECK constraints only',
+				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT existing_fk' => 'DROP CONSTRAINT currently supports CHECK constraints only',
 				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY existing_fk' => 'DROP FOREIGN KEY is not supported',
 				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY' => 'DROP FOREIGN KEY is not supported',
 			) as $sql => $message
@@ -6042,7 +6711,8 @@ SQL,
 				`constraint` INT,
 				`foreign` INT,
 				CONSTRAINT existing_check CHECK (id >= 0),
-				CONSTRAINT existing_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)
+				CONSTRAINT existing_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id),
+				UNIQUE KEY id_unique (id)
 			)'
 		);
 		$driver->query( 'INSERT INTO alter_constraint_guard (id, parent_id, `check`, `constraint`, `foreign`) VALUES (1, 1, 7, 8, 9)' );
@@ -6051,11 +6721,11 @@ SQL,
 
 		foreach (
 			array(
-				'ALTER TABLE alter_constraint_guard ADD CHECK (id >= 0), ADD COLUMN should_not_exist INT DEFAULT 2' => 'ADD CHECK is not supported',
+				'ALTER TABLE alter_constraint_guard ADD CHECK (id >= 0), ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD/DROP CHECK cannot be combined with other ALTER TABLE actions',
 				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY existing_fk, ADD COLUMN should_not_exist INT DEFAULT 2' => 'DROP FOREIGN KEY is not supported',
-				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CHECK (id >= 0)' => 'ADD CHECK is not supported',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
-				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, DROP CONSTRAINT existing_check' => 'DROP CONSTRAINT is not supported',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_unique UNIQUE KEY (id)' => 'ADD CONSTRAINT is not supported',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, DROP CONSTRAINT existing_fk' => 'DROP CONSTRAINT currently supports CHECK constraints only',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD COLUMN inline_check INT CHECK (inline_check >= 0)' => 'Inline CHECK constraints are only supported in CREATE TABLE',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD COLUMN inline_parent INT REFERENCES alter_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
 			) as $sql => $message
@@ -6203,6 +6873,45 @@ SQL,
 				ORDER BY constraint_name"
 			)->fetchAll( PDO::FETCH_ASSOC ),
 			'show_create'             => $driver->query( 'SHOW CREATE TABLE alter_constraint_guard' )->fetchAll( PDO::FETCH_ASSOC ),
+		);
+	}
+
+	private function alter_table_check_lifecycle_snapshot( WP_DuckDB_Driver $driver, string $table_name ): array {
+		return array(
+			'columns'           => $driver->query( 'SHOW COLUMNS FROM ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+			'rows'              => $driver->query( 'SELECT * FROM ' . $table_name . ' ORDER BY 1' )->fetchAll( PDO::FETCH_ASSOC ),
+			'indexes'           => $driver->query( 'SHOW INDEX FROM ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+			'table_constraints' => $driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = '{$table_name}'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'check_constraints' => $driver->query(
+				"SELECT tc.CONSTRAINT_NAME, cc.CHECK_CLAUSE
+				FROM information_schema.table_constraints AS tc
+				JOIN information_schema.check_constraints AS cc
+					ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+					AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+				WHERE tc.table_schema = 'wp' AND tc.table_name = '{$table_name}'
+				ORDER BY tc.constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'show_create'       => $driver->query( 'SHOW CREATE TABLE ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+		);
+	}
+
+	private function alter_table_referenced_parent_snapshot( WP_DuckDB_Driver $driver ): array {
+		return array(
+			'parent'                  => $this->alter_table_check_lifecycle_snapshot( $driver, 'alter_check_parent_guard' ),
+			'child_rows'              => $driver->query( 'SELECT id, parent_id FROM alter_check_child_guard ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
+			'referential_constraints' => $driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp'
+					AND (table_name = 'alter_check_child_guard' OR referenced_table_name = 'alter_check_parent_guard')
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'child_show_create'       => $driver->query( 'SHOW CREATE TABLE alter_check_child_guard' )->fetchAll( PDO::FETCH_ASSOC ),
 		);
 	}
 

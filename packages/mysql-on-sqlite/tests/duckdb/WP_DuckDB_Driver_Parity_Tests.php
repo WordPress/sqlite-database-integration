@@ -1615,52 +1615,54 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW CREATE TABLE inline_fk_child_default' );
 	}
 
-	public function test_alter_table_check_constraint_actions_document_current_duckdb_gap(): void {
-		$sqlite_driver = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
-			'wp'
-		);
-		$duckdb_driver = new WP_DuckDB_Driver(
+	public function test_alter_table_check_constraint_actions_match_sqlite(): void {
+		$this->runParitySetup(
 			array(
-				'path'     => ':memory:',
-				'database' => 'wp',
+				'CREATE TABLE alter_check_gap (id INT, label VARCHAR(20), CONSTRAINT existing_check CHECK (id >= 0), KEY label_idx (label))',
+				"INSERT INTO alter_check_gap (id, label) VALUES (1, 'one')",
+				'ALTER TABLE alter_check_gap ADD CONSTRAINT added_check CHECK (id < 10)',
+				'ALTER TABLE alter_check_gap ADD CHECK (id IS NULL OR id <> 7)',
 			)
 		);
 
-		$create_sql = 'CREATE TABLE alter_check_gap (id INT, CONSTRAINT existing_check CHECK (id >= 0))';
-		$sqlite_driver->query( $create_sql, PDO::FETCH_ASSOC );
-		$duckdb_driver->query( $create_sql );
-
-		$sqlite_driver->query( 'ALTER TABLE alter_check_gap ADD CONSTRAINT added_check CHECK (id < 10)', PDO::FETCH_ASSOC );
-		$sqlite_create = $sqlite_driver->query( 'SHOW CREATE TABLE alter_check_gap', PDO::FETCH_ASSOC );
-		$this->assertStringContainsString( 'added_check', $sqlite_create[0]['Create Table'] );
-
-		$duckdb_before = $duckdb_driver->query( 'SHOW CREATE TABLE alter_check_gap' )->fetchAll( PDO::FETCH_ASSOC );
-		try {
-			$duckdb_driver->query( 'ALTER TABLE alter_check_gap ADD CONSTRAINT added_check CHECK (id < 10)' );
-			$this->fail( 'Expected DuckDB to reject ALTER TABLE ADD CHECK.' );
-		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			$this->assertStringContainsString( 'ADD CHECK is not supported', $e->getMessage() );
-		}
-		$this->assertSame(
-			$duckdb_before,
-			$duckdb_driver->query( 'SHOW CREATE TABLE alter_check_gap' )->fetchAll( PDO::FETCH_ASSOC )
+		$this->assertParityRows( 'SHOW CREATE TABLE alter_check_gap' );
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'alter_check_gap'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = 'wp'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityErrorContains(
+			"INSERT INTO alter_check_gap (id, label) VALUES (20, 'too_high')",
+			'CHECK constraint failed'
+		);
+		$this->assertParityRowColumns(
+			'SHOW INDEX FROM alter_check_gap',
+			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
 		);
 
-		$sqlite_driver->query( 'ALTER TABLE alter_check_gap DROP CHECK existing_check', PDO::FETCH_ASSOC );
-		$sqlite_create = $sqlite_driver->query( 'SHOW CREATE TABLE alter_check_gap', PDO::FETCH_ASSOC );
-		$this->assertStringNotContainsString( 'existing_check', $sqlite_create[0]['Create Table'] );
-
-		try {
-			$duckdb_driver->query( 'ALTER TABLE alter_check_gap DROP CHECK existing_check' );
-			$this->fail( 'Expected DuckDB to reject ALTER TABLE DROP CHECK.' );
-		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			$this->assertStringContainsString( 'DROP CHECK is not supported', $e->getMessage() );
-		}
-		$this->assertSame(
-			$duckdb_before,
-			$duckdb_driver->query( 'SHOW CREATE TABLE alter_check_gap' )->fetchAll( PDO::FETCH_ASSOC )
+		$this->assertParityRowCount( 'ALTER TABLE alter_check_gap DROP CHECK existing_check' );
+		$this->assertParityRowCount( 'ALTER TABLE alter_check_gap DROP CONSTRAINT added_check' );
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'alter_check_gap'
+			ORDER BY constraint_name"
 		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = 'wp'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE alter_check_gap' );
+		$this->assertParityRowCount( "INSERT INTO alter_check_gap (id, label) VALUES (-1, 'after_drop')" );
 	}
 
 	public function test_unique_key_foreign_key_metadata_documents_current_duckdb_gap(): void {
