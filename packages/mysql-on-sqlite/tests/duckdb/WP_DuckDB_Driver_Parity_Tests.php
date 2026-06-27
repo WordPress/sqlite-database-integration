@@ -1528,132 +1528,270 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
-	public function test_replace_select_unsafe_conflict_shapes_are_rejected_without_mutation(): void {
-		$cases = array(
+	public function test_replace_select_multiple_unique_keys_match_sqlite(): void {
+		$this->runParitySetup(
 			array(
-				'setup'  => array(
-					'CREATE TABLE replace_select_temporal_multi_unique (
-						id INT PRIMARY KEY,
-						name VARCHAR(20) UNIQUE,
-						d DATE NULL,
-						payload VARCHAR(20)
-					)',
-					"INSERT INTO replace_select_temporal_multi_unique VALUES
-						(1, 'one', '2025-01-01', 'old-one'),
-						(2, 'two', '2025-01-02', 'old-two')",
-					'CREATE TABLE replace_select_temporal_multi_unique_source (
-						id INT,
-						name VARCHAR(20),
-						d_text VARCHAR(40),
-						payload VARCHAR(20)
-					)',
-					"INSERT INTO replace_select_temporal_multi_unique_source VALUES
-						(1, 'two', '2025-03-03', 'incoming')",
-				),
-				'sql'    => 'REPLACE INTO replace_select_temporal_multi_unique (id, name, d, payload)
-					SELECT id, name, d_text, payload
-					FROM replace_select_temporal_multi_unique_source',
-				'select' => 'SELECT id, name, d, payload FROM replace_select_temporal_multi_unique ORDER BY id',
-				'rows'   => array(
-					array(
-						'id'      => 1,
-						'name'    => 'one',
-						'd'       => '2025-01-01',
-						'payload' => 'old-one',
-					),
-					array(
-						'id'      => 2,
-						'name'    => 'two',
-						'd'       => '2025-01-02',
-						'payload' => 'old-two',
-					),
-				),
-			),
-			array(
-				'setup'  => array(
-					'CREATE TABLE replace_select_non_temporal_multi_unique (
-						id INT PRIMARY KEY,
-						email VARCHAR(40) UNIQUE,
-						payload VARCHAR(20)
-					)',
-					"INSERT INTO replace_select_non_temporal_multi_unique VALUES
-						(1, 'one@example.test', 'old-one'),
-						(2, 'two@example.test', 'old-two')",
-					'CREATE TABLE replace_select_non_temporal_multi_unique_source (
-						id INT,
-						email VARCHAR(40),
-						payload VARCHAR(20)
-					)',
-					"INSERT INTO replace_select_non_temporal_multi_unique_source VALUES
-						(1, 'two@example.test', 'incoming')",
-				),
-				'sql'    => 'REPLACE INTO replace_select_non_temporal_multi_unique (id, email, payload)
-					SELECT id, email, payload
-					FROM replace_select_non_temporal_multi_unique_source',
-				'select' => 'SELECT id, email, payload FROM replace_select_non_temporal_multi_unique ORDER BY id',
-				'rows'   => array(
-					array(
-						'id'      => 1,
-						'email'   => 'one@example.test',
-						'payload' => 'old-one',
-					),
-					array(
-						'id'      => 2,
-						'email'   => 'two@example.test',
-						'payload' => 'old-two',
-					),
-				),
-			),
-			array(
-				'setup'  => array(
-					"CREATE TABLE replace_select_ci_unique (
-						id INT,
-						name VARCHAR(20) NOT NULL DEFAULT '',
-						payload VARCHAR(20),
-						UNIQUE KEY name (name)
-					) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
-					"INSERT INTO replace_select_ci_unique VALUES (1, 'first', 'old')",
-					'CREATE TABLE replace_select_ci_unique_source (
-						id INT,
-						name VARCHAR(20),
-						payload VARCHAR(20)
-					)',
-					"INSERT INTO replace_select_ci_unique_source VALUES (2, 'FIRST', 'incoming')",
-				),
-				'sql'    => 'REPLACE INTO replace_select_ci_unique (id, name, payload)
-					SELECT id, name, payload
-					FROM replace_select_ci_unique_source',
-				'select' => 'SELECT id, name, payload FROM replace_select_ci_unique ORDER BY id',
-				'rows'   => array(
-					array(
-						'id'      => 1,
-						'name'    => 'first',
-						'payload' => 'old',
-					),
-				),
-			),
+				'CREATE TABLE replace_select_multi_unique (
+					id INT PRIMARY KEY,
+					email VARCHAR(40) UNIQUE,
+					slug VARCHAR(40) UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO replace_select_multi_unique VALUES
+					(1, 'one@example.test', 'one', 'old-id'),
+					(2, 'two@example.test', 'two', 'old-email')",
+				'CREATE TABLE replace_select_multi_unique_source (
+					id INT,
+					email VARCHAR(40),
+					slug VARCHAR(40),
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO replace_select_multi_unique_source VALUES
+					(1, 'two@example.test', 'incoming', 'new')",
+			)
 		);
 
-		foreach ( $cases as $case ) {
-			$driver = new WP_DuckDB_Driver(
-				array(
-					'path'     => ':memory:',
-					'database' => 'wp',
-				)
-			);
+		$this->assertParityRowCount(
+			'REPLACE INTO replace_select_multi_unique (id, email, slug, payload)
+			SELECT id, email, slug, payload
+			FROM replace_select_multi_unique_source'
+		);
+		$this->assertParityRows( 'SELECT id, email, slug, payload FROM replace_select_multi_unique ORDER BY id' );
+	}
 
-			foreach ( $case['setup'] as $query ) {
-				$driver->query( $query );
-			}
+	public function test_replace_select_omitted_auto_increment_primary_key_with_secondary_unique_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE replace_select_omitted_ai_pk (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					email VARCHAR(40) NOT NULL,
+					payload VARCHAR(20),
+					UNIQUE KEY email_unique (email)
+				)',
+				"INSERT INTO replace_select_omitted_ai_pk (email, payload) VALUES
+					('one@example.test', 'old-one'),
+					('two@example.test', 'old-two')",
+				'CREATE TABLE replace_select_omitted_ai_pk_source (
+					email VARCHAR(40),
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO replace_select_omitted_ai_pk_source VALUES
+					('two@example.test', 'incoming')",
+			)
+		);
 
-			$this->assert_duckdb_error_contains(
-				$driver,
-				$case['sql'],
-				'Manual conflict handling for multiple unique keys or case-insensitive unique keys is not yet supported'
-			);
-			$this->assertSame( $case['rows'], $driver->query( $case['select'] )->fetchAll( PDO::FETCH_ASSOC ) );
-			$this->assert_no_select_write_stage_tables( $driver );
+		$this->assertParityRowCount(
+			'REPLACE INTO replace_select_omitted_ai_pk (email, payload)
+			SELECT email, payload
+			FROM replace_select_omitted_ai_pk_source'
+		);
+		$this->assertParityRows( 'SELECT id, email, payload FROM replace_select_omitted_ai_pk ORDER BY id' );
+	}
+
+	public function test_replace_select_case_insensitive_unique_key_stores_incoming_value(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE replace_select_ci_unique (
+					name VARCHAR(20),
+					payload VARCHAR(20),
+					UNIQUE KEY name_unique (name)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO replace_select_ci_unique VALUES ('First', 'old')",
+				'CREATE TABLE replace_select_ci_unique_source (
+					name VARCHAR(20),
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO replace_select_ci_unique_source VALUES ('first', 'incoming')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'REPLACE INTO replace_select_ci_unique (name, payload)
+			SELECT name, payload
+			FROM replace_select_ci_unique_source'
+		);
+		$this->assertParityRows( 'SELECT name, payload FROM replace_select_ci_unique ORDER BY name' );
+	}
+
+	public function test_temporal_replace_select_multiple_unique_keys_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_select_multi_unique (
+					id INT PRIMARY KEY,
+					d DATE UNIQUE,
+					slug VARCHAR(40) UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO temporal_replace_select_multi_unique VALUES
+					(1, '2025-10-23', 'one', 'old-id'),
+					(2, '2025-10-24', 'two', 'old-date')",
+				'CREATE TABLE temporal_replace_select_multi_unique_source (
+					id INT,
+					d_text VARCHAR(40),
+					slug VARCHAR(40),
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO temporal_replace_select_multi_unique_source VALUES
+					(1, '2025-10-24 01:02:03', 'incoming', 'new')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'REPLACE INTO temporal_replace_select_multi_unique (id, d, slug, payload)
+			SELECT id, d_text, slug, payload
+			FROM temporal_replace_select_multi_unique_source'
+		);
+		$this->assertParityRows( 'SELECT id, d, slug, payload FROM temporal_replace_select_multi_unique ORDER BY id' );
+	}
+
+	public function test_temporal_replace_select_case_insensitive_unique_key_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_select_ci_unique (
+					name VARCHAR(20),
+					d DATE,
+					payload VARCHAR(20),
+					UNIQUE KEY name_unique (name)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO temporal_replace_select_ci_unique VALUES ('First', '2025-10-23', 'old')",
+				'CREATE TABLE temporal_replace_select_ci_unique_source (
+					name VARCHAR(20),
+					d_text VARCHAR(40),
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO temporal_replace_select_ci_unique_source VALUES
+					('first', '2025-10-24 01:02:03', 'incoming')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'REPLACE INTO temporal_replace_select_ci_unique (name, d, payload)
+			SELECT name, d_text, payload
+			FROM temporal_replace_select_ci_unique_source'
+		);
+		$this->assertParityRows( 'SELECT name, d, payload FROM temporal_replace_select_ci_unique ORDER BY name' );
+	}
+
+	public function test_replace_select_nullable_unique_nulls_do_not_conflict(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE replace_select_nullable_unique (
+					id INT PRIMARY KEY,
+					email VARCHAR(40) UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO replace_select_nullable_unique VALUES
+					(1, NULL, 'old-null'),
+					(2, 'two@example.test', 'old-two')",
+				'CREATE TABLE replace_select_nullable_unique_source (
+					id INT,
+					email VARCHAR(40),
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO replace_select_nullable_unique_source VALUES
+					(3, NULL, 'incoming-null')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'REPLACE INTO replace_select_nullable_unique (id, email, payload)
+			SELECT id, email, payload
+			FROM replace_select_nullable_unique_source'
+		);
+		$this->assertParityRows( 'SELECT id, email, payload FROM replace_select_nullable_unique ORDER BY id' );
+	}
+
+	public function test_temporal_replace_select_manual_strict_error_preserves_target(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_select_manual_error (
+					id INT PRIMARY KEY,
+					d DATE UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO temporal_replace_select_manual_error VALUES
+					(1, '2025-10-23', 'old-id'),
+					(2, '2025-10-24', 'old-date')",
+				'CREATE TABLE temporal_replace_select_manual_error_source (
+					id INT,
+					d_text VARCHAR(40),
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO temporal_replace_select_manual_error_source VALUES
+					(1, 'bad', 'incoming')",
+			)
+		);
+
+		$this->assert_temporal_error_leaves_rows(
+			'REPLACE INTO temporal_replace_select_manual_error (id, d, payload)
+			SELECT id, d_text, payload
+			FROM temporal_replace_select_manual_error_source',
+			"Incorrect date value: 'bad'",
+			array(
+				'SELECT id, d, payload FROM temporal_replace_select_manual_error ORDER BY id',
+				'SELECT id, d_text, payload FROM temporal_replace_select_manual_error_source ORDER BY id',
+			)
+		);
+	}
+
+	public function test_replace_select_rejects_incoming_duplicate_unique_groups_without_mutation(): void {
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		foreach (
+			array(
+				'CREATE TABLE replace_select_duplicate_incoming (
+					id INT PRIMARY KEY,
+					email VARCHAR(40) UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO replace_select_duplicate_incoming VALUES
+					(1, 'one@example.test', 'old-one'),
+					(2, 'two@example.test', 'old-two')",
+				'CREATE TABLE replace_select_duplicate_incoming_source (
+					id INT,
+					email VARCHAR(40),
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO replace_select_duplicate_incoming_source VALUES
+					(3, 'dup@example.test', 'incoming-a'),
+					(4, 'dup@example.test', 'incoming-b')",
+			) as $query
+		) {
+			$driver->query( $query );
 		}
+
+		$this->assert_duckdb_error_contains(
+			$driver,
+			'REPLACE INTO replace_select_duplicate_incoming (id, email, payload)
+			SELECT id, email, payload
+			FROM replace_select_duplicate_incoming_source',
+			'Incoming rows contain duplicate values for a unique key'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'email'   => 'one@example.test',
+					'payload' => 'old-one',
+				),
+				array(
+					'id'      => 2,
+					'email'   => 'two@example.test',
+					'payload' => 'old-two',
+				),
+			),
+			$driver->query(
+				'SELECT id, email, payload
+				FROM replace_select_duplicate_incoming
+				ORDER BY id'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assert_no_select_write_stage_tables( $driver );
 	}
 
 	public function test_temporal_select_write_stage_tables_are_cleaned_up(): void {
@@ -3693,7 +3831,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			$driver->get_connection()->query(
 				"SELECT table_name FROM information_schema.tables
 				WHERE table_type = 'LOCAL TEMPORARY'
-					AND table_name LIKE '\\_\\_wp\\_duckdb\\_%select\\_src\\_%' ESCAPE '\\'
+					AND table_name LIKE '\\_\\_wp\\_duckdb\\_%select\\_%' ESCAPE '\\'
 				ORDER BY table_name"
 			)->fetchAll( PDO::FETCH_ASSOC )
 		);

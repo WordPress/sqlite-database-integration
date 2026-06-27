@@ -11812,10 +11812,12 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_replace_select_with_temporal_coercion( array $tokens, int $table_index, int $select_index ): WP_DuckDB_Result_Statement {
-		$shape = $this->parse_insert_select_target_shape( $tokens, $table_index, $select_index );
-		$this->assert_replace_select_native_conflict_handling_safe( $shape );
+		$shape                    = $this->parse_insert_select_target_shape( $tokens, $table_index, $select_index );
+		$unique_sets              = $this->unique_key_column_sets( $shape['table_name'], $shape['temporary'] );
+		$case_insensitive_columns = $this->case_insensitive_column_names( $shape['table_name'], $shape['temporary'] );
+		$manual_conflicts         = $this->replace_select_requires_manual_conflict_handling( $unique_sets, $case_insensitive_columns );
 
-		if ( ! $this->insert_select_shape_requires_temporal_coercion( $shape ) ) {
+		if ( ! $manual_conflicts && ! $this->insert_select_shape_requires_temporal_coercion( $shape ) ) {
 			return $this->execute_auto_increment_write(
 				$shape['requested_table_name'],
 				$this->translate_replace_tokens_to_duckdb_sql( $tokens ),
@@ -11825,12 +11827,33 @@ class WP_DuckDB_Driver {
 			);
 		}
 
-		$source_sql = $this->translate_tokens_to_duckdb_sql( $shape['source_tokens'] );
-		$stage      = $this->create_select_write_stage( $source_sql, 'replace_select_src' );
+		$source_sql  = $this->translate_tokens_to_duckdb_sql( $shape['source_tokens'] );
+		$stage       = $this->create_select_write_stage( $source_sql, 'replace_select_src' );
+		$write_stage = null;
 
 		try {
 			$projection = $this->build_insert_select_projection( $shape, $stage['columns'], true, 'REPLACE' );
 			$this->validate_staged_temporal_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB REPLACE SELECT values' );
+
+			if ( $manual_conflicts ) {
+				$evaluable_unique_sets = $this->replace_select_evaluable_unique_sets( $unique_sets, $projection['columns'] );
+				$write_stage           = $this->create_replace_select_write_stage( $stage['table_name'], $projection );
+				$this->assert_replace_select_write_stage_has_no_duplicate_unique_groups(
+					$write_stage['table_name'],
+					$evaluable_unique_sets,
+					$case_insensitive_columns
+				);
+
+				return $this->execute_replace_select_with_manual_conflict_handling(
+					$shape,
+					$tokens,
+					$table_index,
+					$write_stage['table_name'],
+					$projection['columns'],
+					$evaluable_unique_sets,
+					$case_insensitive_columns
+				);
+			}
 
 			return $this->execute_auto_increment_write(
 				$shape['requested_table_name'],
@@ -11849,6 +11872,9 @@ class WP_DuckDB_Driver {
 				$table_index
 			);
 		} finally {
+			if ( null !== $write_stage ) {
+				$this->drop_select_write_stage( $write_stage['table_name'] );
+			}
 			$this->drop_select_write_stage( $stage['table_name'] );
 		}
 	}
@@ -11919,20 +11945,250 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Reject REPLACE ... SELECT targets that need manual MySQL conflict handling.
+	 * Check whether REPLACE ... SELECT needs manual MySQL conflict handling.
 	 *
-	 * Native DuckDB INSERT OR REPLACE can only match one case-sensitive unique
-	 * target. MySQL REPLACE can delete rows matched by any unique key, and MySQL
-	 * case-insensitive keys require manual matching.
-	 *
-	 * @param array{table_name:string,temporary:bool} $shape Target shape.
+	 * @param array<int,string[]> $unique_sets              Unique key column sets.
+	 * @param array<string,bool>  $case_insensitive_columns Lowercase case-insensitive column-name map.
+	 * @return bool Whether manual conflict handling is required.
 	 */
-	private function assert_replace_select_native_conflict_handling_safe( array $shape ): void {
-		$unique_sets              = $this->unique_key_column_sets( $shape['table_name'], $shape['temporary'] );
-		$case_insensitive_columns = $this->case_insensitive_column_names( $shape['table_name'], $shape['temporary'] );
-		if ( count( $unique_sets ) >= 2 || $this->has_case_insensitive_unique_key( $unique_sets, $case_insensitive_columns ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported REPLACE ... SELECT statement in DuckDB driver. Manual conflict handling for multiple unique keys or case-insensitive unique keys is not yet supported.' );
+	private function replace_select_requires_manual_conflict_handling( array $unique_sets, array $case_insensitive_columns ): bool {
+		return count( $unique_sets ) >= 2 || $this->has_case_insensitive_unique_key( $unique_sets, $case_insensitive_columns );
+	}
+
+	/**
+	 * Return unique keys that can be evaluated from staged write columns.
+	 *
+	 * @param array<int,string[]> $unique_sets   Unique key column sets.
+	 * @param string[]            $write_columns Columns available in the coerced write stage.
+	 * @return array<int,string[]> Unique key column sets whose columns are all available.
+	 */
+	private function replace_select_evaluable_unique_sets( array $unique_sets, array $write_columns ): array {
+		$available = array();
+		foreach ( $write_columns as $column_name ) {
+			$available[ strtolower( $column_name ) ] = true;
 		}
+
+		$evaluable_unique_sets = array();
+		foreach ( $unique_sets as $column_set ) {
+			foreach ( $column_set as $column_name ) {
+				if ( ! isset( $available[ strtolower( $column_name ) ] ) ) {
+					continue 2;
+				}
+			}
+			$evaluable_unique_sets[] = $column_set;
+		}
+
+		return $evaluable_unique_sets;
+	}
+
+	/**
+	 * Materialize coerced REPLACE ... SELECT write values.
+	 *
+	 * @param string $source_stage_table Raw SELECT stage table name.
+	 * @param array{columns:string[],expressions:string[]} $projection Coerced write projection.
+	 * @return array{table_name:string,columns:string[]}
+	 */
+	private function create_replace_select_write_stage( string $source_stage_table, array $projection ): array {
+		$items = array();
+		foreach ( $projection['columns'] as $offset => $column_name ) {
+			$items[] = $projection['expressions'][ $offset ]
+				. ' AS '
+				. $this->connection->quote_identifier( $column_name );
+		}
+
+		return $this->create_select_write_stage(
+			'SELECT '
+				. implode( ', ', $items )
+				. ' FROM '
+				. $this->connection->quote_identifier( $source_stage_table )
+				. ' AS '
+				. $this->connection->quote_identifier( '__src' ),
+			'replace_select_write'
+		);
+	}
+
+	/**
+	 * Reject incoming rows that conflict with each other on a unique key.
+	 *
+	 * @param string              $write_stage_table        Coerced write stage table name.
+	 * @param array<int,string[]> $unique_sets              Unique key column sets.
+	 * @param array<string,bool>  $case_insensitive_columns Lowercase case-insensitive column-name map.
+	 */
+	private function assert_replace_select_write_stage_has_no_duplicate_unique_groups(
+		string $write_stage_table,
+		array $unique_sets,
+		array $case_insensitive_columns
+	): void {
+		foreach ( $unique_sets as $column_set ) {
+			$where    = array();
+			$group_by = array();
+			foreach ( $column_set as $column_name ) {
+				$column_key = strtolower( $column_name );
+				$column_sql = $this->connection->quote_identifier( $column_name );
+				$where[]    = $column_sql . ' IS NOT NULL';
+				$group_by[] = isset( $case_insensitive_columns[ $column_key ] )
+					? 'lower(CAST(' . $column_sql . ' AS VARCHAR))'
+					: $column_sql;
+			}
+
+			$stmt = $this->execute_duckdb_query(
+				'SELECT 1 FROM '
+					. $this->connection->quote_identifier( $write_stage_table )
+					. ' WHERE '
+					. implode( ' AND ', $where )
+					. ' GROUP BY '
+					. implode( ', ', $group_by )
+					. ' HAVING COUNT(*) > 1 LIMIT 1',
+				'Failed to validate DuckDB REPLACE SELECT unique groups'
+			);
+
+			if ( false !== $stmt->fetch( PDO::FETCH_NUM ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported REPLACE ... SELECT statement in DuckDB driver. Incoming rows contain duplicate values for a unique key.' );
+			}
+		}
+	}
+
+	/**
+	 * Execute staged REPLACE ... SELECT with manual conflict deletion.
+	 *
+	 * @param array{requested_table_name:string,table_name:string} $shape                    Target shape.
+	 * @param WP_Parser_Token[]                                  $tokens                   MySQL tokens.
+	 * @param int                                                $table_index              Index of the table token.
+	 * @param string                                             $write_stage_table        Coerced write stage table name.
+	 * @param string[]                                           $write_columns            Columns available in the coerced write stage.
+	 * @param array<int,string[]>                                $unique_sets              Unique key column sets.
+	 * @param array<string,bool>                                 $case_insensitive_columns Lowercase case-insensitive column-name map.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_replace_select_with_manual_conflict_handling(
+		array $shape,
+		array $tokens,
+		int $table_index,
+		string $write_stage_table,
+		array $write_columns,
+		array $unique_sets,
+		array $case_insensitive_columns
+	): WP_DuckDB_Result_Statement {
+		$started_transaction = false;
+		if ( ! $this->connection->inTransaction() ) {
+			$this->connection->beginTransaction();
+			$started_transaction = true;
+		}
+
+		try {
+			$delete_predicate = $this->replace_select_manual_delete_predicate(
+				$shape['table_name'],
+				$write_stage_table,
+				$unique_sets,
+				$case_insensitive_columns
+			);
+
+			if ( '' !== $delete_predicate ) {
+				$this->execute_duckdb_query(
+					'DELETE FROM '
+						. $this->connection->quote_identifier( $shape['table_name'] )
+						. ' WHERE '
+						. $delete_predicate,
+					'Failed to delete DuckDB REPLACE SELECT conflicts'
+				);
+			}
+
+			$result = $this->execute_auto_increment_write(
+				$shape['requested_table_name'],
+				'INSERT INTO '
+					. $this->connection->quote_identifier( $shape['table_name'] )
+					. ' ('
+					. $this->quote_identifier_list( $write_columns )
+					. ') SELECT '
+					. $this->quote_qualified_identifier_list( '__incoming', $write_columns )
+					. ' FROM '
+					. $this->connection->quote_identifier( $write_stage_table )
+					. ' AS '
+					. $this->connection->quote_identifier( '__incoming' ),
+				'Failed to execute DuckDB REPLACE',
+				$tokens,
+				$table_index
+			);
+
+			if ( $started_transaction ) {
+				$this->connection->commit();
+			}
+
+			return $result;
+		} catch ( Throwable $e ) {
+			if ( $started_transaction && $this->connection->inTransaction() ) {
+				$this->connection->rollback();
+			}
+			throw $e;
+		}
+	}
+
+	/**
+	 * Build the manual REPLACE ... SELECT target conflict predicate.
+	 *
+	 * @param string              $table_name               Target table name.
+	 * @param string              $write_stage_table        Coerced write stage table name.
+	 * @param array<int,string[]> $unique_sets              Unique key column sets.
+	 * @param array<string,bool>  $case_insensitive_columns Lowercase case-insensitive column-name map.
+	 * @return string SQL predicate, or an empty string when no unique keys exist.
+	 */
+	private function replace_select_manual_delete_predicate(
+		string $table_name,
+		string $write_stage_table,
+		array $unique_sets,
+		array $case_insensitive_columns
+	): string {
+		$branches = array();
+		foreach ( $unique_sets as $column_set ) {
+			$branches[] = '(' . $this->replace_select_manual_unique_key_predicate( $table_name, $column_set, $case_insensitive_columns ) . ')';
+		}
+
+		if ( count( $branches ) === 0 ) {
+			return '';
+		}
+
+		return 'EXISTS (SELECT 1 FROM '
+			. $this->connection->quote_identifier( $write_stage_table )
+			. ' AS '
+			. $this->connection->quote_identifier( '__incoming' )
+			. ' WHERE '
+			. implode( ' OR ', $branches )
+			. ')';
+	}
+
+	/**
+	 * Build one unique-key conflict branch for manual REPLACE ... SELECT.
+	 *
+	 * @param string             $table_name               Target table name.
+	 * @param string[]           $column_set               Unique key columns.
+	 * @param array<string,bool> $case_insensitive_columns Lowercase case-insensitive column-name map.
+	 * @return string SQL predicate.
+	 */
+	private function replace_select_manual_unique_key_predicate(
+		string $table_name,
+		array $column_set,
+		array $case_insensitive_columns
+	): string {
+		$where = array();
+		foreach ( $column_set as $column_name ) {
+			$column_key   = strtolower( $column_name );
+			$target_sql   = $this->connection->quote_identifier( $table_name )
+				. '.'
+				. $this->connection->quote_identifier( $column_name );
+			$incoming_sql = $this->connection->quote_identifier( '__incoming' )
+				. '.'
+				. $this->connection->quote_identifier( $column_name );
+
+			$where[] = $incoming_sql . ' IS NOT NULL';
+			if ( isset( $case_insensitive_columns[ $column_key ] ) ) {
+				$where[] = 'lower(CAST(' . $target_sql . ' AS VARCHAR)) = lower(CAST(' . $incoming_sql . ' AS VARCHAR))';
+				continue;
+			}
+
+			$where[] = $target_sql . ' = ' . $incoming_sql;
+		}
+
+		return implode( ' AND ', $where );
 	}
 
 	/**
@@ -12105,6 +12361,23 @@ class WP_DuckDB_Driver {
 		$quoted = array();
 		foreach ( $identifiers as $identifier ) {
 			$quoted[] = $this->connection->quote_identifier( $identifier );
+		}
+
+		return implode( ', ', $quoted );
+	}
+
+	/**
+	 * Quote a list of identifiers with a shared table alias qualifier.
+	 *
+	 * @param string   $alias       Table alias.
+	 * @param string[] $identifiers Identifiers.
+	 * @return string SQL identifier list.
+	 */
+	private function quote_qualified_identifier_list( string $alias, array $identifiers ): string {
+		$quoted_alias = $this->connection->quote_identifier( $alias );
+		$quoted       = array();
+		foreach ( $identifiers as $identifier ) {
+			$quoted[] = $quoted_alias . '.' . $this->connection->quote_identifier( $identifier );
 		}
 
 		return implode( ', ', $quoted );
