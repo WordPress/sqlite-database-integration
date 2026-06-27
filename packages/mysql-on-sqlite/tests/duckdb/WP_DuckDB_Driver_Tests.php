@@ -62,6 +62,54 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_invalid_byte_write_display_sql_uses_byte_safe_token_value(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public function __construct() {}
+		};
+		$driver     = ( new ReflectionClass( WP_DuckDB_Driver::class ) )->newInstanceWithoutConstructor();
+
+		foreach (
+			array(
+				'mysql_version'    => WP_DuckDB_Driver::DEFAULT_MYSQL_VERSION,
+				'connection'       => $connection,
+				'database'         => 'wp',
+				'current_database' => 'wp',
+			) as $property => $value
+		) {
+			$reflection_property = new ReflectionProperty( WP_DuckDB_Driver::class, $property );
+			if ( PHP_VERSION_ID < 80100 ) {
+				$reflection_property->setAccessible( true );
+			}
+			$reflection_property->setValue( $driver, $value );
+		}
+
+		$grammar = new ReflectionProperty( WP_DuckDB_Driver::class, 'mysql_grammar' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$grammar->setAccessible( true );
+		}
+		$grammar->setValue( null, new WP_Parser_Grammar( require WP_DuckDB_Driver::MYSQL_GRAMMAR_PATH ) );
+
+		$tokenize = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$display  = new ReflectionMethod( WP_DuckDB_Driver::class, 'write_value_display_sql' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$display->setAccessible( true );
+		}
+
+		$invalid_byte = "\xA1";
+		$tokens       = $tokenize->invoke( $driver, "INSERT INTO wptests_posts (post_status) VALUES ('{$invalid_byte}')" );
+		$value_tokens = array_values(
+			array_filter(
+				$tokens,
+				function ( WP_Parser_Token $token ): bool {
+					return WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id;
+				}
+			)
+		);
+
+		$this->assertSame( bin2hex( "'{$invalid_byte}'" ), bin2hex( $display->invoke( $driver, $value_tokens, "'{$invalid_byte}'" ) ) );
+	}
+
 	public function test_auto_increment_insert_id_falls_back_to_max_when_currval_is_unavailable(): void {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public $queries = array();

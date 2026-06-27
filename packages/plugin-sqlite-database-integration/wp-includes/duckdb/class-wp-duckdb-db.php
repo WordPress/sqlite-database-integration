@@ -60,6 +60,10 @@ class WP_DuckDB_DB extends wpdb {
 	 * @return array{charset:string,collate:string}
 	 */
 	public function determine_charset( $charset, $collate ) {
+		if ( ! $this->ready || ! ( $this->dbh instanceof WP_DuckDB_Driver ) ) {
+			return compact( 'charset', 'collate' );
+		}
+
 		if ( 'utf8' === $charset ) {
 			$charset = 'utf8mb4';
 		}
@@ -161,6 +165,13 @@ class WP_DuckDB_DB extends wpdb {
 	 * @return bool
 	 */
 	public function close() {
+		if ( ! $this->ready ) {
+			return false;
+		}
+
+		$this->ready         = false;
+		$this->has_connected = false;
+
 		return true;
 	}
 
@@ -339,6 +350,11 @@ class WP_DuckDB_DB extends wpdb {
 	 * @return bool
 	 */
 	public function check_connection( $allow_bail = true ) {
+		if ( $this->dbh instanceof WP_DuckDB_Driver ) {
+			$this->ready         = true;
+			$this->has_connected = true;
+		}
+
 		return true;
 	}
 
@@ -413,12 +429,80 @@ class WP_DuckDB_DB extends wpdb {
 					$this->rows_affected = 1;
 				}
 			}
+			if ( defined( 'WP_DUCKDB_E2E_DIAGNOSTICS' ) && WP_DUCKDB_E2E_DIAGNOSTICS && $this->is_persisted_preferences_usermeta_insert( $query ) ) {
+				$this->log_persisted_preferences_insert_diagnostic( $query );
+			}
 			return $this->rows_affected;
 		}
 
 		$this->last_result = is_array( $this->result ) ? $this->result : array();
 		$this->num_rows    = count( $this->last_result );
 		return $this->num_rows;
+	}
+
+	/**
+	 * Check whether a query inserts the persisted preferences user meta row.
+	 *
+	 * @param string $query Query to inspect.
+	 * @return bool
+	 */
+	private function is_persisted_preferences_usermeta_insert( $query ) {
+		return preg_match( '/^\s*insert\s+into\s+`?wp_usermeta`?\s/i', $query )
+			&& false !== strpos( $query, 'wp_persisted_preferences' );
+	}
+
+	/**
+	 * Log immediate DuckDB state after the persisted preferences insert.
+	 *
+	 * @param string $query Insert query.
+	 */
+	private function log_persisted_preferences_insert_diagnostic( $query ) {
+		$diagnostics = array(
+			'query'                  => $query,
+			'last_error'             => (string) $this->last_error,
+			'statement_row_count'    => $this->last_statement ? (int) $this->last_statement->rowCount() : null,
+			'rows_affected'          => (int) $this->rows_affected,
+			'insert_id'              => (int) $this->insert_id,
+			'driver_class'           => is_object( $this->dbh ) ? get_class( $this->dbh ) : gettype( $this->dbh ),
+			'driver_insert_id'       => null,
+			'duckdb_queries_tail'    => array(),
+			'wp_usermeta_columns'    => array(),
+			'wp_usermeta_row_counts' => array(),
+			'wp_usermeta_latest'     => array(),
+		);
+
+		try {
+			if ( is_object( $this->dbh ) && method_exists( $this->dbh, 'get_insert_id' ) ) {
+				$diagnostics['driver_insert_id'] = (int) $this->dbh->get_insert_id();
+			}
+			if ( is_object( $this->dbh ) && method_exists( $this->dbh, 'get_last_duckdb_queries' ) ) {
+				$diagnostics['duckdb_queries_tail'] = array_slice( $this->dbh->get_last_duckdb_queries(), -5 );
+			}
+			if ( is_object( $this->dbh ) && method_exists( $this->dbh, 'get_connection' ) ) {
+				$connection = $this->dbh->get_connection();
+				$table      = $connection->quote_identifier( 'wp_usermeta' );
+
+				$diagnostics['wp_usermeta_columns'] = $connection
+					->query( 'SELECT cid, name, type, "notnull", dflt_value, pk FROM pragma_table_info(' . $connection->quote( 'wp_usermeta' ) . ') ORDER BY cid' )
+					->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+
+				$diagnostics['wp_usermeta_row_counts'] = $connection
+					->query( 'SELECT COUNT(*) AS total_rows, MAX(umeta_id) AS max_umeta_id FROM ' . $table )
+					->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+
+				$diagnostics['wp_usermeta_latest'] = $connection
+					->query( 'SELECT umeta_id, user_id, meta_key, LENGTH(meta_value) AS meta_value_length FROM ' . $table . " WHERE meta_key = 'wp_persisted_preferences' ORDER BY umeta_id DESC LIMIT 3" )
+					->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+			}
+		} catch ( Throwable $e ) {
+			$diagnostics['probe_error'] = $e->getMessage();
+		}
+
+		$encoded = function_exists( 'wp_json_encode' )
+			? wp_json_encode( $diagnostics, JSON_UNESCAPED_SLASHES )
+			: json_encode( $diagnostics );
+
+		error_log( '[duckdb-persisted-preferences-insert] ' . $encoded );
 	}
 
 	/**
@@ -556,6 +640,26 @@ class WP_DuckDB_DB extends wpdb {
 			return 'DuckDB ' . $stmt->fetchColumn();
 		} catch ( Throwable $e ) {
 			return 'DuckDB';
+		}
+	}
+
+	/**
+	 * Strip invalid text without falling back to mysqli for the connection charset.
+	 *
+	 * @param array $data Values to strip.
+	 * @return array|WP_Error Stripped values, or error.
+	 */
+	protected function strip_invalid_text( $data ) {
+		if ( '' !== $this->charset ) {
+			return parent::strip_invalid_text( $data );
+		}
+
+		$this->charset = 'utf8mb4';
+
+		try {
+			return parent::strip_invalid_text( $data );
+		} finally {
+			$this->charset = '';
 		}
 	}
 

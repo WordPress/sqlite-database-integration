@@ -326,6 +326,9 @@ jobs:
           if ( ! defined( 'SAVEQUERIES' ) ) {
            define( 'SAVEQUERIES', true );
           }
+          if ( ! defined( 'WP_DUCKDB_E2E_DIAGNOSTICS' ) ) {
+           define( 'WP_DUCKDB_E2E_DIAGNOSTICS', true );
+          }
 
           register_shutdown_function(
            static function () {

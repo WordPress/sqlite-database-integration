@@ -12784,7 +12784,7 @@ class WP_DuckDB_Driver {
 		++$index;
 
 		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-			return $this->connection->quote( $token->get_value() );
+			return $this->connection->quote( $this->token_value( $token ) );
 		}
 		if ( $this->is_number_token( $token ) ) {
 			return $token->get_bytes();
@@ -15508,7 +15508,7 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-			return $this->bit_literal_sql_and_default_from_numeric_string( $token->get_value() );
+			return $this->bit_literal_sql_and_default_from_numeric_string( $this->token_value( $token ) );
 		}
 
 		if ( WP_MySQL_Lexer::BIN_NUMBER === $token->id ) {
@@ -15930,7 +15930,7 @@ class WP_DuckDB_Driver {
 		if ( 1 === count( $value_tokens ) ) {
 			$token = $value_tokens[0];
 			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
-				return $this->connection->quote( $token->get_value() );
+				return $this->connection->quote( $this->token_value( $token ) );
 			}
 			if ( $this->is_number_token( $token ) ) {
 				return $this->connection->quote( $token->get_bytes() );
@@ -18073,9 +18073,9 @@ class WP_DuckDB_Driver {
 			}
 			if (
 				( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id )
-				&& preg_match( '/^[+-]?\d+$/', $token->get_value() )
+				&& preg_match( '/^[+-]?\d+$/', $this->token_value( $token ) )
 			) {
-				return (int) $token->get_value();
+				return (int) $this->token_value( $token );
 			}
 		}
 
