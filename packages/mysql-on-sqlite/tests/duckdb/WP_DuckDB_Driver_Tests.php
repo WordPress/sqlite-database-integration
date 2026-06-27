@@ -933,6 +933,52 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_savepoint_sql_is_rejected_without_starting_transaction_or_mutating_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$cases = array(
+			array(
+				'sql'     => 'SAVEPOINT sp1',
+				'message' => 'Unsupported DuckDB MySQL-emulation statement: SAVEPOINT.',
+			),
+			array(
+				'sql'     => 'ROLLBACK TO sp1',
+				'message' => 'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.',
+			),
+			array(
+				'sql'     => 'ROLLBACK TO SAVEPOINT sp1',
+				'message' => 'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.',
+			),
+			array(
+				'sql'     => 'ROLLBACK WORK TO sp1',
+				'message' => 'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.',
+			),
+			array(
+				'sql'     => 'ROLLBACK WORK TO SAVEPOINT sp1',
+				'message' => 'Unsupported ROLLBACK statement in DuckDB driver. Only ROLLBACK [WORK] is supported.',
+			),
+			array(
+				'sql'     => 'RELEASE SAVEPOINT sp1',
+				'message' => 'Unsupported DuckDB MySQL-emulation statement: RELEASE.',
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+			$driver->query( 'CREATE TABLE savepoint_reject_state (id INT)' );
+			$driver->query( 'INSERT INTO savepoint_reject_state (id) VALUES (1)' );
+
+			$this->assertFalse( $driver->get_connection()->inTransaction() );
+			$this->assertDriverQueryRejected( $driver, $case['sql'], $case['message'] );
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+			$this->assertFalse( $driver->get_connection()->inTransaction() );
+			$this->assertSame(
+				array( array( 'id' => 1 ) ),
+				$driver->query( 'SELECT id FROM savepoint_reject_state ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		}
+	}
+
 	public function test_session_boolean_variables_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

@@ -1245,6 +1245,465 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_temporal_insert_values_and_set_writes_match_sqlite(): void {
+		$this->create_temporal_write_table( 'temporal_writes' );
+
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_writes (id, d, tm, dt, ts, payload) VALUES
+				(1, '2025-10-23', '18:30:00', '2025-10-23 18:30:00', '2025-10-23 18:30:00', 'canonical'),
+				(2, '2025-10-23 18:30:00.123456', '18:30:00.123456', '2025-10-23', '2025-10-23', 'normalized'),
+				(3, NULL, NULL, NULL, NULL, 'nullable')"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_writes SET
+				id = 4,
+				d = '2025-11-01 01:02:03.123456',
+				tm = '18:30:00.123456',
+				dt = '2025-11-01',
+				ts = '2025-11-01 01:02:03.123456',
+				payload = 'insert-set'"
+		);
+		$this->assertParityRowCount(
+			"INSERT IGNORE INTO temporal_writes (id, d, tm, dt, ts, payload) VALUES
+				(5, '2025-12-01 05:06:07.123456', '18:30:00.123456', '2025-12-01', '2025-12-01 05:06:07.123456', 'insert-ignore')"
+		);
+
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_writes' ) );
+	}
+
+	public function test_temporal_strict_write_errors_match_sqlite(): void {
+		$this->create_temporal_write_table(
+			'temporal_strict',
+			'NULL',
+			array(
+				'UNIQUE KEY payload_unique (payload)',
+			)
+		);
+		$this->runParitySetup(
+			array(
+				"INSERT INTO temporal_strict (id, d, tm, dt, ts, payload) VALUES
+					(1, '2025-01-01', '18:30:00', '2025-01-01 12:00:00', '2025-01-01 12:00:00', 'original')",
+				'CREATE TABLE temporal_strict_source (id INT, dt_text VARCHAR(40), ts_text VARCHAR(40))',
+				"INSERT INTO temporal_strict_source VALUES (1, 'bad', 'bad')",
+			)
+		);
+
+		$stable_selects = array(
+			$this->temporal_select_sql( 'temporal_strict' ),
+			'SELECT id, dt_text, ts_text FROM temporal_strict_source ORDER BY id',
+		);
+
+		foreach (
+			array(
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, d, payload) VALUES (2, 'bad', 'insert-bad-date')",
+					'needle' => "Incorrect date value: 'bad'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, d, payload) VALUES (2, TRUE, 'insert-true-date')",
+					'needle' => "Incorrect date value: '1'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, dt, payload) VALUES (2, 0, 'insert-zero-datetime')",
+					'needle' => "Incorrect datetime value: '0'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, ts, payload) VALUES (2, TRUE, 'insert-true-timestamp')",
+					'needle' => "Incorrect timestamp value: '1'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, d, payload) VALUES (2, '0000-00-00', 'insert-zero-date')",
+					'needle' => "Incorrect date value: '0000-00-00'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, dt, payload) VALUES (2, '0000-00-00 00:00:00', 'insert-zero-datetime')",
+					'needle' => "Incorrect datetime value: '0000-00-00 00:00:00'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, ts, payload) VALUES (2, '2020-01-00 00:00:00', 'insert-zero-in-timestamp')",
+					'needle' => "Incorrect timestamp value: '2020-01-00 00:00:00'",
+				),
+				array(
+					'sql'    => "INSERT IGNORE INTO temporal_strict (id, d, payload) VALUES (2, 'bad', 'ignore-bad-date')",
+					'needle' => "Incorrect date value: 'bad'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict SET id = 2, dt = 'bad', payload = 'set-bad-datetime'",
+					'needle' => "Incorrect datetime value: 'bad'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict SET id = 2, d = '0000-00-00', payload = 'set-zero-date'",
+					'needle' => "Incorrect date value: '0000-00-00'",
+				),
+				array(
+					'sql'    => "REPLACE INTO temporal_strict (id, d, payload) VALUES (1, 'bad', 'replace-bad-date')",
+					'needle' => "Incorrect date value: 'bad'",
+				),
+				array(
+					'sql'    => "UPDATE temporal_strict SET ts = 'bad' WHERE id = 1",
+					'needle' => "Incorrect timestamp value: 'bad'",
+				),
+				array(
+					'sql'    => 'UPDATE temporal_strict t
+						JOIN temporal_strict_source s ON s.id = t.id
+						SET t.dt = s.dt_text
+						WHERE t.id = 1',
+					'needle' => "Incorrect datetime value: 'bad'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, d, payload) VALUES (2, 'bad', 'odku-insert')
+						ON DUPLICATE KEY UPDATE payload = 'unexpected'",
+					'needle' => "Incorrect date value: 'bad'",
+				),
+				array(
+					'sql'    => "INSERT INTO temporal_strict (id, d, dt, payload) VALUES (2, '2025-01-02', '2025-01-02', 'original')
+						ON DUPLICATE KEY UPDATE dt = 'bad'",
+					'needle' => "Incorrect datetime value: 'bad'",
+				),
+			) as $case
+		) {
+			$this->assert_temporal_error_leaves_rows( $case['sql'], $case['needle'], $stable_selects );
+		}
+	}
+
+	public function test_temporal_zero_date_sql_modes_match_sqlite(): void {
+		$this->create_temporal_write_table( 'temporal_modes_default' );
+		$this->runParitySetup(
+			array(
+				"INSERT INTO temporal_modes_default (id, d, tm, dt, ts, payload) VALUES
+					(1, '2025-01-01', '18:30:00', '2025-01-01', '2025-01-01', 'stable')",
+			)
+		);
+		$this->assert_temporal_error_leaves_rows(
+			"INSERT INTO temporal_modes_default (id, d, payload) VALUES (2, '0000-00-00', 'default-zero-date')",
+			"Incorrect date value: '0000-00-00'",
+			array( $this->temporal_select_sql( 'temporal_modes_default' ) )
+		);
+		$this->assert_temporal_error_leaves_rows(
+			"UPDATE temporal_modes_default SET dt = '2020-00-15 00:00:00' WHERE id = 1",
+			"Incorrect datetime value: '2020-00-15 00:00:00'",
+			array( $this->temporal_select_sql( 'temporal_modes_default' ) )
+		);
+
+		$this->assertParityRowCount( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+		$this->create_temporal_write_table( 'temporal_modes_strict' );
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_modes_strict (id, d, tm, dt, ts, payload) VALUES
+				(1, '0000-00-00', '18:30:00', '0000-00-00 00:00:00', '2020-01-00 00:00:00', 'strict-insert'),
+				(2, '2025-01-01', '18:30:00', '2025-01-01', '2025-01-01', 'strict-update')"
+		);
+		$this->assertParityRowCount(
+			"UPDATE temporal_modes_strict
+			SET d = '2020-00-15', dt = '2020-01-00 00:00:00', ts = '0000-00-00 00:00:00'
+			WHERE id = 2"
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_modes_strict' ) );
+
+		$this->assertParityRowCount( "SET sql_mode = 'NO_ZERO_DATE'" );
+		$this->create_temporal_write_table( 'temporal_modes_no_zero_date' );
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_modes_no_zero_date (id, d, tm, dt, ts, payload) VALUES
+				(1, '0000-00-00', '18:30:00', '0000-00-00 00:00:00', '0000-00-00 00:00:00', 'no-zero-date-insert'),
+				(2, '2025-01-01', '18:30:00', '2025-01-01', '2025-01-01', 'no-zero-date-update')"
+		);
+		$this->assertParityRowCount(
+			"UPDATE temporal_modes_no_zero_date
+			SET d = '0000-00-00', dt = '0000-00-00 00:00:00', ts = '0000-00-00 00:00:00'
+			WHERE id = 2"
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_modes_no_zero_date' ) );
+
+		$this->assertParityRowCount( "SET sql_mode = 'NO_ZERO_IN_DATE'" );
+		$this->create_temporal_write_table( 'temporal_modes_no_zero_in_date' );
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_modes_no_zero_in_date (id, d, tm, dt, ts, payload) VALUES
+				(1, '2020-00-15', '18:30:00', '2020-01-00 00:00:00', '2020-00-15 00:00:00', 'no-zero-in-date-insert'),
+				(2, '2025-01-01', '18:30:00', '2025-01-01', '2025-01-01', 'no-zero-in-date-update')"
+		);
+		$this->assertParityRowCount(
+			"UPDATE temporal_modes_no_zero_in_date
+			SET d = '2020-01-00', dt = '2020-00-15 00:00:00', ts = '2020-01-00 00:00:00'
+			WHERE id = 2"
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_modes_no_zero_in_date' ) );
+
+		$this->assertParityRowCount( "SET sql_mode = ''" );
+		$this->create_temporal_write_table( 'temporal_modes_empty' );
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_modes_empty (id, d, tm, dt, ts, payload) VALUES
+				(1, '0000-00-00', '18:30:00', '2020-00-15 00:00:00', '2020-01-00 00:00:00', 'empty-mode-insert'),
+				(2, '2025-01-01', '18:30:00', '2025-01-01', '2025-01-01', 'empty-mode-update')"
+		);
+		$this->assertParityRowCount(
+			"UPDATE temporal_modes_empty
+			SET d = '2020-00-15', dt = '0000-00-00 00:00:00', ts = '2020-01-00 00:00:00'
+			WHERE id = 2"
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_modes_empty' ) );
+	}
+
+	public function test_temporal_non_strict_implicit_defaults_match_sqlite(): void {
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->create_temporal_write_table(
+			'temporal_non_strict',
+			'NOT NULL',
+			array(
+				'UNIQUE KEY payload_unique (payload)',
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_non_strict (id, d, tm, dt, ts, payload) VALUES
+				(1, 'bad', '18:30:00', 'bad', 'bad', 'invalid-strings'),
+				(2, TRUE, '18:30:00.123456', FALSE, 0, 'scalars')"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_non_strict SET
+				id = 3,
+				d = 'bad',
+				tm = '18:30:00',
+				dt = FALSE,
+				ts = TRUE,
+				payload = 'insert-set'"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_non_strict (id, d, tm, dt, ts, payload) VALUES
+				(4, '2025-02-01', '18:30:00', '2025-02-01', '2025-02-01', 'normal-update')"
+		);
+		$this->assertParityRowCount( 'UPDATE temporal_non_strict SET d = NULL, dt = NULL, ts = NULL WHERE id = 4' );
+
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_non_strict (id, d, tm, dt, ts, payload) VALUES
+				(5, '2025-03-01', '18:30:00', '2025-03-01', '2025-03-01', 'odku-target')"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_non_strict (id, d, tm, dt, ts, payload) VALUES
+				(6, '2025-03-02', '18:30:00', '2025-03-02', '2025-03-02', 'odku-target')
+			ON DUPLICATE KEY UPDATE d = 'bad', dt = TRUE, ts = 0"
+		);
+		$this->assert_temporal_error_leaves_rows(
+			"INSERT INTO temporal_non_strict (id, d, tm, dt, ts, payload) VALUES
+				(7, '2025-03-03', '18:30:00', '2025-03-03', '2025-03-03', 'odku-target')
+			ON DUPLICATE KEY UPDATE d = NULL",
+			'NOT NULL',
+			array( $this->temporal_select_sql( 'temporal_non_strict' ) )
+		);
+
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_non_strict' ) );
+	}
+
+	public function test_temporal_replace_and_odku_conflict_values_are_coerced(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_conflict (
+					id INT,
+					d DATE NOT NULL,
+					dt DATETIME NULL,
+					ts TIMESTAMP NULL,
+					payload VARCHAR(40),
+					UNIQUE KEY d_unique (d)
+				)',
+				"INSERT INTO temporal_replace_conflict (id, d, dt, ts, payload) VALUES
+					(1, '2025-10-23', '2025-10-23 09:00:00', '2025-10-23 09:00:00', 'original')",
+			)
+		);
+		$this->assertParityRowCount(
+			"REPLACE INTO temporal_replace_conflict (id, d, dt, ts, payload) VALUES
+				(2, '2025-10-23 18:30:00', '2025-10-24', '2025-10-24 01:02:03.123456', 'replaced')"
+		);
+		$this->assertParityRows( 'SELECT id, d, dt, ts, payload FROM temporal_replace_conflict ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_error (
+					id INT,
+					d DATE NOT NULL,
+					payload VARCHAR(40) UNIQUE
+				)',
+				"INSERT INTO temporal_replace_error (id, d, payload) VALUES (1, '2025-10-23', 'stable')",
+			)
+		);
+		$this->assert_temporal_error_leaves_rows(
+			"REPLACE INTO temporal_replace_error (id, d, payload) VALUES (2, 'bad', 'stable')",
+			"Incorrect date value: 'bad'",
+			array( 'SELECT id, d, payload FROM temporal_replace_error ORDER BY id' )
+		);
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_odku_conflict (
+					id INT PRIMARY KEY,
+					d DATE NOT NULL,
+					dt DATETIME NULL,
+					ts TIMESTAMP NULL,
+					payload VARCHAR(40),
+					UNIQUE KEY d_unique (d)
+				)',
+				"INSERT INTO temporal_odku_conflict (id, d, dt, ts, payload) VALUES
+					(1, '2025-10-23', '2025-10-23 09:00:00', '2025-10-23 09:00:00', 'original')",
+			)
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_odku_conflict (id, d, dt, ts, payload) VALUES
+				(2, '2025-10-23 18:30:00', '2025-10-24', '2025-10-24 01:02:03.123456', 'incoming')
+			ON DUPLICATE KEY UPDATE d = VALUES(d), dt = VALUES(dt), ts = VALUES(ts), payload = 'updated'"
+		);
+		$this->assertParityRows( 'SELECT id, d, dt, ts, payload FROM temporal_odku_conflict ORDER BY id' );
+		$this->assert_temporal_error_leaves_rows(
+			"INSERT INTO temporal_odku_conflict (id, d, dt, ts, payload) VALUES
+				(3, '2025-10-23', '2025-10-26', '2025-10-26', 'bad-update')
+			ON DUPLICATE KEY UPDATE ts = 'bad'",
+			"Incorrect timestamp value: 'bad'",
+			array( 'SELECT id, d, dt, ts, payload FROM temporal_odku_conflict ORDER BY id' )
+		);
+	}
+
+	public function test_temporal_odku_date_unique_conflict_uses_coerced_insert_value(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_odku_date_conflict (
+					id INT PRIMARY KEY,
+					d DATE UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO temporal_odku_date_conflict (id, d, payload) VALUES (1, '2025-10-23', 'old')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_odku_date_conflict (id, d, payload) VALUES (2, '2025-10-23 18:30:00', 'new')
+			ON DUPLICATE KEY UPDATE payload = VALUES(payload)"
+		);
+		$this->assertParityRows( 'SELECT id, d, payload FROM temporal_odku_date_conflict ORDER BY id' );
+	}
+
+	public function test_temporal_replace_manual_conflicts_use_storage_coerced_values(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_manual_conflict (
+					id INT UNIQUE,
+					d DATE UNIQUE,
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_replace_manual_conflict (id, d, payload) VALUES
+					(1, '2025-10-23', 'old-date'),
+					(2, '2025-10-24', 'old-id')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"REPLACE INTO temporal_replace_manual_conflict (id, d, payload) VALUES
+				(2, '2025-10-23 18:30:00', 'new')"
+		);
+		$this->assertParityRows( 'SELECT id, d, payload FROM temporal_replace_manual_conflict ORDER BY id' );
+	}
+
+	public function test_temporal_replace_manual_strict_error_preserves_caller_transaction(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_manual_tx (
+					id INT UNIQUE,
+					d DATE,
+					payload VARCHAR(40),
+					UNIQUE KEY payload_key (payload)
+				)',
+				"INSERT INTO temporal_replace_manual_tx (id, d, payload) VALUES (1, '2025-10-23', 'old')",
+				'START TRANSACTION',
+			)
+		);
+
+		$this->assert_temporal_error_leaves_rows(
+			"REPLACE INTO temporal_replace_manual_tx (id, d, payload) VALUES (1, 'not-a-date', 'new')",
+			"Incorrect date value: 'not-a-date'",
+			array( 'SELECT id, d, payload FROM temporal_replace_manual_tx ORDER BY id' )
+		);
+		$this->runParitySetup( array( 'ROLLBACK' ) );
+	}
+
+	public function test_temporal_joined_update_writes_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_join_posts (
+					id INT,
+					d DATE NULL,
+					tm TIME NULL,
+					dt DATETIME NULL,
+					ts TIMESTAMP NULL,
+					payload VARCHAR(40)
+				)',
+				'CREATE TABLE temporal_join_updates (
+					post_id INT,
+					d_text VARCHAR(40),
+					tm_text VARCHAR(40),
+					dt_text VARCHAR(40),
+					ts_text VARCHAR(40),
+					flag VARCHAR(20)
+				)',
+				"INSERT INTO temporal_join_posts (id, d, tm, dt, ts, payload) VALUES
+					(1, '2025-01-01', '18:30:00', '2025-01-01', '2025-01-01', 'target-first-old'),
+					(2, '2025-01-02', '18:30:00', '2025-01-02', '2025-01-02', 'comma-old'),
+					(3, '2025-01-03', '18:30:00', '2025-01-03', '2025-01-03', 'non-first-old'),
+					(4, '2025-01-04', '18:30:00', '2025-01-04', '2025-01-04', 'invalid-old'),
+					(5, '2025-01-05', '18:30:00', '2025-01-05', '2025-01-05', 'derived-old')",
+				"INSERT INTO temporal_join_updates VALUES
+					(1, '2025-10-23 18:30:00.123456', '18:30:00.123456', '2025-10-23', '2025-10-23 18:30:00.123456', 'target-first'),
+					(2, '2025-10-24', '18:30:00', '2025-10-24', '2025-10-24 01:02:03.123456', 'comma'),
+					(3, '2025-10-25 09:08:07.123456', '18:30:00', '2025-10-25', '2025-10-25', 'non-first'),
+					(4, 'bad', '18:30:00', 'bad', 'bad', 'invalid'),
+					(5, '2025-10-26', '18:30:00', '2025-10-26 04:05:06.123456', '2025-10-26', 'derived')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"UPDATE temporal_join_posts p
+			JOIN temporal_join_updates u ON u.post_id = p.id
+			SET p.d = u.d_text, p.tm = u.tm_text, p.dt = u.dt_text, p.ts = u.ts_text, p.payload = 'target-first'
+			WHERE u.flag = 'target-first'"
+		);
+		$this->assertParityRowCount(
+			"UPDATE temporal_join_posts p, temporal_join_updates u
+			SET p.dt = u.dt_text, p.ts = u.ts_text, p.payload = 'comma'
+			WHERE p.id = u.post_id AND u.flag = 'comma'"
+		);
+		$this->assertParityRowCount(
+			"UPDATE temporal_join_updates u
+			JOIN temporal_join_posts p ON p.id = u.post_id
+			SET p.d = u.d_text, p.payload = 'non-first'
+			WHERE u.flag = 'non-first'"
+		);
+		$this->assertParityRowCount(
+			"UPDATE temporal_join_posts p
+			JOIN (
+				SELECT post_id, dt_text
+				FROM temporal_join_updates
+				WHERE flag = 'derived'
+			) u ON u.post_id = p.id
+			SET p.dt = u.dt_text, p.payload = 'derived'"
+		);
+		$this->assertParityRows( $this->temporal_join_posts_select_sql() );
+
+		$stable_selects = array(
+			$this->temporal_join_posts_select_sql(),
+			'SELECT post_id, d_text, tm_text, dt_text, ts_text, flag FROM temporal_join_updates ORDER BY post_id',
+		);
+		$this->assert_temporal_error_leaves_rows(
+			"UPDATE temporal_join_posts p
+			JOIN temporal_join_updates u ON u.post_id = p.id
+			SET p.dt = u.dt_text
+			WHERE u.flag = 'invalid'",
+			"Incorrect datetime value: 'bad'",
+			$stable_selects
+		);
+		$this->assert_temporal_error_leaves_rows(
+			"UPDATE temporal_join_posts p
+			JOIN temporal_join_updates u ON u.post_id = p.id
+			SET p.dt = '2025-12-01', u.dt_text = '2025-12-01'
+			WHERE p.id = 1",
+			'UPDATE statement modifying multiple tables',
+			$stable_selects
+		);
+	}
+
 	public function test_case_insensitive_unique_conflicts_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -2531,6 +2990,43 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
 		);
 		$this->assertParityRows( 'SHOW CREATE TABLE ddl_drop_pk_shadow' );
+	}
+
+	private function create_temporal_write_table( string $table_name, string $nullability = 'NULL', array $extra_definitions = array() ): void {
+		$definitions = array_merge(
+			array(
+				'id INT PRIMARY KEY',
+				'd DATE ' . $nullability,
+				'tm TIME ' . $nullability,
+				'dt DATETIME ' . $nullability,
+				'ts TIMESTAMP ' . $nullability,
+				'payload VARCHAR(40)',
+			),
+			$extra_definitions
+		);
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE ' . $table_name . " (\n\t"
+				. implode( ",\n\t", $definitions )
+				. "\n)",
+			)
+		);
+	}
+
+	private function temporal_select_sql( string $table_name ): string {
+		return 'SELECT id, d, tm, dt, ts, payload FROM ' . $table_name . ' ORDER BY id';
+	}
+
+	private function temporal_join_posts_select_sql(): string {
+		return 'SELECT id, d, tm, dt, ts, payload FROM temporal_join_posts ORDER BY id';
+	}
+
+	private function assert_temporal_error_leaves_rows( string $sql, string $needle, array $select_queries ): void {
+		$this->assertParityErrorContains( $sql, $needle );
+		foreach ( $select_queries as $select_query ) {
+			$this->assertParityRows( $select_query );
+		}
 	}
 
 	private function createJoinedUpdateGapDrivers(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

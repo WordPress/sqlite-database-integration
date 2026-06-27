@@ -79,6 +79,13 @@ class WP_DuckDB_Driver {
 		WP_MySQL_Lexer::LONGBLOB_SYMBOL   => 'BLOB',
 	);
 
+	const TEMPORAL_IMPLICIT_DEFAULT_MAP = array(
+		'date'      => '0000-00-00',
+		'time'      => '00:00:00',
+		'datetime'  => '0000-00-00 00:00:00',
+		'timestamp' => '0000-00-00 00:00:00',
+	);
+
 	/**
 	 * @var WP_Parser_Grammar|null
 	 */
@@ -2050,9 +2057,7 @@ class WP_DuckDB_Driver {
 
 		return $this->execute_auto_increment_write(
 			$this->identifier_value( $tokens[ $index ] ?? null ),
-			$ignore
-					? $this->translate_insert_ignore_tokens_to_duckdb_sql( $tokens, $index )
-					: $this->translate_tokens_to_duckdb_sql( $tokens ),
+			$this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $index, $ignore ),
 			'Failed to execute DuckDB INSERT',
 			$tokens,
 			$index
@@ -4714,7 +4719,8 @@ class WP_DuckDB_Driver {
 			'is_string'
 		);
 
-		$items = array();
+		$metadata_map = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] ?? false );
+		$items        = array();
 		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
 			if (
 				isset( $item[0], $item[1] )
@@ -4723,7 +4729,32 @@ class WP_DuckDB_Driver {
 			) {
 				$item = array_slice( $item, 2 );
 			}
-			$items[] = $this->translate_tokens_to_duckdb_sql( $item );
+
+			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+			if ( null === $equals_index ) {
+				$items[] = $this->translate_tokens_to_duckdb_sql( $item );
+				continue;
+			}
+
+			$left_tokens  = array_slice( $item, 0, $equals_index );
+			$right_tokens = array_slice( $item, $equals_index + 1 );
+			if ( count( $left_tokens ) !== 1 || count( $right_tokens ) === 0 ) {
+				$items[] = $this->translate_tokens_to_duckdb_sql( $item );
+				continue;
+			}
+
+			$column_name = $this->identifier_value( $left_tokens[0] );
+			$value_sql   = $this->translate_tokens_to_duckdb_sql( $right_tokens );
+			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
+				$value_sql = $this->coerce_write_value_for_column_sql(
+					$metadata_map[ strtolower( $column_name ) ],
+					$right_tokens,
+					$value_sql,
+					true
+				);
+			}
+
+			$items[] = $this->translate_tokens_to_duckdb_sql( $left_tokens ) . ' = ' . $value_sql;
 		}
 
 		return implode( ', ', $items );
@@ -4757,8 +4788,9 @@ class WP_DuckDB_Driver {
 			}
 		}
 
-		$items        = array();
-		$target_index = null;
+		$items         = array();
+		$metadata_maps = array();
+		$target_index  = null;
 		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
 			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
 			if ( null === $equals_index ) {
@@ -4822,9 +4854,26 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE statement modifying multiple tables is not supported.' );
 			}
 
-			$items[] = $this->connection->quote_identifier( $column )
-				. ' = '
-				. $this->translate_tokens_to_duckdb_sql( $right_tokens );
+			if ( ! isset( $metadata_maps[ $assignment_target_index ] ) ) {
+				$assignment_target                       = $references[ $assignment_target_index ];
+				$metadata_maps[ $assignment_target_index ] = $this->write_column_metadata_map(
+					$assignment_target['table_name'],
+					$assignment_target['temporary'] ?? false
+				);
+			}
+
+			$value_sql    = $this->translate_tokens_to_duckdb_sql( $right_tokens );
+			$metadata_map = $metadata_maps[ $assignment_target_index ];
+			if ( isset( $metadata_map[ strtolower( $column ) ] ) ) {
+				$value_sql = $this->coerce_write_value_for_column_sql(
+					$metadata_map[ strtolower( $column ) ],
+					$right_tokens,
+					$value_sql,
+					true
+				);
+			}
+
+			$items[] = $this->connection->quote_identifier( $column ) . ' = ' . $value_sql;
 		}
 
 		if ( null === $target_index ) {
@@ -11627,6 +11676,10 @@ class WP_DuckDB_Driver {
 			++$index;
 		}
 
+		if ( null === $this->find_insert_select_index( $tokens, $index ) ) {
+			return $this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $index, false, 'INSERT OR REPLACE' );
+		}
+
 		return 'INSERT OR REPLACE INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $index ) );
 	}
 
@@ -11642,6 +11695,10 @@ class WP_DuckDB_Driver {
 			++$index;
 		}
 
+		if ( null === $this->find_insert_select_index( $tokens, $index ) ) {
+			return $this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $index, false, 'INSERT' );
+		}
+
 		return 'INSERT INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $index ) );
 	}
 
@@ -11653,7 +11710,7 @@ class WP_DuckDB_Driver {
 	 * @return string DuckDB SQL.
 	 */
 	private function translate_insert_ignore_tokens_to_duckdb_sql( array $tokens, int $table_index ): string {
-		return 'INSERT OR IGNORE INTO ' . $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $table_index ) );
+		return $this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $table_index, true );
 	}
 
 	/**
@@ -11672,6 +11729,54 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Translate MySQL INSERT/REPLACE ... VALUES to DuckDB with temporal write coercion.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
+	 * @param int               $table_index Index of the table token.
+	 * @param bool              $ignore      Whether INSERT IGNORE was used.
+	 * @param string            $verb        DuckDB INSERT verb.
+	 * @param int|null          $end_index   Optional token index where VALUES input ends.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_insert_values_tokens_to_duckdb_sql( array $tokens, int $table_index, bool $ignore, string $verb = 'INSERT', ?int $end_index = null ): string {
+		$shape = $this->parse_insert_values_write_shape( $tokens, $table_index, $end_index, true );
+		if ( ! $shape['requires_coercion'] ) {
+			return $verb
+				. ( $ignore ? ' OR IGNORE' : '' )
+				. ' INTO '
+				. $this->translate_tokens_to_duckdb_sql(
+					array_slice(
+						$tokens,
+						$table_index,
+						(null === $end_index ? count( $tokens ) : $end_index) - $table_index
+					)
+				);
+		}
+
+		$row_sql = array();
+		foreach ( $shape['ordered_rows'] as $row ) {
+			$row_sql[] = '(' . implode( ', ', $row ) . ')';
+		}
+
+		return $verb
+			. ( $ignore ? ' OR IGNORE' : '' )
+			. ' INTO '
+			. $this->connection->quote_identifier( $shape['table_name'] )
+			. ' ('
+			. implode(
+				', ',
+				array_map(
+					function ( string $column_name ): string {
+						return $this->connection->quote_identifier( $column_name );
+					},
+					$shape['columns']
+				)
+			)
+			. ') VALUES '
+			. implode( ', ', $row_sql );
+	}
+
+	/**
 	 * Translate MySQL INSERT ... SET to DuckDB INSERT ... VALUES.
 	 *
 	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
@@ -11681,7 +11786,26 @@ class WP_DuckDB_Driver {
 	 * @return string DuckDB SQL.
 	 */
 	private function translate_insert_set_tokens_to_duckdb_sql( array $tokens, int $table_index, int $set_index, bool $ignore ): string {
-		list( $columns, $values ) = $this->parse_insert_set_assignments( array_slice( $tokens, $set_index + 1 ) );
+		$assignments  = $this->parse_insert_set_assignments( array_slice( $tokens, $set_index + 1 ) );
+		$table_name   = $this->identifier_value( $tokens[ $table_index ] ?? null );
+		$reference    = $this->resolve_write_table_reference( $table_name );
+		$metadata_map = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] );
+		$columns      = array();
+		$values       = array();
+
+		foreach ( $assignments as $assignment ) {
+			$columns[] = $assignment['column_sql'];
+			$value_sql = $assignment['value_sql'];
+			if ( isset( $metadata_map[ strtolower( $assignment['column_name'] ) ] ) ) {
+				$value_sql = $this->coerce_write_value_for_column_sql(
+					$metadata_map[ strtolower( $assignment['column_name'] ) ],
+					$assignment['value_tokens'],
+					$value_sql,
+					false
+				);
+			}
+			$values[] = $value_sql;
+		}
 
 		return 'INSERT '
 			. ( $ignore ? 'OR IGNORE ' : '' )
@@ -11698,16 +11822,15 @@ class WP_DuckDB_Driver {
 	 * Parse INSERT ... SET assignments.
 	 *
 	 * @param WP_Parser_Token[] $tokens Assignment-list tokens after SET.
-	 * @return array{0:string[],1:string[]}
+	 * @return array<int,array{column_name:string,column_sql:string,value_tokens:array<int,WP_Parser_Token>,value_sql:string}>
 	 */
 	private function parse_insert_set_assignments( array $tokens ): array {
-		$columns = array();
-		$values  = array();
-		$index   = 0;
+		$assignments = array();
+		$index       = 0;
 
 		while ( $index < count( $tokens ) ) {
 			$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
-			$columns[]   = $this->translate_tokens_to_duckdb_sql( array( $tokens[ $index ] ) );
+			$column_sql  = $this->translate_tokens_to_duckdb_sql( array( $tokens[ $index ] ) );
 			++$index;
 
 			if (
@@ -11737,17 +11860,22 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... SET statement in DuckDB driver. Assignment value is required for column: ' . $column_name . '.' );
 			}
 
-			$values[] = $this->translate_tokens_to_duckdb_sql( $value_tokens );
+			$assignments[] = array(
+				'column_name'  => $column_name,
+				'column_sql'   => $column_sql,
+				'value_tokens' => $value_tokens,
+				'value_sql'    => $this->translate_tokens_to_duckdb_sql( $value_tokens ),
+			);
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
 			}
 		}
 
-		if ( count( $columns ) === 0 ) {
+		if ( count( $assignments ) === 0 ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... SET statement in DuckDB driver. At least one assignment is required.' );
 		}
 
-		return array( $columns, $values );
+		return $assignments;
 	}
 
 	/**
@@ -11761,14 +11889,16 @@ class WP_DuckDB_Driver {
 	private function translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( array $tokens, int $table_index, int $on_duplicate_index ): string {
 		$insert_shape = $this->parse_on_duplicate_insert_shape( $tokens, $table_index, $on_duplicate_index );
 		$target       = $this->select_on_duplicate_conflict_target( $insert_shape['table_name'], $insert_shape['values_by_column'] );
-		$update_sql   = $this->translate_on_duplicate_update_tokens_to_duckdb_sql( array_slice( $tokens, $on_duplicate_index + 4 ) );
+		$update_sql   = $this->translate_on_duplicate_update_tokens_to_duckdb_sql(
+			array_slice( $tokens, $on_duplicate_index + 4 ),
+			$this->write_column_metadata_map( $insert_shape['table_name'], $insert_shape['temporary'] )
+		);
 
 		if ( '' === $update_sql ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. UPDATE list is required.' );
 		}
 
-		return 'INSERT INTO '
-			. $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $table_index, $on_duplicate_index - $table_index ) )
+		return $this->translate_insert_values_tokens_to_duckdb_sql( $tokens, $table_index, false, 'INSERT', $on_duplicate_index )
 			. ' ON CONFLICT ('
 			. implode(
 				', ',
@@ -11789,11 +11919,13 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
 	 * @param int               $table_index        Index of the table token.
 	 * @param int               $on_duplicate_index Index of the ON token.
-	 * @return array{table_name:string,values_by_column:array<string,string>}
+	 * @return array{table_name:string,temporary:bool,values_by_column:array<string,string>}
 	 */
 	private function parse_on_duplicate_insert_shape( array $tokens, int $table_index, int $on_duplicate_index ): array {
-		$table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
-		$index      = $table_index + 1;
+		$requested_table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
+		$reference            = $this->resolve_write_table_reference( $requested_table_name );
+		$metadata_map         = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] );
+		$index                = $table_index + 1;
 
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Explicit column list is required.' );
 		++$index;
@@ -11830,11 +11962,21 @@ class WP_DuckDB_Driver {
 
 		$values_by_column = array();
 		foreach ( $columns as $offset => $column_name ) {
-			$values_by_column[ strtolower( $column_name ) ] = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
+			$value_sql = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
+			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
+				$value_sql = $this->coerce_write_value_for_column_sql(
+					$metadata_map[ strtolower( $column_name ) ],
+					$value_items[ $offset ],
+					$value_sql,
+					false
+				);
+			}
+			$values_by_column[ strtolower( $column_name ) ] = $value_sql;
 		}
 
 		return array(
-			'table_name'       => $table_name,
+			'table_name'       => $reference['table_name'],
+			'temporary'        => $reference['temporary'],
 			'values_by_column' => $values_by_column,
 		);
 	}
@@ -11849,7 +11991,7 @@ class WP_DuckDB_Driver {
 	 * @param int               $table_index Index of the table token.
 	 */
 	private function assert_insert_values_do_not_conflict_with_case_insensitive_unique_keys( array $tokens, int $table_index ): void {
-		$insert_shape             = $this->parse_insert_values_shape( $tokens, $table_index );
+		$insert_shape             = $this->parse_insert_values_shape( $tokens, $table_index, true );
 		$case_insensitive_columns = $this->case_insensitive_column_names( $insert_shape['table_name'] );
 		if ( count( $case_insensitive_columns ) === 0 ) {
 			return;
@@ -11889,32 +12031,71 @@ class WP_DuckDB_Driver {
 	/**
 	 * Parse a supported INSERT ... VALUES shape into per-row value SQL.
 	 *
-	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
-	 * @param int               $table_index Index of the table token.
+	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
+	 * @param int               $table_index        Index of the table token.
+	 * @param bool              $coerce_for_storage Whether values should be coerced for storage.
 	 * @return array{table_name:string,rows:array<int,array<string,string>>}
 	 */
-	private function parse_insert_values_shape( array $tokens, int $table_index ): array {
-		$table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
-		$index      = $table_index + 1;
-		$columns    = array();
+	private function parse_insert_values_shape( array $tokens, int $table_index, bool $coerce_for_storage = false ): array {
+		$shape = $this->parse_insert_values_write_shape( $tokens, $table_index, null, $coerce_for_storage );
+
+		return array(
+			'table_name' => $shape['table_name'],
+			'rows'       => $shape['rows'],
+		);
+	}
+
+	/**
+	 * Parse a supported INSERT/REPLACE ... VALUES shape into ordered and keyed value SQL.
+	 *
+	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
+	 * @param int               $table_index        Index of the table token.
+	 * @param int|null          $end_index          Optional token index where VALUES input ends.
+	 * @param bool              $coerce_for_storage Whether values should be coerced for storage.
+	 * @return array{table_name:string,temporary:bool,columns:string[],rows:array<int,array<string,string>>,ordered_rows:array<int,string[]>,coerced_value_rows:array<int,string[]>,temporal_validation_rows:array<int,array<int,array<string,string>>>,requires_coercion:bool}
+	 */
+	private function parse_insert_values_write_shape( array $tokens, int $table_index, ?int $end_index = null, bool $coerce_for_storage = false ): array {
+		if ( null !== $end_index ) {
+			$tokens = array_slice( $tokens, 0, $end_index );
+		}
+
+		$requested_table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
+		$reference            = $this->resolve_write_table_reference( $requested_table_name );
+		$table_name           = $reference['table_name'];
+		$temporary            = $reference['temporary'];
+		$index                = $table_index + 1;
+		$columns              = array();
+		$metadata_map         = $this->write_column_metadata_map( $table_name, $temporary );
 
 		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
 			list( $column_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
 			foreach ( $column_items as $column_tokens ) {
 				if ( 1 !== count( $column_tokens ) ) {
 					return array(
-						'table_name' => $table_name,
-						'rows'       => array(),
+						'table_name'               => $table_name,
+						'temporary'                => $temporary,
+						'columns'                  => array(),
+						'rows'                     => array(),
+						'ordered_rows'             => array(),
+						'coerced_value_rows'       => array(),
+						'temporal_validation_rows' => array(),
+						'requires_coercion'        => false,
 					);
 				}
 				$columns[] = $this->identifier_value( $column_tokens[0] );
 			}
 		} else {
-			foreach ( $this->table_column_metadata_rows( $table_name ) as $row ) {
+			foreach ( $this->table_column_metadata_rows( $table_name, $temporary ) as $row ) {
 				if ( ! array_key_exists( 'column_name', $row ) ) {
 					return array(
-						'table_name' => $table_name,
-						'rows'       => array(),
+						'table_name'               => $table_name,
+						'temporary'                => $temporary,
+						'columns'                  => array(),
+						'rows'                     => array(),
+						'ordered_rows'             => array(),
+						'coerced_value_rows'       => array(),
+						'temporal_validation_rows' => array(),
+						'requires_coercion'        => false,
 					);
 				}
 				$columns[] = (string) $row['column_name'];
@@ -11923,27 +12104,73 @@ class WP_DuckDB_Driver {
 
 		if ( count( $columns ) === 0 || ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $index ]->id ) {
 			return array(
-				'table_name' => $table_name,
-				'rows'       => array(),
+				'table_name'               => $table_name,
+				'temporary'                => $temporary,
+				'columns'                  => array(),
+				'rows'                     => array(),
+				'ordered_rows'             => array(),
+				'coerced_value_rows'       => array(),
+				'temporal_validation_rows' => array(),
+				'requires_coercion'        => false,
 			);
 		}
 		++$index;
 
-		$rows = array();
+		$rows                     = array();
+		$ordered_rows             = array();
+		$coerced_value_rows       = array();
+		$temporal_validation_rows = array();
+		$requires_coercion        = false;
 		while ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
 			list( $value_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
 			if ( count( $columns ) !== count( $value_items ) ) {
 				return array(
-					'table_name' => $table_name,
-					'rows'       => array(),
+					'table_name'               => $table_name,
+					'temporary'                => $temporary,
+					'columns'                  => array(),
+					'rows'                     => array(),
+					'ordered_rows'             => array(),
+					'coerced_value_rows'       => array(),
+					'temporal_validation_rows' => array(),
+					'requires_coercion'        => false,
 				);
 			}
 
-			$values_by_column = array();
+			$values_by_column    = array();
+			$ordered_row         = array();
+			$coerced_values      = array();
+			$validation_values   = array();
 			foreach ( $columns as $offset => $column_name ) {
-				$values_by_column[ strtolower( $column_name ) ] = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
+				$value_sql = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
+				if ( $coerce_for_storage && isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
+					$validation = $this->temporal_write_validation_for_column(
+						$metadata_map[ strtolower( $column_name ) ],
+						$value_items[ $offset ],
+						$value_sql
+					);
+					if ( null !== $validation ) {
+						$validation_values[] = $validation;
+					}
+
+					$coerced_sql = $this->coerce_write_value_for_column_sql(
+						$metadata_map[ strtolower( $column_name ) ],
+						$value_items[ $offset ],
+						$value_sql,
+						false
+					);
+					if ( $coerced_sql !== $value_sql ) {
+						$requires_coercion = true;
+						$value_sql         = $coerced_sql;
+						$coerced_values[]  = $coerced_sql;
+					}
+				}
+				$values_by_column[ strtolower( $column_name ) ] = $value_sql;
+				$ordered_row[]                                  = $value_sql;
 			}
-			$rows[] = $values_by_column;
+			$rows[]                     = $values_by_column;
+			$ordered_rows[]             = $ordered_row;
+			$coerced_value_rows[]       = $coerced_values;
+			$temporal_validation_rows[] = $validation_values;
 
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
@@ -11953,9 +12180,297 @@ class WP_DuckDB_Driver {
 		}
 
 		return array(
-			'table_name' => $table_name,
-			'rows'       => $rows,
+			'table_name'               => $table_name,
+			'temporary'                => $temporary,
+			'columns'                  => $columns,
+			'rows'                     => $rows,
+			'ordered_rows'             => $ordered_rows,
+			'coerced_value_rows'       => $coerced_value_rows,
+			'temporal_validation_rows' => $temporal_validation_rows,
+			'requires_coercion'        => $requires_coercion,
 		);
+	}
+
+	/**
+	 * Resolve a DML write target, preferring visible temporary tables.
+	 *
+	 * @param string $requested_table_name Requested table name.
+	 * @return array{table_name:string,temporary:bool}
+	 */
+	private function resolve_write_table_reference( string $requested_table_name ): array {
+		$reference = $this->resolve_visible_user_table_reference( $requested_table_name );
+		if ( null !== $reference ) {
+			return $reference;
+		}
+
+		return array(
+			'table_name' => $requested_table_name,
+			'temporary'  => false,
+		);
+	}
+
+	/**
+	 * Build a lowercase column metadata map for a write target.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 * @return array<string,array<string,mixed>>
+	 */
+	private function write_column_metadata_map( string $table_name, bool $temporary = false ): array {
+		$map = array();
+		foreach ( $this->table_column_metadata_rows( $table_name, $temporary ) as $row ) {
+			if ( array_key_exists( 'column_name', $row ) ) {
+				$map[ strtolower( (string) $row['column_name'] ) ] = $row;
+			}
+		}
+
+		return $map;
+	}
+
+	/**
+	 * Coerce a target-column value for temporal storage when needed.
+	 *
+	 * @param array<string,mixed>  $metadata                     Column metadata.
+	 * @param WP_Parser_Token[]    $value_tokens                 RHS value tokens.
+	 * @param string               $value_sql                    Translated RHS SQL.
+	 * @param bool                 $coalesce_non_strict_not_null Whether normal UPDATE should coalesce NULL to an implicit default.
+	 * @return string Value SQL.
+	 */
+	private function coerce_write_value_for_column_sql( array $metadata, array $value_tokens, string $value_sql, bool $coalesce_non_strict_not_null ): string {
+		$data_type = $this->mysql_column_data_type( $metadata );
+		if ( ! $this->is_temporal_write_data_type( $data_type ) || $this->is_default_value_tokens( $value_tokens ) ) {
+			return $value_sql;
+		}
+
+		$value_sql = $this->coerce_temporal_write_value_sql(
+			$data_type,
+			$value_sql,
+			$this->write_value_display_sql( $value_tokens, $value_sql )
+		);
+
+		if (
+			$coalesce_non_strict_not_null
+			&& ! $this->is_strict_sql_mode_active()
+			&& isset( $metadata['is_nullable'] )
+			&& 'NO' === strtoupper( (string) $metadata['is_nullable'] )
+		) {
+			$implicit_default = $this->temporal_implicit_default( $data_type );
+			if ( null !== $implicit_default ) {
+				$value_sql = 'COALESCE(' . $value_sql . ', ' . $this->connection->quote( $implicit_default ) . ')';
+			}
+		}
+
+		return $value_sql;
+	}
+
+	/**
+	 * Build a non-throwing strict temporal validation expression for a target column.
+	 *
+	 * @param array<string,mixed> $metadata     Column metadata.
+	 * @param WP_Parser_Token[]   $value_tokens RHS value tokens.
+	 * @param string              $value_sql    Translated RHS SQL.
+	 * @return array{data_type:string,invalid_display_sql:string}|null Validation metadata, or null when not needed.
+	 */
+	private function temporal_write_validation_for_column( array $metadata, array $value_tokens, string $value_sql ): ?array {
+		$data_type = $this->mysql_column_data_type( $metadata );
+		if (
+			! $this->is_strict_sql_mode_active()
+			|| ! $this->is_temporal_write_data_type( $data_type )
+			|| $this->is_default_value_tokens( $value_tokens )
+		) {
+			return null;
+		}
+
+		$display_sql = $this->write_value_display_sql( $value_tokens, $value_sql );
+
+		return array(
+			'data_type'           => $data_type,
+			'invalid_display_sql' => $this->temporal_invalid_write_display_sql( $data_type, $value_sql, $display_sql ),
+		);
+	}
+
+	/**
+	 * Read a MySQL-facing column data type from metadata.
+	 *
+	 * @param array<string,mixed> $metadata Column metadata.
+	 * @return string MySQL data type.
+	 */
+	private function mysql_column_data_type( array $metadata ): string {
+		return $this->data_type_from_column_type( strtolower( (string) ( $metadata['column_type'] ?? '' ) ) );
+	}
+
+	/**
+	 * Check whether a data type needs temporal write coercion.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return bool Whether the type is temporal.
+	 */
+	private function is_temporal_write_data_type( string $data_type ): bool {
+		return in_array( $data_type, array( 'date', 'time', 'datetime', 'timestamp' ), true );
+	}
+
+	/**
+	 * Return the temporal implicit default for non-strict invalid writes.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return string|null Implicit default, or null for unsupported types.
+	 */
+	private function temporal_implicit_default( string $data_type ): ?string {
+		return self::TEMPORAL_IMPLICIT_DEFAULT_MAP[ $data_type ] ?? null;
+	}
+
+	/**
+	 * Check whether a value token list is exactly DEFAULT.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return bool Whether the value is DEFAULT.
+	 */
+	private function is_default_value_tokens( array $tokens ): bool {
+		return 1 === count( $tokens ) && WP_MySQL_Lexer::DEFAULT_SYMBOL === $tokens[0]->id;
+	}
+
+	/**
+	 * Build a string SQL expression used for temporal checks and error messages.
+	 *
+	 * @param WP_Parser_Token[] $value_tokens Value tokens.
+	 * @param string            $value_sql    Translated value SQL.
+	 * @return string String SQL expression.
+	 */
+	private function write_value_display_sql( array $value_tokens, string $value_sql ): string {
+		if ( 1 === count( $value_tokens ) ) {
+			$token = $value_tokens[0];
+			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+				return $this->connection->quote( $token->get_value() );
+			}
+			if ( $this->is_number_token( $token ) ) {
+				return $this->connection->quote( $token->get_bytes() );
+			}
+			if ( WP_MySQL_Lexer::TRUE_SYMBOL === $token->id ) {
+				return "'1'";
+			}
+			if ( WP_MySQL_Lexer::FALSE_SYMBOL === $token->id ) {
+				return "'0'";
+			}
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id || WP_MySQL_Lexer::NULL2_SYMBOL === $token->id ) {
+				return 'NULL';
+			}
+		}
+
+		if (
+			2 === count( $value_tokens )
+			&& ( WP_MySQL_Lexer::MINUS_OPERATOR === $value_tokens[0]->id || WP_MySQL_Lexer::PLUS_OPERATOR === $value_tokens[0]->id )
+			&& $this->is_number_token( $value_tokens[1] )
+		) {
+			return $this->connection->quote( $value_tokens[0]->get_bytes() . $value_tokens[1]->get_bytes() );
+		}
+
+		return 'CAST((' . $value_sql . ') AS VARCHAR)';
+	}
+
+	/**
+	 * Build a DuckDB CASE expression that emulates SQLite/MySQL temporal saving.
+	 *
+	 * @param string $data_type   MySQL temporal data type.
+	 * @param string $value_sql   Translated value SQL.
+	 * @param string $display_sql String SQL expression for checks and messages.
+	 * @return string Coerced value SQL.
+	 */
+	private function coerce_temporal_write_value_sql( string $data_type, string $value_sql, string $display_sql ): string {
+		$is_strict_mode       = $this->is_strict_sql_mode_active();
+		$reject_zero_date     = $this->is_sql_mode_active( 'NO_ZERO_DATE' ) && $is_strict_mode ? '1' : '0';
+		$reject_zero_in_date  = $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? '1' : '0';
+		$implicit_default     = $this->temporal_implicit_default( $data_type );
+		$fallback             = $is_strict_mode
+			? "error('Incorrect " . $data_type . " value: ''' || " . $display_sql . " || '''')"
+			: ( null === $implicit_default ? 'NULL' : $this->connection->quote( $implicit_default ) );
+		$zero_date_value      = 'date' === $data_type ? "'0000-00-00'" : "'0000-00-00 00:00:00'";
+		$formatted_value      = $this->temporal_try_cast_formatted_sql( $data_type, $display_sql );
+		$canonical_shape_test = $this->temporal_canonical_shape_sql( $data_type, $display_sql );
+
+		return 'CASE'
+			. ' WHEN (' . $value_sql . ') IS NULL THEN NULL'
+			. ' WHEN ' . $display_sql . " IN ('0000-00-00', '0000-00-00 00:00:00') AND NOT " . $reject_zero_date . ' THEN ' . $zero_date_value
+			. ' WHEN substr(' . $display_sql . ", 1, 4) <> '0000' AND (substr(" . $display_sql . ", 6, 2) = '00' OR substr(" . $display_sql . ", 9, 2) = '00') AND NOT " . $reject_zero_in_date . ' THEN ' . $display_sql
+			. ' WHEN ' . $canonical_shape_test . ' AND ' . $formatted_value . ' IS NOT NULL THEN ' . $formatted_value
+			. ' ELSE ' . $fallback
+			. ' END';
+	}
+
+	/**
+	 * Build a CASE expression that returns the invalid display value or NULL.
+	 *
+	 * @param string $data_type   MySQL temporal data type.
+	 * @param string $value_sql   Translated value SQL.
+	 * @param string $display_sql String SQL expression for checks and messages.
+	 * @return string Invalid display SQL.
+	 */
+	private function temporal_invalid_write_display_sql( string $data_type, string $value_sql, string $display_sql ): string {
+		$reject_zero_date     = $this->is_sql_mode_active( 'NO_ZERO_DATE' ) ? '1' : '0';
+		$reject_zero_in_date  = $this->is_sql_mode_active( 'NO_ZERO_IN_DATE' ) ? '1' : '0';
+		$formatted_value      = $this->temporal_try_cast_formatted_sql( $data_type, $display_sql );
+		$canonical_shape_test = $this->temporal_canonical_shape_sql( $data_type, $display_sql );
+
+		return 'CASE'
+			. ' WHEN (' . $value_sql . ') IS NULL THEN NULL'
+			. ' WHEN ' . $display_sql . " IN ('0000-00-00', '0000-00-00 00:00:00') AND NOT " . $reject_zero_date . ' THEN NULL'
+			. ' WHEN substr(' . $display_sql . ", 1, 4) <> '0000' AND (substr(" . $display_sql . ", 6, 2) = '00' OR substr(" . $display_sql . ", 9, 2) = '00') AND NOT " . $reject_zero_in_date . ' THEN NULL'
+			. ' WHEN ' . $canonical_shape_test . ' AND ' . $formatted_value . ' IS NOT NULL THEN NULL'
+			. ' ELSE ' . $display_sql
+			. ' END';
+	}
+
+	/**
+	 * Build formatted TRY_CAST SQL for a temporal value.
+	 *
+	 * @param string $data_type   MySQL temporal data type.
+	 * @param string $display_sql String SQL expression.
+	 * @return string Formatted TRY_CAST expression.
+	 */
+	private function temporal_try_cast_formatted_sql( string $data_type, string $display_sql ): string {
+		if ( 'date' === $data_type ) {
+			return "strftime(TRY_CAST(" . $display_sql . " AS DATE), '%Y-%m-%d')";
+		}
+		if ( 'time' === $data_type ) {
+			return 'substr(CAST(TRY_CAST(' . $display_sql . ' AS TIME) AS VARCHAR), 1, 8)';
+		}
+
+		return "strftime(TRY_CAST(" . $display_sql . " AS TIMESTAMP), '%Y-%m-%d %H:%M:%S')";
+	}
+
+	/**
+	 * Build a conservative canonical temporal shape check.
+	 *
+	 * @param string $data_type   MySQL temporal data type.
+	 * @param string $display_sql String SQL expression.
+	 * @return string Boolean SQL expression.
+	 */
+	private function temporal_canonical_shape_sql( string $data_type, string $display_sql ): string {
+		if ( 'time' === $data_type ) {
+			$pattern = '^[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?$';
+		} else {
+			$pattern = '^[0-9]{4}-[0-9]{2}-[0-9]{2}([ T][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?)?$';
+		}
+
+		return 'regexp_full_match(' . $display_sql . ', ' . $this->connection->quote( $pattern ) . ')';
+	}
+
+	/**
+	 * Check whether a SQL mode is active.
+	 *
+	 * @param string $mode SQL mode.
+	 * @return bool Whether the mode is active.
+	 */
+	private function is_sql_mode_active( string $mode ): bool {
+		return in_array( strtoupper( $mode ), $this->active_sql_modes, true );
+	}
+
+	/**
+	 * Check whether strict SQL mode is active.
+	 *
+	 * @return bool Whether strict mode is active.
+	 */
+	private function is_strict_sql_mode_active(): bool {
+		return $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' ) || $this->is_sql_mode_active( 'STRICT_ALL_TABLES' );
 	}
 
 	/**
@@ -11972,7 +12487,7 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement|null Statement when emulated, null when native DuckDB can be used.
 	 */
 	private function execute_replace_values_with_manual_conflict_handling( array $tokens, int $table_index ): ?WP_DuckDB_Result_Statement {
-		$replace_shape            = $this->parse_insert_values_shape( $tokens, $table_index );
+		$replace_shape            = $this->parse_insert_values_write_shape( $tokens, $table_index, null, true );
 		$case_insensitive_columns = $this->case_insensitive_column_names( $replace_shape['table_name'] );
 		if ( count( $replace_shape['rows'] ) === 0 ) {
 			return null;
@@ -11982,6 +12497,8 @@ class WP_DuckDB_Driver {
 		if ( count( $unique_sets ) < 2 && ! $this->has_case_insensitive_unique_key( $unique_sets, $case_insensitive_columns ) ) {
 			return null;
 		}
+
+		$this->validate_insert_values_write_shape( $replace_shape, 'Failed to validate DuckDB REPLACE values' );
 
 		$started_transaction = false;
 		if ( ! $this->connection->inTransaction() ) {
@@ -12028,6 +12545,37 @@ class WP_DuckDB_Driver {
 				$this->connection->rollback();
 			}
 			throw $e;
+		}
+	}
+
+	/**
+	 * Evaluate coerced INSERT/REPLACE VALUES expressions before side-effecting emulation.
+	 *
+	 * @param array{temporal_validation_rows:array<int,array<int,array<string,string>>>} $shape Parsed VALUES shape.
+	 * @param string                                                                     $context Failure context.
+	 */
+	private function validate_insert_values_write_shape( array $shape, string $context ): void {
+		if ( empty( $shape['temporal_validation_rows'] ) ) {
+			return;
+		}
+
+		foreach ( $shape['temporal_validation_rows'] as $row ) {
+			if ( count( $row ) === 0 ) {
+				continue;
+			}
+
+			foreach ( $row as $validation ) {
+				$stmt = $this->execute_duckdb_query(
+					'SELECT (' . $validation['invalid_display_sql'] . ') AS invalid_display',
+					$context
+				);
+				$result = $stmt->fetch( PDO::FETCH_ASSOC );
+				if ( false !== $result && null !== $result['invalid_display'] ) {
+					throw new WP_DuckDB_Driver_Exception(
+						"Incorrect " . $validation['data_type'] . " value: '" . (string) $result['invalid_display'] . "'"
+					);
+				}
+			}
 		}
 	}
 
@@ -12242,10 +12790,69 @@ class WP_DuckDB_Driver {
 	/**
 	 * Translate an ODKU update list, rewriting MySQL VALUES(col) references.
 	 *
-	 * @param WP_Parser_Token[] $tokens Update-list tokens after ON DUPLICATE KEY UPDATE.
+	 * @param WP_Parser_Token[]       $tokens       Update-list tokens after ON DUPLICATE KEY UPDATE.
+	 * @param array<string,array<string,mixed>> $metadata_map Target column metadata keyed by lowercase column name.
 	 * @return string DuckDB SQL.
 	 */
-	private function translate_on_duplicate_update_tokens_to_duckdb_sql( array $tokens ): string {
+	private function translate_on_duplicate_update_tokens_to_duckdb_sql( array $tokens, array $metadata_map ): string {
+		$items = array();
+		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
+			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+			if ( null === $equals_index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. UPDATE assignment is required.' );
+			}
+
+			$left_tokens  = array_slice( $item, 0, $equals_index );
+			$right_tokens = array_slice( $item, $equals_index + 1 );
+			if ( count( $right_tokens ) === 0 ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. UPDATE assignment value is required.' );
+			}
+
+			$column_name = $this->assignment_column_name( $left_tokens );
+			$value_sql   = $this->translate_on_duplicate_value_tokens_to_duckdb_sql( $right_tokens );
+			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
+				$value_sql = $this->coerce_write_value_for_column_sql(
+					$metadata_map[ strtolower( $column_name ) ],
+					$right_tokens,
+					$value_sql,
+					false
+				);
+			}
+
+			$items[] = $this->translate_tokens_to_duckdb_sql( $left_tokens ) . ' = ' . $value_sql;
+		}
+
+		return implode( ', ', $items );
+	}
+
+	/**
+	 * Resolve an assignment target column from unqualified or qualified LHS tokens.
+	 *
+	 * @param WP_Parser_Token[] $left_tokens Assignment LHS tokens.
+	 * @return string Column name.
+	 */
+	private function assignment_column_name( array $left_tokens ): string {
+		if ( 1 === count( $left_tokens ) ) {
+			return $this->identifier_value( $left_tokens[0] );
+		}
+
+		if (
+			3 === count( $left_tokens )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $left_tokens[1]->id
+		) {
+			return $this->identifier_value( $left_tokens[2] );
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only simple column assignments are supported.' );
+	}
+
+	/**
+	 * Translate an ODKU RHS expression, rewriting MySQL VALUES(col) references.
+	 *
+	 * @param WP_Parser_Token[] $tokens RHS tokens.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_on_duplicate_value_tokens_to_duckdb_sql( array $tokens ): string {
 		$pieces = array();
 
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
