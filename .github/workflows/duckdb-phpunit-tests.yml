@@ -343,8 +343,13 @@ jobs:
              'wpdb_class'   => is_object( $wpdb ) ? get_class( $wpdb ) : gettype( $wpdb ),
              'last_error'   => '',
              'last_query'   => '',
+             'rows_affected' => null,
+             'insert_id'    => null,
+             'driver_class' => null,
+             'driver_insert_id' => null,
              'num_queries'  => null,
              'queries_tail' => array(),
+             'duckdb_queries_tail' => array(),
              'php_error'    => error_get_last(),
             );
 
@@ -355,8 +360,34 @@ jobs:
              if ( isset( $wpdb->last_query ) ) {
               $diagnostics['last_query'] = (string) $wpdb->last_query;
              }
+             if ( isset( $wpdb->rows_affected ) ) {
+              $diagnostics['rows_affected'] = (int) $wpdb->rows_affected;
+             }
+             if ( isset( $wpdb->insert_id ) ) {
+              $diagnostics['insert_id'] = (int) $wpdb->insert_id;
+             }
              if ( isset( $wpdb->num_queries ) ) {
               $diagnostics['num_queries'] = (int) $wpdb->num_queries;
+             }
+             try {
+              $reflection = new ReflectionObject( $wpdb );
+              if ( $reflection->hasProperty( 'dbh' ) ) {
+               $property = $reflection->getProperty( 'dbh' );
+               $property->setAccessible( true );
+               $driver = $property->getValue( $wpdb );
+
+               if ( is_object( $driver ) ) {
+                $diagnostics['driver_class'] = get_class( $driver );
+                if ( method_exists( $driver, 'get_insert_id' ) ) {
+                 $diagnostics['driver_insert_id'] = (int) $driver->get_insert_id();
+                }
+                if ( method_exists( $driver, 'get_last_duckdb_queries' ) ) {
+                 $diagnostics['duckdb_queries_tail'] = array_slice( $driver->get_last_duckdb_queries(), -5 );
+                }
+               }
+              }
+             } catch ( Throwable $e ) {
+              $diagnostics['driver_probe_error'] = $e->getMessage();
              }
              if ( isset( $wpdb->queries ) && is_array( $wpdb->queries ) ) {
               foreach ( array_slice( $wpdb->queries, -5 ) as $query ) {

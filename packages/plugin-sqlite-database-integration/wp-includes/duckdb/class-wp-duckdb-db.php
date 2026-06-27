@@ -369,7 +369,10 @@ class WP_DuckDB_DB extends wpdb {
 		if ( preg_match( '/^\s*(insert|delete|update|replace)\s/i', $query ) ) {
 			$this->rows_affected = $this->last_statement ? $this->last_statement->rowCount() : 0;
 			if ( preg_match( '/^\s*(insert|replace)\s/i', $query ) && method_exists( $this->dbh, 'get_insert_id' ) ) {
-				$this->insert_id = $this->dbh->get_insert_id();
+				$this->insert_id = (int) $this->dbh->get_insert_id();
+				if ( 0 === $this->rows_affected && $this->insert_id > 0 ) {
+					$this->rows_affected = 1;
+				}
 			}
 			return $this->rows_affected;
 		}

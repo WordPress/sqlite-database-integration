@@ -10554,7 +10554,7 @@ SQL,
 		}
 	}
 
-	public function test_alter_table_change_existing_auto_increment_column_rebuilds(): void {
+	public function test_alter_table_change_existing_auto_increment_column_updates_metadata(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver(
@@ -10579,7 +10579,7 @@ SQL,
 		$driver->query( "INSERT INTO dbdelta_auto_increment (slug, payload) VALUES ('charlie', 'three')" );
 
 		$this->assertSame( 0, $result->rowCount() );
-		$this->assertStringContainsString( 'CREATE TEMP TABLE "__wp_duckdb_rebuild_', $queries );
+		$this->assertStringNotContainsString( 'CREATE TEMP TABLE "__wp_duckdb_rebuild_', $queries );
 		$this->assertSame(
 			array(
 				array(
@@ -10622,10 +10622,58 @@ SQL,
 
 		try {
 			$driver->query( "INSERT INTO dbdelta_auto_increment (slug, payload) VALUES ('alpha', 'duplicate')" );
-			$this->fail( 'Expected rebuilt UNIQUE index to remain enforced after AUTO_INCREMENT CHANGE COLUMN.' );
+			$this->fail( 'Expected UNIQUE index to remain enforced after AUTO_INCREMENT CHANGE COLUMN.' );
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
 			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
 		}
+	}
+
+	public function test_alter_table_change_existing_auto_increment_noop_runs_inside_transaction(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE dbdelta_auto_increment_noop (
+				id INT(11) NOT NULL AUTO_INCREMENT,
+				slug VARCHAR(50) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+		$driver->query( "INSERT INTO dbdelta_auto_increment_noop (slug) VALUES ('alpha')" );
+
+		$driver->query( 'BEGIN' );
+		$result  = $driver->query( 'ALTER TABLE dbdelta_auto_increment_noop CHANGE COLUMN `id` id int(11) NOT NULL AUTO_INCREMENT' );
+		$queries = implode( "\n", $driver->get_last_duckdb_queries() );
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$driver->query( "INSERT INTO dbdelta_auto_increment_noop (slug) VALUES ('bravo')" );
+		$driver->query( 'COMMIT' );
+
+		$this->assertSame( 0, $result->rowCount() );
+		$this->assertStringNotContainsString( 'CREATE TEMP TABLE "__wp_duckdb_rebuild_', $queries );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'slug' => 'alpha',
+				),
+				array(
+					'id'   => 2,
+					'slug' => 'bravo',
+				),
+			),
+			$driver->query( 'SELECT id, slug FROM dbdelta_auto_increment_noop ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$columns = array_column( $driver->query( 'SHOW FULL COLUMNS FROM dbdelta_auto_increment_noop' )->fetchAll( PDO::FETCH_ASSOC ), null, 'Field' );
+		$this->assertSame( 'int(11)', $columns['id']['Type'] );
+		$this->assertSame( 'NO', $columns['id']['Null'] );
+		$this->assertSame( 'PRI', $columns['id']['Key'] );
+		$this->assertSame( 'auto_increment', $columns['id']['Extra'] );
 	}
 
 	public function test_alter_table_change_modify_key_rebuild_rejects_unsafe_conversion_before_mutation(): void {

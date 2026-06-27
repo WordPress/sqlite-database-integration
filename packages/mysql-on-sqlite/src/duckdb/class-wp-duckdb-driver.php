@@ -9371,6 +9371,24 @@ class WP_DuckDB_Driver {
 		$has_physical_changes = $rename_column || $type_change || $default_change || $nullability_change;
 		$targets_key_column   = $this->alter_table_change_modify_column_targets_key( $table_name, $current_column_name, $index_definitions );
 
+		if ( ! $rename_column && $auto_increment_rebuild && ! $has_physical_changes ) {
+			$metadata['column_key'] = '' === $metadata['column_key']
+				? $current_column['column_key']
+				: $metadata['column_key'];
+			$this->replace_changed_column_metadata(
+				$table_name,
+				$current_column_name,
+				$metadata,
+				$metadata_rows,
+				count( $stored_metadata_rows ) > 0,
+				$temporary
+			);
+			$this->refresh_column_key_metadata( $table_name, $temporary );
+			$this->invalidate_information_schema_compatibility_tables();
+
+			return $this->empty_ddl_result();
+		}
+
 		if ( ! $rename_column && ( $auto_increment_rebuild || ( $has_physical_changes && $targets_key_column ) ) ) {
 			$this->assert_alter_table_change_modify_column_rebuild_supported(
 				$table_name,
