@@ -5580,6 +5580,294 @@ SQL,
 		);
 	}
 
+	public function test_alter_table_drop_primary_key_column_rebuilds_and_cleans_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE drop_col_pk_rebuild (
+				id INT NOT NULL,
+				code VARCHAR(20) NOT NULL,
+				amount INT,
+				note VARCHAR(20),
+				PRIMARY KEY (id),
+				UNIQUE KEY code_unique (code),
+				KEY amount_idx (amount),
+				CONSTRAINT amount_positive CHECK (amount > 0)
+			)'
+		);
+		$driver->query( "INSERT INTO drop_col_pk_rebuild (id, code, amount, note) VALUES (1, 'a', 10, 'first'), (2, 'b', 20, 'second')" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE drop_col_pk_rebuild DROP COLUMN id' )->rowCount() );
+		$driver->query( "INSERT INTO drop_col_pk_rebuild (code, amount, note) VALUES ('c', 30, 'third')" );
+
+		try {
+			$driver->query( "INSERT INTO drop_col_pk_rebuild (code, amount, note) VALUES ('a', 40, 'duplicate')" );
+			$this->fail( 'Expected surviving UNIQUE index to remain enforced after DROP COLUMN rebuild.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( "INSERT INTO drop_col_pk_rebuild (code, amount, note) VALUES ('d', 0, 'invalid')" );
+			$this->fail( 'Expected surviving CHECK constraint to remain enforced after DROP COLUMN rebuild.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'code'   => 'a',
+					'amount' => 10,
+					'note'   => 'first',
+				),
+				array(
+					'code'   => 'b',
+					'amount' => 20,
+					'note'   => 'second',
+				),
+				array(
+					'code'   => 'c',
+					'amount' => 30,
+					'note'   => 'third',
+				),
+			),
+			$driver->query( 'SELECT code, amount, note FROM drop_col_pk_rebuild ORDER BY code' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				'code'   => 'UNI',
+				'amount' => 'MUL',
+				'note'   => '',
+			),
+			array_column( $driver->query( 'SHOW COLUMNS FROM drop_col_pk_rebuild' )->fetchAll( PDO::FETCH_ASSOC ), 'Key', 'Field' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'      => 'code',
+					'ORDINAL_POSITION' => 1,
+					'EXTRA'            => '',
+				),
+				array(
+					'COLUMN_NAME'      => 'amount',
+					'ORDINAL_POSITION' => 2,
+					'EXTRA'            => '',
+				),
+				array(
+					'COLUMN_NAME'      => 'note',
+					'ORDINAL_POSITION' => 3,
+					'EXTRA'            => '',
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, ORDINAL_POSITION, EXTRA
+				FROM information_schema.columns
+				WHERE table_schema = 'wp' AND table_name = 'drop_col_pk_rebuild'
+				ORDER BY ORDINAL_POSITION"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE drop_col_pk_rebuild' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringNotContainsString( '`id`', $create_sql );
+		$this->assertStringNotContainsString( 'PRIMARY KEY', $create_sql );
+		$this->assertStringContainsString( 'UNIQUE KEY `code_unique` (`code`)', $create_sql );
+		$this->assertStringContainsString( 'KEY `amount_idx` (`amount`)', $create_sql );
+		$this->assertStringContainsString( 'CONSTRAINT `amount_positive` CHECK (amount > 0)', $create_sql );
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT index_name
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp'
+					AND table_name = 'drop_col_pk_rebuild'
+					AND index_name = 'PRIMARY'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT constraint_name
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp'
+					AND table_name = 'drop_col_pk_rebuild'
+					AND constraint_name = 'PRIMARY'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT constraint_name
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp'
+					AND table_name = 'drop_col_pk_rebuild'
+					AND constraint_name = 'PRIMARY'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_drop_composite_primary_key_member_shrinks_keys(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE drop_col_composite_pk (
+				site_id INT NOT NULL,
+				option_id INT NOT NULL,
+				name VARCHAR(20),
+				payload INT,
+				PRIMARY KEY (site_id, option_id),
+				KEY site_name (site_id, name),
+				KEY only_site (site_id),
+				KEY payload_idx (payload)
+			)'
+		);
+		$driver->query( "INSERT INTO drop_col_composite_pk (site_id, option_id, name, payload) VALUES (1, 10, 'a', 100), (2, 20, 'b', 200)" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE drop_col_composite_pk DROP site_id' )->rowCount() );
+
+		$index_columns = array();
+		foreach ( $driver->query( 'SHOW INDEX FROM drop_col_composite_pk' )->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$index_columns[ $row['Key_name'] ][] = $row['Column_name'];
+		}
+		$this->assertSame( array( 'option_id' ), $index_columns['PRIMARY'] );
+		$this->assertSame( array( 'name' ), $index_columns['site_name'] );
+		$this->assertSame( array( 'payload' ), $index_columns['payload_idx'] );
+		$this->assertArrayNotHasKey( 'only_site', $index_columns );
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT index_name
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp'
+					AND table_name = 'drop_col_composite_pk'
+					AND index_name = 'only_site'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		try {
+			$driver->query( "INSERT INTO drop_col_composite_pk (option_id, name, payload) VALUES (10, 'duplicate', 300)" );
+			$this->fail( 'Expected shrunken PRIMARY KEY to remain enforced.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'option_id' => 10,
+					'name'      => 'a',
+					'payload'   => 100,
+				),
+				array(
+					'option_id' => 20,
+					'name'      => 'b',
+					'payload'   => 200,
+				),
+			),
+			$driver->query( 'SELECT option_id, name, payload FROM drop_col_composite_pk ORDER BY option_id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE drop_col_composite_pk' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringContainsString( 'PRIMARY KEY (`option_id`)', $create_sql );
+		$this->assertStringContainsString( 'KEY `site_name` (`name`)', $create_sql );
+		$this->assertStringNotContainsString( 'KEY `only_site`', $create_sql );
+	}
+
+	public function test_alter_table_drop_auto_increment_primary_key_column_removes_sequence_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE drop_col_ai_rebuild (
+				id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+				slug VARCHAR(20) NOT NULL,
+				payload INT,
+				PRIMARY KEY (id),
+				UNIQUE KEY slug_unique (slug),
+				KEY payload_idx (payload)
+			) AUTO_INCREMENT=50'
+		);
+		$driver->query( "INSERT INTO drop_col_ai_rebuild (slug, payload) VALUES ('a', 100), ('b', 200)" );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE drop_col_ai_rebuild DROP COLUMN id' )->rowCount() );
+		$this->assertNotEmpty(
+			array_filter(
+				$driver->get_last_duckdb_queries(),
+				function ( string $sql ): bool {
+					return false !== strpos( $sql, 'DROP SEQUENCE IF EXISTS' );
+				}
+			)
+		);
+		$driver->query( "INSERT INTO drop_col_ai_rebuild (slug, payload) VALUES ('c', 300)" );
+
+		$this->assertSame(
+			array(
+				array(
+					'slug'    => 'a',
+					'payload' => 100,
+				),
+				array(
+					'slug'    => 'b',
+					'payload' => 200,
+				),
+				array(
+					'slug'    => 'c',
+					'payload' => 300,
+				),
+			),
+			$driver->query( 'SELECT slug, payload FROM drop_col_ai_rebuild ORDER BY slug' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertNull(
+			$driver->query(
+				"SELECT `AUTO_INCREMENT`
+				FROM information_schema.tables
+				WHERE table_schema = 'wp' AND table_name = 'drop_col_ai_rebuild'"
+			)->fetch( PDO::FETCH_ASSOC )['AUTO_INCREMENT']
+		);
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME' => 'slug',
+					'EXTRA'       => '',
+				),
+				array(
+					'COLUMN_NAME' => 'payload',
+					'EXTRA'       => '',
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, EXTRA
+				FROM information_schema.columns
+				WHERE table_schema = 'wp' AND table_name = 'drop_col_ai_rebuild'
+				ORDER BY ORDINAL_POSITION"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_sql = $driver->query( 'SHOW CREATE TABLE drop_col_ai_rebuild' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringNotContainsString( '`id`', $create_sql );
+		$this->assertStringNotContainsString( 'AUTO_INCREMENT', $create_sql );
+		$this->assertStringNotContainsString( 'PRIMARY KEY', $create_sql );
+		$this->assertStringContainsString( 'UNIQUE KEY `slug_unique` (`slug`)', $create_sql );
+		$this->assertStringContainsString( 'KEY `payload_idx` (`payload`)', $create_sql );
+	}
+
 	public function test_alter_table_drop_multiple_and_mixed_columns(): void {
 		$this->requireDuckDBRuntime();
 
@@ -5653,6 +5941,51 @@ SQL,
 		$this->assertSame(
 			array( 'a', 'b' ),
 			array_column( $driver->query( 'SHOW COLUMNS FROM shadow_drop' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+	}
+
+	public function test_alter_table_drop_primary_key_column_rebuild_targets_temporary_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE shadow_drop_pk (id INT NOT NULL, keep_col VARCHAR(20), PRIMARY KEY (id))' );
+		$driver->query( "INSERT INTO shadow_drop_pk (id, keep_col) VALUES (1, 'persistent')" );
+		$driver->query( 'CREATE TEMPORARY TABLE shadow_drop_pk (id INT NOT NULL, keep_col VARCHAR(20), temp_col VARCHAR(20), PRIMARY KEY (id))' );
+		$driver->query( "INSERT INTO shadow_drop_pk (id, keep_col, temp_col) VALUES (10, 'temporary', 'temp')" );
+
+		$driver->query( 'ALTER TABLE shadow_drop_pk DROP COLUMN id' );
+		$this->assertSame(
+			array( 'keep_col', 'temp_col' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM shadow_drop_pk' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'keep_col' => 'temporary',
+					'temp_col' => 'temp',
+				),
+			),
+			$driver->query( 'SELECT keep_col, temp_col FROM shadow_drop_pk' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE shadow_drop_pk' );
+		$this->assertSame(
+			array( 'id', 'keep_col' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM shadow_drop_pk' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'       => 1,
+					'keep_col' => 'persistent',
+				),
+			),
+			$driver->query( 'SELECT id, keep_col FROM shadow_drop_pk' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
@@ -5929,7 +6262,7 @@ SQL,
 		}
 	}
 
-	public function test_alter_table_drop_column_rejects_protected_columns(): void {
+	public function test_alter_table_drop_column_rejects_last_column(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver(
@@ -5938,23 +6271,131 @@ SQL,
 				'database' => 'wp',
 			)
 		);
-		$driver->query( 'CREATE TABLE drop_col_pk (id INT NOT NULL, keep_col INT, PRIMARY KEY (id))' );
-		$driver->query( 'CREATE TABLE drop_col_auto (id BIGINT NOT NULL AUTO_INCREMENT, keep_col INT, KEY id_idx (id))' );
 		$driver->query( 'CREATE TABLE drop_col_last (only_col INT)' );
 
+		try {
+			$driver->query( 'ALTER TABLE drop_col_last DROP COLUMN only_col' );
+			$this->fail( 'Expected DROP COLUMN last-column rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'DROP COLUMN cannot remove the last column', $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_drop_primary_key_column_rejects_check_references_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE drop_col_check_guard (
+				id INT NOT NULL,
+				name VARCHAR(20),
+				PRIMARY KEY (id),
+				CONSTRAINT id_positive CHECK (id > 0)
+			)'
+		);
+		$driver->query( "INSERT INTO drop_col_check_guard (id, name) VALUES (1, 'a')" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_col_check_guard' );
+		try {
+			$driver->query( 'ALTER TABLE drop_col_check_guard DROP COLUMN id' );
+			$this->fail( 'Expected DROP COLUMN CHECK reference rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "CHECK constraint 'id_positive' references it", $e->getMessage() );
+		}
+
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_col_check_guard' ) );
+	}
+
+	public function test_alter_table_drop_primary_key_column_rejects_foreign_key_references_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE drop_col_fk_parent (id INT PRIMARY KEY)' );
+		$driver->query(
+			'CREATE TABLE drop_col_fk_child (
+				id INT NOT NULL,
+				parent_id INT NOT NULL,
+				name VARCHAR(20),
+				PRIMARY KEY (id, parent_id),
+				CONSTRAINT child_parent_fk FOREIGN KEY (parent_id) REFERENCES drop_col_fk_parent (id)
+			)'
+		);
+		$driver->query( 'INSERT INTO drop_col_fk_parent (id) VALUES (1)' );
+		$driver->query( "INSERT INTO drop_col_fk_child (id, parent_id, name) VALUES (10, 1, 'a')" );
+
+		$before = $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'drop_col_fk_child' );
+		try {
+			$driver->query( 'ALTER TABLE drop_col_fk_child DROP COLUMN parent_id' );
+			$this->fail( 'Expected DROP COLUMN FOREIGN KEY reference rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "FOREIGN KEY constraint 'child_parent_fk' references it", $e->getMessage() );
+		}
+
+		$this->assertSame( $before, $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'drop_col_fk_child' ) );
+	}
+
+	public function test_alter_table_drop_primary_key_column_rejects_active_transaction_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE drop_col_pk_tx (id INT PRIMARY KEY, name VARCHAR(20))' );
+		$driver->query( "INSERT INTO drop_col_pk_tx (id, name) VALUES (1, 'a')" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_col_pk_tx' );
+		$driver->query( 'BEGIN' );
+		try {
+			$driver->query( 'ALTER TABLE drop_col_pk_tx DROP COLUMN id' );
+			$this->fail( 'Expected active transaction DROP COLUMN rebuild rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'DROP COLUMN cannot run inside an active DuckDB transaction', $e->getMessage() );
+		}
+		$driver->query( 'ROLLBACK' );
+
+		$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_col_pk_tx' ) );
+	}
+
+	public function test_alter_table_drop_primary_key_column_rejects_multi_action_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE drop_col_pk_multi_guard (id INT PRIMARY KEY, name VARCHAR(20))' );
+		$driver->query( "INSERT INTO drop_col_pk_multi_guard (id, name) VALUES (1, 'a')" );
+
+		$before = $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_col_pk_multi_guard' );
 		foreach (
 			array(
-				'ALTER TABLE drop_col_pk DROP COLUMN id'   => 'primary key column requires a table rebuild',
-				'ALTER TABLE drop_col_auto DROP COLUMN id' => 'AUTO_INCREMENT column requires a table rebuild',
-				'ALTER TABLE drop_col_last DROP COLUMN only_col' => 'DROP COLUMN cannot remove the last column',
-			) as $sql => $message
+				'ALTER TABLE drop_col_pk_multi_guard DROP COLUMN id, ADD COLUMN should_not_exist INT',
+				'ALTER TABLE drop_col_pk_multi_guard ADD COLUMN should_not_exist INT, DROP COLUMN id',
+			) as $sql
 		) {
 			try {
 				$driver->query( $sql );
-				$this->fail( 'Expected DROP COLUMN protection to reject SQL: ' . $sql );
+				$this->fail( 'Expected multi-action DROP COLUMN rebuild rejection for SQL: ' . $sql );
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
-				$this->assertStringContainsString( $message, $e->getMessage() );
+				$this->assertStringContainsString( 'DROP COLUMN requiring a table rebuild cannot be combined with other ALTER TABLE actions', $e->getMessage() );
 			}
+
+			$this->assertSame( $before, $this->alter_table_check_lifecycle_snapshot( $driver, 'drop_col_pk_multi_guard' ) );
 		}
 	}
 

@@ -4597,6 +4597,9 @@ class WP_DuckDB_Driver {
 			if ( $this->is_alter_table_drop_primary_key_action( $action ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP PRIMARY KEY cannot be combined with other ALTER TABLE actions.' );
 			}
+			if ( $this->is_alter_table_drop_column_rebuild_action( $table_name, $action, $temporary ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN requiring a table rebuild cannot be combined with other ALTER TABLE actions.' );
+			}
 		}
 	}
 
@@ -5645,6 +5648,7 @@ class WP_DuckDB_Driver {
 			'Failed to rebuild DuckDB ' . $context . ' table'
 		);
 		$this->drop_auto_increment_sequences( $sequence_names );
+		$this->delete_index_metadata_for_table( $table_name, $temporary );
 		$this->execute_create_table( $this->tokenize_and_validate( $create_sql ) );
 		$this->execute_duckdb_query(
 			'INSERT INTO '
@@ -6009,8 +6013,20 @@ class WP_DuckDB_Driver {
 		}
 
 		$resolved_column_name = $this->assert_alter_table_drop_column_supported( $table_name, $column_name, $temporary );
-		$index_definitions    = $this->secondary_index_definitions_for_table( $table_name, $temporary );
-		$rebuilt_indexes      = $this->secondary_index_definitions_after_column_drop( $table_name, $resolved_column_name, $index_definitions, $temporary );
+		if ( $this->alter_table_drop_column_requires_rebuild( $table_name, $resolved_column_name, $temporary ) ) {
+			$this->assert_alter_table_drop_column_rebuild_supported( $table_name, $resolved_column_name, $temporary );
+
+			return $this->execute_schema_lifecycle_change(
+				function () use ( $table_name, $resolved_column_name, $temporary ): WP_DuckDB_Result_Statement {
+					$this->execute_alter_table_drop_column_rebuild( $table_name, $resolved_column_name, $temporary );
+					$this->invalidate_information_schema_compatibility_tables();
+					return $this->empty_ddl_result();
+				}
+			);
+		}
+
+		$index_definitions = $this->secondary_index_definitions_for_table( $table_name, $temporary );
+		$rebuilt_indexes   = $this->secondary_index_definitions_after_column_drop( $table_name, $resolved_column_name, $index_definitions, $temporary );
 
 		$callback = function () use ( $table_name, $resolved_column_name, $index_definitions, $rebuilt_indexes, $temporary ): WP_DuckDB_Result_Statement {
 			return $this->execute_alter_table_drop_column_change( $table_name, $resolved_column_name, $index_definitions, $rebuilt_indexes, $temporary );
@@ -6119,18 +6135,226 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN cannot remove the last column.' );
 		}
 
+		return $resolved_column_name;
+	}
+
+	/**
+	 * Check whether ALTER TABLE ... DROP COLUMN needs a metadata-plan rebuild.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Resolved column name.
+	 * @param bool   $temporary   Whether the target is a temporary table.
+	 * @return bool Whether the column requires a table rebuild.
+	 */
+	private function alter_table_drop_column_requires_rebuild( string $table_name, string $column_name, bool $temporary = false ): bool {
 		foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
-			if ( 0 === strcasecmp( (string) $index_row[4], $resolved_column_name ) ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN on a primary key column requires a table rebuild.' );
+			if ( 0 === strcasecmp( (string) $index_row[4], $column_name ) ) {
+				return true;
 			}
 		}
 
 		$auto_increment = $this->auto_increment_metadata_for_table( $table_name, $temporary );
-		if ( null !== $auto_increment && 0 === strcasecmp( $auto_increment['column_name'], $resolved_column_name ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN on an AUTO_INCREMENT column requires a table rebuild.' );
+		if ( null !== $auto_increment && 0 === strcasecmp( $auto_increment['column_name'], $column_name ) ) {
+			return true;
 		}
 
-		return $resolved_column_name;
+		return false;
+	}
+
+	/**
+	 * Check whether an ALTER TABLE action drops a column that requires rebuild.
+	 *
+	 * @param string            $table_name Table name.
+	 * @param WP_Parser_Token[] $tokens     ALTER action tokens.
+	 * @param bool              $temporary  Whether the target is a temporary table.
+	 * @return bool Whether the action needs a drop-column rebuild.
+	 */
+	private function is_alter_table_drop_column_rebuild_action( string $table_name, array $tokens, bool $temporary = false ): bool {
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::DROP_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		if (
+			WP_MySQL_Lexer::CHECK_SYMBOL === $tokens[1]->id
+			|| WP_MySQL_Lexer::CONSTRAINT_SYMBOL === $tokens[1]->id
+			|| WP_MySQL_Lexer::FOREIGN_SYMBOL === $tokens[1]->id
+			|| $this->is_alter_table_drop_index_action( $tokens )
+		) {
+			return false;
+		}
+
+		$index = WP_MySQL_Lexer::COLUMN_SYMBOL === $tokens[1]->id ? 2 : 1;
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return false;
+		}
+
+		$column_name          = $this->identifier_value( $tokens[ $index ] );
+		$resolved_column_name = $this->assert_alter_table_drop_column_supported( $table_name, $column_name, $temporary );
+
+		return $this->alter_table_drop_column_requires_rebuild( $table_name, $resolved_column_name, $temporary );
+	}
+
+	/**
+	 * Validate ALTER TABLE ... DROP COLUMN rebuild before mutation.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Resolved column name.
+	 * @param bool   $temporary   Whether the target is a temporary table.
+	 */
+	private function assert_alter_table_drop_column_rebuild_supported( string $table_name, string $column_name, bool $temporary = false ): void {
+		$this->assert_no_active_transaction_for_table_rebuild( 'DROP COLUMN' );
+		$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'DROP COLUMN', $temporary );
+
+		foreach ( $this->check_constraint_metadata_rows( $table_name, $temporary ) as $check_constraint ) {
+			if ( $this->check_constraint_references_column( $check_constraint, $column_name ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN cannot remove column '{$column_name}' because CHECK constraint '{$check_constraint['constraint_name']}' references it." );
+			}
+		}
+
+		foreach ( $this->show_create_table_foreign_key_groups( $table_name, $temporary ) as $foreign_key ) {
+			if ( $this->foreign_key_constraint_references_column( $foreign_key, $table_name, $column_name ) ) {
+				throw new WP_DuckDB_Driver_Exception( "Unsupported ALTER TABLE statement in DuckDB driver. DROP COLUMN cannot remove column '{$column_name}' because FOREIGN KEY constraint '{$foreign_key['constraint_name']}' references it." );
+			}
+		}
+	}
+
+	/**
+	 * Rebuild a table for ALTER TABLE ... DROP COLUMN.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Resolved column name.
+	 * @param bool   $temporary   Whether the target is a temporary table.
+	 */
+	private function execute_alter_table_drop_column_rebuild( string $table_name, string $column_name, bool $temporary = false ): void {
+		$column_metadata_rows = $this->column_metadata_rows_after_column_drop(
+			$this->table_column_metadata_rows( $table_name, $temporary ),
+			$column_name
+		);
+		$primary_key_columns  = $this->primary_key_columns_after_column_drop( $table_name, $column_name );
+		$secondary_indexes    = $this->secondary_index_definitions_after_column_drop(
+			$table_name,
+			$column_name,
+			$this->secondary_index_definitions_for_table( $table_name, $temporary ),
+			$temporary
+		);
+		$auto_increment       = $this->metadata_rows_have_auto_increment( $column_metadata_rows )
+			? $this->table_auto_increment_value( $table_name, $temporary )
+			: null;
+
+		$this->rebuild_table_from_metadata_plan(
+			$table_name,
+			$column_metadata_rows,
+			$primary_key_columns,
+			$secondary_indexes,
+			$this->check_constraint_metadata_rows( $table_name, $temporary ),
+			$this->show_create_table_foreign_key_groups( $table_name, $temporary ),
+			$auto_increment,
+			'DROP COLUMN',
+			$temporary
+		);
+	}
+
+	/**
+	 * Return column metadata rows after dropping one column.
+	 *
+	 * @param array<int,array<string,mixed>> $metadata    Current metadata rows.
+	 * @param string                         $column_name Dropped column name.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function column_metadata_rows_after_column_drop( array $metadata, string $column_name ): array {
+		return array_values(
+			array_filter(
+				$metadata,
+				function ( array $column ) use ( $column_name ): bool {
+					return 0 !== strcasecmp( (string) $column['column_name'], $column_name );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Return primary key columns after dropping one column.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Dropped column name.
+	 * @return string[] Primary key columns.
+	 */
+	private function primary_key_columns_after_column_drop( string $table_name, string $column_name ): array {
+		return array_values(
+			array_filter(
+				$this->primary_key_columns_for_table( $table_name ),
+				function ( string $primary_key_column ) use ( $column_name ): bool {
+					return 0 !== strcasecmp( $primary_key_column, $column_name );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Check whether planned metadata still has an AUTO_INCREMENT column.
+	 *
+	 * @param array<int,array<string,mixed>> $metadata Column metadata rows.
+	 * @return bool Whether AUTO_INCREMENT remains.
+	 */
+	private function metadata_rows_have_auto_increment( array $metadata ): bool {
+		foreach ( $metadata as $column ) {
+			if ( 'auto_increment' === $column['extra'] ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a CHECK constraint references a column.
+	 *
+	 * @param array<string,mixed> $check_constraint CHECK metadata row.
+	 * @param string              $column_name      Column name.
+	 * @return bool Whether the CHECK expression mentions the column.
+	 */
+	private function check_constraint_references_column( array $check_constraint, string $column_name ): bool {
+		$clause = (string) $check_constraint['check_clause'];
+
+		$quoted_identifier = '`' . str_replace( '`', '``', $column_name ) . '`';
+		if ( false !== stripos( $clause, $quoted_identifier ) ) {
+			return true;
+		}
+
+		$without_strings = preg_replace( "/'([^'\\\\]|\\\\.|'')*'/", "''", $clause );
+		if ( null === $without_strings ) {
+			$without_strings = $clause;
+		}
+
+		return 1 === preg_match( '/(?<![A-Za-z0-9_$])' . preg_quote( $column_name, '/' ) . '(?![A-Za-z0-9_$])/i', $without_strings );
+	}
+
+	/**
+	 * Check whether a FOREIGN KEY constraint references a column on the rebuilt table.
+	 *
+	 * @param array<string,mixed> $foreign_key FOREIGN KEY metadata group.
+	 * @param string              $table_name  Table name.
+	 * @param string              $column_name Column name.
+	 * @return bool Whether the FOREIGN KEY mentions the column.
+	 */
+	private function foreign_key_constraint_references_column( array $foreign_key, string $table_name, string $column_name ): bool {
+		foreach ( $foreign_key['columns'] as $foreign_key_column ) {
+			if ( 0 === strcasecmp( (string) $foreign_key_column, $column_name ) ) {
+				return true;
+			}
+		}
+
+		if ( 0 !== strcasecmp( (string) $foreign_key['referenced_table_name'], $table_name ) ) {
+			return false;
+		}
+
+		foreach ( $foreign_key['referenced_columns'] as $referenced_column ) {
+			if ( 0 === strcasecmp( (string) $referenced_column, $column_name ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -12648,6 +12872,24 @@ class WP_DuckDB_Driver {
 				. ' AND index_name = '
 				. $this->connection->quote( $index_name ),
 			'Failed to delete DuckDB index metadata'
+		);
+	}
+
+	/**
+	 * Delete all secondary index metadata rows for a table.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether the target is a temporary table.
+	 */
+	private function delete_index_metadata_for_table( string $table_name, bool $temporary = false ): void {
+		$this->ensure_index_metadata_table( $temporary );
+
+		$this->execute_duckdb_query(
+			'DELETE FROM '
+				. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name ),
+			'Failed to delete DuckDB table index metadata'
 		);
 	}
 
