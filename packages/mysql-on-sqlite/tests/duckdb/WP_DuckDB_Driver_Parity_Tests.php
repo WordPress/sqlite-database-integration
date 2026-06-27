@@ -1245,6 +1245,24 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_on_duplicate_key_update_qualified_target_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t (
+					id INTEGER PRIMARY KEY,
+					d VARCHAR(100) NOT NULL DEFAULT \'\'
+				)',
+				"INSERT INTO t (id, d) VALUES (1, 'old')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO t (id, d) VALUES (1, 'new')
+			ON DUPLICATE KEY UPDATE t.d = VALUES(d)"
+		);
+		$this->assertParityRows( 'SELECT id, d FROM t ORDER BY id' );
+	}
+
 	public function test_temporal_insert_values_and_set_writes_match_sqlite(): void {
 		$this->create_temporal_write_table( 'temporal_writes' );
 

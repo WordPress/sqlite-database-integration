@@ -11926,7 +11926,9 @@ class WP_DuckDB_Driver {
 		$target       = $this->select_on_duplicate_conflict_target( $insert_shape['table_name'], $insert_shape['values_by_column'] );
 		$update_sql   = $this->translate_on_duplicate_update_tokens_to_duckdb_sql(
 			array_slice( $tokens, $on_duplicate_index + 4 ),
-			$this->write_column_metadata_map( $insert_shape['table_name'], $insert_shape['temporary'] )
+			$this->write_column_metadata_map( $insert_shape['table_name'], $insert_shape['temporary'] ),
+			$insert_shape['table_name'],
+			$insert_shape['requested_table_name']
 		);
 
 		if ( '' === $update_sql ) {
@@ -11954,7 +11956,7 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
 	 * @param int               $table_index        Index of the table token.
 	 * @param int               $on_duplicate_index Index of the ON token.
-	 * @return array{table_name:string,temporary:bool,values_by_column:array<string,string>}
+	 * @return array{table_name:string,requested_table_name:string,temporary:bool,values_by_column:array<string,string>}
 	 */
 	private function parse_on_duplicate_insert_shape( array $tokens, int $table_index, int $on_duplicate_index ): array {
 		$requested_table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
@@ -12010,9 +12012,10 @@ class WP_DuckDB_Driver {
 		}
 
 		return array(
-			'table_name'       => $reference['table_name'],
-			'temporary'        => $reference['temporary'],
-			'values_by_column' => $values_by_column,
+			'table_name'           => $reference['table_name'],
+			'requested_table_name' => $requested_table_name,
+			'temporary'            => $reference['temporary'],
+			'values_by_column'     => $values_by_column,
 		);
 	}
 
@@ -12825,11 +12828,18 @@ class WP_DuckDB_Driver {
 	/**
 	 * Translate an ODKU update list, rewriting MySQL VALUES(col) references.
 	 *
-	 * @param WP_Parser_Token[]       $tokens       Update-list tokens after ON DUPLICATE KEY UPDATE.
-	 * @param array<string,array<string,mixed>> $metadata_map Target column metadata keyed by lowercase column name.
+	 * @param WP_Parser_Token[]                  $tokens               Update-list tokens after ON DUPLICATE KEY UPDATE.
+	 * @param array<string,array<string,mixed>>  $metadata_map         Target column metadata keyed by lowercase column name.
+	 * @param string                             $target_table_name    Resolved target table name.
+	 * @param string                             $requested_table_name Requested target table name.
 	 * @return string DuckDB SQL.
 	 */
-	private function translate_on_duplicate_update_tokens_to_duckdb_sql( array $tokens, array $metadata_map ): string {
+	private function translate_on_duplicate_update_tokens_to_duckdb_sql(
+		array $tokens,
+		array $metadata_map,
+		string $target_table_name,
+		string $requested_table_name
+	): string {
 		$items = array();
 		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
 			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
@@ -12843,8 +12853,9 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. UPDATE assignment value is required.' );
 			}
 
-			$column_name = $this->assignment_column_name( $left_tokens );
+			$target      = $this->on_duplicate_assignment_target( $left_tokens, $target_table_name, $requested_table_name );
 			$value_sql   = $this->translate_on_duplicate_value_tokens_to_duckdb_sql( $right_tokens );
+			$column_name = $target['column_name'];
 			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
 				$value_sql = $this->coerce_write_value_for_column_sql(
 					$metadata_map[ strtolower( $column_name ) ],
@@ -12854,28 +12865,52 @@ class WP_DuckDB_Driver {
 				);
 			}
 
-			$items[] = $this->translate_tokens_to_duckdb_sql( $left_tokens ) . ' = ' . $value_sql;
+			$items[] = $target['sql'] . ' = ' . $value_sql;
 		}
 
 		return implode( ', ', $items );
 	}
 
 	/**
-	 * Resolve an assignment target column from unqualified or qualified LHS tokens.
+	 * Resolve an ODKU assignment target and strip target-table qualifiers.
 	 *
-	 * @param WP_Parser_Token[] $left_tokens Assignment LHS tokens.
-	 * @return string Column name.
+	 * @param WP_Parser_Token[] $left_tokens          Assignment LHS tokens.
+	 * @param string            $target_table_name    Resolved target table name.
+	 * @param string            $requested_table_name Requested target table name.
+	 * @return array{column_name:string,sql:string} Column name and unqualified DuckDB target SQL.
 	 */
-	private function assignment_column_name( array $left_tokens ): string {
+	private function on_duplicate_assignment_target(
+		array $left_tokens,
+		string $target_table_name,
+		string $requested_table_name
+	): array {
 		if ( 1 === count( $left_tokens ) ) {
-			return $this->identifier_value( $left_tokens[0] );
+			$column_name = $this->identifier_value( $left_tokens[0] );
+
+			return array(
+				'column_name' => $column_name,
+				'sql'         => $this->translate_tokens_to_duckdb_sql( $left_tokens ),
+			);
 		}
 
 		if (
 			3 === count( $left_tokens )
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $left_tokens[1]->id
 		) {
-			return $this->identifier_value( $left_tokens[2] );
+			$qualifier = $this->identifier_value( $left_tokens[0] );
+			if (
+				0 !== strcasecmp( $qualifier, $target_table_name )
+				&& 0 !== strcasecmp( $qualifier, $requested_table_name )
+			) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only target table-qualified assignments are supported.' );
+			}
+
+			$column_name = $this->identifier_value( $left_tokens[2] );
+
+			return array(
+				'column_name' => $column_name,
+				'sql'         => $this->connection->quote_identifier( $column_name ),
+			);
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only simple column assignments are supported.' );
