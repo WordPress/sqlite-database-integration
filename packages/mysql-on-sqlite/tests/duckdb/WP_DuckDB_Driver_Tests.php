@@ -69,6 +69,67 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( $source->getColumnMeta( 1 ), $result->getColumnMeta( 1 ) );
 	}
 
+	public function test_translated_driver_execution_failure_preserves_context_and_previous_chain(): void {
+		$native_failure = new RuntimeException( 'native create failure', 321 );
+		$connection     = new WP_DuckDB_Connection(
+			array(
+				'duckdb' => new class( $native_failure ) {
+					private $native_failure;
+
+					public function __construct( Throwable $native_failure ) {
+						$this->native_failure = $native_failure;
+					}
+
+					public function query( string $sql ) {
+						if ( 0 === strpos( $sql, 'CREATE TABLE "broken"' ) ) {
+							throw $this->native_failure;
+						}
+
+						return $this->create_native_result( array( 'Count' ), array() );
+					}
+
+					private function create_native_result( array $columns, array $rows ) {
+						return new class( $columns, $rows ) {
+							private $columns;
+							private $rows;
+
+							public function __construct( array $columns, array $rows ) {
+								$this->columns = $columns;
+								$this->rows    = $rows;
+							}
+
+							public function columnNames(): ArrayIterator { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+								return new ArrayIterator( $this->columns );
+							}
+
+							public function rows( bool $assoc ): array {
+								$rows = array();
+								foreach ( $this->rows as $row ) {
+									$rows[] = array_combine( $this->columns, $row );
+								}
+								return $rows;
+							}
+						};
+					}
+				},
+			)
+		);
+		$driver         = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+
+		try {
+			$driver->query( 'CREATE TABLE broken (id INT)' );
+			$this->fail( 'Expected WP_DuckDB_Driver_Exception.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertSame( 'HY000', $e->getCode() );
+			$this->assertStringStartsWith( 'Failed to create DuckDB table: DuckDB query failed:', $e->getMessage() );
+			$this->assertSame( 1, substr_count( $e->getMessage(), 'Failed to create DuckDB table:' ) );
+			$this->assertInstanceOf( WP_DuckDB_Driver_Exception::class, $e->getPrevious() );
+			$this->assertSame( 'HY000', $e->getPrevious()->getCode() );
+			$this->assertStringStartsWith( 'DuckDB query failed: native create failure', $e->getPrevious()->getMessage() );
+			$this->assertSame( $native_failure, $e->getPrevious()->getPrevious() );
+		}
+	}
+
 	public function test_select_mysql_functions_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

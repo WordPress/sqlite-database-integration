@@ -154,6 +154,9 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 102, $result['insert_id_after_replace'] );
 		$this->assertFalse( $result['failed_insert_return'] );
 		$this->assertSame( 0, $result['insert_id_after_failed_insert'] );
+		$this->assertSame( 'Synthetic insert failure.', $result['last_error_after_failed_insert'] );
+		$this->assertSame( 0, $result['successful_select_return'] );
+		$this->assertSame( '', $result['last_error_after_success'] );
 	}
 
 	public function test_duckdb_wpdb_flush_clears_statement_metadata(): void {
@@ -463,7 +466,11 @@ class WP_DuckDB_Plugin_Insert_Id_Test_Driver extends WP_DuckDB_Driver {
 		}
 
 		if ( false !== strpos( $sql, 'BROKEN' ) ) {
-			throw new RuntimeException( 'Synthetic insert failure.' );
+			throw new WP_DuckDB_Driver_Exception(
+				'Synthetic insert failure.',
+				'HY000',
+				new RuntimeException( 'Native synthetic insert failure.' )
+			);
 		}
 
 		if ( 0 === stripos( trim( $sql ), 'replace' ) ) {
@@ -493,6 +500,9 @@ $replace_return            = $db->query( "REPLACE INTO t (name) VALUES ('second'
 $replace_insert_id         = $db->insert_id;
 $failed_insert             = $db->query( 'INSERT INTO t VALUES (BROKEN)' );
 $failed_insert_id          = $db->insert_id;
+$failed_last_error         = $db->last_error;
+$successful_select         = $db->query( 'SELECT 1 AS ok' );
+$last_error_after_success  = $db->last_error;
 
 echo json_encode(
 	array(
@@ -503,6 +513,9 @@ echo json_encode(
 		'insert_id_after_replace'       => $replace_insert_id,
 		'failed_insert_return'          => $failed_insert,
 		'insert_id_after_failed_insert' => $failed_insert_id,
+		'last_error_after_failed_insert' => $failed_last_error,
+		'successful_select_return'      => $successful_select,
+		'last_error_after_success'      => $last_error_after_success,
 	)
 );
 PHP;

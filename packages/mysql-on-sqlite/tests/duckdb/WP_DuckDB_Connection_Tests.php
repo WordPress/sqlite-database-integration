@@ -249,6 +249,130 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array( 'Success' => 1 ), $success_result->fetch( PDO::FETCH_ASSOC ) );
 	}
 
+	public function test_query_failure_wraps_native_exception_with_stable_surface(): void {
+		$previous   = new RuntimeException( 'native syntax failure', 123 );
+		$connection = new WP_DuckDB_Connection(
+			array(
+				'duckdb' => new class( $previous ) {
+					private $previous;
+
+					public function __construct( Throwable $previous ) {
+						$this->previous = $previous;
+					}
+
+					public function query( string $sql ) {
+						throw $this->previous;
+					}
+				},
+			)
+		);
+
+		$this->assertDuckDBDriverExceptionSurface(
+			'DuckDB query failed: native syntax failure',
+			$previous,
+			function () use ( $connection ): void {
+				$connection->query( 'SELECT BROKEN' );
+			}
+		);
+	}
+
+	public function test_prepare_failure_wraps_native_exception_with_stable_surface(): void {
+		$previous   = new RuntimeException( 'native prepare failure', 456 );
+		$connection = new WP_DuckDB_Connection(
+			array(
+				'duckdb' => new class( $previous ) {
+					private $previous;
+
+					public function __construct( Throwable $previous ) {
+						$this->previous = $previous;
+					}
+
+					public function preparedStatement( string $sql ) { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+						throw $this->previous;
+					}
+				},
+			)
+		);
+
+		$this->assertDuckDBDriverExceptionSurface(
+			'Failed to prepare DuckDB query: native prepare failure',
+			$previous,
+			function () use ( $connection ): void {
+				$connection->prepare( 'SELECT ?' );
+			}
+		);
+	}
+
+	public function test_prepared_statement_execute_failure_wraps_native_exception_with_stable_surface(): void {
+		$previous   = new RuntimeException( 'native execute failure', 789 );
+		$connection = new WP_DuckDB_Connection( array( 'duckdb' => new stdClass() ) );
+		$statement  = new WP_DuckDB_Prepared_Statement(
+			$connection,
+			new class( $previous ) {
+				private $previous;
+
+				public function __construct( Throwable $previous ) {
+					$this->previous = $previous;
+				}
+
+				public function bindParam( $parameter, $value ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+				}
+
+				public function execute() {
+					throw $this->previous;
+				}
+			},
+			'SELECT ?'
+		);
+
+		$this->assertDuckDBDriverExceptionSurface(
+			'DuckDB prepared statement failed: native execute failure',
+			$previous,
+			function () use ( $statement ): void {
+				$statement->execute( array( 1 ) );
+			}
+		);
+	}
+
+	public function test_prepared_statement_bind_failure_wraps_native_exception_with_stable_surface(): void {
+		$previous   = new RuntimeException( 'native bind failure', 901 );
+		$connection = new WP_DuckDB_Connection( array( 'duckdb' => new stdClass() ) );
+		$statement  = new WP_DuckDB_Prepared_Statement(
+			$connection,
+			new class( $previous ) {
+				private $previous;
+
+				public function __construct( Throwable $previous ) {
+					$this->previous = $previous;
+				}
+
+				public function bindParam( $parameter, $value ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+					throw $this->previous;
+				}
+
+				public function execute() {
+					return null;
+				}
+			},
+			'SELECT ?'
+		);
+
+		$this->assertDuckDBDriverExceptionSurface(
+			'DuckDB prepared statement failed: native bind failure',
+			$previous,
+			function () use ( $statement ): void {
+				$statement->execute( array( 1 ) );
+			}
+		);
+	}
+
+	public function test_successful_statement_error_info_remains_clear_after_failure_characterization(): void {
+		$stmt = new WP_DuckDB_Result_Statement( array(), array() );
+
+		$this->assertSame( '00000', $stmt->errorCode() );
+		$this->assertSame( array( '00000', null, null ), $stmt->errorInfo() );
+	}
+
 	public function test_in_memory_connection_executes_query(): void {
 		$this->requireDuckDBRuntime();
 
@@ -531,5 +655,16 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 				return $this->result;
 			}
 		};
+	}
+
+	private function assertDuckDBDriverExceptionSurface( string $message_prefix, Throwable $previous, callable $callback ): void {
+		try {
+			$callback();
+			$this->fail( 'Expected WP_DuckDB_Driver_Exception.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringStartsWith( $message_prefix, $e->getMessage() );
+			$this->assertSame( 'HY000', $e->getCode() );
+			$this->assertSame( $previous, $e->getPrevious() );
+		}
 	}
 }
