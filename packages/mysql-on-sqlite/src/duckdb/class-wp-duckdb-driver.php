@@ -538,6 +538,7 @@ class WP_DuckDB_Driver {
 		$has_sql_calc_found_rows = $this->has_top_level_sql_calc_found_rows( $tokens );
 		$tokens                  = $this->normalize_select_helper_tokens( $tokens );
 		$column_meta             = $this->simple_select_column_metadata( $tokens );
+		$group_by_expansion      = $this->primary_key_group_by_wildcard_expansion( $tokens );
 		$seeded_rand_expressions = $this->parse_seeded_rand_select_expressions( $tokens );
 		$seeded_rand_rewrites    = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
 
@@ -579,7 +580,9 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_key_column_usage,
 			$rewrite_information_schema_referential_constraints,
 			$rewrite_information_schema_check_constraints,
-			$seeded_rand_rewrites
+			$seeded_rand_rewrites,
+			false,
+			$group_by_expansion
 		);
 
 		if ( $has_sql_calc_found_rows ) {
@@ -593,7 +596,8 @@ class WP_DuckDB_Driver {
 					$rewrite_information_schema_key_column_usage,
 					$rewrite_information_schema_referential_constraints,
 					$rewrite_information_schema_check_constraints,
-					$seeded_rand_rewrites
+					$seeded_rand_rewrites,
+					$group_by_expansion
 				);
 				$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 				$result           = $this->apply_result_column_metadata( $result, $column_meta );
@@ -1097,6 +1101,229 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Build a bounded GROUP BY expansion for SELECT table.* grouped by that table's full primary key.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array{group_index:int,group_end:int,table_alias:string,columns:string[]}|null Expansion data, or null when outside the supported slice.
+	 */
+	private function primary_key_group_by_wildcard_expansion( array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+		if (
+			null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::HAVING_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL )
+			|| $this->contains_top_level_aggregate_function_call( $tokens )
+		) {
+			return null;
+		}
+
+		$from_index  = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::FROM_SYMBOL );
+		$group_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::GROUP_SYMBOL );
+		if (
+			null === $from_index
+			|| null === $group_index
+			|| $group_index <= $from_index
+			|| ! isset( $tokens[ $group_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$select_items = $this->split_top_level_comma_items( array_slice( $tokens, 1, $from_index - 1 ) );
+		if ( 1 !== count( $select_items ) ) {
+			return null;
+		}
+
+		$table_tokens = array_slice(
+			$tokens,
+			$from_index + 1,
+			$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
+		);
+		$table        = $this->parse_simple_select_table_reference( $table_tokens );
+		if ( null === $table ) {
+			return null;
+		}
+
+		$wildcard = $this->parse_simple_select_column_reference( $select_items[0] );
+		if (
+			null === $wildcard
+			|| ! $wildcard['wildcard']
+			|| ! $this->simple_select_column_qualifier_matches_table( $wildcard['qualifier'], $table )
+		) {
+			return null;
+		}
+
+		$primary_key_columns = $this->primary_key_columns_for_table( $table['table_name'] );
+		if ( count( $primary_key_columns ) === 0 ) {
+			return null;
+		}
+
+		$group_end    = $this->primary_key_group_by_clause_end( $tokens, $group_index + 2 );
+		$group_tokens = array_slice( $tokens, $group_index + 2, $group_end - $group_index - 2 );
+		if ( count( $group_tokens ) === 0 ) {
+			return null;
+		}
+
+		$grouped_columns = array();
+		foreach ( $this->split_top_level_comma_items( $group_tokens ) as $item ) {
+			$column = $this->parse_group_by_column_reference( $item );
+			if (
+				null === $column
+				|| ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+			) {
+				return null;
+			}
+			$grouped_columns[ strtolower( $column['column_name'] ) ] = true;
+		}
+
+		foreach ( $primary_key_columns as $primary_key_column ) {
+			if ( ! isset( $grouped_columns[ strtolower( $primary_key_column ) ] ) ) {
+				return null;
+			}
+		}
+
+		$columns = array();
+		foreach ( $this->table_column_metadata_rows( $table['table_name'], $table['temporary'] ) as $metadata ) {
+			$column_name = (string) $metadata['column_name'];
+			if ( ! isset( $grouped_columns[ strtolower( $column_name ) ] ) ) {
+				$columns[] = $column_name;
+			}
+		}
+
+		if ( count( $columns ) === 0 ) {
+			return null;
+		}
+
+		return array(
+			'group_index' => $group_index,
+			'group_end'   => $group_end,
+			'table_alias' => $table['alias'],
+			'columns'     => $columns,
+		);
+	}
+
+	/**
+	 * Find the end of the supported top-level GROUP BY clause.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $start  First token after GROUP BY.
+	 * @return int End offset, exclusive.
+	 */
+	private function primary_key_group_by_clause_end( array $tokens, int $start ): int {
+		$clause_tokens = array(
+			WP_MySQL_Lexer::HAVING_SYMBOL,
+			WP_MySQL_Lexer::WINDOW_SYMBOL,
+			WP_MySQL_Lexer::ORDER_SYMBOL,
+			WP_MySQL_Lexer::LIMIT_SYMBOL,
+			WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+			WP_MySQL_Lexer::INTO_SYMBOL,
+			WP_MySQL_Lexer::FOR_SYMBOL,
+			WP_MySQL_Lexer::LOCK_SYMBOL,
+			WP_MySQL_Lexer::UNION_SYMBOL,
+		);
+		$depth         = 0;
+
+		for ( $index = $start; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 === $depth && in_array( $tokens[ $index ]->id, $clause_tokens, true ) ) {
+				return $index;
+			}
+		}
+
+		return count( $tokens );
+	}
+
+	/**
+	 * Check whether a token stream contains a top-level aggregate function call.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether a top-level aggregate call is present.
+	 */
+	private function contains_top_level_aggregate_function_call( array $tokens ): bool {
+		$aggregate_names = array(
+			'AVG',
+			'BIT_AND',
+			'BIT_OR',
+			'BIT_XOR',
+			'COUNT',
+			'GROUP_CONCAT',
+			'MAX',
+			'MIN',
+			'STD',
+			'STDDEV',
+			'SUM',
+			'VARIANCE',
+		);
+		$depth           = 0;
+
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+				continue;
+			}
+			if (
+				0 === $depth
+				&& isset( $tokens[ $index + 1 ] )
+				&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index + 1 ]->id
+				&& ! $this->is_non_identifier_token( $tokens[ $index ] )
+				&& in_array( strtoupper( $tokens[ $index ]->get_value() ), $aggregate_names, true )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Parse a simple GROUP BY column reference.
+	 *
+	 * @param WP_Parser_Token[] $tokens GROUP BY item tokens.
+	 * @return array{column_name:string,qualifier:string|null}|null Column reference, or null when unsupported.
+	 */
+	private function parse_group_by_column_reference( array $tokens ): ?array {
+		$count = count( $tokens );
+		if ( 1 === $count ) {
+			$name = $this->metadata_identifier_value( $tokens[0] );
+			if ( null === $name ) {
+				return null;
+			}
+
+			return array(
+				'column_name' => $name,
+				'qualifier'   => null,
+			);
+		}
+
+		if ( 3 === $count && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[1]->id ) {
+			$qualifier = $this->metadata_identifier_value( $tokens[0] );
+			$name      = $this->metadata_identifier_value( $tokens[2] );
+			if ( null === $qualifier || null === $name ) {
+				return null;
+			}
+
+			return array(
+				'column_name' => $name,
+				'qualifier'   => $qualifier,
+			);
+		}
+
+		return null;
+	}
+
+	/**
 	 * Check whether a SELECT-list qualifier belongs to the one supported table.
 	 *
 	 * @param string|null                                       $qualifier Optional column qualifier.
@@ -1576,7 +1803,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_key_column_usage,
 		bool $rewrite_information_schema_referential_constraints,
 		bool $rewrite_information_schema_check_constraints,
-		array $seeded_rand_rewrites = array()
+		array $seeded_rand_rewrites = array(),
+		?array $group_by_expansion = null
 	): int {
 		$sql = $this->translate_tokens_to_duckdb_sql(
 			$tokens,
@@ -1587,7 +1815,9 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_key_column_usage,
 			$rewrite_information_schema_referential_constraints,
 			$rewrite_information_schema_check_constraints,
-			$seeded_rand_rewrites
+			$seeded_rand_rewrites,
+			false,
+			$group_by_expansion
 		);
 
 		return (int) $this->execute_duckdb_query(
@@ -12083,6 +12313,52 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Render a GROUP BY clause expanded with selected wildcard columns.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param array{group_index:int,group_end:int,table_alias:string,columns:string[]} $group_by_expansion Expansion data.
+	 * @return string DuckDB GROUP BY SQL.
+	 */
+	private function expanded_primary_key_group_by_clause_sql(
+		array $tokens,
+		array $group_by_expansion,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): string {
+		$group_tokens = array_slice(
+			$tokens,
+			$group_by_expansion['group_index'] + 2,
+			$group_by_expansion['group_end'] - $group_by_expansion['group_index'] - 2
+		);
+
+		$items = array(
+			$this->translate_tokens_to_duckdb_sql(
+				$group_tokens,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			),
+		);
+
+		foreach ( $group_by_expansion['columns'] as $column_name ) {
+			$items[] = $this->connection->quote_identifier( $group_by_expansion['table_alias'] )
+				. '.'
+				. $this->connection->quote_identifier( $column_name );
+		}
+
+		return 'GROUP BY ' . implode( ', ', $items );
+	}
+
+	/**
 	 * Convert MySQL tokens to DuckDB SQL.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
@@ -12098,12 +12374,29 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_referential_constraints = false,
 		bool $rewrite_information_schema_check_constraints = false,
 		array $seeded_rand_rewrites = array(),
-		bool $rewrite_option_value_numeric_literal_comparisons = false
+		bool $rewrite_option_value_numeric_literal_comparisons = false,
+		?array $group_by_expansion = null
 	): string {
 		$pieces = array();
 
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
 			$token = $tokens[ $index ];
+
+			if ( null !== $group_by_expansion && $index === $group_by_expansion['group_index'] ) {
+				$pieces[] = $this->expanded_primary_key_group_by_clause_sql(
+					$tokens,
+					$group_by_expansion,
+					$rewrite_information_schema_tables,
+					$rewrite_information_schema_columns,
+					$rewrite_information_schema_statistics,
+					$rewrite_information_schema_table_constraints,
+					$rewrite_information_schema_key_column_usage,
+					$rewrite_information_schema_referential_constraints,
+					$rewrite_information_schema_check_constraints
+				);
+				$index    = $group_by_expansion['group_end'] - 1;
+				continue;
+			}
 
 			if ( $this->is_configured_database_select_table_qualifier( $tokens, $index ) ) {
 				++$index;

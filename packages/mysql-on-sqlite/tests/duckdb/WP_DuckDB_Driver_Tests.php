@@ -152,6 +152,54 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertLessThan( time() + 60, $row['unix_time'] );
 	}
 
+	public function test_select_posts_wildcard_group_by_primary_key_expands_group_by(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				post_title TEXT NOT NULL,
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_posts (ID, post_author, post_title) VALUES
+				(1, 10, 'first'),
+				(2, 20, 'second')"
+		);
+
+		$rows = $driver->query(
+			'SELECT wp_posts.* FROM wp_posts GROUP BY wp_posts.ID ORDER BY wp_posts.ID'
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'ID'          => 1,
+					'post_author' => 10,
+					'post_title'  => 'first',
+				),
+				array(
+					'ID'          => 2,
+					'post_author' => 20,
+					'post_title'  => 'second',
+				),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString(
+			'GROUP BY wp_posts.ID, "wp_posts"."post_author", "wp_posts"."post_title"',
+			$select_sql
+		);
+	}
+
 	public function test_select_seeded_rand_literals_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 

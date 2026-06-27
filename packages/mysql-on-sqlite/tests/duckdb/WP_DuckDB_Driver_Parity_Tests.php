@@ -853,6 +853,26 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
 	}
 
+	public function test_select_posts_wildcard_group_by_primary_key_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+					post_title TEXT NOT NULL,
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_posts (ID, post_author, post_title) VALUES
+					(1, 10, 'first'),
+					(2, 20, 'second')",
+			)
+		);
+
+		$this->assertParityRows(
+			'SELECT wp_posts.* FROM wp_posts GROUP BY wp_posts.ID ORDER BY wp_posts.ID'
+		);
+	}
+
 	public function test_select_index_hints_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
