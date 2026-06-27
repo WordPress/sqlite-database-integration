@@ -430,7 +430,10 @@ class WP_DuckDB_DB extends wpdb {
 				}
 			}
 			if ( defined( 'WP_DUCKDB_E2E_DIAGNOSTICS' ) && WP_DUCKDB_E2E_DIAGNOSTICS && $this->is_persisted_preferences_usermeta_insert( $query ) ) {
-				$this->log_persisted_preferences_insert_diagnostic( $query );
+				$this->log_persisted_preferences_insert_diagnostic(
+					$query,
+					$this->persisted_preferences_usermeta_insert_table( $query )
+				);
 			}
 			return $this->rows_affected;
 		}
@@ -447,18 +450,43 @@ class WP_DuckDB_DB extends wpdb {
 	 * @return bool
 	 */
 	private function is_persisted_preferences_usermeta_insert( $query ) {
-		return preg_match( '/^\s*insert\s+into\s+`?wp_usermeta`?\s/i', $query )
-			&& false !== strpos( $query, 'wp_persisted_preferences' );
+		return false !== $this->persisted_preferences_usermeta_insert_table( $query )
+			&& false !== strpos( $query, 'persisted_preferences' );
+	}
+
+	/**
+	 * Extract the usermeta table name from a persisted preferences insert.
+	 *
+	 * @param string $query Query to inspect.
+	 * @return string|false Usermeta table name, or false when the query does not match.
+	 */
+	private function persisted_preferences_usermeta_insert_table( $query ) {
+		if ( ! preg_match( '/^\s*insert\s+into\s+`?([^`\s(]+)`?\s/i', $query, $matches ) ) {
+			return false;
+		}
+
+		$table = $matches[1];
+		if ( isset( $this->usermeta ) && 0 === strcasecmp( $table, $this->usermeta ) ) {
+			return $table;
+		}
+
+		if ( 'usermeta' === substr( strtolower( $table ), -8 ) ) {
+			return $table;
+		}
+
+		return false;
 	}
 
 	/**
 	 * Log immediate DuckDB state after the persisted preferences insert.
 	 *
-	 * @param string $query Insert query.
+	 * @param string       $query      Insert query.
+	 * @param string|false $table_name Usermeta table name.
 	 */
-	private function log_persisted_preferences_insert_diagnostic( $query ) {
+	private function log_persisted_preferences_insert_diagnostic( $query, $table_name ) {
 		$diagnostics = array(
 			'query'                  => $query,
+			'usermeta_table'         => $table_name ? (string) $table_name : null,
 			'last_error'             => (string) $this->last_error,
 			'statement_row_count'    => $this->last_statement ? (int) $this->last_statement->rowCount() : null,
 			'rows_affected'          => (int) $this->rows_affected,
@@ -469,6 +497,8 @@ class WP_DuckDB_DB extends wpdb {
 			'wp_usermeta_columns'    => array(),
 			'wp_usermeta_row_counts' => array(),
 			'wp_usermeta_latest'     => array(),
+			'duckdb_column_metadata' => array(),
+			'duckdb_metadata_error'  => null,
 		);
 
 		try {
@@ -480,18 +510,33 @@ class WP_DuckDB_DB extends wpdb {
 			}
 			if ( is_object( $this->dbh ) && method_exists( $this->dbh, 'get_connection' ) ) {
 				$connection = $this->dbh->get_connection();
-				$table      = $connection->quote_identifier( 'wp_usermeta' );
+				$table_name = $table_name ? (string) $table_name : 'wp_usermeta';
+				$table      = $connection->quote_identifier( $table_name );
 
 				$diagnostics['wp_usermeta_columns'] = $connection
-					->query( 'SELECT cid, name, type, "notnull", dflt_value, pk FROM pragma_table_info(' . $connection->quote( 'wp_usermeta' ) . ') ORDER BY cid' )
+					->query( 'SELECT cid, name, type, "notnull", dflt_value, pk FROM pragma_table_info(' . $connection->quote( $table_name ) . ') ORDER BY cid' )
 					->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+
+				try {
+					$diagnostics['duckdb_column_metadata'] = $connection
+						->query(
+							'SELECT column_name, ordinal_position, column_type, is_nullable, column_default, column_key, extra FROM '
+							. $connection->quote_identifier( WP_DuckDB_Driver::COLUMN_METADATA_TABLE )
+							. ' WHERE table_name = '
+							. $connection->quote( $table_name )
+							. ' ORDER BY ordinal_position'
+						)
+						->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+				} catch ( Throwable $e ) {
+					$diagnostics['duckdb_metadata_error'] = $e->getMessage();
+				}
 
 				$diagnostics['wp_usermeta_row_counts'] = $connection
 					->query( 'SELECT COUNT(*) AS total_rows, MAX(umeta_id) AS max_umeta_id FROM ' . $table )
 					->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 
 				$diagnostics['wp_usermeta_latest'] = $connection
-					->query( 'SELECT umeta_id, user_id, meta_key, LENGTH(meta_value) AS meta_value_length FROM ' . $table . " WHERE meta_key = 'wp_persisted_preferences' ORDER BY umeta_id DESC LIMIT 3" )
+					->query( 'SELECT umeta_id, user_id, meta_key, LENGTH(meta_value) AS meta_value_length FROM ' . $table . " WHERE meta_key LIKE '%persisted_preferences' ORDER BY umeta_id DESC LIMIT 3" )
 					->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 			}
 		} catch ( Throwable $e ) {

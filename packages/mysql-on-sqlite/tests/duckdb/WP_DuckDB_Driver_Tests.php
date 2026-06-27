@@ -1324,6 +1324,40 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_native_error_rolls_back_active_transaction_before_dbdelta_insert(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE wptests_dbdelta_test (
+				id int NOT NULL AUTO_INCREMENT,
+				column_1 varchar(255),
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$driver->query( 'BEGIN' );
+		try {
+			$driver->query( "SELECT '\xF0\x9F' AS invalid_bytes" );
+			$this->fail( 'Expected invalid UTF-8 SELECT to fail.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Invalid unicode', $e->getMessage() );
+		}
+
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+
+		$driver->query( "INSERT INTO wptests_dbdelta_test (column_1) VALUES ('wcphilly2015')" );
+		$row = $driver->query( "select column_1 from wptests_dbdelta_test where column_1 = 'wcphilly2015'" )->fetch( PDO::FETCH_OBJ );
+
+		$this->assertIsObject( $row );
+		$this->assertSame( 'wcphilly2015', $row->column_1 );
+	}
+
 	public function test_savepoint_sql_is_rejected_without_mutating_active_transaction(): void {
 		$this->requireDuckDBRuntime();
 
@@ -6442,6 +6476,43 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				),
 			),
 			$driver->query( 'SELECT umeta_id, user_id, meta_key, meta_value FROM wp_usermeta' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( 0, $driver->get_insert_id() );
+	}
+
+	public function test_insert_id_tracks_prefixed_wordpress_usermeta_shape(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE wp_e2e_usermeta (
+				umeta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				user_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (umeta_id),
+				KEY user_id (user_id),
+				KEY meta_key (meta_key(191))
+			)'
+		);
+
+		$insert = $driver->query(
+			"INSERT INTO `wp_e2e_usermeta` (`user_id`, `meta_key`, `meta_value`)
+			VALUES (1, 'wp_e2e_persisted_preferences', 'a:0:{}')"
+		);
+
+		$this->assertSame( 1, $insert->rowCount() );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'umeta_id'   => 1,
+					'user_id'    => 1,
+					'meta_key'   => 'wp_e2e_persisted_preferences',
+					'meta_value' => 'a:0:{}',
+				),
+			),
+			$driver->query( 'SELECT umeta_id, user_id, meta_key, meta_value FROM wp_e2e_usermeta' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame( 0, $driver->get_insert_id() );
 	}

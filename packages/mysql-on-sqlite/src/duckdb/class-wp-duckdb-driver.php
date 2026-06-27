@@ -348,6 +348,7 @@ class WP_DuckDB_Driver {
 			throw $this->new_unsupported_statement_exception( $tokens[0] );
 		} catch ( Throwable $e ) {
 			$this->found_rows = 0;
+			$this->rollback_failed_active_transaction( $e );
 			throw $e;
 		}
 	}
@@ -386,6 +387,54 @@ class WP_DuckDB_Driver {
 	 */
 	public function get_insert_id(): int {
 		return $this->last_insert_id;
+	}
+
+	/**
+	 * Roll back active transactions after errors that can poison DuckDB state.
+	 *
+	 * Unsupported or preflight driver exceptions should leave caller
+	 * transactions open. Native DuckDB execution failures and raw PHP type
+	 * errors can leave the transaction unusable, matching the
+	 * "Current transaction is aborted" dbDelta cascade.
+	 *
+	 * @param Throwable $error Query failure.
+	 */
+	private function rollback_failed_active_transaction( Throwable $error ): void {
+		if ( ! $this->connection->inTransaction() ) {
+			return;
+		}
+
+		if ( ! $this->should_rollback_active_transaction_on_error( $error ) ) {
+			return;
+		}
+
+		$this->connection->rollback();
+	}
+
+	/**
+	 * Check whether a query error means the active DuckDB transaction is unsafe.
+	 *
+	 * @param Throwable $error Query failure.
+	 * @return bool Whether to roll back the active transaction.
+	 */
+	private function should_rollback_active_transaction_on_error( Throwable $error ): bool {
+		if ( $error instanceof TypeError ) {
+			return true;
+		}
+
+		for ( $current = $error; null !== $current; $current = $current->getPrevious() ) {
+			if (
+				$current instanceof WP_DuckDB_Driver_Exception
+				&& (
+					0 === strpos( $current->getMessage(), 'DuckDB query failed:' )
+					|| 0 === strpos( $current->getMessage(), 'Failed to prepare DuckDB query:' )
+				)
+			) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -17491,7 +17540,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function is_empty_function_call( array $tokens, int $index, string $name ): bool {
 		return isset( $tokens[ $index + 2 ] )
-			&& 0 === strcasecmp( $tokens[ $index ]->get_value(), $name )
+			&& 0 === strcasecmp( $this->token_value( $tokens[ $index ] ), $name )
 			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index + 1 ]->id
 			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index + 2 ]->id;
 	}
