@@ -42,6 +42,7 @@ class WP_DuckDB_Driver {
 		'big_tables'         => true,
 		'foreign_key_checks' => true,
 		'sql_mode'           => true,
+		'sql_warnings'       => true,
 		'unique_checks'      => true,
 	);
 
@@ -4058,7 +4059,7 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception(
 				'Unsupported SET session variable in DuckDB driver: '
 				. $name
-				. '. Only autocommit, big_tables, foreign_key_checks, sql_mode, and unique_checks are supported.'
+				. '. Only autocommit, big_tables, foreign_key_checks, sql_mode, sql_warnings, and unique_checks are supported.'
 			);
 		}
 

@@ -641,7 +641,7 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array( '00000', null, null ), $stmt->errorInfo() );
 	}
 
-	public function test_sql_warnings_policy_is_explicitly_unsupported(): void {
+	public function test_sql_warnings_session_variable_is_supported_without_warning_lists(): void {
 		$empty_result = $this->createDuckDBResult( array(), array() );
 		$duckdb       = new class( $empty_result ) {
 			public $queries = array();
@@ -662,10 +662,14 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 			)
 		);
 
+		$this->assertSame( 0, $driver->query( 'SET sql_warnings = ON' )->rowCount() );
+		$stmt = $driver->query( 'SELECT @@sql_warnings' );
+		$this->assertSame( 1, $stmt->columnCount() );
+		$this->assertSame( array( '@@sql_warnings' => 1 ), $stmt->fetch( PDO::FETCH_ASSOC ) );
+
 		$cases = array(
-			'SET sql_warnings = ON' => 'Unsupported SET session variable in DuckDB driver: sql_warnings.',
-			'SHOW WARNINGS'         => 'Unsupported SHOW statement in DuckDB driver.',
-			'SHOW ERRORS'           => 'Unsupported SHOW statement in DuckDB driver.',
+			'SHOW WARNINGS' => 'Unsupported SHOW statement in DuckDB driver.',
+			'SHOW ERRORS'   => 'Unsupported SHOW statement in DuckDB driver.',
 		);
 
 		foreach ( $cases as $sql => $message ) {

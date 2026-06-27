@@ -608,6 +608,11 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRowCount( 'SET big_tables = ON' );
 		$this->assertParityRows( 'SELECT @@big_tables' );
 
+		$this->assertParityRowCount( 'SET sql_warnings = ON' );
+		$this->assertParityRows( 'SELECT @@sql_warnings' );
+		$this->assertParityRowCount( 'SET @@session.sql_warnings = OFF' );
+		$this->assertParityRows( 'SELECT @@sql_warnings, @@SESSION.sql_warnings' );
+
 		$this->assertParityRowCount( 'SET SESSION autocommit = 0' );
 		$this->assertParityRowCount( 'SET @@session.big_tables = 1' );
 		$this->assertParityRows(
