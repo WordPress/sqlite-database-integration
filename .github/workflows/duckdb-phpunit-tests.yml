@@ -98,7 +98,7 @@ jobs:
         working-directory: packages/mysql-on-sqlite
 
   wp-duckdb-test:
-    name: WordPress PHPUnit wpdb / DuckDB
+    name: WordPress PHPUnit / DuckDB
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -158,13 +158,12 @@ jobs:
         timeout-minutes: 5
         run: ./bin/wp-test-duckdb-smoke.sh
 
-      - name: Run WordPress wpdb PHPUnit tests with DuckDB
+      - name: Run full WordPress PHPUnit tests with DuckDB
         timeout-minutes: 15
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
-          WP_SQLITE_IGNORE_MISSING_EXPECTED_RESULTS: '1'
-          WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb -- --group=wpdb --log-junit=phpunit-duckdb-results.xml --verbose
+          WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb -- --log-junit=phpunit-duckdb-results.xml --verbose
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
 
