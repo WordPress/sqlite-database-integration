@@ -274,6 +274,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRowCount( 'UNLOCK TABLES' );
 		$this->assertParityRowCount( 'LOCK TABLES lock_temp READ, lock_items WRITE' );
 		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLES lock_items AS li READ' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLES lock_items li READ' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLES lock_items READ LOCAL' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLES lock_items LOW_PRIORITY WRITE' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLE lock_items AS li READ LOCAL' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLE lock_items li LOW_PRIORITY WRITE' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
+		$this->assertParityRowCount( 'LOCK TABLES lock_temp AS lt READ LOCAL, lock_items li LOW_PRIORITY WRITE' );
+		$this->assertParityRowCount( 'UNLOCK TABLES' );
 
 		$this->runParitySetup(
 			array(
@@ -300,6 +314,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 
 		$this->assertParityErrorContains( 'LOCK TABLES missing_lock_item READ', "Table 'wp.missing_lock_item' doesn't exist" );
 		$this->assertParityErrorContains( 'LOCK TABLES lock_items READ, missing_lock_item WRITE', "Table 'wp.missing_lock_item' doesn't exist" );
+		$this->assertParityErrorContains( 'LOCK TABLES lock_items AS li READ LOCAL, missing_lock_item missing LOW_PRIORITY WRITE', "Table 'wp.missing_lock_item' doesn't exist" );
 		$this->assertParityErrorContains( 'LOCK TABLES information_schema.tables READ', "to database 'information_schema'" );
 	}
 

@@ -3230,7 +3230,7 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Execute LOCK TABLE[S] ... READ|WRITE.
+	 * Execute LOCK TABLE[S] ... READ [LOCAL]|[LOW_PRIORITY] WRITE.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return WP_DuckDB_Result_Statement
@@ -3243,7 +3243,7 @@ class WP_DuckDB_Driver {
 			! isset( $tokens[ $index ] )
 			|| ( WP_MySQL_Lexer::TABLE_SYMBOL !== $tokens[ $index ]->id && WP_MySQL_Lexer::TABLES_SYMBOL !== $tokens[ $index ]->id )
 		) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported LOCK statement in DuckDB driver. Only LOCK TABLES ... READ|WRITE is supported.' );
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported LOCK statement in DuckDB driver. Only LOCK TABLES ... READ [LOCAL] or [LOW_PRIORITY] WRITE is supported.' );
 		}
 		++$index;
 
@@ -3290,17 +3290,94 @@ class WP_DuckDB_Driver {
 		$reference = $this->parse_schema_lifecycle_table_reference( $tokens, $index, 'LOCK TABLES' );
 		$index     = $reference['next_index'];
 
-		if (
-			! isset( $tokens[ $index ] )
-			|| ( WP_MySQL_Lexer::READ_SYMBOL !== $tokens[ $index ]->id && WP_MySQL_Lexer::WRITE_SYMBOL !== $tokens[ $index ]->id )
-		) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported LOCK TABLES statement in DuckDB driver. Each table must specify READ or WRITE.' );
-		}
-		++$index;
+		$index = $this->consume_lock_table_alias( $tokens, $index );
+		$index = $this->consume_lock_table_option( $tokens, $index );
 
 		return array(
 			'requested_table_name' => $reference['requested_table_name'],
 			'next_index'           => $index,
+		);
+	}
+
+	/**
+	 * Consume an optional LOCK TABLES table alias.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index after the table reference.
+	 * @return int New index.
+	 */
+	private function consume_lock_table_alias( array $tokens, int $index ): int {
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$this->identifier_value( $tokens[ $index ] ?? null );
+			return $index + 1;
+		}
+
+		if (
+			! isset( $tokens[ $index ] )
+			|| $this->is_non_identifier_token( $tokens[ $index ] )
+			|| $this->is_lock_table_option_start_token( $tokens[ $index ] )
+		) {
+			return $index;
+		}
+
+		$this->identifier_value( $tokens[ $index ] );
+		return $index + 1;
+	}
+
+	/**
+	 * Consume a LOCK TABLES lock option.
+	 *
+	 * Supports MySQL's READ, READ LOCAL, WRITE, and LOW_PRIORITY WRITE lock
+	 * options. DuckDB still emulates these as transaction boundaries only.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Index of the lock option.
+	 * @return int New index.
+	 */
+	private function consume_lock_table_option( array $tokens, int $index ): int {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported LOCK TABLES statement in DuckDB driver. Each table must specify READ or WRITE.' );
+		}
+
+		if ( WP_MySQL_Lexer::READ_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::LOCAL_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+			}
+			return $index;
+		}
+
+		if ( WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::WRITE_SYMBOL !== $tokens[ $index ]->id ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported LOCK TABLES statement in DuckDB driver. LOW_PRIORITY must be followed by WRITE.' );
+			}
+			return $index + 1;
+		}
+
+		if ( WP_MySQL_Lexer::WRITE_SYMBOL === $tokens[ $index ]->id ) {
+			return $index + 1;
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported LOCK TABLES statement in DuckDB driver. Each table must specify READ or WRITE.' );
+	}
+
+	/**
+	 * Check whether a token starts a LOCK TABLES lock option.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token starts a lock option.
+	 */
+	private function is_lock_table_option_start_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::READ_SYMBOL,
+				WP_MySQL_Lexer::WRITE_SYMBOL,
+				WP_MySQL_Lexer::LOW_PRIORITY_SYMBOL,
+			),
+			true
 		);
 	}
 

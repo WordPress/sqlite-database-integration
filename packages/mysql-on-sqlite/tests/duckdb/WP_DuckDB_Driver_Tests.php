@@ -993,6 +993,42 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_lock_table_aliases_and_options_are_accepted(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE lock_items (id INT)' );
+		$driver->query( 'CREATE TABLE lock_two (id INT)' );
+		$driver->query( 'CREATE TEMPORARY TABLE lock_temp (id INT)' );
+
+		foreach (
+			array(
+				'LOCK TABLES lock_items AS li READ',
+				'LOCK TABLES lock_items li READ',
+				'LOCK TABLES lock_items READ LOCAL',
+				'LOCK TABLES lock_items LOW_PRIORITY WRITE',
+				'LOCK TABLES wp.lock_items AS li READ LOCAL',
+				'LOCK TABLES wp.lock_items LOW_PRIORITY WRITE',
+				'LOCK TABLE lock_items AS li READ LOCAL',
+				'LOCK TABLE lock_items li LOW_PRIORITY WRITE',
+				'LOCK TABLES lock_temp AS lt READ LOCAL, lock_items li LOW_PRIORITY WRITE, wp.lock_two AS two READ',
+			) as $sql
+		) {
+			$lock = $driver->query( $sql );
+			$this->assertSame( 0, $lock->rowCount(), 'LOCK row count mismatch for SQL: ' . $sql );
+			$this->assertSame( 0, $lock->columnCount(), 'LOCK column count mismatch for SQL: ' . $sql );
+			$this->assertTrue( $driver->get_connection()->inTransaction(), 'LOCK did not open a transaction for SQL: ' . $sql );
+			$this->assertSame( 'BEGIN TRANSACTION', $this->lastDuckDBQuery( $driver ) );
+			$driver->query( 'UNLOCK TABLES' );
+			$this->assertFalse( $driver->get_connection()->inTransaction(), 'UNLOCK did not close the lock transaction for SQL: ' . $sql );
+		}
+	}
+
 	public function test_lock_table_validation_matches_mysql_shaped_errors(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1017,6 +1053,27 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( 'ROLLBACK' );
 		$this->assertSame( array(), $driver->query( 'SELECT id FROM lock_one' )->fetchAll( PDO::FETCH_ASSOC ) );
 
+		$driver->query( 'BEGIN' );
+		$driver->query( 'INSERT INTO lock_one (id) VALUES (2)' );
+		try {
+			$driver->query( 'LOCK TABLES lock_one AS one READ LOCAL, missing_table missing LOW_PRIORITY WRITE, lock_three AS three READ' );
+			$this->fail( 'Expected LOCK TABLES to reject a missing table in an aliased/optioned list.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Table 'wp.missing_table' doesn't exist", $e->getMessage() );
+		}
+		$this->assertTrue( $driver->get_connection()->inTransaction() );
+		$driver->query( 'ROLLBACK' );
+		$this->assertSame( array(), $driver->query( 'SELECT id FROM lock_one' )->fetchAll( PDO::FETCH_ASSOC ) );
+
+		try {
+			$driver->query( 'LOCK TABLES lock_one AS one READ LOCAL, missing_table missing LOW_PRIORITY WRITE, lock_three AS three READ' );
+			$this->fail( 'Expected LOCK TABLES to reject a missing table in an aliased/optioned list without opening a transaction.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Table 'wp.missing_table' doesn't exist", $e->getMessage() );
+		}
+		$this->assertFalse( $driver->get_connection()->inTransaction() );
+		$this->assertNotContains( 'BEGIN TRANSACTION', $driver->get_last_duckdb_queries() );
+
 		foreach (
 			array(
 				'LOCK TABLES information_schema.tables READ' => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
@@ -1032,6 +1089,35 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				$this->assertStringContainsString( $message, $e->getMessage() );
 			}
 			$this->assertFalse( $driver->get_connection()->inTransaction() );
+		}
+	}
+
+	public function test_lock_table_malformed_option_order_is_rejected(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE lock_items (id INT)' );
+
+		foreach (
+			array(
+				'LOCK TABLES lock_items LOW_PRIORITY READ',
+				'LOCK TABLES lock_items WRITE LOCAL',
+				'LOCK TABLES lock_items READ LOCAL LOW_PRIORITY',
+				'LOCK TABLES lock_items LOW_PRIORITY WRITE LOCAL',
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected malformed LOCK TABLES option order to be rejected: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertNotSame( '', $e->getMessage() );
+			}
+			$this->assertFalse( $driver->get_connection()->inTransaction(), 'Malformed LOCK TABLES opened a transaction for SQL: ' . $sql );
 		}
 	}
 
