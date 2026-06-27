@@ -203,6 +203,89 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( array(), $result['update_col_info'] );
 	}
 
+	public function test_duckdb_wpdb_col_info_defaults_for_name_only_metadata_provider(): void {
+		$result = $this->run_col_info_fallback_state_script();
+		$cases  = $result['cases'];
+
+		$this->assertTrue( $result['connected'] );
+
+		$expected_cases = array(
+			'select_count'      => array( 'post_count' ),
+			'found_rows'        => array( 'found_rows' ),
+			'show_full_tables'  => array( 'Tables_in_wordpress_test', 'Table_type' ),
+			'show_columns'      => array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+			'show_table_status' => array(
+				'Name',
+				'Engine',
+				'Version',
+				'Row_format',
+				'Rows',
+				'Avg_row_length',
+				'Data_length',
+				'Max_data_length',
+				'Index_length',
+				'Data_free',
+				'Auto_increment',
+				'Create_time',
+				'Update_time',
+				'Check_time',
+				'Collation',
+				'Checksum',
+				'Create_options',
+				'Comment',
+			),
+			'show_create_table' => array( 'Table', 'Create Table' ),
+			'show_index'        => array(
+				'Table',
+				'Non_unique',
+				'Key_name',
+				'Seq_in_index',
+				'Column_name',
+				'Collation',
+				'Cardinality',
+				'Sub_part',
+				'Packed',
+				'Null',
+				'Index_type',
+				'Comment',
+				'Index_comment',
+				'Visible',
+				'Expression',
+			),
+			'check_table'       => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			'analyze_table'     => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			'optimize_table'    => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			'repair_table'      => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+		);
+
+		foreach ( $expected_cases as $case_name => $expected_names ) {
+			$this->assertArrayHasKey( $case_name, $cases );
+			$this->assertCount( count( $expected_names ), $cases[ $case_name ], $case_name );
+
+			foreach ( $expected_names as $index => $expected_name ) {
+				$this->assertSame(
+					array(
+						'name'       => $expected_name,
+						'orgname'    => $expected_name,
+						'table'      => '',
+						'orgtable'   => '',
+						'def'        => '',
+						'db'         => 'wordpress_test',
+						'catalog'    => 'def',
+						'max_length' => 0,
+						'length'     => 0,
+						'charsetnr'  => 224,
+						'flags'      => 0,
+						'type'       => 253,
+						'decimals'   => 0,
+					),
+					$cases[ $case_name ][ $index ],
+					$case_name . ' column ' . $expected_name
+				);
+			}
+		}
+	}
+
 	public function test_duckdb_wpdb_query_surface_provider(): void {
 		$result = $this->run_query_surface_state_script();
 		$cases  = $result['cases'];
@@ -817,6 +900,141 @@ echo json_encode(
 		'select_col_info' => $select_col_info,
 		'update_return'   => $update_return,
 		'update_col_info' => $update_col_info,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_col_info_fallback_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_Col_Info_Fallback_Test_Driver extends WP_DuckDB_Driver {
+	public function __construct() {}
+
+	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		if ( 'SELECT @@SESSION.sql_mode' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( '@@SESSION.sql_mode' ),
+				array(
+					array( 'NO_ENGINE_SUBSTITUTION' ),
+				),
+				0
+			);
+		}
+
+		if ( "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		$statement_columns = array(
+			'SELECT COUNT(*) AS post_count' => array( 'post_count' ),
+			'SELECT FOUND_ROWS() AS found_rows' => array( 'found_rows' ),
+			'SHOW FULL TABLES' => array( 'Tables_in_wordpress_test', 'Table_type' ),
+			'SHOW COLUMNS FROM wp_posts' => array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+			'SHOW TABLE STATUS' => array(
+				'Name',
+				'Engine',
+				'Version',
+				'Row_format',
+				'Rows',
+				'Avg_row_length',
+				'Data_length',
+				'Max_data_length',
+				'Index_length',
+				'Data_free',
+				'Auto_increment',
+				'Create_time',
+				'Update_time',
+				'Check_time',
+				'Collation',
+				'Checksum',
+				'Create_options',
+				'Comment',
+			),
+			'SHOW CREATE TABLE wp_posts' => array( 'Table', 'Create Table' ),
+			'SHOW INDEX FROM wp_posts' => array(
+				'Table',
+				'Non_unique',
+				'Key_name',
+				'Seq_in_index',
+				'Column_name',
+				'Collation',
+				'Cardinality',
+				'Sub_part',
+				'Packed',
+				'Null',
+				'Index_type',
+				'Comment',
+				'Index_comment',
+				'Visible',
+				'Expression',
+			),
+			'CHECK TABLE wp_posts' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			'ANALYZE TABLE wp_posts' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			'OPTIMIZE TABLE wp_posts' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			'REPAIR TABLE wp_posts' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+		);
+
+		if ( isset( $statement_columns[ $sql ] ) ) {
+			$columns = $statement_columns[ $sql ];
+			return new WP_DuckDB_Result_Statement(
+				$columns,
+				array(
+					array_fill( 0, count( $columns ), null ),
+				),
+				0
+			);
+		}
+
+		throw new RuntimeException( 'Unexpected query: ' . $sql );
+	}
+}
+
+class WP_DuckDB_Plugin_Col_Info_Fallback_Test_DB extends WP_DuckDB_DB {
+	public function exported_col_info() {
+		$this->load_col_info();
+		return array_map(
+			function ( $column ) {
+				return (array) $column;
+			},
+			$this->col_info
+		);
+	}
+}
+
+function wp_duckdb_plugin_col_info_fallback_case( WP_DuckDB_Plugin_Col_Info_Fallback_Test_DB $db, $sql ) {
+	$db->query( $sql );
+	return $db->exported_col_info();
+}
+
+$GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Col_Info_Fallback_Test_Driver();
+$db                        = new WP_DuckDB_Plugin_Col_Info_Fallback_Test_DB( 'wordpress_test' );
+$connected                 = $db->db_connect( false );
+$cases                     = array(
+	'select_count'      => wp_duckdb_plugin_col_info_fallback_case( $db, 'SELECT COUNT(*) AS post_count' ),
+	'found_rows'        => wp_duckdb_plugin_col_info_fallback_case( $db, 'SELECT FOUND_ROWS() AS found_rows' ),
+	'show_full_tables'  => wp_duckdb_plugin_col_info_fallback_case( $db, 'SHOW FULL TABLES' ),
+	'show_columns'      => wp_duckdb_plugin_col_info_fallback_case( $db, 'SHOW COLUMNS FROM wp_posts' ),
+	'show_table_status' => wp_duckdb_plugin_col_info_fallback_case( $db, 'SHOW TABLE STATUS' ),
+	'show_create_table' => wp_duckdb_plugin_col_info_fallback_case( $db, 'SHOW CREATE TABLE wp_posts' ),
+	'show_index'        => wp_duckdb_plugin_col_info_fallback_case( $db, 'SHOW INDEX FROM wp_posts' ),
+	'check_table'       => wp_duckdb_plugin_col_info_fallback_case( $db, 'CHECK TABLE wp_posts' ),
+	'analyze_table'     => wp_duckdb_plugin_col_info_fallback_case( $db, 'ANALYZE TABLE wp_posts' ),
+	'optimize_table'    => wp_duckdb_plugin_col_info_fallback_case( $db, 'OPTIMIZE TABLE wp_posts' ),
+	'repair_table'      => wp_duckdb_plugin_col_info_fallback_case( $db, 'REPAIR TABLE wp_posts' ),
+);
+
+echo json_encode(
+	array(
+		'connected' => $connected,
+		'cases'     => $cases,
 	)
 );
 PHP;

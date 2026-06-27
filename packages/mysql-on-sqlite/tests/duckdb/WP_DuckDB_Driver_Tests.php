@@ -3102,6 +3102,128 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertFalse( $update->getColumnMeta( 0 ) );
 	}
 
+	public function test_expression_and_admin_result_metadata_provider_documents_name_only_contract(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE metadata_provider_items (
+				id INT PRIMARY KEY,
+				name VARCHAR(20)
+			)'
+		);
+		$driver->query( 'CREATE INDEX metadata_provider_items_name ON metadata_provider_items (name)' );
+		$driver->query( "INSERT INTO metadata_provider_items (id, name) VALUES (1, 'alpha')" );
+		$driver->query( 'SELECT id FROM metadata_provider_items' );
+
+		$cases = array(
+			array(
+				'sql'     => 'SELECT COUNT(*) AS post_count FROM metadata_provider_items',
+				'columns' => array( 'post_count' ),
+			),
+			array(
+				'sql'     => 'SELECT FOUND_ROWS() AS found_rows',
+				'columns' => array( 'found_rows' ),
+			),
+			array(
+				'sql'     => 'SELECT DATABASE() AS db_name',
+				'columns' => array( 'db_name' ),
+			),
+			array(
+				'sql'     => 'SELECT CAST(42 AS SIGNED) AS signed_value',
+				'columns' => array( 'signed_value' ),
+			),
+			array(
+				'sql'     => "SELECT CONCAT('a', 'b') AS concat_value",
+				'columns' => array( 'concat_value' ),
+			),
+			array(
+				'sql'     => "SHOW COLLATION LIKE 'utf8_bin'",
+				'columns' => array( 'Collation', 'Charset', 'Id', 'Default', 'Compiled', 'Sortlen', 'Pad_attribute' ),
+			),
+			array(
+				'sql'     => 'SHOW DATABASES',
+				'columns' => array( 'Database' ),
+			),
+			array(
+				'sql'     => 'SHOW GRANTS',
+				'columns' => array( 'Grants for root@%' ),
+			),
+			array(
+				'sql'     => 'SHOW VARIABLES',
+				'columns' => array( 'Variable_name', 'Value' ),
+			),
+			array(
+				'sql'     => 'SHOW TABLES',
+				'columns' => array( 'Tables_in_wp' ),
+			),
+			array(
+				'sql'     => 'SHOW FULL TABLES',
+				'columns' => array( 'Tables_in_wp', 'Table_type' ),
+			),
+			array(
+				'sql'     => 'SHOW COLUMNS FROM metadata_provider_items',
+				'columns' => array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+			),
+			array(
+				'sql'     => 'SHOW FULL COLUMNS FROM metadata_provider_items',
+				'columns' => array( 'Field', 'Type', 'Collation', 'Null', 'Key', 'Default', 'Extra', 'Privileges', 'Comment' ),
+			),
+			array(
+				'sql'     => 'SHOW INDEX FROM metadata_provider_items',
+				'columns' => array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Collation', 'Cardinality', 'Sub_part', 'Packed', 'Null', 'Index_type', 'Comment', 'Index_comment', 'Visible', 'Expression' ),
+			),
+			array(
+				'sql'     => 'SHOW CREATE TABLE metadata_provider_items',
+				'columns' => array( 'Table', 'Create Table' ),
+			),
+			array(
+				'sql'     => "SHOW TABLE STATUS LIKE 'metadata_provider_items'",
+				'columns' => array( 'Name', 'Engine', 'Version', 'Row_format', 'Rows', 'Avg_row_length', 'Data_length', 'Max_data_length', 'Index_length', 'Data_free', 'Auto_increment', 'Create_time', 'Update_time', 'Check_time', 'Collation', 'Checksum', 'Create_options', 'Comment' ),
+			),
+			array(
+				'sql'     => 'DESCRIBE metadata_provider_items',
+				'columns' => array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+			),
+			array(
+				'sql'     => 'CHECK TABLE metadata_provider_items',
+				'columns' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			),
+			array(
+				'sql'     => 'ANALYZE TABLE metadata_provider_items',
+				'columns' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			),
+			array(
+				'sql'     => 'OPTIMIZE TABLE metadata_provider_items',
+				'columns' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			),
+			array(
+				'sql'     => 'REPAIR TABLE metadata_provider_items',
+				'columns' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$sql            = $case['sql'];
+			$expected_names = $case['columns'];
+			$result         = $driver->query( $sql );
+
+			$this->assertSame( 0, $result->rowCount(), $sql );
+			$this->assertSame( count( $expected_names ), $result->columnCount(), $sql );
+
+			foreach ( $expected_names as $index => $expected_name ) {
+				$this->assertSame( array( 'name' => $expected_name ), $result->getColumnMeta( $index ), $sql );
+			}
+
+			$this->assertFalse( $result->getColumnMeta( count( $expected_names ) ), $sql );
+		}
+	}
+
 	public function test_simple_select_wildcard_result_metadata_uses_recorded_table_columns(): void {
 		$this->requireDuckDBRuntime();
 
