@@ -1289,6 +1289,414 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( $this->temporal_select_sql( 'temporal_writes' ) );
 	}
 
+	public function test_temporal_insert_select_explicit_columns_match_sqlite(): void {
+		$this->create_temporal_write_table( 'temporal_insert_select_explicit' );
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_insert_select_explicit_source (
+					id INT,
+					d_text VARCHAR(40),
+					tm_text VARCHAR(40),
+					dt_text VARCHAR(40),
+					ts_text VARCHAR(40),
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_insert_select_explicit_source VALUES
+					(1, '2025-10-23 18:30:00.123456', '18:30:00.123456', '2025-10-24', '2025-10-24 01:02:03.123456', 'explicit')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'INSERT INTO temporal_insert_select_explicit (payload, ts, dt, tm, d, id)
+			SELECT payload, ts_text, dt_text, tm_text, d_text, id
+			FROM temporal_insert_select_explicit_source'
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_insert_select_explicit' ) );
+	}
+
+	public function test_temporal_insert_select_implicit_columns_match_sqlite(): void {
+		$this->create_temporal_write_table( 'temporal_insert_select_implicit' );
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_insert_select_implicit_source (
+					id INT,
+					d_text VARCHAR(40),
+					tm_text VARCHAR(40),
+					dt_text VARCHAR(40),
+					ts_text VARCHAR(40),
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_insert_select_implicit_source VALUES
+					(1, '2025-11-01 05:06:07.123456', '18:31:32.654321', '2025-11-02', '2025-11-03 04:05:06.654321', 'implicit')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'INSERT INTO temporal_insert_select_implicit
+			SELECT id, d_text, tm_text, dt_text, ts_text, payload
+			FROM temporal_insert_select_implicit_source'
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_insert_select_implicit' ) );
+	}
+
+	public function test_temporal_insert_select_strict_errors_leave_rows(): void {
+		$this->create_temporal_write_table( 'temporal_insert_select_strict' );
+		$this->runParitySetup(
+			array(
+				"INSERT INTO temporal_insert_select_strict (id, d, tm, dt, ts, payload) VALUES
+					(1, '2025-01-01', '18:30:00', '2025-01-01 12:00:00', '2025-01-01 12:00:00', 'stable')",
+				'CREATE TABLE temporal_insert_select_strict_source (
+					id INT,
+					d_text VARCHAR(40),
+					dt_text VARCHAR(40),
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_insert_select_strict_source VALUES
+					(2, 'bad', '2025-01-02', 'plain'),
+					(3, '2025-01-03', 'bad', 'ignore')",
+			)
+		);
+
+		$stable_selects = array(
+			$this->temporal_select_sql( 'temporal_insert_select_strict' ),
+			'SELECT id, d_text, dt_text, payload FROM temporal_insert_select_strict_source ORDER BY id',
+		);
+
+		$this->assert_temporal_error_leaves_rows(
+			"INSERT INTO temporal_insert_select_strict (id, d, dt, payload)
+			SELECT id, d_text, dt_text, payload
+			FROM temporal_insert_select_strict_source
+			WHERE payload = 'plain'",
+			"Incorrect date value: 'bad'",
+			$stable_selects
+		);
+		$this->assert_temporal_error_leaves_rows(
+			"INSERT IGNORE INTO temporal_insert_select_strict (id, d, dt, payload)
+			SELECT id, d_text, dt_text, payload
+			FROM temporal_insert_select_strict_source
+			WHERE payload = 'ignore'",
+			"Incorrect datetime value: 'bad'",
+			$stable_selects
+		);
+	}
+
+	public function test_temporal_insert_select_non_strict_defaults_and_nulls_match_sqlite(): void {
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->create_temporal_write_table( 'temporal_insert_select_non_strict', 'NOT NULL' );
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_insert_select_non_strict_source (
+					id INT,
+					d_text VARCHAR(40),
+					dt_text VARCHAR(40),
+					ts_text VARCHAR(40),
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_insert_select_non_strict_source VALUES
+					(1, 'bad', 'bad', 'bad', 'invalid'),
+					(2, NULL, NULL, NULL, 'selected-nulls')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'INSERT INTO temporal_insert_select_non_strict (id, d, dt, ts, payload)
+			SELECT id, d_text, dt_text, ts_text, payload
+			FROM temporal_insert_select_non_strict_source
+			ORDER BY id'
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_insert_select_non_strict' ) );
+	}
+
+	public function test_temporal_insert_ignore_select_match_sqlite(): void {
+		$this->create_temporal_write_table( 'temporal_insert_ignore_select' );
+		$this->runParitySetup(
+			array(
+				"INSERT INTO temporal_insert_ignore_select (id, d, tm, dt, ts, payload) VALUES
+					(1, '2025-01-01', '18:30:00', '2025-01-01 12:00:00', '2025-01-01 12:00:00', 'stable')",
+				'CREATE TABLE temporal_insert_ignore_select_source (
+					id INT,
+					d_text VARCHAR(40),
+					tm_text VARCHAR(40),
+					dt_text VARCHAR(40),
+					ts_text VARCHAR(40),
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_insert_ignore_select_source VALUES
+					(1, '2025-02-01 01:02:03', '18:31:00.123456', '2025-02-01', '2025-02-01 01:02:03.123456', 'ignored'),
+					(2, '2025-03-01 01:02:03', '18:32:00.123456', '2025-03-01', '2025-03-01 01:02:03.123456', 'inserted')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'INSERT IGNORE INTO temporal_insert_ignore_select (id, d, tm, dt, ts, payload)
+			SELECT id, d_text, tm_text, dt_text, ts_text, payload
+			FROM temporal_insert_ignore_select_source
+			ORDER BY id'
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_insert_ignore_select' ) );
+	}
+
+	public function test_temporal_replace_select_native_conflict_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_select_native (
+					id INT,
+					d DATE UNIQUE,
+					dt DATETIME NULL,
+					ts TIMESTAMP NULL,
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_replace_select_native (id, d, dt, ts, payload) VALUES
+					(1, '2025-10-23', '2025-10-23 09:00:00', '2025-10-23 09:00:00', 'old')",
+				'CREATE TABLE temporal_replace_select_native_source (
+					id INT,
+					d_text VARCHAR(40),
+					dt_text VARCHAR(40),
+					ts_text VARCHAR(40),
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_replace_select_native_source VALUES
+					(2, '2025-10-23 18:30:00', '2025-10-24', '2025-10-24 01:02:03.123456', 'new')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'REPLACE INTO temporal_replace_select_native (id, d, dt, ts, payload)
+			SELECT id, d_text, dt_text, ts_text, payload
+			FROM temporal_replace_select_native_source'
+		);
+		$this->assertParityRows( 'SELECT id, d, dt, ts, payload FROM temporal_replace_select_native ORDER BY id' );
+	}
+
+	public function test_temporal_replace_select_non_strict_selected_nulls_match_sqlite(): void {
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->create_temporal_write_table( 'temporal_replace_select_non_strict_nulls', 'NOT NULL' );
+		$this->runParitySetup(
+			array(
+				"INSERT INTO temporal_replace_select_non_strict_nulls (id, d, tm, dt, ts, payload) VALUES
+					(1, '2025-10-23', '18:30:00', '2025-10-23 09:00:00', '2025-10-23 09:00:00', 'old')",
+				'CREATE TABLE temporal_replace_select_non_strict_nulls_source (
+					id INT,
+					d_text VARCHAR(40),
+					tm_text VARCHAR(40),
+					dt_text VARCHAR(40),
+					ts_text VARCHAR(40),
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_replace_select_non_strict_nulls_source VALUES
+					(1, NULL, NULL, NULL, NULL, 'selected-nulls')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'REPLACE INTO temporal_replace_select_non_strict_nulls (id, d, tm, dt, ts, payload)
+			SELECT id, d_text, tm_text, dt_text, ts_text, payload
+			FROM temporal_replace_select_non_strict_nulls_source'
+		);
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_replace_select_non_strict_nulls' ) );
+	}
+
+	public function test_temporal_replace_select_strict_error_preserves_target(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_replace_select_error (
+					id INT PRIMARY KEY,
+					d DATE,
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_replace_select_error (id, d, payload) VALUES
+					(1, '2025-10-23', 'stable')",
+				'CREATE TABLE temporal_replace_select_error_source (
+					id INT,
+					d_text VARCHAR(40),
+					payload VARCHAR(40)
+				)',
+				"INSERT INTO temporal_replace_select_error_source VALUES
+					(1, 'bad', 'stable')",
+			)
+		);
+
+		$this->assert_temporal_error_leaves_rows(
+			'REPLACE INTO temporal_replace_select_error (id, d, payload)
+			SELECT id, d_text, payload
+			FROM temporal_replace_select_error_source',
+			"Incorrect date value: 'bad'",
+			array(
+				'SELECT id, d, payload FROM temporal_replace_select_error ORDER BY id',
+				'SELECT id, d_text, payload FROM temporal_replace_select_error_source ORDER BY id',
+			)
+		);
+	}
+
+	public function test_replace_select_unsafe_conflict_shapes_are_rejected_without_mutation(): void {
+		$cases = array(
+			array(
+				'setup'  => array(
+					'CREATE TABLE replace_select_temporal_multi_unique (
+						id INT PRIMARY KEY,
+						name VARCHAR(20) UNIQUE,
+						d DATE NULL,
+						payload VARCHAR(20)
+					)',
+					"INSERT INTO replace_select_temporal_multi_unique VALUES
+						(1, 'one', '2025-01-01', 'old-one'),
+						(2, 'two', '2025-01-02', 'old-two')",
+					'CREATE TABLE replace_select_temporal_multi_unique_source (
+						id INT,
+						name VARCHAR(20),
+						d_text VARCHAR(40),
+						payload VARCHAR(20)
+					)',
+					"INSERT INTO replace_select_temporal_multi_unique_source VALUES
+						(1, 'two', '2025-03-03', 'incoming')",
+				),
+				'sql'    => 'REPLACE INTO replace_select_temporal_multi_unique (id, name, d, payload)
+					SELECT id, name, d_text, payload
+					FROM replace_select_temporal_multi_unique_source',
+				'select' => 'SELECT id, name, d, payload FROM replace_select_temporal_multi_unique ORDER BY id',
+				'rows'   => array(
+					array(
+						'id'      => 1,
+						'name'    => 'one',
+						'd'       => '2025-01-01',
+						'payload' => 'old-one',
+					),
+					array(
+						'id'      => 2,
+						'name'    => 'two',
+						'd'       => '2025-01-02',
+						'payload' => 'old-two',
+					),
+				),
+			),
+			array(
+				'setup'  => array(
+					'CREATE TABLE replace_select_non_temporal_multi_unique (
+						id INT PRIMARY KEY,
+						email VARCHAR(40) UNIQUE,
+						payload VARCHAR(20)
+					)',
+					"INSERT INTO replace_select_non_temporal_multi_unique VALUES
+						(1, 'one@example.test', 'old-one'),
+						(2, 'two@example.test', 'old-two')",
+					'CREATE TABLE replace_select_non_temporal_multi_unique_source (
+						id INT,
+						email VARCHAR(40),
+						payload VARCHAR(20)
+					)',
+					"INSERT INTO replace_select_non_temporal_multi_unique_source VALUES
+						(1, 'two@example.test', 'incoming')",
+				),
+				'sql'    => 'REPLACE INTO replace_select_non_temporal_multi_unique (id, email, payload)
+					SELECT id, email, payload
+					FROM replace_select_non_temporal_multi_unique_source',
+				'select' => 'SELECT id, email, payload FROM replace_select_non_temporal_multi_unique ORDER BY id',
+				'rows'   => array(
+					array(
+						'id'      => 1,
+						'email'   => 'one@example.test',
+						'payload' => 'old-one',
+					),
+					array(
+						'id'      => 2,
+						'email'   => 'two@example.test',
+						'payload' => 'old-two',
+					),
+				),
+			),
+			array(
+				'setup'  => array(
+					"CREATE TABLE replace_select_ci_unique (
+						id INT,
+						name VARCHAR(20) NOT NULL DEFAULT '',
+						payload VARCHAR(20),
+						UNIQUE KEY name (name)
+					) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+					"INSERT INTO replace_select_ci_unique VALUES (1, 'first', 'old')",
+					'CREATE TABLE replace_select_ci_unique_source (
+						id INT,
+						name VARCHAR(20),
+						payload VARCHAR(20)
+					)',
+					"INSERT INTO replace_select_ci_unique_source VALUES (2, 'FIRST', 'incoming')",
+				),
+				'sql'    => 'REPLACE INTO replace_select_ci_unique (id, name, payload)
+					SELECT id, name, payload
+					FROM replace_select_ci_unique_source',
+				'select' => 'SELECT id, name, payload FROM replace_select_ci_unique ORDER BY id',
+				'rows'   => array(
+					array(
+						'id'      => 1,
+						'name'    => 'first',
+						'payload' => 'old',
+					),
+				),
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$driver = new WP_DuckDB_Driver(
+				array(
+					'path'     => ':memory:',
+					'database' => 'wp',
+				)
+			);
+
+			foreach ( $case['setup'] as $query ) {
+				$driver->query( $query );
+			}
+
+			$this->assert_duckdb_error_contains(
+				$driver,
+				$case['sql'],
+				'Manual conflict handling for multiple unique keys or case-insensitive unique keys is not yet supported'
+			);
+			$this->assertSame( $case['rows'], $driver->query( $case['select'] )->fetchAll( PDO::FETCH_ASSOC ) );
+			$this->assert_no_select_write_stage_tables( $driver );
+		}
+	}
+
+	public function test_temporal_select_write_stage_tables_are_cleaned_up(): void {
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( 'CREATE TABLE temporal_stage_cleanup (id INT PRIMARY KEY, d DATE NULL, payload VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE temporal_stage_cleanup_source (id INT, d_text VARCHAR(40), payload VARCHAR(20))' );
+		$driver->query(
+			"INSERT INTO temporal_stage_cleanup_source VALUES
+				(1, '2025-01-01', 'valid'),
+				(2, 'bad', 'invalid')"
+		);
+
+		$driver->query(
+			"INSERT INTO temporal_stage_cleanup (id, d, payload)
+			SELECT id, d_text, payload
+			FROM temporal_stage_cleanup_source
+			WHERE payload = 'valid'"
+		);
+		$this->assert_no_select_write_stage_tables( $driver );
+
+		$this->assert_duckdb_error_contains(
+			$driver,
+			"INSERT INTO temporal_stage_cleanup (id, d, payload)
+			SELECT id, d_text, payload
+			FROM temporal_stage_cleanup_source
+			WHERE payload = 'invalid'",
+			"Incorrect date value: 'bad'"
+		);
+		$this->assert_no_select_write_stage_tables( $driver );
+
+		$driver->query(
+			"REPLACE INTO temporal_stage_cleanup (id, d, payload)
+			SELECT 1, '2025-02-02', 'replaced'"
+		);
+		$this->assert_no_select_write_stage_tables( $driver );
+	}
+
 	public function test_temporal_strict_write_errors_match_sqlite(): void {
 		$this->create_temporal_write_table(
 			'temporal_strict',
@@ -3277,6 +3685,18 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 
 		$this->fail( 'DuckDB query should have failed for SQL: ' . $sql );
+	}
+
+	private function assert_no_select_write_stage_tables( WP_DuckDB_Driver $driver ): void {
+		$this->assertSame(
+			array(),
+			$driver->get_connection()->query(
+				"SELECT table_name FROM information_schema.tables
+				WHERE table_type = 'LOCAL TEMPORARY'
+					AND table_name LIKE '\\_\\_wp\\_duckdb\\_%select\\_src\\_%' ESCAPE '\\'
+				ORDER BY table_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	private function createJoinedUpdateGapDrivers(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

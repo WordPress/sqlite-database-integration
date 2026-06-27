@@ -2023,13 +2023,7 @@ class WP_DuckDB_Driver {
 			if ( null !== $this->find_on_duplicate_key_update_index( $tokens ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT statement in DuckDB driver. INSERT ... SELECT ... ON DUPLICATE KEY UPDATE is not supported.' );
 			}
-			return $this->execute_auto_increment_write(
-				$this->identifier_value( $tokens[ $index ] ?? null ),
-				$this->translate_insert_select_tokens_to_duckdb_sql( $tokens, $index, $ignore ),
-				'Failed to execute DuckDB INSERT',
-				$tokens,
-				$index
-			);
+			return $this->execute_insert_select_with_temporal_coercion( $tokens, $index, $select_index, $ignore );
 		}
 
 		$set_index = $this->find_insert_set_index( $tokens, $index );
@@ -2087,14 +2081,9 @@ class WP_DuckDB_Driver {
 			++$index;
 		}
 
-		if ( null !== $this->find_insert_select_index( $tokens, $index ) ) {
-			return $this->execute_auto_increment_write(
-				$this->identifier_value( $tokens[ $index ] ?? null ),
-				$this->translate_replace_tokens_to_duckdb_sql( $tokens ),
-				'Failed to execute DuckDB REPLACE',
-				$tokens,
-				$index
-			);
+		$select_index = $this->find_insert_select_index( $tokens, $index );
+		if ( null !== $select_index ) {
+			return $this->execute_replace_select_with_temporal_coercion( $tokens, $index, $select_index );
 		}
 
 		$this->assert_values_write_statement( $tokens, $index, 'REPLACE' );
@@ -4890,7 +4879,7 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( ! isset( $metadata_maps[ $assignment_target_index ] ) ) {
-				$assignment_target                       = $references[ $assignment_target_index ];
+				$assignment_target                         = $references[ $assignment_target_index ];
 				$metadata_maps[ $assignment_target_index ] = $this->write_column_metadata_map(
 					$assignment_target['table_name'],
 					$assignment_target['temporary'] ?? false
@@ -11764,6 +11753,364 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute MySQL INSERT ... SELECT with staged temporal write coercion.
+	 *
+	 * @param WP_Parser_Token[] $tokens       MySQL tokens.
+	 * @param int               $table_index  Index of the table token.
+	 * @param int               $select_index Index of the SELECT token.
+	 * @param bool              $ignore       Whether INSERT IGNORE was used.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_insert_select_with_temporal_coercion( array $tokens, int $table_index, int $select_index, bool $ignore ): WP_DuckDB_Result_Statement {
+		$shape = $this->parse_insert_select_target_shape( $tokens, $table_index, $select_index );
+		if ( ! $this->insert_select_shape_requires_temporal_coercion( $shape ) ) {
+			return $this->execute_auto_increment_write(
+				$shape['requested_table_name'],
+				$this->translate_insert_select_tokens_to_duckdb_sql( $tokens, $table_index, $ignore ),
+				'Failed to execute DuckDB INSERT',
+				$tokens,
+				$table_index
+			);
+		}
+
+		$source_sql = $this->translate_tokens_to_duckdb_sql( $shape['source_tokens'] );
+		$stage      = $this->create_select_write_stage( $source_sql, 'insert_select_src' );
+
+		try {
+			$projection = $this->build_insert_select_projection( $shape, $stage['columns'], true, 'INSERT' );
+			$this->validate_staged_temporal_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB INSERT SELECT values' );
+
+			return $this->execute_auto_increment_write(
+				$shape['requested_table_name'],
+				'INSERT '
+					. ( $ignore ? 'OR IGNORE ' : '' )
+					. 'INTO '
+					. $this->connection->quote_identifier( $shape['table_name'] )
+					. ' ('
+					. $this->quote_identifier_list( $projection['columns'] )
+					. ') SELECT '
+					. implode( ', ', $projection['expressions'] )
+					. ' FROM '
+					. $this->connection->quote_identifier( $stage['table_name'] )
+					. ' AS '
+					. $this->connection->quote_identifier( '__src' ),
+				'Failed to execute DuckDB INSERT',
+				$tokens,
+				$table_index
+			);
+		} finally {
+			$this->drop_select_write_stage( $stage['table_name'] );
+		}
+	}
+
+	/**
+	 * Execute MySQL REPLACE ... SELECT with staged temporal write coercion.
+	 *
+	 * @param WP_Parser_Token[] $tokens       MySQL tokens.
+	 * @param int               $table_index  Index of the table token.
+	 * @param int               $select_index Index of the SELECT token.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_replace_select_with_temporal_coercion( array $tokens, int $table_index, int $select_index ): WP_DuckDB_Result_Statement {
+		$shape = $this->parse_insert_select_target_shape( $tokens, $table_index, $select_index );
+		$this->assert_replace_select_native_conflict_handling_safe( $shape );
+
+		if ( ! $this->insert_select_shape_requires_temporal_coercion( $shape ) ) {
+			return $this->execute_auto_increment_write(
+				$shape['requested_table_name'],
+				$this->translate_replace_tokens_to_duckdb_sql( $tokens ),
+				'Failed to execute DuckDB REPLACE',
+				$tokens,
+				$table_index
+			);
+		}
+
+		$source_sql = $this->translate_tokens_to_duckdb_sql( $shape['source_tokens'] );
+		$stage      = $this->create_select_write_stage( $source_sql, 'replace_select_src' );
+
+		try {
+			$projection = $this->build_insert_select_projection( $shape, $stage['columns'], true, 'REPLACE' );
+			$this->validate_staged_temporal_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB REPLACE SELECT values' );
+
+			return $this->execute_auto_increment_write(
+				$shape['requested_table_name'],
+				'INSERT OR REPLACE INTO '
+					. $this->connection->quote_identifier( $shape['table_name'] )
+					. ' ('
+					. $this->quote_identifier_list( $projection['columns'] )
+					. ') SELECT '
+					. implode( ', ', $projection['expressions'] )
+					. ' FROM '
+					. $this->connection->quote_identifier( $stage['table_name'] )
+					. ' AS '
+					. $this->connection->quote_identifier( '__src' ),
+				'Failed to execute DuckDB REPLACE',
+				$tokens,
+				$table_index
+			);
+		} finally {
+			$this->drop_select_write_stage( $stage['table_name'] );
+		}
+	}
+
+	/**
+	 * Parse target metadata for INSERT/REPLACE ... SELECT.
+	 *
+	 * @param WP_Parser_Token[] $tokens       MySQL tokens.
+	 * @param int               $table_index  Index of the table token.
+	 * @param int               $select_index Index of the SELECT token.
+	 * @return array{requested_table_name:string,table_name:string,temporary:bool,target_columns:string[],target_metadata:array<int,array<string,mixed>>,omitted_defaults:array<int,array{column_name:string,value_sql:string,data_type:string}>,source_tokens:array<int,WP_Parser_Token>}
+	 */
+	private function parse_insert_select_target_shape( array $tokens, int $table_index, int $select_index ): array {
+		$requested_table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
+		$reference            = $this->resolve_write_table_reference( $requested_table_name );
+		$table_name           = $reference['table_name'];
+		$temporary            = $reference['temporary'];
+		$metadata_map         = $this->write_column_metadata_map( $table_name, $temporary );
+		$target_columns       = array();
+		$target_metadata      = array();
+		$explicit_columns     = false;
+		$index                = $table_index + 1;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+			$explicit_columns             = true;
+			list( $column_items, $index ) = $this->collect_parenthesized_items( $tokens, $index + 1 );
+			foreach ( $column_items as $column_tokens ) {
+				if ( 1 !== count( $column_tokens ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT/REPLACE ... SELECT statement in DuckDB driver. Target column list must contain only simple identifiers.' );
+				}
+
+				$column_name = $this->identifier_value( $column_tokens[0] );
+				$column_key  = strtolower( $column_name );
+				if ( ! isset( $metadata_map[ $column_key ] ) ) {
+					throw new WP_DuckDB_Driver_Exception( "Unknown INSERT/REPLACE target column '{$column_name}' in DuckDB driver." );
+				}
+
+				$target_columns[]  = (string) $metadata_map[ $column_key ]['column_name'];
+				$target_metadata[] = $metadata_map[ $column_key ];
+			}
+		} else {
+			foreach ( $this->table_column_metadata_rows( $table_name, $temporary ) as $metadata ) {
+				if ( ! isset( $metadata['column_name'] ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT/REPLACE ... SELECT statement in DuckDB driver. Target table column metadata is incomplete.' );
+				}
+				$target_columns[]  = (string) $metadata['column_name'];
+				$target_metadata[] = $metadata;
+			}
+		}
+
+		if ( $index !== $select_index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT/REPLACE ... SELECT statement in DuckDB driver. Unexpected target clause before SELECT.' );
+		}
+
+		$omitted_defaults = $explicit_columns
+			? $this->omitted_non_strict_temporal_default_writes( $table_name, $temporary, $target_columns )
+			: array();
+
+		return array(
+			'requested_table_name' => $requested_table_name,
+			'table_name'           => $table_name,
+			'temporary'            => $temporary,
+			'target_columns'       => $target_columns,
+			'target_metadata'      => $target_metadata,
+			'omitted_defaults'     => $omitted_defaults,
+			'source_tokens'        => array_slice( $tokens, $select_index ),
+		);
+	}
+
+	/**
+	 * Reject REPLACE ... SELECT targets that need manual MySQL conflict handling.
+	 *
+	 * Native DuckDB INSERT OR REPLACE can only match one case-sensitive unique
+	 * target. MySQL REPLACE can delete rows matched by any unique key, and MySQL
+	 * case-insensitive keys require manual matching.
+	 *
+	 * @param array{table_name:string,temporary:bool} $shape Target shape.
+	 */
+	private function assert_replace_select_native_conflict_handling_safe( array $shape ): void {
+		$unique_sets              = $this->unique_key_column_sets( $shape['table_name'], $shape['temporary'] );
+		$case_insensitive_columns = $this->case_insensitive_column_names( $shape['table_name'], $shape['temporary'] );
+		if ( count( $unique_sets ) >= 2 || $this->has_case_insensitive_unique_key( $unique_sets, $case_insensitive_columns ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported REPLACE ... SELECT statement in DuckDB driver. Manual conflict handling for multiple unique keys or case-insensitive unique keys is not yet supported.' );
+		}
+	}
+
+	/**
+	 * Check whether a SELECT-input write target needs temporal rewrite work.
+	 *
+	 * @param array{target_metadata:array<int,array<string,mixed>>,omitted_defaults:array<int,array{column_name:string,value_sql:string,data_type:string}>} $shape Target shape.
+	 * @return bool Whether staging/coercion is required.
+	 */
+	private function insert_select_shape_requires_temporal_coercion( array $shape ): bool {
+		if ( count( $shape['omitted_defaults'] ) > 0 ) {
+			return true;
+		}
+
+		foreach ( $shape['target_metadata'] as $metadata ) {
+			if ( $this->is_temporal_write_data_type( $this->mysql_column_data_type( $metadata ) ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Materialize SELECT output into a temporary stage and return ordered columns.
+	 *
+	 * @param string $source_sql Translated DuckDB SELECT SQL.
+	 * @param string $purpose    Stage purpose suffix.
+	 * @return array{table_name:string,columns:string[]}
+	 */
+	private function create_select_write_stage( string $source_sql, string $purpose ): array {
+		$stage_table = $this->select_write_stage_table_name( $purpose );
+		$this->execute_duckdb_query(
+			'CREATE TEMPORARY TABLE '
+				. $this->connection->quote_identifier( $stage_table )
+				. ' AS '
+				. $source_sql,
+			'Failed to stage DuckDB SELECT write source'
+		);
+
+		$stmt    = $this->execute_duckdb_query(
+			'SELECT name FROM pragma_table_info(' . $this->connection->quote( $stage_table ) . ') ORDER BY cid',
+			'Failed to inspect DuckDB SELECT write source'
+		);
+		$columns = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN ) as $column_name ) {
+			$columns[] = (string) $column_name;
+		}
+
+		return array(
+			'table_name' => $stage_table,
+			'columns'    => $columns,
+		);
+	}
+
+	/**
+	 * Build a unique temporary stage table name.
+	 *
+	 * @param string $purpose Stage purpose suffix.
+	 * @return string Stage table name.
+	 */
+	private function select_write_stage_table_name( string $purpose ): string {
+		return '__wp_duckdb_' . $purpose . '_' . str_replace( '.', '_', uniqid( '', true ) );
+	}
+
+	/**
+	 * Drop a temporary SELECT write stage.
+	 *
+	 * @param string $stage_table Stage table name.
+	 */
+	private function drop_select_write_stage( string $stage_table ): void {
+		$sql = 'DROP TABLE IF EXISTS ' . $this->connection->quote_identifier( $stage_table );
+		try {
+			$this->execute_duckdb_query( $sql, 'Failed to clean up DuckDB SELECT write source' );
+		} catch ( Throwable $e ) {
+			// Keep the original write/validation exception visible to callers.
+		} finally {
+			if ( end( $this->last_duckdb_queries ) === $sql ) {
+				array_pop( $this->last_duckdb_queries );
+			}
+		}
+	}
+
+	/**
+	 * Build INSERT/REPLACE SELECT target columns, source projections, and validations.
+	 *
+	 * @param array{target_columns:string[],target_metadata:array<int,array<string,mixed>>,omitted_defaults:array<int,array{column_name:string,value_sql:string,data_type:string}>} $shape Target shape.
+	 * @param string[] $stage_columns Ordered staged SELECT output columns.
+	 * @param bool     $coalesce_select_nulls Whether non-strict temporal NOT NULL NULLs should become implicit defaults.
+	 * @param string   $statement Statement name for errors.
+	 * @return array{columns:string[],expressions:string[],validations:array<int,array{data_type:string,invalid_display_sql:string}>}
+	 */
+	private function build_insert_select_projection( array $shape, array $stage_columns, bool $coalesce_select_nulls, string $statement ): array {
+		if ( count( $stage_columns ) !== count( $shape['target_columns'] ) ) {
+			throw new WP_DuckDB_Driver_Exception( $statement . ' ... SELECT column count does not match target column count in DuckDB driver.' );
+		}
+
+		$columns     = array();
+		$expressions = array();
+		$validations = array();
+		foreach ( $shape['target_columns'] as $offset => $column_name ) {
+			$source_sql = $this->connection->quote_identifier( '__src' )
+				. '.'
+				. $this->connection->quote_identifier( $stage_columns[ $offset ] );
+			$metadata   = $shape['target_metadata'][ $offset ];
+
+			$validation = $this->temporal_write_validation_for_column( $metadata, array(), $source_sql );
+			if ( null !== $validation ) {
+				$validations[] = $validation;
+			}
+
+			$columns[]     = $column_name;
+			$expressions[] = $this->coerce_write_value_for_column_sql(
+				$metadata,
+				array(),
+				$source_sql,
+				$coalesce_select_nulls
+			);
+		}
+
+		foreach ( $shape['omitted_defaults'] as $default_write ) {
+			$columns[]     = $default_write['column_name'];
+			$expressions[] = $default_write['value_sql'];
+		}
+
+		return array(
+			'columns'     => $columns,
+			'expressions' => $expressions,
+			'validations' => $validations,
+		);
+	}
+
+	/**
+	 * Validate strict temporal staged values before mutating the target table.
+	 *
+	 * @param string $stage_table Stage table name.
+	 * @param array<int,array{data_type:string,invalid_display_sql:string}> $validations Validation expressions.
+	 * @param string $context Failure context.
+	 */
+	private function validate_staged_temporal_write( string $stage_table, array $validations, string $context ): void {
+		foreach ( $validations as $validation ) {
+			$stmt = $this->execute_duckdb_query(
+				'SELECT ('
+					. $validation['invalid_display_sql']
+					. ') AS invalid_display FROM '
+					. $this->connection->quote_identifier( $stage_table )
+					. ' AS '
+					. $this->connection->quote_identifier( '__src' )
+					. ' WHERE ('
+					. $validation['invalid_display_sql']
+					. ') IS NOT NULL LIMIT 1',
+				$context
+			);
+
+			$result = $stmt->fetch( PDO::FETCH_ASSOC );
+			if ( false !== $result && null !== $result['invalid_display'] ) {
+				throw new WP_DuckDB_Driver_Exception(
+					'Incorrect ' . $validation['data_type'] . " value: '" . (string) $result['invalid_display'] . "'"
+				);
+			}
+		}
+	}
+
+	/**
+	 * Quote an identifier list for generated INSERT targets.
+	 *
+	 * @param string[] $identifiers Identifiers.
+	 * @return string SQL identifier list.
+	 */
+	private function quote_identifier_list( array $identifiers ): string {
+		$quoted = array();
+		foreach ( $identifiers as $identifier ) {
+			$quoted[] = $this->connection->quote_identifier( $identifier );
+		}
+
+		return implode( ', ', $quoted );
+	}
+
+	/**
 	 * Translate MySQL INSERT/REPLACE ... VALUES to DuckDB with temporal write coercion.
 	 *
 	 * @param WP_Parser_Token[] $tokens      MySQL tokens.
@@ -11783,7 +12130,7 @@ class WP_DuckDB_Driver {
 					array_slice(
 						$tokens,
 						$table_index,
-						(null === $end_index ? count( $tokens ) : $end_index) - $table_index
+						( null === $end_index ? count( $tokens ) : $end_index ) - $table_index
 					)
 				);
 		}
@@ -11830,9 +12177,9 @@ class WP_DuckDB_Driver {
 		$supplied     = array();
 
 		foreach ( $assignments as $assignment ) {
-			$columns[] = $assignment['column_sql'];
+			$columns[]  = $assignment['column_sql'];
 			$supplied[] = $assignment['column_name'];
-			$value_sql = $assignment['value_sql'];
+			$value_sql  = $assignment['value_sql'];
 			if ( isset( $metadata_map[ strtolower( $assignment['column_name'] ) ] ) ) {
 				$value_sql = $this->coerce_write_value_for_column_sql(
 					$metadata_map[ strtolower( $assignment['column_name'] ) ],
@@ -12193,10 +12540,10 @@ class WP_DuckDB_Driver {
 				);
 			}
 
-			$values_by_column    = array();
-			$ordered_row         = array();
-			$coerced_values      = array();
-			$validation_values   = array();
+			$values_by_column  = array();
+			$ordered_row       = array();
+			$coerced_values    = array();
+			$validation_values = array();
 			foreach ( $columns as $offset => $column_name ) {
 				$value_sql = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
 				if ( $coerce_for_storage && isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
@@ -12226,7 +12573,7 @@ class WP_DuckDB_Driver {
 			}
 			foreach ( $omitted_defaults as $default_write ) {
 				$values_by_column[ strtolower( $default_write['column_name'] ) ] = $default_write['value_sql'];
-				$ordered_row[]                                                   = $default_write['value_sql'];
+				$ordered_row[] = $default_write['value_sql'];
 			}
 			$rows[]                     = $values_by_column;
 			$ordered_rows[]             = $ordered_row;
@@ -12546,13 +12893,13 @@ class WP_DuckDB_Driver {
 	 */
 	private function temporal_try_cast_formatted_sql( string $data_type, string $display_sql ): string {
 		if ( 'date' === $data_type ) {
-			return "strftime(TRY_CAST(" . $display_sql . " AS DATE), '%Y-%m-%d')";
+			return 'strftime(TRY_CAST(' . $display_sql . " AS DATE), '%Y-%m-%d')";
 		}
 		if ( 'time' === $data_type ) {
 			return 'substr(CAST(TRY_CAST(' . $display_sql . ' AS TIME) AS VARCHAR), 1, 8)';
 		}
 
-		return "strftime(TRY_CAST(" . $display_sql . " AS TIMESTAMP), '%Y-%m-%d %H:%M:%S')";
+		return 'strftime(TRY_CAST(' . $display_sql . " AS TIMESTAMP), '%Y-%m-%d %H:%M:%S')";
 	}
 
 	/**
@@ -12683,14 +13030,14 @@ class WP_DuckDB_Driver {
 			}
 
 			foreach ( $row as $validation ) {
-				$stmt = $this->execute_duckdb_query(
+				$stmt   = $this->execute_duckdb_query(
 					'SELECT (' . $validation['invalid_display_sql'] . ') AS invalid_display',
 					$context
 				);
 				$result = $stmt->fetch( PDO::FETCH_ASSOC );
 				if ( false !== $result && null !== $result['invalid_display'] ) {
 					throw new WP_DuckDB_Driver_Exception(
-						"Incorrect " . $validation['data_type'] . " value: '" . (string) $result['invalid_display'] . "'"
+						'Incorrect ' . $validation['data_type'] . " value: '" . (string) $result['invalid_display'] . "'"
 					);
 				}
 			}
