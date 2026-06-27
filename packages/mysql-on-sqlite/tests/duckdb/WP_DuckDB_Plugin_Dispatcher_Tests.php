@@ -203,6 +203,100 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( array(), $result['update_col_info'] );
 	}
 
+	public function test_duckdb_wpdb_query_surface_provider(): void {
+		$result = $this->run_query_surface_state_script();
+		$cases  = $result['cases'];
+
+		$this->assertTrue( $result['connected'] );
+
+		$this->assertSame( 1, $cases['select_one_row']['return'] );
+		$this->assertSame( 0, $cases['select_one_row']['rows_affected'] );
+		$this->assertSame( 1, $cases['select_one_row']['num_rows'] );
+		$this->assertSame( 1, $cases['select_one_row']['last_result_count'] );
+		$this->assertSame( array( 'answer' ), $cases['select_one_row']['col_info_names'] );
+		$this->assertSame( '', $cases['select_one_row']['last_error'] );
+
+		$this->assertSame( 0, $cases['select_zero_rows']['return'] );
+		$this->assertSame( 0, $cases['select_zero_rows']['rows_affected'] );
+		$this->assertSame( 0, $cases['select_zero_rows']['num_rows'] );
+		$this->assertSame( 0, $cases['select_zero_rows']['last_result_count'] );
+		$this->assertSame( array( 'ID', 'post_title' ), $cases['select_zero_rows']['col_info_names'] );
+
+		$this->assertSame( 1, $cases['show_full_tables']['return'] );
+		$this->assertSame( 1, $cases['show_full_tables']['num_rows'] );
+		$this->assertSame(
+			array( 'Tables_in_wordpress_test', 'Table_type' ),
+			$cases['show_full_tables']['col_info_names']
+		);
+
+		$this->assertSame( 2, $cases['show_columns']['return'] );
+		$this->assertSame( 2, $cases['show_columns']['num_rows'] );
+		$this->assertSame(
+			array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+			$cases['show_columns']['col_info_names']
+		);
+
+		$this->assertSame( 1, $cases['check_table']['return'] );
+		$this->assertSame( 1, $cases['check_table']['num_rows'] );
+		$this->assertSame( array( 'Table', 'Op', 'Msg_type', 'Msg_text' ), $cases['check_table']['col_info_names'] );
+
+		$this->assertSame( 1, $cases['insert_row']['return'] );
+		$this->assertSame( 1, $cases['insert_row']['rows_affected'] );
+		$this->assertSame( 0, $cases['insert_row']['num_rows'] );
+		$this->assertSame( 0, $cases['insert_row']['last_result_count'] );
+		$this->assertSame( 11, $cases['insert_row']['insert_id'] );
+		$this->assertSame( array(), $cases['insert_row']['col_info_names'] );
+
+		$this->assertSame( 1, $cases['update_changed']['return'] );
+		$this->assertSame( 1, $cases['update_changed']['rows_affected'] );
+		$this->assertSame( 0, $cases['update_changed']['num_rows'] );
+		$this->assertSame( array(), $cases['update_changed']['col_info_names'] );
+
+		$this->assertSame( 0, $cases['update_no_match']['return'] );
+		$this->assertSame( 0, $cases['update_no_match']['rows_affected'] );
+		$this->assertSame( 0, $cases['update_no_match']['num_rows'] );
+
+		$this->assertSame( 1, $cases['delete_row']['return'] );
+		$this->assertSame( 1, $cases['delete_row']['rows_affected'] );
+		$this->assertSame( 0, $cases['delete_row']['num_rows'] );
+
+		$this->assertSame( 1, $cases['replace_row']['return'] );
+		$this->assertSame( 1, $cases['replace_row']['rows_affected'] );
+		$this->assertSame( 12, $cases['replace_row']['insert_id'] );
+		$this->assertSame( array(), $cases['replace_row']['col_info_names'] );
+
+		$this->assertTrue( $cases['create_table']['return'] );
+		$this->assertSame( 0, $cases['create_table']['rows_affected'] );
+		$this->assertSame( 0, $cases['create_table']['num_rows'] );
+		$this->assertSame( array(), $cases['create_table']['col_info_names'] );
+	}
+
+	public function test_duckdb_wpdb_last_error_surface_provider(): void {
+		$result = $this->run_query_surface_state_script();
+		$cases  = $result['cases'];
+
+		$this->assertTrue( $result['connected'] );
+
+		$this->assertFalse( $cases['select_failure']['return'] );
+		$this->assertSame( 'Synthetic select failure.', $cases['select_failure']['last_error'] );
+		$this->assertSame( 0, $cases['select_failure']['num_rows'] );
+		$this->assertSame( 0, $cases['select_failure']['rows_affected'] );
+
+		$this->assertSame( 1, $cases['select_after_failure']['return'] );
+		$this->assertSame( '', $cases['select_after_failure']['last_error'] );
+		$this->assertSame( 1, $cases['select_after_failure']['num_rows'] );
+
+		$this->assertFalse( $cases['insert_failure']['return'] );
+		$this->assertSame( 'Synthetic insert failure.', $cases['insert_failure']['last_error'] );
+		$this->assertSame( 0, $cases['insert_failure']['insert_id'] );
+		$this->assertSame( 0, $cases['insert_failure']['num_rows'] );
+		$this->assertSame( 0, $cases['insert_failure']['rows_affected'] );
+
+		$this->assertSame( 1, $cases['insert_after_failure']['return'] );
+		$this->assertSame( '', $cases['insert_after_failure']['last_error'] );
+		$this->assertSame( 13, $cases['insert_after_failure']['insert_id'] );
+	}
+
 	public function test_duckdb_wpdb_db_connect_sets_filtered_sql_mode(): void {
 		$result = $this->run_sql_mode_boot_state_script( false );
 
@@ -723,6 +817,245 @@ echo json_encode(
 		'select_col_info' => $select_col_info,
 		'update_return'   => $update_return,
 		'update_col_info' => $update_col_info,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_query_surface_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+class WP_DuckDB_Plugin_Query_Surface_Test_Driver extends WP_DuckDB_Driver {
+	private $insert_id = 0;
+
+	public function __construct() {}
+
+	public function query( string $sql ): WP_DuckDB_Result_Statement {
+		if ( 'SELECT @@SESSION.sql_mode' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( '@@SESSION.sql_mode' ),
+				array(
+					array( 'NO_ENGINE_SUBSTITUTION' ),
+				),
+				0
+			);
+		}
+
+		if ( "SET SESSION sql_mode='NO_ENGINE_SUBSTITUTION'" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		if ( 'SELECT 42 AS answer' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'answer' ),
+				array(
+					array( 42 ),
+				),
+				0,
+				array(
+					array(
+						'name'             => 'answer',
+						'native_type'      => 'BIGINT',
+						'len'              => 20,
+						'precision'        => 0,
+						'mysqli:orgname'   => 'answer',
+						'mysqli:db'        => 'wordpress_test',
+						'mysqli:charsetnr' => 63,
+						'mysqli:flags'     => 0,
+						'mysqli:type'      => 8,
+					),
+				)
+			);
+		}
+
+		if ( 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'ID', 'post_title' ),
+				array(),
+				0,
+				array(
+					array(
+						'name'             => 'ID',
+						'native_type'      => 'LONGLONG',
+						'table'            => 'wp_posts',
+						'len'              => 20,
+						'precision'        => 0,
+						'mysqli:orgname'   => 'ID',
+						'mysqli:orgtable'  => 'wp_posts',
+						'mysqli:db'        => 'wordpress_test',
+						'mysqli:charsetnr' => 63,
+						'mysqli:flags'     => 0,
+						'mysqli:type'      => 8,
+					),
+					array(
+						'name'             => 'post_title',
+						'native_type'      => 'VAR_STRING',
+						'table'            => 'wp_posts',
+						'len'              => 764,
+						'precision'        => 0,
+						'mysqli:orgname'   => 'post_title',
+						'mysqli:orgtable'  => 'wp_posts',
+						'mysqli:db'        => 'wordpress_test',
+						'mysqli:charsetnr' => 255,
+						'mysqli:flags'     => 0,
+						'mysqli:type'      => 253,
+					),
+				)
+			);
+		}
+
+		if ( 'SHOW FULL TABLES' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'Tables_in_wordpress_test', 'Table_type' ),
+				array(
+					array( 'wp_posts', 'BASE TABLE' ),
+				)
+			);
+		}
+
+		if ( 'SHOW COLUMNS FROM wp_posts' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ),
+				array(
+					array( 'ID', 'bigint unsigned', 'NO', 'PRI', null, 'auto_increment' ),
+					array( 'post_title', 'text', 'NO', '', null, '' ),
+				)
+			);
+		}
+
+		if ( 'CHECK TABLE wp_posts' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+				array(
+					array( 'wordpress_test.wp_posts', 'check', 'status', 'OK' ),
+				)
+			);
+		}
+
+		if ( "INSERT INTO wp_posts (post_title) VALUES ('hello')" === $sql ) {
+			$this->insert_id = 11;
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		if ( "UPDATE wp_posts SET post_title = 'changed' WHERE ID = 11" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		if ( "UPDATE wp_posts SET post_title = 'missing' WHERE ID = 999" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		if ( 'DELETE FROM wp_posts WHERE ID = 11' === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		if ( "REPLACE INTO wp_posts (ID, post_title) VALUES (12, 'replacement')" === $sql ) {
+			$this->insert_id = 12;
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		if ( 'CREATE TABLE wp_surface (id INTEGER)' === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		if ( 'SELECT BROKEN' === $sql ) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Synthetic select failure.',
+				'HY000',
+				new RuntimeException( 'Native synthetic select failure.' )
+			);
+		}
+
+		if ( 'INSERT INTO wp_posts VALUES (BROKEN)' === $sql ) {
+			throw new WP_DuckDB_Driver_Exception(
+				'Synthetic insert failure.',
+				'HY000',
+				new RuntimeException( 'Native synthetic insert failure.' )
+			);
+		}
+
+		if ( "INSERT INTO wp_posts (post_title) VALUES ('after-failure')" === $sql ) {
+			$this->insert_id = 13;
+			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		throw new RuntimeException( 'Unexpected query: ' . $sql );
+	}
+
+	public function get_insert_id(): int {
+		return $this->insert_id;
+	}
+}
+
+class WP_DuckDB_Plugin_Query_Surface_Test_DB extends WP_DuckDB_DB {
+	public function exported_state( $query_return ) {
+		$this->load_col_info();
+		$col_info = null === $this->col_info
+			? null
+			: array_map(
+				function ( $column ) {
+					return (array) $column;
+				},
+				$this->col_info
+			);
+
+		return array(
+			'return'            => $query_return,
+			'last_query'        => $this->last_query,
+			'rows_affected'     => $this->rows_affected,
+			'num_rows'          => $this->num_rows,
+			'last_result_count' => count( $this->last_result ),
+			'last_error'        => $this->last_error,
+			'insert_id'         => $this->insert_id,
+			'col_info_names'    => is_array( $col_info )
+				? array_map(
+					function ( $column ) {
+						return $column['name'];
+					},
+					$col_info
+				)
+				: null,
+		);
+	}
+}
+
+function wp_duckdb_plugin_query_surface_case( WP_DuckDB_Plugin_Query_Surface_Test_DB $db, $sql ) {
+	$query_return = $db->query( $sql );
+	return $db->exported_state( $query_return );
+}
+
+$GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Query_Surface_Test_Driver();
+$db                        = new WP_DuckDB_Plugin_Query_Surface_Test_DB( 'wordpress_test' );
+$connected                 = $db->db_connect( false );
+$cases                     = array(
+	'select_one_row'       => wp_duckdb_plugin_query_surface_case( $db, 'SELECT 42 AS answer' ),
+	'select_zero_rows'     => wp_duckdb_plugin_query_surface_case( $db, 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' ),
+	'show_full_tables'     => wp_duckdb_plugin_query_surface_case( $db, 'SHOW FULL TABLES' ),
+	'show_columns'         => wp_duckdb_plugin_query_surface_case( $db, 'SHOW COLUMNS FROM wp_posts' ),
+	'check_table'          => wp_duckdb_plugin_query_surface_case( $db, 'CHECK TABLE wp_posts' ),
+	'insert_row'           => wp_duckdb_plugin_query_surface_case( $db, "INSERT INTO wp_posts (post_title) VALUES ('hello')" ),
+	'update_changed'       => wp_duckdb_plugin_query_surface_case( $db, "UPDATE wp_posts SET post_title = 'changed' WHERE ID = 11" ),
+	'update_no_match'      => wp_duckdb_plugin_query_surface_case( $db, "UPDATE wp_posts SET post_title = 'missing' WHERE ID = 999" ),
+	'delete_row'           => wp_duckdb_plugin_query_surface_case( $db, 'DELETE FROM wp_posts WHERE ID = 11' ),
+	'replace_row'          => wp_duckdb_plugin_query_surface_case( $db, "REPLACE INTO wp_posts (ID, post_title) VALUES (12, 'replacement')" ),
+	'create_table'         => wp_duckdb_plugin_query_surface_case( $db, 'CREATE TABLE wp_surface (id INTEGER)' ),
+	'select_failure'       => wp_duckdb_plugin_query_surface_case( $db, 'SELECT BROKEN' ),
+	'select_after_failure' => wp_duckdb_plugin_query_surface_case( $db, 'SELECT 42 AS answer' ),
+	'insert_failure'       => wp_duckdb_plugin_query_surface_case( $db, 'INSERT INTO wp_posts VALUES (BROKEN)' ),
+	'insert_after_failure' => wp_duckdb_plugin_query_surface_case( $db, "INSERT INTO wp_posts (post_title) VALUES ('after-failure')" ),
+);
+
+echo json_encode(
+	array(
+		'connected' => $connected,
+		'cases'     => $cases,
 	)
 );
 PHP;

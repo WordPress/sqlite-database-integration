@@ -188,6 +188,143 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_result_statement_fetch_mode_reference_provider(): void {
+		$cases = array(
+			'fetch_both'     => array(
+				'columns'  => array( 'id', 'name' ),
+				'rows'     => array(
+					array( 1, 'Ada' ),
+				),
+				'mode'     => PDO::FETCH_BOTH,
+				'method'   => 'fetch',
+				'expected' => array(
+					'id'   => 1,
+					'name' => 'Ada',
+					0      => 1,
+					1      => 'Ada',
+				),
+			),
+			'fetch_num'      => array(
+				'columns'  => array( 'id', 'name' ),
+				'rows'     => array(
+					array( 1, 'Ada' ),
+				),
+				'mode'     => PDO::FETCH_NUM,
+				'method'   => 'fetch',
+				'expected' => array( 1, 'Ada' ),
+			),
+			'fetch_assoc'    => array(
+				'columns'  => array( '1', 'abc', '2', '2' ),
+				'rows'     => array(
+					array( '1', 'abc', '2', 'two' ),
+				),
+				'mode'     => PDO::FETCH_ASSOC,
+				'method'   => 'fetch',
+				'expected' => array(
+					1     => '1',
+					'abc' => 'abc',
+					2     => 'two',
+				),
+			),
+			'fetch_named'    => array(
+				'columns'  => array( 'id', 'id', 'name' ),
+				'rows'     => array(
+					array( 1, 2, 'Ada' ),
+				),
+				'mode'     => PDO::FETCH_NAMED,
+				'method'   => 'fetch',
+				'expected' => array(
+					'id'   => array( 1, 2 ),
+					'name' => 'Ada',
+				),
+			),
+			'fetch_obj'      => array(
+				'columns'  => array( 'id', 'name' ),
+				'rows'     => array(
+					array( 1, 'Ada' ),
+				),
+				'mode'     => PDO::FETCH_OBJ,
+				'method'   => 'fetch',
+				'expected' => (object) array(
+					'id'   => 1,
+					'name' => 'Ada',
+				),
+			),
+			'fetch_column'   => array(
+				'columns'  => array( 'id', 'name' ),
+				'rows'     => array(
+					array( 1, 'Ada' ),
+					array( 2, 'Grace' ),
+				),
+				'mode'     => PDO::FETCH_COLUMN,
+				'args'     => array( 1 ),
+				'method'   => 'fetchAll',
+				'expected' => array( 'Ada', 'Grace' ),
+			),
+			'fetch_key_pair' => array(
+				'columns'  => array( 'id', 'name' ),
+				'rows'     => array(
+					array( 1, 'Ada' ),
+					array( 2, 'Grace' ),
+				),
+				'mode'     => PDO::FETCH_KEY_PAIR,
+				'method'   => 'fetchAll',
+				'expected' => array(
+					1 => 'Ada',
+					2 => 'Grace',
+				),
+			),
+			'fetch_class'    => array(
+				'columns'  => array( 'id', 'name' ),
+				'rows'     => array(
+					array( 1, 'Ada' ),
+				),
+				'mode'     => PDO::FETCH_CLASS,
+				'args'     => array( stdClass::class ),
+				'method'   => 'fetch',
+				'expected' => (object) array(
+					'id'   => 1,
+					'name' => 'Ada',
+				),
+			),
+			'fetch_func'     => array(
+				'columns'  => array( 'first', 'second' ),
+				'rows'     => array(
+					array( 'a', 'b' ),
+					array( 'c', 'd' ),
+				),
+				'mode'     => PDO::FETCH_FUNC,
+				'args'     => array(
+					function ( $first, $second ) {
+						return $first . ':' . $second;
+					},
+				),
+				'method'   => 'fetchAll',
+				'expected' => array( 'a:b', 'c:d' ),
+			),
+		);
+
+		foreach ( $cases as $label => $case ) {
+			$stmt = new WP_DuckDB_Result_Statement( $case['columns'], $case['rows'] );
+			$args = $case['args'] ?? array();
+
+			if ( 'fetchAll' === $case['method'] ) {
+				$actual = $stmt->fetchAll( $case['mode'], ...$args );
+			} else {
+				$this->assertTrue( $stmt->setFetchMode( $case['mode'], ...$args ), $label );
+				$actual = $stmt->fetch();
+			}
+
+			if ( is_object( $case['expected'] ) ) {
+				$this->assertInstanceOf( get_class( $case['expected'] ), $actual, $label );
+				$this->assertSame( (array) $case['expected'], (array) $actual, $label );
+			} else {
+				$this->assertSame( $case['expected'], $actual, $label );
+			}
+			$this->assertFalse( $stmt->fetch(), $label );
+		}
+	}
+
 	public function test_result_statement_cursor_and_metadata_methods_match_pdo_shape(): void {
 		$stmt = new WP_DuckDB_Result_Statement(
 			array( 'id', 'name' ),
@@ -589,6 +726,117 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$delete = $connection->query( 'DELETE FROM write_counts WHERE id IN (1, 2)' );
 		$this->assertSame( 0, $delete->columnCount() );
 		$this->assertSame( 2, $delete->rowCount() );
+	}
+
+	public function test_live_duckdb_statement_surface_provider(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->query( 'CREATE TABLE live_statement_surface (id INTEGER PRIMARY KEY, label VARCHAR)' );
+		$connection->query( "INSERT INTO live_statement_surface VALUES (1, 'one'), (2, 'two')" );
+
+		$select_cases = array(
+			'count_alias_literal' => array(
+				'sql'          => 'SELECT 7 AS Count',
+				'column_count' => 1,
+				'row_count'    => 0,
+				'meta_name'    => 'Count',
+				'fetch_assoc'  => array( 'Count' => 7 ),
+				'fetch_column' => 7,
+				'fetch_all'    => array(
+					array( 'Count' => 7 ),
+				),
+			),
+			'table_count_alias'   => array(
+				'sql'          => 'SELECT COUNT(*) AS Count FROM live_statement_surface',
+				'column_count' => 1,
+				'row_count'    => 0,
+				'meta_name'    => 'Count',
+				'fetch_assoc'  => array( 'Count' => 2 ),
+				'fetch_column' => 2,
+				'fetch_all'    => array(
+					array( 'Count' => 2 ),
+				),
+			),
+			'two_column_select'   => array(
+				'sql'          => 'SELECT id, label FROM live_statement_surface ORDER BY id LIMIT 1',
+				'column_count' => 2,
+				'row_count'    => 0,
+				'meta_name'    => 'id',
+				'fetch_assoc'  => array(
+					'id'    => 1,
+					'label' => 'one',
+				),
+				'fetch_column' => 1,
+				'fetch_all'    => array(
+					array(
+						'id'    => 1,
+						'label' => 'one',
+					),
+				),
+			),
+			'zero_row_select'     => array(
+				'sql'          => 'SELECT id, label FROM live_statement_surface WHERE id = 999',
+				'column_count' => 2,
+				'row_count'    => 0,
+				'meta_name'    => 'id',
+				'fetch_assoc'  => false,
+				'fetch_column' => false,
+				'fetch_all'    => array(),
+			),
+		);
+
+		foreach ( $select_cases as $label => $case ) {
+			$stmt = $connection->query( $case['sql'] );
+			$this->assertSame( $case['column_count'], $stmt->columnCount(), $label );
+			$this->assertSame( $case['row_count'], $stmt->rowCount(), $label );
+			$this->assertSame( $case['meta_name'], $stmt->getColumnMeta( 0 )['name'], $label );
+			$this->assertSame( '00000', $stmt->errorCode(), $label );
+			$this->assertSame( array( '00000', null, null ), $stmt->errorInfo(), $label );
+			$this->assertSame( $case['fetch_assoc'], $stmt->fetch( PDO::FETCH_ASSOC ), $label );
+			$this->assertFalse( $stmt->fetch(), $label );
+
+			$this->assertSame( $case['fetch_all'], $connection->query( $case['sql'] )->fetchAll( PDO::FETCH_ASSOC ), $label );
+			$this->assertSame( $case['fetch_column'], $connection->query( $case['sql'] )->fetchColumn(), $label );
+		}
+
+		$write_cases = array(
+			'create_table'       => array(
+				'sql'       => 'CREATE TABLE live_statement_writes (id INTEGER PRIMARY KEY, label VARCHAR)',
+				'row_count' => 0,
+			),
+			'insert_rows'        => array(
+				'sql'       => "INSERT INTO live_statement_writes VALUES (1, 'one'), (2, 'two')",
+				'row_count' => 2,
+			),
+			'update_changed'     => array(
+				'sql'       => "UPDATE live_statement_writes SET label = 'updated' WHERE id = 1",
+				'row_count' => 1,
+			),
+			'update_no_match'    => array(
+				'sql'       => "UPDATE live_statement_writes SET label = 'missing' WHERE id = 999",
+				'row_count' => 0,
+			),
+			'insert_or_replace'  => array(
+				'sql'       => "INSERT OR REPLACE INTO live_statement_writes VALUES (2, 'replaced')",
+				'row_count' => 1,
+			),
+			'delete_matched_row' => array(
+				'sql'       => 'DELETE FROM live_statement_writes WHERE id = 1',
+				'row_count' => 1,
+			),
+		);
+
+		foreach ( $write_cases as $label => $case ) {
+			$stmt = $connection->query( $case['sql'] );
+			$this->assertSame( 0, $stmt->columnCount(), $label );
+			$this->assertSame( $case['row_count'], $stmt->rowCount(), $label );
+			$this->assertFalse( $stmt->getColumnMeta( 0 ), $label );
+			$this->assertFalse( $stmt->fetch(), $label );
+			$this->assertSame( array(), $stmt->fetchAll(), $label );
+			$this->assertSame( '00000', $stmt->errorCode(), $label );
+			$this->assertSame( array( '00000', null, null ), $stmt->errorInfo(), $label );
+		}
 	}
 
 	public function test_prepared_statement_binds_positional_parameters(): void {
