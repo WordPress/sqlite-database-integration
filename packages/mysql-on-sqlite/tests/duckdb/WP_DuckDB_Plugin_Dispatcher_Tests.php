@@ -267,6 +267,7 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 			'analyze_table'     => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
 			'optimize_table'    => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
 			'repair_table'      => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			'complex_join'      => array( 'ID', 'post_title', 'meta_value', 'post_title' ),
 		);
 
 		foreach ( $expected_cases as $case_name => $expected_names ) {
@@ -1086,6 +1087,8 @@ class WP_DuckDB_Plugin_Col_Info_Fallback_Test_Driver extends WP_DuckDB_Driver {
 			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
 		}
 
+		$complex_join_sql = 'SELECT p.*, m.meta_value, LENGTH(p.post_title) AS post_title ' .
+			'FROM wp_posts AS p LEFT JOIN wp_postmeta AS m ON m.post_id = p.ID';
 		$statement_columns = array(
 			'SELECT COUNT(*) AS post_count' => array( 'post_count' ),
 			'SELECT FOUND_ROWS() AS found_rows' => array( 'found_rows' ),
@@ -1133,6 +1136,12 @@ class WP_DuckDB_Plugin_Col_Info_Fallback_Test_Driver extends WP_DuckDB_Driver {
 			'ANALYZE TABLE wp_posts' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
 			'OPTIMIZE TABLE wp_posts' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
 			'REPAIR TABLE wp_posts' => array( 'Table', 'Op', 'Msg_type', 'Msg_text' ),
+			$complex_join_sql => array(
+				'ID',
+				'post_title',
+				'meta_value',
+				'post_title',
+			),
 		);
 
 		if ( isset( $statement_columns[ $sql ] ) ) {
@@ -1170,6 +1179,8 @@ function wp_duckdb_plugin_col_info_fallback_case( WP_DuckDB_Plugin_Col_Info_Fall
 $GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Col_Info_Fallback_Test_Driver();
 $db                        = new WP_DuckDB_Plugin_Col_Info_Fallback_Test_DB( 'wordpress_test' );
 $connected                 = $db->db_connect( false );
+$complex_join_sql          = 'SELECT p.*, m.meta_value, LENGTH(p.post_title) AS post_title ' .
+	'FROM wp_posts AS p LEFT JOIN wp_postmeta AS m ON m.post_id = p.ID';
 $cases                     = array(
 	'select_count'      => wp_duckdb_plugin_col_info_fallback_case( $db, 'SELECT COUNT(*) AS post_count' ),
 	'found_rows'        => wp_duckdb_plugin_col_info_fallback_case( $db, 'SELECT FOUND_ROWS() AS found_rows' ),
@@ -1182,6 +1193,7 @@ $cases                     = array(
 	'analyze_table'     => wp_duckdb_plugin_col_info_fallback_case( $db, 'ANALYZE TABLE wp_posts' ),
 	'optimize_table'    => wp_duckdb_plugin_col_info_fallback_case( $db, 'OPTIMIZE TABLE wp_posts' ),
 	'repair_table'      => wp_duckdb_plugin_col_info_fallback_case( $db, 'REPAIR TABLE wp_posts' ),
+	'complex_join'      => wp_duckdb_plugin_col_info_fallback_case( $db, $complex_join_sql ),
 );
 
 echo json_encode(
