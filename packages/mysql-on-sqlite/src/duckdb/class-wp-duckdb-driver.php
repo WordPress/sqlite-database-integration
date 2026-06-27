@@ -1071,16 +1071,18 @@ class WP_DuckDB_Driver {
 			return $statement;
 		}
 
-		$columns = array();
+		$columns     = array();
+		$column_meta = array();
 		for ( $index = 0; $index < $statement->columnCount(); ++$index ) {
-			$meta      = $statement->getColumnMeta( $index );
-			$columns[] = is_array( $meta ) && isset( $meta['name'] ) ? (string) $meta['name'] : (string) $index;
+			$meta          = $statement->getColumnMeta( $index );
+			$column_meta[] = is_array( $meta ) ? $meta : array();
+			$columns[]     = is_array( $meta ) && isset( $meta['name'] ) ? (string) $meta['name'] : (string) $index;
 		}
 
 		$rows             = $statement->fetchAll( PDO::FETCH_NUM );
 		$this->found_rows = count( $rows );
 
-		return new WP_DuckDB_Result_Statement( $columns, $rows, $statement->rowCount() );
+		return new WP_DuckDB_Result_Statement( $columns, $rows, $statement->rowCount(), $column_meta );
 	}
 
 	/**

@@ -6,6 +6,69 @@ require_once __DIR__ . '/WP_DuckDB_TestCase.php';
  * @group duckdb
  */
 class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
+	public function test_record_found_rows_from_result_preserves_column_metadata(): void {
+		$driver = ( new ReflectionClass( WP_DuckDB_Driver::class ) )->newInstanceWithoutConstructor();
+		$source = new WP_DuckDB_Result_Statement(
+			array( 'post_id', 'post_title' ),
+			array(
+				array( 1, 'Hello' ),
+				array( 2, 'World' ),
+			),
+			0,
+			array(
+				array(
+					'name'              => 'post_id',
+					'table'             => 'p',
+					'mysqli:orgname'    => 'ID',
+					'mysqli:orgtable'   => 'wp_posts',
+					'mysqli:db'         => 'wordpress_test',
+					'len'               => 20,
+					'mysqli:charsetnr'  => 63,
+					'mysqli:type'       => 8,
+					'mysqli:custom_key' => 'preserved',
+				),
+				array(
+					'name'             => 'post_title',
+					'table'            => 'p',
+					'mysqli:orgname'   => 'post_title',
+					'mysqli:orgtable'  => 'wp_posts',
+					'mysqli:db'        => 'wordpress_test',
+					'len'              => 764,
+					'mysqli:charsetnr' => 255,
+					'mysqli:type'      => 253,
+				),
+			)
+		);
+
+		$method = new ReflectionMethod( WP_DuckDB_Driver::class, 'record_found_rows_from_result' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$method->setAccessible( true );
+		}
+		$result = $method->invoke( $driver, $source );
+
+		$found_rows = new ReflectionProperty( WP_DuckDB_Driver::class, 'found_rows' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$found_rows->setAccessible( true );
+		}
+
+		$this->assertSame( 2, $found_rows->getValue( $driver ) );
+		$this->assertSame(
+			array(
+				array(
+					'post_id'    => 1,
+					'post_title' => 'Hello',
+				),
+				array(
+					'post_id'    => 2,
+					'post_title' => 'World',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( $source->getColumnMeta( 0 ), $result->getColumnMeta( 0 ) );
+		$this->assertSame( $source->getColumnMeta( 1 ), $result->getColumnMeta( 1 ) );
+	}
+
 	public function test_select_mysql_functions_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -855,6 +918,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 		$read   = $driver->query( 'SELECT @@version, @@version_comment' );
 
+		$this->assertSame( 0, $read->rowCount() );
 		$this->assertSame( array( 'name' => '@@version' ), $read->getColumnMeta( 0 ) );
 		$this->assertSame( array( 'name' => '@@version_comment' ), $read->getColumnMeta( 1 ) );
 		$this->assertSame(
@@ -863,6 +927,11 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'@@version_comment' => 'MySQL Community Server - GPL',
 			),
 			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertFalse( $read->fetch( PDO::FETCH_ASSOC ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
@@ -1830,9 +1899,26 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			('katherine')"
 		);
 
-		$rows = $driver->query(
+		$result = $driver->query(
 			'SELECT SQL_CALC_FOUND_ROWS ID, user_login FROM wp_found_rows_users ORDER BY ID LIMIT 2'
-		)->fetchAll( PDO::FETCH_ASSOC );
+		);
+
+		$this->assertSame( 0, $result->rowCount() );
+		$id_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( 'ID', $id_meta['name'] );
+		$this->assertSame( 'ID', $id_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_found_rows_users', $id_meta['mysqli:orgtable'] );
+		$this->assertSame( 20, $id_meta['len'] );
+		$this->assertSame( 8, $id_meta['mysqli:type'] );
+
+		$login_meta = $result->getColumnMeta( 1 );
+		$this->assertSame( 'user_login', $login_meta['name'] );
+		$this->assertSame( 'user_login', $login_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_found_rows_users', $login_meta['mysqli:orgtable'] );
+		$this->assertSame( 240, $login_meta['len'] );
+		$this->assertSame( 253, $login_meta['mysqli:type'] );
+
+		$rows = $result->fetchAll( PDO::FETCH_ASSOC );
 
 		$this->assertSame(
 			array(
@@ -1869,9 +1955,23 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 
-		$driver->query( 'SELECT id, label FROM wp_found_rows_state ORDER BY id' );
+		$plain = $driver->query( 'SELECT id, label FROM wp_found_rows_state ORDER BY id LIMIT 2' );
+		$this->assertSame( 0, $plain->rowCount() );
 		$this->assertSame(
-			array( array( 'found_rows' => 3 ) ),
+			array(
+				array(
+					'id'    => 1,
+					'label' => 'one',
+				),
+				array(
+					'id'    => 2,
+					'label' => 'two',
+				),
+			),
+			$plain->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
 			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame(
@@ -4353,7 +4453,13 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')"
 		);
 
-		$rows = $driver->query( 'SHOW TABLE STATUS FROM wp' )->fetchAll( PDO::FETCH_ASSOC );
+		$status = $driver->query( 'SHOW TABLE STATUS FROM wp' );
+		$this->assertSame( 0, $status->rowCount() );
+		$this->assertSame( array( 'name' => 'Name' ), $status->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => 'Engine' ), $status->getColumnMeta( 1 ) );
+		$this->assertSame( array( 'name' => 'Comment' ), $status->getColumnMeta( 17 ) );
+
+		$rows = $status->fetchAll( PDO::FETCH_ASSOC );
 
 		$this->assertSame(
 			array(
@@ -4417,6 +4523,12 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$internal = $driver->query( "SHOW TABLE STATUS LIKE '__wp_duckdb_%'" )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array(), $internal );
+
+		$driver->query( 'SHOW TABLE STATUS FROM wp' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_check_table_returns_mysql_shaped_status_rows(): void {
