@@ -3134,6 +3134,83 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertFalse( $update->getColumnMeta( 0 ) );
 	}
 
+	public function test_direct_column_metadata_type_matrix_for_supported_mysql_types(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$this->createMetadataTypeMatrixTable( $driver );
+
+		$result = $driver->query( 'SELECT * FROM metadata_type_matrix WHERE id = 0' );
+
+		$this->assertSame( 13, $result->columnCount() );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+
+		foreach ( $this->metadataTypeMatrixResultMetadata() as $index => $expected ) {
+			$metadata = $result->getColumnMeta( $index );
+			foreach ( $expected as $key => $value ) {
+				$this->assertArrayHasKey( $key, $metadata, $expected['name'] . ' metadata key ' . $key );
+				$this->assertSame( $value, $metadata[ $key ], $expected['name'] . ' metadata key ' . $key );
+			}
+		}
+
+		$this->assertFalse( $result->getColumnMeta( 13 ) );
+	}
+
+	public function test_type_default_charset_metadata_rows_for_supported_mysql_types(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$this->createMetadataTypeMatrixTable( $driver );
+
+		$show_columns = $this->metadataTypeMatrixShowColumnRows();
+		$this->assertSame(
+			$show_columns,
+			$driver->query( 'SHOW COLUMNS FROM metadata_type_matrix' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			$show_columns,
+			$driver->query( 'DESCRIBE metadata_type_matrix' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			$show_columns,
+			$driver->query( 'DESC metadata_type_matrix' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$show_full_columns = $this->metadataTypeMatrixShowFullColumnRows();
+		$this->assertSame(
+			$show_full_columns,
+			$driver->query( 'SHOW FULL COLUMNS FROM metadata_type_matrix' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			$show_full_columns,
+			$driver->query( 'SHOW FULL FIELDS FROM metadata_type_matrix' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			$this->metadataTypeMatrixInformationSchemaRows(),
+			$driver->query(
+				"SELECT COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE,
+					CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH,
+					NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION,
+					CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE, COLUMN_KEY,
+					EXTRA, COLUMN_COMMENT
+				FROM information_schema.columns
+				WHERE table_schema = 'wp' AND table_name = 'metadata_type_matrix'
+				ORDER BY ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_expression_and_admin_result_metadata_provider_documents_name_only_contract(): void {
 		$this->requireDuckDBRuntime();
 
@@ -9460,6 +9537,570 @@ SQL,
 		$this->expectException( WP_DuckDB_Driver_Exception::class );
 		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN NOT NULL requires a DEFAULT for non-empty tables.' );
 		$driver->query( 'ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL' );
+	}
+
+	private function createMetadataTypeMatrixTable( WP_DuckDB_Driver $driver ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$driver->query(
+			"CREATE TABLE metadata_type_matrix (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				flag TINYINT UNSIGNED NOT NULL DEFAULT '10',
+				small_code SMALLINT NOT NULL DEFAULT 14,
+				medium_code MEDIUMINT,
+				count_col INT UNSIGNED,
+				score DOUBLE,
+				price DECIMAL(10,2) DEFAULT 1.25,
+				slug CHAR(10),
+				title VARCHAR(20) NOT NULL DEFAULT 'untitled',
+				body LONGTEXT,
+				created_at DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				updated_at TIMESTAMP NULL,
+				payload BLOB
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+	}
+
+	private function metadataTypeMatrixResultMetadata(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return array(
+			array(
+				'native_type'      => 'LONGLONG',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'id',
+				'len'              => 20,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'bigint(20) unsigned',
+				'mysqli:orgname'   => 'id',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 8,
+			),
+			array(
+				'native_type'      => 'TINY',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'flag',
+				'len'              => 3,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'tinyint unsigned',
+				'mysqli:orgname'   => 'flag',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 1,
+			),
+			array(
+				'native_type'      => 'SHORT',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'small_code',
+				'len'              => 6,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'smallint',
+				'mysqli:orgname'   => 'small_code',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 2,
+			),
+			array(
+				'native_type'      => 'INT24',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'medium_code',
+				'len'              => 9,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'mediumint',
+				'mysqli:orgname'   => 'medium_code',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 9,
+			),
+			array(
+				'native_type'      => 'LONG',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'count_col',
+				'len'              => 10,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'int unsigned',
+				'mysqli:orgname'   => 'count_col',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 3,
+			),
+			array(
+				'native_type'      => 'DOUBLE',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'score',
+				'len'              => 22,
+				'precision'        => 31,
+				'duckdb:decl_type' => 'double',
+				'mysqli:orgname'   => 'score',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 5,
+			),
+			array(
+				'native_type'      => 'NEWDECIMAL',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'price',
+				'len'              => 12,
+				'precision'        => 2,
+				'duckdb:decl_type' => 'decimal(10, 2)',
+				'mysqli:orgname'   => 'price',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 246,
+			),
+			array(
+				'native_type'      => 'STRING',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'slug',
+				'len'              => 40,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'char(10)',
+				'mysqli:orgname'   => 'slug',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 254,
+			),
+			array(
+				'native_type'      => 'VAR_STRING',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'title',
+				'len'              => 80,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'varchar(20)',
+				'mysqli:orgname'   => 'title',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 253,
+			),
+			array(
+				'native_type'      => 'BLOB',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'body',
+				'len'              => 4294967295,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'longtext',
+				'mysqli:orgname'   => 'body',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 255,
+				'mysqli:type'      => 252,
+			),
+			array(
+				'native_type'      => 'DATETIME',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'created_at',
+				'len'              => 19,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'datetime',
+				'mysqli:orgname'   => 'created_at',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 12,
+			),
+			array(
+				'native_type'      => 'TIMESTAMP',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'updated_at',
+				'len'              => 19,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'timestamp',
+				'mysqli:orgname'   => 'updated_at',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 7,
+			),
+			array(
+				'native_type'      => 'BLOB',
+				'table'            => 'metadata_type_matrix',
+				'name'             => 'payload',
+				'len'              => 65535,
+				'precision'        => 0,
+				'duckdb:decl_type' => 'blob',
+				'mysqli:orgname'   => 'payload',
+				'mysqli:orgtable'  => 'metadata_type_matrix',
+				'mysqli:db'        => 'wp',
+				'mysqli:charsetnr' => 63,
+				'mysqli:type'      => 252,
+			),
+		);
+	}
+
+	private function metadataTypeMatrixShowColumnRows(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return array(
+			array(
+				'Field'   => 'id',
+				'Type'    => 'bigint(20) unsigned',
+				'Null'    => 'NO',
+				'Key'     => 'PRI',
+				'Default' => null,
+				'Extra'   => 'auto_increment',
+			),
+			array(
+				'Field'   => 'flag',
+				'Type'    => 'tinyint unsigned',
+				'Null'    => 'NO',
+				'Key'     => '',
+				'Default' => '10',
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'small_code',
+				'Type'    => 'smallint',
+				'Null'    => 'NO',
+				'Key'     => '',
+				'Default' => '14',
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'medium_code',
+				'Type'    => 'mediumint',
+				'Null'    => 'YES',
+				'Key'     => '',
+				'Default' => null,
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'count_col',
+				'Type'    => 'int unsigned',
+				'Null'    => 'YES',
+				'Key'     => '',
+				'Default' => null,
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'score',
+				'Type'    => 'double',
+				'Null'    => 'YES',
+				'Key'     => '',
+				'Default' => null,
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'price',
+				'Type'    => 'decimal(10, 2)',
+				'Null'    => 'YES',
+				'Key'     => '',
+				'Default' => '1.25',
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'slug',
+				'Type'    => 'char(10)',
+				'Null'    => 'YES',
+				'Key'     => '',
+				'Default' => null,
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'title',
+				'Type'    => 'varchar(20)',
+				'Null'    => 'NO',
+				'Key'     => '',
+				'Default' => 'untitled',
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'body',
+				'Type'    => 'longtext',
+				'Null'    => 'YES',
+				'Key'     => '',
+				'Default' => null,
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'created_at',
+				'Type'    => 'datetime',
+				'Null'    => 'NO',
+				'Key'     => '',
+				'Default' => '0000-00-00 00:00:00',
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'updated_at',
+				'Type'    => 'timestamp',
+				'Null'    => 'YES',
+				'Key'     => '',
+				'Default' => null,
+				'Extra'   => '',
+			),
+			array(
+				'Field'   => 'payload',
+				'Type'    => 'blob',
+				'Null'    => 'YES',
+				'Key'     => '',
+				'Default' => null,
+				'Extra'   => '',
+			),
+		);
+	}
+
+	private function metadataTypeMatrixShowFullColumnRows(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$collations = array(
+			'id'          => null,
+			'flag'        => null,
+			'small_code'  => null,
+			'medium_code' => null,
+			'count_col'   => null,
+			'score'       => null,
+			'price'       => null,
+			'slug'        => 'utf8mb4_0900_ai_ci',
+			'title'       => 'utf8mb4_0900_ai_ci',
+			'body'        => 'utf8mb4_0900_ai_ci',
+			'created_at'  => null,
+			'updated_at'  => null,
+			'payload'     => null,
+		);
+		$rows       = array();
+
+		foreach ( $this->metadataTypeMatrixShowColumnRows() as $row ) {
+			$rows[] = array(
+				'Field'      => $row['Field'],
+				'Type'       => $row['Type'],
+				'Collation'  => $collations[ $row['Field'] ],
+				'Null'       => $row['Null'],
+				'Key'        => $row['Key'],
+				'Default'    => $row['Default'],
+				'Extra'      => $row['Extra'],
+				'Privileges' => 'select,insert,update,references',
+				'Comment'    => '',
+			);
+		}
+
+		return $rows;
+	}
+
+	private function metadataTypeMatrixInformationSchemaRows(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return array(
+			array(
+				'COLUMN_NAME'              => 'id',
+				'COLUMN_DEFAULT'           => null,
+				'IS_NULLABLE'              => 'NO',
+				'DATA_TYPE'                => 'bigint',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => 20,
+				'NUMERIC_SCALE'            => 0,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'bigint(20) unsigned',
+				'COLUMN_KEY'               => 'PRI',
+				'EXTRA'                    => 'auto_increment',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'flag',
+				'COLUMN_DEFAULT'           => '10',
+				'IS_NULLABLE'              => 'NO',
+				'DATA_TYPE'                => 'tinyint',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => 3,
+				'NUMERIC_SCALE'            => 0,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'tinyint unsigned',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'small_code',
+				'COLUMN_DEFAULT'           => '14',
+				'IS_NULLABLE'              => 'NO',
+				'DATA_TYPE'                => 'smallint',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => 5,
+				'NUMERIC_SCALE'            => 0,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'smallint',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'medium_code',
+				'COLUMN_DEFAULT'           => null,
+				'IS_NULLABLE'              => 'YES',
+				'DATA_TYPE'                => 'mediumint',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => 7,
+				'NUMERIC_SCALE'            => 0,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'mediumint',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'count_col',
+				'COLUMN_DEFAULT'           => null,
+				'IS_NULLABLE'              => 'YES',
+				'DATA_TYPE'                => 'int',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => 10,
+				'NUMERIC_SCALE'            => 0,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'int unsigned',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'score',
+				'COLUMN_DEFAULT'           => null,
+				'IS_NULLABLE'              => 'YES',
+				'DATA_TYPE'                => 'double',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => 22,
+				'NUMERIC_SCALE'            => 0,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'double',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'price',
+				'COLUMN_DEFAULT'           => '1.25',
+				'IS_NULLABLE'              => 'YES',
+				'DATA_TYPE'                => 'decimal',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => 10,
+				'NUMERIC_SCALE'            => 2,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'decimal(10, 2)',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'slug',
+				'COLUMN_DEFAULT'           => null,
+				'IS_NULLABLE'              => 'YES',
+				'DATA_TYPE'                => 'char',
+				'CHARACTER_MAXIMUM_LENGTH' => 10,
+				'CHARACTER_OCTET_LENGTH'   => 40,
+				'NUMERIC_PRECISION'        => null,
+				'NUMERIC_SCALE'            => null,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => 'utf8mb4',
+				'COLLATION_NAME'           => 'utf8mb4_0900_ai_ci',
+				'COLUMN_TYPE'              => 'char(10)',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'title',
+				'COLUMN_DEFAULT'           => 'untitled',
+				'IS_NULLABLE'              => 'NO',
+				'DATA_TYPE'                => 'varchar',
+				'CHARACTER_MAXIMUM_LENGTH' => 20,
+				'CHARACTER_OCTET_LENGTH'   => 80,
+				'NUMERIC_PRECISION'        => null,
+				'NUMERIC_SCALE'            => null,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => 'utf8mb4',
+				'COLLATION_NAME'           => 'utf8mb4_0900_ai_ci',
+				'COLUMN_TYPE'              => 'varchar(20)',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'body',
+				'COLUMN_DEFAULT'           => null,
+				'IS_NULLABLE'              => 'YES',
+				'DATA_TYPE'                => 'longtext',
+				'CHARACTER_MAXIMUM_LENGTH' => 4294967295,
+				'CHARACTER_OCTET_LENGTH'   => 4294967295,
+				'NUMERIC_PRECISION'        => null,
+				'NUMERIC_SCALE'            => null,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => 'utf8mb4',
+				'COLLATION_NAME'           => 'utf8mb4_0900_ai_ci',
+				'COLUMN_TYPE'              => 'longtext',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'created_at',
+				'COLUMN_DEFAULT'           => '0000-00-00 00:00:00',
+				'IS_NULLABLE'              => 'NO',
+				'DATA_TYPE'                => 'datetime',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => null,
+				'NUMERIC_SCALE'            => null,
+				'DATETIME_PRECISION'       => 0,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'datetime',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'updated_at',
+				'COLUMN_DEFAULT'           => null,
+				'IS_NULLABLE'              => 'YES',
+				'DATA_TYPE'                => 'timestamp',
+				'CHARACTER_MAXIMUM_LENGTH' => null,
+				'CHARACTER_OCTET_LENGTH'   => null,
+				'NUMERIC_PRECISION'        => null,
+				'NUMERIC_SCALE'            => null,
+				'DATETIME_PRECISION'       => 0,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'timestamp',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+			array(
+				'COLUMN_NAME'              => 'payload',
+				'COLUMN_DEFAULT'           => null,
+				'IS_NULLABLE'              => 'YES',
+				'DATA_TYPE'                => 'blob',
+				'CHARACTER_MAXIMUM_LENGTH' => 65535,
+				'CHARACTER_OCTET_LENGTH'   => 65535,
+				'NUMERIC_PRECISION'        => null,
+				'NUMERIC_SCALE'            => null,
+				'DATETIME_PRECISION'       => null,
+				'CHARACTER_SET_NAME'       => null,
+				'COLLATION_NAME'           => null,
+				'COLUMN_TYPE'              => 'blob',
+				'COLUMN_KEY'               => '',
+				'EXTRA'                    => '',
+				'COLUMN_COMMENT'           => '',
+			),
+		);
 	}
 
 	private function alter_table_foreign_key_lifecycle_snapshot( WP_DuckDB_Driver $driver, string $table_name ): array {
