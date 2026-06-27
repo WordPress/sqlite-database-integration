@@ -11827,9 +11827,11 @@ class WP_DuckDB_Driver {
 		$metadata_map = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] );
 		$columns      = array();
 		$values       = array();
+		$supplied     = array();
 
 		foreach ( $assignments as $assignment ) {
 			$columns[] = $assignment['column_sql'];
+			$supplied[] = $assignment['column_name'];
 			$value_sql = $assignment['value_sql'];
 			if ( isset( $metadata_map[ strtolower( $assignment['column_name'] ) ] ) ) {
 				$value_sql = $this->coerce_write_value_for_column_sql(
@@ -11842,10 +11844,15 @@ class WP_DuckDB_Driver {
 			$values[] = $value_sql;
 		}
 
+		foreach ( $this->omitted_non_strict_temporal_default_writes( $reference['table_name'], $reference['temporary'], $supplied ) as $default_write ) {
+			$columns[] = $this->connection->quote_identifier( $default_write['column_name'] );
+			$values[]  = $default_write['value_sql'];
+		}
+
 		return 'INSERT '
 			. ( $ignore ? 'OR IGNORE ' : '' )
 			. 'INTO '
-			. $this->translate_tokens_to_duckdb_sql( array( $tokens[ $table_index ] ) )
+			. $this->connection->quote_identifier( $reference['table_name'] )
 			. ' ('
 			. implode( ', ', $columns )
 			. ') VALUES ('
@@ -12010,6 +12017,9 @@ class WP_DuckDB_Driver {
 			}
 			$values_by_column[ strtolower( $column_name ) ] = $value_sql;
 		}
+		foreach ( $this->omitted_non_strict_temporal_default_writes( $reference['table_name'], $reference['temporary'], $columns ) as $default_write ) {
+			$values_by_column[ strtolower( $default_write['column_name'] ) ] = $default_write['value_sql'];
+		}
 
 		return array(
 			'table_name'           => $reference['table_name'],
@@ -12140,6 +12150,14 @@ class WP_DuckDB_Driver {
 			}
 		}
 
+		$omitted_defaults = $coerce_for_storage
+			? $this->omitted_non_strict_temporal_default_writes( $table_name, $temporary, $columns )
+			: array();
+		$storage_columns  = $columns;
+		foreach ( $omitted_defaults as $default_write ) {
+			$storage_columns[] = $default_write['column_name'];
+		}
+
 		if ( count( $columns ) === 0 || ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $index ]->id ) {
 			return array(
 				'table_name'               => $table_name,
@@ -12205,6 +12223,10 @@ class WP_DuckDB_Driver {
 				$values_by_column[ strtolower( $column_name ) ] = $value_sql;
 				$ordered_row[]                                  = $value_sql;
 			}
+			foreach ( $omitted_defaults as $default_write ) {
+				$values_by_column[ strtolower( $default_write['column_name'] ) ] = $default_write['value_sql'];
+				$ordered_row[]                                                   = $default_write['value_sql'];
+			}
 			$rows[]                     = $values_by_column;
 			$ordered_rows[]             = $ordered_row;
 			$coerced_value_rows[]       = $coerced_values;
@@ -12220,12 +12242,12 @@ class WP_DuckDB_Driver {
 		return array(
 			'table_name'               => $table_name,
 			'temporary'                => $temporary,
-			'columns'                  => $columns,
+			'columns'                  => $storage_columns,
 			'rows'                     => $rows,
 			'ordered_rows'             => $ordered_rows,
 			'coerced_value_rows'       => $coerced_value_rows,
 			'temporal_validation_rows' => $temporal_validation_rows,
-			'requires_coercion'        => $requires_coercion,
+			'requires_coercion'        => $requires_coercion || count( $omitted_defaults ) > 0,
 		);
 	}
 
@@ -12263,6 +12285,63 @@ class WP_DuckDB_Driver {
 		}
 
 		return $map;
+	}
+
+	/**
+	 * Return omitted non-strict temporal default writes in table ordinal order.
+	 *
+	 * @param string   $table_name       Resolved DuckDB table name.
+	 * @param bool     $temporary        Whether the target is temporary.
+	 * @param string[] $supplied_columns MySQL-facing supplied column names.
+	 * @return array<int,array{column_name:string,value_sql:string,data_type:string}>
+	 */
+	private function omitted_non_strict_temporal_default_writes( string $table_name, bool $temporary, array $supplied_columns ): array {
+		if ( $this->is_strict_sql_mode_active() ) {
+			return array();
+		}
+
+		$supplied = array();
+		foreach ( $supplied_columns as $column_name ) {
+			$supplied[ strtolower( $column_name ) ] = true;
+		}
+
+		$writes = array();
+		foreach ( $this->table_column_metadata_rows( $table_name, $temporary ) as $metadata ) {
+			if ( ! isset( $metadata['column_name'] ) ) {
+				continue;
+			}
+
+			$column_name = (string) $metadata['column_name'];
+			if ( isset( $supplied[ strtolower( $column_name ) ] ) ) {
+				continue;
+			}
+			if (
+				! isset( $metadata['is_nullable'] )
+				|| 'NO' !== strtoupper( (string) $metadata['is_nullable'] )
+				|| null !== ( $metadata['column_default'] ?? null )
+				|| false !== stripos( (string) ( $metadata['extra'] ?? '' ), 'auto_increment' )
+			) {
+				continue;
+			}
+
+			$data_type = $this->mysql_column_data_type( $metadata );
+			if ( ! $this->is_temporal_write_data_type( $data_type ) ) {
+				continue;
+			}
+
+			$implicit_default = $this->temporal_implicit_default( $data_type );
+			if ( null === $implicit_default ) {
+				continue;
+			}
+
+			$writes[] = array(
+				'column_name' => $column_name,
+				'value_sql'   => $this->connection->quote( $implicit_default ),
+				'data_type'   => $data_type,
+			);
+		}
+
+		return $writes;
 	}
 
 	/**

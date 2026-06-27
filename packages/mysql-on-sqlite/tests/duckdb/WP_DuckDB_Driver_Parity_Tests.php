@@ -1569,6 +1569,48 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( $this->temporal_select_sql( 'temporal_non_strict' ) );
 	}
 
+	public function test_temporal_non_strict_omitted_defaults_for_insert_values_and_set_match_sqlite(): void {
+		$this->create_temporal_write_table( 'temporal_omitted_defaults', 'NOT NULL' );
+
+		$this->assertParityRowCount( "SET sql_mode = ''" );
+		$this->assertParityRowCount( "INSERT INTO temporal_omitted_defaults (id, payload) VALUES (1, 'values')" );
+		$this->assertParityRowCount( "INSERT INTO temporal_omitted_defaults SET id = 2, payload = 'set'" );
+		$this->assertParityRowCount( "INSERT INTO temporal_omitted_defaults (id, d, payload) VALUES (3, '2025-01-01', 'partial')" );
+
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_omitted_defaults' ) );
+	}
+
+	public function test_temporal_strict_omitted_defaults_still_fail_at_insert_time(): void {
+		$this->assertParityRowCount( "SET sql_mode = ''" );
+		$this->create_temporal_write_table( 'temporal_omitted_strict_values', 'NOT NULL' );
+		$this->create_temporal_write_table( 'temporal_omitted_strict_set', 'NOT NULL' );
+
+		$this->assertParityRowCount( "SET sql_mode = 'STRICT_TRANS_TABLES'" );
+		$this->assertParityErrorContains(
+			'INSERT INTO temporal_omitted_strict_values (id) VALUES (1)',
+			'NOT NULL'
+		);
+		$this->assertParityErrorContains(
+			'INSERT INTO temporal_omitted_strict_set SET id = 1',
+			'NOT NULL'
+		);
+	}
+
+	public function test_temporal_full_column_insert_order_is_unchanged_by_omitted_defaults(): void {
+		$this->assertParityRowCount( "SET sql_mode = ''" );
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE temporal_omitted_full_order (
+					id INT,
+					d DATE NOT NULL
+				)',
+			)
+		);
+
+		$this->assertParityRowCount( "INSERT INTO temporal_omitted_full_order VALUES (1, '2025-01-01')" );
+		$this->assertParityRows( 'SELECT id, d FROM temporal_omitted_full_order ORDER BY id' );
+	}
+
 	public function test_temporal_replace_and_odku_conflict_values_are_coerced(): void {
 		$this->runParitySetup(
 			array(
@@ -1652,6 +1694,26 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			ON DUPLICATE KEY UPDATE payload = VALUES(payload)"
 		);
 		$this->assertParityRows( 'SELECT id, d, payload FROM temporal_odku_date_conflict ORDER BY id' );
+	}
+
+	public function test_temporal_odku_omitted_default_unique_conflict_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"SET sql_mode = ''",
+				'CREATE TABLE temporal_odku_omitted_conflict (
+					id INT PRIMARY KEY,
+					d DATE NOT NULL UNIQUE,
+					payload VARCHAR(20)
+				)',
+				"INSERT INTO temporal_odku_omitted_conflict (id, d, payload) VALUES (1, '0000-00-00', 'old')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_odku_omitted_conflict (id, payload) VALUES (2, 'new')
+			ON DUPLICATE KEY UPDATE payload = VALUES(payload)"
+		);
+		$this->assertParityRows( 'SELECT id, d, payload FROM temporal_odku_omitted_conflict ORDER BY id' );
 	}
 
 	public function test_temporal_replace_manual_conflicts_use_storage_coerced_values(): void {
