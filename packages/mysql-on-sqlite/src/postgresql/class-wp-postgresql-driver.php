@@ -4459,10 +4459,10 @@ $wp_mysql_primary_index_comment$',
 		?string $column_name = null,
 		bool $case_sensitive_column = false
 	): array {
-		$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+		$column_comment_sql = 'c.column_comment';
 		$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
 			'c',
-			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+			'c.identity_sequence_comment',
 			$column_comment_sql
 		);
 		$collation          = $this->get_direct_information_schema_collation_expression(
@@ -4560,7 +4560,13 @@ $wp_mysql_primary_index_comment$',
 				: "\n\t\t\t\t\tAND LOWER(c.column_name) = LOWER(?)";
 		}
 		return sprintf(
-			'SELECT %1$s
+			'WITH catalog_columns AS MATERIALIZED (
+				SELECT c.*,
+					pg_catalog.col_description(pc.oid, pa.attnum) AS column_comment,
+					pg_catalog.obj_description(
+						pg_catalog.pg_get_serial_sequence(format(\'%%I.%%I\', c.table_schema, c.table_name), c.column_name)::regclass,
+						\'pg_class\'
+					) AS identity_sequence_comment
 				FROM information_schema.columns c
 				LEFT JOIN pg_catalog.pg_namespace pn
 					ON pn.nspname = c.table_schema
@@ -4574,7 +4580,10 @@ $wp_mysql_primary_index_comment$',
 					AND pa.attnum > 0
 				WHERE c.table_schema = ?
 					AND c.table_name = ?%2$s
-					ORDER BY c.ordinal_position%3$s',
+			)
+			SELECT %1$s
+				FROM catalog_columns c
+				ORDER BY c.ordinal_position%3$s',
 			$projection_sql,
 			$column_filter_sql,
 			$filter_column ? "\n\t\t\t\tLIMIT 2" : ''
@@ -7221,10 +7230,10 @@ $wp_mysql_primary_index_comment$',
 		return false;
 	}
 	private function get_existing_dbdelta_column_identity_metadata( string $table_schema, string $table_name, string $column_name ): ?array {
-		$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+		$column_comment_sql = 'c.column_comment';
 		$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
 			'c',
-			$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+			'c.identity_sequence_comment',
 			$column_comment_sql
 		);
 		$extra              = $this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql );

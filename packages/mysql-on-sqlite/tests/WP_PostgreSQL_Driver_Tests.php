@@ -15601,6 +15601,119 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests factored catalog metadata SQL matches the previous projection shape.
+	 */
+	public function test_catalog_metadata_factored_sql_matches_legacy_projection_and_reduces_catalog_calls(): void {
+		list( $driver, $connection, $schema ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                                = 'wptests_catalog_metadata_factored_rows';
+
+		$this->assertSame( 0, $driver->query( $this->get_create_metadata_preseed_fixture_sql( $table ) ) );
+
+		$legacy_rows = $this->read_legacy_mysql_catalog_column_metadata_rows( $driver, $schema, $table );
+		$connection->clear_column_catalog_queries();
+		$factored_rows   = $this->read_mysql_catalog_column_metadata_rows( $driver, $schema, $table );
+		$catalog_queries = $connection->get_column_catalog_queries();
+
+		$this->assertSame( $legacy_rows, $factored_rows );
+		$this->assertCount( 1, $catalog_queries );
+
+		$catalog_sql = $catalog_queries[0]['sql'];
+		$this->assertStringContainsString( 'WITH catalog_columns AS MATERIALIZED', $catalog_sql );
+		$this->assertStringContainsString( 'FROM information_schema.columns c', $catalog_sql );
+		$this->assertStringContainsString( 'FROM catalog_columns c', $catalog_sql );
+		$this->assertStringContainsString( 'AS column_comment', $catalog_sql );
+		$this->assertStringContainsString( 'AS identity_sequence_comment', $catalog_sql );
+		$this->assertStringContainsString( 'c.column_comment', $catalog_sql );
+		$this->assertStringContainsString( 'c.identity_sequence_comment', $catalog_sql );
+		$this->assertSame( 1, substr_count( $catalog_sql, 'pg_catalog.col_description(pc.oid, pa.attnum)' ) );
+		$this->assertSame( 1, substr_count( $catalog_sql, 'pg_catalog.pg_get_serial_sequence(' ) );
+
+		$rows_by_column = $this->index_metadata_rows_by_column_name( $factored_rows );
+		$this->assertSame( 'bigint(20) unsigned', $rows_by_column['id']['column_type'] );
+		$this->assertSame( 'auto_increment', $rows_by_column['id']['extra'] );
+		$this->assertSame( 'varchar(191)', $rows_by_column['title']['column_type'] );
+		$this->assertSame( 'big5_chinese_ci', $rows_by_column['title']['collation_name'] );
+		$this->assertSame( '', $rows_by_column['title']['column_default'] );
+		$this->assertSame( 'longtext', $rows_by_column['body']['column_type'] );
+		$this->assertSame( 'CURRENT_TIMESTAMP', $rows_by_column['created_at']['column_default'] );
+		$this->assertSame( 'DEFAULT_GENERATED', $rows_by_column['created_at']['extra'] );
+		$this->assertSame( 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', $rows_by_column['touched_at']['extra'] );
+		$this->assertSame( 'enum(\'draft\',\'published\')', $rows_by_column['status']['column_type'] );
+		$this->assertSame( 'set(\'flag-a\',\'flag-b\')', $rows_by_column['flags']['column_type'] );
+		$this->assertSame( 'decimal(10,2) unsigned', $rows_by_column['price']['column_type'] );
+
+		$describe_rows = $driver->query( 'DESCRIBE `' . $table . '`' );
+		$this->assertSame( 'bigint(20) unsigned', $this->get_row_value( $this->find_row_by_value( $describe_rows, 'Field', 'id' ), 'Type' ) );
+		$this->assertSame( 'auto_increment', $this->get_row_value( $this->find_row_by_value( $describe_rows, 'Field', 'id' ), 'Extra' ) );
+	}
+
+	/**
+	 * Tests factored catalog metadata keeps temp schemas and column lookup case rules.
+	 */
+	public function test_catalog_metadata_factored_sql_preserves_temp_table_and_column_lookup_case_rules(): void {
+		list( $driver, , $schema ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                     = 'wptests_catalog_metadata_case_lookup';
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$table}` (
+					`id` int(11),
+					`MiXeDName` varchar(20),
+					`lower_name` varchar(20)
+				)"
+			)
+		);
+		$this->assertSame( 0, $driver->query( "CREATE TEMPORARY TABLE `{$table}` ( `temp_col` longtext )" ) );
+
+		$temp_schema = $this->get_temporary_metadata_schema_for_table( $driver, $table );
+		$this->assertNotSame( $schema, $temp_schema );
+
+		$permanent_rows = $this->read_mysql_catalog_column_metadata_rows( $driver, $schema, $table );
+		$this->assertSame(
+			$this->read_legacy_mysql_catalog_column_metadata_rows( $driver, $schema, $table ),
+			$permanent_rows
+		);
+		$this->assertSame( array( 'id', 'MiXeDName', 'lower_name' ), array_column( $permanent_rows, 'column_name' ) );
+
+		$temp_rows = $this->read_mysql_catalog_column_metadata_rows( $driver, $temp_schema, $table );
+		$this->assertSame(
+			$this->read_legacy_mysql_catalog_column_metadata_rows( $driver, $temp_schema, $table ),
+			$temp_rows
+		);
+		$this->assertSame( array( 'temp_col' ), array_column( $temp_rows, 'column_name' ) );
+		$this->assertSame( 'longtext', $temp_rows[0]['column_type'] );
+
+		$case_insensitive_rows = $this->read_mysql_catalog_column_metadata_rows(
+			$driver,
+			$schema,
+			$table,
+			'mixedname'
+		);
+		$this->assertSame(
+			$this->read_legacy_mysql_catalog_column_metadata_rows( $driver, $schema, $table, 'mixedname' ),
+			$case_insensitive_rows
+		);
+		$this->assertCount( 1, $case_insensitive_rows );
+		$this->assertSame( 'MiXeDName', $case_insensitive_rows[0]['column_name'] );
+
+		$this->assertSame(
+			array(),
+			$this->read_mysql_catalog_column_metadata_rows( $driver, $schema, $table, 'mixedname', true )
+		);
+
+		$case_sensitive_rows = $this->read_mysql_catalog_column_metadata_rows(
+			$driver,
+			$schema,
+			$table,
+			'MiXeDName',
+			true
+		);
+		$this->assertCount( 1, $case_sensitive_rows );
+		$this->assertSame( 'MiXeDName', $case_sensitive_rows[0]['column_name'] );
+	}
+
+	/**
 	 * Tests CREATE-time metadata preseed does not survive explicit clears, DROP/CREATE, or ALTER.
 	 */
 	public function test_create_metadata_preseed_invalidates_on_explicit_clear_drop_create_and_alter(): void {
@@ -32489,13 +32602,31 @@ $$'
 	 *
 	 * @param WP_PostgreSQL_Driver $driver Driver under test.
 	 * @param string               $schema Backend schema.
-	 * @param string               $table  Table name.
+	 * @param string               $table                 Table name.
+	 * @param string|null          $column_name           Optional column name.
+	 * @param bool                 $case_sensitive_column Whether the optional column lookup is case-sensitive.
 	 * @return array[] Metadata rows.
 	 */
-	private function read_mysql_catalog_column_metadata_rows( WP_PostgreSQL_Driver $driver, string $schema, string $table ): array {
+	private function read_mysql_catalog_column_metadata_rows(
+		WP_PostgreSQL_Driver $driver,
+		string $schema,
+		string $table,
+		?string $column_name = null,
+		bool $case_sensitive_column = false
+	): array {
 		$read_rows = Closure::bind(
-			function ( string $schema, string $table ): array {
-				return $this->read_mysql_table_catalog_column_metadata_rows( $schema, $table );
+			function (
+				string $schema,
+				string $table,
+				?string $column_name = null,
+				bool $case_sensitive_column = false
+			): array {
+				return $this->read_mysql_table_catalog_column_metadata_rows(
+					$schema,
+					$table,
+					$column_name,
+					$case_sensitive_column
+				);
 			},
 			$driver,
 			WP_PostgreSQL_Driver::class
@@ -32505,7 +32636,101 @@ $$'
 			throw new RuntimeException( 'Could not bind MySQL metadata catalog reader.' );
 		}
 
-		return $read_rows( $schema, $table );
+		return $read_rows( $schema, $table, $column_name, $case_sensitive_column );
+	}
+
+	/**
+	 * Read catalog rows with the pre-factoring projection for row-equivalence coverage.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver                Driver under test.
+	 * @param string               $schema                Backend schema.
+	 * @param string               $table                 Table name.
+	 * @param string|null          $column_name           Optional column name.
+	 * @param bool                 $case_sensitive_column Whether the optional column lookup is case-sensitive.
+	 * @return array[] Metadata rows.
+	 */
+	private function read_legacy_mysql_catalog_column_metadata_rows(
+		WP_PostgreSQL_Driver $driver,
+		string $schema,
+		string $table,
+		?string $column_name = null,
+		bool $case_sensitive_column = false
+	): array {
+		$read_rows = Closure::bind(
+			function (
+				string $schema,
+				string $table,
+				?string $column_name = null,
+				bool $case_sensitive_column = false
+			): array {
+				$column_comment_sql = 'pg_catalog.col_description(pc.oid, pa.attnum)';
+				$column_type        = $this->get_direct_information_schema_catalog_column_type_expression(
+					'c',
+					$this->get_postgresql_identity_sequence_comment_sql( 'c' ),
+					$column_comment_sql
+				);
+				$collation          = $this->get_direct_information_schema_collation_expression(
+					$column_type,
+					'c.collation_name',
+					$column_comment_sql,
+					$this->connection->quote( self::DEFAULT_MYSQL_COLLATION )
+				);
+				$projection_sql     = sprintf(
+					'c.column_name,
+					c.ordinal_position,
+					%1$s AS column_type,
+					%2$s AS collation_name,
+					c.is_nullable,
+					%3$s AS column_default,
+					%4$s AS extra',
+					$column_type,
+					$collation,
+					$this->get_direct_information_schema_column_default_expression( 'c', $column_comment_sql ),
+					$this->get_direct_information_schema_column_extra_expression( 'c', true, $column_comment_sql )
+				);
+				$column_filter_sql  = '';
+				if ( null !== $column_name ) {
+					$column_filter_sql = $case_sensitive_column
+						? "\n\t\t\t\t\tAND c.column_name = ?"
+						: "\n\t\t\t\t\tAND LOWER(c.column_name) = LOWER(?)";
+				}
+				$sql    = sprintf(
+					'SELECT %1$s
+						FROM information_schema.columns c
+						LEFT JOIN pg_catalog.pg_namespace pn
+							ON pn.nspname = c.table_schema
+						LEFT JOIN pg_catalog.pg_class pc
+							ON pc.relnamespace = pn.oid
+							AND pc.relname = c.table_name
+							AND pc.relkind IN (\'r\', \'p\', \'v\', \'m\')
+						LEFT JOIN pg_catalog.pg_attribute pa
+							ON pa.attrelid = pc.oid
+							AND pa.attname = c.column_name
+							AND pa.attnum > 0
+						WHERE c.table_schema = ?
+							AND c.table_name = ?%2$s
+							ORDER BY c.ordinal_position%3$s',
+					$projection_sql,
+					$column_filter_sql,
+					null !== $column_name ? "\n\t\t\t\tLIMIT 2" : ''
+				);
+				$params = array( $schema, $table );
+				if ( null !== $column_name ) {
+					$params[] = $column_name;
+				}
+
+				$stmt = $this->connection->query( $sql, $params );
+				return $this->normalize_mysql_table_catalog_column_metadata_rows( $stmt->fetchAll( PDO::FETCH_ASSOC ) );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		if ( ! $read_rows instanceof Closure ) {
+			throw new RuntimeException( 'Could not bind legacy MySQL metadata catalog reader.' );
+		}
+
+		return $read_rows( $schema, $table, $column_name, $case_sensitive_column );
 	}
 
 	/**
