@@ -6840,6 +6840,394 @@ SQL,
 		}
 	}
 
+	public function test_alter_table_add_foreign_key_constraints_rebuilds_table_and_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_fk_parent (id INT PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO alter_fk_parent (id) VALUES (1), (2)' );
+		$driver->query(
+			'CREATE TABLE alter_fk_child_named (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				parent_id INT,
+				amount INT,
+				label VARCHAR(20),
+				CONSTRAINT amount_positive CHECK (amount > 0),
+				UNIQUE KEY label_unique (label),
+				KEY parent_idx (parent_id)
+			)'
+		);
+		$driver->query( "INSERT INTO alter_fk_child_named (parent_id, amount, label) VALUES (1, 10, 'a'), (2, 20, 'b')" );
+		$driver->query( 'CREATE TABLE alter_fk_child_generated (id INT, parent_id INT, KEY parent_idx (parent_id))' );
+		$driver->query( 'INSERT INTO alter_fk_child_generated (id, parent_id) VALUES (10, 1)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE alter_fk_child_named ADD CONSTRAINT fk_child_parent FOREIGN KEY (parent_id) REFERENCES alter_fk_parent (id) ON DELETE RESTRICT ON UPDATE NO ACTION' )->rowCount()
+		);
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE alter_fk_child_generated ADD FOREIGN KEY (parent_id) REFERENCES alter_fk_parent (id)' )->rowCount()
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'TABLE_NAME'      => 'alter_fk_child_generated',
+					'CONSTRAINT_NAME' => 'alter_fk_child_generated_ibfk_1',
+					'CONSTRAINT_TYPE' => 'FOREIGN KEY',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'TABLE_NAME'      => 'alter_fk_child_named',
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'TABLE_NAME'      => 'alter_fk_child_named',
+					'CONSTRAINT_NAME' => 'fk_child_parent',
+					'CONSTRAINT_TYPE' => 'FOREIGN KEY',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'TABLE_NAME'      => 'alter_fk_child_named',
+					'CONSTRAINT_NAME' => 'PRIMARY',
+					'CONSTRAINT_TYPE' => 'PRIMARY KEY',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'TABLE_NAME'      => 'alter_fk_child_named',
+					'CONSTRAINT_NAME' => 'label_unique',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$driver->query(
+				"SELECT TABLE_NAME, CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp'
+					AND table_name IN ('alter_fk_child_named', 'alter_fk_child_generated')
+				ORDER BY table_name, constraint_type, constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'       => 'alter_fk_child_generated_ibfk_1',
+					'TABLE_NAME'            => 'alter_fk_child_generated',
+					'REFERENCED_TABLE_NAME' => 'alter_fk_parent',
+					'UPDATE_RULE'           => 'NO ACTION',
+					'DELETE_RULE'           => 'NO ACTION',
+				),
+				array(
+					'CONSTRAINT_NAME'       => 'fk_child_parent',
+					'TABLE_NAME'            => 'alter_fk_child_named',
+					'REFERENCED_TABLE_NAME' => 'alter_fk_parent',
+					'UPDATE_RULE'           => 'NO ACTION',
+					'DELETE_RULE'           => 'RESTRICT',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME, UPDATE_RULE, DELETE_RULE
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp'
+					AND table_name IN ('alter_fk_child_named', 'alter_fk_child_generated')
+				ORDER BY table_name, constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'        => 'alter_fk_child_generated_ibfk_1',
+					'TABLE_NAME'             => 'alter_fk_child_generated',
+					'COLUMN_NAME'            => 'parent_id',
+					'REFERENCED_TABLE_NAME'  => 'alter_fk_parent',
+					'REFERENCED_COLUMN_NAME' => 'id',
+				),
+				array(
+					'CONSTRAINT_NAME'        => 'fk_child_parent',
+					'TABLE_NAME'             => 'alter_fk_child_named',
+					'COLUMN_NAME'            => 'parent_id',
+					'REFERENCED_TABLE_NAME'  => 'alter_fk_parent',
+					'REFERENCED_COLUMN_NAME' => 'id',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp'
+					AND table_name IN ('alter_fk_child_named', 'alter_fk_child_generated')
+					AND referenced_table_name IS NOT NULL
+				ORDER BY table_name, constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$named_create = $driver->query( 'SHOW CREATE TABLE alter_fk_child_named' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringContainsString( 'CONSTRAINT `fk_child_parent` FOREIGN KEY (`parent_id`) REFERENCES `alter_fk_parent` (`id`) ON DELETE RESTRICT', $named_create );
+		$this->assertStringContainsString( 'CONSTRAINT `amount_positive` CHECK (amount > 0)', $named_create );
+		$this->assertStringContainsString( 'UNIQUE KEY `label_unique` (`label`)', $named_create );
+		$this->assertStringContainsString( 'KEY `parent_idx` (`parent_id`)', $named_create );
+		$this->assertStringContainsString(
+			'CONSTRAINT `alter_fk_child_generated_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `alter_fk_parent` (`id`)',
+			$driver->query( 'SHOW CREATE TABLE alter_fk_child_generated' )->fetch( PDO::FETCH_ASSOC )['Create Table']
+		);
+
+		$driver->query( "INSERT INTO alter_fk_child_named (parent_id, amount, label) VALUES (1, 30, 'c')" );
+		$this->assertSame(
+			array(
+				array(
+					'id'        => 1,
+					'parent_id' => 1,
+					'amount'    => 10,
+					'label'     => 'a',
+				),
+				array(
+					'id'        => 2,
+					'parent_id' => 2,
+					'amount'    => 20,
+					'label'     => 'b',
+				),
+				array(
+					'id'        => 3,
+					'parent_id' => 1,
+					'amount'    => 30,
+					'label'     => 'c',
+				),
+			),
+			$driver->query( 'SELECT id, parent_id, amount, label FROM alter_fk_child_named ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		try {
+			$driver->query( "INSERT INTO alter_fk_child_named (parent_id, amount, label) VALUES (404, 40, 'blocked')" );
+			$this->fail( 'Expected added FOREIGN KEY to reject missing parent rows.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB INSERT', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( 'DELETE FROM alter_fk_parent WHERE id = 1' );
+			$this->fail( 'Expected added FOREIGN KEY to reject referenced parent deletes.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Failed to execute DuckDB DELETE', $e->getMessage() );
+		}
+	}
+
+	public function test_alter_table_drop_foreign_key_constraints_rebuilds_table_and_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_fk_drop_parent (id INT PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO alter_fk_drop_parent (id) VALUES (1)' );
+		$driver->query(
+			'CREATE TABLE alter_fk_drop_by_key (
+				id INT,
+				parent_id INT,
+				amount INT,
+				CONSTRAINT fk_drop_parent FOREIGN KEY (parent_id) REFERENCES alter_fk_drop_parent (id),
+				CONSTRAINT amount_positive CHECK (amount > 0),
+				KEY parent_idx (parent_id)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE alter_fk_drop_by_constraint (
+				id INT,
+				parent_id INT,
+				CONSTRAINT fk_constraint_parent FOREIGN KEY (parent_id) REFERENCES alter_fk_drop_parent (id)
+			)'
+		);
+		$driver->query( 'INSERT INTO alter_fk_drop_by_key (id, parent_id, amount) VALUES (1, 1, 10)' );
+		$driver->query( 'INSERT INTO alter_fk_drop_by_constraint (id, parent_id) VALUES (2, 1)' );
+
+		$before = $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_drop_by_key' );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_fk_drop_by_key DROP FOREIGN KEY missing_fk' )->rowCount() );
+		$this->assertSame( $before, $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_drop_by_key' ) );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_fk_drop_by_key DROP FOREIGN KEY fk_drop_parent' )->rowCount() );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_fk_drop_by_constraint DROP CONSTRAINT fk_constraint_parent' )->rowCount() );
+
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp'
+					AND table_name IN ('alter_fk_drop_by_key', 'alter_fk_drop_by_constraint')"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp'
+					AND table_name IN ('alter_fk_drop_by_key', 'alter_fk_drop_by_constraint')
+					AND referenced_table_name IS NOT NULL"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$key_create = $driver->query( 'SHOW CREATE TABLE alter_fk_drop_by_key' )->fetch( PDO::FETCH_ASSOC )['Create Table'];
+		$this->assertStringNotContainsString( 'fk_drop_parent', $key_create );
+		$this->assertStringContainsString( 'CONSTRAINT `amount_positive` CHECK (amount > 0)', $key_create );
+		$this->assertStringContainsString( 'KEY `parent_idx` (`parent_id`)', $key_create );
+		$this->assertStringNotContainsString(
+			'fk_constraint_parent',
+			$driver->query( 'SHOW CREATE TABLE alter_fk_drop_by_constraint' )->fetch( PDO::FETCH_ASSOC )['Create Table']
+		);
+
+		$driver->query( 'INSERT INTO alter_fk_drop_by_key (id, parent_id, amount) VALUES (3, 404, 20)' );
+		$driver->query( 'INSERT INTO alter_fk_drop_by_constraint (id, parent_id) VALUES (4, 404)' );
+		$this->assertSame(
+			array(
+				array(
+					'id'        => 1,
+					'parent_id' => 1,
+					'amount'    => 10,
+				),
+				array(
+					'id'        => 3,
+					'parent_id' => 404,
+					'amount'    => 20,
+				),
+			),
+			$driver->query( 'SELECT id, parent_id, amount FROM alter_fk_drop_by_key ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_alter_table_add_foreign_key_rejects_existing_row_violations_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_fk_validate_parent (id INT PRIMARY KEY)' );
+		$driver->query( 'INSERT INTO alter_fk_validate_parent (id) VALUES (1)' );
+		$driver->query( 'CREATE TABLE alter_fk_validate_child (id INT, parent_id INT, KEY parent_idx (parent_id))' );
+		$driver->query( 'INSERT INTO alter_fk_validate_child (id, parent_id) VALUES (1, 1), (2, 404)' );
+
+		$before = $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_validate_child' );
+		try {
+			$driver->query( 'ALTER TABLE alter_fk_validate_child ADD CONSTRAINT fk_validate_parent FOREIGN KEY (parent_id) REFERENCES alter_fk_validate_parent (id)' );
+			$this->fail( 'Expected ADD FOREIGN KEY to reject existing orphan rows before mutation.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'existing rows violate the constraint', $e->getMessage() );
+		}
+
+		$this->assertSame( $before, $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_validate_child' ) );
+		$driver->query( 'INSERT INTO alter_fk_validate_child (id, parent_id) VALUES (3, 405)' );
+	}
+
+	public function test_alter_table_foreign_key_limitations_reject_before_mutation(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_fk_limit_parent (id INT PRIMARY KEY, other_id INT, code INT, UNIQUE KEY code_u (code))' );
+		$driver->query( 'INSERT INTO alter_fk_limit_parent (id, other_id, code) VALUES (1, 10, 100)' );
+		$driver->query( 'CREATE TABLE alter_fk_limit_child (id INT PRIMARY KEY, parent_id INT, other_id INT, code INT)' );
+		$driver->query( 'INSERT INTO alter_fk_limit_child (id, parent_id, other_id, code) VALUES (1, 1, 10, 100)' );
+		$driver->query( 'CREATE TEMPORARY TABLE alter_fk_limit_temp (id INT, parent_id INT)' );
+		$driver->query( 'INSERT INTO alter_fk_limit_temp (id, parent_id) VALUES (1, 1)' );
+
+		foreach (
+			array(
+				'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_multi FOREIGN KEY (parent_id, other_id) REFERENCES alter_fk_limit_parent (id, other_id)' => 'Only single-column foreign keys are supported',
+				'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_schema FOREIGN KEY (parent_id) REFERENCES wp.alter_fk_limit_parent (id)' => 'Schema-qualified references are not supported',
+				'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_cascade FOREIGN KEY (parent_id) REFERENCES alter_fk_limit_parent (id) ON DELETE CASCADE' => 'ON DELETE CASCADE is not supported',
+				'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_unique_gap FOREIGN KEY (code) REFERENCES alter_fk_limit_parent (code)' => 'single-column referenced PRIMARY KEY',
+				'ALTER TABLE alter_fk_limit_temp ADD CONSTRAINT fk_temp FOREIGN KEY (parent_id) REFERENCES alter_fk_limit_parent (id)' => 'temporary tables is not supported',
+				'ALTER TABLE alter_fk_limit_child ADD COLUMN parent_ref INT REFERENCES alter_fk_limit_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
+				'ALTER TABLE alter_fk_limit_child ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT fk_multi_action FOREIGN KEY (parent_id) REFERENCES alter_fk_limit_parent (id)' => 'ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions',
+			) as $sql => $message
+		) {
+			$before_child = $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_limit_child' );
+			$before_temp  = $driver->query( 'SELECT id, parent_id FROM alter_fk_limit_temp ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected unsupported ALTER TABLE FOREIGN KEY form to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+
+			$this->assertSame( $before_child, $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_limit_child' ) );
+			$this->assertSame( $before_temp, $driver->query( 'SELECT id, parent_id FROM alter_fk_limit_temp ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ) );
+		}
+
+		$driver->query( 'BEGIN' );
+		try {
+			$driver->query( 'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_tx FOREIGN KEY (parent_id) REFERENCES alter_fk_limit_parent (id)' );
+			$this->fail( 'Expected active transaction ADD FOREIGN KEY rebuild rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'ADD/DROP FOREIGN KEY cannot run inside an active DuckDB transaction', $e->getMessage() );
+		}
+		$driver->query( 'ROLLBACK' );
+
+		$driver->query(
+			'CREATE TABLE alter_fk_referenced_child (
+				id INT PRIMARY KEY,
+				parent_id INT,
+				CONSTRAINT fk_referenced_parent FOREIGN KEY (parent_id) REFERENCES alter_fk_limit_parent (id)
+			)'
+		);
+		$driver->query( 'CREATE TABLE alter_fk_referenced_grandchild (id INT, child_id INT, CONSTRAINT fk_grandchild FOREIGN KEY (child_id) REFERENCES alter_fk_referenced_child (id))' );
+		$driver->query( 'INSERT INTO alter_fk_referenced_child (id, parent_id) VALUES (1, 1)' );
+		$driver->query( 'INSERT INTO alter_fk_referenced_grandchild (id, child_id) VALUES (1, 1)' );
+		$before = $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_referenced_child' );
+
+		try {
+			$driver->query( 'ALTER TABLE alter_fk_referenced_child DROP FOREIGN KEY fk_referenced_parent' );
+			$this->fail( 'Expected DROP FOREIGN KEY on referenced parent table to reject before mutation.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'referenced by FOREIGN KEY', $e->getMessage() );
+		}
+		$this->assertSame( $before, $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_referenced_child' ) );
+	}
+
+	public function test_alter_table_drop_foreign_key_missing_and_generic_missing_constraint_distinction(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE alter_fk_missing_parent (id INT PRIMARY KEY)' );
+		$driver->query( 'CREATE TABLE alter_fk_missing_child (id INT, parent_id INT, CONSTRAINT fk_missing_parent FOREIGN KEY (parent_id) REFERENCES alter_fk_missing_parent (id))' );
+		$driver->query( 'INSERT INTO alter_fk_missing_parent (id) VALUES (1)' );
+		$driver->query( 'INSERT INTO alter_fk_missing_child (id, parent_id) VALUES (1, 1)' );
+
+		$before = $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_missing_child' );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_fk_missing_child DROP FOREIGN KEY missing_fk' )->rowCount() );
+		$this->assertSame( $before, $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_missing_child' ) );
+
+		try {
+			$driver->query( 'ALTER TABLE alter_fk_missing_child DROP CONSTRAINT missing_fk' );
+			$this->fail( 'Expected generic DROP CONSTRAINT missing name to reject.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( "Unknown constraint 'missing_fk'", $e->getMessage() );
+		}
+		$this->assertSame( $before, $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_missing_child' ) );
+	}
+
 	public function test_unsupported_alter_table_constraint_actions_throw_before_mutation(): void {
 		$this->requireDuckDBRuntime();
 
@@ -6864,15 +7252,10 @@ SQL,
 
 		foreach (
 			array(
-				'ALTER TABLE alter_constraint_guard ADD FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
-				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
 				'ALTER TABLE alter_constraint_guard ADD CONSTRAINT added_unique UNIQUE KEY (id)' => 'ADD CONSTRAINT is not supported',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN score INT CHECK (score >= 0)' => 'Inline CHECK constraints are only supported in CREATE TABLE',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN parent_ref INT REFERENCES alter_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
-				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT id_unique' => 'DROP CONSTRAINT currently supports CHECK constraints only',
-				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT existing_fk' => 'DROP CONSTRAINT currently supports CHECK constraints only',
-				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY existing_fk' => 'DROP FOREIGN KEY is not supported',
-				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY' => 'DROP FOREIGN KEY is not supported',
+				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT id_unique' => 'DROP CONSTRAINT currently supports CHECK and FOREIGN KEY constraints only',
 			) as $sql => $message
 		) {
 			try {
@@ -6891,15 +7274,16 @@ SQL,
 
 		foreach (
 			array(
-				'ALTER TABLE alter_constraint_guard DROP CHECK',
-				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT',
-			) as $sql
+				'ALTER TABLE alter_constraint_guard DROP CHECK'       => 'DuckDB driver could not parse MySQL statement',
+				'ALTER TABLE alter_constraint_guard DROP CONSTRAINT'  => 'DuckDB driver could not parse MySQL statement',
+				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY' => 'Expected a MySQL identifier',
+			) as $sql => $message
 		) {
 			try {
 				$driver->query( $sql );
 				$this->fail( 'Expected malformed ALTER TABLE constraint action to reject SQL: ' . $sql );
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
-				$this->assertStringContainsString( 'DuckDB driver could not parse MySQL statement', $e->getMessage() );
+				$this->assertStringContainsString( $message, $e->getMessage() );
 			}
 
 			$this->assertSame(
@@ -6935,10 +7319,10 @@ SQL,
 		foreach (
 			array(
 				'ALTER TABLE alter_constraint_guard ADD CHECK (id >= 0), ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD/DROP CHECK cannot be combined with other ALTER TABLE actions',
-				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY existing_fk, ADD COLUMN should_not_exist INT DEFAULT 2' => 'DROP FOREIGN KEY is not supported',
-				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD FOREIGN KEY is not supported',
+				'ALTER TABLE alter_constraint_guard DROP FOREIGN KEY existing_fk, ADD COLUMN should_not_exist INT DEFAULT 2' => 'ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_fk FOREIGN KEY (parent_id) REFERENCES alter_parent (id)' => 'ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT added_unique UNIQUE KEY (id)' => 'ADD CONSTRAINT is not supported',
-				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, DROP CONSTRAINT existing_fk' => 'DROP CONSTRAINT currently supports CHECK constraints only',
+				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, DROP CONSTRAINT existing_fk' => 'ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD COLUMN inline_check INT CHECK (inline_check >= 0)' => 'Inline CHECK constraints are only supported in CREATE TABLE',
 				'ALTER TABLE alter_constraint_guard ADD COLUMN should_not_exist INT DEFAULT 2, ADD COLUMN inline_parent INT REFERENCES alter_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
 			) as $sql => $message
@@ -7061,6 +7445,35 @@ SQL,
 		$this->expectException( WP_DuckDB_Driver_Exception::class );
 		$this->expectExceptionMessage( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD COLUMN NOT NULL requires a DEFAULT for non-empty tables.' );
 		$driver->query( 'ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL' );
+	}
+
+	private function alter_table_foreign_key_lifecycle_snapshot( WP_DuckDB_Driver $driver, string $table_name ): array {
+		return array(
+			'columns'                 => $driver->query( 'SHOW COLUMNS FROM ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+			'rows'                    => $driver->query( 'SELECT * FROM ' . $table_name . ' ORDER BY 1' )->fetchAll( PDO::FETCH_ASSOC ),
+			'indexes'                 => $driver->query( 'SHOW INDEX FROM ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+			'table_constraints'       => $driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = '{$table_name}'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'referential_constraints' => $driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME, UPDATE_RULE, DELETE_RULE
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp' AND table_name = '{$table_name}'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'key_column_usage'        => $driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp'
+					AND table_name = '{$table_name}'
+					AND referenced_table_name IS NOT NULL
+				ORDER BY constraint_name, ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC ),
+			'show_create'             => $driver->query( 'SHOW CREATE TABLE ' . $table_name )->fetchAll( PDO::FETCH_ASSOC ),
+		);
 	}
 
 	private function alter_table_constraint_guard_snapshot( WP_DuckDB_Driver $driver ): array {
