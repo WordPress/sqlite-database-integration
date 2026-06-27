@@ -136,6 +136,119 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertFalse( $stmt->fetch() );
 	}
 
+	public function test_result_classification_keeps_select_count_and_success_columns_fetchable(): void {
+		$connection = new WP_DuckDB_Connection( array( 'duckdb' => new stdClass() ) );
+
+		$count = $connection->create_statement_from_result(
+			$this->createDuckDBResult( array( 'Count' ), array( array( 123 ) ) ),
+			'SELECT 123 AS Count'
+		);
+
+		$this->assertSame( 1, $count->columnCount() );
+		$this->assertSame( 0, $count->rowCount() );
+		$this->assertSame( array( 'Count' => 123 ), $count->fetch( PDO::FETCH_ASSOC ) );
+
+		$success = $connection->create_statement_from_result(
+			$this->createDuckDBResult( array( 'Success' ), array( array( 1 ) ) ),
+			'SELECT 1 AS Success'
+		);
+
+		$this->assertSame( 1, $success->columnCount() );
+		$this->assertSame( 0, $success->rowCount() );
+		$this->assertSame( array( 'Success' => 1 ), $success->fetch( PDO::FETCH_ASSOC ) );
+	}
+
+	public function test_result_classification_maps_raw_dml_count_to_affected_rows(): void {
+		$connection = new WP_DuckDB_Connection( array( 'duckdb' => new stdClass() ) );
+
+		$sql_statements = array(
+			'INSERT INTO items VALUES (1)',
+			'UPDATE items SET name = ? WHERE id = ?',
+			'DELETE FROM items WHERE id = ?',
+			"INSERT OR REPLACE INTO items VALUES (1, 'one')",
+		);
+
+		foreach ( $sql_statements as $sql ) {
+			$stmt = $connection->create_statement_from_result(
+				$this->createDuckDBResult( array( 'Count' ), array( array( 2 ) ) ),
+				$sql
+			);
+
+			$this->assertSame( 0, $stmt->columnCount(), 'Column count mismatch for SQL: ' . $sql );
+			$this->assertSame( 2, $stmt->rowCount(), 'Row count mismatch for SQL: ' . $sql );
+			$this->assertFalse( $stmt->fetch(), 'Fetch mismatch for SQL: ' . $sql );
+		}
+	}
+
+	public function test_result_classification_maps_raw_command_results_to_empty_statement(): void {
+		$connection = new WP_DuckDB_Connection( array( 'duckdb' => new stdClass() ) );
+
+		$results = array(
+			array(
+				'sql'     => 'CREATE TABLE items (id INTEGER)',
+				'columns' => array( 'Count' ),
+				'rows'    => array(),
+			),
+			array(
+				'sql'     => 'DROP TABLE items',
+				'columns' => array( 'Success' ),
+				'rows'    => array(),
+			),
+			array(
+				'sql'     => 'COMMIT',
+				'columns' => array( 'Success' ),
+				'rows'    => array(),
+			),
+		);
+
+		foreach ( $results as $result ) {
+			$stmt = $connection->create_statement_from_result(
+				$this->createDuckDBResult( $result['columns'], $result['rows'] ),
+				$result['sql']
+			);
+
+			$this->assertSame( 0, $stmt->columnCount(), 'Column count mismatch for SQL: ' . $result['sql'] );
+			$this->assertSame( 0, $stmt->rowCount(), 'Row count mismatch for SQL: ' . $result['sql'] );
+			$this->assertFalse( $stmt->fetch(), 'Fetch mismatch for SQL: ' . $result['sql'] );
+		}
+	}
+
+	public function test_prepared_statement_passes_sql_context_to_result_classification(): void {
+		$connection = new WP_DuckDB_Connection( array( 'duckdb' => new stdClass() ) );
+
+		$count        = new WP_DuckDB_Prepared_Statement(
+			$connection,
+			$this->createDuckDBPreparedStatement( array( 'Count' ), array( array( 123 ) ) ),
+			'SELECT ? AS Count'
+		);
+		$count_result = $count->execute( array( 123 ) );
+
+		$this->assertSame( 1, $count_result->columnCount() );
+		$this->assertSame( 0, $count_result->rowCount() );
+		$this->assertSame( array( 'Count' => 123 ), $count_result->fetch( PDO::FETCH_ASSOC ) );
+
+		$insert        = new WP_DuckDB_Prepared_Statement(
+			$connection,
+			$this->createDuckDBPreparedStatement( array( 'Count' ), array( array( 1 ) ) ),
+			'INSERT INTO items VALUES (?)'
+		);
+		$insert_result = $insert->execute( array( 1 ) );
+
+		$this->assertSame( 0, $insert_result->columnCount() );
+		$this->assertSame( 1, $insert_result->rowCount() );
+
+		$success        = new WP_DuckDB_Prepared_Statement(
+			$connection,
+			$this->createDuckDBPreparedStatement( array( 'Success' ), array( array( 1 ) ) ),
+			'SELECT ? AS Success'
+		);
+		$success_result = $success->execute( array( 1 ) );
+
+		$this->assertSame( 1, $success_result->columnCount() );
+		$this->assertSame( 0, $success_result->rowCount() );
+		$this->assertSame( array( 'Success' => 1 ), $success_result->fetch( PDO::FETCH_ASSOC ) );
+	}
+
 	public function test_in_memory_connection_executes_query(): void {
 		$this->requireDuckDBRuntime();
 
@@ -153,6 +266,70 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertFalse( $stmt->fetch() );
 	}
 
+	public function test_select_count_alias_is_fetchable_result_set(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$stmt       = $connection->query( 'SELECT 123 AS Count' );
+
+		$this->assertSame( 1, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertSame( array( 'Count' => 123 ), $stmt->fetch( PDO::FETCH_ASSOC ) );
+		$this->assertFalse( $stmt->fetch() );
+	}
+
+	public function test_select_success_alias_is_fetchable_result_set(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$stmt       = $connection->query( 'SELECT 1 AS Success' );
+
+		$this->assertSame( 1, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertSame( array( 'Success' => 1 ), $stmt->fetch( PDO::FETCH_ASSOC ) );
+		$this->assertFalse( $stmt->fetch() );
+	}
+
+	public function test_table_select_count_alias_is_fetchable_result_set(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->query( 'CREATE TABLE count_alias_items (id INTEGER, label VARCHAR)' );
+		$connection->query( "INSERT INTO count_alias_items VALUES (1, 'one'), (2, 'two')" );
+
+		$stmt = $connection->query( 'SELECT id AS Count FROM count_alias_items ORDER BY id' );
+
+		$this->assertSame( 1, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertSame(
+			array(
+				array( 'Count' => 1 ),
+				array( 'Count' => 2 ),
+			),
+			$stmt->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_table_select_success_alias_is_fetchable_result_set(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->query( 'CREATE TABLE success_alias_items (id INTEGER, label VARCHAR)' );
+		$connection->query( "INSERT INTO success_alias_items VALUES (1, 'one'), (2, 'two')" );
+
+		$stmt = $connection->query( 'SELECT id AS Success FROM success_alias_items ORDER BY id' );
+
+		$this->assertSame( 1, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertSame(
+			array(
+				array( 'Success' => 1 ),
+				array( 'Success' => 2 ),
+			),
+			$stmt->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_insert_result_reports_affected_rows(): void {
 		$this->requireDuckDBRuntime();
 
@@ -165,15 +342,74 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertFalse( $stmt->fetch() );
 	}
 
+	public function test_command_success_result_is_empty_statement(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$stmt       = $connection->query( 'CREATE TABLE success_result_items (id INTEGER)' );
+
+		$this->assertSame( 0, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertFalse( $stmt->fetch() );
+	}
+
+	public function test_write_results_report_affected_rows(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->query( 'CREATE TABLE write_counts (id INTEGER PRIMARY KEY, label VARCHAR)' );
+
+		$insert = $connection->query( "INSERT INTO write_counts VALUES (1, 'one'), (2, 'two')" );
+		$this->assertSame( 0, $insert->columnCount() );
+		$this->assertSame( 2, $insert->rowCount() );
+
+		$update = $connection->query( "UPDATE write_counts SET label = 'updated' WHERE id = 1" );
+		$this->assertSame( 0, $update->columnCount() );
+		$this->assertSame( 1, $update->rowCount() );
+
+		$replace = $connection->query( "INSERT OR REPLACE INTO write_counts VALUES (2, 'replaced')" );
+		$this->assertSame( 0, $replace->columnCount() );
+		$this->assertSame( 1, $replace->rowCount() );
+
+		$delete = $connection->query( 'DELETE FROM write_counts WHERE id IN (1, 2)' );
+		$this->assertSame( 0, $delete->columnCount() );
+		$this->assertSame( 2, $delete->rowCount() );
+	}
+
 	public function test_prepared_statement_binds_positional_parameters(): void {
 		$this->requireDuckDBRuntime();
 
 		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
 		$connection->query( 'CREATE TABLE t (id INTEGER, label VARCHAR)' );
-		$connection->prepare( 'INSERT INTO t VALUES (?, ?)' )->execute( array( 1, 'first' ) );
+		$insert = $connection->prepare( 'INSERT INTO t VALUES (?, ?)' )->execute( array( 1, 'first' ) );
+		$this->assertSame( 1, $insert->rowCount() );
 
 		$stmt = $connection->prepare( 'SELECT label FROM t WHERE id = ?' )->execute( array( 1 ) );
 		$this->assertSame( 'first', $stmt->fetchColumn() );
+	}
+
+	public function test_prepared_select_count_alias_is_fetchable_result_set(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$stmt       = $connection->prepare( 'SELECT ? AS Count' )->execute( array( 123 ) );
+
+		$this->assertSame( 1, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertSame( array( 'Count' => 123 ), $stmt->fetch( PDO::FETCH_ASSOC ) );
+		$this->assertFalse( $stmt->fetch() );
+	}
+
+	public function test_prepared_select_success_alias_is_fetchable_result_set(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$stmt       = $connection->prepare( 'SELECT ? AS Success' )->execute( array( 1 ) );
+
+		$this->assertSame( 1, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertSame( array( 'Success' => 1 ), $stmt->fetch( PDO::FETCH_ASSOC ) );
+		$this->assertFalse( $stmt->fetch() );
 	}
 
 	public function test_transactions_commit_and_rollback(): void {
@@ -252,5 +488,48 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$duckdb = new WP_DuckDB_Connection( array( 'duckdb' => new stdClass() ) );
 
 		$this->assertSame( '"table""name"', $duckdb->quote_identifier( 'table"name' ) );
+	}
+
+	private function createDuckDBResult( array $columns, array $rows ) {
+		return new class( $columns, $rows ) {
+			private $columns;
+			private $rows;
+
+			public function __construct( array $columns, array $rows ) {
+				$this->columns = $columns;
+				$this->rows    = $rows;
+			}
+
+			public function columnNames(): ArrayIterator { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+				return new ArrayIterator( $this->columns );
+			}
+
+			public function rows( bool $assoc ): array {
+				$rows = array();
+				foreach ( $this->rows as $row ) {
+					$rows[] = array_combine( $this->columns, $row );
+				}
+				return $rows;
+			}
+		};
+	}
+
+	private function createDuckDBPreparedStatement( array $columns, array $rows ) {
+		$result = $this->createDuckDBResult( $columns, $rows );
+
+		return new class( $result ) {
+			private $result;
+
+			public function __construct( $result ) {
+				$this->result = $result;
+			}
+
+			public function bindParam( $parameter, $value ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+			}
+
+			public function execute() {
+				return $this->result;
+			}
+		};
 	}
 }

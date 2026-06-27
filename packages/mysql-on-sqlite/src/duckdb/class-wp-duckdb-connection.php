@@ -72,7 +72,7 @@ class WP_DuckDB_Connection {
 		}
 
 		try {
-			return $this->create_statement_from_result( $this->duckdb->query( $sql ) );
+			return $this->create_statement_from_result( $this->duckdb->query( $sql ), $sql );
 		} catch ( Throwable $e ) {
 			throw new WP_DuckDB_Driver_Exception( 'DuckDB query failed: ' . $e->getMessage(), 0, $e );
 		}
@@ -92,7 +92,7 @@ class WP_DuckDB_Connection {
 		}
 
 		try {
-			return new WP_DuckDB_Prepared_Statement( $this, $this->duckdb->preparedStatement( $sql ) );
+			return new WP_DuckDB_Prepared_Statement( $this, $this->duckdb->preparedStatement( $sql ), $sql );
 		} catch ( Throwable $e ) {
 			throw new WP_DuckDB_Driver_Exception( 'Failed to prepare DuckDB query: ' . $e->getMessage(), 0, $e );
 		}
@@ -178,10 +178,11 @@ class WP_DuckDB_Connection {
 	/**
 	 * Create a statement wrapper from a DuckDB PHP ResultSet.
 	 *
-	 * @param object $result DuckDB PHP ResultSet.
+	 * @param object      $result DuckDB PHP ResultSet.
+	 * @param string|null $sql    SQL query that produced the result.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	public function create_statement_from_result( $result ): WP_DuckDB_Result_Statement {
+	public function create_statement_from_result( $result, ?string $sql = null ): WP_DuckDB_Result_Statement {
 		$columns = iterator_to_array( $result->columnNames() );
 		$columns = array_values( $columns );
 		$rows    = array();
@@ -191,15 +192,85 @@ class WP_DuckDB_Connection {
 		}
 
 		$affected_rows = 0;
-		if ( array( 'Count' ) === $columns ) {
+		if ( array( 'Count' ) === $columns && $this->is_affected_row_statement( $sql ) ) {
 			$affected_rows = isset( $rows[0][0] ) ? (int) $rows[0][0] : 0;
 			return new WP_DuckDB_Result_Statement( array(), array(), $affected_rows );
 		}
-		if ( array( 'Success' ) === $columns ) {
+		if ( array( 'Count' ) === $columns && $this->is_success_statement( $sql ) ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+		if ( array( 'Success' ) === $columns && $this->is_success_statement( $sql ) ) {
 			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
 		}
 
 		return new WP_DuckDB_Result_Statement( $columns, $rows, $affected_rows );
+	}
+
+	/**
+	 * Check whether SQL is expected to produce a DuckDB affected-row Count result.
+	 *
+	 * @param string|null $sql SQL query.
+	 * @return bool
+	 */
+	private function is_affected_row_statement( ?string $sql ): bool {
+		return in_array(
+			$this->get_statement_verb( $sql ),
+			array( 'insert', 'update', 'delete', 'replace' ),
+			true
+		);
+	}
+
+	/**
+	 * Check whether SQL is expected to produce a DuckDB command-success result.
+	 *
+	 * @param string|null $sql SQL query.
+	 * @return bool
+	 */
+	private function is_success_statement( ?string $sql ): bool {
+		return in_array(
+			$this->get_statement_verb( $sql ),
+			array(
+				'alter',
+				'attach',
+				'begin',
+				'checkpoint',
+				'commit',
+				'create',
+				'detach',
+				'drop',
+				'reset',
+				'rollback',
+				'set',
+				'truncate',
+				'use',
+				'vacuum',
+			),
+			true
+		);
+	}
+
+	/**
+	 * Get the first SQL statement verb after leading comments.
+	 *
+	 * @param string|null $sql SQL query.
+	 * @return string|null
+	 */
+	private function get_statement_verb( ?string $sql ): ?string {
+		if ( null === $sql ) {
+			return null;
+		}
+
+		if (
+			1 !== preg_match(
+				'/^\s*(?:(?:\/\*.*?\*\/|--[^\r\n]*|#[^\r\n]*)\s*)*([a-z]+)/is',
+				$sql,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		return strtolower( $matches[1] );
 	}
 
 	/**
