@@ -82,6 +82,9 @@
 			"rm -rf wordpress/src/wp-content/database/.ht.duckdb wordpress/src/wp-content/database/.ht.duckdb.wal @no_additional_args",
 			"npm --prefix wordpress run test:php -- @additional_args"
 		],
+		"wp-smoke-duckdb-local": [
+			"./bin/wp-duckdb-local-smoke.sh"
+		],
 		"wp-test-e2e": [
 			"@wp-test-ensure-env @no_additional_args",
 			"npm --prefix wordpress run test:e2e -- @additional_args"
