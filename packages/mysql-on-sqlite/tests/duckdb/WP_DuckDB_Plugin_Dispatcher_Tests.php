@@ -180,7 +180,7 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 
 		$this->assertTrue( $result['connected'] );
 		$this->assertSame( 0, $result['select_return'] );
-		$this->assertCount( 2, $result['select_col_info'] );
+		$this->assertCount( 3, $result['select_col_info'] );
 
 		$this->assertSame( 'ID', $result['select_col_info'][0]['name'] );
 		$this->assertSame( 'ID', $result['select_col_info'][0]['orgname'] );
@@ -199,6 +199,17 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 764, $result['select_col_info'][1]['length'] );
 		$this->assertSame( 255, $result['select_col_info'][1]['charsetnr'] );
 		$this->assertSame( 253, $result['select_col_info'][1]['type'] );
+
+		$this->assertSame( 'price', $result['select_col_info'][2]['name'] );
+		$this->assertSame( 'price', $result['select_col_info'][2]['orgname'] );
+		$this->assertSame( 'wp_posts', $result['select_col_info'][2]['table'] );
+		$this->assertSame( 'wp_posts', $result['select_col_info'][2]['orgtable'] );
+		$this->assertSame( 'wordpress_test', $result['select_col_info'][2]['db'] );
+		$this->assertSame( 12, $result['select_col_info'][2]['length'] );
+		$this->assertSame( 63, $result['select_col_info'][2]['charsetnr'] );
+		$this->assertSame( 32768, $result['select_col_info'][2]['flags'] );
+		$this->assertSame( 246, $result['select_col_info'][2]['type'] );
+		$this->assertSame( 2, $result['select_col_info'][2]['decimals'] );
 		$this->assertSame( 0, $result['update_return'] );
 		$this->assertSame( array(), $result['update_col_info'] );
 	}
@@ -877,9 +888,9 @@ class WP_DuckDB_Plugin_Col_Info_Test_Driver extends WP_DuckDB_Driver {
 			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
 		}
 
-		if ( 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' === $sql ) {
+		if ( 'SELECT ID, post_title, price FROM wp_posts WHERE ID = 0' === $sql ) {
 			return new WP_DuckDB_Result_Statement(
-				array( 'ID', 'post_title' ),
+				array( 'ID', 'post_title', 'price' ),
 				array(),
 				0,
 				array(
@@ -909,6 +920,19 @@ class WP_DuckDB_Plugin_Col_Info_Test_Driver extends WP_DuckDB_Driver {
 						'mysqli:flags'     => 0,
 						'mysqli:type'      => 253,
 					),
+					array(
+						'name'             => 'price',
+						'native_type'      => 'NEWDECIMAL',
+						'table'            => 'wp_posts',
+						'len'              => 12,
+						'precision'        => 2,
+						'mysqli:orgname'   => 'price',
+						'mysqli:orgtable'  => 'wp_posts',
+						'mysqli:db'        => 'wordpress_test',
+						'mysqli:charsetnr' => 63,
+						'mysqli:flags'     => 32768,
+						'mysqli:type'      => 246,
+					),
 				)
 			);
 		}
@@ -936,7 +960,7 @@ class WP_DuckDB_Plugin_Col_Info_Test_DB extends WP_DuckDB_DB {
 $GLOBALS['@duckdb_driver'] = new WP_DuckDB_Plugin_Col_Info_Test_Driver();
 $db                        = new WP_DuckDB_Plugin_Col_Info_Test_DB( 'wordpress_test' );
 $connected                 = $db->db_connect( false );
-$select_return             = $db->query( 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' );
+$select_return             = $db->query( 'SELECT ID, post_title, price FROM wp_posts WHERE ID = 0' );
 $select_col_info           = $db->exported_col_info();
 $update_return             = $db->query( 'UPDATE wp_posts SET ID = ID WHERE ID = 0' );
 $update_col_info           = $db->exported_col_info();
