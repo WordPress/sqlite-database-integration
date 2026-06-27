@@ -3599,14 +3599,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$inserted = $driver->query( "INSERT INTO items SET id = 1, name = 'first', hits = 2" );
 		$this->assertSame( 1, $inserted->rowCount() );
-		$this->assertSame( "INSERT INTO items (id, name, hits) VALUES (1, 'first', 2)", $this->lastDuckDBQuery( $driver ) );
+		$this->assertSame( "INSERT INTO \"items\" (id, name, hits) VALUES (1, 'first', 2)", $this->lastDuckDBQuery( $driver ) );
 
 		$inserted_without_into = $driver->query( "INSERT items SET id = 2, name = 'second'" );
 		$this->assertSame( 1, $inserted_without_into->rowCount() );
 
 		$ignored = $driver->query( "INSERT IGNORE items SET id = 2, name = 'duplicate'" );
 		$this->assertSame( 0, $ignored->rowCount() );
-		$this->assertSame( "INSERT OR IGNORE INTO items (id, name) VALUES (2, 'duplicate')", $this->lastDuckDBQuery( $driver ) );
+		$this->assertSame( "INSERT OR IGNORE INTO \"items\" (id, name) VALUES (2, 'duplicate')", $this->lastDuckDBQuery( $driver ) );
 
 		$this->assertSame(
 			array(
