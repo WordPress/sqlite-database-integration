@@ -3637,6 +3637,56 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW CREATE TABLE inline_check_metadata' );
 	}
 
+	public function test_check_not_enforced_constraints_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE check_not_enforced (
+					id INT CHECK (id > 0) NOT ENFORCED,
+					amount INT,
+					CONSTRAINT amount_limit CHECK (amount < 5) NOT ENFORCED,
+					CONSTRAINT amount_positive CHECK (amount > 0)
+				)',
+				'INSERT INTO check_not_enforced (id, amount) VALUES (0, 10)',
+				'ALTER TABLE check_not_enforced ADD CONSTRAINT added_less_than_five CHECK (amount < 5) NOT ENFORCED',
+				'ALTER TABLE check_not_enforced ADD CHECK (id > 10) NOT ENFORCED',
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO check_not_enforced (id, amount) VALUES (0, 10)' );
+		$this->assertParityErrorContains(
+			'INSERT INTO check_not_enforced (id, amount) VALUES (1, -1)',
+			'CHECK constraint failed'
+		);
+		$this->assertParityRows( 'SELECT id, amount FROM check_not_enforced ORDER BY id, amount' );
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'check_not_enforced'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT tc.CONSTRAINT_NAME, cc.CHECK_CLAUSE
+			FROM information_schema.table_constraints AS tc
+			JOIN information_schema.check_constraints AS cc
+				ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+				AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
+			WHERE tc.table_schema = 'wp' AND tc.table_name = 'check_not_enforced'
+			ORDER BY tc.constraint_name"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE check_not_enforced' );
+
+		$this->assertParityRowCount( 'ALTER TABLE check_not_enforced DROP CHECK added_less_than_five' );
+		$this->assertParityRowCount( 'ALTER TABLE check_not_enforced DROP CONSTRAINT check_not_enforced_chk_2' );
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'check_not_enforced'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE check_not_enforced' );
+		$this->assertParityRowCount( 'INSERT INTO check_not_enforced (id, amount) VALUES (0, 10)' );
+	}
+
 	public function test_simple_table_level_foreign_keys_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

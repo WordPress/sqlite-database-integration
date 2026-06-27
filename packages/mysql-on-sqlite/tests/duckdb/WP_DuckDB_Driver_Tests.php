@@ -6452,6 +6452,154 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_create_table_check_not_enforced_uses_metadata_without_native_enforcement(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query(
+			'CREATE TABLE checks_not_enforced (
+				id INT CHECK (id > 0) NOT ENFORCED,
+				amount INT,
+				CONSTRAINT amount_limit CHECK (amount < 5) NOT ENFORCED,
+				CONSTRAINT amount_positive CHECK (amount > 0)
+			)'
+		);
+
+		$native_create_queries = array_values(
+			array_filter(
+				$driver->get_last_duckdb_queries(),
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'CREATE TABLE "checks_not_enforced" ' );
+				}
+			)
+		);
+		$this->assertCount( 1, $native_create_queries );
+		$this->assertStringNotContainsString( 'amount_limit', $native_create_queries[0] );
+		$this->assertStringNotContainsString( 'checks_not_enforced_chk_1', $native_create_queries[0] );
+		$this->assertStringContainsString( 'amount_positive', $native_create_queries[0] );
+
+		$this->assertSame( 1, $driver->query( 'INSERT INTO checks_not_enforced (id, amount) VALUES (0, 10)' )->rowCount() );
+		try {
+			$driver->query( 'INSERT INTO checks_not_enforced (id, amount) VALUES (1, -1)' );
+			$this->fail( 'Expected enforced CHECK constraint to reject a negative amount.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'amount_limit',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'NO',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'checks_not_enforced_chk_1',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'NO',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'checks_not_enforced'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'amount_limit',
+					'CHECK_CLAUSE'    => 'amount < 5',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CHECK_CLAUSE'    => 'amount > 0',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'checks_not_enforced_chk_1',
+					'CHECK_CLAUSE'    => 'id > 0',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+				FROM information_schema.check_constraints
+				WHERE constraint_schema = 'wp'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create = $driver->query( 'SHOW CREATE TABLE checks_not_enforced' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `checks_not_enforced` (',
+					'  `id` int DEFAULT NULL,',
+					'  `amount` int DEFAULT NULL,',
+					'  CONSTRAINT `amount_limit` CHECK (amount < 5) /*!80016 NOT ENFORCED */,',
+					'  CONSTRAINT `amount_positive` CHECK (amount > 0),',
+					'  CONSTRAINT `checks_not_enforced_chk_1` CHECK (id > 0) /*!80016 NOT ENFORCED */',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$create['Create Table']
+		);
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE checks_not_enforced DROP CHECK amount_positive' )->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'amount_limit',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'NO',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'checks_not_enforced_chk_1',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'NO',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'checks_not_enforced'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$create = $driver->query( 'SHOW CREATE TABLE checks_not_enforced' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertStringNotContainsString( 'amount_positive', $create['Create Table'] );
+		$this->assertStringContainsString( 'CONSTRAINT `amount_limit` CHECK (amount < 5) /*!80016 NOT ENFORCED */', $create['Create Table'] );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO checks_not_enforced (id, amount) VALUES (0, -1)' )->rowCount() );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE checks_not_enforced DROP CHECK amount_limit' )->rowCount() );
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE checks_not_enforced DROP CONSTRAINT checks_not_enforced_chk_1' )->rowCount() );
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'checks_not_enforced'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$create = $driver->query( 'SHOW CREATE TABLE checks_not_enforced' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertStringNotContainsString( 'NOT ENFORCED', $create['Create Table'] );
+		$this->assertStringNotContainsString( 'CONSTRAINT', $create['Create Table'] );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO checks_not_enforced (id, amount) VALUES (0, -1)' )->rowCount() );
+	}
+
 	public function test_create_table_foreign_keys_use_native_enforcement_and_mysql_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -9482,6 +9630,135 @@ SQL,
 		}
 	}
 
+	public function test_alter_table_add_check_not_enforced_records_metadata_without_rebuild(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE alter_check_not_enforced (
+				id INT,
+				amount INT,
+				CONSTRAINT amount_positive CHECK (amount > 0),
+				KEY amount_idx (amount)
+			)'
+		);
+		$driver->query( 'INSERT INTO alter_check_not_enforced (id, amount) VALUES (1, 20)' );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE alter_check_not_enforced ADD CONSTRAINT amount_less_than_five CHECK (amount < 5) NOT ENFORCED' )->rowCount()
+		);
+		$this->assertSame(
+			array(),
+			array_values(
+				array_filter(
+					$driver->get_last_duckdb_queries(),
+					function ( string $sql ): bool {
+						return false !== strpos( $sql, '__wp_duckdb_rebuild_' );
+					}
+				)
+			)
+		);
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_check_not_enforced ADD CHECK (id > 10) NOT ENFORCED' )->rowCount() );
+
+		$this->assertSame( 1, $driver->query( 'INSERT INTO alter_check_not_enforced (id, amount) VALUES (2, 20)' )->rowCount() );
+		try {
+			$driver->query( 'INSERT INTO alter_check_not_enforced (id, amount) VALUES (3, -1)' );
+			$this->fail( 'Expected enforced CHECK constraint to remain enforced after metadata-only CHECK additions.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'alter_check_not_enforced_chk_1',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'NO',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'amount_less_than_five',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'NO',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'alter_check_not_enforced'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'alter_check_not_enforced_chk_1',
+					'CHECK_CLAUSE'    => 'id > 10',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'amount_less_than_five',
+					'CHECK_CLAUSE'    => 'amount < 5',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CHECK_CLAUSE'    => 'amount > 0',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+				FROM information_schema.check_constraints
+				WHERE constraint_schema = 'wp'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE alter_check_not_enforced' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringContainsString(
+			'CONSTRAINT `amount_less_than_five` CHECK (amount < 5) /*!80016 NOT ENFORCED */',
+			$create_rows[0]['Create Table']
+		);
+		$this->assertStringContainsString(
+			'CONSTRAINT `alter_check_not_enforced_chk_1` CHECK (id > 10) /*!80016 NOT ENFORCED */',
+			$create_rows[0]['Create Table']
+		);
+		$this->assertStringContainsString( 'CONSTRAINT `amount_positive` CHECK (amount > 0)', $create_rows[0]['Create Table'] );
+
+		$this->assertSame( 0, $driver->query( 'ALTER TABLE alter_check_not_enforced DROP CHECK amount_less_than_five' )->rowCount() );
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE alter_check_not_enforced DROP CONSTRAINT alter_check_not_enforced_chk_1' )->rowCount()
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'wp' AND table_name = 'alter_check_not_enforced'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$create_rows = $driver->query( 'SHOW CREATE TABLE alter_check_not_enforced' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertStringNotContainsString( 'NOT ENFORCED', $create_rows[0]['Create Table'] );
+		$this->assertStringContainsString( 'KEY `amount_idx` (`amount`)', $create_rows[0]['Create Table'] );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO alter_check_not_enforced (id, amount) VALUES (4, 20)' )->rowCount() );
+	}
+
 	public function test_alter_table_add_check_constraint_violation_rolls_back_schema_data_and_indexes(): void {
 		$this->requireDuckDBRuntime();
 
@@ -11120,31 +11397,6 @@ SQL,
 				'Multi-action ALTER TABLE constraint rejection mutated schema or data for SQL: ' . $sql
 			);
 		}
-	}
-
-	public function test_unsupported_create_table_check_constraint_not_enforced_throws_driver_exception(): void {
-		$this->requireDuckDBRuntime();
-
-		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
-
-		foreach (
-			array(
-				'CREATE TABLE checks_named (id INT, CONSTRAINT positive CHECK (id > 0) NOT ENFORCED)',
-				'CREATE TABLE checks_inline (id INT CHECK (id > 0) NOT ENFORCED)',
-			) as $sql
-		) {
-			try {
-				$driver->query( $sql );
-				$this->fail( 'Expected unsupported CHECK NOT ENFORCED to reject SQL: ' . $sql );
-			} catch ( WP_DuckDB_Driver_Exception $e ) {
-				$this->assertStringContainsString(
-					'Unsupported CREATE TABLE CHECK constraint in DuckDB driver: NOT ENFORCED is not supported.',
-					$e->getMessage()
-				);
-			}
-		}
-
-		$this->assertSame( array(), $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ) );
 	}
 
 	public function test_unsupported_create_table_foreign_key_actions_throw_before_mutation(): void {
