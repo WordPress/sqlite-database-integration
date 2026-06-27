@@ -1403,9 +1403,22 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE constraint in DuckDB driver: ' . $item[0]->get_bytes() . '.' );
 			}
 
-			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata ) = $this->translate_create_table_column( $table_name, $item, true, false, $temporary, $auto_increment_seed, $table_metadata['table_collation'] );
-			$columns[]  = $column_sql;
-			$metadata[] = $column_metadata;
+			list( $column_sql, $sequence_sql, $column_indexes, $column_metadata, $column_constraints, $column_check_constraints, $column_foreign_keys ) = $this->translate_create_table_column(
+				$table_name,
+				$item,
+				true,
+				false,
+				$temporary,
+				$auto_increment_seed,
+				$table_metadata['table_collation'],
+				$check_names,
+				$foreign_key_names
+			);
+			$columns[]         = $column_sql;
+			$metadata[]        = $column_metadata;
+			$constraints       = array_merge( $constraints, $column_constraints );
+			$check_constraints = array_merge( $check_constraints, $column_check_constraints );
+			$foreign_keys      = array_merge( $foreign_keys, $column_foreign_keys );
 			if ( null !== $sequence_sql ) {
 				$sequences[] = array(
 					'sql'         => $sequence_sql,
@@ -5849,9 +5862,11 @@ class WP_DuckDB_Driver {
 	 * @param bool              $temporary                  Whether the target is a temporary table.
 	 * @param int|null          $auto_increment_seed        Optional AUTO_INCREMENT table option.
 	 * @param string|null       $default_collation_name     Effective table collation for text columns without an explicit collation.
-	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>,3:array<string,mixed>}
+	 * @param array<string,bool>|null $check_names       Existing MySQL-facing CHECK names, keyed lowercase.
+	 * @param array<string,bool>|null $foreign_key_names Existing FOREIGN KEY names, keyed lowercase.
+	 * @return array{0:string,1:string|null,2:array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}>,3:array<string,mixed>,4:array<int,string>,5:array<int,array{constraint_name:string,check_clause:string,enforced:string}>,6:array<int,array{constraint_name:string,columns:string[],referenced_table_name:string,referenced_columns:string[],update_rule:string,delete_rule:string}>}
 	 */
-	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false, ?int $auto_increment_seed = null, ?string $default_collation_name = null ): array {
+	private function translate_create_table_column( string $table_name, array $tokens, bool $include_inline_constraints = true, bool $allow_position_options = false, bool $temporary = false, ?int $auto_increment_seed = null, ?string $default_collation_name = null, ?array &$check_names = null, ?array &$foreign_key_names = null ): array {
 		$index       = 0;
 		$column_name = $this->identifier_value( $tokens[ $index ] ?? null );
 		++$index;
@@ -5871,6 +5886,16 @@ class WP_DuckDB_Driver {
 		$unique_key     = false;
 		$auto_increment = false;
 		$default_sql    = null;
+		$constraints    = array();
+		$checks         = array();
+		$foreign_keys   = array();
+
+		if ( null === $check_names ) {
+			$check_names = array();
+		}
+		if ( null === $foreign_key_names ) {
+			$foreign_key_names = array();
+		}
 
 		while ( $index < count( $tokens ) ) {
 			$token = $tokens[ $index ];
@@ -5937,8 +5962,22 @@ class WP_DuckDB_Driver {
 					}
 					$index = $this->skip_option_value( $tokens, $index + 2 );
 					break;
+				case WP_MySQL_Lexer::CHECK_SYMBOL:
+					if ( ! $include_inline_constraints ) {
+						throw new WP_DuckDB_Driver_Exception( 'Unsupported inline CHECK constraint in DuckDB driver. Inline CHECK constraints are only supported in CREATE TABLE.' );
+					}
+					$check         = $this->translate_inline_check_constraint( $table_name, $tokens, $index, $check_names );
+					$constraints[] = $check['sql'];
+					$checks[]      = $check['metadata'];
+					break;
 				case WP_MySQL_Lexer::REFERENCES_SYMBOL:
-					throw new WP_DuckDB_Driver_Exception( 'Unsupported inline REFERENCES constraint in DuckDB driver. Use a table-level FOREIGN KEY constraint.' );
+					if ( ! $include_inline_constraints ) {
+						throw new WP_DuckDB_Driver_Exception( 'Unsupported inline REFERENCES constraint in DuckDB driver. Inline REFERENCES constraints are only supported in CREATE TABLE.' );
+					}
+					$foreign_key    = $this->translate_inline_foreign_key_constraint( $table_name, $column_name, $tokens, $index, $foreign_key_names );
+					$constraints[]  = $foreign_key['sql'];
+					$foreign_keys[] = $foreign_key['metadata'];
+					break;
 				default:
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported column attribute in DuckDB driver: ' . $token->get_bytes() . '.' );
 			}
@@ -6015,7 +6054,116 @@ class WP_DuckDB_Driver {
 			'_default_sql'   => $auto_increment ? null : $default_sql,
 		);
 
-		return array( $column_sql, $sequence, $indexes, $metadata );
+		return array( $column_sql, $sequence, $indexes, $metadata, $constraints, $checks, $foreign_keys );
+	}
+
+	/**
+	 * Translate an inline column CHECK constraint into table-level DuckDB SQL and metadata.
+	 *
+	 * @param string             $table_name  Table name.
+	 * @param WP_Parser_Token[]  $tokens      Column definition tokens.
+	 * @param int                $index       Current index, advanced past the CHECK clause.
+	 * @param array<string,bool> $check_names Existing MySQL-facing CHECK names, keyed lowercase.
+	 * @return array{sql:string,metadata:array{constraint_name:string,check_clause:string,enforced:string}}
+	 */
+	private function translate_inline_check_constraint( string $table_name, array $tokens, int &$index, array &$check_names ): array {
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::CHECK_SYMBOL, 'Expected CHECK constraint.' );
+		++$index;
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Expected CHECK expression.' );
+
+		$expression_end    = $this->skip_balanced_parentheses( $tokens, $index );
+		$expression_tokens = array_slice( $tokens, $index + 1, $expression_end - $index - 2 );
+		if ( count( $expression_tokens ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'CHECK constraint requires an expression in the DuckDB driver.' );
+		}
+
+		$index = $expression_end;
+		if ( isset( $tokens[ $index ] ) ) {
+			if (
+				WP_MySQL_Lexer::NOT_SYMBOL === $tokens[ $index ]->id
+				&& isset( $tokens[ $index + 1 ] )
+				&& WP_MySQL_Lexer::ENFORCED_SYMBOL === $tokens[ $index + 1 ]->id
+			) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE CHECK constraint in DuckDB driver: NOT ENFORCED is not supported.' );
+			}
+
+			if ( WP_MySQL_Lexer::ENFORCED_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+			}
+		}
+
+		$constraint_name = $this->generate_check_constraint_name( $table_name, $check_names );
+		$this->register_check_constraint_name( $constraint_name, $check_names );
+
+		$duckdb_expression = $this->translate_tokens_to_duckdb_sql( $expression_tokens );
+		$mysql_expression  = $this->mysql_check_clause_from_tokens( $expression_tokens );
+
+		return array(
+			'sql'      => 'CONSTRAINT '
+				. $this->connection->quote_identifier( $constraint_name )
+				. ' CHECK ('
+				. $duckdb_expression
+				. ')',
+			'metadata' => array(
+				'constraint_name' => $constraint_name,
+				'check_clause'    => $mysql_expression,
+				'enforced'        => 'YES',
+			),
+		);
+	}
+
+	/**
+	 * Translate an inline column REFERENCES constraint into table-level DuckDB SQL and metadata.
+	 *
+	 * @param string             $table_name        Table name.
+	 * @param string             $column_name       Referencing column name.
+	 * @param WP_Parser_Token[]  $tokens            Column definition tokens.
+	 * @param int                $index             Current index, advanced past the REFERENCES clause.
+	 * @param array<string,bool> $foreign_key_names Existing FOREIGN KEY names, keyed lowercase.
+	 * @return array{sql:string,metadata:array{constraint_name:string,columns:string[],referenced_table_name:string,referenced_columns:string[],update_rule:string,delete_rule:string}}
+	 */
+	private function translate_inline_foreign_key_constraint( string $table_name, string $column_name, array $tokens, int &$index, array &$foreign_key_names ): array {
+		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::REFERENCES_SYMBOL, 'Expected REFERENCES in FOREIGN KEY constraint.' );
+		++$index;
+
+		$referenced_table_name = $this->identifier_value( $tokens[ $index ] ?? null );
+		++$index;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY constraint in DuckDB driver. Schema-qualified references are not supported.' );
+		}
+
+		list( $referenced_columns, $index ) = $this->parse_foreign_key_column_list( $tokens, $index, 'FOREIGN KEY referenced column list' );
+		if ( 1 !== count( $referenced_columns ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY constraint in DuckDB driver. Only single-column foreign keys are supported.' );
+		}
+
+		list( $update_rule, $delete_rule, $index ) = $this->parse_foreign_key_actions( $tokens, $index );
+		if ( count( $tokens ) !== $index ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE TABLE FOREIGN KEY constraint in DuckDB driver.' );
+		}
+
+		$constraint_name = $this->generate_foreign_key_constraint_name( $table_name, $foreign_key_names );
+		$this->register_foreign_key_constraint_name( $constraint_name, $foreign_key_names );
+
+		return array(
+			'sql'      => 'CONSTRAINT '
+				. $this->connection->quote_identifier( $constraint_name )
+				. ' FOREIGN KEY ('
+				. $this->connection->quote_identifier( $column_name )
+				. ') REFERENCES '
+				. $this->connection->quote_identifier( $referenced_table_name )
+				. ' ('
+				. $this->connection->quote_identifier( $referenced_columns[0] )
+				. ')',
+			'metadata' => array(
+				'constraint_name'       => $constraint_name,
+				'columns'               => array( $column_name ),
+				'referenced_table_name' => $referenced_table_name,
+				'referenced_columns'    => $referenced_columns,
+				'update_rule'           => $update_rule,
+				'delete_rule'           => $delete_rule,
+			),
+		);
 	}
 
 	/**

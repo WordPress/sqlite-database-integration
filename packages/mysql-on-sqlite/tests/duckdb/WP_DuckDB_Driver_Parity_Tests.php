@@ -960,6 +960,44 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SHOW CREATE TABLE check_metadata' );
 	}
 
+	public function test_inline_check_constraints_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE inline_check_metadata (
+					id INT CHECK (id >= 0),
+					amount INT CHECK (amount > 0) ENFORCED
+				)',
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO inline_check_metadata (id, amount) VALUES (1, 10)' );
+		$this->assertParityErrorContains(
+			'INSERT INTO inline_check_metadata (id, amount) VALUES (-1, 1)',
+			'CHECK constraint failed'
+		);
+		$this->assertParityErrorContains(
+			'INSERT INTO inline_check_metadata (id, amount) VALUES (2, -1)',
+			'CHECK constraint failed'
+		);
+		$this->assertParityErrorContains(
+			'UPDATE inline_check_metadata SET amount = 0 WHERE id = 1',
+			'CHECK constraint failed'
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'inline_check_metadata'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = 'wp'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE inline_check_metadata' );
+	}
+
 	public function test_simple_table_level_foreign_keys_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -1026,6 +1064,68 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 		$this->assertParityRows( 'SHOW CREATE TABLE fk_child' );
 		$this->assertParityRows( 'SHOW CREATE TABLE fk_child_generated' );
+	}
+
+	public function test_simple_inline_foreign_keys_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE inline_fk_parent (id INT PRIMARY KEY)',
+				'CREATE TABLE inline_fk_child (
+					id INT,
+					parent_id INT REFERENCES inline_fk_parent (id) ON DELETE RESTRICT ON UPDATE NO ACTION
+				)',
+				'CREATE TABLE inline_fk_child_default (
+					id INT,
+					parent_id INT REFERENCES inline_fk_parent (id)
+				)',
+				'INSERT INTO inline_fk_parent (id) VALUES (1)',
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO inline_fk_child (id, parent_id) VALUES (10, 1)' );
+		$this->assertParityRowCount( 'INSERT INTO inline_fk_child_default (id, parent_id) VALUES (20, 1)' );
+		$this->assertParityErrorContains(
+			'INSERT INTO inline_fk_child (id, parent_id) VALUES (11, 404)',
+			'constraint'
+		);
+		$this->assertParityErrorContains(
+			'UPDATE inline_fk_child SET parent_id = 404 WHERE id = 10',
+			'constraint'
+		);
+		$this->assertParityErrorContains(
+			'UPDATE inline_fk_parent SET id = 2 WHERE id = 1',
+			'constraint'
+		);
+		$this->assertParityErrorContains(
+			'DELETE FROM inline_fk_parent WHERE id = 1',
+			'constraint'
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp'
+				AND table_name IN ('inline_fk_child', 'inline_fk_child_default')
+			ORDER BY table_name, constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, MATCH_OPTION,
+				UPDATE_RULE, DELETE_RULE, TABLE_NAME, REFERENCED_TABLE_NAME
+			FROM information_schema.referential_constraints
+			WHERE constraint_schema = 'wp'
+				AND table_name IN ('inline_fk_child', 'inline_fk_child_default')
+			ORDER BY table_name, constraint_name"
+		);
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
+				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_SCHEMA,
+				REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp'
+				AND table_name IN ('inline_fk_child', 'inline_fk_child_default')
+			ORDER BY table_name, constraint_name, ordinal_position"
+		);
+		$this->assertParityRows( 'SHOW CREATE TABLE inline_fk_child' );
+		$this->assertParityRows( 'SHOW CREATE TABLE inline_fk_child_default' );
 	}
 
 	public function test_unique_key_foreign_key_metadata_documents_current_duckdb_gap(): void {

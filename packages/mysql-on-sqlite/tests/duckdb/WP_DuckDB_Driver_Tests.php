@@ -2722,6 +2722,126 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_create_table_inline_check_constraints_use_native_enforcement_and_mysql_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query(
+			'CREATE TABLE inline_checks (
+				id INT CHECK (id >= 0),
+				amount INT CHECK (amount > 0) ENFORCED
+			)'
+		);
+
+		$this->assertSame( 2, $driver->query( 'INSERT INTO inline_checks (id, amount) VALUES (1, 10), (NULL, 2)' )->rowCount() );
+
+		try {
+			$driver->query( 'INSERT INTO inline_checks (id, amount) VALUES (-1, 1)' );
+			$this->fail( 'Expected inline CHECK constraint enforcement to reject a negative id.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( 'INSERT INTO inline_checks (id, amount) VALUES (2, -1)' );
+			$this->fail( 'Expected inline CHECK constraint enforcement to reject a negative amount.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( 'UPDATE inline_checks SET amount = 0 WHERE id = 1' );
+			$this->fail( 'Expected inline CHECK constraint enforcement to reject an invalid UPDATE.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		try {
+			$driver->query( 'UPDATE inline_checks SET id = -2 WHERE amount = 2' );
+			$this->fail( 'Expected inline CHECK constraint enforcement to reject an invalid UPDATE.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'id'     => 1,
+					'amount' => 10,
+				),
+				array(
+					'id'     => null,
+					'amount' => 2,
+				),
+			),
+			$driver->query( 'SELECT id, amount FROM inline_checks ORDER BY amount DESC' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'inline_checks'
+			ORDER BY constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'inline_checks_chk_1',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'inline_checks_chk_2',
+					'CONSTRAINT_TYPE' => 'CHECK',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$constraints
+		);
+
+		$check_constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+			FROM information_schema.check_constraints
+			WHERE constraint_schema = 'wp'
+			ORDER BY constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'inline_checks_chk_1',
+					'CHECK_CLAUSE'    => 'id >= 0',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'inline_checks_chk_2',
+					'CHECK_CLAUSE'    => 'amount > 0',
+				),
+			),
+			$check_constraints
+		);
+
+		$create = $driver->query( 'SHOW CREATE TABLE inline_checks' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `inline_checks` (',
+					'  `id` int DEFAULT NULL,',
+					'  `amount` int DEFAULT NULL,',
+					'  CONSTRAINT `inline_checks_chk_1` CHECK (id >= 0),',
+					'  CONSTRAINT `inline_checks_chk_2` CHECK (amount > 0)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$create['Create Table']
+		);
+	}
+
 	public function test_create_table_foreign_keys_use_native_enforcement_and_mysql_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -2887,6 +3007,187 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					'  `id` int DEFAULT NULL,',
 					'  `parent_id` int DEFAULT NULL,',
 					'  CONSTRAINT `fk_parent` FOREIGN KEY (`parent_id`) REFERENCES `parents` (`id`) ON DELETE RESTRICT',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$create['Create Table']
+		);
+	}
+
+	public function test_create_table_inline_foreign_keys_use_native_enforcement_and_mysql_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY)' );
+		$driver->query(
+			'CREATE TABLE child_inline (
+				id INT,
+				parent_id INT REFERENCES parents (id) ON DELETE RESTRICT ON UPDATE NO ACTION
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE child_inline_default (
+				id INT,
+				parent_id INT REFERENCES parents (id)
+			)'
+		);
+
+		$create_queries = $driver->get_last_duckdb_queries();
+		$this->assertContains(
+			'CREATE TABLE "child_inline_default" ("id" INTEGER, "parent_id" INTEGER, CONSTRAINT "child_inline_default_ibfk_1" FOREIGN KEY ("parent_id") REFERENCES "parents" ("id"))',
+			$create_queries
+		);
+
+		$driver->query( 'INSERT INTO parents (id) VALUES (1)' );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO child_inline (id, parent_id) VALUES (10, 1)' )->rowCount() );
+		$this->assertSame( 1, $driver->query( 'INSERT INTO child_inline_default (id, parent_id) VALUES (20, 1)' )->rowCount() );
+
+		try {
+			$driver->query( 'INSERT INTO child_inline (id, parent_id) VALUES (11, 404)' );
+			$this->fail( 'Expected inline FOREIGN KEY enforcement to reject a missing parent row.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'constraint', strtolower( $e->getMessage() ) );
+		}
+
+		try {
+			$driver->query( 'UPDATE child_inline SET parent_id = 404 WHERE id = 10' );
+			$this->fail( 'Expected inline FOREIGN KEY enforcement to reject updating a child to a missing parent row.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'constraint', strtolower( $e->getMessage() ) );
+		}
+
+		try {
+			$driver->query( 'UPDATE parents SET id = 2 WHERE id = 1' );
+			$this->fail( 'Expected inline FOREIGN KEY enforcement to restrict updating a referenced parent key.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'constraint', strtolower( $e->getMessage() ) );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'id'        => 10,
+					'parent_id' => 1,
+				),
+			),
+			$driver->query( 'SELECT id, parent_id FROM child_inline' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'id' => 1 ) ),
+			$driver->query( 'SELECT id FROM parents' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		try {
+			$driver->query( 'DELETE FROM parents WHERE id = 1' );
+			$this->fail( 'Expected inline FOREIGN KEY enforcement to restrict deleting a referenced parent row.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'constraint', strtolower( $e->getMessage() ) );
+		}
+
+		$constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name IN ('child_inline', 'child_inline_default')
+			ORDER BY table_name, constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'child_inline_ibfk_1',
+					'CONSTRAINT_TYPE' => 'FOREIGN KEY',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'child_inline_default_ibfk_1',
+					'CONSTRAINT_TYPE' => 'FOREIGN KEY',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$constraints
+		);
+
+		$referential_constraints = $driver->query(
+			"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, MATCH_OPTION,
+				UPDATE_RULE, DELETE_RULE, TABLE_NAME, REFERENCED_TABLE_NAME
+			FROM information_schema.referential_constraints
+			WHERE constraint_schema = 'wp'
+				AND table_name IN ('child_inline', 'child_inline_default')
+			ORDER BY table_name, constraint_name"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'        => 'child_inline_ibfk_1',
+					'UNIQUE_CONSTRAINT_NAME' => 'PRIMARY',
+					'MATCH_OPTION'           => 'NONE',
+					'UPDATE_RULE'            => 'NO ACTION',
+					'DELETE_RULE'            => 'RESTRICT',
+					'TABLE_NAME'             => 'child_inline',
+					'REFERENCED_TABLE_NAME'  => 'parents',
+				),
+				array(
+					'CONSTRAINT_NAME'        => 'child_inline_default_ibfk_1',
+					'UNIQUE_CONSTRAINT_NAME' => 'PRIMARY',
+					'MATCH_OPTION'           => 'NONE',
+					'UPDATE_RULE'            => 'NO ACTION',
+					'DELETE_RULE'            => 'NO ACTION',
+					'TABLE_NAME'             => 'child_inline_default',
+					'REFERENCED_TABLE_NAME'  => 'parents',
+				),
+			),
+			$referential_constraints
+		);
+
+		$usage = $driver->query(
+			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION,
+				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_SCHEMA,
+				REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+			FROM information_schema.key_column_usage
+			WHERE table_schema = 'wp'
+				AND table_name IN ('child_inline', 'child_inline_default')
+			ORDER BY table_name, constraint_name, ordinal_position"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'               => 'child_inline_ibfk_1',
+					'TABLE_NAME'                    => 'child_inline',
+					'COLUMN_NAME'                   => 'parent_id',
+					'ORDINAL_POSITION'              => 1,
+					'POSITION_IN_UNIQUE_CONSTRAINT' => 1,
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 'parents',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+				array(
+					'CONSTRAINT_NAME'               => 'child_inline_default_ibfk_1',
+					'TABLE_NAME'                    => 'child_inline_default',
+					'COLUMN_NAME'                   => 'parent_id',
+					'ORDINAL_POSITION'              => 1,
+					'POSITION_IN_UNIQUE_CONSTRAINT' => 1,
+					'REFERENCED_TABLE_SCHEMA'       => 'wp',
+					'REFERENCED_TABLE_NAME'         => 'parents',
+					'REFERENCED_COLUMN_NAME'        => 'id',
+				),
+			),
+			$usage
+		);
+
+		$create = $driver->query( 'SHOW CREATE TABLE child_inline' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `child_inline` (',
+					'  `id` int DEFAULT NULL,',
+					'  `parent_id` int DEFAULT NULL,',
+					'  CONSTRAINT `child_inline_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parents` (`id`) ON DELETE RESTRICT',
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -3297,6 +3598,60 @@ SQL,
 		$drop = $driver->query( 'DROP TEMPORARY TABLE temp_items' );
 		$this->assertSame( 0, $drop->rowCount() );
 		$this->assertSame( array(), $driver->query( 'SHOW CREATE TABLE temp_items' )->fetchAll( PDO::FETCH_ASSOC ) );
+	}
+
+	public function test_temporary_table_inline_checks_use_temp_metadata_only(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query(
+			'CREATE TEMPORARY TABLE temp_inline_checks (
+				id INT CHECK (id >= 0),
+				amount INT CHECK (amount > 0)
+			)'
+		);
+
+		$this->assertSame( 1, $driver->query( 'INSERT INTO temp_inline_checks (id, amount) VALUES (1, 10)' )->rowCount() );
+
+		try {
+			$driver->query( 'UPDATE temp_inline_checks SET amount = -1 WHERE id = 1' );
+			$this->fail( 'Expected temporary inline CHECK constraint enforcement to reject an invalid UPDATE.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'CHECK constraint failed', $e->getMessage() );
+		}
+
+		$create_rows = $driver->query( 'SHOW CREATE TABLE temp_inline_checks' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TEMPORARY TABLE `temp_inline_checks` (',
+					'  `id` int DEFAULT NULL,',
+					'  `amount` int DEFAULT NULL,',
+					'  CONSTRAINT `temp_inline_checks_chk_1` CHECK (id >= 0),',
+					'  CONSTRAINT `temp_inline_checks_chk_2` CHECK (amount > 0)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$create_rows[0]['Create Table']
+		);
+
+		$this->assertSame( array(), $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME
+				FROM information_schema.check_constraints
+				WHERE constraint_schema = 'wp'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_temporary_table_takes_precedence_over_persistent_table(): void {
@@ -4204,9 +4559,24 @@ SQL,
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 
-		$this->expectException( WP_DuckDB_Driver_Exception::class );
-		$this->expectExceptionMessage( 'Unsupported CREATE TABLE CHECK constraint in DuckDB driver: NOT ENFORCED is not supported.' );
-		$driver->query( 'CREATE TABLE checks (id INT, CONSTRAINT positive CHECK (id > 0) NOT ENFORCED)' );
+		foreach (
+			array(
+				'CREATE TABLE checks_named (id INT, CONSTRAINT positive CHECK (id > 0) NOT ENFORCED)',
+				'CREATE TABLE checks_inline (id INT CHECK (id > 0) NOT ENFORCED)',
+			) as $sql
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected unsupported CHECK NOT ENFORCED to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString(
+					'Unsupported CREATE TABLE CHECK constraint in DuckDB driver: NOT ENFORCED is not supported.',
+					$e->getMessage()
+				);
+			}
+		}
+
+		$this->assertSame( array(), $driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC ) );
 	}
 
 	public function test_unsupported_create_table_foreign_key_actions_throw_before_mutation(): void {
@@ -4220,6 +4590,9 @@ SQL,
 				'CREATE TABLE child_cascade (parent_id INT, FOREIGN KEY (parent_id) REFERENCES parents (id) ON DELETE CASCADE)' => 'ON DELETE CASCADE is not supported',
 				'CREATE TABLE child_set_null (parent_id INT, FOREIGN KEY (parent_id) REFERENCES parents (id) ON UPDATE SET NULL)' => 'ON UPDATE SET NULL is not supported',
 				'CREATE TABLE child_set_default (parent_id INT DEFAULT 0, FOREIGN KEY (parent_id) REFERENCES parents (id) ON DELETE SET DEFAULT)' => 'ON DELETE SET DEFAULT is not supported',
+				'CREATE TABLE child_inline_cascade (parent_id INT REFERENCES parents (id) ON DELETE CASCADE)' => 'ON DELETE CASCADE is not supported',
+				'CREATE TABLE child_inline_set_null (parent_id INT REFERENCES parents (id) ON UPDATE SET NULL)' => 'ON UPDATE SET NULL is not supported',
+				'CREATE TABLE child_inline_set_default (parent_id INT DEFAULT 0 REFERENCES parents (id) ON DELETE SET DEFAULT)' => 'ON DELETE SET DEFAULT is not supported',
 			) as $sql => $message
 		) {
 			try {
@@ -4236,15 +4609,31 @@ SQL,
 		);
 	}
 
-	public function test_inline_references_remain_unsupported(): void {
+	public function test_unsupported_inline_references_shapes_throw_before_mutation(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
-		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY)' );
+		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY, other_id INT)' );
 
-		$this->expectException( WP_DuckDB_Driver_Exception::class );
-		$this->expectExceptionMessage( 'Unsupported inline REFERENCES constraint in DuckDB driver.' );
-		$driver->query( 'CREATE TABLE child_inline (parent_id INT REFERENCES parents (id))' );
+		foreach (
+			array(
+				'CREATE TABLE child_inline_schema (parent_id INT REFERENCES wp.parents (id))' => 'Schema-qualified references are not supported',
+				'CREATE TABLE child_inline_composite (parent_id INT REFERENCES parents (id, other_id))' => 'Only single-column foreign keys are supported',
+				'CREATE TABLE child_inline_missing_list (parent_id INT REFERENCES parents)' => 'Expected FOREIGN KEY referenced column list',
+			) as $sql => $message
+		) {
+			try {
+				$driver->query( $sql );
+				$this->fail( 'Expected unsupported inline REFERENCES shape to reject SQL: ' . $sql );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $message, $e->getMessage() );
+			}
+		}
+
+		$this->assertSame(
+			array( array( 'Tables_in_wp' => 'parents' ) ),
+			$driver->query( 'SHOW TABLES' )->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_unsupported_alter_table_add_auto_increment_throws_driver_exception(): void {
