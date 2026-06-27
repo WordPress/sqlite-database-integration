@@ -586,22 +586,31 @@ class WP_DuckDB_Driver {
 		}
 
 		foreach ( $columns as $column ) {
-			if (
-				null !== $column['qualifier']
-				&& 0 !== strcasecmp( $column['qualifier'], $table['alias'] )
-				&& 0 !== strcasecmp( $column['qualifier'], $table['table_name'] )
-			) {
+			if ( ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table ) ) {
 				return null;
 			}
 		}
 
+		$metadata_rows      = $this->table_column_metadata_rows( $table['table_name'], $table['temporary'] );
 		$metadata_by_column = array();
-		foreach ( $this->table_column_metadata_rows( $table['table_name'], $table['temporary'] ) as $metadata ) {
+		foreach ( $metadata_rows as $metadata ) {
 			$metadata_by_column[ strtolower( (string) $metadata['column_name'] ) ] = $metadata;
 		}
 
 		$column_meta = array();
 		foreach ( $columns as $column ) {
+			if ( $column['wildcard'] ) {
+				foreach ( $metadata_rows as $metadata ) {
+					$column_meta[] = $this->mysql_result_column_metadata(
+						$table['table_name'],
+						$table['alias'],
+						$metadata,
+						(string) $metadata['column_name']
+					);
+				}
+				continue;
+			}
+
 			$key = strtolower( $column['column_name'] );
 			if ( ! isset( $metadata_by_column[ $key ] ) ) {
 				return null;
@@ -616,6 +625,19 @@ class WP_DuckDB_Driver {
 		}
 
 		return $column_meta;
+	}
+
+	/**
+	 * Check whether a SELECT-list qualifier belongs to the one supported table.
+	 *
+	 * @param string|null                                       $qualifier Optional column qualifier.
+	 * @param array{table_name:string,alias:string,temporary:bool} $table     Parsed table reference.
+	 * @return bool Whether the qualifier matches the table reference.
+	 */
+	private function simple_select_column_qualifier_matches_table( ?string $qualifier, array $table ): bool {
+		return null === $qualifier
+			|| 0 === strcasecmp( $qualifier, $table['alias'] )
+			|| 0 === strcasecmp( $qualifier, $table['table_name'] );
 	}
 
 	/**
@@ -734,12 +756,39 @@ class WP_DuckDB_Driver {
 	 * Parse one SELECT list item for bounded result metadata.
 	 *
 	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
-	 * @return array{name:string,column_name:string,qualifier:string|null}|null Column reference, or null when unsupported.
+	 * @return array{name:string,column_name:string,qualifier:string|null,wildcard:bool}|null Column reference, or null when unsupported.
 	 */
 	private function parse_simple_select_column_reference( array $tokens ): ?array {
 		$count = count( $tokens );
 		if ( 0 === $count ) {
 			return null;
+		}
+
+		if ( 1 === $count && WP_MySQL_Lexer::MULT_OPERATOR === $tokens[0]->id ) {
+			return array(
+				'name'        => '*',
+				'column_name' => '*',
+				'qualifier'   => null,
+				'wildcard'    => true,
+			);
+		}
+
+		if (
+			3 === $count
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[1]->id
+			&& WP_MySQL_Lexer::MULT_OPERATOR === $tokens[2]->id
+		) {
+			$qualifier = $this->metadata_identifier_value( $tokens[0] );
+			if ( null === $qualifier ) {
+				return null;
+			}
+
+			return array(
+				'name'        => '*',
+				'column_name' => '*',
+				'qualifier'   => $qualifier,
+				'wildcard'    => true,
+			);
 		}
 
 		$index     = 0;
@@ -786,6 +835,7 @@ class WP_DuckDB_Driver {
 			'name'        => $alias,
 			'column_name' => $name,
 			'qualifier'   => $qualifier,
+			'wildcard'    => false,
 		);
 	}
 

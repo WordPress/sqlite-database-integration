@@ -2790,6 +2790,261 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertFalse( $update->getColumnMeta( 0 ) );
 	}
 
+	public function test_simple_select_wildcard_result_metadata_uses_recorded_table_columns(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wordpress_test',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE `wp_wildcard_posts` (
+				`ID` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				`post_title` VARCHAR(191) NOT NULL DEFAULT '',
+				`post_content` LONGTEXT,
+				PRIMARY KEY (`ID`)
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_wildcard_posts (post_title, post_content) VALUES
+			('Hello', 'First post'),
+			('World', 'Second post')"
+		);
+
+		$result = $driver->query( 'SELECT * FROM wp_wildcard_posts ORDER BY ID LIMIT 1' );
+
+		$this->assertSame( 3, $result->columnCount() );
+		$this->assertSame(
+			array(
+				array(
+					'ID'           => 1,
+					'post_title'   => 'Hello',
+					'post_content' => 'First post',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$id_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( 'ID', $id_meta['name'] );
+		$this->assertSame( 'wp_wildcard_posts', $id_meta['table'] );
+		$this->assertSame( 'ID', $id_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_wildcard_posts', $id_meta['mysqli:orgtable'] );
+		$this->assertSame( 'wordpress_test', $id_meta['mysqli:db'] );
+		$this->assertSame( 20, $id_meta['len'] );
+		$this->assertSame( 63, $id_meta['mysqli:charsetnr'] );
+		$this->assertSame( 8, $id_meta['mysqli:type'] );
+
+		$title_meta = $result->getColumnMeta( 1 );
+		$this->assertSame( 'post_title', $title_meta['name'] );
+		$this->assertSame( 'wp_wildcard_posts', $title_meta['table'] );
+		$this->assertSame( 'post_title', $title_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_wildcard_posts', $title_meta['mysqli:orgtable'] );
+		$this->assertSame( 764, $title_meta['len'] );
+		$this->assertSame( 255, $title_meta['mysqli:charsetnr'] );
+		$this->assertSame( 253, $title_meta['mysqli:type'] );
+
+		$content_meta = $result->getColumnMeta( 2 );
+		$this->assertSame( 'post_content', $content_meta['name'] );
+		$this->assertSame( 'post_content', $content_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_wildcard_posts', $content_meta['mysqli:orgtable'] );
+		$this->assertSame( 4294967295, $content_meta['len'] );
+		$this->assertSame( 255, $content_meta['mysqli:charsetnr'] );
+		$this->assertSame( 252, $content_meta['mysqli:type'] );
+	}
+
+	public function test_simple_select_alias_wildcard_result_metadata_uses_alias_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wordpress_test',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE wp_alias_wildcard_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_title VARCHAR(191) NOT NULL DEFAULT '',
+				PRIMARY KEY (ID)
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( "INSERT INTO wp_alias_wildcard_posts (post_title) VALUES ('Hello')" );
+
+		$result = $driver->query( 'SELECT p.* FROM wp_alias_wildcard_posts AS p WHERE p.ID = 1' );
+
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'post_title' => 'Hello',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$id_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( 'ID', $id_meta['name'] );
+		$this->assertSame( 'p', $id_meta['table'] );
+		$this->assertSame( 'ID', $id_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_alias_wildcard_posts', $id_meta['mysqli:orgtable'] );
+
+		$title_meta = $result->getColumnMeta( 1 );
+		$this->assertSame( 'post_title', $title_meta['name'] );
+		$this->assertSame( 'p', $title_meta['table'] );
+		$this->assertSame( 'post_title', $title_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_alias_wildcard_posts', $title_meta['mysqli:orgtable'] );
+	}
+
+	public function test_simple_select_wildcard_metadata_uses_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_shadow_wildcard_posts (
+				persistent_id BIGINT(20) UNSIGNED NOT NULL,
+				persistent_label VARCHAR(191) NOT NULL DEFAULT ''
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TEMPORARY TABLE wp_shadow_wildcard_posts (
+				temp_id INT NOT NULL,
+				temp_label VARCHAR(20) NOT NULL DEFAULT ''
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( "INSERT INTO wp_shadow_wildcard_posts (temp_id, temp_label) VALUES (7, 'temporary')" );
+
+		$result = $driver->query( 'SELECT * FROM wp_shadow_wildcard_posts' );
+
+		$this->assertSame(
+			array(
+				array(
+					'temp_id'    => 7,
+					'temp_label' => 'temporary',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$id_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( 'temp_id', $id_meta['name'] );
+		$this->assertSame( 'temp_id', $id_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_shadow_wildcard_posts', $id_meta['mysqli:orgtable'] );
+		$this->assertSame( 11, $id_meta['len'] );
+		$this->assertSame( 3, $id_meta['mysqli:type'] );
+
+		$label_meta = $result->getColumnMeta( 1 );
+		$this->assertSame( 'temp_label', $label_meta['name'] );
+		$this->assertSame( 'temp_label', $label_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_shadow_wildcard_posts', $label_meta['mysqli:orgtable'] );
+		$this->assertSame( 80, $label_meta['len'] );
+		$this->assertSame( 253, $label_meta['mysqli:type'] );
+	}
+
+	public function test_sql_calc_found_rows_wildcard_result_metadata_is_preserved(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_found_rows_wildcard_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_title VARCHAR(191) NOT NULL DEFAULT '',
+				PRIMARY KEY (ID)
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_found_rows_wildcard_posts (post_title) VALUES
+			('Hello'),
+			('World')"
+		);
+
+		$result = $driver->query( 'SELECT SQL_CALC_FOUND_ROWS * FROM wp_found_rows_wildcard_posts ORDER BY ID LIMIT 1' );
+
+		$id_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( 'ID', $id_meta['name'] );
+		$this->assertSame( 'ID', $id_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_found_rows_wildcard_posts', $id_meta['mysqli:orgtable'] );
+
+		$title_meta = $result->getColumnMeta( 1 );
+		$this->assertSame( 'post_title', $title_meta['name'] );
+		$this->assertSame( 'post_title', $title_meta['mysqli:orgname'] );
+		$this->assertSame( 'wp_found_rows_wildcard_posts', $title_meta['mysqli:orgtable'] );
+
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'post_title' => 'Hello',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_non_simple_wildcard_selects_do_not_infer_origin_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_join_wildcard_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_title VARCHAR(191) NOT NULL DEFAULT '',
+				PRIMARY KEY (ID)
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wp_join_wildcard_meta (
+				post_id BIGINT(20) UNSIGNED NOT NULL,
+				meta_key VARCHAR(191) NOT NULL DEFAULT ''
+			) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( "INSERT INTO wp_join_wildcard_posts (post_title) VALUES ('Hello')" );
+		$driver->query( "INSERT INTO wp_join_wildcard_meta (post_id, meta_key) VALUES (1, '_edit_lock')" );
+
+		$join = $driver->query(
+			'SELECT p.*, m.meta_key FROM wp_join_wildcard_posts AS p JOIN wp_join_wildcard_meta AS m ON p.ID = m.post_id'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'post_title' => 'Hello',
+					'meta_key'   => '_edit_lock',
+				),
+			),
+			$join->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$join_meta = $join->getColumnMeta( 0 );
+		$this->assertSame( 'ID', $join_meta['name'] );
+		$this->assertArrayNotHasKey( 'mysqli:orgname', $join_meta );
+		$this->assertArrayNotHasKey( 'mysqli:orgtable', $join_meta );
+
+		$expression = $driver->query( 'SELECT *, CONCAT(post_title, post_title) AS doubled FROM wp_join_wildcard_posts' );
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'post_title' => 'Hello',
+					'doubled'    => 'HelloHello',
+				),
+			),
+			$expression->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$expression_meta = $expression->getColumnMeta( 0 );
+		$this->assertSame( 'ID', $expression_meta['name'] );
+		$this->assertArrayNotHasKey( 'mysqli:orgname', $expression_meta );
+		$this->assertArrayNotHasKey( 'mysqli:orgtable', $expression_meta );
+	}
+
 	public function test_regexp_predicates_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
