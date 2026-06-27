@@ -3048,6 +3048,266 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_delete_accepts_target_wildcard_aliases(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, target_id INT, flag VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')" );
+		$driver->query( "INSERT INTO t2 VALUES (10, 1, 'drop'), (11, 3, 'drop'), (12, 4, 'keep')" );
+
+		$single_target_delete = $driver->query(
+			"DELETE a.* FROM t1 a
+			JOIN t2 b ON b.target_id = a.id
+			WHERE b.flag = 'drop'"
+		);
+
+		$this->assertSame( 2, $single_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+				array(
+					'id'   => 4,
+					'note' => 'd',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'        => 10,
+					'target_id' => 1,
+					'flag'      => 'drop',
+				),
+				array(
+					'id'        => 11,
+					'target_id' => 3,
+					'flag'      => 'drop',
+				),
+				array(
+					'id'        => 12,
+					'target_id' => 4,
+					'flag'      => 'keep',
+				),
+			),
+			$driver->query( 'SELECT id, target_id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, target_id INT, flag VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')" );
+		$driver->query( "INSERT INTO t2 VALUES (10, 1, 'drop'), (11, 3, 'drop'), (12, 2, 'keep')" );
+
+		$multi_target_delete = $driver->query(
+			"DELETE a.*, b FROM t1 a
+			JOIN t2 b ON b.target_id = a.id
+			WHERE b.flag = 'drop'"
+		);
+
+		$this->assertSame( 4, $multi_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'        => 12,
+					'target_id' => 2,
+					'flag'      => 'keep',
+				),
+			),
+			$driver->query( 'SELECT id, target_id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_joined_delete_accepts_derived_read_only_sources(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, flag VARCHAR(20), note VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'drop', 'x'), (3, 'drop', 'z'), (4, 'keep', 'other')" );
+
+		$single_target_delete = $driver->query(
+			"DELETE a FROM t1 a
+			JOIN (SELECT id FROM t2 WHERE flag = 'drop') b ON a.id = b.id"
+		);
+
+		$this->assertSame( 2, $single_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'flag' => 'drop',
+				),
+				array(
+					'id'   => 3,
+					'flag' => 'drop',
+				),
+				array(
+					'id'   => 4,
+					'flag' => 'keep',
+				),
+			),
+			$driver->query( 'SELECT id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, flag VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'drop'), (2, 'keep'), (3, 'drop')" );
+
+		$comma_source_delete = $driver->query(
+			"DELETE a FROM t1 a, (SELECT id FROM t2 WHERE flag = 'drop') b
+			WHERE a.id = b.id"
+		);
+
+		$this->assertSame( 2, $comma_source_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'flag' => 'drop',
+				),
+				array(
+					'id'   => 2,
+					'flag' => 'keep',
+				),
+				array(
+					'id'   => 3,
+					'flag' => 'drop',
+				),
+			),
+			$driver->query( 'SELECT id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t2 (id INT, flag VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t3 (id INT, note VARCHAR(20))' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'drop'), (3, 'drop'), (4, 'keep')" );
+		$driver->query( "INSERT INTO t3 VALUES (1, 'x'), (3, 'z'), (4, 'other')" );
+
+		$multi_target_delete = $driver->query(
+			"DELETE a, c FROM t1 a
+			JOIN t3 c ON c.id = a.id
+			JOIN (SELECT id FROM t2 WHERE flag = 'drop') b ON b.id = a.id"
+		);
+
+		$this->assertSame( 4, $multi_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'note' => 'b',
+				),
+				array(
+					'id'   => 4,
+					'note' => 'd',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'flag' => 'drop',
+				),
+				array(
+					'id'   => 3,
+					'flag' => 'drop',
+				),
+				array(
+					'id'   => 4,
+					'flag' => 'keep',
+				),
+			),
+			$driver->query( 'SELECT id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 4,
+					'note' => 'other',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t3 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t2 (id INT, flag VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE t3 (id INT, note VARCHAR(20))' );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'drop'), (2, 'keep'), (3, 'drop')" );
+		$driver->query( "INSERT INTO t3 VALUES (1, 'x'), (2, 'y'), (3, 'z')" );
+
+		$target_not_first_delete = $driver->query(
+			"DELETE c FROM (SELECT id FROM t2 WHERE flag = 'drop') b
+			JOIN t3 c ON c.id = b.id"
+		);
+
+		$this->assertSame( 2, $target_not_first_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 2,
+					'note' => 'y',
+				),
+			),
+			$driver->query( 'SELECT id, note FROM t3 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'flag' => 'drop',
+				),
+				array(
+					'id'   => 2,
+					'flag' => 'keep',
+				),
+				array(
+					'id'   => 3,
+					'flag' => 'drop',
+				),
+			),
+			$driver->query( 'SELECT id, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_single_target_joined_delete_rewrites_join_using_and_alias_forms(): void {
 		$this->requireDuckDBRuntime();
 
@@ -3306,12 +3566,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					'message' => "Duplicate table alias 'a'",
 				),
 				array(
-					'sql'     => 'DELETE a, b FROM t1 a JOIN (SELECT id FROM t2) b ON a.id = b.id',
-					'message' => 'Derived table sources are not supported',
-				),
-				array(
-					'sql'     => 'DELETE a.* FROM t1 a',
-					'message' => 'DELETE target wildcards are not supported',
+					'sql'     => 'DELETE b FROM t1 a JOIN (SELECT id FROM t2) b ON a.id = b.id',
+					'message' => "Derived table alias 'b' cannot be targeted",
 				),
 				array(
 					'sql'     => 'DELETE t FROM information_schema.tables t',

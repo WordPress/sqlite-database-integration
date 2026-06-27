@@ -2419,6 +2419,11 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( "Unknown DELETE target alias '{$target_alias}' in DuckDB driver." );
 			}
 			$reference = $references['by_alias'][ $key ];
+			if ( null === $reference['table_name'] ) {
+				throw new WP_DuckDB_Driver_Exception(
+					"Unsupported DELETE statement in DuckDB driver. Derived table alias '{$target_alias}' cannot be targeted."
+				);
+			}
 			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE', $reference['temporary'] );
 			$targets[] = array(
 				'alias'      => $reference['alias'],
@@ -2535,12 +2540,21 @@ class WP_DuckDB_Driver {
 	private function parse_multi_delete_target_aliases( array $tokens ): array {
 		$aliases = array();
 		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
-			if ( 1 !== count( $item ) ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. DELETE target wildcards are not supported.' );
+			if (
+				3 === count( $item )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $item[1]->id
+				&& WP_MySQL_Lexer::MULT_OPERATOR === $item[2]->id
+			) {
+				$alias = $this->identifier_value( $item[0] );
+			} elseif ( 1 === count( $item ) ) {
+				$alias = $this->identifier_value( $item[0] );
+			} else {
+				throw new WP_DuckDB_Driver_Exception(
+					'Unsupported DELETE statement in DuckDB driver. DELETE targets must be aliases or alias wildcards.'
+				);
 			}
 
-			$alias = $this->identifier_value( $item[0] );
-			$key   = strtolower( $alias );
+			$key = strtolower( $alias );
 			if ( isset( $aliases[ $key ] ) ) {
 				throw new WP_DuckDB_Driver_Exception( "Duplicate DELETE target alias '{$alias}' in DuckDB driver." );
 			}
@@ -2554,10 +2568,13 @@ class WP_DuckDB_Driver {
 	 * Parse comma-separated table references for a bounded multi-table DELETE.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
-	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>} SQL and references keyed by lowercase alias.
+	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string|null,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>} SQL and references keyed by lowercase alias.
 	 */
 	private function parse_multi_delete_table_references( array $tokens ): array {
-		if ( $this->contains_top_level_join_token( $tokens ) ) {
+		if (
+			$this->contains_top_level_join_token( $tokens )
+			|| $this->contains_top_level_derived_table_factor( $tokens )
+		) {
 			return $this->parse_joined_multi_delete_table_references( $tokens );
 		}
 
@@ -2591,7 +2608,7 @@ class WP_DuckDB_Driver {
 	 * Parse joined table references for a bounded multi-table DELETE.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
-	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>} SQL and references keyed by lowercase alias.
+	 * @return array{sql:string,by_alias:array<string,array{alias:string,table_name:string|null,temporary:bool}>,join_predicates:array<int,array<int,WP_Parser_Token>|string>} SQL and references keyed by lowercase alias.
 	 */
 	private function parse_joined_multi_delete_table_references( array $tokens ): array {
 		$joined_references = $this->parse_joined_update_table_references( $tokens, 'DELETE', false );
@@ -2609,10 +2626,6 @@ class WP_DuckDB_Driver {
 		}
 
 		foreach ( $references as $reference ) {
-			if ( null === $reference['table_name'] ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported DELETE statement in DuckDB driver. Derived table sources are not supported.' );
-			}
-
 			$key              = strtolower( $reference['alias'] );
 			$by_alias[ $key ] = array(
 				'alias'      => $reference['alias'],
@@ -2995,6 +3008,22 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 			if ( 0 === $depth && in_array( $token->id, $join_tokens, true ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a table-reference list contains a top-level derived table factor.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return bool Whether a top-level comma item starts with a derived table.
+	 */
+	private function contains_top_level_derived_table_factor( array $tokens ): bool {
+		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
+			if ( isset( $item[0] ) && WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $item[0]->id ) {
 				return true;
 			}
 		}

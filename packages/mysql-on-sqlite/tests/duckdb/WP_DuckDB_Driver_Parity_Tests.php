@@ -1407,6 +1407,112 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
 	}
 
+	public function test_joined_delete_target_wildcards_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wildcard_t1 (id INT, note VARCHAR(20))',
+				'CREATE TABLE wildcard_t2 (id INT, target_id INT, flag VARCHAR(20))',
+				"INSERT INTO wildcard_t1 VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')",
+				"INSERT INTO wildcard_t2 VALUES (10, 1, 'drop'), (11, 3, 'drop'), (12, 4, 'keep')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE a.* FROM wildcard_t1 a
+			JOIN wildcard_t2 b ON b.target_id = a.id
+			WHERE b.flag = 'drop'"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM wildcard_t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, target_id, flag FROM wildcard_t2 ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wildcard_multi_t1 (id INT, note VARCHAR(20))',
+				'CREATE TABLE wildcard_multi_t2 (id INT, target_id INT, flag VARCHAR(20))',
+				"INSERT INTO wildcard_multi_t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+				"INSERT INTO wildcard_multi_t2 VALUES (10, 1, 'drop'), (11, 3, 'drop'), (12, 2, 'keep')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE a.*, b FROM wildcard_multi_t1 a
+			JOIN wildcard_multi_t2 b ON b.target_id = a.id
+			WHERE b.flag = 'drop'"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM wildcard_multi_t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, target_id, flag FROM wildcard_multi_t2 ORDER BY id' );
+	}
+
+	public function test_joined_delete_derived_sources_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE derived_delete_t1 (id INT, note VARCHAR(20))',
+				'CREATE TABLE derived_delete_t2 (id INT, flag VARCHAR(20), note VARCHAR(20))',
+				"INSERT INTO derived_delete_t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+				"INSERT INTO derived_delete_t2 VALUES (1, 'drop', 'x'), (3, 'drop', 'z'), (4, 'keep', 'other')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE a FROM derived_delete_t1 a
+			JOIN (SELECT id FROM derived_delete_t2 WHERE flag = 'drop') b ON a.id = b.id"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM derived_delete_t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, flag FROM derived_delete_t2 ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE derived_comma_t1 (id INT, note VARCHAR(20))',
+				'CREATE TABLE derived_comma_t2 (id INT, flag VARCHAR(20))',
+				"INSERT INTO derived_comma_t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+				"INSERT INTO derived_comma_t2 VALUES (1, 'drop'), (2, 'keep'), (3, 'drop')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE a FROM derived_comma_t1 a, (SELECT id FROM derived_comma_t2 WHERE flag = 'drop') b
+			WHERE a.id = b.id"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM derived_comma_t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, flag FROM derived_comma_t2 ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE derived_multi_t1 (id INT, note VARCHAR(20))',
+				'CREATE TABLE derived_multi_t2 (id INT, flag VARCHAR(20))',
+				'CREATE TABLE derived_multi_t3 (id INT, note VARCHAR(20))',
+				"INSERT INTO derived_multi_t1 VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')",
+				"INSERT INTO derived_multi_t2 VALUES (1, 'drop'), (3, 'drop'), (4, 'keep')",
+				"INSERT INTO derived_multi_t3 VALUES (1, 'x'), (3, 'z'), (4, 'other')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE a, c FROM derived_multi_t1 a
+			JOIN derived_multi_t3 c ON c.id = a.id
+			JOIN (SELECT id FROM derived_multi_t2 WHERE flag = 'drop') b ON b.id = a.id"
+		);
+		$this->assertParityRows( 'SELECT id, note FROM derived_multi_t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, flag FROM derived_multi_t2 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note FROM derived_multi_t3 ORDER BY id' );
+
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE derived_first_t2 (id INT, flag VARCHAR(20))',
+				'CREATE TABLE derived_first_t3 (id INT, note VARCHAR(20))',
+				"INSERT INTO derived_first_t2 VALUES (1, 'drop'), (2, 'keep'), (3, 'drop')",
+				"INSERT INTO derived_first_t3 VALUES (1, 'x'), (2, 'y'), (3, 'z')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE c FROM (SELECT id FROM derived_first_t2 WHERE flag = 'drop') b
+			JOIN derived_first_t3 c ON c.id = b.id"
+		);
+		$this->assertParityRows( 'SELECT id, flag FROM derived_first_t2 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note FROM derived_first_t3 ORDER BY id' );
+	}
+
 	public function test_single_target_joined_delete_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
