@@ -942,9 +942,10 @@ class WP_DuckDB_Driver {
 			$sql_tokens = $seeded_rand_ordering['tokens'];
 		}
 
-		$seeded_rand_rewrites        = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
-		$sql_tokens                  = $this->strip_irrelevant_order_by_for_count_select( $sql_tokens );
-		$grouped_date_order_rewrites = $this->grouped_date_order_by_rewrites( $sql_tokens );
+		$seeded_rand_rewrites         = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
+		$sql_tokens                   = $this->strip_irrelevant_order_by_for_count_select( $sql_tokens );
+		$grouped_date_order_rewrites  = $this->grouped_date_order_by_rewrites( $sql_tokens );
+		$grouped_date_select_rewrites = $this->grouped_date_select_item_rewrites( $sql_tokens );
 
 		$rewrite_information_schema_tables                  = $this->uses_information_schema_tables( $sql_tokens );
 		$rewrite_information_schema_columns                 = $this->uses_information_schema_columns( $sql_tokens );
@@ -989,7 +990,7 @@ class WP_DuckDB_Driver {
 			$this->refresh_information_schema_check_constraints_table();
 		}
 
-		$order_by_item_rewrites = $grouped_date_order_rewrites + $this->primary_key_group_by_order_by_rewrites(
+		$order_by_item_rewrites = $grouped_date_select_rewrites + $grouped_date_order_rewrites + $this->primary_key_group_by_order_by_rewrites(
 			$sql_tokens,
 			$group_by_expansion,
 			$grouped_date_order_rewrites,
@@ -2812,6 +2813,117 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Build SELECT item rewrites for date-bucket GROUP BY queries.
+	 *
+	 * WordPress weekly archive queries select DATE_FORMAT(post_date, ...)
+	 * while grouping by WEEK(post_date, mode), YEAR(post_date). DuckDB requires
+	 * that selected date expression to be grouped or aggregated, so use the same
+	 * bucket boundary aggregate selected for ORDER BY post_date.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array<int,array{end:int,sql:string}> Rewrites keyed by SELECT item start offset.
+	 */
+	private function grouped_date_select_item_rewrites( array $tokens ): array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return array();
+		}
+		if (
+			null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::HAVING_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL )
+		) {
+			return array();
+		}
+
+		$group_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::GROUP_SYMBOL );
+		if (
+			null === $group_index
+			|| ! isset( $tokens[ $group_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_index + 1 ]->id
+		) {
+			return array();
+		}
+
+		$group_end = $this->primary_key_group_by_clause_end( $tokens, $group_index + 2 );
+		if (
+			! isset( $tokens[ $group_end ] )
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $group_end ]->id
+			|| ! isset( $tokens[ $group_end + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_end + 1 ]->id
+		) {
+			return array();
+		}
+
+		$grouped_date_columns = array();
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, $group_index + 2, $group_end ) as $item ) {
+			$column = $this->parse_date_group_by_column_reference( $item['tokens'] );
+			if ( null === $column ) {
+				continue;
+			}
+			$grouped_date_columns[ strtolower( $column['column_name'] ) ][] = $column['qualifier'];
+		}
+
+		if ( count( $grouped_date_columns ) === 0 ) {
+			return array();
+		}
+
+		$order_columns = array();
+		$order_end     = $this->primary_key_order_by_clause_end( $tokens, $group_end + 2 );
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, $group_end + 2, $order_end ) as $item ) {
+			$column = $this->parse_order_by_column_reference_with_direction( $item['tokens'] );
+			if (
+				null === $column
+				|| ! $this->grouped_date_column_matches_order_column( $grouped_date_columns, $column )
+			) {
+				continue;
+			}
+
+			$order_columns[] = array(
+				'column'    => $column,
+				'aggregate' => 'DESC' === $column['direction'] ? 'MAX' : 'MIN',
+			);
+		}
+
+		if ( count( $order_columns ) === 0 ) {
+			return array();
+		}
+
+		$rewrites   = array();
+		$select_end = $this->top_level_select_list_end( $tokens );
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, 1, $select_end ) as $item ) {
+			$date_format = $this->parse_grouped_date_format_select_item( $item['tokens'] );
+			if ( null === $date_format ) {
+				continue;
+			}
+
+			foreach ( $order_columns as $order_column ) {
+				if ( ! $this->grouped_date_select_column_matches_order_column( $date_format, $order_column['column'] ) ) {
+					continue;
+				}
+
+				$aggregate_sql   = $order_column['aggregate'] . '('
+					. $this->grouped_date_aggregate_column_sql( $date_format, $order_column['column'] )
+					. ')';
+				$date_format_sql = 'strftime(TRY_CAST(('
+					. $aggregate_sql
+					. ') AS TIMESTAMP), '
+					. $date_format['format_sql']
+					. ')';
+				if ( '%H.%i' === $date_format['literal_format'] ) {
+					$date_format_sql = 'CAST(' . $date_format_sql . ' AS DOUBLE)';
+				}
+
+				$rewrites[ $item['start'] ] = array(
+					'end' => $item['end'],
+					'sql' => $date_format_sql . $date_format['alias_sql'],
+				);
+				break;
+			}
+		}
+
+		return $rewrites;
+	}
+
+	/**
 	 * Build ORDER BY item rewrites for SELECTs grouped by a full primary key.
 	 *
 	 * MySQL permits WordPress meta queries to group by the primary table ID while
@@ -2968,7 +3080,7 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Parse YEAR/MONTH/DAY/DATE group bucket functions over a simple column.
+	 * Parse YEAR/MONTH/DAY/DATE/WEEK group bucket functions over a simple column.
 	 *
 	 * @param WP_Parser_Token[] $tokens GROUP BY item tokens.
 	 * @return array{column_name:string,qualifier:string|null}|null Column reference, or null when unsupported.
@@ -2983,7 +3095,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$name = strtoupper( $tokens[0]->get_value() );
-		if ( ! in_array( $name, array( 'DATE', 'DAY', 'DAYOFMONTH', 'MONTH', 'YEAR' ), true ) ) {
+		if ( ! in_array( $name, array( 'DATE', 'DAY', 'DAYOFMONTH', 'MONTH', 'WEEK', 'YEAR' ), true ) ) {
 			return null;
 		}
 
@@ -2994,11 +3106,142 @@ class WP_DuckDB_Driver {
 
 		$body  = array_slice( $tokens, 2, $end_index - 3 );
 		$items = $this->split_top_level_comma_items( $body );
+		if ( 'WEEK' === $name ) {
+			if (
+				( 1 !== count( $items ) && 2 !== count( $items ) )
+				|| count( $items[0] ) === 0
+				|| (
+					2 === count( $items )
+					&& ( 1 !== count( $items[1] ) || ! $this->is_integer_number_token( $items[1][0] ) )
+				)
+			) {
+				return null;
+			}
+
+			return $this->parse_group_by_column_reference( $items[0] );
+		}
+
 		if ( 1 !== count( $items ) || count( $items[0] ) === 0 ) {
 			return null;
 		}
 
 		return $this->parse_group_by_column_reference( $items[0] );
+	}
+
+	/**
+	 * Parse a DATE_FORMAT() SELECT item over a grouped date column.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return array{column_name:string,qualifier:string|null,format_sql:string,literal_format:string|null,alias_sql:string}|null Parsed item, or null when unsupported.
+	 */
+	private function parse_grouped_date_format_select_item( array $tokens ): ?array {
+		if (
+			count( $tokens ) < 6
+			|| ! isset( $tokens[0], $tokens[1] )
+			|| $this->is_non_identifier_token( $tokens[0] )
+			|| 0 !== strcasecmp( $tokens[0]->get_value(), 'DATE_FORMAT' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, 1 );
+		$body      = array_slice( $tokens, 2, $end_index - 3 );
+		$items     = $this->split_top_level_comma_items( $body );
+		if ( 2 !== count( $items ) || count( $items[0] ) === 0 || count( $items[1] ) === 0 ) {
+			return null;
+		}
+
+		$column = $this->parse_group_by_column_reference( $items[0] );
+		if ( null === $column ) {
+			return null;
+		}
+
+		$alias_sql = $this->grouped_date_select_alias_sql( array_slice( $tokens, $end_index ) );
+		if ( null === $alias_sql ) {
+			return null;
+		}
+
+		$literal_format = null;
+		$format_sql     = $this->translate_tokens_to_duckdb_sql( $items[1] );
+		if (
+			1 === count( $items[1] )
+			&& (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $items[1][0]->id
+				|| WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $items[1][0]->id
+			)
+		) {
+			$literal_format = $this->token_value( $items[1][0] );
+			$format_sql     = $this->connection->quote( $this->mysql_date_format_to_duckdb( $literal_format ) );
+		}
+
+		return array(
+			'column_name'    => $column['column_name'],
+			'qualifier'      => $column['qualifier'],
+			'format_sql'     => $format_sql,
+			'literal_format' => $literal_format,
+			'alias_sql'      => $alias_sql,
+		);
+	}
+
+	/**
+	 * Translate the supported alias tail for a grouped date SELECT item.
+	 *
+	 * @param WP_Parser_Token[] $tokens Alias tail tokens.
+	 * @return string|null SQL alias suffix, or null when unsupported.
+	 */
+	private function grouped_date_select_alias_sql( array $tokens ): ?string {
+		if ( 0 === count( $tokens ) ) {
+			return '';
+		}
+
+		if (
+			2 === count( $tokens )
+			&& WP_MySQL_Lexer::AS_SYMBOL === $tokens[0]->id
+			&& ! $this->is_non_identifier_token( $tokens[1] )
+		) {
+			return ' AS ' . $this->translate_tokens_to_duckdb_sql( array( $tokens[1] ) );
+		}
+
+		if ( 1 === count( $tokens ) && ! $this->is_non_identifier_token( $tokens[0] ) ) {
+			return ' ' . $this->translate_tokens_to_duckdb_sql( array( $tokens[0] ) );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a grouped DATE_FORMAT() column follows an ORDER BY date column.
+	 *
+	 * @param array{column_name:string,qualifier:string|null} $select_column SELECT DATE_FORMAT() column.
+	 * @param array{column_name:string,qualifier:string|null,direction:string} $order_column ORDER BY column.
+	 * @return bool Whether the columns match.
+	 */
+	private function grouped_date_select_column_matches_order_column( array $select_column, array $order_column ): bool {
+		if ( 0 !== strcasecmp( $select_column['column_name'], $order_column['column_name'] ) ) {
+			return false;
+		}
+
+		return null === $select_column['qualifier']
+			|| null === $order_column['qualifier']
+			|| 0 === strcasecmp( $select_column['qualifier'], $order_column['qualifier'] );
+	}
+
+	/**
+	 * Build a quoted date column SQL fragment for grouped date aggregation.
+	 *
+	 * @param array{column_name:string,qualifier:string|null} $select_column SELECT DATE_FORMAT() column.
+	 * @param array{column_name:string,qualifier:string|null,direction:string} $order_column ORDER BY column.
+	 * @return string Quoted column SQL.
+	 */
+	private function grouped_date_aggregate_column_sql( array $select_column, array $order_column ): string {
+		$qualifier = $order_column['qualifier'] ?? $select_column['qualifier'];
+		$sql       = '';
+		if ( null !== $qualifier ) {
+			$sql .= $this->connection->quote_identifier( $qualifier ) . '.';
+		}
+
+		return $sql . $this->connection->quote_identifier( $select_column['column_name'] );
 	}
 
 	/**

@@ -2017,6 +2017,64 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 2, $row['timestamp_day'] );
 	}
 
+	public function test_weekly_archive_date_format_select_uses_grouped_date_boundary(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_type, post_status) VALUES
+				(1, '2024-02-01 00:00:00', 'post', 'publish'),
+				(2, '2024-02-03 00:00:00', 'post', 'publish'),
+				(3, '2024-01-10 00:00:00', 'post', 'publish'),
+				(4, '2024-02-04 00:00:00', 'page', 'publish'),
+				(5, '2024-03-01 00:00:00', 'post', 'draft')"
+		);
+
+		$rows = $driver->query(
+			"SELECT DISTINCT WEEK( `post_date`, 1 ) AS `week`,
+				YEAR( `post_date` ) AS `yr`,
+				DATE_FORMAT( `post_date`, '%Y-%m-%d' ) AS `yyyymmdd`,
+				count( `ID` ) AS `posts`
+			FROM `wptests_posts`
+			WHERE post_type = 'post' AND post_status = 'publish'
+			GROUP BY WEEK( `post_date`, 1 ), YEAR( `post_date` )
+			ORDER BY `post_date` DESC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'week'     => 5,
+					'yr'       => 2024,
+					'yyyymmdd' => '2024-02-03',
+					'posts'    => 2,
+				),
+				array(
+					'week'     => 2,
+					'yr'       => 2024,
+					'yyyymmdd' => '2024-01-10',
+					'posts'    => 1,
+				),
+			),
+			$rows
+		);
+
+		$this->assertStringContainsString(
+			'strftime(TRY_CAST((MAX("post_date")) AS TIMESTAMP), \'%Y-%m-%d\') AS "yyyymmdd"',
+			$this->lastDuckDBQuery( $driver )
+		);
+		$this->assertStringContainsString( 'ORDER BY MAX("post_date") DESC', $this->lastDuckDBQuery( $driver ) );
+	}
+
 	public function test_sum_length_result_does_not_require_bcmath(): void {
 		$this->requireDuckDBRuntime();
 
