@@ -1046,6 +1046,21 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 1, $connection->query( 'SELECT COUNT(*) AS c FROM t' )->fetchColumn() );
 	}
 
+	public function test_rollback_native_transaction_recovers_untracked_transaction(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->query( 'CREATE TABLE t (id INTEGER)' );
+
+		$connection->query( 'BEGIN TRANSACTION' );
+		$this->assertFalse( $connection->inTransaction() );
+		$connection->query( 'INSERT INTO t VALUES (1)' );
+
+		$this->assertTrue( $connection->rollbackNativeTransaction() );
+		$this->assertFalse( $connection->inTransaction() );
+		$this->assertSame( 0, $connection->query( 'SELECT COUNT(*) AS c FROM t' )->fetchColumn() );
+	}
+
 	public function test_transaction_state_errors_are_explicit(): void {
 		$this->requireDuckDBRuntime();
 

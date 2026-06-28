@@ -167,6 +167,26 @@ class WP_DuckDB_Connection {
 	}
 
 	/**
+	 * Roll back a native DuckDB transaction even if this wrapper did not open it.
+	 *
+	 * Some recovery paths need to clean up an aborted DuckDB transaction after
+	 * raw SQL opened it through query() without updating the wrapper flag.
+	 *
+	 * @return bool
+	 *
+	 * @throws WP_DuckDB_Driver_Exception When DuckDB rejects ROLLBACK.
+	 */
+	public function rollbackNativeTransaction(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		try {
+			$this->query( 'ROLLBACK' );
+		} finally {
+			$this->in_transaction = false;
+		}
+
+		return true;
+	}
+
+	/**
 	 * Check whether a transaction is active.
 	 *
 	 * @return bool

@@ -526,6 +526,13 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 'DuckDB query failed: inactive transaction.', $cases['inactive_native_query_marker']['last_error'] );
 		$this->assertSame( array(), $cases['inactive_native_query_marker']['connection_queries'] );
 		$this->assertFalse( $cases['inactive_native_query_marker']['in_transaction_after'] );
+
+		$this->assertSame(
+			'DuckDB query failed: TransactionContext Error: Current transaction is aborted (please ROLLBACK)',
+			$cases['inactive_current_aborted_marker']['last_error']
+		);
+		$this->assertSame( array( 'ROLLBACK' ), $cases['inactive_current_aborted_marker']['connection_queries'] );
+		$this->assertFalse( $cases['inactive_current_aborted_marker']['in_transaction_after'] );
 	}
 
 	public function test_duckdb_wpdb_db_connect_sets_filtered_sql_mode(): void {
@@ -848,15 +855,22 @@ function wp_duckdb_plugin_transaction_cleanup_failure( $case_name ) {
 		case 'preflight_error':
 			return new WP_DuckDB_Driver_Exception( 'DuckDB driver could not parse MySQL statement: syntax error.' );
 
-		case 'plain_exception':
-			return new RuntimeException( 'Plain runtime failure.' );
+			case 'plain_exception':
+				return new RuntimeException( 'Plain runtime failure.' );
 
-		case 'inactive_native_query_marker':
-			return new WP_DuckDB_Driver_Exception(
-				'DuckDB query failed: inactive transaction.',
-				0,
-				new RuntimeException( 'Inactive native query failure.' )
-			);
+			case 'inactive_native_query_marker':
+				return new WP_DuckDB_Driver_Exception(
+					'DuckDB query failed: inactive transaction.',
+					0,
+					new RuntimeException( 'Inactive native query failure.' )
+				);
+
+			case 'inactive_current_aborted_marker':
+				return new WP_DuckDB_Driver_Exception(
+					'DuckDB query failed: TransactionContext Error: Current transaction is aborted (please ROLLBACK)',
+					0,
+					new RuntimeException( 'Inactive aborted native transaction.' )
+				);
 	}
 
 	throw new RuntimeException( 'Unknown cleanup test case: ' . $case_name );
@@ -901,6 +915,7 @@ $cases = array(
 	'preflight_error'               => wp_duckdb_plugin_transaction_cleanup_case( 'preflight_error', true ),
 	'plain_exception'               => wp_duckdb_plugin_transaction_cleanup_case( 'plain_exception', true ),
 	'inactive_native_query_marker'  => wp_duckdb_plugin_transaction_cleanup_case( 'inactive_native_query_marker', false ),
+	'inactive_current_aborted_marker' => wp_duckdb_plugin_transaction_cleanup_case( 'inactive_current_aborted_marker', false ),
 );
 
 echo json_encode(

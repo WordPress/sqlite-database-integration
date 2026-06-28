@@ -543,11 +543,15 @@ class WP_DuckDB_Driver {
 	 * @param Throwable $error Query failure.
 	 */
 	private function rollback_failed_active_transaction( Throwable $error ): void {
-		if ( ! $this->connection->inTransaction() ) {
+		if ( ! $this->should_rollback_active_transaction_on_error( $error ) ) {
 			return;
 		}
 
-		if ( ! $this->should_rollback_active_transaction_on_error( $error ) ) {
+		if ( ! $this->connection->inTransaction() ) {
+			if ( $this->is_current_transaction_aborted_error( $error ) ) {
+				$this->last_duckdb_queries[] = 'ROLLBACK';
+				$this->connection->rollbackNativeTransaction();
+			}
 			return;
 		}
 
@@ -612,10 +616,6 @@ class WP_DuckDB_Driver {
 	 * "Current transaction is aborted" errors.
 	 */
 	private function recover_aborted_transaction_before_information_schema_refresh(): void {
-		if ( ! $this->connection->inTransaction() ) {
-			return;
-		}
-
 		$probe_sql                   = 'SELECT 1';
 		$this->last_duckdb_queries[] = $probe_sql;
 		try {
@@ -632,7 +632,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$this->last_duckdb_queries[] = 'ROLLBACK';
-		$this->connection->rollback();
+		$this->connection->rollbackNativeTransaction();
 	}
 
 	/**

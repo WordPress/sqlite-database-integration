@@ -10339,6 +10339,52 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertContains( 'ROLLBACK', $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_information_schema_tables_recovers_untracked_aborted_native_transaction_before_refresh(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wordpress_develop_tests',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE wptests_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL
+			)"
+		);
+
+		$connection = $driver->get_connection();
+		$connection->query( 'BEGIN TRANSACTION' );
+		$this->assertFalse( $connection->inTransaction() );
+		try {
+			$connection->query( "SELECT CAST('not-an-integer' AS INTEGER)" );
+			$this->fail( 'Expected raw DuckDB query failure to abort the untracked transaction.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'DuckDB query failed:', $e->getMessage() );
+		}
+		$this->assertFalse( $connection->inTransaction() );
+
+		$rows = $driver->query(
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows',
+				SUM(data_length + index_length) as 'bytes'
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+				AND TABLE_NAME IN ('wptests_options')
+			GROUP BY TABLE_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertFalse( $connection->inTransaction() );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wptests_options', $rows[0]['table'] );
+		$this->assertSame( 0, (int) $rows[0]['rows'] );
+		$this->assertSame( 0, (int) $rows[0]['bytes'] );
+		$this->assertContains( 'SELECT 1', $driver->get_last_duckdb_queries() );
+		$this->assertContains( 'ROLLBACK', $driver->get_last_duckdb_queries() );
+	}
+
 	public function test_information_schema_tables_exposes_mysql_shaped_table_metadata(): void {
 		$this->requireDuckDBRuntime();
 

@@ -632,12 +632,16 @@ class WP_DuckDB_DB extends wpdb {
 		}
 
 		$connection = $this->get_duckdb_connection();
-		if ( ! $connection || ! $connection->inTransaction() ) {
+		if ( ! $connection ) {
 			return;
 		}
 
 		try {
-			$connection->rollback();
+			if ( $connection->inTransaction() ) {
+				$connection->rollback();
+			} elseif ( $this->is_current_duckdb_transaction_aborted_error( $error ) ) {
+				$connection->rollbackNativeTransaction();
+			}
 		} catch ( Throwable $rollback_error ) {
 			if ( '' === $this->last_error ) {
 				$this->last_error = $rollback_error->getMessage();
@@ -678,6 +682,10 @@ class WP_DuckDB_DB extends wpdb {
 	 * @return bool Whether to roll back the active transaction.
 	 */
 	private function should_rollback_active_duckdb_transaction_on_error( Throwable $error ) {
+		if ( $this->is_current_duckdb_transaction_aborted_error( $error ) ) {
+			return true;
+		}
+
 		for ( $current = $error; null !== $current; $current = $current->getPrevious() ) {
 			$message = $current->getMessage();
 			if (
@@ -689,6 +697,22 @@ class WP_DuckDB_DB extends wpdb {
 					|| false !== strpos( $message, ': Failed to prepare DuckDB query:' )
 				)
 			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether an error reports a DuckDB-aborted transaction.
+	 *
+	 * @param Throwable $error Query failure.
+	 * @return bool Whether the native transaction is already aborted.
+	 */
+	private function is_current_duckdb_transaction_aborted_error( Throwable $error ) {
+		for ( $current = $error; null !== $current; $current = $current->getPrevious() ) {
+			if ( false !== strpos( $current->getMessage(), 'Current transaction is aborted' ) ) {
 				return true;
 			}
 		}
