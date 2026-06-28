@@ -565,6 +565,10 @@ class WP_DuckDB_Driver {
 			return true;
 		}
 
+		if ( $this->is_current_transaction_aborted_error( $error ) ) {
+			return true;
+		}
+
 		for ( $current = $error; null !== $current; $current = $current->getPrevious() ) {
 			$message = $current->getMessage();
 			if (
@@ -581,6 +585,54 @@ class WP_DuckDB_Driver {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Check whether an error reports a DuckDB-aborted transaction.
+	 *
+	 * @param Throwable $error Query failure.
+	 * @return bool Whether the active transaction is already aborted.
+	 */
+	private function is_current_transaction_aborted_error( Throwable $error ): bool {
+		for ( $current = $error; null !== $current; $current = $current->getPrevious() ) {
+			if ( false !== strpos( $current->getMessage(), 'Current transaction is aborted' ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Recover a poisoned transaction before rebuilding information_schema tables.
+	 *
+	 * WordPress Site Health queries information_schema.tables after earlier
+	 * PHPUnit failures. If a native DuckDB error left the active transaction
+	 * aborted, the compatibility-table refresh would otherwise cascade with
+	 * "Current transaction is aborted" errors.
+	 */
+	private function recover_aborted_transaction_before_information_schema_refresh(): void {
+		if ( ! $this->connection->inTransaction() ) {
+			return;
+		}
+
+		$probe_sql                   = 'SELECT 1';
+		$this->last_duckdb_queries[] = $probe_sql;
+		try {
+			$this->connection->query( $probe_sql );
+			return;
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			if ( ! $this->is_current_transaction_aborted_error( $e ) ) {
+				throw new WP_DuckDB_Driver_Exception(
+					'Failed to inspect DuckDB transaction state before information_schema refresh: ' . $e->getMessage(),
+					0,
+					$e
+				);
+			}
+		}
+
+		$this->last_duckdb_queries[] = 'ROLLBACK';
+		$this->connection->rollback();
 	}
 
 	/**
@@ -816,6 +868,20 @@ class WP_DuckDB_Driver {
 		$rewrite_information_schema_key_column_usage        = $this->uses_information_schema_key_column_usage( $sql_tokens );
 		$rewrite_information_schema_referential_constraints = $this->uses_information_schema_referential_constraints( $sql_tokens );
 		$rewrite_information_schema_check_constraints       = $this->uses_information_schema_check_constraints( $sql_tokens );
+		if ( null === $group_by_expansion && $rewrite_information_schema_tables ) {
+			$group_by_expansion = $this->information_schema_tables_group_by_expansion( $sql_tokens );
+		}
+		if (
+			$rewrite_information_schema_tables
+			|| $rewrite_information_schema_columns
+			|| $rewrite_information_schema_statistics
+			|| $rewrite_information_schema_table_constraints
+			|| $rewrite_information_schema_key_column_usage
+			|| $rewrite_information_schema_referential_constraints
+			|| $rewrite_information_schema_check_constraints
+		) {
+			$this->recover_aborted_transaction_before_information_schema_refresh();
+		}
 		if ( $rewrite_information_schema_tables ) {
 			$this->refresh_information_schema_tables_table();
 		}
@@ -2034,6 +2100,182 @@ class WP_DuckDB_Driver {
 			'table_alias' => $table['alias'],
 			'columns'     => $columns,
 		);
+	}
+
+	/**
+	 * Build a GROUP BY expansion for MySQL-shaped information_schema.tables.
+	 *
+	 * MySQL accepts WordPress Site Health's table-size query, which groups by
+	 * TABLE_NAME while also selecting table metadata columns. DuckDB requires
+	 * those non-aggregate columns to be grouped explicitly.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array{group_index:int,group_end:int,table_alias:string,columns:string[]}|null Expansion data, or null when unsupported.
+	 */
+	private function information_schema_tables_group_by_expansion( array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+		if (
+			null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::HAVING_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL )
+			|| ! $this->contains_top_level_aggregate_function_call( $tokens )
+		) {
+			return null;
+		}
+
+		$from_index  = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::FROM_SYMBOL );
+		$group_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::GROUP_SYMBOL );
+		if (
+			null === $from_index
+			|| null === $group_index
+			|| $group_index <= $from_index
+			|| ! isset( $tokens[ $group_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$table_tokens = array_slice(
+			$tokens,
+			$from_index + 1,
+			$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
+		);
+		$table        = $this->parse_information_schema_tables_group_by_from_clause( $table_tokens );
+		if ( null === $table ) {
+			return null;
+		}
+
+		$columns_by_key = array();
+		$definitions    = array();
+		foreach ( array_keys( $this->information_schema_table_definitions() ) as $column_name ) {
+			$definitions[ strtolower( $column_name ) ] = $column_name;
+		}
+
+		foreach ( $this->split_top_level_comma_items( array_slice( $tokens, 1, $from_index - 1 ) ) as $item ) {
+			if ( $this->contains_top_level_aggregate_function_call( $item ) ) {
+				continue;
+			}
+
+			$column = $this->parse_simple_select_column_reference( $this->select_item_expression_tokens( $item ) );
+			if (
+				null === $column
+				|| $column['wildcard']
+				|| ! $this->information_schema_tables_group_by_column_qualifier_matches_table( $column['qualifier'], $table )
+			) {
+				return null;
+			}
+
+			$column_key = strtolower( $column['column_name'] );
+			if ( ! isset( $definitions[ $column_key ] ) ) {
+				return null;
+			}
+
+			$columns_by_key[ $column_key ] = $definitions[ $column_key ];
+		}
+
+		$group_end    = $this->primary_key_group_by_clause_end( $tokens, $group_index + 2 );
+		$group_tokens = array_slice( $tokens, $group_index + 2, $group_end - $group_index - 2 );
+		foreach ( $this->split_top_level_comma_items( $group_tokens ) as $item ) {
+			$column = $this->parse_group_by_column_reference( $item );
+			if (
+				null === $column
+				|| ! $this->information_schema_tables_group_by_column_qualifier_matches_table( $column['qualifier'], $table )
+			) {
+				return null;
+			}
+
+			unset( $columns_by_key[ strtolower( $column['column_name'] ) ] );
+		}
+
+		if ( count( $columns_by_key ) === 0 ) {
+			return null;
+		}
+
+		return array(
+			'group_index' => $group_index,
+			'group_end'   => $group_end,
+			'table_alias' => $table['alias'],
+			'columns'     => array_values( $columns_by_key ),
+		);
+	}
+
+	/**
+	 * Return the expression portion of a SELECT item with an explicit alias.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return WP_Parser_Token[] Expression tokens before a top-level AS alias.
+	 */
+	private function select_item_expression_tokens( array $tokens ): array {
+		$as_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::AS_SYMBOL );
+		if ( null === $as_index ) {
+			return $tokens;
+		}
+
+		return array_slice( $tokens, 0, $as_index );
+	}
+
+	/**
+	 * Parse the FROM clause supported by information_schema.tables GROUP BY expansion.
+	 *
+	 * @param WP_Parser_Token[] $tokens FROM clause tokens.
+	 * @return array{alias:string}|null Parsed table reference, or null when unsupported.
+	 */
+	private function parse_information_schema_tables_group_by_from_clause( array $tokens ): ?array {
+		if (
+			count( $tokens ) === 0
+			|| $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::COMMA_SYMBOL )
+			|| $this->contains_top_level_join_token( $tokens )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id
+		) {
+			return null;
+		}
+
+		$reference_length = $this->information_schema_tables_reference_length( $tokens, 0 );
+		if ( null === $reference_length ) {
+			return null;
+		}
+
+		$index = $reference_length;
+		$alias = self::INFO_SCHEMA_TABLES_TABLE;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) ) {
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			return null;
+		}
+
+		return array(
+			'alias' => $alias,
+		);
+	}
+
+	/**
+	 * Check whether a GROUP BY expansion column belongs to information_schema.tables.
+	 *
+	 * @param string|null         $qualifier Optional column qualifier.
+	 * @param array{alias:string} $table     Parsed information_schema table reference.
+	 * @return bool Whether the qualifier matches the table reference.
+	 */
+	private function information_schema_tables_group_by_column_qualifier_matches_table( ?string $qualifier, array $table ): bool {
+		return null === $qualifier
+			|| 0 === strcasecmp( $qualifier, $table['alias'] )
+			|| 0 === strcasecmp( $qualifier, 'tables' )
+			|| 0 === strcasecmp( $qualifier, self::INFO_SCHEMA_TABLES_TABLE );
 	}
 
 	/**
@@ -14947,6 +15189,22 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$information_schema_sum_function = $this->translate_information_schema_tables_sum_function_call(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $information_schema_sum_function ) {
+				$pieces[] = $information_schema_sum_function;
+				continue;
+			}
+
 			$sum_length_function = $this->translate_sum_length_function_call(
 				$tokens,
 				$index,
@@ -15552,6 +15810,144 @@ class WP_DuckDB_Driver {
 
 		$index = $next_index - 1;
 		return implode( ' ', $cases );
+	}
+
+	/**
+	 * Translate SUM() over information_schema.tables numeric metadata to BIGINT.
+	 *
+	 * DuckDB promotes SUM(BIGINT) arithmetic to HUGEINT, and the PHP client
+	 * refuses HUGEINT without bcmath. WordPress Site Health uses
+	 * SUM(data_length + index_length), which MySQL returns as a regular integer.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current token index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when the token does not start a supported SUM().
+	 */
+	private function translate_information_schema_tables_sum_function_call(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if (
+			! $rewrite_information_schema_tables
+			|| ! isset( $tokens[ $index + 1 ] )
+			|| $this->is_non_identifier_token( $tokens[ $index ] )
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_value(), 'SUM' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$items     = $this->split_top_level_comma_items( $body );
+		if ( 1 !== count( $items ) || ! $this->is_information_schema_tables_numeric_sum_expression( $items[0] ) ) {
+			return null;
+		}
+
+		$index = $end_index - 1;
+		return 'CAST(SUM('
+			. $this->translate_tokens_to_duckdb_sql(
+				$items[0],
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			)
+			. ') AS BIGINT)';
+	}
+
+	/**
+	 * Check whether tokens form a bounded numeric information_schema.tables expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return bool Whether the expression only references numeric tables metadata.
+	 */
+	private function is_information_schema_tables_numeric_sum_expression( array $tokens ): bool {
+		if ( count( $tokens ) === 0 ) {
+			return false;
+		}
+
+		$has_metadata_column = false;
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			$token = $tokens[ $index ];
+			if (
+				WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::PLUS_OPERATOR === $token->id
+				|| WP_MySQL_Lexer::MINUS_OPERATOR === $token->id
+				|| WP_MySQL_Lexer::MULT_OPERATOR === $token->id
+				|| WP_MySQL_Lexer::DIV_OPERATOR === $token->id
+			) {
+				continue;
+			}
+
+			if ( $this->is_number_token( $token ) ) {
+				continue;
+			}
+
+			$identifier = $this->metadata_identifier_value( $token );
+			if ( null === $identifier ) {
+				return false;
+			}
+
+			if (
+				isset( $tokens[ $index + 2 ] )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			) {
+				$identifier = $this->metadata_identifier_value( $tokens[ $index + 2 ] );
+				$index     += 2;
+			}
+
+			if ( ! $this->is_numeric_information_schema_tables_column( $identifier ) ) {
+				return false;
+			}
+			$has_metadata_column = true;
+		}
+
+		return $has_metadata_column;
+	}
+
+	/**
+	 * Check whether an information_schema.tables column is numeric metadata.
+	 *
+	 * @param string|null $identifier Identifier token value.
+	 * @return bool Whether the identifier maps to a numeric tables column.
+	 */
+	private function is_numeric_information_schema_tables_column( ?string $identifier ): bool {
+		if ( null === $identifier ) {
+			return false;
+		}
+
+		$column_name = $this->information_schema_tables_column_name( $identifier );
+		if ( null === $column_name ) {
+			return false;
+		}
+
+		return in_array(
+			$column_name,
+			array(
+				'VERSION',
+				'TABLE_ROWS',
+				'AVG_ROW_LENGTH',
+				'DATA_LENGTH',
+				'MAX_DATA_LENGTH',
+				'INDEX_LENGTH',
+				'DATA_FREE',
+				'AUTO_INCREMENT',
+				'CHECKSUM',
+			),
+			true
+		);
 	}
 
 	/**
