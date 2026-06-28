@@ -24,6 +24,62 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertFalse( $stmt->fetch() );
 	}
 
+	public function test_result_statement_constructor_normalizes_row_shapes(): void {
+		$row_shapes = array(
+			'list'        => array(
+				array( 10, 'Ada' ),
+			),
+			'associative' => array(
+				array(
+					'id'   => 10,
+					'name' => 'Ada',
+				),
+			),
+			'sparse'      => array(
+				array(
+					2 => 10,
+					4 => 'Ada',
+				),
+			),
+		);
+
+		foreach ( $row_shapes as $label => $rows ) {
+			$stmt = new WP_DuckDB_Result_Statement( array( 'id', 'name' ), $rows );
+			$this->assertSame( array( array( 10, 'Ada' ) ), $stmt->fetchAll( PDO::FETCH_NUM ), $label );
+
+			$stmt = new WP_DuckDB_Result_Statement( array( 'id', 'name' ), $rows );
+			$this->assertSame(
+				array(
+					array(
+						'id'   => 10,
+						'name' => 'Ada',
+					),
+				),
+				$stmt->fetchAll( PDO::FETCH_ASSOC ),
+				$label
+			);
+
+			$stmt = new WP_DuckDB_Result_Statement( array( 'id', 'name' ), $rows );
+			$this->assertSame(
+				array(
+					array(
+						'id'   => 10,
+						'name' => 'Ada',
+						0      => 10,
+						1      => 'Ada',
+					),
+				),
+				$stmt->fetchAll( PDO::FETCH_BOTH ),
+				$label
+			);
+
+			$stmt = new WP_DuckDB_Result_Statement( array( 'id', 'name' ), $rows );
+			$row  = $stmt->fetch( PDO::FETCH_OBJ );
+			$this->assertSame( 10, $row->id, $label );
+			$this->assertSame( 'Ada', $row->name, $label );
+		}
+	}
+
 	public function test_result_statement_fetch_column_preserves_nulls_and_validates_indexes(): void {
 		$stmt = new WP_DuckDB_Result_Statement(
 			array( 'id', 'label' ),

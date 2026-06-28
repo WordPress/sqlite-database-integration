@@ -38,18 +38,70 @@ class WP_DuckDB_Driver {
 	const INFO_SCHEMA_CHECK_CONSTRAINTS_TABLE       = '__wp_duckdb_information_schema_check_constraints';
 
 	const SUPPORTED_SESSION_SYSTEM_VARIABLES = array(
-		'autocommit'             => true,
-		'big_tables'             => true,
-		'default_storage_engine' => true,
-		'foreign_key_checks'     => true,
-		'sql_mode'               => true,
-		'sql_warnings'           => true,
-		'unique_checks'          => true,
+		'autocommit'                              => true,
+		'big_tables'                              => true,
+		'character_set_client'                    => true,
+		'character_set_results'                   => true,
+		'collation_connection'                    => true,
+		'default_collation_for_utf8mb4'           => true,
+		'default_storage_engine'                  => true,
+		'end_markers_in_json'                     => true,
+		'explicit_defaults_for_timestamp'         => true,
+		'foreign_key_checks'                      => true,
+		'keep_files_on_create'                    => true,
+		'old_alter_table'                         => true,
+		'print_identified_with_as_hex'            => true,
+		'require_row_format'                      => true,
+		'resultset_metadata'                      => true,
+		'select_into_disk_sync'                   => true,
+		'session_track_gtids'                     => true,
+		'session_track_schema'                    => true,
+		'session_track_state_change'              => true,
+		'session_track_transaction_info'          => true,
+		'show_create_table_skip_secondary_engine' => true,
+		'show_create_table_verbosity'             => true,
+		'sql_auto_is_null'                        => true,
+		'sql_big_selects'                         => true,
+		'sql_buffer_result'                       => true,
+		'sql_mode'                                => true,
+		'sql_notes'                               => true,
+		'sql_safe_updates'                        => true,
+		'sql_warnings'                            => true,
+		'time_zone'                               => true,
+		'transaction_isolation'                   => true,
+		'transaction_read_only'                   => true,
+		'unique_checks'                           => true,
+		'use_secondary_engine'                    => true,
+	);
+
+	const STRING_SESSION_SYSTEM_VARIABLES = array(
+		'character_set_client'           => true,
+		'character_set_results'          => true,
+		'collation_connection'           => true,
+		'default_collation_for_utf8mb4'  => true,
+		'default_storage_engine'         => true,
+		'resultset_metadata'             => true,
+		'session_track_gtids'            => true,
+		'session_track_transaction_info' => true,
+		'time_zone'                      => true,
+		'transaction_isolation'          => true,
+		'use_secondary_engine'           => true,
 	);
 
 	const READ_ONLY_SYSTEM_VARIABLES = array(
 		'version'         => true,
 		'version_comment' => true,
+	);
+
+	const READ_ONLY_GLOBAL_SYSTEM_VARIABLES = array(
+		'gtid_purged'                     => true,
+		'log_bin'                         => true,
+		'log_bin_trust_function_creators' => true,
+		'sql_mode'                        => true,
+	);
+
+	const READ_ONLY_SESSION_SYSTEM_VARIABLES = array(
+		'max_allowed_packet' => true,
 	);
 
 	const BIT_SIGNED_BIGINT_MAX_DECIMAL = '9223372036854775807';
@@ -214,6 +266,13 @@ class WP_DuckDB_Driver {
 	 * @var array<string,int|float|string|null>
 	 */
 	private $user_variables = array();
+
+	/**
+	 * Internal metadata tables already initialized for this connection.
+	 *
+	 * @var array<string,bool>
+	 */
+	private $ensured_metadata_tables = array();
 
 	/**
 	 * Whether a MySQL LOCK TABLES statement opened the current transaction.
@@ -551,6 +610,33 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Get an emulated MySQL system variable value for a supported scope.
+	 *
+	 * @param string $name  Variable name.
+	 * @param string $scope Variable scope: session or global.
+	 * @return int|string|null Stored value, or null when supported but unset.
+	 */
+	private function get_system_variable( string $name, string $scope ) {
+		$normalized_name = strtolower( $name );
+
+		if ( 'global' === $scope ) {
+			if ( 'sql_mode' === $normalized_name ) {
+				return implode( ',', $this->active_sql_modes );
+			}
+
+			if ( isset( self::READ_ONLY_GLOBAL_SYSTEM_VARIABLES[ $normalized_name ] ) ) {
+				return null;
+			}
+		}
+
+		if ( isset( self::READ_ONLY_SESSION_SYSTEM_VARIABLES[ $normalized_name ] ) ) {
+			return $this->session_system_variables[ $normalized_name ] ?? null;
+		}
+
+		return $this->get_session_system_variable( $name );
+	}
+
+	/**
 	 * Tokenize and parse a single MySQL statement.
 	 *
 	 * @param string $query MySQL query.
@@ -684,20 +770,51 @@ class WP_DuckDB_Driver {
 			return $this->record_found_rows_from_result( $variable_select );
 		}
 
+		$variable_expression_select = $this->execute_variable_expression_select( $tokens );
+		if ( null !== $variable_expression_select ) {
+			return $this->record_found_rows_from_result( $variable_expression_select );
+		}
+
 		$has_sql_calc_found_rows = $this->has_top_level_sql_calc_found_rows( $tokens );
 		$tokens                  = $this->normalize_select_helper_tokens( $tokens );
 		$column_meta             = $this->simple_select_column_metadata( $tokens );
 		$group_by_expansion      = $this->primary_key_group_by_expansion( $tokens );
 		$seeded_rand_expressions = $this->parse_seeded_rand_select_expressions( $tokens );
-		$seeded_rand_rewrites    = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
+		$seeded_rand_where       = $this->parse_seeded_rand_where_clause( $tokens );
+		if ( null !== $seeded_rand_where && $has_sql_calc_found_rows ) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB WHERE is not supported with SQL_CALC_FOUND_ROWS.' );
+		}
+		if ( null !== $seeded_rand_where && count( $seeded_rand_expressions ) > 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB driver cannot be used as both a top-level SELECT expression and a WHERE predicate.' );
+		}
 
-		$rewrite_information_schema_tables                  = $this->uses_information_schema_tables( $tokens );
-		$rewrite_information_schema_columns                 = $this->uses_information_schema_columns( $tokens );
-		$rewrite_information_schema_statistics              = $this->uses_information_schema_statistics( $tokens );
-		$rewrite_information_schema_table_constraints       = $this->uses_information_schema_table_constraints( $tokens );
-		$rewrite_information_schema_key_column_usage        = $this->uses_information_schema_key_column_usage( $tokens );
-		$rewrite_information_schema_referential_constraints = $this->uses_information_schema_referential_constraints( $tokens );
-		$rewrite_information_schema_check_constraints       = $this->uses_information_schema_check_constraints( $tokens );
+		$sql_tokens              = null === $seeded_rand_where ? $tokens : $seeded_rand_where['tokens'];
+		$seeded_rand_ordering    = $this->parse_seeded_rand_order_by_clause( $sql_tokens );
+		$seeded_rand_where_order = null;
+		if ( null !== $seeded_rand_ordering && count( $seeded_rand_expressions ) > 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB driver cannot be used as both a top-level SELECT expression and an ORDER BY expression.' );
+		}
+		if ( null !== $seeded_rand_where && null !== $seeded_rand_ordering ) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB driver cannot be used as both a WHERE predicate and an ORDER BY expression.' );
+		}
+		if ( null !== $seeded_rand_where ) {
+			$seeded_rand_where_order = $this->parse_seeded_rand_where_order_by_clause( $sql_tokens );
+			if ( null !== $seeded_rand_where_order ) {
+				$sql_tokens = $seeded_rand_where_order['tokens'];
+			}
+		} elseif ( null !== $seeded_rand_ordering ) {
+			$sql_tokens = $seeded_rand_ordering['tokens'];
+		}
+
+		$seeded_rand_rewrites = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
+
+		$rewrite_information_schema_tables                  = $this->uses_information_schema_tables( $sql_tokens );
+		$rewrite_information_schema_columns                 = $this->uses_information_schema_columns( $sql_tokens );
+		$rewrite_information_schema_statistics              = $this->uses_information_schema_statistics( $sql_tokens );
+		$rewrite_information_schema_table_constraints       = $this->uses_information_schema_table_constraints( $sql_tokens );
+		$rewrite_information_schema_key_column_usage        = $this->uses_information_schema_key_column_usage( $sql_tokens );
+		$rewrite_information_schema_referential_constraints = $this->uses_information_schema_referential_constraints( $sql_tokens );
+		$rewrite_information_schema_check_constraints       = $this->uses_information_schema_check_constraints( $sql_tokens );
 		if ( $rewrite_information_schema_tables ) {
 			$this->refresh_information_schema_tables_table();
 		}
@@ -721,7 +838,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$sql = $this->translate_tokens_to_duckdb_sql(
-			$tokens,
+			$sql_tokens,
 			$rewrite_information_schema_tables,
 			$rewrite_information_schema_columns,
 			$rewrite_information_schema_statistics,
@@ -737,7 +854,7 @@ class WP_DuckDB_Driver {
 		if ( $has_sql_calc_found_rows ) {
 			try {
 				$this->found_rows = $this->count_select_rows(
-					$this->strip_top_level_limit_clause( $tokens ),
+					$this->strip_top_level_limit_clause( $sql_tokens ),
 					$rewrite_information_schema_tables,
 					$rewrite_information_schema_columns,
 					$rewrite_information_schema_statistics,
@@ -750,7 +867,10 @@ class WP_DuckDB_Driver {
 				);
 				$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 				$result           = $this->apply_result_column_metadata( $result, $column_meta );
-				return $this->apply_seeded_rand_select_expressions( $result, $seeded_rand_expressions );
+				$result           = $this->apply_seeded_rand_where_filter( $result, $seeded_rand_where );
+				$result           = $this->apply_seeded_rand_select_expressions( $result, $seeded_rand_expressions );
+				$result           = $this->apply_seeded_rand_ordering( $result, $seeded_rand_ordering );
+				return $this->apply_seeded_rand_where_ordering( $result, $seeded_rand_where_order );
 			} catch ( Throwable $e ) {
 				$this->found_rows = 0;
 				throw $e;
@@ -760,7 +880,10 @@ class WP_DuckDB_Driver {
 		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 		$this->found_rows = $sql;
 		$result           = $this->apply_result_column_metadata( $result, $column_meta );
-		return $this->apply_seeded_rand_select_expressions( $result, $seeded_rand_expressions );
+		$result           = $this->apply_seeded_rand_where_filter( $result, $seeded_rand_where );
+		$result           = $this->apply_seeded_rand_select_expressions( $result, $seeded_rand_expressions );
+		$result           = $this->apply_seeded_rand_ordering( $result, $seeded_rand_ordering );
+		return $this->apply_seeded_rand_where_ordering( $result, $seeded_rand_where_order );
 	}
 
 	/**
@@ -782,7 +905,7 @@ class WP_DuckDB_Driver {
 	 * Parse top-level SELECT-list RAND(seed) expressions supported by the DuckDB driver.
 	 *
 	 * @param WP_Parser_Token[] $tokens SELECT tokens.
-	 * @return array<int,array{column:int,start:int,end:int,seed:int,replacement:string}>
+	 * @return array<int,array{column:int,start:int,end:int,seed:int|null,replacement:string}>
 	 */
 	private function parse_seeded_rand_select_expressions( array $tokens ): array {
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
@@ -795,22 +918,36 @@ class WP_DuckDB_Driver {
 			$this->top_level_select_list_end( $tokens )
 		);
 
-		$expressions  = array();
-		$has_wildcard = false;
+		$expressions         = array();
+		$has_wildcard        = false;
+		$last_wildcard_index = null;
+		$seeded_columns      = array();
 		foreach ( $ranges as $column_index => $range ) {
 			if ( $this->select_item_is_wildcard( $range['tokens'] ) ) {
-				$has_wildcard = true;
+				$has_wildcard        = true;
+				$last_wildcard_index = $column_index;
 				continue;
 			}
 
 			$expression = $this->parse_seeded_rand_select_item( $range['tokens'], $range['start'], $column_index );
 			if ( null !== $expression ) {
-				$expressions[] = $expression;
+				$expressions[]    = $expression;
+				$seeded_columns[] = $column_index;
 			}
 		}
 
 		if ( $has_wildcard && count( $expressions ) > 0 ) {
-			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() with SELECT-list wildcards is not supported by the DuckDB driver.' );
+			foreach ( $seeded_columns as $seeded_column ) {
+				if ( null === $last_wildcard_index || $seeded_column <= $last_wildcard_index ) {
+					throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() with SELECT-list wildcards is supported only after wildcard columns in the DuckDB driver.' );
+				}
+			}
+
+			$select_item_count = count( $ranges );
+			foreach ( $expressions as &$expression ) {
+				$expression['column'] -= $select_item_count;
+			}
+			unset( $expression );
 		}
 
 		return $expressions;
@@ -819,8 +956,8 @@ class WP_DuckDB_Driver {
 	/**
 	 * Index seeded RAND rewrites by absolute token offset.
 	 *
-	 * @param array<int,array{column:int,start:int,end:int,seed:int,replacement:string}> $expressions Seeded RAND expressions.
-	 * @return array<int,array{column:int,start:int,end:int,seed:int,replacement:string}>
+	 * @param array<int,array{column:int,start:int,end:int,seed:int|null,replacement:string}> $expressions Seeded RAND expressions.
+	 * @return array<int,array{column:int,start:int,end:int,seed:int|null,replacement:string}>
 	 */
 	private function seeded_rand_rewrite_map( array $expressions ): array {
 		$rewrites = array();
@@ -937,7 +1074,7 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens         SELECT item tokens.
 	 * @param int               $absolute_start Absolute start offset in the full SELECT token stream.
 	 * @param int               $column_index   Result column index.
-	 * @return array{column:int,start:int,end:int,seed:int,replacement:string}|null Parsed expression, or null for non-RAND items.
+	 * @return array{column:int,start:int,end:int,seed:int|null,replacement:string}|null Parsed expression, or null for non-RAND items.
 	 */
 	private function parse_seeded_rand_select_item( array $tokens, int $absolute_start, int $column_index ): ?array {
 		if (
@@ -959,16 +1096,14 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB SELECT supports exactly one seed argument.' );
 		}
 
-		$seed = $this->parse_seeded_rand_literal_seed( $seed_tokens );
-		if ( null === $seed ) {
-			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB SELECT supports only literal numeric, string, or NULL seeds.' );
-		}
-
+		$seed        = $this->parse_seeded_rand_literal_seed( $seed_tokens );
 		$has_alias   = $this->validate_seeded_rand_select_item_tail( $tokens, $close_index + 1 );
-		$replacement = '0.0';
+		$replacement = null === $seed
+			? $this->translate_tokens_to_duckdb_sql( $seed_tokens )
+			: '0.0';
 		if ( ! $has_alias ) {
 			$replacement .= ' AS ' . $this->connection->quote_identifier(
-				$this->concatenate_token_bytes( array_slice( $tokens, 0, $close_index + 1 ) )
+				$this->seeded_rand_select_expression_label( array_slice( $tokens, 0, $close_index + 1 ) )
 			);
 		}
 
@@ -1100,10 +1235,511 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Parse a bounded SELECT ORDER BY RAND(seed) clause.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @return array{seed:int,descending:bool,tokens:array<int,WP_Parser_Token>}|null Parsed ordering, or null when unsupported/not present.
+	 */
+	private function parse_seeded_rand_order_by_clause( array $tokens ): ?array {
+		$order_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::ORDER_SYMBOL );
+		if (
+			null === $order_index
+			|| ! isset( $tokens[ $order_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_index + 1 ]->id
+			|| null !== $this->find_top_level_token_index( $tokens, $order_index + 2, WP_MySQL_Lexer::LIMIT_SYMBOL )
+		) {
+			return null;
+		}
+
+		$order_tokens = array_slice( $tokens, $order_index + 2 );
+		$order_items  = $this->split_top_level_comma_items( $order_tokens );
+		if ( 1 !== count( $order_items ) ) {
+			return null;
+		}
+
+		$item       = array_values( $order_items[0] );
+		$descending = false;
+		$last       = end( $item );
+		if ( $last instanceof WP_Parser_Token && ( WP_MySQL_Lexer::ASC_SYMBOL === $last->id || WP_MySQL_Lexer::DESC_SYMBOL === $last->id ) ) {
+			$descending = WP_MySQL_Lexer::DESC_SYMBOL === $last->id;
+			array_pop( $item );
+		}
+
+		$seed = $this->parse_seeded_rand_order_item_seed( $item );
+		if ( null === $seed ) {
+			return null;
+		}
+
+		return array(
+			'seed'       => $seed,
+			'descending' => $descending,
+			'tokens'     => array_slice( $tokens, 0, $order_index ),
+		);
+	}
+
+	/**
+	 * Parse a RAND(seed) ORDER BY item.
+	 *
+	 * @param WP_Parser_Token[] $tokens ORDER BY item tokens.
+	 * @return int|null Normalized seed, or null when unsupported.
+	 */
+	private function parse_seeded_rand_order_item_seed( array $tokens ): ?int {
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| $this->is_non_identifier_token( $tokens[0] )
+			|| 0 !== strcasecmp( $tokens[0]->get_value(), 'RAND' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$close_index = $this->matching_parenthesis_index( $tokens, 1 );
+		if ( null === $close_index || 2 === $close_index || count( $tokens ) !== $close_index + 1 ) {
+			return null;
+		}
+
+		$seed_tokens = array_slice( $tokens, 2, $close_index - 2 );
+		if ( 1 !== count( $this->split_top_level_comma_items( $seed_tokens ) ) ) {
+			return null;
+		}
+
+		return $this->parse_seeded_rand_literal_seed( $seed_tokens );
+	}
+
+	/**
+	 * Parse a bounded SELECT WHERE RAND(seed) comparison.
+	 *
+	 * Supported shape is a full top-level WHERE predicate comparing RAND(seed) with
+	 * a literal numeric/string threshold. Later GROUP/HAVING/LIMIT clauses are not
+	 * supported because they would require broader relational rewriting.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @return array{seed:int,operator:int,threshold:float,rand_left:bool,tokens:array<int,WP_Parser_Token>}|null Parsed filter, or null when unsupported/not present.
+	 */
+	private function parse_seeded_rand_where_clause( array $tokens ): ?array {
+		$where_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::WHERE_SYMBOL );
+		if ( null === $where_index ) {
+			return null;
+		}
+
+		$clause_end = count( $tokens );
+		foreach (
+			array(
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+				WP_MySQL_Lexer::FOR_SYMBOL,
+			) as $boundary
+		) {
+			$boundary_index = $this->find_top_level_token_index( $tokens, $where_index + 1, $boundary );
+			if ( null !== $boundary_index && $boundary_index < $clause_end ) {
+				$clause_end = $boundary_index;
+			}
+		}
+
+		if (
+			isset( $tokens[ $clause_end ] )
+			&& in_array(
+				$tokens[ $clause_end ]->id,
+				array(
+					WP_MySQL_Lexer::GROUP_SYMBOL,
+					WP_MySQL_Lexer::HAVING_SYMBOL,
+					WP_MySQL_Lexer::LIMIT_SYMBOL,
+					WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+					WP_MySQL_Lexer::FOR_SYMBOL,
+				),
+				true
+			)
+		) {
+			return null;
+		}
+
+		$where_tokens = array_slice( $tokens, $where_index + 1, $clause_end - $where_index - 1 );
+		$predicate    = $this->parse_seeded_rand_where_predicate( $where_tokens );
+		if ( null === $predicate ) {
+			return null;
+		}
+
+		$predicate['tokens'] = array_merge(
+			array_slice( $tokens, 0, $where_index ),
+			array_slice( $tokens, $clause_end )
+		);
+
+		return $predicate;
+	}
+
+	/**
+	 * Parse the supported seeded RAND() WHERE predicate body.
+	 *
+	 * @param WP_Parser_Token[] $tokens WHERE predicate tokens.
+	 * @return array{seed:int,operator:int,threshold:float,rand_left:bool}|null Parsed predicate, or null when unsupported.
+	 */
+	private function parse_seeded_rand_where_predicate( array $tokens ): ?array {
+		$operator_index = null;
+		$depth          = 0;
+		foreach ( $tokens as $index => $token ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+				--$depth;
+				continue;
+			}
+			if ( 0 === $depth && $this->is_numeric_comparison_operator_token( $token ) ) {
+				if ( null !== $operator_index ) {
+					return null;
+				}
+				$operator_index = $index;
+			}
+		}
+
+		if ( null === $operator_index ) {
+			return null;
+		}
+
+		$left      = array_slice( $tokens, 0, $operator_index );
+		$operator  = $tokens[ $operator_index ]->id;
+		$right     = array_slice( $tokens, $operator_index + 1 );
+		$left_seed = $this->parse_seeded_rand_order_item_seed( $left );
+		if ( null !== $left_seed ) {
+			$threshold = $this->parse_seeded_rand_where_threshold( $right );
+			if ( null === $threshold ) {
+				return null;
+			}
+
+			return array(
+				'seed'      => $left_seed,
+				'operator'  => $operator,
+				'threshold' => $threshold,
+				'rand_left' => true,
+			);
+		}
+
+		$right_seed = $this->parse_seeded_rand_order_item_seed( $right );
+		if ( null === $right_seed ) {
+			return null;
+		}
+
+		$threshold = $this->parse_seeded_rand_where_threshold( $left );
+		if ( null === $threshold ) {
+			return null;
+		}
+
+		return array(
+			'seed'      => $right_seed,
+			'operator'  => $operator,
+			'threshold' => $threshold,
+			'rand_left' => false,
+		);
+	}
+
+	/**
+	 * Parse a literal threshold for a seeded RAND() WHERE comparison.
+	 *
+	 * @param WP_Parser_Token[] $tokens Threshold tokens.
+	 * @return float|null Literal threshold, or null when unsupported.
+	 */
+	private function parse_seeded_rand_where_threshold( array $tokens ): ?float {
+		if ( 1 === count( $tokens ) ) {
+			if ( $this->is_number_token( $tokens[0] ) ) {
+				return (float) $this->number_token_value( $tokens[0] );
+			}
+			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $tokens[0]->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $tokens[0]->id ) {
+				return (float) $tokens[0]->get_value();
+			}
+		}
+
+		if (
+			2 === count( $tokens )
+			&& $this->is_sign_token( $tokens[0] )
+			&& $this->is_number_token( $tokens[1] )
+		) {
+			return (float) $this->signed_number_token_value( $tokens[0], $tokens[1] );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse a simple ORDER BY clause used after a seeded RAND() WHERE filter.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens with the RAND() WHERE removed.
+	 * @return array{items:array<int,array{column:string|null,ordinal:int|null,descending:bool}>,tokens:array<int,WP_Parser_Token>}|null Parsed ordering, no ordering, or unsupported ordering.
+	 */
+	private function parse_seeded_rand_where_order_by_clause( array $tokens ): ?array {
+		$order_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::ORDER_SYMBOL );
+		if ( null === $order_index ) {
+			return null;
+		}
+		if (
+			! isset( $tokens[ $order_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_index + 1 ]->id
+			|| null !== $this->find_top_level_token_index( $tokens, $order_index + 2, WP_MySQL_Lexer::LIMIT_SYMBOL )
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB WHERE supports only simple ORDER BY columns without LIMIT.' );
+		}
+
+		$items = array();
+		foreach ( $this->split_top_level_comma_items( array_slice( $tokens, $order_index + 2 ) ) as $item ) {
+			$item       = array_values( $item );
+			$descending = false;
+			$last       = end( $item );
+			if ( $last instanceof WP_Parser_Token && ( WP_MySQL_Lexer::ASC_SYMBOL === $last->id || WP_MySQL_Lexer::DESC_SYMBOL === $last->id ) ) {
+				$descending = WP_MySQL_Lexer::DESC_SYMBOL === $last->id;
+				array_pop( $item );
+			}
+
+			if ( 1 === count( $item ) && $this->is_number_token( $item[0] ) ) {
+				$ordinal = (int) $this->number_token_value( $item[0] );
+				if ( $ordinal < 1 ) {
+					throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB WHERE supports only positive ORDER BY ordinals.' );
+				}
+				$items[] = array(
+					'column'     => null,
+					'ordinal'    => $ordinal - 1,
+					'descending' => $descending,
+				);
+				continue;
+			}
+
+			if ( 1 === count( $item ) && ! $this->is_non_identifier_token( $item[0] ) ) {
+				$items[] = array(
+					'column'     => $item[0]->get_value(),
+					'ordinal'    => null,
+					'descending' => $descending,
+				);
+				continue;
+			}
+
+			throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB WHERE supports only simple ORDER BY result columns.' );
+		}
+
+		return array(
+			'items'  => $items,
+			'tokens' => array_slice( $tokens, 0, $order_index ),
+		);
+	}
+
+	/**
+	 * Build the no-alias result column label for a seeded RAND() expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens RAND expression tokens.
+	 * @return string Display label.
+	 */
+	private function seeded_rand_select_expression_label( array $tokens ): string {
+		$pieces = array();
+		foreach ( $tokens as $token ) {
+			$pieces[] = $token->get_bytes();
+		}
+
+		return $this->join_sql_pieces( $pieces );
+	}
+
+	/**
+	 * Apply a bounded seeded RAND() ORDER BY to materialized SELECT rows.
+	 *
+	 * @param WP_DuckDB_Result_Statement $result   Result statement.
+	 * @param array{seed:int,descending:bool,tokens:array<int,WP_Parser_Token>}|null $ordering Parsed ordering.
+	 * @return WP_DuckDB_Result_Statement Result with rows sorted.
+	 */
+	private function apply_seeded_rand_ordering( WP_DuckDB_Result_Statement $result, ?array $ordering ): WP_DuckDB_Result_Statement {
+		if ( null === $ordering ) {
+			return $result;
+		}
+
+		$columns     = array();
+		$column_meta = array();
+		for ( $index = 0; $index < $result->columnCount(); ++$index ) {
+			$meta          = $result->getColumnMeta( $index );
+			$column_meta[] = is_array( $meta ) ? $meta : array();
+			$columns[]     = is_array( $meta ) && isset( $meta['name'] ) ? (string) $meta['name'] : (string) $index;
+		}
+
+		$state     = array();
+		$decorated = array();
+		foreach ( $result->fetchAll( PDO::FETCH_NUM ) as $position => $row ) {
+			$decorated[] = array(
+				'key'      => $this->next_seeded_rand_value( $ordering['seed'], $state ),
+				'position' => $position,
+				'row'      => $row,
+			);
+		}
+
+		usort(
+			$decorated,
+			function ( array $left, array $right ) use ( $ordering ): int {
+				if ( $left['key'] === $right['key'] ) {
+					return $left['position'] <=> $right['position'];
+				}
+
+				$comparison = $left['key'] <=> $right['key'];
+				return $ordering['descending'] ? -$comparison : $comparison;
+			}
+		);
+
+		$rows = array();
+		foreach ( $decorated as $item ) {
+			$rows[] = $item['row'];
+		}
+
+		return new WP_DuckDB_Result_Statement( $columns, $rows, $result->rowCount(), $column_meta );
+	}
+
+	/**
+	 * Apply a bounded seeded RAND() WHERE predicate to materialized SELECT rows.
+	 *
+	 * @param WP_DuckDB_Result_Statement $result Result statement.
+	 * @param array{seed:int,operator:int,threshold:float,rand_left:bool,tokens:array<int,WP_Parser_Token>}|null $filter Parsed filter.
+	 * @return WP_DuckDB_Result_Statement Filtered result.
+	 */
+	private function apply_seeded_rand_where_filter( WP_DuckDB_Result_Statement $result, ?array $filter ): WP_DuckDB_Result_Statement {
+		if ( null === $filter ) {
+			return $result;
+		}
+
+		$columns     = array();
+		$column_meta = array();
+		for ( $index = 0; $index < $result->columnCount(); ++$index ) {
+			$meta          = $result->getColumnMeta( $index );
+			$column_meta[] = is_array( $meta ) ? $meta : array();
+			$columns[]     = is_array( $meta ) && isset( $meta['name'] ) ? (string) $meta['name'] : (string) $index;
+		}
+
+		$rows  = array();
+		$state = array();
+		foreach ( $result->fetchAll( PDO::FETCH_NUM ) as $row ) {
+			$value = $this->next_seeded_rand_value( $filter['seed'], $state );
+			$left  = $filter['rand_left'] ? $value : $filter['threshold'];
+			$right = $filter['rand_left'] ? $filter['threshold'] : $value;
+			if ( $this->compare_seeded_rand_where_values( $left, $filter['operator'], $right ) ) {
+				$rows[] = $row;
+			}
+		}
+
+		return new WP_DuckDB_Result_Statement( $columns, $rows, $result->rowCount(), $column_meta );
+	}
+
+	/**
+	 * Apply simple ORDER BY result-column ordering after a seeded RAND() WHERE filter.
+	 *
+	 * @param WP_DuckDB_Result_Statement $result   Result statement.
+	 * @param array{items:array<int,array{column:string|null,ordinal:int|null,descending:bool}>,tokens:array<int,WP_Parser_Token>}|null $ordering Parsed ordering.
+	 * @return WP_DuckDB_Result_Statement Ordered result.
+	 */
+	private function apply_seeded_rand_where_ordering( WP_DuckDB_Result_Statement $result, ?array $ordering ): WP_DuckDB_Result_Statement {
+		if ( null === $ordering ) {
+			return $result;
+		}
+
+		$columns     = array();
+		$column_meta = array();
+		for ( $index = 0; $index < $result->columnCount(); ++$index ) {
+			$meta          = $result->getColumnMeta( $index );
+			$column_meta[] = is_array( $meta ) ? $meta : array();
+			$columns[]     = is_array( $meta ) && isset( $meta['name'] ) ? (string) $meta['name'] : (string) $index;
+		}
+
+		$column_indexes = array();
+		foreach ( $ordering['items'] as $item ) {
+			if ( null !== $item['ordinal'] ) {
+				if ( ! array_key_exists( $item['ordinal'], $columns ) ) {
+					throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() WHERE ORDER BY ordinal is outside the result column range.' );
+				}
+				$column_indexes[] = $item['ordinal'];
+				continue;
+			}
+
+			$column_index = null;
+			foreach ( $columns as $index => $name ) {
+				if ( 0 === strcasecmp( $name, (string) $item['column'] ) ) {
+					$column_index = $index;
+					break;
+				}
+			}
+			if ( null === $column_index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() WHERE ORDER BY column is not present in the result set.' );
+			}
+			$column_indexes[] = $column_index;
+		}
+
+		$rows = $result->fetchAll( PDO::FETCH_NUM );
+		usort(
+			$rows,
+			function ( array $left, array $right ) use ( $ordering, $column_indexes ): int {
+				foreach ( $ordering['items'] as $item_index => $item ) {
+					$comparison = $this->compare_result_order_values(
+						$left[ $column_indexes[ $item_index ] ] ?? null,
+						$right[ $column_indexes[ $item_index ] ] ?? null
+					);
+					if ( 0 !== $comparison ) {
+						return $item['descending'] ? -$comparison : $comparison;
+					}
+				}
+
+				return 0;
+			}
+		);
+
+		return new WP_DuckDB_Result_Statement( $columns, $rows, $result->rowCount(), $column_meta );
+	}
+
+	/**
+	 * Compare two values with a seeded RAND() WHERE comparison operator.
+	 *
+	 * @param float $left     Left value.
+	 * @param int   $operator Comparison operator token ID.
+	 * @param float $right    Right value.
+	 * @return bool Comparison result.
+	 */
+	private function compare_seeded_rand_where_values( float $left, int $operator, float $right ): bool {
+		switch ( $operator ) {
+			case WP_MySQL_Lexer::LESS_THAN_OPERATOR:
+				return $left < $right;
+			case WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR:
+				return $left <= $right;
+			case WP_MySQL_Lexer::GREATER_THAN_OPERATOR:
+				return $left > $right;
+			case WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR:
+				return $left >= $right;
+			case WP_MySQL_Lexer::EQUAL_OPERATOR:
+				return $left === $right;
+		}
+
+		throw new WP_DuckDB_Driver_Exception( 'Unsupported seeded RAND() WHERE comparison operator.' );
+	}
+
+	/**
+	 * Compare materialized result values for simple ORDER BY.
+	 *
+	 * @param mixed $left  Left value.
+	 * @param mixed $right Right value.
+	 * @return int Comparison result.
+	 */
+	private function compare_result_order_values( $left, $right ): int {
+		if ( null === $left && null === $right ) {
+			return 0;
+		}
+		if ( null === $left ) {
+			return -1;
+		}
+		if ( null === $right ) {
+			return 1;
+		}
+		if ( is_numeric( $left ) && is_numeric( $right ) ) {
+			return (float) $left <=> (float) $right;
+		}
+
+		return strcmp( (string) $left, (string) $right );
+	}
+
+	/**
 	 * Apply MySQL's seeded RAND(N) sequence to materialized SELECT rows.
 	 *
 	 * @param WP_DuckDB_Result_Statement $result      Result statement.
-	 * @param array<int,array{column:int,start:int,end:int,seed:int,replacement:string}> $expressions Seeded RAND expressions.
+	 * @param array<int,array{column:int,start:int,end:int,seed:int|null,replacement:string}> $expressions Seeded RAND expressions.
 	 * @return WP_DuckDB_Result_Statement Result with seeded RAND columns replaced.
 	 */
 	private function apply_seeded_rand_select_expressions( WP_DuckDB_Result_Statement $result, array $expressions ): WP_DuckDB_Result_Statement {
@@ -1123,10 +1759,16 @@ class WP_DuckDB_Driver {
 		$state = array();
 		foreach ( $rows as &$row ) {
 			foreach ( $expressions as $expression ) {
-				if ( ! array_key_exists( $expression['column'], $row ) ) {
+				$column = $expression['column'] < 0
+					? count( $row ) + $expression['column']
+					: $expression['column'];
+				if ( ! array_key_exists( $column, $row ) ) {
 					throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() result column was not found in DuckDB SELECT result.' );
 				}
-				$row[ $expression['column'] ] = $this->next_seeded_rand_value( $expression['seed'], $state );
+				$seed           = null === $expression['seed']
+					? $this->normalize_seeded_rand_seed( $row[ $column ] )
+					: $expression['seed'];
+				$row[ $column ] = $this->next_seeded_rand_value( $seed, $state );
 			}
 		}
 		unset( $row );
@@ -2334,10 +2976,261 @@ class WP_DuckDB_Driver {
 			$columns[] = $variable['alias'];
 			$row[]     = 'user' === $variable['type']
 				? $this->get_user_variable( $variable['name'] )
-				: $this->get_session_system_variable( $variable['name'] );
+				: $this->get_system_variable( $variable['name'], $variable['scope'] );
 		}
 
 		return new WP_DuckDB_Result_Statement( $columns, array( $row ), 0 );
+	}
+
+	/**
+	 * Execute a simple SELECT list containing supported MySQL variable expressions.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement|null Statement when emulated, null for generic SELECT handling.
+	 */
+	private function execute_variable_expression_select( array $tokens ): ?WP_DuckDB_Result_Statement {
+		$select_items = $this->parse_variable_expression_select_items( $tokens );
+		if ( null === $select_items ) {
+			return null;
+		}
+
+		$has_variable = false;
+		$sql_items    = array();
+		foreach ( $select_items as $item ) {
+			$translated = $this->translate_variable_expression_tokens_to_duckdb_sql( $item['tokens'] );
+			if ( null === $translated ) {
+				return null;
+			}
+			$has_variable = $has_variable || $translated['has_variable'];
+			$sql_items[]  = $translated['sql'] . ' AS ' . $this->connection->quote_identifier( $item['alias'] );
+		}
+
+		if ( ! $has_variable ) {
+			return null;
+		}
+
+		return $this->execute_duckdb_query(
+			'SELECT ' . implode( ', ', $sql_items ),
+			'Failed to execute DuckDB MySQL variable expression SELECT'
+		);
+	}
+
+	/**
+	 * Parse a simple variable-expression SELECT list.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array<int,array{tokens:array<int,WP_Parser_Token>,alias:string}>|null Parsed items.
+	 */
+	private function parse_variable_expression_select_items( array $tokens ): ?array {
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$select_list_end = $this->top_level_select_list_end( $tokens );
+		if ( $select_list_end <= 1 ) {
+			return null;
+		}
+
+		if ( $select_list_end < count( $tokens ) ) {
+			if (
+				! isset( $tokens[ $select_list_end + 1 ] )
+				|| WP_MySQL_Lexer::FROM_SYMBOL !== $tokens[ $select_list_end ]->id
+				|| WP_MySQL_Lexer::DUAL_SYMBOL !== $tokens[ $select_list_end + 1 ]->id
+				|| count( $tokens ) !== $select_list_end + 2
+			) {
+				return null;
+			}
+		}
+
+		$items = array();
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, 1, $select_list_end ) as $range ) {
+			if ( $this->select_item_is_wildcard( $range['tokens'] ) ) {
+				return null;
+			}
+
+			$item = $this->parse_variable_expression_select_item( $range['tokens'] );
+			if ( null === $item || count( $item['tokens'] ) === 0 ) {
+				return null;
+			}
+
+			$items[] = $item;
+		}
+
+		return count( $items ) > 0 ? $items : null;
+	}
+
+	/**
+	 * Parse a SELECT-list item and its SQLite-compatible result label.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return array{tokens:array<int,WP_Parser_Token>,alias:string}|null Parsed item.
+	 */
+	private function parse_variable_expression_select_item( array $tokens ): ?array {
+		$as_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::AS_SYMBOL );
+		if ( null !== $as_index ) {
+			if ( 0 === $as_index || count( $tokens ) !== $as_index + 2 ) {
+				return null;
+			}
+
+			return array(
+				'tokens' => array_slice( $tokens, 0, $as_index ),
+				'alias'  => $this->identifier_value( $tokens[ $as_index + 1 ] ),
+			);
+		}
+
+		if ( $this->select_item_has_implicit_alias( $tokens ) ) {
+			$alias = $this->identifier_value( $tokens[ count( $tokens ) - 1 ] );
+			return array(
+				'tokens' => array_slice( $tokens, 0, -1 ),
+				'alias'  => $alias,
+			);
+		}
+
+		return array(
+			'tokens' => $tokens,
+			'alias'  => $this->variable_expression_select_label( $tokens ),
+		);
+	}
+
+	/**
+	 * Translate expression tokens after replacing supported variable references with literals.
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return array{sql:string,has_variable:bool}|null Translated expression, or null when variables are unsupported.
+	 */
+	private function translate_variable_expression_tokens_to_duckdb_sql( array $tokens ): ?array {
+		$pieces       = array();
+		$has_variable = false;
+
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			$token = $tokens[ $index ];
+			if ( $this->is_user_variable_token( $token ) ) {
+				$pieces[]     = $this->duckdb_literal_sql( $this->get_user_variable( $this->user_variable_name( $token ) ) );
+				$has_variable = true;
+				continue;
+			}
+
+			$system_variable = $this->parse_system_variable_reference_at( $tokens, $index );
+			if ( null !== $system_variable ) {
+				$pieces[]     = $this->duckdb_literal_sql(
+					$this->get_system_variable( $system_variable['name'], $system_variable['scope'] )
+				);
+				$has_variable = true;
+				$index       += $system_variable['length'] - 1;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL === $token->id ) {
+				return null;
+			}
+
+			$pieces[] = $this->translate_token_to_duckdb_sql( $token );
+		}
+
+		return array(
+			'sql'          => $this->join_sql_pieces( $pieces ),
+			'has_variable' => $has_variable,
+		);
+	}
+
+	/**
+	 * Build a DuckDB SQL literal for an emulated variable value.
+	 *
+	 * @param mixed $value Variable value.
+	 * @return string SQL literal.
+	 */
+	private function duckdb_literal_sql( $value ): string {
+		if ( null === $value ) {
+			return 'NULL';
+		}
+		if ( is_int( $value ) || is_float( $value ) ) {
+			return (string) $value;
+		}
+
+		return $this->connection->quote( (string) $value );
+	}
+
+	/**
+	 * Build a SQLite-style default result label for a variable expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return string Label.
+	 */
+	private function variable_expression_select_label( array $tokens ): string {
+		$label = '';
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			$system_variable = $this->parse_system_variable_reference_at( $tokens, $index );
+			if ( null !== $system_variable ) {
+				$label .= $this->concatenate_token_bytes( array_slice( $tokens, $index, $system_variable['length'] ) );
+				$index += $system_variable['length'] - 1;
+				continue;
+			}
+
+			$token = $tokens[ $index ];
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+				$label = rtrim( $label ) . '(';
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+				$label = rtrim( $label ) . ')';
+				continue;
+			}
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL === $token->id ) {
+				$label = rtrim( $label ) . ', ';
+				continue;
+			}
+			if ( $this->is_label_spaced_operator_token( $token ) ) {
+				$label = rtrim( $label ) . ' ' . $token->get_bytes() . ' ';
+				continue;
+			}
+
+			if ( '' !== $label && ! $this->label_ends_with_separator( $label ) ) {
+				$label .= ' ';
+			}
+			$label .= $token->get_bytes();
+		}
+
+		return trim( $label );
+	}
+
+	/**
+	 * Check whether a token is rendered with surrounding spaces in a result label.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether to add surrounding spaces.
+	 */
+	private function is_label_spaced_operator_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::PLUS_OPERATOR,
+				WP_MySQL_Lexer::MINUS_OPERATOR,
+				WP_MySQL_Lexer::MULT_OPERATOR,
+				WP_MySQL_Lexer::DIV_OPERATOR,
+				WP_MySQL_Lexer::MOD_OPERATOR,
+				WP_MySQL_Lexer::EQUAL_OPERATOR,
+				WP_MySQL_Lexer::NULL_SAFE_EQUAL_OPERATOR,
+				WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
+				WP_MySQL_Lexer::LESS_THAN_OPERATOR,
+				WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
+				WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
+				WP_MySQL_Lexer::NOT_EQUAL_OPERATOR,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a generated label already has a separator before the next token.
+	 *
+	 * @param string $label Label built so far.
+	 * @return bool Whether no extra separator is needed.
+	 */
+	private function label_ends_with_separator( string $label ): bool {
+		return '' === $label
+			|| ' ' === substr( $label, -1 )
+			|| '(' === substr( $label, -1 )
+			|| '.' === substr( $label, -1 );
 	}
 
 	/**
@@ -2389,31 +3282,17 @@ class WP_DuckDB_Driver {
 	 * Parse one supported @@session_variable reference.
 	 *
 	 * @param WP_Parser_Token[] $tokens Reference tokens.
-	 * @return array{name:string,alias:string}|null Variable, or null when the item is not supported by this slice.
+	 * @return array{name:string,alias:string,scope:string}|null Variable, or null when the item is not supported by this slice.
 	 */
 	private function parse_session_system_variable_reference( array $tokens ): ?array {
-		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[0]->id ) {
+		$reference = $this->parse_system_variable_reference_at( $tokens, 0 );
+		if ( null === $reference ) {
 			return null;
 		}
 
-		$session_scoped = false;
-		if (
-			isset( $tokens[3] )
-			&& WP_MySQL_Lexer::SESSION_SYMBOL === $tokens[1]->id
-			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[2]->id
-		) {
-			$name           = $this->session_system_variable_name( $tokens[3] );
-			$session_scoped = true;
-			$index          = 4;
-		} else {
-			$name  = $this->session_system_variable_name( $tokens[1] );
-			$index = 2;
-		}
-
-		if ( null === $name || ! $this->is_supported_session_system_variable_reference( $name, $session_scoped ) ) {
-			return null;
-		}
-
+		$name  = $reference['name'];
+		$scope = $reference['scope'];
+		$index = $reference['length'];
 		$alias = $this->concatenate_token_bytes( array_slice( $tokens, 0, $index ) );
 		if ( isset( $tokens[ $index ] ) ) {
 			if ( 'sql_mode' !== $name ) {
@@ -2437,6 +3316,49 @@ class WP_DuckDB_Driver {
 		return array(
 			'name'  => $name,
 			'alias' => $alias,
+			'scope' => $scope,
+		);
+	}
+
+	/**
+	 * Parse a supported @@system-variable reference at a token offset.
+	 *
+	 * @param WP_Parser_Token[] $tokens Tokens.
+	 * @param int               $index  Current token offset.
+	 * @return array{name:string,scope:string,length:int}|null Parsed reference.
+	 */
+	private function parse_system_variable_reference_at( array $tokens, int $index ): ?array {
+		if (
+			! isset( $tokens[ $index ], $tokens[ $index + 1 ] )
+			|| WP_MySQL_Lexer::AT_AT_SIGN_SYMBOL !== $tokens[ $index ]->id
+		) {
+			return null;
+		}
+
+		$scope          = 'session';
+		$explicit_scope = false;
+		if (
+			isset( $tokens[ $index + 3 ] )
+			&& ( WP_MySQL_Lexer::SESSION_SYMBOL === $tokens[ $index + 1 ]->id || WP_MySQL_Lexer::GLOBAL_SYMBOL === $tokens[ $index + 1 ]->id )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 2 ]->id
+		) {
+			$name           = $this->session_system_variable_name( $tokens[ $index + 3 ] );
+			$scope          = WP_MySQL_Lexer::GLOBAL_SYMBOL === $tokens[ $index + 1 ]->id ? 'global' : 'session';
+			$explicit_scope = true;
+			$length         = 4;
+		} else {
+			$name   = $this->session_system_variable_name( $tokens[ $index + 1 ] );
+			$length = 2;
+		}
+
+		if ( null === $name || ! $this->is_supported_system_variable_reference( $name, $scope, $explicit_scope ) ) {
+			return null;
+		}
+
+		return array(
+			'name'   => $name,
+			'scope'  => $scope,
+			'length' => $length,
 		);
 	}
 
@@ -2524,15 +3446,24 @@ class WP_DuckDB_Driver {
 	 * Check whether this bounded slice supports a system-variable reference.
 	 *
 	 * @param string $name           Lowercase variable name.
-	 * @param bool   $session_scoped Whether the reference uses @@SESSION.
+	 * @param string $scope          Variable scope: session or global.
+	 * @param bool   $explicit_scope Whether the reference uses @@scope.name.
 	 * @return bool Whether the variable is supported.
 	 */
-	private function is_supported_session_system_variable_reference( string $name, bool $session_scoped ): bool {
+	private function is_supported_system_variable_reference( string $name, string $scope, bool $explicit_scope ): bool {
+		if ( 'global' === $scope ) {
+			return isset( self::READ_ONLY_GLOBAL_SYSTEM_VARIABLES[ $name ] );
+		}
+
 		if ( isset( self::SUPPORTED_SESSION_SYSTEM_VARIABLES[ $name ] ) ) {
 			return true;
 		}
 
-		return ! $session_scoped && isset( self::READ_ONLY_SYSTEM_VARIABLES[ $name ] );
+		if ( isset( self::READ_ONLY_SESSION_SYSTEM_VARIABLES[ $name ] ) ) {
+			return true;
+		}
+
+		return ! $explicit_scope && isset( self::READ_ONLY_SYSTEM_VARIABLES[ $name ] );
 	}
 
 	/**
@@ -2732,7 +3663,7 @@ class WP_DuckDB_Driver {
 		}
 		$table_sql .= $this->connection->quote_identifier( $table_name );
 		$table_sql .= ' (';
-		$table_sql .= implode( ', ', array_merge( $columns, $constraints ) );
+		$table_sql .= implode( ', ', array_merge( $columns, $this->native_create_table_constraints( $constraints, $foreign_keys, $temporary ) ) );
 		$table_sql .= ')';
 
 		$result = $this->execute_duckdb_query( $table_sql, 'Failed to create DuckDB table' );
@@ -2825,7 +3756,7 @@ class WP_DuckDB_Driver {
 			if ( null !== $this->find_on_duplicate_key_update_index( $tokens ) ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT statement in DuckDB driver. INSERT ... SELECT ... ON DUPLICATE KEY UPDATE is not supported.' );
 			}
-			return $this->execute_insert_select_with_temporal_coercion( $tokens, $index, $select_index, $ignore );
+			return $this->execute_insert_select_with_write_coercion( $tokens, $index, $select_index, $ignore );
 		}
 
 		$set_index = $this->find_insert_set_index( $tokens, $index );
@@ -2906,7 +3837,7 @@ class WP_DuckDB_Driver {
 
 		$select_index = $this->find_insert_select_index( $tokens, $index );
 		if ( null !== $select_index ) {
-			return $this->execute_replace_select_with_temporal_coercion( $tokens, $index, $select_index );
+			return $this->execute_replace_select_with_write_coercion( $tokens, $index, $select_index );
 		}
 
 		$this->assert_values_write_statement( $tokens, $index, 'REPLACE' );
@@ -2952,6 +3883,21 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE list is required.' );
 		}
 
+		$seeded_rand_where = $this->parse_seeded_rand_dml_where_clause( $tokens, $clauses );
+		if ( null !== $seeded_rand_where ) {
+			if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
+				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB UPDATE WHERE is not supported with ORDER BY or LIMIT.' );
+			}
+			if ( $this->update_assignment_tokens_contain_literal_seeded_rand( $update_tokens ) ) {
+				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB driver cannot be used as both an UPDATE assignment and a WHERE predicate.' );
+			}
+			return $this->execute_update_with_seeded_rand_where( $reference, $update_tokens, $seeded_rand_where );
+		}
+
+		if ( $this->update_assignment_tokens_contain_literal_seeded_rand( $update_tokens ) ) {
+			return $this->execute_update_with_seeded_rand_assignments( $tokens, $reference, $clauses, $update_tokens );
+		}
+
 		$sql = 'UPDATE ' . $this->dml_table_reference_sql( $reference )
 			. ' SET '
 			. $this->translate_update_assignment_tokens_to_duckdb_sql( $update_tokens, $reference );
@@ -2969,6 +3915,141 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB UPDATE' );
+	}
+
+	/**
+	 * Parse a supported seeded RAND() UPDATE WHERE predicate.
+	 *
+	 * @param WP_Parser_Token[]                         $tokens  MySQL tokens.
+	 * @param array{where:int|null,order:int|null,limit:int|null} $clauses DML clause indexes.
+	 * @return array{seed:int,operator:int,threshold:float,rand_left:bool}|null Parsed predicate, or null when unsupported/not present.
+	 */
+	private function parse_seeded_rand_dml_where_clause( array $tokens, array $clauses ): ?array {
+		if ( null === $clauses['where'] ) {
+			return null;
+		}
+
+		$where_end    = $clauses['order'] ?? $clauses['limit'] ?? count( $tokens );
+		$where_tokens = array_slice( $tokens, $clauses['where'] + 1, $where_end - $clauses['where'] - 1 );
+		return $this->parse_seeded_rand_where_predicate( $where_tokens );
+	}
+
+	/**
+	 * Execute an UPDATE with a supported seeded RAND() WHERE predicate.
+	 *
+	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int,temporary:bool} $reference     Parsed table reference.
+	 * @param WP_Parser_Token[]                                                                         $update_tokens Update-list tokens.
+	 * @param array{seed:int,operator:int,threshold:float,rand_left:bool}                                $filter        Parsed seeded RAND() predicate.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_update_with_seeded_rand_where( array $reference, array $update_tokens, array $filter ): WP_DuckDB_Result_Statement {
+		$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'UPDATE', $reference['temporary'] );
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT rowid FROM ' . $this->dml_table_reference_sql( $reference ) . ' ORDER BY rowid',
+			'Failed to inspect DuckDB UPDATE target rows'
+		);
+
+		$rowids = array();
+		$state  = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN ) as $rowid ) {
+			$value = $this->next_seeded_rand_value( $filter['seed'], $state );
+			$left  = $filter['rand_left'] ? $value : $filter['threshold'];
+			$right = $filter['rand_left'] ? $filter['threshold'] : $value;
+			if ( $this->compare_seeded_rand_where_values( $left, $filter['operator'], $right ) ) {
+				$rowids[] = (int) $rowid;
+			}
+		}
+
+		if ( count( $rowids ) === 0 ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		$assignment_sql = $this->translate_update_assignment_tokens_to_duckdb_sql( $update_tokens, $reference );
+		$sql            = 'UPDATE ' . $this->dml_table_reference_sql( $reference )
+			. ' SET ' . $assignment_sql
+			. ' WHERE rowid IN (' . implode( ', ', array_map( 'strval', $rowids ) ) . ')';
+
+		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB UPDATE' );
+	}
+
+	/**
+	 * Execute an UPDATE whose assignment list contains literal seeded RAND() calls.
+	 *
+	 * @param WP_Parser_Token[]                                                                         $tokens        MySQL tokens.
+	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int,temporary:bool} $reference     Parsed table reference.
+	 * @param array{where:int|null,order:int|null,limit:int|null}                                        $clauses       DML clause indexes.
+	 * @param WP_Parser_Token[]                                                                         $update_tokens Update-list tokens.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_update_with_seeded_rand_assignments( array $tokens, array $reference, array $clauses, array $update_tokens ): WP_DuckDB_Result_Statement {
+		$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'UPDATE', $reference['temporary'] );
+
+		if ( null === $clauses['order'] && null !== $clauses['limit'] ) {
+			$rowid_sql  = $this->dml_rowid_subquery_sql(
+				$tokens,
+				array(
+					'where' => $clauses['where'],
+					'order' => null,
+					'limit' => null,
+				),
+				$reference
+			);
+			$rowid_sql .= ' ORDER BY rowid '
+				. $this->translate_tokens_to_duckdb_sql( array_slice( $tokens, $clauses['limit'] ) );
+		} else {
+			$rowid_sql = $this->dml_rowid_subquery_sql( $tokens, $clauses, $reference );
+		}
+		if ( null === $clauses['order'] && null === $clauses['limit'] ) {
+			$rowid_sql .= ' ORDER BY rowid';
+		}
+
+		$stmt   = $this->execute_duckdb_query( $rowid_sql, 'Failed to inspect DuckDB UPDATE target rows' );
+		$rowids = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN ) as $rowid ) {
+			$rowids[] = (int) $rowid;
+		}
+
+		if ( count( $rowids ) === 0 ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		$started_transaction = ! $this->connection->inTransaction();
+		if ( $started_transaction ) {
+			$this->connection->beginTransaction();
+		}
+
+		$affected_rows     = 0;
+		$seeded_rand_state = array();
+		$target_sql        = $this->dml_table_reference_sql( $reference );
+		try {
+			foreach ( $rowids as $rowid ) {
+				$assignment_sql = $this->translate_update_assignment_tokens_to_duckdb_sql_with_seeded_rand(
+					$update_tokens,
+					$reference,
+					true,
+					$seeded_rand_state
+				);
+				$result         = $this->execute_duckdb_query(
+					'UPDATE ' . $target_sql
+						. ' SET ' . $assignment_sql
+						. ' WHERE rowid = ' . (string) $rowid,
+					'Failed to execute DuckDB UPDATE'
+				);
+				$affected_rows += $result->rowCount();
+			}
+
+			if ( $started_transaction ) {
+				$this->connection->commit();
+			}
+		} catch ( Throwable $e ) {
+			if ( $started_transaction && $this->connection->inTransaction() ) {
+				$this->connection->rollback();
+			}
+			throw $e;
+		}
+
+		return new WP_DuckDB_Result_Statement( array(), array(), $affected_rows );
 	}
 
 	/**
@@ -3044,32 +4125,48 @@ class WP_DuckDB_Driver {
 		$target     = $references[ $update['target_index'] ];
 		$sources    = array();
 		foreach ( $references as $index => $reference ) {
-			if ( $update['target_index'] !== $index ) {
+			if ( $update['include_target_reference_in_from'] || $update['target_index'] !== $index ) {
 				$sources[] = $reference;
 			}
 		}
 
-		$sql = 'UPDATE '
-			. $this->connection->quote_identifier( $target['table_name'] )
-			. ' AS '
-			. $this->connection->quote_identifier( $target['alias'] )
-			. ' SET '
-			. $update['sql']
-			. ' FROM '
-			. implode( ', ', array_column( $sources, 'sql' ) );
-
-		$where_clauses = array();
+		$target_alias_sql = $update['include_target_reference_in_from']
+			? ''
+			: ' AS ' . $this->connection->quote_identifier( $target['alias'] );
+		$source_sql       = implode( ', ', array_column( $sources, 'sql' ) );
+		$where_clauses    = array();
 		if ( count( $shape['where_tokens'] ) > 0 ) {
 			$where_clauses[] = $this->translate_tokens_to_duckdb_sql( $shape['where_tokens'] );
 		}
 		foreach ( $shape['join_predicates'] as $predicate ) {
 			$where_clauses[] = $this->joined_dml_predicate_sql( $predicate );
 		}
+
+		$count_sql = 'SELECT COUNT(*) AS affected FROM '
+			. $this->connection->quote_identifier( $target['table_name'] )
+			. $target_alias_sql
+			. ' WHERE EXISTS ( SELECT 1 FROM '
+			. $source_sql;
+		if ( count( $where_clauses ) > 0 ) {
+			$count_sql .= ' WHERE (' . implode( ') AND (', $where_clauses ) . ')';
+		}
+		$count_sql .= ' )';
+		$count_row  = $this->execute_duckdb_query( $count_sql, 'Failed to count DuckDB joined UPDATE targets' )->fetch( PDO::FETCH_ASSOC );
+		$row_count  = false === $count_row ? 0 : (int) $count_row['affected'];
+
+		$sql = 'UPDATE '
+			. $this->connection->quote_identifier( $target['table_name'] )
+			. $target_alias_sql
+			. ' SET '
+			. $update['sql']
+			. ' FROM '
+			. $source_sql;
 		if ( count( $where_clauses ) > 0 ) {
 			$sql .= ' WHERE (' . implode( ') AND (', $where_clauses ) . ')';
 		}
 
-		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB joined UPDATE' );
+		$this->execute_duckdb_query( $sql, 'Failed to execute DuckDB joined UPDATE' );
+		return new WP_DuckDB_Result_Statement( array(), array(), $row_count );
 	}
 
 	/**
@@ -3091,6 +4188,14 @@ class WP_DuckDB_Driver {
 		$reference = $this->parse_single_table_dml_reference( $tokens, 2, 'DELETE' );
 		$clauses   = $this->dml_clause_indexes( $tokens, $reference['next_index'] );
 
+		$seeded_rand_where = $this->parse_seeded_rand_dml_where_clause( $tokens, $clauses );
+		if ( null !== $seeded_rand_where ) {
+			if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
+				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB DELETE WHERE is not supported with ORDER BY or LIMIT.' );
+			}
+			return $this->execute_delete_with_seeded_rand_where( $reference, $seeded_rand_where );
+		}
+
 		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
 			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE', $reference['temporary'] );
 			$sql = 'DELETE FROM ' . $this->connection->quote_identifier( $reference['table_name'] )
@@ -3107,6 +4212,43 @@ class WP_DuckDB_Driver {
 		}
 
 		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB DELETE' );
+	}
+
+	/**
+	 * Execute a DELETE with a supported seeded RAND() WHERE predicate.
+	 *
+	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int,temporary:bool} $reference Parsed table reference.
+	 * @param array{seed:int,operator:int,threshold:float,rand_left:bool}                                        $filter    Parsed seeded RAND() predicate.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_delete_with_seeded_rand_where( array $reference, array $filter ): WP_DuckDB_Result_Statement {
+		$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'DELETE', $reference['temporary'] );
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT rowid FROM ' . $this->dml_table_reference_sql( $reference ) . ' ORDER BY rowid',
+			'Failed to inspect DuckDB DELETE target rows'
+		);
+
+		$rowids = array();
+		$state  = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_COLUMN ) as $rowid ) {
+			$value = $this->next_seeded_rand_value( $filter['seed'], $state );
+			$left  = $filter['rand_left'] ? $value : $filter['threshold'];
+			$right = $filter['rand_left'] ? $filter['threshold'] : $value;
+			if ( $this->compare_seeded_rand_where_values( $left, $filter['operator'], $right ) ) {
+				$rowids[] = (int) $rowid;
+			}
+		}
+
+		if ( count( $rowids ) === 0 ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
+		return $this->execute_duckdb_query(
+			'DELETE FROM ' . $this->connection->quote_identifier( $reference['table_name'] )
+				. ' WHERE rowid IN (' . implode( ', ', array_map( 'strval', $rowids ) ) . ')',
+			'Failed to execute DuckDB DELETE'
+		);
 	}
 
 	/**
@@ -3345,6 +4487,7 @@ class WP_DuckDB_Driver {
 		if (
 			$this->contains_top_level_join_token( $tokens )
 			|| $this->contains_top_level_derived_table_factor( $tokens )
+			|| $this->contains_information_schema_reference( $tokens )
 		) {
 			return $this->parse_joined_multi_delete_table_references( $tokens );
 		}
@@ -3576,6 +4719,10 @@ class WP_DuckDB_Driver {
 			++$index;
 
 			if ( 0 === strcasecmp( $database, 'information_schema' ) ) {
+				if ( 'DELETE' === $statement && ! $is_target && 0 === strcasecmp( $table_name, 'tables' ) ) {
+					return $this->parse_joined_delete_information_schema_tables_source( $tokens, $index, $table_name );
+				}
+
 				throw new WP_DuckDB_Driver_Exception( "Access denied for user 'duckdb'@'%' to database 'information_schema'" );
 			}
 
@@ -3624,6 +4771,45 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Parse information_schema.tables as a read-only joined DELETE source.
+	 *
+	 * @param WP_Parser_Token[] $tokens     Table reference tokens.
+	 * @param int               $index      Current index after information_schema.tables.
+	 * @param string            $table_name Referenced information_schema table name.
+	 * @return array{reference:array{alias:string,explicit_alias:bool,sql:string,table_name:null,temporary:bool,requested_table_name:string},next_index:int}
+	 */
+	private function parse_joined_delete_information_schema_tables_source( array $tokens, int $index, string $table_name ): array {
+		$this->refresh_information_schema_tables_table();
+
+		$alias          = $table_name;
+		$explicit_alias = false;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$alias          = $this->identifier_value( $tokens[ $index ] ?? null );
+			$explicit_alias = true;
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) && ! $this->is_joined_update_table_reference_boundary( $tokens[ $index ] ) ) {
+			$alias          = $this->identifier_value( $tokens[ $index ] );
+			$explicit_alias = true;
+			++$index;
+		}
+
+		return array(
+			'reference'  => array(
+				'alias'                => $alias,
+				'explicit_alias'       => $explicit_alias,
+				'sql'                  => $this->connection->quote_identifier( self::INFO_SCHEMA_TABLES_TABLE )
+					. ' AS '
+					. $this->connection->quote_identifier( $alias ),
+				'table_name'           => null,
+				'temporary'            => false,
+				'requested_table_name' => 'information_schema.' . $table_name,
+			),
+			'next_index' => $index,
+		);
+	}
+
+	/**
 	 * Parse a joined UPDATE join chain.
 	 *
 	 * @param WP_Parser_Token[] $tokens          Table reference tokens.
@@ -3643,6 +4829,38 @@ class WP_DuckDB_Driver {
 				$join_type = 'CROSS';
 				++$index;
 				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after CROSS.' );
+			} elseif ( WP_MySQL_Lexer::NATURAL_SYMBOL === $tokens[ $index ]->id ) {
+				if ( 'UPDATE' !== $statement ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported.' );
+				}
+				$join_type = 'NATURAL_AS_CROSS';
+				++$index;
+				if (
+					isset( $tokens[ $index ] )
+					&& (
+						WP_MySQL_Lexer::LEFT_SYMBOL === $tokens[ $index ]->id
+						|| WP_MySQL_Lexer::RIGHT_SYMBOL === $tokens[ $index ]->id
+					)
+				) {
+					++$index;
+					if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OUTER_SYMBOL === $tokens[ $index ]->id ) {
+						++$index;
+					}
+				}
+				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after NATURAL.' );
+			} elseif (
+				WP_MySQL_Lexer::LEFT_SYMBOL === $tokens[ $index ]->id
+				|| WP_MySQL_Lexer::RIGHT_SYMBOL === $tokens[ $index ]->id
+			) {
+				if ( 'UPDATE' !== $statement ) {
+					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported.' );
+				}
+				$join_type = 'OUTER_AS_INNER';
+				++$index;
+				if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OUTER_SYMBOL === $tokens[ $index ]->id ) {
+					++$index;
+				}
+				$this->expect_token( $tokens, $index, WP_MySQL_Lexer::JOIN_SYMBOL, 'Expected JOIN after LEFT or RIGHT.' );
 			} elseif ( WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL === $tokens[ $index ]->id ) {
 				if ( 'UPDATE' !== $statement ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported.' );
@@ -3678,9 +4896,12 @@ class WP_DuckDB_Driver {
 			}
 
 			if ( 'CROSS' === $join_type ) {
-				if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $index ]->id ) {
-					throw new WP_DuckDB_Driver_Exception( 'Unsupported ' . $statement . ' statement in DuckDB driver. CROSS JOIN ... ON is not supported.' );
+				if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $index ]->id ) {
+					$left_reference = $source['reference'];
+					continue;
 				}
+			}
+			if ( 'NATURAL_AS_CROSS' === $join_type ) {
 				$left_reference = $source['reference'];
 				continue;
 			}
@@ -4586,11 +5807,7 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( $this->is_user_variable_token( $tokens[0] ) ) {
-			if ( ! in_array( $name, array( 'foreign_key_checks', 'unique_checks' ), true ) ) {
-				throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
-			}
-
-			return $this->normalize_set_dump_check_variable_value(
+			return $this->normalize_set_session_system_variable_stored_value(
 				$name,
 				$this->get_user_variable( $this->user_variable_name( $tokens[0] ) )
 			);
@@ -4612,6 +5829,9 @@ class WP_DuckDB_Driver {
 		}
 		if ( 'default_storage_engine' === $name ) {
 			return $this->normalize_set_default_storage_engine_value( $token );
+		}
+		if ( isset( self::STRING_SESSION_SYSTEM_VARIABLES[ $name ] ) ) {
+			return $this->normalize_set_string_session_system_variable_value( $name, $token );
 		}
 
 		$value = $token->get_value();
@@ -4649,18 +5869,19 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Normalize a SET default_storage_engine value for driver-local readback.
+	 * Normalize a SET string-valued session variable for driver-local readback.
 	 *
+	 * @param string          $name  Normalized variable name.
 	 * @param WP_Parser_Token $token Value token.
-	 * @return string Normalized storage engine value.
+	 * @return string Normalized variable value.
 	 */
-	private function normalize_set_default_storage_engine_value( WP_Parser_Token $token ): string {
+	private function normalize_set_string_session_system_variable_value( string $name, WP_Parser_Token $token ): string {
 		if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
 			return $token->get_value();
 		}
 
 		if ( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $token->id || $this->is_non_identifier_token( $token ) ) {
-			throw $this->new_unsupported_set_session_system_variable_value_exception( 'default_storage_engine' );
+			throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
 		}
 
 		if ( 'default' === strtolower( $token->get_value() ) ) {
@@ -4668,6 +5889,16 @@ class WP_DuckDB_Driver {
 		}
 
 		return $token->get_value();
+	}
+
+	/**
+	 * Normalize a SET default_storage_engine value for driver-local readback.
+	 *
+	 * @param WP_Parser_Token $token Value token.
+	 * @return string Normalized storage engine value.
+	 */
+	private function normalize_set_default_storage_engine_value( WP_Parser_Token $token ): string {
+		return $this->normalize_set_string_session_system_variable_value( 'default_storage_engine', $token );
 	}
 
 	/**
@@ -4679,6 +5910,10 @@ class WP_DuckDB_Driver {
 	 */
 	private function normalize_set_dump_check_variable_value( string $name, $value ) {
 		if ( null === $value || 'DEFAULT' === $value ) {
+			if ( ! in_array( $name, array( 'foreign_key_checks', 'unique_checks' ), true ) ) {
+				throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+			}
+
 			return $value;
 		}
 
@@ -4700,6 +5935,36 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Normalize a session system variable value restored from an emulated user variable.
+	 *
+	 * @param string $name  Normalized variable name.
+	 * @param mixed  $value Stored user-variable value.
+	 * @return int|string|null Normalized stored value.
+	 */
+	private function normalize_set_session_system_variable_stored_value( string $name, $value ) {
+		if ( 'sql_mode' === $name ) {
+			if ( ! is_scalar( $value ) ) {
+				throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+			}
+
+			return implode( ',', $this->normalize_sql_modes( (string) $value ) );
+		}
+
+		if ( isset( self::STRING_SESSION_SYSTEM_VARIABLES[ $name ] ) ) {
+			if ( null === $value || 'DEFAULT' === $value ) {
+				return $value;
+			}
+			if ( is_scalar( $value ) ) {
+				return (string) $value;
+			}
+
+			throw $this->new_unsupported_set_session_system_variable_value_exception( $name );
+		}
+
+		return $this->normalize_set_dump_check_variable_value( $name, $value );
+	}
+
+	/**
 	 * Normalize an emulated user variable assignment value.
 	 *
 	 * @param WP_Parser_Token[] $tokens Value tokens.
@@ -4708,14 +5973,148 @@ class WP_DuckDB_Driver {
 	private function normalize_set_user_variable_value( array $tokens ) {
 		$system_variable = $this->parse_session_system_variable_reference( $tokens );
 		if ( null !== $system_variable ) {
-			return $this->get_session_system_variable( $system_variable['name'] );
+			return $this->get_system_variable( $system_variable['name'], $system_variable['scope'] );
 		}
 
 		if ( 1 === count( $tokens ) && $this->is_user_variable_token( $tokens[0] ) ) {
 			return $this->get_user_variable( $this->user_variable_name( $tokens[0] ) );
 		}
 
+		$function_value = $this->normalize_set_user_variable_function_value( $tokens );
+		if ( null !== $function_value['matched'] ) {
+			return $function_value['value'];
+		}
+
+		$arithmetic_value = $this->normalize_set_user_variable_arithmetic_value( $tokens );
+		if ( null !== $arithmetic_value['matched'] ) {
+			return $arithmetic_value['value'];
+		}
+
 		return $this->normalize_set_user_variable_literal_value( $tokens );
+	}
+
+	/**
+	 * Normalize a bounded empty function call for a user-variable assignment.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return array{matched:bool|null,value:string|null} Match state and computed value.
+	 */
+	private function normalize_set_user_variable_function_value( array $tokens ): array {
+		if ( 3 !== count( $tokens ) ) {
+			return array(
+				'matched' => null,
+				'value'   => null,
+			);
+		}
+
+		if ( $this->is_empty_function_call( $tokens, 0, 'DATABASE' ) ) {
+			return array(
+				'matched' => true,
+				'value'   => $this->current_database,
+			);
+		}
+
+		if ( $this->is_empty_function_call( $tokens, 0, 'VERSION' ) ) {
+			return array(
+				'matched' => true,
+				'value'   => $this->format_mysql_system_variable_version(),
+			);
+		}
+
+		return array(
+			'matched' => null,
+			'value'   => null,
+		);
+	}
+
+	/**
+	 * Normalize a bounded arithmetic expression for a user-variable assignment.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return array{matched:bool|null,value:int|float|null} Match state and computed value.
+	 */
+	private function normalize_set_user_variable_arithmetic_value( array $tokens ): array {
+		if (
+			3 !== count( $tokens )
+			|| ! $this->is_user_variable_token( $tokens[0] )
+			|| ( WP_MySQL_Lexer::PLUS_OPERATOR !== $tokens[1]->id && WP_MySQL_Lexer::MINUS_OPERATOR !== $tokens[1]->id )
+		) {
+			return array(
+				'matched' => null,
+				'value'   => null,
+			);
+		}
+
+		$right = $this->user_variable_arithmetic_operand_value( $tokens[2] );
+		if ( null === $right['matched'] ) {
+			return array(
+				'matched' => null,
+				'value'   => null,
+			);
+		}
+
+		$left = $this->user_variable_numeric_value(
+			$this->get_user_variable( $this->user_variable_name( $tokens[0] ) )
+		);
+
+		if ( null === $left || null === $right['value'] ) {
+			return array(
+				'matched' => true,
+				'value'   => null,
+			);
+		}
+
+		return array(
+			'matched' => true,
+			'value'   => WP_MySQL_Lexer::PLUS_OPERATOR === $tokens[1]->id ? $left + $right['value'] : $left - $right['value'],
+		);
+	}
+
+	/**
+	 * Normalize a bounded arithmetic operand for user-variable assignments.
+	 *
+	 * @param WP_Parser_Token $token Operand token.
+	 * @return array{matched:bool|null,value:int|float|null} Match state and numeric value.
+	 */
+	private function user_variable_arithmetic_operand_value( WP_Parser_Token $token ): array {
+		if ( $this->is_number_token( $token ) ) {
+			return array(
+				'matched' => true,
+				'value'   => $this->number_token_value( $token ),
+			);
+		}
+
+		if ( $this->is_user_variable_token( $token ) ) {
+			return array(
+				'matched' => true,
+				'value'   => $this->user_variable_numeric_value( $this->get_user_variable( $this->user_variable_name( $token ) ) ),
+			);
+		}
+
+		return array(
+			'matched' => null,
+			'value'   => null,
+		);
+	}
+
+	/**
+	 * Convert a stored user variable to a bounded numeric operand.
+	 *
+	 * @param mixed $value Stored user-variable value.
+	 * @return int|float|null Numeric value, or null when the variable is NULL.
+	 */
+	private function user_variable_numeric_value( $value ) {
+		if ( null === $value ) {
+			return null;
+		}
+		if ( is_int( $value ) || is_float( $value ) ) {
+			return $value;
+		}
+		if ( is_string( $value ) && is_numeric( $value ) ) {
+			return false !== strpos( $value, '.' ) || false !== stripos( $value, 'e' ) ? (float) $value : (int) $value;
+		}
+
+		throw $this->new_unsupported_set_user_variable_value_exception();
 	}
 
 	/**
@@ -4820,6 +6219,13 @@ class WP_DuckDB_Driver {
 				'Unsupported SET value for default_storage_engine in DuckDB driver. Only string literals, bare engine names, and DEFAULT are supported.'
 			);
 		}
+		if ( isset( self::STRING_SESSION_SYSTEM_VARIABLES[ $name ] ) ) {
+			return new WP_DuckDB_Driver_Exception(
+				'Unsupported SET value for '
+				. $name
+				. ' in DuckDB driver. Only string literals, bare identifiers, DEFAULT, and supported dump restores are supported.'
+			);
+		}
 
 		return new WP_DuckDB_Driver_Exception(
 			'Unsupported SET value for '
@@ -4851,7 +6257,9 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception(
 				'Unsupported SET session variable in DuckDB driver: '
 				. $name
-				. '. Only autocommit, big_tables, default_storage_engine, foreign_key_checks, sql_mode, sql_warnings, and unique_checks are supported.'
+				. '. Supported variables: '
+				. implode( ', ', array_keys( self::SUPPORTED_SESSION_SYSTEM_VARIABLES ) )
+				. '.'
 			);
 		}
 
@@ -5727,6 +7135,20 @@ class WP_DuckDB_Driver {
 	 * @return string DuckDB update list SQL.
 	 */
 	private function translate_update_assignment_tokens_to_duckdb_sql( array $tokens, array $reference ): string {
+		$seeded_rand_state = array();
+		return $this->translate_update_assignment_tokens_to_duckdb_sql_with_seeded_rand( $tokens, $reference, false, $seeded_rand_state );
+	}
+
+	/**
+	 * Translate UPDATE assignments, optionally rewriting seeded RAND() calls.
+	 *
+	 * @param WP_Parser_Token[]                                                                          $tokens                       Update-list tokens.
+	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int} $reference                    Parsed table reference.
+	 * @param bool                                                                                       $rewrite_seeded_rand_literals Whether literal seeded RAND() calls are supported.
+	 * @param array                                                                                      $seeded_rand_state            Per-statement seeded RAND() state.
+	 * @return string DuckDB update list SQL.
+	 */
+	private function translate_update_assignment_tokens_to_duckdb_sql_with_seeded_rand( array $tokens, array $reference, bool $rewrite_seeded_rand_literals, array &$seeded_rand_state ): string {
 		$qualifiers = array_filter(
 			array(
 				$reference['alias'],
@@ -5761,7 +7183,11 @@ class WP_DuckDB_Driver {
 			}
 
 			$column_name = $this->identifier_value( $left_tokens[0] );
-			$value_sql   = $this->translate_tokens_to_duckdb_sql( $right_tokens );
+			$value_sql   = $this->translate_update_assignment_value_tokens_to_duckdb_sql(
+				$right_tokens,
+				$rewrite_seeded_rand_literals,
+				$seeded_rand_state
+			);
 			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
 				$value_sql = $this->coerce_write_value_for_column_sql(
 					$metadata_map[ strtolower( $column_name ) ],
@@ -5778,11 +7204,104 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Translate one UPDATE assignment value, optionally rewriting literal seeded RAND().
+	 *
+	 * @param WP_Parser_Token[] $tokens                       Value expression tokens.
+	 * @param bool              $rewrite_seeded_rand_literals Whether literal seeded RAND() calls are supported.
+	 * @param array             $seeded_rand_state            Per-statement seeded RAND() state.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_update_assignment_value_tokens_to_duckdb_sql( array $tokens, bool $rewrite_seeded_rand_literals, array &$seeded_rand_state ): string {
+		if ( ! $rewrite_seeded_rand_literals ) {
+			return $this->translate_tokens_to_duckdb_sql( $tokens );
+		}
+
+		$seeded_rand_rewrites = $this->seeded_rand_literal_rewrite_map( $tokens, $seeded_rand_state, 'UPDATE SET' );
+		if ( count( $seeded_rand_rewrites ) === 0 ) {
+			return $this->translate_tokens_to_duckdb_sql( $tokens );
+		}
+
+		return $this->translate_tokens_to_duckdb_sql(
+			$tokens,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			$seeded_rand_rewrites
+		);
+	}
+
+	/**
+	 * Check whether UPDATE assignment tokens contain a literal seeded RAND() call.
+	 *
+	 * @param WP_Parser_Token[] $tokens Update-list tokens.
+	 * @return bool Whether literal seeded RAND() appears in an assignment value.
+	 */
+	private function update_assignment_tokens_contain_literal_seeded_rand( array $tokens ): bool {
+		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
+			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+			if ( null === $equals_index ) {
+				continue;
+			}
+
+			if ( $this->tokens_contain_literal_seeded_rand( array_slice( $item, $equals_index + 1 ) ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether tokens contain at least one literal seeded RAND() call.
+	 *
+	 * @param WP_Parser_Token[] $tokens Tokens.
+	 * @return bool Whether a literal seeded RAND() call appears.
+	 */
+	private function tokens_contain_literal_seeded_rand( array $tokens ): bool {
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			if (
+				! isset( $tokens[ $index + 2 ] )
+				|| $this->is_non_identifier_token( $tokens[ $index ] )
+				|| 0 !== strcasecmp( $tokens[ $index ]->get_value(), 'RAND' )
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+			) {
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index + 2 ]->id ) {
+				$index += 2;
+				continue;
+			}
+
+			$close_index = $this->matching_parenthesis_index( $tokens, $index + 1 );
+			if ( null === $close_index ) {
+				return false;
+			}
+
+			$seed_tokens = array_slice( $tokens, $index + 2, $close_index - $index - 2 );
+			if (
+				count( $this->split_top_level_comma_items( $seed_tokens ) ) === 1
+				&& null !== $this->parse_seeded_rand_literal_seed( $seed_tokens )
+			) {
+				return true;
+			}
+
+			$index = $close_index;
+		}
+
+		return false;
+	}
+
+	/**
 	 * Translate joined UPDATE assignments and enforce a single writable target.
 	 *
 	 * @param WP_Parser_Token[]            $tokens     Update-list tokens.
 	 * @param array<int,array<string,mixed>> $references Joined references.
-	 * @return array{target_index:int,sql:string} Resolved writable target index and DuckDB update-list SQL.
+	 * @return array{target_index:int,include_target_reference_in_from:bool,sql:string} Resolved writable target index and DuckDB update-list SQL.
 	 */
 	private function translate_joined_update_assignment_tokens_to_duckdb_sql( array $tokens, array $references ): array {
 		$qualifier_references = array();
@@ -5805,9 +7324,11 @@ class WP_DuckDB_Driver {
 			}
 		}
 
-		$items         = array();
-		$metadata_maps = array();
-		$target_index  = null;
+		$items                            = array();
+		$metadata_maps                    = array();
+		$target_index                     = null;
+		$target_key                       = null;
+		$include_target_reference_in_from = false;
 		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
 			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
 			if ( null === $equals_index ) {
@@ -5823,6 +7344,7 @@ class WP_DuckDB_Driver {
 			if ( 1 === count( $left_tokens ) ) {
 				$column                  = $this->identifier_value( $left_tokens[0] );
 				$assignment_target_index = null;
+				$assignment_target_key   = null;
 				foreach ( $references as $index => $reference ) {
 					$has_column = null !== $reference['table_name']
 						&& $this->table_has_column( $reference['table_name'], $column, $reference['temporary'] );
@@ -5837,7 +7359,10 @@ class WP_DuckDB_Driver {
 					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
 				}
 				if ( $this->is_unsafe_unqualified_joined_update_target( $references, $assignment_target_index ) ) {
-					throw new WP_DuckDB_Driver_Exception( "Unqualified UPDATE target column '{$column}' is not supported for aliased joined UPDATE targets in DuckDB driver. Qualify the target column." );
+					$include_target_reference_in_from = true;
+					$assignment_target_key            = 'table:' . strtolower( (string) $references[ $assignment_target_index ]['table_name'] );
+				} else {
+					$assignment_target_key = 'reference:' . $assignment_target_index;
 				}
 			} elseif (
 				3 === count( $left_tokens )
@@ -5861,13 +7386,17 @@ class WP_DuckDB_Driver {
 				if ( ! $this->table_has_column( $assignment_target['table_name'], $column, $assignment_target['temporary'] ) ) {
 					throw new WP_DuckDB_Driver_Exception( "Unknown UPDATE target column '{$column}' in DuckDB driver." );
 				}
+				$assignment_target_key = 'reference:' . $assignment_target_index;
 			} else {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. Only simple column assignments are supported.' );
 			}
 
 			if ( null === $target_index ) {
 				$target_index = $assignment_target_index;
+				$target_key   = $assignment_target_key;
 			} elseif ( $target_index !== $assignment_target_index ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE statement modifying multiple tables is not supported.' );
+			} elseif ( $target_key !== $assignment_target_key ) {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported UPDATE statement in DuckDB driver. UPDATE statement modifying multiple tables is not supported.' );
 			}
 
@@ -5898,8 +7427,9 @@ class WP_DuckDB_Driver {
 		}
 
 		return array(
-			'target_index' => $target_index,
-			'sql'          => implode( ', ', $items ),
+			'target_index'                     => $target_index,
+			'include_target_reference_in_from' => $include_target_reference_in_from,
+			'sql'                              => implode( ', ', $items ),
 		);
 	}
 
@@ -7914,8 +9444,10 @@ class WP_DuckDB_Driver {
 		}
 
 		$primary_key_columns = $this->primary_key_columns_for_table( $resolved_parent_name );
-		if ( 1 !== count( $primary_key_columns ) || 0 !== strcasecmp( $primary_key_columns[0], $referenced_column ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD FOREIGN KEY currently requires a single-column referenced PRIMARY KEY.' );
+		$references_primary  = 1 === count( $primary_key_columns ) && 0 === strcasecmp( $primary_key_columns[0], $referenced_column );
+		$references_unique   = null !== $this->single_column_unique_secondary_index_name( $resolved_parent_name, $referenced_column );
+		if ( ! $references_primary && ! $references_unique ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. ADD FOREIGN KEY currently requires a single-column referenced PRIMARY KEY or UNIQUE KEY.' );
 		}
 
 		$foreign_key['referenced_table_name'] = $resolved_parent_name;
@@ -8033,6 +9565,86 @@ class WP_DuckDB_Driver {
 			'Failed to drop DuckDB ' . $context . ' rebuild backup table'
 		);
 		$this->refresh_column_key_metadata( $table_name, $temporary );
+	}
+
+	/**
+	 * Filter native CREATE TABLE constraints for MySQL metadata-only FOREIGN KEYs.
+	 *
+	 * DuckDB only accepts referenced columns backed by a native PRIMARY KEY or
+	 * UNIQUE table constraint. MySQL UNIQUE KEY definitions are represented by
+	 * this driver as secondary indexes so they can be dropped/rebuilt with
+	 * MySQL-facing metadata. Preserve those FOREIGN KEYs in metadata while
+	 * omitting only their native DuckDB constraint clauses.
+	 *
+	 * @param string[]                       $constraints  Native DuckDB constraint SQL fragments.
+	 * @param array<int,array<string,mixed>> $foreign_keys FOREIGN KEY metadata groups.
+	 * @param bool                           $temporary    Whether the child table is temporary.
+	 * @return string[] Native constraint SQL fragments to include in CREATE TABLE.
+	 */
+	private function native_create_table_constraints( array $constraints, array $foreign_keys, bool $temporary = false ): array {
+		$metadata_only_constraints = array();
+		foreach ( $foreign_keys as $foreign_key ) {
+			if ( $this->foreign_key_references_driver_managed_unique_index( $foreign_key, $temporary ) ) {
+				$metadata_only_constraints[ $this->foreign_key_native_constraint_sql( $foreign_key ) ] = true;
+			}
+		}
+
+		if ( count( $metadata_only_constraints ) === 0 ) {
+			return $constraints;
+		}
+
+		return array_values(
+			array_filter(
+				$constraints,
+				function ( string $constraint ) use ( $metadata_only_constraints ): bool {
+					return ! isset( $metadata_only_constraints[ $constraint ] );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Check whether a FOREIGN KEY references a driver-managed UNIQUE secondary index.
+	 *
+	 * @param array<string,mixed> $foreign_key FOREIGN KEY metadata group.
+	 * @param bool                $temporary   Whether the child table is temporary.
+	 * @return bool Whether the FK should be metadata-only in native DuckDB DDL.
+	 */
+	private function foreign_key_references_driver_managed_unique_index( array $foreign_key, bool $temporary = false ): bool {
+		if ( $temporary || 1 !== count( $foreign_key['columns'] ) || 1 !== count( $foreign_key['referenced_columns'] ) ) {
+			return false;
+		}
+
+		$referenced_table_name = $this->resolve_user_table_name( (string) $foreign_key['referenced_table_name'] );
+		if ( null === $referenced_table_name ) {
+			return false;
+		}
+
+		$referenced_column = (string) $foreign_key['referenced_columns'][0];
+		$primary_key       = $this->primary_key_columns_for_table( $referenced_table_name );
+		if ( 1 === count( $primary_key ) && 0 === strcasecmp( $primary_key[0], $referenced_column ) ) {
+			return false;
+		}
+
+		return null !== $this->single_column_unique_secondary_index_name( $referenced_table_name, $referenced_column );
+	}
+
+	/**
+	 * Rebuild the native DuckDB FOREIGN KEY clause generated for a metadata group.
+	 *
+	 * @param array<string,mixed> $foreign_key FOREIGN KEY metadata group.
+	 * @return string Native DuckDB constraint SQL fragment.
+	 */
+	private function foreign_key_native_constraint_sql( array $foreign_key ): string {
+		return 'CONSTRAINT '
+			. $this->connection->quote_identifier( (string) $foreign_key['constraint_name'] )
+			. ' FOREIGN KEY ('
+			. $this->connection->quote_identifier( (string) $foreign_key['columns'][0] )
+			. ') REFERENCES '
+			. $this->connection->quote_identifier( (string) $foreign_key['referenced_table_name'] )
+			. ' ('
+			. $this->connection->quote_identifier( (string) $foreign_key['referenced_columns'][0] )
+			. ')';
 	}
 
 	/**
@@ -13802,7 +15414,7 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Execute MySQL INSERT ... SELECT with staged temporal write coercion.
+	 * Execute MySQL INSERT ... SELECT with staged write coercion/validation.
 	 *
 	 * @param WP_Parser_Token[] $tokens       MySQL tokens.
 	 * @param int               $table_index  Index of the table token.
@@ -13810,10 +15422,13 @@ class WP_DuckDB_Driver {
 	 * @param bool              $ignore       Whether INSERT IGNORE was used.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_insert_select_with_temporal_coercion( array $tokens, int $table_index, int $select_index, bool $ignore ): WP_DuckDB_Result_Statement {
+	private function execute_insert_select_with_write_coercion( array $tokens, int $table_index, int $select_index, bool $ignore ): WP_DuckDB_Result_Statement {
 		$shape                = $this->parse_insert_select_target_shape( $tokens, $table_index, $select_index );
 		$text_blob_write_plan = $this->insert_select_text_blob_coercion_plan( $shape );
-		$requires_write_stage = $this->insert_select_shape_requires_temporal_coercion( $shape ) || null !== $text_blob_write_plan;
+		$requires_write_stage = $this->insert_select_shape_requires_temporal_coercion( $shape )
+			|| $this->insert_select_shape_requires_strict_integer_validation( $shape )
+			|| $this->insert_select_shape_requires_non_strict_numeric_coercion( $shape )
+			|| null !== $text_blob_write_plan;
 		if ( ! $requires_write_stage ) {
 			return $this->execute_auto_increment_write(
 				$shape['requested_table_name'],
@@ -13837,7 +15452,7 @@ class WP_DuckDB_Driver {
 				'INSERT',
 				null === $text_blob_write_plan ? array() : $text_blob_write_plan['precoerced_offsets']
 			);
-			$this->validate_staged_temporal_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB INSERT SELECT values' );
+			$this->validate_staged_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB INSERT SELECT values' );
 
 			return $this->execute_auto_increment_write(
 				$shape['requested_table_name'],
@@ -13863,14 +15478,14 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Execute MySQL REPLACE ... SELECT with staged temporal write coercion.
+	 * Execute MySQL REPLACE ... SELECT with staged write coercion/validation.
 	 *
 	 * @param WP_Parser_Token[] $tokens       MySQL tokens.
 	 * @param int               $table_index  Index of the table token.
 	 * @param int               $select_index Index of the SELECT token.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_replace_select_with_temporal_coercion( array $tokens, int $table_index, int $select_index ): WP_DuckDB_Result_Statement {
+	private function execute_replace_select_with_write_coercion( array $tokens, int $table_index, int $select_index ): WP_DuckDB_Result_Statement {
 		$shape                    = $this->parse_insert_select_target_shape( $tokens, $table_index, $select_index );
 		$unique_sets              = $this->unique_key_column_sets( $shape['table_name'], $shape['temporary'] );
 		$case_insensitive_columns = $this->case_insensitive_column_names( $shape['table_name'], $shape['temporary'] );
@@ -13878,6 +15493,8 @@ class WP_DuckDB_Driver {
 		$text_blob_write_plan     = $this->insert_select_text_blob_coercion_plan( $shape );
 		$requires_write_stage     = $manual_conflicts
 			|| $this->insert_select_shape_requires_temporal_coercion( $shape )
+			|| $this->insert_select_shape_requires_strict_integer_validation( $shape )
+			|| $this->insert_select_shape_requires_non_strict_numeric_coercion( $shape )
 			|| null !== $text_blob_write_plan;
 
 		if ( ! $requires_write_stage ) {
@@ -13904,7 +15521,7 @@ class WP_DuckDB_Driver {
 				'REPLACE',
 				null === $text_blob_write_plan ? array() : $text_blob_write_plan['precoerced_offsets']
 			);
-			$this->validate_staged_temporal_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB REPLACE SELECT values' );
+			$this->validate_staged_write( $stage['table_name'], $projection['validations'], 'Failed to validate DuckDB REPLACE SELECT values' );
 
 			if ( $manual_conflicts ) {
 				$evaluable_unique_sets = $this->replace_select_evaluable_unique_sets( $unique_sets, $projection['columns'] );
@@ -14548,6 +16165,171 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a SELECT-input write target needs non-strict numeric coercion.
+	 *
+	 * @param array{target_metadata:array<int,array<string,mixed>>} $shape Target shape.
+	 * @return bool Whether staging/coercion is required.
+	 */
+	private function insert_select_shape_requires_non_strict_numeric_coercion( array $shape ): bool {
+		if ( $this->is_strict_sql_mode_active() ) {
+			return false;
+		}
+
+		foreach ( $shape['target_metadata'] as $metadata ) {
+			$data_type = $this->mysql_column_data_type( $metadata );
+			if ( 'bit' === $data_type || $this->is_numeric_write_data_type( $data_type ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a SELECT-input write target needs strict integer validation.
+	 *
+	 * @param array{target_metadata:array<int,array<string,mixed>>} $shape Target shape.
+	 * @return bool Whether staging/validation is required.
+	 */
+	private function insert_select_shape_requires_strict_integer_validation( array $shape ): bool {
+		if ( ! $this->is_strict_sql_mode_active() ) {
+			return false;
+		}
+
+		$select_items = $this->simple_insert_select_items( $shape['source_tokens'] );
+		foreach ( $shape['target_metadata'] as $offset => $metadata ) {
+			if ( ! $this->is_integer_write_data_type( $this->mysql_column_data_type( $metadata ) ) ) {
+				continue;
+			}
+
+			if (
+				null !== $select_items
+				&& isset( $select_items[ $offset ] )
+				&& (
+					$this->is_static_integral_write_value_tokens( $select_items[ $offset ] )
+					|| $this->insert_select_item_is_integer_source_column( $shape['source_tokens'], $select_items[ $offset ] )
+				)
+			) {
+				continue;
+			}
+
+			if ( null !== $select_items && ! isset( $select_items[ $offset ] ) ) {
+				continue;
+			}
+
+			if ( null === $select_items ) {
+				return true;
+			}
+
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a simple SELECT item reads an integer-backed source column.
+	 *
+	 * @param WP_Parser_Token[] $source_tokens SELECT tokens.
+	 * @param WP_Parser_Token[] $item_tokens   SELECT item tokens.
+	 * @return bool Whether the item is an integer source column reference.
+	 */
+	private function insert_select_item_is_integer_source_column( array $source_tokens, array $item_tokens ): bool {
+		$source = $this->simple_insert_select_source_table_reference( $source_tokens );
+		if ( null === $source ) {
+			return false;
+		}
+
+		if ( 1 === count( $item_tokens ) ) {
+			$column_name = $this->identifier_value( $item_tokens[0] );
+		} elseif (
+			3 === count( $item_tokens )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $item_tokens[1]->id
+			&& in_array( strtolower( $this->identifier_value( $item_tokens[0] ) ), $source['qualifiers'], true )
+		) {
+			$column_name = $this->identifier_value( $item_tokens[2] );
+		} else {
+			return false;
+		}
+
+		$metadata_map = $this->write_column_metadata_map( $source['table_name'], $source['temporary'] );
+		$metadata     = $metadata_map[ strtolower( $column_name ) ] ?? null;
+
+		return is_array( $metadata ) && $this->is_integer_write_data_type( $this->mysql_column_data_type( $metadata ) );
+	}
+
+	/**
+	 * Resolve the single source table for a simple INSERT/REPLACE SELECT.
+	 *
+	 * @param WP_Parser_Token[] $source_tokens SELECT tokens.
+	 * @return array{table_name:string,temporary:bool,qualifiers:string[]}|null Source table reference.
+	 */
+	private function simple_insert_select_source_table_reference( array $source_tokens ): ?array {
+		$list_end = $this->top_level_select_list_end( $source_tokens );
+		if ( ! isset( $source_tokens[ $list_end ], $source_tokens[ $list_end + 1 ] ) || WP_MySQL_Lexer::FROM_SYMBOL !== $source_tokens[ $list_end ]->id ) {
+			return null;
+		}
+
+		$table_name = $this->identifier_value( $source_tokens[ $list_end + 1 ] );
+		$reference  = $this->resolve_visible_user_table_reference( $table_name );
+		if ( null === $reference ) {
+			return null;
+		}
+
+		$alias = null;
+		$index = $list_end + 2;
+		if ( isset( $source_tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $source_tokens[ $index ]->id ) {
+			++$index;
+			if ( ! isset( $source_tokens[ $index ] ) || $this->is_non_identifier_token( $source_tokens[ $index ] ) ) {
+				return null;
+			}
+			$alias = $this->identifier_value( $source_tokens[ $index ] );
+			++$index;
+		} elseif ( isset( $source_tokens[ $index ] ) && ! $this->is_select_tail_clause_start_token( $source_tokens[ $index ] ) ) {
+			if ( $this->is_non_identifier_token( $source_tokens[ $index ] ) ) {
+				return null;
+			}
+			$alias = $this->identifier_value( $source_tokens[ $index ] );
+			++$index;
+		}
+
+		if ( isset( $source_tokens[ $index ] ) && ! $this->is_select_tail_clause_start_token( $source_tokens[ $index ] ) ) {
+			return null;
+		}
+
+		$qualifiers = array( strtolower( $table_name ), strtolower( $reference['table_name'] ) );
+		if ( null !== $alias ) {
+			$qualifiers[] = strtolower( $alias );
+		}
+
+		return array(
+			'table_name' => $reference['table_name'],
+			'temporary'  => $reference['temporary'],
+			'qualifiers' => array_values( array_unique( $qualifiers ) ),
+		);
+	}
+
+	/**
+	 * Check whether a token starts a simple SELECT source-tail clause.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token begins a tail clause.
+	 */
+	private function is_select_tail_clause_start_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
 	 * Materialize SELECT output into a temporary stage and return ordered columns.
 	 *
 	 * @param string $source_sql Translated DuckDB SELECT SQL.
@@ -14615,7 +16397,7 @@ class WP_DuckDB_Driver {
 	 * @param bool            $coalesce_select_nulls Whether non-strict temporal NOT NULL NULLs should become implicit defaults.
 	 * @param string          $statement           Statement name for errors.
 	 * @param array<int,bool> $precoerced_offsets  SELECT offsets already coerced for storage in the stage.
-	 * @return array{columns:string[],expressions:string[],validations:array<int,array{data_type:string,invalid_display_sql:string}>}
+	 * @return array{columns:string[],expressions:string[],validations:array<int,array{data_type:string,invalid_display_sql:string,error_message?:string}>}
 	 */
 	private function build_insert_select_projection( array $shape, array $stage_columns, bool $coalesce_select_nulls, string $statement, array $precoerced_offsets = array() ): array {
 		if ( count( $stage_columns ) !== count( $shape['target_columns'] ) ) {
@@ -14631,7 +16413,7 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote_identifier( $stage_columns[ $offset ] );
 			$metadata   = $shape['target_metadata'][ $offset ];
 
-			$validation = $this->temporal_write_validation_for_column( $metadata, array(), $source_sql );
+			$validation = $this->write_validation_for_column( $metadata, array(), $source_sql );
 			if ( null !== $validation ) {
 				$validations[] = $validation;
 			}
@@ -14660,13 +16442,13 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Validate strict temporal staged values before mutating the target table.
+	 * Validate staged values before mutating the target table.
 	 *
 	 * @param string $stage_table Stage table name.
-	 * @param array<int,array{data_type:string,invalid_display_sql:string}> $validations Validation expressions.
+	 * @param array<int,array{data_type:string,invalid_display_sql:string,error_message?:string}> $validations Validation expressions.
 	 * @param string $context Failure context.
 	 */
-	private function validate_staged_temporal_write( string $stage_table, array $validations, string $context ): void {
+	private function validate_staged_write( string $stage_table, array $validations, string $context ): void {
 		foreach ( $validations as $validation ) {
 			$stmt = $this->execute_duckdb_query(
 				'SELECT ('
@@ -14683,8 +16465,9 @@ class WP_DuckDB_Driver {
 
 			$result = $stmt->fetch( PDO::FETCH_ASSOC );
 			if ( false !== $result && null !== $result['invalid_display'] ) {
+				$error_message = $validation['error_message'] ?? ( 'Incorrect ' . $validation['data_type'] . ' value' );
 				throw new WP_DuckDB_Driver_Exception(
-					'Incorrect ' . $validation['data_type'] . " value: '" . (string) $result['invalid_display'] . "'"
+					$error_message . ": '" . (string) $result['invalid_display'] . "'"
 				);
 			}
 		}
@@ -14781,13 +16564,14 @@ class WP_DuckDB_Driver {
 	 * @return string DuckDB SQL.
 	 */
 	private function translate_insert_set_tokens_to_duckdb_sql( array $tokens, int $table_index, int $set_index, bool $ignore ): string {
-		$assignments  = $this->parse_insert_set_assignments( array_slice( $tokens, $set_index + 1 ) );
-		$table_name   = $this->identifier_value( $tokens[ $table_index ] ?? null );
-		$reference    = $this->resolve_write_table_reference( $table_name );
-		$metadata_map = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] );
-		$columns      = array();
-		$values       = array();
-		$supplied     = array();
+		$seeded_rand_state = array();
+		$assignments       = $this->parse_insert_set_assignments( array_slice( $tokens, $set_index + 1 ), $seeded_rand_state );
+		$table_name        = $this->identifier_value( $tokens[ $table_index ] ?? null );
+		$reference         = $this->resolve_write_table_reference( $table_name );
+		$metadata_map      = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] );
+		$columns           = array();
+		$values            = array();
+		$supplied          = array();
 
 		foreach ( $assignments as $assignment ) {
 			$columns[]  = $assignment['column_sql'];
@@ -14823,10 +16607,11 @@ class WP_DuckDB_Driver {
 	/**
 	 * Parse INSERT ... SET assignments.
 	 *
-	 * @param WP_Parser_Token[] $tokens Assignment-list tokens after SET.
+	 * @param WP_Parser_Token[] $tokens            Assignment-list tokens after SET.
+	 * @param array             $seeded_rand_state Per-statement seeded RAND() state.
 	 * @return array<int,array{column_name:string,column_sql:string,value_tokens:array<int,WP_Parser_Token>,value_sql:string}>
 	 */
-	private function parse_insert_set_assignments( array $tokens ): array {
+	private function parse_insert_set_assignments( array $tokens, array &$seeded_rand_state ): array {
 		$assignments = array();
 		$index       = 0;
 
@@ -14866,7 +16651,7 @@ class WP_DuckDB_Driver {
 				'column_name'  => $column_name,
 				'column_sql'   => $column_sql,
 				'value_tokens' => $value_tokens,
-				'value_sql'    => $this->translate_tokens_to_duckdb_sql( $value_tokens ),
+				'value_sql'    => $this->translate_insert_set_value_tokens_to_duckdb_sql( $value_tokens, $seeded_rand_state ),
 			);
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
@@ -14878,6 +16663,32 @@ class WP_DuckDB_Driver {
 		}
 
 		return $assignments;
+	}
+
+	/**
+	 * Translate one INSERT ... SET value, optionally rewriting literal seeded RAND().
+	 *
+	 * @param WP_Parser_Token[] $tokens            Value expression tokens.
+	 * @param array             $seeded_rand_state Per-statement seeded RAND() state.
+	 * @return string DuckDB SQL.
+	 */
+	private function translate_insert_set_value_tokens_to_duckdb_sql( array $tokens, array &$seeded_rand_state ): string {
+		$seeded_rand_rewrites = $this->seeded_rand_literal_rewrite_map( $tokens, $seeded_rand_state, 'INSERT ... SET' );
+		if ( count( $seeded_rand_rewrites ) === 0 ) {
+			return $this->translate_tokens_to_duckdb_sql( $tokens );
+		}
+
+		return $this->translate_tokens_to_duckdb_sql(
+			$tokens,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			false,
+			$seeded_rand_rewrites
+		);
 	}
 
 	/**
@@ -15068,7 +16879,7 @@ class WP_DuckDB_Driver {
 	 * @param int|null          $end_index                    Optional token index where VALUES input ends.
 	 * @param bool              $coerce_for_storage           Whether values should be coerced for storage.
 	 * @param bool              $rewrite_seeded_rand_literals Whether literal seeded RAND() calls are supported in VALUES.
-	 * @return array{table_name:string,temporary:bool,columns:string[],rows:array<int,array<string,string>>,ordered_rows:array<int,string[]>,coerced_value_rows:array<int,string[]>,temporal_validation_rows:array<int,array<int,array<string,string>>>,requires_coercion:bool,requires_seeded_rand_rewrite:bool}
+	 * @return array{table_name:string,temporary:bool,columns:string[],rows:array<int,array<string,string>>,ordered_rows:array<int,string[]>,coerced_value_rows:array<int,string[]>,write_validation_rows:array<int,array<int,array<string,string>>>,requires_coercion:bool,requires_seeded_rand_rewrite:bool}
 	 */
 	private function parse_insert_values_write_shape( array $tokens, int $table_index, ?int $end_index = null, bool $coerce_for_storage = false, bool $rewrite_seeded_rand_literals = false ): array {
 		if ( null !== $end_index ) {
@@ -15116,7 +16927,7 @@ class WP_DuckDB_Driver {
 		$rows                         = array();
 		$ordered_rows                 = array();
 		$coerced_value_rows           = array();
-		$temporal_validation_rows     = array();
+		$write_validation_rows        = array();
 		$requires_coercion            = false;
 		$requires_seeded_rand_rewrite = false;
 		$seeded_rand_state            = array();
@@ -15138,7 +16949,7 @@ class WP_DuckDB_Driver {
 					$requires_seeded_rand_rewrite
 				);
 				if ( $coerce_for_storage && isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
-					$validation = $this->temporal_write_validation_for_column(
+					$validation = $this->write_validation_for_column(
 						$metadata_map[ strtolower( $column_name ) ],
 						$value_items[ $offset ],
 						$value_sql
@@ -15166,10 +16977,10 @@ class WP_DuckDB_Driver {
 				$values_by_column[ strtolower( $default_write['column_name'] ) ] = $default_write['value_sql'];
 				$ordered_row[] = $default_write['value_sql'];
 			}
-			$rows[]                     = $values_by_column;
-			$ordered_rows[]             = $ordered_row;
-			$coerced_value_rows[]       = $coerced_values;
-			$temporal_validation_rows[] = $validation_values;
+			$rows[]                  = $values_by_column;
+			$ordered_rows[]          = $ordered_row;
+			$coerced_value_rows[]    = $coerced_values;
+			$write_validation_rows[] = $validation_values;
 
 			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
@@ -15185,7 +16996,7 @@ class WP_DuckDB_Driver {
 			'rows'                         => $rows,
 			'ordered_rows'                 => $ordered_rows,
 			'coerced_value_rows'           => $coerced_value_rows,
-			'temporal_validation_rows'     => $temporal_validation_rows,
+			'write_validation_rows'        => $write_validation_rows,
 			'requires_coercion'            => $requires_coercion || count( $omitted_defaults ) > 0,
 			'requires_seeded_rand_rewrite' => $requires_seeded_rand_rewrite,
 		);
@@ -15196,7 +17007,7 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string $table_name Table name.
 	 * @param bool   $temporary  Whether the target is temporary.
-	 * @return array{table_name:string,temporary:bool,columns:string[],rows:array<int,array<string,string>>,ordered_rows:array<int,string[]>,coerced_value_rows:array<int,string[]>,temporal_validation_rows:array<int,array<int,array<string,string>>>,requires_coercion:bool,requires_seeded_rand_rewrite:bool}
+	 * @return array{table_name:string,temporary:bool,columns:string[],rows:array<int,array<string,string>>,ordered_rows:array<int,string[]>,coerced_value_rows:array<int,string[]>,write_validation_rows:array<int,array<int,array<string,string>>>,requires_coercion:bool,requires_seeded_rand_rewrite:bool}
 	 */
 	private function empty_insert_values_write_shape( string $table_name, bool $temporary ): array {
 		return array(
@@ -15206,7 +17017,7 @@ class WP_DuckDB_Driver {
 			'rows'                         => array(),
 			'ordered_rows'                 => array(),
 			'coerced_value_rows'           => array(),
-			'temporal_validation_rows'     => array(),
+			'write_validation_rows'        => array(),
 			'requires_coercion'            => false,
 			'requires_seeded_rand_rewrite' => false,
 		);
@@ -15253,6 +17064,18 @@ class WP_DuckDB_Driver {
 	 * @return array<int,array{end:int,replacement:string}>
 	 */
 	private function seeded_rand_insert_values_rewrite_map( array $tokens, array &$seeded_rand_state ): array {
+		return $this->seeded_rand_literal_rewrite_map( $tokens, $seeded_rand_state, 'INSERT ... VALUES' );
+	}
+
+	/**
+	 * Build deterministic literal rewrites for seeded RAND() calls.
+	 *
+	 * @param WP_Parser_Token[] $tokens            Value expression tokens.
+	 * @param array             $seeded_rand_state Per-statement seeded RAND() state.
+	 * @param string            $context           SQL context label for errors.
+	 * @return array<int,array{end:int,replacement:string}>
+	 */
+	private function seeded_rand_literal_rewrite_map( array $tokens, array &$seeded_rand_state, string $context ): array {
 		$rewrites = array();
 		for ( $index = 0; $index < count( $tokens ); ++$index ) {
 			if (
@@ -15276,12 +17099,12 @@ class WP_DuckDB_Driver {
 
 			$seed_tokens = array_slice( $tokens, $index + 2, $close_index - $index - 2 );
 			if ( count( $this->split_top_level_comma_items( $seed_tokens ) ) !== 1 ) {
-				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB INSERT ... VALUES supports exactly one seed argument.' );
+				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB ' . $context . ' supports exactly one seed argument.' );
 			}
 
 			$seed = $this->parse_seeded_rand_literal_seed( $seed_tokens );
 			if ( null === $seed ) {
-				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB INSERT ... VALUES supports only literal numeric, string, or NULL seeds.' );
+				throw new WP_DuckDB_Driver_Exception( 'Seeded RAND() in DuckDB ' . $context . ' supports only literal numeric, string, or NULL seeds.' );
 			}
 
 			$rewrites[ $index ] = array(
@@ -15428,7 +17251,25 @@ class WP_DuckDB_Driver {
 			return $value_sql;
 		}
 
-		if ( $this->is_numeric_write_data_type( $data_type ) && ! $this->is_strict_sql_mode_active() ) {
+		if ( $this->is_numeric_write_data_type( $data_type ) ) {
+			if ( $this->is_strict_sql_mode_active() ) {
+				if ( $this->is_integer_write_data_type( $data_type ) ) {
+					if (
+						$this->is_static_integral_write_value_tokens( $value_tokens )
+						|| $this->is_on_duplicate_values_reference_tokens( $value_tokens )
+					) {
+						return $value_sql;
+					}
+
+					return $this->coerce_strict_integer_write_value_sql(
+						$value_sql,
+						$this->write_value_display_sql( $value_tokens, $value_sql )
+					);
+				}
+
+				return $value_sql;
+			}
+
 			$value_sql = $this->coerce_numeric_write_value_sql( $data_type, $value_sql );
 			if (
 				$coalesce_non_strict_not_null
@@ -15514,6 +17355,85 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a data type is stored as an integer in the SQLite driver.
+	 *
+	 * @param string $data_type MySQL data type.
+	 * @return bool Whether the type is integer-backed.
+	 */
+	private function is_integer_write_data_type( string $data_type ): bool {
+		return in_array( $data_type, array( 'tinyint', 'smallint', 'mediumint', 'int', 'bigint' ), true );
+	}
+
+	/**
+	 * Check whether value tokens are a literal SQLite already stores as INTEGER.
+	 *
+	 * @param WP_Parser_Token[] $value_tokens RHS value tokens.
+	 * @return bool Whether the value is statically integral.
+	 */
+	private function is_static_integral_write_value_tokens( array $value_tokens ): bool {
+		if ( 1 === count( $value_tokens ) ) {
+			$token = $value_tokens[0];
+			if (
+				WP_MySQL_Lexer::NULL_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::NULL2_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::TRUE_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::FALSE_SYMBOL === $token->id
+			) {
+				return true;
+			}
+			if ( $this->is_number_token( $token ) ) {
+				return $this->numeric_literal_string_is_integral( $token->get_bytes() );
+			}
+			if ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id ) {
+				return $this->numeric_literal_string_is_integral( $this->token_value( $token ) );
+			}
+		}
+
+		if (
+			2 === count( $value_tokens )
+			&& $this->is_sign_token( $value_tokens[0] )
+			&& $this->is_number_token( $value_tokens[1] )
+		) {
+			return $this->numeric_literal_string_is_integral( $value_tokens[0]->get_bytes() . $value_tokens[1]->get_bytes() );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a numeric literal string has no fractional component.
+	 *
+	 * @param string $literal Numeric literal/display string.
+	 * @return bool Whether the literal is integral.
+	 */
+	private function numeric_literal_string_is_integral( string $literal ): bool {
+		$literal = trim( $literal );
+		if ( 1 === preg_match( '/^[+-]?[0-9]+$/', $literal ) ) {
+			return true;
+		}
+		if ( '' === $literal || strlen( $literal ) > 15 || ! is_numeric( $literal ) ) {
+			return false;
+		}
+
+		$number = (float) $literal;
+		return floor( abs( $number ) ) === abs( $number );
+	}
+
+	/**
+	 * Check whether ODKU tokens are exactly VALUES(column).
+	 *
+	 * @param WP_Parser_Token[] $value_tokens RHS value tokens.
+	 * @return bool Whether the RHS is an incoming-values reference.
+	 */
+	private function is_on_duplicate_values_reference_tokens( array $value_tokens ): bool {
+		return 4 === count( $value_tokens )
+			&& WP_MySQL_Lexer::VALUES_SYMBOL === $value_tokens[0]->id
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $value_tokens[1]->id
+			&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $value_tokens[3]->id
+			&& ! $this->is_non_identifier_token( $value_tokens[2] );
+	}
+
+	/**
 	 * Coerce a write value to MySQL/SQLite-like text storage.
 	 *
 	 * @param WP_Parser_Token[] $value_tokens RHS value tokens.
@@ -15556,6 +17476,26 @@ class WP_DuckDB_Driver {
 		return 'CASE'
 			. ' WHEN (' . $value_sql . ') IS NULL THEN NULL'
 			. ' ELSE COALESCE(TRY_CAST((' . $value_sql . ') AS ' . $this->numeric_write_cast_type( $data_type ) . '), 0)'
+			. ' END';
+	}
+
+	/**
+	 * Reject strict integer writes that SQLite would classify as REAL.
+	 *
+	 * DuckDB rounds fractional numeric strings/literals when casting to an integer.
+	 * SQLite strict tables reject them instead, which is the behavior the existing
+	 * SQLite-backed driver exposes.
+	 *
+	 * @param string $value_sql   Translated RHS SQL.
+	 * @param string $display_sql String SQL expression for checks and messages.
+	 * @return string Coerced value SQL.
+	 */
+	private function coerce_strict_integer_write_value_sql( string $value_sql, string $display_sql ): string {
+		$invalid_display_sql = $this->strict_integer_invalid_write_display_sql( $value_sql, $display_sql );
+
+		return 'CASE'
+			. ' WHEN (' . $invalid_display_sql . ") IS NOT NULL THEN error('cannot store REAL value in INTEGER column')"
+			. ' ELSE ' . $value_sql
 			. ' END';
 	}
 
@@ -15989,6 +17929,23 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Build a non-throwing validation expression for a target column.
+	 *
+	 * @param array<string,mixed> $metadata     Column metadata.
+	 * @param WP_Parser_Token[]   $value_tokens RHS value tokens.
+	 * @param string              $value_sql    Translated RHS SQL.
+	 * @return array{data_type:string,invalid_display_sql:string,error_message?:string}|null Validation metadata, or null when not needed.
+	 */
+	private function write_validation_for_column( array $metadata, array $value_tokens, string $value_sql ): ?array {
+		$validation = $this->temporal_write_validation_for_column( $metadata, $value_tokens, $value_sql );
+		if ( null !== $validation ) {
+			return $validation;
+		}
+
+		return $this->strict_integer_write_validation_for_column( $metadata, $value_tokens, $value_sql );
+	}
+
+	/**
 	 * Build a non-throwing strict temporal validation expression for a target column.
 	 *
 	 * @param array<string,mixed> $metadata     Column metadata.
@@ -16011,6 +17968,36 @@ class WP_DuckDB_Driver {
 		return array(
 			'data_type'           => $data_type,
 			'invalid_display_sql' => $this->temporal_invalid_write_display_sql( $data_type, $value_sql, $display_sql ),
+		);
+	}
+
+	/**
+	 * Build a non-throwing strict integer validation expression for a target column.
+	 *
+	 * @param array<string,mixed> $metadata     Column metadata.
+	 * @param WP_Parser_Token[]   $value_tokens RHS value tokens.
+	 * @param string              $value_sql    Translated RHS SQL.
+	 * @return array{data_type:string,invalid_display_sql:string,error_message:string}|null Validation metadata, or null when not needed.
+	 */
+	private function strict_integer_write_validation_for_column( array $metadata, array $value_tokens, string $value_sql ): ?array {
+		$data_type = $this->mysql_column_data_type( $metadata );
+		if (
+			! $this->is_strict_sql_mode_active()
+			|| ! $this->is_integer_write_data_type( $data_type )
+			|| $this->is_default_value_tokens( $value_tokens )
+			|| $this->is_static_integral_write_value_tokens( $value_tokens )
+			|| $this->is_on_duplicate_values_reference_tokens( $value_tokens )
+		) {
+			return null;
+		}
+
+		return array(
+			'data_type'           => $data_type,
+			'invalid_display_sql' => $this->strict_integer_invalid_write_display_sql(
+				$value_sql,
+				$this->write_value_display_sql( $value_tokens, $value_sql )
+			),
+			'error_message'       => 'cannot store REAL value in INTEGER column',
 		);
 	}
 
@@ -16159,6 +18146,24 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Build a CASE expression that returns a strict integer REAL display or NULL.
+	 *
+	 * @param string $value_sql   Translated RHS SQL.
+	 * @param string $display_sql String SQL expression for checks and messages.
+	 * @return string Invalid display SQL.
+	 */
+	private function strict_integer_invalid_write_display_sql( string $value_sql, string $display_sql ): string {
+		$numeric_sql = 'TRY_CAST(' . $display_sql . ' AS DOUBLE)';
+
+		return 'CASE'
+			. ' WHEN (' . $value_sql . ') IS NULL THEN NULL'
+			. ' WHEN ' . $numeric_sql . ' IS NULL THEN NULL'
+			. ' WHEN abs(' . $numeric_sql . ') <> floor(abs(' . $numeric_sql . ')) THEN ' . $display_sql
+			. ' ELSE NULL'
+			. ' END';
+	}
+
+	/**
 	 * Build formatted TRY_CAST SQL for a temporal value.
 	 *
 	 * @param string $data_type   MySQL temporal data type.
@@ -16288,17 +18293,17 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Evaluate coerced INSERT/REPLACE VALUES expressions before side-effecting emulation.
+	 * Evaluate INSERT/REPLACE VALUES validations before side-effecting emulation.
 	 *
-	 * @param array{temporal_validation_rows:array<int,array<int,array<string,string>>>} $shape Parsed VALUES shape.
-	 * @param string                                                                     $context Failure context.
+	 * @param array{write_validation_rows:array<int,array<int,array<string,string>>>} $shape Parsed VALUES shape.
+	 * @param string                                                                  $context Failure context.
 	 */
 	private function validate_insert_values_write_shape( array $shape, string $context ): void {
-		if ( empty( $shape['temporal_validation_rows'] ) ) {
+		if ( empty( $shape['write_validation_rows'] ) ) {
 			return;
 		}
 
-		foreach ( $shape['temporal_validation_rows'] as $row ) {
+		foreach ( $shape['write_validation_rows'] as $row ) {
 			if ( count( $row ) === 0 ) {
 				continue;
 			}
@@ -16310,8 +18315,9 @@ class WP_DuckDB_Driver {
 				);
 				$result = $stmt->fetch( PDO::FETCH_ASSOC );
 				if ( false !== $result && null !== $result['invalid_display'] ) {
+					$error_message = $validation['error_message'] ?? ( 'Incorrect ' . $validation['data_type'] . ' value' );
 					throw new WP_DuckDB_Driver_Exception(
-						'Incorrect ' . $validation['data_type'] . " value: '" . (string) $result['invalid_display'] . "'"
+						$error_message . ": '" . (string) $result['invalid_display'] . "'"
 					);
 				}
 			}
@@ -16564,12 +18570,14 @@ class WP_DuckDB_Driver {
 				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. UPDATE assignment value is required.' );
 			}
 
-			$target      = $this->on_duplicate_assignment_target( $left_tokens, $target_table_name, $requested_table_name );
-			$value_sql   = $this->translate_on_duplicate_value_tokens_to_duckdb_sql( $right_tokens );
-			$column_name = $target['column_name'];
-			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
+			$target        = $this->on_duplicate_assignment_target( $left_tokens, $target_table_name, $requested_table_name );
+			$value_sql     = $this->translate_on_duplicate_value_tokens_to_duckdb_sql( $right_tokens );
+			$column_name   = $target['column_name'];
+			$metadata      = $metadata_map[ strtolower( $column_name ) ] ?? null;
+			$requires_wrap = ! is_array( $metadata ) || ! $this->on_duplicate_update_tokens_are_integer_preserving( $right_tokens, $metadata, $metadata_map );
+			if ( is_array( $metadata ) && $requires_wrap ) {
 				$value_sql = $this->coerce_write_value_for_column_sql(
-					$metadata_map[ strtolower( $column_name ) ],
+					$metadata,
 					$right_tokens,
 					$value_sql,
 					false
@@ -16625,6 +18633,97 @@ class WP_DuckDB_Driver {
 		}
 
 		throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only simple column assignments are supported.' );
+	}
+
+	/**
+	 * Check whether an ODKU RHS expression is known to stay integer-valued.
+	 *
+	 * @param WP_Parser_Token[]                 $tokens       RHS tokens.
+	 * @param array<string,mixed>               $metadata     Target column metadata.
+	 * @param array<string,array<string,mixed>> $metadata_map Target metadata keyed by lowercase column name.
+	 * @return bool Whether the strict integer guard can be skipped.
+	 */
+	private function on_duplicate_update_tokens_are_integer_preserving( array $tokens, array $metadata, array $metadata_map ): bool {
+		if (
+			! $this->is_strict_sql_mode_active()
+			|| ! $this->is_integer_write_data_type( $this->mysql_column_data_type( $metadata ) )
+			|| count( $tokens ) === 0
+		) {
+			return false;
+		}
+
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			$values_reference = $this->on_duplicate_values_reference_column_name_at( $tokens, $index );
+			if ( null !== $values_reference ) {
+				if ( ! $this->metadata_column_is_integer( $values_reference['column_name'], $metadata_map ) ) {
+					return false;
+				}
+				$index = $values_reference['next_index'] - 1;
+				continue;
+			}
+
+			$token = $tokens[ $index ];
+			if ( $this->is_number_token( $token ) ) {
+				if ( ! $this->is_static_integral_write_value_tokens( array( $token ) ) ) {
+					return false;
+				}
+				continue;
+			}
+
+			if (
+				$this->is_sign_token( $token )
+				|| WP_MySQL_Lexer::MULT_OPERATOR === $token->id
+				|| WP_MySQL_Lexer::MOD_OPERATOR === $token->id
+				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id
+				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id
+			) {
+				continue;
+			}
+
+			if ( ! $this->is_non_identifier_token( $token ) && $this->metadata_column_is_integer( $this->identifier_value( $token ), $metadata_map ) ) {
+				continue;
+			}
+
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Return VALUES(column) metadata when the token stream has one at the index.
+	 *
+	 * @param WP_Parser_Token[] $tokens RHS tokens.
+	 * @param int               $index  Current token index.
+	 * @return array{column_name:string,next_index:int}|null VALUES() reference metadata.
+	 */
+	private function on_duplicate_values_reference_column_name_at( array $tokens, int $index ): ?array {
+		if (
+			! isset( $tokens[ $index + 3 ] )
+			|| WP_MySQL_Lexer::VALUES_SYMBOL !== $tokens[ $index ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $index + 3 ]->id
+			|| $this->is_non_identifier_token( $tokens[ $index + 2 ] )
+		) {
+			return null;
+		}
+
+		return array(
+			'column_name' => $this->identifier_value( $tokens[ $index + 2 ] ),
+			'next_index'  => $index + 4,
+		);
+	}
+
+	/**
+	 * Check whether target metadata identifies an integer-backed column.
+	 *
+	 * @param string                            $column_name  Column name.
+	 * @param array<string,array<string,mixed>> $metadata_map Target metadata keyed by lowercase column name.
+	 * @return bool Whether the column is integer-backed.
+	 */
+	private function metadata_column_is_integer( string $column_name, array $metadata_map ): bool {
+		$metadata = $metadata_map[ strtolower( $column_name ) ] ?? null;
+		return is_array( $metadata ) && $this->is_integer_write_data_type( $this->mysql_column_data_type( $metadata ) );
 	}
 
 	/**
@@ -18359,6 +20458,11 @@ class WP_DuckDB_Driver {
 	 * Ensure the internal index metadata table exists.
 	 */
 	private function ensure_index_metadata_table( bool $temporary = false ): void {
+		$ensure_key = $this->metadata_ensure_key( 'index', $temporary );
+		if ( isset( $this->ensured_metadata_tables[ $ensure_key ] ) ) {
+			return;
+		}
+
 		$table_name = $this->index_metadata_table_name( $temporary );
 		$this->execute_duckdb_query(
 			'CREATE '
@@ -18382,12 +20486,19 @@ class WP_DuckDB_Driver {
 				'Failed to upgrade DuckDB index metadata'
 			);
 		}
+
+		$this->ensured_metadata_tables[ $ensure_key ] = true;
 	}
 
 	/**
 	 * Ensure the internal column metadata table exists.
 	 */
 	private function ensure_column_metadata_table( bool $temporary = false ): void {
+		$ensure_key = $this->metadata_ensure_key( 'column', $temporary );
+		if ( isset( $this->ensured_metadata_tables[ $ensure_key ] ) ) {
+			return;
+		}
+
 		$this->execute_duckdb_query(
 			'CREATE '
 				. ( $temporary ? 'TEMP ' : '' )
@@ -18396,12 +20507,19 @@ class WP_DuckDB_Driver {
 				. ' (table_name VARCHAR, ordinal_position INTEGER, column_name VARCHAR, column_type VARCHAR, is_nullable VARCHAR, column_key VARCHAR, column_default VARCHAR, extra VARCHAR, collation_name VARCHAR, comment VARCHAR)',
 			'Failed to initialize DuckDB column metadata'
 		);
+
+		$this->ensured_metadata_tables[ $ensure_key ] = true;
 	}
 
 	/**
 	 * Ensure the internal table metadata table exists.
 	 */
 	private function ensure_table_metadata_table( bool $temporary = false ): void {
+		$ensure_key = $this->metadata_ensure_key( 'table', $temporary );
+		if ( isset( $this->ensured_metadata_tables[ $ensure_key ] ) ) {
+			return;
+		}
+
 		$this->execute_duckdb_query(
 			'CREATE '
 				. ( $temporary ? 'TEMP ' : '' )
@@ -18410,12 +20528,19 @@ class WP_DuckDB_Driver {
 				. ' (table_name VARCHAR, engine VARCHAR, row_format VARCHAR, table_collation VARCHAR, table_comment VARCHAR, create_options VARCHAR, create_time VARCHAR)',
 			'Failed to initialize DuckDB table metadata'
 		);
+
+		$this->ensured_metadata_tables[ $ensure_key ] = true;
 	}
 
 	/**
 	 * Ensure the internal CHECK constraint metadata table exists.
 	 */
 	private function ensure_check_metadata_table( bool $temporary = false ): void {
+		$ensure_key = $this->metadata_ensure_key( 'check', $temporary );
+		if ( isset( $this->ensured_metadata_tables[ $ensure_key ] ) ) {
+			return;
+		}
+
 		$this->execute_duckdb_query(
 			'CREATE '
 				. ( $temporary ? 'TEMP ' : '' )
@@ -18424,12 +20549,19 @@ class WP_DuckDB_Driver {
 				. ' (table_name VARCHAR, constraint_name VARCHAR, check_clause VARCHAR, enforced VARCHAR)',
 			'Failed to initialize DuckDB CHECK constraint metadata'
 		);
+
+		$this->ensured_metadata_tables[ $ensure_key ] = true;
 	}
 
 	/**
 	 * Ensure the internal FOREIGN KEY metadata table exists.
 	 */
 	private function ensure_foreign_key_metadata_table( bool $temporary = false ): void {
+		$ensure_key = $this->metadata_ensure_key( 'foreign_key', $temporary );
+		if ( isset( $this->ensured_metadata_tables[ $ensure_key ] ) ) {
+			return;
+		}
+
 		$this->execute_duckdb_query(
 			'CREATE '
 				. ( $temporary ? 'TEMP ' : '' )
@@ -18438,6 +20570,19 @@ class WP_DuckDB_Driver {
 				. ' (table_name VARCHAR, constraint_name VARCHAR, ordinal_position INTEGER, column_name VARCHAR, referenced_table_name VARCHAR, referenced_column_name VARCHAR, update_rule VARCHAR, delete_rule VARCHAR)',
 			'Failed to initialize DuckDB FOREIGN KEY metadata'
 		);
+
+		$this->ensured_metadata_tables[ $ensure_key ] = true;
+	}
+
+	/**
+	 * Return a cache key for a metadata table ensure operation.
+	 *
+	 * @param string $kind      Metadata table kind.
+	 * @param bool   $temporary Whether to use session-local temporary metadata.
+	 * @return string Cache key.
+	 */
+	private function metadata_ensure_key( string $kind, bool $temporary ): string {
+		return ( $temporary ? 'temporary:' : 'persistent:' ) . $kind;
 	}
 
 	/**
@@ -18491,6 +20636,40 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Insert rows whose values have already been quoted or otherwise rendered as SQL.
+	 *
+	 * @param string                       $table_name    Table name.
+	 * @param array<int,string>            $columns       Column names.
+	 * @param array<int,array<int,string>> $value_rows    Pre-rendered SQL value rows.
+	 * @param string                       $error_message Error message for failed inserts.
+	 */
+	private function insert_rendered_value_rows( string $table_name, array $columns, array $value_rows, string $error_message ): void {
+		if ( count( $value_rows ) === 0 ) {
+			return;
+		}
+
+		$quoted_columns = array();
+		foreach ( $columns as $column_name ) {
+			$quoted_columns[] = $this->connection->quote_identifier( $column_name );
+		}
+
+		$tuples = array();
+		foreach ( $value_rows as $values ) {
+			$tuples[] = '(' . implode( ', ', $values ) . ')';
+		}
+
+		$this->execute_duckdb_query(
+			'INSERT INTO '
+				. $this->connection->quote_identifier( $table_name )
+				. ' ('
+				. implode( ', ', $quoted_columns )
+				. ') VALUES '
+				. implode( ', ', $tuples ),
+			$error_message
+		);
+	}
+
+	/**
 	 * Record MySQL index metadata for SHOW INDEX.
 	 *
 	 * @param array{table_name:string,index_name:string,unique:bool,temporary?:bool,index_type?:string,columns:array<int,array{name:string,sub_part:int|null}>} $index_definition Index definition.
@@ -18513,28 +20692,25 @@ class WP_DuckDB_Driver {
 			'Failed to reset DuckDB index metadata'
 		);
 
+		$value_rows = array();
 		foreach ( $index_definition['columns'] as $offset => $column ) {
-			$this->execute_duckdb_query(
-				'INSERT INTO '
-					. $this->connection->quote_identifier( $this->index_metadata_table_name( $temporary ) )
-					. ' (table_name, index_name, non_unique, seq_in_index, column_name, sub_part, index_type) VALUES ('
-					. $this->connection->quote( $table_name )
-					. ', '
-					. $this->connection->quote( $index_name )
-					. ', '
-					. ( $index_definition['unique'] ? '0' : '1' )
-					. ', '
-					. ( $offset + 1 )
-					. ', '
-					. $this->connection->quote( $column['name'] )
-					. ', '
-					. $this->connection->quote( $column['sub_part'] )
-					. ', '
-					. $this->connection->quote( $index_type )
-					. ')',
-				'Failed to store DuckDB index metadata'
+			$value_rows[] = array(
+				$this->connection->quote( $table_name ),
+				$this->connection->quote( $index_name ),
+				$index_definition['unique'] ? '0' : '1',
+				(string) ( $offset + 1 ),
+				$this->connection->quote( $column['name'] ),
+				$this->connection->quote( $column['sub_part'] ),
+				$this->connection->quote( $index_type ),
 			);
 		}
+
+		$this->insert_rendered_value_rows(
+			$this->index_metadata_table_name( $temporary ),
+			array( 'table_name', 'index_name', 'non_unique', 'seq_in_index', 'column_name', 'sub_part', 'index_type' ),
+			$value_rows,
+			'Failed to store DuckDB index metadata'
+		);
 	}
 
 	/**
@@ -18641,34 +20817,39 @@ class WP_DuckDB_Driver {
 			'Failed to reset DuckDB column metadata'
 		);
 
+		$value_rows = array();
 		foreach ( $metadata as $offset => $column ) {
-			$this->execute_duckdb_query(
-				'INSERT INTO '
-					. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
-					. ' (table_name, ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment) VALUES ('
-					. $this->connection->quote( $table_name )
-					. ', '
-					. ( $offset + 1 )
-					. ', '
-					. $this->connection->quote( $column['column_name'] )
-					. ', '
-					. $this->connection->quote( $column['column_type'] )
-					. ', '
-					. $this->connection->quote( $column['is_nullable'] )
-					. ', '
-					. $this->connection->quote( $column['column_key'] )
-					. ', '
-					. $this->connection->quote( $column['column_default'] )
-					. ', '
-					. $this->connection->quote( $column['extra'] )
-					. ', '
-					. $this->connection->quote( $column['collation_name'] )
-					. ', '
-					. $this->connection->quote( $column['comment'] )
-					. ')',
-				'Failed to store DuckDB column metadata'
+			$value_rows[] = array(
+				$this->connection->quote( $table_name ),
+				(string) ( $offset + 1 ),
+				$this->connection->quote( $column['column_name'] ),
+				$this->connection->quote( $column['column_type'] ),
+				$this->connection->quote( $column['is_nullable'] ),
+				$this->connection->quote( $column['column_key'] ),
+				$this->connection->quote( $column['column_default'] ),
+				$this->connection->quote( $column['extra'] ),
+				$this->connection->quote( $column['collation_name'] ),
+				$this->connection->quote( $column['comment'] ),
 			);
 		}
+
+		$this->insert_rendered_value_rows(
+			$this->column_metadata_table_name( $temporary ),
+			array(
+				'table_name',
+				'ordinal_position',
+				'column_name',
+				'column_type',
+				'is_nullable',
+				'column_key',
+				'column_default',
+				'extra',
+				'collation_name',
+				'comment',
+			),
+			$value_rows,
+			'Failed to store DuckDB column metadata'
+		);
 	}
 
 	/**
@@ -18728,22 +20909,22 @@ class WP_DuckDB_Driver {
 			'Failed to reset DuckDB CHECK constraint metadata'
 		);
 
+		$value_rows = array();
 		foreach ( $metadata as $constraint ) {
-			$this->execute_duckdb_query(
-				'INSERT INTO '
-					. $this->connection->quote_identifier( $this->check_metadata_table_name( $temporary ) )
-					. ' (table_name, constraint_name, check_clause, enforced) VALUES ('
-					. $this->connection->quote( $table_name )
-					. ', '
-					. $this->connection->quote( $constraint['constraint_name'] )
-					. ', '
-					. $this->connection->quote( $constraint['check_clause'] )
-					. ', '
-					. $this->connection->quote( $constraint['enforced'] )
-					. ')',
-				'Failed to store DuckDB CHECK constraint metadata'
+			$value_rows[] = array(
+				$this->connection->quote( $table_name ),
+				$this->connection->quote( $constraint['constraint_name'] ),
+				$this->connection->quote( $constraint['check_clause'] ),
+				$this->connection->quote( $constraint['enforced'] ),
 			);
 		}
+
+		$this->insert_rendered_value_rows(
+			$this->check_metadata_table_name( $temporary ),
+			array( 'table_name', 'constraint_name', 'check_clause', 'enforced' ),
+			$value_rows,
+			'Failed to store DuckDB CHECK constraint metadata'
+		);
 	}
 
 	/**
@@ -18764,32 +20945,37 @@ class WP_DuckDB_Driver {
 			'Failed to reset DuckDB FOREIGN KEY metadata'
 		);
 
+		$value_rows = array();
 		foreach ( $metadata as $constraint ) {
 			foreach ( $constraint['columns'] as $offset => $column_name ) {
-				$this->execute_duckdb_query(
-					'INSERT INTO '
-						. $this->connection->quote_identifier( $this->foreign_key_metadata_table_name( $temporary ) )
-						. ' (table_name, constraint_name, ordinal_position, column_name, referenced_table_name, referenced_column_name, update_rule, delete_rule) VALUES ('
-						. $this->connection->quote( $table_name )
-						. ', '
-						. $this->connection->quote( $constraint['constraint_name'] )
-						. ', '
-						. ( $offset + 1 )
-						. ', '
-						. $this->connection->quote( $column_name )
-						. ', '
-						. $this->connection->quote( $constraint['referenced_table_name'] )
-						. ', '
-						. $this->connection->quote( $constraint['referenced_columns'][ $offset ] )
-						. ', '
-						. $this->connection->quote( $constraint['update_rule'] )
-						. ', '
-						. $this->connection->quote( $constraint['delete_rule'] )
-						. ')',
-					'Failed to store DuckDB FOREIGN KEY metadata'
+				$value_rows[] = array(
+					$this->connection->quote( $table_name ),
+					$this->connection->quote( $constraint['constraint_name'] ),
+					(string) ( $offset + 1 ),
+					$this->connection->quote( $column_name ),
+					$this->connection->quote( $constraint['referenced_table_name'] ),
+					$this->connection->quote( $constraint['referenced_columns'][ $offset ] ),
+					$this->connection->quote( $constraint['update_rule'] ),
+					$this->connection->quote( $constraint['delete_rule'] ),
 				);
 			}
 		}
+
+		$this->insert_rendered_value_rows(
+			$this->foreign_key_metadata_table_name( $temporary ),
+			array(
+				'table_name',
+				'constraint_name',
+				'ordinal_position',
+				'column_name',
+				'referenced_table_name',
+				'referenced_column_name',
+				'update_rule',
+				'delete_rule',
+			),
+			$value_rows,
+			'Failed to store DuckDB FOREIGN KEY metadata'
+		);
 	}
 
 	/**
@@ -18917,6 +21103,33 @@ class WP_DuckDB_Driver {
 		foreach ( $this->secondary_index_definitions_for_table( $table_name, $temporary ) as $index_definition ) {
 			if ( 0 === strcasecmp( $index_definition['index_name'], $mysql_index_name ) ) {
 				return $index_definition['index_name'];
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Resolve a single-column UNIQUE secondary index by column name.
+	 *
+	 * @param string $table_name  Table name.
+	 * @param string $column_name Column name.
+	 * @param bool   $temporary   Whether the target table is temporary.
+	 * @return string|null MySQL-facing index name when a full-column unique index matches.
+	 */
+	private function single_column_unique_secondary_index_name( string $table_name, string $column_name, bool $temporary = false ): ?string {
+		foreach ( $this->secondary_index_definitions_for_table( $table_name, $temporary ) as $index_definition ) {
+			if ( ! $index_definition['unique'] || 1 !== count( $index_definition['columns'] ) ) {
+				continue;
+			}
+
+			$column = $index_definition['columns'][0];
+			if ( null !== $column['sub_part'] ) {
+				continue;
+			}
+
+			if ( 0 === strcasecmp( (string) $column['name'], $column_name ) ) {
+				return (string) $index_definition['index_name'];
 			}
 		}
 
@@ -19590,33 +21803,22 @@ class WP_DuckDB_Driver {
 			return;
 		}
 
-		$quoted_columns = implode(
-			', ',
-			array_map(
-				function ( string $column_name ): string {
-					return $this->connection->quote_identifier( $column_name );
-				},
-				$columns
-			)
-		);
-
+		$value_rows = array();
 		foreach ( $rows as $row ) {
 			$values = array();
 			foreach ( $columns as $column_name ) {
 				$values[] = $this->connection->quote( $row[ $column_name ] );
 			}
 
-			$this->execute_duckdb_query(
-				'INSERT INTO '
-					. $this->connection->quote_identifier( self::INFO_SCHEMA_TABLES_TABLE )
-					. ' ('
-					. $quoted_columns
-					. ') VALUES ('
-					. implode( ', ', $values )
-					. ')',
-				'Failed to populate DuckDB information_schema.tables compatibility table'
-			);
+			$value_rows[] = $values;
 		}
+
+		$this->insert_rendered_value_rows(
+			self::INFO_SCHEMA_TABLES_TABLE,
+			$columns,
+			$value_rows,
+			'Failed to populate DuckDB information_schema.tables compatibility table'
+		);
 	}
 
 	/**
@@ -19874,33 +22076,22 @@ class WP_DuckDB_Driver {
 			return;
 		}
 
-		$quoted_columns = implode(
-			', ',
-			array_map(
-				function ( string $column_name ): string {
-					return $this->connection->quote_identifier( $column_name );
-				},
-				$columns
-			)
-		);
-
+		$value_rows = array();
 		foreach ( $rows as $row ) {
 			$values = array();
 			foreach ( $columns as $column_name ) {
 				$values[] = $this->connection->quote( $row[ $column_name ] );
 			}
 
-			$this->execute_duckdb_query(
-				'INSERT INTO '
-					. $this->connection->quote_identifier( self::INFO_SCHEMA_COLUMNS_TABLE )
-					. ' ('
-					. $quoted_columns
-					. ') VALUES ('
-					. implode( ', ', $values )
-					. ')',
-				'Failed to populate DuckDB information_schema.columns compatibility table'
-			);
+			$value_rows[] = $values;
 		}
+
+		$this->insert_rendered_value_rows(
+			self::INFO_SCHEMA_COLUMNS_TABLE,
+			$columns,
+			$value_rows,
+			'Failed to populate DuckDB information_schema.columns compatibility table'
+		);
 	}
 
 	/**
@@ -19961,33 +22152,22 @@ class WP_DuckDB_Driver {
 			return;
 		}
 
-		$quoted_columns = implode(
-			', ',
-			array_map(
-				function ( string $column_name ): string {
-					return $this->connection->quote_identifier( $column_name );
-				},
-				$columns
-			)
-		);
-
+		$value_rows = array();
 		foreach ( $rows as $row ) {
 			$values = array();
 			foreach ( $columns as $column_name ) {
 				$values[] = $this->connection->quote( $row[ $column_name ] );
 			}
 
-			$this->execute_duckdb_query(
-				'INSERT INTO '
-					. $this->connection->quote_identifier( self::INFO_SCHEMA_STATISTICS_TABLE )
-					. ' ('
-					. $quoted_columns
-					. ') VALUES ('
-					. implode( ', ', $values )
-					. ')',
-				'Failed to populate DuckDB information_schema.statistics compatibility table'
-			);
+			$value_rows[] = $values;
 		}
+
+		$this->insert_rendered_value_rows(
+			self::INFO_SCHEMA_STATISTICS_TABLE,
+			$columns,
+			$value_rows,
+			'Failed to populate DuckDB information_schema.statistics compatibility table'
+		);
 	}
 
 	/**
@@ -20645,10 +22825,10 @@ class WP_DuckDB_Driver {
 	/**
 	 * Refresh a temporary MySQL-shaped information_schema compatibility table.
 	 *
-	 * @param string                  $table_name  Temporary table name.
-	 * @param array<string,string>    $definitions Column definitions.
+	 * @param string                       $table_name  Temporary table name.
+	 * @param array<string,string>         $definitions Column definitions.
 	 * @param array<int,array<string,mixed>> $rows        Rows to insert.
-	 * @param string                  $label       User-facing information_schema table label.
+	 * @param string                       $label       User-facing information_schema table label.
 	 */
 	private function refresh_information_schema_compatibility_table( string $table_name, array $definitions, array $rows, string $label ): void {
 		$columns    = array_keys( $definitions );
@@ -20670,33 +22850,22 @@ class WP_DuckDB_Driver {
 			return;
 		}
 
-		$quoted_columns = implode(
-			', ',
-			array_map(
-				function ( string $column_name ): string {
-					return $this->connection->quote_identifier( $column_name );
-				},
-				$columns
-			)
-		);
-
+		$value_rows = array();
 		foreach ( $rows as $row ) {
 			$values = array();
 			foreach ( $columns as $column_name ) {
 				$values[] = $this->connection->quote( $row[ $column_name ] );
 			}
 
-			$this->execute_duckdb_query(
-				'INSERT INTO '
-					. $this->connection->quote_identifier( $table_name )
-					. ' ('
-					. $quoted_columns
-					. ') VALUES ('
-					. implode( ', ', $values )
-					. ')',
-				'Failed to populate DuckDB ' . $label . ' compatibility table'
-			);
+			$value_rows[] = $values;
 		}
+
+		$this->insert_rendered_value_rows(
+			$table_name,
+			$columns,
+			$value_rows,
+			'Failed to populate DuckDB ' . $label . ' compatibility table'
+		);
 	}
 
 	/**
@@ -20785,28 +22954,92 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Resolve a requested table name to a visible persistent DuckDB user table.
+	 *
+	 * @param string $table_name Requested table name.
+	 * @return string|null Actual table name, or null when no persistent user table matches.
+	 */
+	private function resolve_persistent_user_table_name( string $table_name ): ?string {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()'
+				. " AND table_type = 'BASE TABLE'"
+				. ' AND lower(table_name) = '
+				. $this->connection->quote( strtolower( $table_name ) )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INDEX_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::TABLE_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::CHECK_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::FOREIGN_KEY_METADATA_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_STATISTICS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_REFERENTIAL_CONSTRAINTS_TABLE )
+				. ' AND table_name <> '
+				. $this->connection->quote( self::INFO_SCHEMA_CHECK_CONSTRAINTS_TABLE )
+				. ' LIMIT 1',
+			'Failed to inspect DuckDB table'
+		);
+
+		$resolved = $stmt->fetchColumn();
+		return false === $resolved || null === $resolved ? null : (string) $resolved;
+	}
+
+	/**
+	 * Resolve a requested table name to a visible temporary DuckDB user table.
+	 *
+	 * @param string $table_name Requested table name.
+	 * @return string|null Actual table name, or null when no temporary user table matches.
+	 */
+	private function resolve_temporary_user_table_name( string $table_name ): ?string {
+		$stmt = $this->execute_duckdb_query(
+			"SELECT table_name FROM information_schema.tables WHERE table_type = 'LOCAL TEMPORARY'"
+				. ' AND lower(table_name) = '
+				. $this->connection->quote( strtolower( $table_name ) )
+				. ' AND table_name NOT LIKE '
+				. $this->connection->quote( '\_\_wp\_duckdb\_%' )
+				. " ESCAPE '\\'"
+				. ' LIMIT 1',
+			'Failed to inspect DuckDB temporary table'
+		);
+
+		$resolved = $stmt->fetchColumn();
+		return false === $resolved || null === $resolved ? null : (string) $resolved;
+	}
+
+	/**
 	 * Resolve a requested table name to the visible DuckDB table, preferring temporary tables.
 	 *
 	 * @param string $table_name Requested table name.
 	 * @return array{table_name:string,temporary:bool}|null Resolved table reference, or null when no table matches.
 	 */
 	private function resolve_visible_user_table_reference( string $table_name ): ?array {
-		foreach ( $this->temporary_user_table_names() as $candidate ) {
-			if ( 0 === strcasecmp( $candidate, $table_name ) ) {
-				return array(
-					'table_name' => $candidate,
-					'temporary'  => true,
-				);
-			}
+		$temporary_table_name = $this->resolve_temporary_user_table_name( $table_name );
+		if ( null !== $temporary_table_name ) {
+			return array(
+				'table_name' => $temporary_table_name,
+				'temporary'  => true,
+			);
 		}
 
-		foreach ( $this->user_table_names() as $candidate ) {
-			if ( 0 === strcasecmp( $candidate, $table_name ) ) {
-				return array(
-					'table_name' => $candidate,
-					'temporary'  => false,
-				);
-			}
+		$persistent_table_name = $this->resolve_persistent_user_table_name( $table_name );
+		if ( null !== $persistent_table_name ) {
+			return array(
+				'table_name' => $persistent_table_name,
+				'temporary'  => false,
+			);
 		}
 
 		return null;
@@ -20819,13 +23052,12 @@ class WP_DuckDB_Driver {
 	 * @return array{table_name:string,temporary:bool}|null Resolved table reference, or null when no temp table matches.
 	 */
 	private function resolve_temporary_user_table_reference( string $table_name ): ?array {
-		foreach ( $this->temporary_user_table_names() as $candidate ) {
-			if ( 0 === strcasecmp( $candidate, $table_name ) ) {
-				return array(
-					'table_name' => $candidate,
-					'temporary'  => true,
-				);
-			}
+		$temporary_table_name = $this->resolve_temporary_user_table_name( $table_name );
+		if ( null !== $temporary_table_name ) {
+			return array(
+				'table_name' => $temporary_table_name,
+				'temporary'  => true,
+			);
 		}
 
 		return null;
@@ -20838,13 +23070,7 @@ class WP_DuckDB_Driver {
 	 * @return string|null Actual table name, or null when no user table matches.
 	 */
 	private function resolve_user_table_name( string $table_name ): ?string {
-		foreach ( $this->user_table_names() as $candidate ) {
-			if ( 0 === strcasecmp( $candidate, $table_name ) ) {
-				return $candidate;
-			}
-		}
-
-		return null;
+		return $this->resolve_persistent_user_table_name( $table_name );
 	}
 
 	/**

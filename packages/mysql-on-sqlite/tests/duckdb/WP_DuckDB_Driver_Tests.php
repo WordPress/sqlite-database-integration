@@ -1007,6 +1007,93 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( $first, $second );
 	}
 
+	public function test_select_order_by_seeded_rand_literal_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_order (id INT)' );
+		$driver->query( 'INSERT INTO seeded_rand_order (id) VALUES (1), (2), (3), (4), (5)' );
+
+		$first  = $driver->query( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1)' )->fetchAll( PDO::FETCH_COLUMN );
+		$second = $driver->query( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1)' )->fetchAll( PDO::FETCH_COLUMN );
+		$this->assertSame( array( 5, 4, 3, 1, 2 ), array_map( 'intval', $first ) );
+		$this->assertSame( $first, $second );
+
+		$descending = $driver->query( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1) DESC' )->fetchAll( PDO::FETCH_COLUMN );
+		$this->assertSame( array( 2, 1, 3, 4, 5 ), array_map( 'intval', $descending ) );
+	}
+
+	public function test_select_seeded_rand_where_literal_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_where (id INT)' );
+		$driver->query( 'INSERT INTO seeded_rand_where (id) VALUES (3), (1), (2)' );
+
+		$filtered = $driver->query( 'SELECT id FROM seeded_rand_where WHERE RAND(1) < 0.5 ORDER BY id' )->fetchAll( PDO::FETCH_COLUMN );
+		$this->assertSame( array( 2, 3 ), array_map( 'intval', $filtered ) );
+
+		$reversed = $driver->query( 'SELECT id FROM seeded_rand_where WHERE 0.5 > RAND(1) ORDER BY 1 DESC' )->fetchAll( PDO::FETCH_COLUMN );
+		$this->assertSame( array( 3, 2 ), array_map( 'intval', $reversed ) );
+	}
+
+	public function test_select_wildcard_seeded_rand_literal_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_wildcard (id INT, name VARCHAR(20))' );
+		$driver->query( "INSERT INTO seeded_rand_wildcard (id, name) VALUES (1, 'a'), (2, 'b')" );
+
+		$rows = $driver->query( 'SELECT *, RAND(1) AS r FROM seeded_rand_wildcard ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( 1, (int) $rows[0]['id'] );
+		$this->assertSame( 'a', $rows[0]['name'] );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $rows[0]['r'], 1e-12 );
+		$this->assertSame( 2, (int) $rows[1]['id'] );
+		$this->assertSame( 'b', $rows[1]['name'] );
+		$this->assertEqualsWithDelta( 0.87161418038571, (float) $rows[1]['r'], 1e-12 );
+
+		$rows = $driver->query( 'SELECT *, RAND(1) AS r, id AS explicit_id FROM seeded_rand_wildcard ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( 1, (int) $rows[0]['id'] );
+		$this->assertSame( 'a', $rows[0]['name'] );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $rows[0]['r'], 1e-12 );
+		$this->assertSame( 1, (int) $rows[0]['explicit_id'] );
+		$this->assertSame( 2, (int) $rows[1]['id'] );
+		$this->assertSame( 'b', $rows[1]['name'] );
+		$this->assertEqualsWithDelta( 0.87161418038571, (float) $rows[1]['r'], 1e-12 );
+		$this->assertSame( 2, (int) $rows[1]['explicit_id'] );
+	}
+
+	public function test_select_seeded_rand_expression_seeds_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_expr (id INT, seed_text VARCHAR(20))' );
+		$driver->query( "INSERT INTO seeded_rand_expr (id, seed_text) VALUES (1, '1'), (2, '2'), (3, '3')" );
+
+		$rows = $driver->query( 'SELECT id, RAND(CAST(seed_text AS SIGNED)) AS r FROM seeded_rand_expr ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 3, $rows );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $rows[0]['r'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.65558664654902, (float) $rows[1]['r'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.90576975597606, (float) $rows[2]['r'], 1e-12 );
+
+		$row = $driver->query( 'SELECT RAND(NULLIF(1, 1)) AS r' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertEqualsWithDelta( 0.15522042769494, (float) $row['r'], 1e-12 );
+	}
+
+	public function test_select_seeded_rand_expression_without_alias_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$row    = $driver->query( 'SELECT RAND(CAST(1 AS SIGNED))' )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertArrayHasKey( 'RAND(CAST(1 AS SIGNED))', $row );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row['RAND(CAST(1 AS SIGNED))'], 1e-12 );
+	}
+
 	public function test_select_seeded_rand_call_sites_share_statement_state(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1060,19 +1147,61 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertEqualsWithDelta( 0.87161418038571, (float) $row['other'], 1e-12 );
 	}
 
+	public function test_insert_set_seeded_rand_literals_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_set (id INT, value DOUBLE, other DOUBLE)' );
+
+		$driver->query( 'INSERT INTO seeded_rand_set SET id = 1, value = RAND(1), other = RAND(1)' );
+		$driver->query( 'INSERT seeded_rand_set SET id = 2, value = RAND(NULL), other = RAND(1) + 0' );
+
+		$rows = $driver->query( 'SELECT id, value, other FROM seeded_rand_set ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertCount( 2, $rows );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $rows[0]['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.87161418038571, (float) $rows[0]['other'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.15522042769494, (float) $rows[1]['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $rows[1]['other'], 1e-12 );
+	}
+
+	public function test_update_seeded_rand_literals_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_update (id INT, value DOUBLE, other DOUBLE)' );
+		$driver->query( 'INSERT INTO seeded_rand_update (id, value, other) VALUES (1, 0.0, 0.0), (2, 0.0, 0.0), (3, 0.0, 0.0)' );
+
+		$single = $driver->query( 'UPDATE seeded_rand_update SET value = RAND(1) WHERE id = 1' );
+		$this->assertSame( 1, $single->rowCount() );
+		$row = $driver->query( 'SELECT value FROM seeded_rand_update WHERE id = 1' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row['value'], 1e-12 );
+
+		$ordered = $driver->query( 'UPDATE seeded_rand_update SET value = RAND(1), other = RAND(1) ORDER BY id LIMIT 2' );
+		$this->assertSame( 2, $ordered->rowCount() );
+		$rows = $driver->query( 'SELECT id, value, other FROM seeded_rand_update ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertCount( 3, $rows );
+		$this->assertEqualsWithDelta( 0.40540353712198, (float) $rows[0]['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.87161418038571, (float) $rows[0]['other'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.14186032129625, (float) $rows[1]['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.09445909605777, (float) $rows[1]['other'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.0, (float) $rows[2]['value'], 1e-12 );
+		$this->assertEqualsWithDelta( 0.0, (float) $rows[2]['other'], 1e-12 );
+
+		$driver->query( 'UPDATE seeded_rand_update SET value = 0.0, other = 0.0' );
+		$limited = $driver->query( 'UPDATE seeded_rand_update SET value = RAND(1) LIMIT 1' );
+		$this->assertSame( 1, $limited->rowCount() );
+		$row = $driver->query( 'SELECT COUNT(*) AS changed FROM seeded_rand_update WHERE abs(value - 0.40540353712198) < 0.000000000001' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( 1, (int) $row['changed'] );
+	}
+
 	public function test_select_seeded_rand_unsupported_shapes_are_rejected(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 		$driver->query( 'CREATE TABLE t (id INT, value DOUBLE)' );
 		$driver->query( 'INSERT INTO t (id, value) VALUES (1, 0.0)' );
-
-		try {
-			$driver->query( 'SELECT RAND(CAST(1 AS SIGNED)) AS r' );
-			$this->fail( 'Expected unsupported non-literal seeded RAND() shape to fail.' );
-		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			$this->assertStringContainsString( 'literal numeric, string, or NULL seeds', $e->getMessage() );
-		}
 
 		try {
 			$driver->query( 'SELECT CAST(RAND(1) AS DOUBLE) AS r' );
@@ -1083,23 +1212,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$unsupported_contexts = array(
 			array(
-				'sql'     => 'SELECT *, RAND(1) AS r FROM t',
-				'message' => 'SELECT-list wildcards',
-			),
-			array(
 				'sql'     => 'SELECT RAND(1) AS r FROM t ORDER BY RAND(1)',
-				'message' => 'top-level SELECT expression',
-			),
-			array(
-				'sql'     => 'SELECT id FROM t ORDER BY RAND(1)',
-				'message' => 'top-level SELECT expression',
-			),
-			array(
-				'sql'     => 'SELECT id FROM t WHERE RAND(1) < 1',
-				'message' => 'top-level SELECT expression',
-			),
-			array(
-				'sql'     => 'UPDATE t SET value = RAND(1)',
 				'message' => 'top-level SELECT expression',
 			),
 		);
@@ -1119,29 +1232,75 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
 			$this->assertStringContainsString( 'literal numeric, string, or NULL seeds', $e->getMessage() );
 		}
+
+		try {
+			$driver->query( 'INSERT INTO t SET value = RAND(CAST(1 AS SIGNED))' );
+			$this->fail( 'Expected unsupported non-literal INSERT SET seeded RAND() shape to fail.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'literal numeric, string, or NULL seeds', $e->getMessage() );
+		}
 	}
 
-	public function test_seeded_rand_where_rejection_does_not_mutate_rows_or_state(): void {
+	public function test_update_seeded_rand_where_literal_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
-		$driver->query( 'CREATE TABLE seeded_rand_where_reject (id INT, value DOUBLE)' );
-		$driver->query( 'INSERT INTO seeded_rand_where_reject (id, value) VALUES (1, 0.0), (2, 0.0), (3, 0.0)' );
+		$driver->query( 'CREATE TABLE seeded_rand_where_update (id INT, value DOUBLE)' );
+		$driver->query( 'INSERT INTO seeded_rand_where_update (id, value) VALUES (3, 0.0), (1, 0.0), (2, 0.0)' );
 
-		$before = $driver->query( 'SELECT id, value FROM seeded_rand_where_reject ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$updated = $driver->query( 'UPDATE seeded_rand_where_update SET value = 9 WHERE RAND(1) < 0.5' );
+		$this->assertSame( 2, $updated->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'    => 1,
+					'value' => 0.0,
+				),
+				array(
+					'id'    => 2,
+					'value' => 9.0,
+				),
+				array(
+					'id'    => 3,
+					'value' => 9.0,
+				),
+			),
+			$driver->query( 'SELECT id, value FROM seeded_rand_where_update ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$before = $driver->query( 'SELECT id, value FROM seeded_rand_where_update ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
 
 		try {
-			$driver->query( 'UPDATE seeded_rand_where_reject SET value = 9 WHERE RAND(1) < 0.5' );
-			$this->fail( 'Expected unsupported seeded RAND() WHERE context to fail.' );
+			$driver->query( 'UPDATE seeded_rand_where_update SET value = RAND(1) WHERE RAND(1) < 0.5' );
+			$this->fail( 'Expected mixed seeded RAND() UPDATE context to fail.' );
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			$this->assertStringContainsString( 'top-level SELECT expression', $e->getMessage() );
+			$this->assertStringContainsString( 'cannot be used as both an UPDATE assignment and a WHERE predicate', $e->getMessage() );
 		}
 
-		$after = $driver->query( 'SELECT id, value FROM seeded_rand_where_reject ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$after = $driver->query( 'SELECT id, value FROM seeded_rand_where_update ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( $before, $after );
 
 		$row = $driver->query( 'SELECT RAND(1) AS r' )->fetch( PDO::FETCH_ASSOC );
 		$this->assertEqualsWithDelta( 0.40540353712198, (float) $row['r'], 1e-12 );
+	}
+
+	public function test_delete_seeded_rand_where_literal_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE seeded_rand_where_delete (id INT)' );
+		$driver->query( 'INSERT INTO seeded_rand_where_delete (id) VALUES (3), (1), (2)' );
+
+		$deleted = $driver->query( 'DELETE FROM seeded_rand_where_delete WHERE RAND(1) < 0.5' );
+
+		$this->assertSame( 2, $deleted->rowCount() );
+		$this->assertSame(
+			array( 1 ),
+			array_map(
+				'intval',
+				$driver->query( 'SELECT id FROM seeded_rand_where_delete ORDER BY id' )->fetchAll( PDO::FETCH_COLUMN )
+			)
+		);
 	}
 
 	public function test_date_format_function_is_emulated(): void {
@@ -2100,6 +2259,17 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			)->fetch( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$this->assertSame(
+			array(
+				'ac'                        => 0,
+				'@@autocommit + 0'          => 0,
+				'COALESCE(@@autocommit, 1)' => 0,
+			),
+			$driver->query(
+				'SELECT @@autocommit AS ac, @@autocommit + 0, COALESCE(@@autocommit, 1)'
+			)->fetch( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_session_variable_scoped_comma_list_matches_sqlite_current_behavior(): void {
@@ -2185,6 +2355,152 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame(
 			array( '@@default_storage_engine' => 'DEFAULT' ),
 			$driver->query( 'SELECT @@default_storage_engine' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
+	public function test_keyword_session_variables_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$set = $driver->query(
+			'SET default_collation_for_utf8mb4 = utf8mb4_0900_ai_ci,
+				resultset_metadata = FULL,
+				session_track_gtids = OWN_GTID,
+				session_track_transaction_info = STATE,
+				transaction_isolation = SERIALIZABLE,
+				use_secondary_engine = FORCED'
+		);
+		$this->assertSame( 0, $set->rowCount() );
+		$this->assertSame( 0, $set->columnCount() );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$read = $driver->query(
+			'SELECT @@default_collation_for_utf8mb4,
+				@@resultset_metadata,
+				@@session_track_gtids,
+				@@session_track_transaction_info,
+				@@transaction_isolation,
+				@@use_secondary_engine'
+		);
+		$this->assertSame( array( 'name' => '@@default_collation_for_utf8mb4' ), $read->getColumnMeta( 0 ) );
+		$this->assertSame(
+			array(
+				'@@default_collation_for_utf8mb4'  => 'utf8mb4_0900_ai_ci',
+				'@@resultset_metadata'             => 'FULL',
+				'@@session_track_gtids'            => 'OWN_GTID',
+				'@@session_track_transaction_info' => 'STATE',
+				'@@transaction_isolation'          => 'SERIALIZABLE',
+				'@@use_secondary_engine'           => 'FORCED',
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$driver->query( "SET @@session.session_track_transaction_info = 'CHARACTERISTICS'" );
+		$this->assertSame(
+			array(
+				'@@session.session_track_transaction_info' => 'CHARACTERISTICS',
+			),
+			$driver->query( 'SELECT @@session.session_track_transaction_info' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
+	public function test_boolean_like_session_variables_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver      = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$assignments = array(
+			'end_markers_in_json'                     => array(
+				'value'    => 'ON',
+				'expected' => 1,
+			),
+			'explicit_defaults_for_timestamp'         => array(
+				'value'    => 'OFF',
+				'expected' => 0,
+			),
+			'keep_files_on_create'                    => array(
+				'value'    => 'ON',
+				'expected' => 1,
+			),
+			'old_alter_table'                         => array(
+				'value'    => 'OFF',
+				'expected' => 0,
+			),
+			'print_identified_with_as_hex'            => array(
+				'value'    => 'ON',
+				'expected' => 1,
+			),
+			'require_row_format'                      => array(
+				'value'    => 'OFF',
+				'expected' => 0,
+			),
+			'select_into_disk_sync'                   => array(
+				'value'    => 'ON',
+				'expected' => 1,
+			),
+			'session_track_schema'                    => array(
+				'value'    => 'ON',
+				'expected' => 1,
+			),
+			'session_track_state_change'              => array(
+				'value'    => 'OFF',
+				'expected' => 0,
+			),
+			'show_create_table_skip_secondary_engine' => array(
+				'value'    => 'ON',
+				'expected' => 1,
+			),
+			'show_create_table_verbosity'             => array(
+				'value'    => 'OFF',
+				'expected' => 0,
+			),
+			'sql_auto_is_null'                        => array(
+				'value'    => 'ON',
+				'expected' => 1,
+			),
+			'sql_big_selects'                         => array(
+				'value'    => 'OFF',
+				'expected' => 0,
+			),
+			'sql_buffer_result'                       => array(
+				'value'    => 'ON',
+				'expected' => 1,
+			),
+			'sql_safe_updates'                        => array(
+				'value'    => 'OFF',
+				'expected' => 0,
+			),
+			'transaction_read_only'                   => array(
+				'value'    => 'OFF',
+				'expected' => 0,
+			),
+		);
+
+		foreach ( $assignments as $name => $assignment ) {
+			$set = $driver->query( 'SET ' . $name . ' = ' . $assignment['value'] );
+			$this->assertSame( 0, $set->rowCount() );
+			$this->assertSame( 0, $set->columnCount() );
+			$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+		}
+
+		$expected = array();
+		foreach ( $assignments as $name => $assignment ) {
+			$expected[ '@@' . $name ] = $assignment['expected'];
+		}
+
+		$read = $driver->query( 'SELECT @@' . implode( ', @@', array_keys( $assignments ) ) );
+		$this->assertSame( $expected, $read->fetch( PDO::FETCH_ASSOC ) );
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'SET @old_safe_updates = @@sql_safe_updates' );
+		$driver->query( 'SET @@sql_safe_updates = ON' );
+		$driver->query( 'SET @@sql_safe_updates = @old_safe_updates' );
+		$this->assertSame(
+			array( '@@sql_safe_updates' => 0 ),
+			$driver->query( 'SELECT @@sql_safe_updates' )->fetch( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
@@ -2332,6 +2648,48 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_scoped_system_variable_read_probes_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver           = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$default_sql_mode = 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,'
+			. 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES';
+
+		$read = $driver->query(
+			'SELECT @@GLOBAL.gtid_purged,
+				@@GLOBAL.log_bin,
+				@@GLOBAL.log_bin_trust_function_creators,
+				@@GLOBAL.sql_mode,
+				@@SESSION.max_allowed_packet,
+				@@SESSION.sql_mode'
+		);
+		$this->assertSame(
+			array(
+				'@@GLOBAL.gtid_purged'                     => null,
+				'@@GLOBAL.log_bin'                         => null,
+				'@@GLOBAL.log_bin_trust_function_creators' => null,
+				'@@GLOBAL.sql_mode'                        => $default_sql_mode,
+				'@@SESSION.max_allowed_packet'             => null,
+				'@@SESSION.sql_mode'                       => $default_sql_mode,
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$driver->query( "SET SESSION sql_mode = 'NO_ZERO_DATE'" );
+		$read = $driver->query( 'SELECT @@gLoBAL.gTiD_purGed, @@sEssIOn.sqL_moDe' );
+		$this->assertSame( array( 'name' => '@@gLoBAL.gTiD_purGed' ), $read->getColumnMeta( 0 ) );
+		$this->assertSame( array( 'name' => '@@sEssIOn.sqL_moDe' ), $read->getColumnMeta( 1 ) );
+		$this->assertSame(
+			array(
+				'@@gLoBAL.gTiD_purGed' => null,
+				'@@sEssIOn.sqL_moDe'   => 'NO_ZERO_DATE',
+			),
+			$read->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+	}
+
 	public function test_user_variables_are_emulated_for_bounded_values(): void {
 		$this->requireDuckDBRuntime();
 
@@ -2384,13 +2742,86 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$driver->query( 'SELECT @signed, @decimal, @flag' )->fetch( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame( array(), $driver->get_last_duckdb_queries() );
+
+		$driver->query( 'SET @my_var = @my_var + 1' );
+		$this->assertSame(
+			array( '@my_var' => 2 ),
+			$driver->query( 'SELECT @my_var' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SET @my_var = @my_var + 1' );
+		$this->assertSame(
+			array( '@my_var' => 3 ),
+			$driver->query( 'SELECT @my_var' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SET @other = 4, @sum = @my_var + @other' );
+		$this->assertSame(
+			array( '@sum' => 7 ),
+			$driver->query( 'SELECT @sum' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'SET @db = DATABASE(), @version = VERSION()' );
+		$this->assertSame(
+			array(
+				'@db'      => 'wp',
+				'@version' => '8.0.38',
+			),
+			$driver->query( 'SELECT @db, @version' )->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				'alias' => 3,
+				1       => 1,
+			),
+			$driver->query( 'SELECT @my_var AS alias, 1' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( '@my_var + 1' => 4 ),
+			$driver->query( 'SELECT @my_var + 1' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 'expr_var' => 4 ),
+			$driver->query( 'SELECT @my_var + 1 AS expr_var' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 'COALESCE(@my_var, 1)' => 3 ),
+			$driver->query( 'SELECT COALESCE(@my_var, 1)' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 'COALESCE(@missing, 1)' => 1 ),
+			$driver->query( 'SELECT COALESCE(@missing, 1)' )->fetch( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				'alias' => 3,
+				1       => 1,
+			),
+			$driver->query( 'SELECT @my_var AS alias, 1 FROM DUAL' )->fetch( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_dump_check_variable_backup_and_restore_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"SET character_set_client = 'latin1',
+				character_set_results = 'latin1',
+				collation_connection = latin1_swedish_ci,
+				time_zone = '+02:00',
+				sql_notes = 1"
+		);
 
+		$default_sql_mode = 'ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION,'
+			. 'NO_ZERO_DATE,NO_ZERO_IN_DATE,ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES';
+		$driver->query( '/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;' );
+		$driver->query( '/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;' );
+		$driver->query( '/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;' );
+		$driver->query( '/*!50503 SET NAMES utf8mb4 */;' );
+		$driver->query( '/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;' );
+		$driver->query( "/*!40103 SET TIME_ZONE='+00:00' */;" );
 		$set = $driver->query( '/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;' );
 		$this->assertSame( 0, $set->rowCount() );
 		$this->assertSame( 0, $set->columnCount() );
@@ -2417,14 +2848,69 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$driver->query( 'SELECT @OLD_FOREIGN_KEY_CHECKS, @@FOREIGN_KEY_CHECKS' )->fetch( PDO::FETCH_ASSOC )
 		);
 
-		$driver->query( '/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;' );
-		$driver->query( '/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;' );
+		$driver->query( "/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;" );
+		$driver->query( '/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;' );
+		$driver->query( '/*!40101 SET @saved_cs_client = @@character_set_client */; ' );
+		$driver->query( '/*!50503 SET character_set_client = utf8mb4 */;' );
 		$this->assertSame(
 			array(
-				'@@UNIQUE_CHECKS'      => null,
-				'@@FOREIGN_KEY_CHECKS' => null,
+				'@OLD_CHARACTER_SET_CLIENT'  => 'latin1',
+				'@OLD_CHARACTER_SET_RESULTS' => 'latin1',
+				'@OLD_COLLATION_CONNECTION'  => 'latin1_swedish_ci',
+				'@OLD_TIME_ZONE'             => '+02:00',
+				'@OLD_SQL_MODE'              => $default_sql_mode,
+				'@OLD_SQL_NOTES'             => 1,
+				'@saved_cs_client'           => 'latin1',
+				'@@CHARACTER_SET_CLIENT'     => 'utf8mb4',
+				'@@TIME_ZONE'                => '+00:00',
+				'@@SQL_MODE'                 => 'NO_AUTO_VALUE_ON_ZERO',
+				'@@SQL_NOTES'                => 0,
 			),
-			$driver->query( 'SELECT @@UNIQUE_CHECKS, @@FOREIGN_KEY_CHECKS' )->fetch( PDO::FETCH_ASSOC )
+			$driver->query(
+				'SELECT @OLD_CHARACTER_SET_CLIENT,
+					@OLD_CHARACTER_SET_RESULTS,
+					@OLD_COLLATION_CONNECTION,
+					@OLD_TIME_ZONE,
+					@OLD_SQL_MODE,
+					@OLD_SQL_NOTES,
+					@saved_cs_client,
+					@@CHARACTER_SET_CLIENT,
+					@@TIME_ZONE,
+					@@SQL_MODE,
+					@@SQL_NOTES'
+			)->fetch( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( '/*!40101 SET character_set_client = @saved_cs_client */;' );
+		$driver->query( '/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;' );
+		$driver->query( '/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;' );
+		$driver->query( '/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;' );
+		$driver->query( '/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;' );
+		$driver->query( '/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;' );
+		$driver->query( '/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;' );
+		$driver->query( '/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;' );
+		$driver->query( '/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;' );
+		$this->assertSame(
+			array(
+				'@@CHARACTER_SET_CLIENT'  => 'latin1',
+				'@@CHARACTER_SET_RESULTS' => 'latin1',
+				'@@COLLATION_CONNECTION'  => 'latin1_swedish_ci',
+				'@@TIME_ZONE'             => '+02:00',
+				'@@SQL_MODE'              => $default_sql_mode,
+				'@@UNIQUE_CHECKS'         => null,
+				'@@FOREIGN_KEY_CHECKS'    => null,
+				'@@SQL_NOTES'             => 1,
+			),
+			$driver->query(
+				'SELECT @@CHARACTER_SET_CLIENT,
+					@@CHARACTER_SET_RESULTS,
+					@@COLLATION_CONNECTION,
+					@@TIME_ZONE,
+					@@SQL_MODE,
+					@@UNIQUE_CHECKS,
+					@@FOREIGN_KEY_CHECKS,
+					@@SQL_NOTES'
+			)->fetch( PDO::FETCH_ASSOC )
 		);
 
 		$driver->query( 'SET @RESTORED_UNIQUE_CHECKS = 1, @RESTORED_FOREIGN_KEY_CHECKS = "0"' );
@@ -2473,12 +2959,9 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		foreach (
 			array(
-				'SET @my_var = @my_var + 1',
-				'SET @my_var = DATABASE()',
 				'SET @my_var',
-				'SELECT @my_var AS alias, 1',
-				'SELECT @my_var + 1',
-				'SELECT COALESCE(@my_var, 1)',
+				'SET @my_var = DATABASE(1)',
+				'SET @my_var = @my_var * 2',
 				'SELECT @my_var FROM real_table',
 			) as $sql
 		) {
@@ -2496,9 +2979,6 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				'SELECT @@GLOBAL.autocommit',
 				'SELECT @@LOCAL.autocommit',
-				'SELECT @@autocommit AS ac',
-				'SELECT @@autocommit + 0',
-				'SELECT COALESCE(@@autocommit, 1)',
 				'SELECT @@autocommit FROM real_table',
 			) as $sql
 		) {
@@ -2920,6 +3400,33 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
+
+		$joined_update = $driver->query(
+			'UPDATE t1 a CROSS JOIN t2 b ON a.id = b.id
+			SET a.note = b.note
+			WHERE b.flag = 1'
+		);
+		$this->assertSame( 2, $joined_update->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'note'    => 'b1',
+					'only_t1' => 10,
+				),
+				array(
+					'id'      => 2,
+					'note'    => 'cross',
+					'only_t1' => 20,
+				),
+				array(
+					'id'      => 3,
+					'note'    => 'b3',
+					'only_t1' => 30,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_joined_update_rewrites_straight_join_on(): void {
@@ -2978,6 +3485,159 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array(
 					'id'   => 4,
 					'note' => 'b4',
+					'flag' => 1,
+				),
+			),
+			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_joined_update_rewrites_left_and_right_join_like_sqlite(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30), (4, 'a4', 40)" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (5, 'b5', 1)" );
+
+		$left_update = $driver->query(
+			"UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id
+			SET a.note = 'left'"
+		);
+		$this->assertSame( 2, $left_update->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'note'    => 'left',
+					'only_t1' => 10,
+				),
+				array(
+					'id'      => 2,
+					'note'    => 'a2',
+					'only_t1' => 20,
+				),
+				array(
+					'id'      => 3,
+					'note'    => 'left',
+					'only_t1' => 30,
+				),
+				array(
+					'id'      => 4,
+					'note'    => 'a4',
+					'only_t1' => 40,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$right_update = $driver->query(
+			"UPDATE t1 a RIGHT OUTER JOIN t2 b ON a.id = b.id
+			SET a.note = 'right'"
+		);
+		$this->assertSame( 2, $right_update->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'note'    => 'right',
+					'only_t1' => 10,
+				),
+				array(
+					'id'      => 2,
+					'note'    => 'a2',
+					'only_t1' => 20,
+				),
+				array(
+					'id'      => 3,
+					'note'    => 'right',
+					'only_t1' => 30,
+				),
+				array(
+					'id'      => 4,
+					'note'    => 'a4',
+					'only_t1' => 40,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'b1',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 3,
+					'note' => 'b3',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 5,
+					'note' => 'b5',
+					'flag' => 1,
+				),
+			),
+			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_joined_update_rewrites_natural_join_like_sqlite(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30), (4, 'a4', 40)" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (5, 'b5', 1)" );
+
+		$updated = $driver->query(
+			"UPDATE t1 a NATURAL JOIN t2 b
+			SET a.note = 'natural'"
+		);
+		$this->assertSame( 4, $updated->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'note'    => 'natural',
+					'only_t1' => 10,
+				),
+				array(
+					'id'      => 2,
+					'note'    => 'natural',
+					'only_t1' => 20,
+				),
+				array(
+					'id'      => 3,
+					'note'    => 'natural',
+					'only_t1' => 30,
+				),
+				array(
+					'id'      => 4,
+					'note'    => 'natural',
+					'only_t1' => 40,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'b1',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 3,
+					'note' => 'b3',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 5,
+					'note' => 'b5',
 					'flag' => 1,
 				),
 			),
@@ -3333,7 +3993,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
-	public function test_joined_update_rejects_unqualified_unique_aliased_target_column(): void {
+	public function test_joined_update_rewrites_unqualified_unique_aliased_target_column_like_sqlite(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
@@ -3342,36 +4002,29 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( "INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)" );
 		$driver->query( "INSERT INTO t2 VALUES (1, 'b1', 1), (2, 'b2', 0), (3, 'b3', 1)" );
 
-		try {
-			$driver->query(
-				'UPDATE t1 a JOIN t2 b ON a.id = b.id
-				SET only_t1 = 99
-				WHERE b.flag = 1'
-			);
-			$this->fail( 'Expected joined UPDATE rejection for unqualified aliased target column.' );
-		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			$this->assertStringContainsString(
-				"Unqualified UPDATE target column 'only_t1' is not supported for aliased joined UPDATE targets",
-				$e->getMessage()
-			);
-		}
+		$updated = $driver->query(
+			'UPDATE t1 a JOIN t2 b ON a.id = b.id
+			SET only_t1 = 99
+			WHERE b.flag = 1'
+		);
 
+		$this->assertSame( 3, $updated->rowCount() );
 		$this->assertSame(
 			array(
 				array(
 					'id'      => 1,
 					'note'    => 'a1',
-					'only_t1' => 10,
+					'only_t1' => 99,
 				),
 				array(
 					'id'      => 2,
 					'note'    => 'a2',
-					'only_t1' => 20,
+					'only_t1' => 99,
 				),
 				array(
 					'id'      => 3,
 					'note'    => 'a3',
-					'only_t1' => 30,
+					'only_t1' => 99,
 				),
 			),
 			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
@@ -3449,22 +4102,6 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array(
 					'sql'     => "UPDATE t1 a JOIN t2 b USING (id) SET a.note = 'target', b.note = 'source'",
 					'message' => 'UPDATE statement modifying multiple tables is not supported',
-				),
-				array(
-					'sql'     => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
-				),
-				array(
-					'sql'     => "UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id SET a.note = 'target'",
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
-				),
-				array(
-					'sql'     => "UPDATE t1 a NATURAL JOIN t2 b SET a.note = 'target'",
-					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
-				),
-				array(
-					'sql'     => "UPDATE t1 a CROSS JOIN t2 b ON a.id = b.id SET a.note = 'target'",
-					'message' => 'CROSS JOIN ... ON is not supported',
 				),
 				array(
 					'sql'     => "UPDATE t1 a CROSS JOIN t2 b USING (id) SET a.note = 'target'",
@@ -4294,6 +4931,116 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_delete_rewrites_cross_join_on_forms(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)' );
+		$driver->query( 'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)' );
+		$driver->query( "INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)" );
+		$driver->query( "INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (4, 'b4', 1), (5, 'b5', 0)" );
+
+		$single_target_delete = $driver->query(
+			'DELETE a FROM t1 a CROSS JOIN t2 b ON a.id = b.id
+			WHERE b.flag = 1 AND a.id = 1'
+		);
+		$this->assertSame( 1, $single_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 2,
+					'note'    => 'a2',
+					'only_t1' => 20,
+				),
+				array(
+					'id'      => 3,
+					'note'    => 'a3',
+					'only_t1' => 30,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$multi_target_delete = $driver->query(
+			'DELETE a, b FROM t1 a CROSS JOIN t2 b ON a.id = b.id
+			WHERE a.id = 3'
+		);
+		$this->assertSame( 2, $multi_target_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 2,
+					'note'    => 'a2',
+					'only_t1' => 20,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'b1',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 4,
+					'note' => 'b4',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 5,
+					'note' => 'b5',
+					'flag' => 0,
+				),
+			),
+			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( "INSERT INTO t1 VALUES (6, 'a6', 60)" );
+		$driver->query( "INSERT INTO t2 VALUES (6, 'b6', 1)" );
+		$using_form_delete = $driver->query(
+			'DELETE FROM a USING t1 a CROSS JOIN t2 b ON a.id = b.id
+			WHERE b.id = 6'
+		);
+		$this->assertSame( 1, $using_form_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 2,
+					'note'    => 'a2',
+					'only_t1' => 20,
+				),
+			),
+			$driver->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'note' => 'b1',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 4,
+					'note' => 'b4',
+					'flag' => 1,
+				),
+				array(
+					'id'   => 5,
+					'note' => 'b5',
+					'flag' => 0,
+				),
+				array(
+					'id'   => 6,
+					'note' => 'b6',
+					'flag' => 1,
+				),
+			),
+			$driver->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_joined_delete_accepts_target_wildcard_aliases(): void {
 		$this->requireDuckDBRuntime();
 
@@ -4743,6 +5490,55 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_joined_delete_accepts_information_schema_tables_read_only_source(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE info_delete_items (id INT, value VARCHAR(64))' );
+		$driver->query(
+			"INSERT INTO info_delete_items VALUES
+			(1, 'info_delete_items'),
+			(2, 'other'),
+			(3, 'info_delete_items'),
+			(4, 'info_delete_items')"
+		);
+
+		$joined_delete = $driver->query(
+			"DELETE d FROM info_delete_items d
+			JOIN information_schema.tables it ON d.value = it.table_name
+			WHERE it.table_schema = 'wp' AND d.id < 4"
+		);
+		$this->assertSame( 2, $joined_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'    => 2,
+					'value' => 'other',
+				),
+				array(
+					'id'    => 4,
+					'value' => 'info_delete_items',
+				),
+			),
+			$driver->query( 'SELECT id, value FROM info_delete_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$comma_delete = $driver->query(
+			"DELETE d FROM info_delete_items d, information_schema.tables it
+			WHERE d.value = it.table_name AND it.table_schema = 'wp'"
+		);
+		$this->assertSame( 1, $comma_delete->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id'    => 2,
+					'value' => 'other',
+				),
+			),
+			$driver->query( 'SELECT id, value FROM info_delete_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_multi_table_delete_rejects_unsupported_shapes(): void {
 		$this->requireDuckDBRuntime();
 
@@ -4786,10 +5582,6 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a NATURAL JOIN t2 b',
 					'message' => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
-				),
-				array(
-					'sql'     => 'DELETE a, b FROM t1 a CROSS JOIN t2 b ON a.id = b.id',
-					'message' => 'CROSS JOIN ... ON is not supported',
 				),
 				array(
 					'sql'     => 'DELETE a, b FROM t1 a STRAIGHT_JOIN t2 b ON a.id = b.id',
@@ -4971,6 +5763,35 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$update = $driver->query( "UPDATE wp_posts SET post_title = 'draft' WHERE ID = 0" );
 		$this->assertSame( 0, $update->columnCount() );
 		$this->assertFalse( $update->getColumnMeta( 0 ) );
+	}
+
+	public function test_write_and_control_statements_expose_empty_result_metadata(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		foreach (
+			array(
+				'CREATE TABLE empty_meta (id INT, note VARCHAR(20))',
+				'CREATE INDEX empty_meta_note ON empty_meta (note)',
+				'ALTER TABLE empty_meta ADD COLUMN extra INT',
+				'TRUNCATE TABLE empty_meta',
+				'DROP INDEX empty_meta_note ON empty_meta',
+				'SET autocommit=1',
+				'START TRANSACTION',
+				'COMMIT',
+				'LOCK TABLES empty_meta READ',
+				'UNLOCK TABLES',
+				'DROP TABLE empty_meta',
+			) as $sql
+		) {
+			$this->assert_empty_statement_result( $driver->query( $sql ), $sql );
+		}
 	}
 
 	public function test_direct_column_metadata_type_matrix_for_supported_mysql_types(): void {
@@ -8183,6 +9004,70 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal );
 	}
 
+	public function test_information_schema_refresh_inserts_are_batched(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE batched_info_metadata (
+				id INT NOT NULL,
+				slug VARCHAR(20) NOT NULL,
+				name VARCHAR(20),
+				KEY slug_name_key (slug, name)
+			)'
+		);
+
+		$column_rows = $driver->query(
+			"SELECT column_name
+			FROM information_schema.columns
+			WHERE table_schema = 'wp' AND table_name = 'batched_info_metadata'
+			ORDER BY ordinal_position"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'id', 'slug', 'name' ), array_column( $column_rows, 'COLUMN_NAME' ) );
+
+		$column_inserts = array_values(
+			array_filter(
+				$driver->get_last_duckdb_queries(),
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'INSERT INTO "__wp_duckdb_information_schema_columns"' );
+				}
+			)
+		);
+		$this->assertCount( 1, $column_inserts );
+		$this->assertStringContainsString(
+			"), ('def', 'wp', 'batched_info_metadata', 'slug'",
+			$column_inserts[0]
+		);
+
+		$statistics_rows = $driver->query(
+			"SELECT index_name, seq_in_index, column_name
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp' AND table_name = 'batched_info_metadata'
+			ORDER BY index_name, seq_in_index"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'slug', 'name' ), array_column( $statistics_rows, 'COLUMN_NAME' ) );
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $statistics_rows, 'SEQ_IN_INDEX' ) ) );
+
+		$statistics_inserts = array_values(
+			array_filter(
+				$driver->get_last_duckdb_queries(),
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'INSERT INTO "__wp_duckdb_information_schema_statistics"' );
+				}
+			)
+		);
+		$this->assertCount( 1, $statistics_inserts );
+		$this->assertStringContainsString(
+			"), ('def', 'wp', 'batched_info_metadata', 1, 'wp', 'slug_name_key', 2, 'name'",
+			$statistics_inserts[0]
+		);
+	}
+
 	public function test_information_schema_constraints_expose_mysql_shaped_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -9126,7 +10011,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
-	public function test_foreign_keys_referencing_driver_managed_unique_keys_are_not_supported(): void {
+	public function test_foreign_keys_referencing_driver_managed_unique_keys_expose_metadata(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver(
@@ -9194,26 +10079,58 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$parent_usage
 		);
 
-		try {
-			$driver->query(
-				'CREATE TABLE unique_child (
-					id INT,
-					parent_code INT,
-					CONSTRAINT fk_parent_code FOREIGN KEY (parent_code) REFERENCES unique_parent (code)
-				)'
-			);
-			$this->fail( 'Expected DuckDB to reject a foreign key referencing a driver-managed unique index.' );
-		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			$this->assertStringContainsString( 'primary key or unique constraint', strtolower( $e->getMessage() ) );
-		}
+		$driver->query(
+			'CREATE TABLE unique_child (
+				id INT,
+				parent_code INT,
+				CONSTRAINT fk_parent_code FOREIGN KEY (parent_code) REFERENCES unique_parent (code)
+			)'
+		);
 
 		$referential_constraints = $driver->query(
-			"SELECT CONSTRAINT_NAME
+			"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
 			FROM information_schema.referential_constraints
-			WHERE table_name = 'unique_child'
-				OR referenced_table_name = 'unique_parent'"
+			WHERE constraint_schema = 'wp' AND table_name = 'unique_child'
+			ORDER BY constraint_name"
 		)->fetchAll( PDO::FETCH_ASSOC );
-		$this->assertSame( array(), $referential_constraints );
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'        => 'fk_parent_code',
+					'UNIQUE_CONSTRAINT_NAME' => 'code_u',
+					'TABLE_NAME'             => 'unique_child',
+					'REFERENCED_TABLE_NAME'  => 'unique_parent',
+				),
+			),
+			$referential_constraints
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'               => 'fk_parent_code',
+					'TABLE_NAME'                    => 'unique_child',
+					'COLUMN_NAME'                   => 'parent_code',
+					'POSITION_IN_UNIQUE_CONSTRAINT' => 1,
+					'REFERENCED_TABLE_NAME'         => 'unique_parent',
+					'REFERENCED_COLUMN_NAME'        => 'code',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME,
+					POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_NAME,
+					REFERENCED_COLUMN_NAME
+				FROM information_schema.key_column_usage
+				WHERE table_schema = 'wp' AND table_name = 'unique_child'
+				ORDER BY constraint_name, ordinal_position"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$create = $driver->query( 'SHOW CREATE TABLE unique_child' )->fetch( PDO::FETCH_ASSOC );
+		$this->assertStringContainsString(
+			'CONSTRAINT `fk_parent_code` FOREIGN KEY (`parent_code`) REFERENCES `unique_parent` (`code`)',
+			$create['Create Table']
+		);
 	}
 
 	public function test_information_schema_tables_exposes_mysql_shaped_table_metadata(): void {
@@ -9988,6 +10905,97 @@ SQL
 		$this->assertSame( array(), $driver->query( 'SHOW CREATE TABLE temp_items' )->fetchAll( PDO::FETCH_ASSOC ) );
 	}
 
+	public function test_repeated_metadata_reads_do_not_reensure_metadata_tables(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE metadata_cache_items (id INT NOT NULL, name VARCHAR(20), KEY name_key (name))' );
+
+		$first = $driver->query( 'SHOW INDEX FROM metadata_cache_items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'name_key' ), array_column( $first, 'Key_name' ) );
+
+		$second = $driver->query( 'SHOW INDEX FROM metadata_cache_items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $first, $second );
+
+		foreach ( $driver->get_last_duckdb_queries() as $duckdb_sql ) {
+			$this->assertStringNotContainsString( 'CREATE TABLE IF NOT EXISTS "__wp_duckdb_index_metadata"', $duckdb_sql );
+			$this->assertStringNotContainsString( "pragma_table_info('__wp_duckdb_index_metadata')", $duckdb_sql );
+		}
+
+		$driver->query( 'CREATE TEMPORARY TABLE temp_metadata_cache_items (id INT NOT NULL, name VARCHAR(20), KEY temp_name_key (name))' );
+		$temp_first = $driver->query( 'SHOW INDEX FROM temp_metadata_cache_items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'temp_name_key' ), array_column( $temp_first, 'Key_name' ) );
+
+		$temp_second = $driver->query( 'SHOW INDEX FROM temp_metadata_cache_items' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $temp_first, $temp_second );
+
+		foreach ( $driver->get_last_duckdb_queries() as $duckdb_sql ) {
+			$this->assertStringNotContainsString( 'CREATE TEMP TABLE IF NOT EXISTS "__wp_duckdb_temp_index_metadata"', $duckdb_sql );
+			$this->assertStringNotContainsString( "pragma_table_info('__wp_duckdb_temp_index_metadata')", $duckdb_sql );
+		}
+	}
+
+	public function test_create_table_metadata_inserts_are_batched(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE batched_metadata (
+				id INT NOT NULL,
+				slug VARCHAR(20) NOT NULL,
+				name VARCHAR(20),
+				KEY slug_name_key (slug, name)
+			)'
+		);
+
+		$queries        = $driver->get_last_duckdb_queries();
+		$column_inserts = array_values(
+			array_filter(
+				$queries,
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'INSERT INTO "__wp_duckdb_column_metadata"' );
+				}
+			)
+		);
+		$index_inserts  = array_values(
+			array_filter(
+				$queries,
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'INSERT INTO "__wp_duckdb_index_metadata"' );
+				}
+			)
+		);
+
+		$this->assertCount( 1, $column_inserts );
+		$this->assertCount( 1, $index_inserts );
+		$this->assertStringContainsString(
+			"), ('batched_metadata', 2, 'slug'",
+			$column_inserts[0]
+		);
+		$this->assertStringContainsString(
+			"), ('batched_metadata', 'slug_name_key', 1, 2, 'name'",
+			$index_inserts[0]
+		);
+
+		$this->assertSame(
+			array( 'id', 'slug', 'name' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM batched_metadata' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+		$index_rows = $driver->query( 'SHOW INDEX FROM batched_metadata' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'slug', 'name' ), array_column( $index_rows, 'Column_name' ) );
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $index_rows, 'Seq_in_index' ) ) );
+	}
+
 	public function test_temporary_table_inline_checks_use_temp_metadata_only(): void {
 		$this->requireDuckDBRuntime();
 
@@ -10129,6 +11137,73 @@ SQL
 		$this->assertSame(
 			array( array( 'a' => 1 ) ),
 			$driver->query( 'SELECT * FROM t' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_targeted_table_resolution_preserves_temp_shadow_without_broad_table_scan(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE runtime_lookup_target (persistent_id INT, persistent_label VARCHAR(20))' );
+		$driver->query( "INSERT INTO runtime_lookup_target VALUES (1, 'persistent')" );
+
+		for ( $i = 0; $i < 5; ++$i ) {
+			$driver->query( 'CREATE TEMPORARY TABLE runtime_lookup_noise_' . $i . ' (noise_id INT)' );
+		}
+
+		$driver->query( 'CREATE TEMPORARY TABLE runtime_lookup_target (temp_id INT, temp_label VARCHAR(20))' );
+		$driver->query( "INSERT INTO runtime_lookup_target VALUES (2, 'temporary')" );
+
+		$this->assertSame(
+			array(
+				array(
+					'temp_id'    => 2,
+					'temp_label' => 'temporary',
+				),
+			),
+			$driver->query( 'SELECT * FROM runtime_lookup_target' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'ALTER TABLE runtime_lookup_target ADD COLUMN temp_marker INT' );
+		foreach ( $driver->get_last_duckdb_queries() as $duckdb_sql ) {
+			$this->assertFalse(
+				0 === strpos( $duckdb_sql, 'SELECT table_name FROM information_schema.tables' )
+				&& false !== strpos( $duckdb_sql, 'ORDER BY table_name' ),
+				$duckdb_sql
+			);
+		}
+
+		$this->assertSame(
+			array( 'temp_id', 'temp_label', 'temp_marker' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM runtime_lookup_target' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE runtime_lookup_target' );
+		foreach ( $driver->get_last_duckdb_queries() as $duckdb_sql ) {
+			$this->assertFalse(
+				0 === strpos( $duckdb_sql, 'SELECT table_name FROM information_schema.tables' )
+				&& false !== strpos( $duckdb_sql, 'ORDER BY table_name' ),
+				$duckdb_sql
+			);
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'persistent_id'    => 1,
+					'persistent_label' => 'persistent',
+				),
+			),
+			$driver->query( 'SELECT * FROM runtime_lookup_target' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( 'persistent_id', 'persistent_label' ),
+			array_column( $driver->query( 'SHOW COLUMNS FROM runtime_lookup_target' )->fetchAll( PDO::FETCH_ASSOC ), 'Field' )
 		);
 	}
 
@@ -13632,7 +14707,6 @@ SQL
 				'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_multi FOREIGN KEY (parent_id, other_id) REFERENCES alter_fk_limit_parent (id, other_id)' => 'Only single-column foreign keys are supported',
 				'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_schema FOREIGN KEY (parent_id) REFERENCES wp.alter_fk_limit_parent (id)' => 'Schema-qualified references are not supported',
 				'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_cascade FOREIGN KEY (parent_id) REFERENCES alter_fk_limit_parent (id) ON DELETE CASCADE' => 'ON DELETE CASCADE is not supported',
-				'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_unique_gap FOREIGN KEY (code) REFERENCES alter_fk_limit_parent (code)' => 'single-column referenced PRIMARY KEY',
 				'ALTER TABLE alter_fk_limit_temp ADD CONSTRAINT fk_temp FOREIGN KEY (parent_id) REFERENCES alter_fk_limit_parent (id)' => 'temporary tables is not supported',
 				'ALTER TABLE alter_fk_limit_child ADD COLUMN parent_ref INT REFERENCES alter_fk_limit_parent (id)' => 'Inline REFERENCES constraints are only supported in CREATE TABLE',
 				'ALTER TABLE alter_fk_limit_child ADD COLUMN should_not_exist INT DEFAULT 2, ADD CONSTRAINT fk_multi_action FOREIGN KEY (parent_id) REFERENCES alter_fk_limit_parent (id)' => 'ADD/DROP FOREIGN KEY cannot be combined with other ALTER TABLE actions',
@@ -13651,6 +14725,31 @@ SQL
 			$this->assertSame( $before_child, $this->alter_table_foreign_key_lifecycle_snapshot( $driver, 'alter_fk_limit_child' ) );
 			$this->assertSame( $before_temp, $driver->query( 'SELECT id, parent_id FROM alter_fk_limit_temp ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ) );
 		}
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER TABLE alter_fk_limit_child ADD CONSTRAINT fk_unique_gap FOREIGN KEY (code) REFERENCES alter_fk_limit_parent (code)' )->rowCount()
+		);
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'        => 'fk_unique_gap',
+					'UNIQUE_CONSTRAINT_NAME' => 'code_u',
+					'TABLE_NAME'             => 'alter_fk_limit_child',
+					'REFERENCED_TABLE_NAME'  => 'alter_fk_limit_parent',
+				),
+			),
+			$driver->query(
+				"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
+				FROM information_schema.referential_constraints
+				WHERE constraint_schema = 'wp' AND table_name = 'alter_fk_limit_child'
+				ORDER BY constraint_name"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString(
+			'CONSTRAINT `fk_unique_gap` FOREIGN KEY (`code`) REFERENCES `alter_fk_limit_parent` (`code`)',
+			$driver->query( 'SHOW CREATE TABLE alter_fk_limit_child' )->fetch( PDO::FETCH_ASSOC )['Create Table']
+		);
 
 		$driver->query( 'BEGIN' );
 		try {
@@ -14772,6 +15871,14 @@ SQL
 			)->fetchAll( PDO::FETCH_ASSOC ),
 			'child_show_create'       => $driver->query( 'SHOW CREATE TABLE alter_check_child_guard' )->fetchAll( PDO::FETCH_ASSOC ),
 		);
+	}
+
+	private function assert_empty_statement_result( WP_DuckDB_Result_Statement $result, string $sql ): void {
+		$this->assertSame( 0, $result->rowCount(), 'Row count mismatch for SQL: ' . $sql );
+		$this->assertSame( 0, $result->columnCount(), 'Column count mismatch for SQL: ' . $sql );
+		$this->assertFalse( $result->getColumnMeta( 0 ), 'Column metadata mismatch for SQL: ' . $sql );
+		$this->assertFalse( $result->fetch( PDO::FETCH_ASSOC ), 'Fetch mismatch for SQL: ' . $sql );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ), 'Fetch-all mismatch for SQL: ' . $sql );
 	}
 
 	private function assertDriverQueryRejected( WP_DuckDB_Driver $driver, string $sql, string $message_substring = '' ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

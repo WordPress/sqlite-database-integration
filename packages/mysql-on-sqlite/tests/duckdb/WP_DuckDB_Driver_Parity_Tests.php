@@ -72,6 +72,32 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, RAND(3) AS r FROM seeded_rand_rows ORDER BY id' );
 	}
 
+	public function test_select_seeded_rand_expression_seeds_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_rand_expr (id INT, seed_text VARCHAR(20))',
+				"INSERT INTO seeded_rand_expr (id, seed_text) VALUES (1, '1'), (2, '2'), (3, '3')",
+			)
+		);
+
+		$this->assertParityRows( 'SELECT id, RAND(CAST(seed_text AS SIGNED)) AS r FROM seeded_rand_expr ORDER BY id' );
+		$this->assertParityRows( 'SELECT RAND(NULLIF(1, 1)) AS r' );
+		$this->assertParityRows( 'SELECT RAND(CAST(1 AS SIGNED))' );
+	}
+
+	public function test_select_wildcard_seeded_rand_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_rand_wildcard (id INT, name VARCHAR(20))',
+				"INSERT INTO seeded_rand_wildcard (id, name) VALUES (1, 'a'), (2, 'b')",
+			)
+		);
+
+		$this->assertParityRows( 'SELECT *, RAND(1) AS r FROM seeded_rand_wildcard ORDER BY id' );
+		$this->assertParityRows( 'SELECT *, RAND(1) AS r, id AS explicit_id FROM seeded_rand_wildcard ORDER BY id' );
+		$this->assertParityRows( 'SELECT *, id AS explicit_id, RAND(CAST(id AS SIGNED)) AS r FROM seeded_rand_wildcard ORDER BY id' );
+	}
+
 	public function test_insert_values_seeded_rand_literals_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -89,27 +115,62 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_out ORDER BY id' );
 	}
 
-	public function test_seeded_rand_where_and_order_by_contexts_have_explicit_rejection_contract(): void {
+	public function test_insert_set_seeded_rand_literals_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
-				'CREATE TABLE seeded_rand_ctx (id INT, value DOUBLE)',
-				'INSERT INTO seeded_rand_ctx (id, value) VALUES (1, 0.0), (2, 0.0), (3, 0.0)',
+				'CREATE TABLE seeded_rand_set (id INT, value DOUBLE, other DOUBLE)',
 			)
 		);
 
-		$this->assertDuckDBRejectsWhileSqliteAccepts(
-			'SELECT id FROM seeded_rand_ctx WHERE RAND(1) < 0.5 ORDER BY id',
-			'top-level SELECT expression'
+		$this->assertParityRowCount( 'INSERT INTO seeded_rand_set SET id = 1, value = RAND(1), other = RAND(1)' );
+		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_set ORDER BY id' );
+
+		$this->assertParityRowCount( 'INSERT seeded_rand_set SET id = 2, value = RAND(NULL), other = RAND(1) + 0' );
+		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_set ORDER BY id' );
+	}
+
+	public function test_update_seeded_rand_literals_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_rand_update (id INT, value DOUBLE, other DOUBLE)',
+				'INSERT INTO seeded_rand_update (id, value, other) VALUES (1, 0.0, 0.0), (2, 0.0, 0.0), (3, 0.0, 0.0)',
+			)
 		);
-		$this->assertDuckDBRejectsWhileSqliteAccepts(
-			'SELECT id FROM seeded_rand_ctx ORDER BY RAND(1)',
-			'top-level SELECT expression'
+
+		$this->assertParityRowCount( 'UPDATE seeded_rand_update SET value = RAND(1) WHERE id = 1' );
+		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_update ORDER BY id' );
+
+		$this->assertParityRowCount( 'UPDATE seeded_rand_update SET value = RAND(1), other = RAND(1) ORDER BY id LIMIT 2' );
+		$this->assertParityRows( 'SELECT id, value, other FROM seeded_rand_update ORDER BY id' );
+	}
+
+	public function test_select_order_by_seeded_rand_literal_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_rand_order (id INT)',
+				'INSERT INTO seeded_rand_order (id) VALUES (1), (2), (3), (4), (5)',
+			)
 		);
-		$this->assertDuckDBRejectsWithoutMutatingRows(
-			'UPDATE seeded_rand_ctx SET value = 9 WHERE RAND(1) < 0.5',
-			'top-level SELECT expression',
-			'SELECT id, value FROM seeded_rand_ctx ORDER BY id'
+
+		$this->assertParityRows( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1)' );
+		$this->assertParityRows( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1) DESC' );
+	}
+
+	public function test_seeded_rand_select_and_update_where_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE seeded_rand_ctx (id INT, value DOUBLE)',
+				'INSERT INTO seeded_rand_ctx (id, value) VALUES (3, 0.0), (1, 0.0), (2, 0.0)',
+				'CREATE TABLE seeded_rand_delete_ctx (id INT)',
+				'INSERT INTO seeded_rand_delete_ctx (id) VALUES (3), (1), (2)',
+			)
 		);
+
+		$this->assertParityRows( 'SELECT id FROM seeded_rand_ctx WHERE RAND(1) < 0.5 ORDER BY id' );
+		$this->assertParityRowCount( 'UPDATE seeded_rand_ctx SET value = 9 WHERE RAND(1) < 0.5' );
+		$this->assertParityRows( 'SELECT id, value FROM seeded_rand_ctx ORDER BY id' );
+		$this->assertParityRowCount( 'DELETE FROM seeded_rand_delete_ctx WHERE RAND(1) < 0.5' );
+		$this->assertParityRows( 'SELECT id FROM seeded_rand_delete_ctx ORDER BY id' );
 	}
 
 	public function test_select_cast_convert_binary_expressions_match_sqlite(): void {
@@ -295,6 +356,77 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, int_value, decimal_value, float_value FROM numeric_not_null_coercions ORDER BY id' );
 	}
 
+	public function test_non_strict_numeric_insert_select_write_coercions_match_sqlite(): void {
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE numeric_insert_select_coercions (
+					id INT PRIMARY KEY,
+					int_value INT NOT NULL,
+					decimal_value DECIMAL(10,2) NOT NULL,
+					float_value FLOAT NOT NULL,
+					nullable_int INT
+				)',
+				'CREATE TABLE numeric_insert_select_source (
+					id INT,
+					int_text VARCHAR(20),
+					decimal_text VARCHAR(20),
+					float_text VARCHAR(20),
+					nullable_text VARCHAR(20)
+				)',
+				"INSERT INTO numeric_insert_select_source VALUES
+					(1, 'bad-int', 'bad-decimal', 'bad-float', NULL),
+					(2, '7', '8.25', '9.5', '11')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'INSERT INTO numeric_insert_select_coercions
+				(id, int_value, decimal_value, float_value, nullable_int)
+			SELECT id, int_text, decimal_text, float_text, nullable_text
+			FROM numeric_insert_select_source
+			ORDER BY id'
+		);
+		$this->assertParityRows(
+			'SELECT id, int_value, decimal_value, float_value, nullable_int
+			FROM numeric_insert_select_coercions
+			ORDER BY id'
+		);
+
+		$this->assertParityRowCount(
+			'INSERT INTO numeric_insert_select_coercions
+				(id, int_value, decimal_value, float_value, nullable_int)
+			SELECT 3, NULL, NULL, NULL, NULL'
+		);
+		$this->assertParityRows(
+			'SELECT id, int_value, decimal_value, float_value, nullable_int
+			FROM numeric_insert_select_coercions
+			ORDER BY id'
+		);
+
+		$this->assertParityRowCount(
+			"INSERT IGNORE INTO numeric_insert_select_coercions
+				(id, int_value, decimal_value, float_value, nullable_int)
+			SELECT 1, 'ignored-int', 'ignored-decimal', 'ignored-float', 'ignored-nullable'"
+		);
+		$this->assertParityRows(
+			'SELECT id, int_value, decimal_value, float_value, nullable_int
+			FROM numeric_insert_select_coercions
+			ORDER BY id'
+		);
+
+		$this->assertParityRowCount(
+			"REPLACE INTO numeric_insert_select_coercions
+				(id, int_value, decimal_value, float_value, nullable_int)
+			SELECT 2, 'replace-int', 'replace-decimal', 'replace-float', 'replace-nullable'"
+		);
+		$this->assertParityRows(
+			'SELECT id, int_value, decimal_value, float_value, nullable_int
+			FROM numeric_insert_select_coercions
+			ORDER BY id'
+		);
+	}
+
 	public function test_strict_numeric_write_errors_preserve_duckdb_rows(): void {
 		$driver = new WP_DuckDB_Driver(
 			array(
@@ -394,6 +526,90 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			),
 			$driver->query( 'SELECT id, int_value, decimal_value, float_value FROM strict_numeric_write_coercions ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
+	}
+
+	public function test_strict_integer_fractional_writes_reject_like_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE strict_integer_write_rejections (
+					id INT PRIMARY KEY,
+					int_value INT,
+					big_value BIGINT,
+					decimal_value DECIMAL(10,2),
+					float_value FLOAT
+				)',
+				'CREATE TABLE strict_integer_write_source (
+					id INT,
+					int_text VARCHAR(20),
+					big_text VARCHAR(20),
+					decimal_text VARCHAR(20),
+					float_text VARCHAR(20)
+				)',
+				'INSERT INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+					VALUES (1, 7, 8, 9.25, 10.5)',
+				"INSERT INTO strict_integer_write_source
+					VALUES (2, '4.5', '8', '9.25', '10.5')",
+			)
+		);
+
+		$state_sql                       = 'SELECT id, int_value, big_value, decimal_value, float_value
+			FROM strict_integer_write_rejections
+			ORDER BY id';
+		$assert_rejects_without_mutation = function ( string $sql ) use ( $state_sql ): void {
+			$this->assertParityErrorContains( $sql, 'REAL value in INTEGER column' );
+			$this->assertParityRows( $state_sql );
+		};
+
+		$assert_rejects_without_mutation(
+			"INSERT INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+			VALUES (2, '4.5', 8, 9.25, 10.5)"
+		);
+		$assert_rejects_without_mutation(
+			"INSERT INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+			VALUES (2, 4, '4e-1', 9.25, 10.5)"
+		);
+		$assert_rejects_without_mutation(
+			"INSERT INTO strict_integer_write_rejections SET
+				id = 2,
+				int_value = '4.5',
+				big_value = 8,
+				decimal_value = 9.25,
+				float_value = 10.5"
+		);
+		$assert_rejects_without_mutation(
+			"REPLACE INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+			VALUES (1, '4.5', 8, 9.25, 10.5)"
+		);
+		$assert_rejects_without_mutation(
+			"UPDATE strict_integer_write_rejections
+			SET int_value = '4.5'
+			WHERE id = 1"
+		);
+		$assert_rejects_without_mutation(
+			"INSERT INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+			VALUES (1, 7, 8, 9.25, 10.5)
+			ON DUPLICATE KEY UPDATE int_value = '4.5'"
+		);
+		$assert_rejects_without_mutation(
+			"INSERT INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+			VALUES (1, '4.5', 8, 9.25, 10.5)
+			ON DUPLICATE KEY UPDATE int_value = int_value + VALUES(int_value)"
+		);
+		$assert_rejects_without_mutation(
+			'INSERT INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+			SELECT id, int_text, big_text, decimal_text, float_text
+			FROM strict_integer_write_source'
+		);
+		$assert_rejects_without_mutation(
+			"REPLACE INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+			SELECT 1, '4.5', 8, 9.25, 10.5"
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO strict_integer_write_rejections (id, int_value, big_value, decimal_value, float_value)
+			VALUES (2, '4.0', '8.00', 9.25, 10.5)"
+		);
+		$this->assertParityRows( $state_sql );
 	}
 
 	public function test_show_full_tables_sql_matches_sqlite(): void {
@@ -584,6 +800,15 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 
 	public function test_session_variable_sql_matches_sqlite(): void {
 		$this->assertParityRows( 'SELECT @@autocommit, @@session.autocommit, @@big_tables, @@SESSION.big_tables' );
+		$this->assertParityRows(
+			'SELECT @@GLOBAL.gtid_purged,
+				@@GLOBAL.log_bin,
+				@@GLOBAL.log_bin_trust_function_creators,
+				@@GLOBAL.sql_mode,
+				@@SESSION.max_allowed_packet,
+				@@SESSION.sql_mode'
+		);
+		$this->assertParityRows( 'SELECT @@gLoBAL.gTiD_purGed, @@sEssIOn.sqL_moDe' );
 
 		$this->assertParityRowCount( 'SET SESSION autocommit = 1, big_tables = 0' );
 		$this->assertParityRows( 'SELECT @@autocommit, @@session.autocommit, @@big_tables, @@session.big_tables' );
@@ -608,10 +833,73 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRowCount( "SET @@session.default_storage_engine = 'MyISAM'" );
 		$this->assertParityRows( 'SELECT @@default_storage_engine' );
 
+		$this->assertParityRowCount(
+			'SET default_collation_for_utf8mb4 = utf8mb4_0900_ai_ci,
+				resultset_metadata = FULL,
+				session_track_gtids = OWN_GTID,
+				session_track_transaction_info = STATE,
+				transaction_isolation = SERIALIZABLE,
+				use_secondary_engine = FORCED'
+		);
+		$this->assertParityRows(
+			'SELECT @@default_collation_for_utf8mb4,
+				@@resultset_metadata,
+				@@session_track_gtids,
+				@@session_track_transaction_info,
+				@@transaction_isolation,
+				@@use_secondary_engine'
+		);
+		$this->assertParityRowCount( "SET @@session.session_track_transaction_info = 'CHARACTERISTICS'" );
+		$this->assertParityRows( 'SELECT @@session.session_track_transaction_info' );
+
 		$this->assertParityRowCount( 'SET autocommit = OFF' );
 		$this->assertParityRows( 'SELECT @@autocommit' );
+		$this->assertParityRows( 'SELECT @@autocommit AS ac' );
+		$this->assertParityRows( 'SELECT @@autocommit + 0' );
+		$this->assertParityRows( 'SELECT COALESCE(@@autocommit, 1)' );
 		$this->assertParityRowCount( 'SET big_tables = ON' );
 		$this->assertParityRows( 'SELECT @@big_tables' );
+
+		$this->assertParityRowCount(
+			'SET end_markers_in_json = ON,
+				explicit_defaults_for_timestamp = OFF,
+				keep_files_on_create = ON,
+				old_alter_table = OFF,
+				print_identified_with_as_hex = ON,
+				require_row_format = OFF,
+				select_into_disk_sync = ON,
+				session_track_schema = ON,
+				session_track_state_change = OFF,
+				show_create_table_skip_secondary_engine = ON,
+				show_create_table_verbosity = OFF,
+				sql_auto_is_null = ON,
+				sql_big_selects = OFF,
+				sql_buffer_result = ON,
+				sql_safe_updates = OFF,
+				transaction_read_only = OFF'
+		);
+		$this->assertParityRows(
+			'SELECT @@end_markers_in_json,
+				@@explicit_defaults_for_timestamp,
+				@@keep_files_on_create,
+				@@old_alter_table,
+				@@print_identified_with_as_hex,
+				@@require_row_format,
+				@@select_into_disk_sync,
+				@@session_track_schema,
+				@@session_track_state_change,
+				@@show_create_table_skip_secondary_engine,
+				@@show_create_table_verbosity,
+				@@sql_auto_is_null,
+				@@sql_big_selects,
+				@@sql_buffer_result,
+				@@sql_safe_updates,
+				@@transaction_read_only'
+		);
+		$this->assertParityRowCount( 'SET @old_safe_updates = @@sql_safe_updates' );
+		$this->assertParityRowCount( 'SET @@sql_safe_updates = ON' );
+		$this->assertParityRowCount( 'SET @@sql_safe_updates = @old_safe_updates' );
+		$this->assertParityRows( 'SELECT @@sql_safe_updates' );
 
 		$this->assertParityRowCount( 'SET sql_warnings = ON' );
 		$this->assertParityRows( 'SELECT @@sql_warnings' );
@@ -640,9 +928,41 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 
 		$this->assertParityRowCount( 'SET @signed = -2, @decimal = +1.25, @flag = TRUE' );
 		$this->assertParityRows( 'SELECT @signed, @decimal, @flag' );
+
+		$this->assertParityRowCount( 'SET @my_var = @my_var + 1' );
+		$this->assertParityRows( 'SELECT @my_var' );
+
+		$this->assertParityRowCount( 'SET @my_var = @my_var + 1' );
+		$this->assertParityRows( 'SELECT @my_var' );
+		$this->assertParityRows( 'SELECT @my_var AS alias, 1' );
+		$this->assertParityRows( 'SELECT @my_var + 1' );
+		$this->assertParityRows( 'SELECT @my_var + 1 AS expr_var' );
+		$this->assertParityRows( 'SELECT COALESCE(@my_var, 1)' );
+		$this->assertParityRows( 'SELECT COALESCE(@missing, 1)' );
+		$this->assertParityRows( 'SELECT @my_var AS alias, 1 FROM DUAL' );
+
+		$this->assertParityRowCount( 'SET @other = 4, @sum = @my_var + @other' );
+		$this->assertParityRows( 'SELECT @sum' );
+
+		$this->assertParityRowCount( 'SET @db = DATABASE(), @version = VERSION()' );
+		$this->assertParityRows( 'SELECT @db, @version' );
 	}
 
 	public function test_dump_check_variable_backup_and_restore_sql_matches_sqlite(): void {
+		$this->assertParityRowCount(
+			"SET character_set_client = 'latin1',
+				character_set_results = 'latin1',
+				collation_connection = latin1_swedish_ci,
+				time_zone = '+02:00',
+				sql_notes = 1"
+		);
+		$this->assertParityRowCount( '/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;' );
+		$this->assertParityRowCount( '/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;' );
+		$this->assertParityRowCount( '/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;' );
+		$this->assertParityRowCount( '/*!50503 SET NAMES utf8mb4 */;' );
+		$this->assertParityRowCount( '/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;' );
+		$this->assertParityRowCount( "/*!40103 SET TIME_ZONE='+00:00' */;" );
+
 		$this->assertParityRowCount(
 			'/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;'
 		);
@@ -653,9 +973,43 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 		$this->assertParityRows( 'SELECT @OLD_FOREIGN_KEY_CHECKS, @@FOREIGN_KEY_CHECKS' );
 
+		$this->assertParityRowCount( "/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;" );
+		$this->assertParityRowCount( '/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;' );
+		$this->assertParityRowCount( '/*!40101 SET @saved_cs_client = @@character_set_client */; ' );
+		$this->assertParityRowCount( '/*!50503 SET character_set_client = utf8mb4 */;' );
+		$this->assertParityRows(
+			'SELECT @OLD_CHARACTER_SET_CLIENT,
+				@OLD_CHARACTER_SET_RESULTS,
+				@OLD_COLLATION_CONNECTION,
+				@OLD_TIME_ZONE,
+				@OLD_SQL_MODE,
+				@OLD_SQL_NOTES,
+				@saved_cs_client,
+				@@CHARACTER_SET_CLIENT,
+				@@TIME_ZONE,
+				@@SQL_MODE,
+				@@SQL_NOTES'
+		);
+
+		$this->assertParityRowCount( '/*!40101 SET character_set_client = @saved_cs_client */;' );
+		$this->assertParityRowCount( '/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;' );
+		$this->assertParityRowCount( '/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;' );
 		$this->assertParityRowCount( '/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;' );
 		$this->assertParityRowCount( '/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;' );
-		$this->assertParityRows( 'SELECT @@UNIQUE_CHECKS, @@FOREIGN_KEY_CHECKS' );
+		$this->assertParityRowCount( '/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;' );
+		$this->assertParityRowCount( '/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;' );
+		$this->assertParityRowCount( '/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;' );
+		$this->assertParityRowCount( '/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;' );
+		$this->assertParityRows(
+			'SELECT @@CHARACTER_SET_CLIENT,
+				@@CHARACTER_SET_RESULTS,
+				@@COLLATION_CONNECTION,
+				@@TIME_ZONE,
+				@@SQL_MODE,
+				@@UNIQUE_CHECKS,
+				@@FOREIGN_KEY_CHECKS,
+				@@SQL_NOTES'
+		);
 
 		$this->assertParityRowCount(
 			'SET @RESTORED_UNIQUE_CHECKS = 1, @RESTORED_FOREIGN_KEY_CHECKS = "0"'
@@ -1011,6 +1365,14 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
 		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount(
+			'UPDATE t1 a CROSS JOIN t2 b ON a.id = b.id
+			SET a.note = b.note
+			WHERE b.flag = 1'
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
 	}
 
 	public function test_straight_joined_update_matches_sqlite(): void {
@@ -1027,6 +1389,49 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			"UPDATE t1 a STRAIGHT_JOIN t2 b ON a.id = b.id
 			SET a.note = 'straight', a.only_t1 = a.only_t1 + b.flag
 			WHERE b.flag = 1"
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+	}
+
+	public function test_left_and_right_joined_update_match_sqlite_current_rewrite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30), (4, 'a4', 40)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (5, 'b5', 1)",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id
+			SET a.note = 'left'"
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount(
+			"UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id
+			SET a.note = 'right'"
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+	}
+
+	public function test_natural_joined_update_matches_sqlite_current_rewrite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30), (4, 'a4', 40)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (5, 'b5', 1)",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"UPDATE t1 a NATURAL JOIN t2 b
+			SET a.note = 'natural'"
 		);
 		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
 		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
@@ -1139,194 +1544,23 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
 	}
 
-	public function test_joined_update_unsupported_join_forms_document_current_duckdb_gap(): void {
-		foreach (
+	public function test_joined_update_unqualified_unique_aliased_target_matches_sqlite_current_rewrite(): void {
+		$this->runParitySetup(
 			array(
-				array(
-					'sql'              => "UPDATE t1 a LEFT JOIN t2 b ON a.id = b.id SET a.note = 'left'",
-					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
-					'sqlite_row_count' => 2,
-					'sqlite_rows'      => array(
-						array(
-							'id'      => '1',
-							'note'    => 'left',
-							'only_t1' => '10',
-						),
-						array(
-							'id'      => '2',
-							'note'    => 'a2',
-							'only_t1' => '20',
-						),
-						array(
-							'id'      => '3',
-							'note'    => 'left',
-							'only_t1' => '30',
-						),
-						array(
-							'id'      => '4',
-							'note'    => 'a4',
-							'only_t1' => '40',
-						),
-					),
-				),
-				array(
-					'sql'              => "UPDATE t1 a RIGHT JOIN t2 b ON a.id = b.id SET a.note = 'right'",
-					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
-					'sqlite_row_count' => 2,
-					'sqlite_rows'      => array(
-						array(
-							'id'      => '1',
-							'note'    => 'right',
-							'only_t1' => '10',
-						),
-						array(
-							'id'      => '2',
-							'note'    => 'a2',
-							'only_t1' => '20',
-						),
-						array(
-							'id'      => '3',
-							'note'    => 'right',
-							'only_t1' => '30',
-						),
-						array(
-							'id'      => '4',
-							'note'    => 'a4',
-							'only_t1' => '40',
-						),
-					),
-				),
-				array(
-					'sql'              => 'UPDATE t1 a CROSS JOIN t2 b ON a.id = b.id SET a.note = b.note WHERE b.flag = 1',
-					'duckdb_message'   => 'CROSS JOIN ... ON is not supported',
-					'sqlite_row_count' => 2,
-					'sqlite_rows'      => array(
-						array(
-							'id'      => '1',
-							'note'    => 'b1',
-							'only_t1' => '10',
-						),
-						array(
-							'id'      => '2',
-							'note'    => 'a2',
-							'only_t1' => '20',
-						),
-						array(
-							'id'      => '3',
-							'note'    => 'b3',
-							'only_t1' => '30',
-						),
-						array(
-							'id'      => '4',
-							'note'    => 'a4',
-							'only_t1' => '40',
-						),
-					),
-				),
-				array(
-					'sql'              => "UPDATE t1 a NATURAL JOIN t2 b SET a.note = 'natural'",
-					'duckdb_message'   => 'Only comma joins, CROSS JOIN, and INNER JOIN ... ON or USING are supported',
-					'sqlite_row_count' => 4,
-					'sqlite_rows'      => array(
-						array(
-							'id'      => '1',
-							'note'    => 'natural',
-							'only_t1' => '10',
-						),
-						array(
-							'id'      => '2',
-							'note'    => 'natural',
-							'only_t1' => '20',
-						),
-						array(
-							'id'      => '3',
-							'note'    => 'natural',
-							'only_t1' => '30',
-						),
-						array(
-							'id'      => '4',
-							'note'    => 'natural',
-							'only_t1' => '40',
-						),
-					),
-				),
-			) as $case
-		) {
-			$drivers = $this->createJoinedUpdateGapDrivers();
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30), (4, 'a4', 40)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (5, 'b5', 1)",
+			)
+		);
 
-			$this->assertSame(
-				$case['sqlite_row_count'],
-				(int) $drivers['sqlite']->query( $case['sql'], PDO::FETCH_ASSOC ),
-				'SQLite row count changed for SQL: ' . $case['sql']
-			);
-			$this->assertDuckDBGapQueryRejected( $drivers['duckdb'], $case['sql'], $case['duckdb_message'] );
-
-			$this->assertSame(
-				$case['sqlite_rows'],
-				$drivers['sqlite']->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id', PDO::FETCH_ASSOC ),
-				'SQLite rows changed for SQL: ' . $case['sql']
-			);
-			$this->assertSame(
-				$this->joinedUpdateGapInitialDuckDBRows(),
-				$drivers['duckdb']->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
-				'DuckDB rejected joined UPDATE mutated t1 for SQL: ' . $case['sql']
-			);
-			$this->assertSame(
-				$this->joinedUpdateGapInitialDuckDBSourceRows(),
-				$drivers['duckdb']->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
-				'DuckDB rejected joined UPDATE mutated t2 for SQL: ' . $case['sql']
-			);
-		}
-	}
-
-	public function test_joined_update_unqualified_unique_aliased_target_rejects_duckdb_gap(): void {
-		$drivers = $this->createJoinedUpdateGapDrivers();
-		$sql     = 'UPDATE t1 a JOIN t2 b ON a.id = b.id
+		$this->assertParityRowCount(
+			'UPDATE t1 a JOIN t2 b ON a.id = b.id
 			SET only_t1 = 99
-			WHERE b.flag = 1';
-
-		$this->assertSame( 4, (int) $drivers['sqlite']->query( $sql, PDO::FETCH_ASSOC ) );
-		$this->assertDuckDBGapQueryRejected(
-			$drivers['duckdb'],
-			$sql,
-			"Unqualified UPDATE target column 'only_t1' is not supported for aliased joined UPDATE targets"
+			WHERE b.flag = 1'
 		);
-
-		$this->assertSame(
-			array(
-				array(
-					'id'      => '1',
-					'note'    => 'a1',
-					'only_t1' => '99',
-				),
-				array(
-					'id'      => '2',
-					'note'    => 'a2',
-					'only_t1' => '99',
-				),
-				array(
-					'id'      => '3',
-					'note'    => 'a3',
-					'only_t1' => '99',
-				),
-				array(
-					'id'      => '4',
-					'note'    => 'a4',
-					'only_t1' => '99',
-				),
-			),
-			$drivers['sqlite']->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id', PDO::FETCH_ASSOC )
-		);
-		$this->assertSame(
-			$this->joinedUpdateGapInitialDuckDBRows(),
-			$drivers['duckdb']->query( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
-			'DuckDB rejected joined UPDATE mutated t1.'
-		);
-		$this->assertSame(
-			$this->joinedUpdateGapInitialDuckDBSourceRows(),
-			$drivers['duckdb']->query( 'SELECT id, note, flag FROM t2 ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC ),
-			'DuckDB rejected joined UPDATE mutated t2.'
-		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
 	}
 
 	public function test_joined_update_derived_table_claim_query_matches_sqlite(): void {
@@ -1477,6 +1711,66 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
 		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+	}
+
+	public function test_cross_joined_delete_on_predicates_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
+				'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
+				"INSERT INTO t1 VALUES (1, 'a1', 10), (2, 'a2', 20), (3, 'a3', 30)",
+				"INSERT INTO t2 VALUES (1, 'b1', 1), (3, 'b3', 1), (4, 'b4', 1), (5, 'b5', 0)",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'DELETE a FROM t1 a CROSS JOIN t2 b ON a.id = b.id
+			WHERE b.flag = 1 AND a.id = 1'
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount(
+			'DELETE a, b FROM t1 a CROSS JOIN t2 b ON a.id = b.id
+			WHERE a.id = 3'
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+
+		$this->assertParityRowCount( "INSERT INTO t1 VALUES (6, 'a6', 60)" );
+		$this->assertParityRowCount( "INSERT INTO t2 VALUES (6, 'b6', 1)" );
+		$this->assertParityRowCount(
+			'DELETE FROM a USING t1 a CROSS JOIN t2 b ON a.id = b.id
+			WHERE b.id = 6'
+		);
+		$this->assertParityRows( 'SELECT id, note, only_t1 FROM t1 ORDER BY id' );
+		$this->assertParityRows( 'SELECT id, note, flag FROM t2 ORDER BY id' );
+	}
+
+	public function test_joined_delete_information_schema_source_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE info_delete_items (id INT, value VARCHAR(64))',
+				"INSERT INTO info_delete_items VALUES
+					(1, 'info_delete_items'),
+					(2, 'other'),
+					(3, 'info_delete_items'),
+					(4, 'info_delete_items')",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"DELETE d FROM info_delete_items d
+			JOIN information_schema.tables it ON d.value = it.table_name
+			WHERE it.table_schema = 'wp' AND d.id < 4"
+		);
+		$this->assertParityRows( 'SELECT id, value FROM info_delete_items ORDER BY id' );
+
+		$this->assertParityRowCount(
+			"DELETE d FROM info_delete_items d, information_schema.tables it
+			WHERE d.value = it.table_name AND it.table_schema = 'wp'"
+		);
+		$this->assertParityRows( 'SELECT id, value FROM info_delete_items ORDER BY id' );
 	}
 
 	public function test_joined_delete_target_wildcards_match_sqlite(): void {
@@ -4251,80 +4545,43 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name FROM alter_unique_drop_gap ORDER BY id' );
 	}
 
-	public function test_unique_key_foreign_key_metadata_documents_current_duckdb_gap(): void {
-		$sqlite_driver = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
-			'wp'
-		);
-		$duckdb_driver = new WP_DuckDB_Driver(
+	public function test_unique_key_foreign_key_metadata_matches_sqlite(): void {
+		$this->runParitySetup(
 			array(
-				'path'     => ':memory:',
-				'database' => 'wp',
+				'CREATE TABLE unique_parent (
+					id INT PRIMARY KEY,
+					code INT,
+					UNIQUE KEY code_u (code)
+				)',
+				'CREATE TABLE unique_child (
+					id INT,
+					parent_code INT,
+					CONSTRAINT fk_parent_code FOREIGN KEY (parent_code) REFERENCES unique_parent (code)
+				)',
 			)
 		);
 
-		$parent_sql = 'CREATE TABLE unique_parent (
-			id INT PRIMARY KEY,
-			code INT,
-			UNIQUE KEY code_u (code)
-		)';
-		$child_sql  = 'CREATE TABLE unique_child (
-			id INT,
-			parent_code INT,
-			CONSTRAINT fk_parent_code FOREIGN KEY (parent_code) REFERENCES unique_parent (code)
-		)';
-
-		$sqlite_driver->query( $parent_sql, PDO::FETCH_ASSOC );
-		$duckdb_driver->query( $parent_sql );
-		$sqlite_driver->query( $child_sql, PDO::FETCH_ASSOC );
-
-		try {
-			$duckdb_driver->query( $child_sql );
-			$this->fail( 'Expected DuckDB to reject a foreign key referencing a driver-managed unique index.' );
-		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			$this->assertStringContainsString( 'primary key or unique constraint', strtolower( $e->getMessage() ) );
-		}
-
-		$this->assertSame(
-			array(
-				array(
-					'CONSTRAINT_NAME'        => 'fk_parent_code',
-					'UNIQUE_CONSTRAINT_NAME' => 'code_u',
-					'TABLE_NAME'             => 'unique_child',
-					'REFERENCED_TABLE_NAME'  => 'unique_parent',
-				),
-			),
-			$sqlite_driver->query(
-				"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
-				FROM information_schema.referential_constraints
-				WHERE constraint_schema = 'wp' AND table_name = 'unique_child'
-				ORDER BY constraint_name",
-				PDO::FETCH_ASSOC
-			)
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+			FROM information_schema.table_constraints
+			WHERE table_schema = 'wp' AND table_name = 'unique_child'
+			ORDER BY constraint_name"
 		);
-
-		$sqlite_usage = $sqlite_driver->query(
+		$this->assertParityRows(
+			"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
+			FROM information_schema.referential_constraints
+			WHERE constraint_schema = 'wp' AND table_name = 'unique_child'
+			ORDER BY constraint_name"
+		);
+		$this->assertParityRows(
 			"SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME,
 				POSITION_IN_UNIQUE_CONSTRAINT, REFERENCED_TABLE_NAME,
 				REFERENCED_COLUMN_NAME
 			FROM information_schema.key_column_usage
 			WHERE table_schema = 'wp' AND table_name = 'unique_child'
-			ORDER BY constraint_name, ordinal_position",
-			PDO::FETCH_ASSOC
+			ORDER BY constraint_name, ordinal_position"
 		);
-		$this->assertSame(
-			array(
-				array(
-					'CONSTRAINT_NAME'               => 'fk_parent_code',
-					'TABLE_NAME'                    => 'unique_child',
-					'COLUMN_NAME'                   => 'parent_code',
-					'POSITION_IN_UNIQUE_CONSTRAINT' => '1',
-					'REFERENCED_TABLE_NAME'         => 'unique_parent',
-					'REFERENCED_COLUMN_NAME'        => 'code',
-				),
-			),
-			$sqlite_usage
-		);
+		$this->assertParityRows( 'SHOW CREATE TABLE unique_child' );
 	}
 
 	public function test_information_schema_tables_metadata_matches_sqlite(): void {
@@ -5047,97 +5304,6 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 					AND table_name LIKE '\\_\\_wp\\_duckdb\\_%select\\_%' ESCAPE '\\'
 				ORDER BY table_name"
 			)->fetchAll( PDO::FETCH_ASSOC )
-		);
-	}
-
-	private function createJoinedUpdateGapDrivers(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
-		$sqlite_driver = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
-			'wp'
-		);
-		$duckdb_driver = new WP_DuckDB_Driver(
-			array(
-				'path'     => ':memory:',
-				'database' => 'wp',
-			)
-		);
-
-		$setup_queries = array(
-			'CREATE TABLE t1 (id INT, note VARCHAR(20), only_t1 INT)',
-			'CREATE TABLE t2 (id INT, note VARCHAR(20), flag INT)',
-			"INSERT INTO t1 VALUES
-				(1, 'a1', 10),
-				(2, 'a2', 20),
-				(3, 'a3', 30),
-				(4, 'a4', 40)",
-			"INSERT INTO t2 VALUES
-				(1, 'b1', 1),
-				(3, 'b3', 1),
-				(5, 'b5', 1)",
-		);
-
-		foreach ( $setup_queries as $query ) {
-			$sqlite_driver->query( $query, PDO::FETCH_ASSOC );
-			$duckdb_driver->query( $query );
-		}
-
-		return array(
-			'sqlite' => $sqlite_driver,
-			'duckdb' => $duckdb_driver,
-		);
-	}
-
-	private function assertDuckDBGapQueryRejected( WP_DuckDB_Driver $driver, string $sql, string $message ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
-		try {
-			$driver->query( $sql );
-			$this->fail( 'Expected DuckDB joined UPDATE rejection for SQL: ' . $sql );
-		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			$this->assertStringContainsString( $message, $e->getMessage() );
-		}
-	}
-
-	private function joinedUpdateGapInitialDuckDBRows(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
-		return array(
-			array(
-				'id'      => 1,
-				'note'    => 'a1',
-				'only_t1' => 10,
-			),
-			array(
-				'id'      => 2,
-				'note'    => 'a2',
-				'only_t1' => 20,
-			),
-			array(
-				'id'      => 3,
-				'note'    => 'a3',
-				'only_t1' => 30,
-			),
-			array(
-				'id'      => 4,
-				'note'    => 'a4',
-				'only_t1' => 40,
-			),
-		);
-	}
-
-	private function joinedUpdateGapInitialDuckDBSourceRows(): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
-		return array(
-			array(
-				'id'   => 1,
-				'note' => 'b1',
-				'flag' => 1,
-			),
-			array(
-				'id'   => 3,
-				'note' => 'b3',
-				'flag' => 1,
-			),
-			array(
-				'id'   => 5,
-				'note' => 'b5',
-				'flag' => 1,
-			),
 		);
 	}
 

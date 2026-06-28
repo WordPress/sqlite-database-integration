@@ -59,14 +59,7 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 	 */
 	public function __construct( array $columns, array $rows, int $affected_rows = 0, array $column_meta = array() ) {
 		$this->columns       = array_values( $columns );
-		$this->rows          = array_values(
-			array_map(
-				function ( array $row ): array {
-					return array_values( $row );
-				},
-				$rows
-			)
-		);
+		$this->rows          = $this->normalize_rows( $rows );
 		$this->affected_rows = $affected_rows;
 		$this->setColumnMeta( $column_meta );
 	}
@@ -287,6 +280,39 @@ class WP_DuckDB_Result_Statement implements IteratorAggregate {
 		while ( false !== ( $row = $this->fetch() ) ) {
 			yield $row;
 		}
+	}
+
+	/**
+	 * Normalize input rows to zero-based numeric lists.
+	 *
+	 * @param array<int,array<mixed>> $rows Rows to normalize.
+	 * @return array<int,array<int,mixed>> Normalized rows.
+	 */
+	private function normalize_rows( array $rows ): array {
+		$normalized_rows = array();
+		foreach ( $rows as $row ) {
+			$normalized_rows[] = $this->is_list_array( $row ) ? $row : array_values( $row );
+		}
+
+		return $normalized_rows;
+	}
+
+	/**
+	 * Check whether an array is already a zero-based numeric list.
+	 *
+	 * @param array<mixed> $row Row array.
+	 * @return bool Whether the row has consecutive integer keys from zero.
+	 */
+	private function is_list_array( array $row ): bool {
+		$expected_key = 0;
+		foreach ( $row as $key => $_value ) {
+			if ( $key !== $expected_key ) {
+				return false;
+			}
+			++$expected_key;
+		}
+
+		return true;
 	}
 
 	/**
