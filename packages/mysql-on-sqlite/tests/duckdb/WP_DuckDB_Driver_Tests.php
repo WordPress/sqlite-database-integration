@@ -11272,6 +11272,53 @@ SQL
 		}
 	}
 
+	public function test_repeated_simple_select_metadata_uses_schema_cache_and_invalidates_after_alter(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE metadata_query_cache_items (
+				id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+				name VARCHAR(20) NOT NULL,
+				PRIMARY KEY (id)
+			)'
+		);
+
+		$queries = array();
+		$result  = $driver->query( 'SELECT id, name FROM metadata_query_cache_items WHERE id = 0 ORDER BY id' );
+		$this->assertSame( 2, $result->columnCount() );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$result = $driver->query( 'SELECT id, name FROM metadata_query_cache_items WHERE id = 0 ORDER BY id' );
+		$this->assertSame( 2, $result->columnCount() );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'metadata_query_cache_items' ) );
+
+		$driver->query( "ALTER TABLE metadata_query_cache_items ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'" );
+
+		$queries = array();
+		$result  = $driver->query( 'SELECT id, name, status FROM metadata_query_cache_items WHERE id = 0 ORDER BY id' );
+		$this->assertSame( 3, $result->columnCount() );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$result = $driver->query( 'SELECT id, name, status FROM metadata_query_cache_items WHERE id = 0 ORDER BY id' );
+		$this->assertSame( 3, $result->columnCount() );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'metadata_query_cache_items' ) );
+	}
+
 	public function test_create_table_metadata_inserts_are_batched(): void {
 		$this->requireDuckDBRuntime();
 
@@ -16239,6 +16286,21 @@ SQL
 	private function lastDuckDBQuery( WP_DuckDB_Driver $driver ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 		$queries = $driver->get_last_duckdb_queries();
 		return $queries[ count( $queries ) - 1 ];
+	}
+
+	private function count_duckdb_column_metadata_queries( array $queries, string $table_name ): int {
+		$count = 0;
+		foreach ( $queries as $query ) {
+			if (
+				false !== strpos( $query, 'FROM "__wp_duckdb_column_metadata"' )
+				&& false !== strpos( $query, 'ORDER BY ordinal_position' )
+				&& false !== strpos( $query, "'" . $table_name . "'" )
+			) {
+				++$count;
+			}
+		}
+
+		return $count;
 	}
 
 	private function lifecycleTableSql( string $table_name ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

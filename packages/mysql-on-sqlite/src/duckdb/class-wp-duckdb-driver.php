@@ -276,6 +276,41 @@ class WP_DuckDB_Driver {
 	private $ensured_metadata_tables = array();
 
 	/**
+	 * Cached persistent and temporary table names.
+	 *
+	 * @var array<string,string[]>
+	 */
+	private $table_name_cache = array();
+
+	/**
+	 * Cached MySQL-facing table metadata by table set.
+	 *
+	 * @var array<string,array<string,array<string,mixed>>>
+	 */
+	private $table_metadata_cache = array();
+
+	/**
+	 * Cached recorded column metadata by table.
+	 *
+	 * @var array<string,array<int,array<string,mixed>>>
+	 */
+	private $column_metadata_cache = array();
+
+	/**
+	 * Cached effective column metadata by table, including pragma fallback rows.
+	 *
+	 * @var array<string,array<int,array<string,mixed>>>
+	 */
+	private $table_column_metadata_cache = array();
+
+	/**
+	 * Cached AUTO_INCREMENT metadata by table.
+	 *
+	 * @var array<string,array{column_name:string,sequence_name:string}|null>
+	 */
+	private $auto_increment_metadata_cache = array();
+
+	/**
 	 * Whether a MySQL LOCK TABLES statement opened the current transaction.
 	 *
 	 * @var bool
@@ -10803,11 +10838,17 @@ class WP_DuckDB_Driver {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function table_column_metadata_rows( string $table_name, bool $temporary = false ): array {
+		$cache_key = $this->metadata_table_cache_key( $table_name, $temporary );
+		if ( isset( $this->table_column_metadata_cache[ $cache_key ] ) ) {
+			return $this->table_column_metadata_cache[ $cache_key ];
+		}
+
 		$metadata = $this->column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata ) === 0 ) {
 			$metadata = $this->pragma_column_metadata_rows( $table_name );
 		}
 
+		$this->table_column_metadata_cache[ $cache_key ] = $metadata;
 		return $metadata;
 	}
 
@@ -11336,6 +11377,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( $old_column_name ),
 			'Failed to update DuckDB column metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -11357,6 +11400,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( $column_name ),
 			'Failed to delete DuckDB column metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -20865,6 +20910,11 @@ class WP_DuckDB_Driver {
 	 * @return array{column_name:string,sequence_name:string}|null Metadata, or null when no AUTO_INCREMENT column is known.
 	 */
 	private function auto_increment_metadata_for_table( string $table_name, bool $temporary = false ): ?array {
+		$cache_key = $this->metadata_table_cache_key( $table_name, $temporary );
+		if ( array_key_exists( $cache_key, $this->auto_increment_metadata_cache ) ) {
+			return $this->auto_increment_metadata_cache[ $cache_key ];
+		}
+
 		try {
 			$stmt = $this->connection->query(
 				'SELECT column_name FROM '
@@ -20874,19 +20924,22 @@ class WP_DuckDB_Driver {
 					. " AND extra = 'auto_increment' ORDER BY ordinal_position LIMIT 1"
 			);
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
-			return $this->physical_auto_increment_metadata_for_table( $table_name, $temporary );
+			$this->auto_increment_metadata_cache[ $cache_key ] = $this->physical_auto_increment_metadata_for_table( $table_name, $temporary );
+			return $this->auto_increment_metadata_cache[ $cache_key ];
 		}
 
 		$column_name = $stmt->fetchColumn();
 		if ( false === $column_name || null === $column_name ) {
-			return $this->physical_auto_increment_metadata_for_table( $table_name, $temporary );
+			$this->auto_increment_metadata_cache[ $cache_key ] = $this->physical_auto_increment_metadata_for_table( $table_name, $temporary );
+			return $this->auto_increment_metadata_cache[ $cache_key ];
 		}
 
-		$column_name = (string) $column_name;
-		return array(
+		$column_name                                       = (string) $column_name;
+		$this->auto_increment_metadata_cache[ $cache_key ] = array(
 			'column_name'   => $column_name,
 			'sequence_name' => $this->sequence_name( $table_name, $column_name, $temporary ),
 		);
+		return $this->auto_increment_metadata_cache[ $cache_key ];
 	}
 
 	/**
@@ -21369,6 +21422,50 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Return a cache key for table-scoped metadata.
+	 *
+	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether to use session-local temporary metadata.
+	 * @return string Cache key.
+	 */
+	private function metadata_table_cache_key( string $table_name, bool $temporary ): string {
+		return $this->metadata_ensure_key( strtolower( $table_name ), $temporary );
+	}
+
+	/**
+	 * Clear cached schema metadata after DDL or metadata table writes.
+	 *
+	 * @param string|null $table_name Optional table name whose table-scoped metadata changed.
+	 * @param bool|null   $temporary  Optional table set whose metadata changed.
+	 */
+	private function clear_schema_metadata_cache( ?string $table_name = null, ?bool $temporary = null ): void {
+		if ( null === $table_name ) {
+			$this->table_name_cache              = array();
+			$this->table_metadata_cache          = array();
+			$this->column_metadata_cache         = array();
+			$this->table_column_metadata_cache   = array();
+			$this->auto_increment_metadata_cache = array();
+			return;
+		}
+
+		$sets = null === $temporary ? array( false, true ) : array( $temporary );
+		foreach ( $sets as $temporary_set ) {
+			$key = $this->metadata_table_cache_key( $table_name, $temporary_set );
+			unset(
+				$this->column_metadata_cache[ $key ],
+				$this->table_column_metadata_cache[ $key ],
+				$this->auto_increment_metadata_cache[ $key ]
+			);
+
+			$table_set_key = $this->metadata_ensure_key( 'tables', $temporary_set );
+			unset(
+				$this->table_name_cache[ $table_set_key ],
+				$this->table_metadata_cache[ $table_set_key ]
+			);
+		}
+	}
+
+	/**
 	 * Return the metadata table that stores secondary index rows.
 	 *
 	 * @param bool $temporary Whether to use session-local temporary metadata.
@@ -21494,6 +21591,8 @@ class WP_DuckDB_Driver {
 			$value_rows,
 			'Failed to store DuckDB index metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -21633,6 +21732,8 @@ class WP_DuckDB_Driver {
 			$value_rows,
 			'Failed to store DuckDB column metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -21672,6 +21773,8 @@ class WP_DuckDB_Driver {
 				. ')',
 			'Failed to store DuckDB table metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -21708,6 +21811,8 @@ class WP_DuckDB_Driver {
 			$value_rows,
 			'Failed to store DuckDB CHECK constraint metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -21759,6 +21864,8 @@ class WP_DuckDB_Driver {
 			$value_rows,
 			'Failed to store DuckDB FOREIGN KEY metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -21852,6 +21959,8 @@ class WP_DuckDB_Driver {
 				. ')',
 			'Failed to store DuckDB column metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -21996,6 +22105,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( $index_name ),
 			'Failed to delete DuckDB index metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -22014,6 +22125,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( $table_name ),
 			'Failed to delete DuckDB table index metadata'
 		);
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -22028,15 +22141,15 @@ class WP_DuckDB_Driver {
 		$this->ensure_check_metadata_table( $temporary );
 		$this->ensure_foreign_key_metadata_table( $temporary );
 
-		foreach (
-			array(
-				$this->index_metadata_table_name( $temporary )       => 'index',
-				$this->column_metadata_table_name( $temporary )      => 'column',
-				$this->table_metadata_table_name( $temporary )       => 'table',
-				$this->check_metadata_table_name( $temporary )       => 'CHECK constraint',
-				$this->foreign_key_metadata_table_name( $temporary ) => 'FOREIGN KEY',
-			) as $metadata_table => $label
-		) {
+		$metadata_tables = array(
+			$this->index_metadata_table_name( $temporary ) => 'index',
+			$this->column_metadata_table_name( $temporary ) => 'column',
+			$this->table_metadata_table_name( $temporary ) => 'table',
+			$this->check_metadata_table_name( $temporary ) => 'CHECK constraint',
+			$this->foreign_key_metadata_table_name( $temporary ) => 'FOREIGN KEY',
+		);
+
+		foreach ( $metadata_tables as $metadata_table => $label ) {
 			$this->execute_duckdb_query(
 				'DELETE FROM '
 					. $this->connection->quote_identifier( $metadata_table )
@@ -22045,6 +22158,8 @@ class WP_DuckDB_Driver {
 				'Failed to delete DuckDB ' . $label . ' metadata'
 			);
 		}
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -22090,6 +22205,8 @@ class WP_DuckDB_Driver {
 				'Failed to refresh DuckDB column metadata'
 			);
 		}
+
+		$this->clear_schema_metadata_cache( $table_name, $temporary );
 	}
 
 	/**
@@ -22136,6 +22253,8 @@ class WP_DuckDB_Driver {
 	 * Drop temporary information_schema compatibility snapshots.
 	 */
 	private function invalidate_information_schema_compatibility_tables(): void {
+		$this->clear_schema_metadata_cache();
+
 		foreach (
 			array(
 				self::INFO_SCHEMA_TABLES_TABLE,
@@ -22280,6 +22399,11 @@ class WP_DuckDB_Driver {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function column_metadata_rows( string $table_name, bool $temporary = false ): array {
+		$cache_key = $this->metadata_table_cache_key( $table_name, $temporary );
+		if ( isset( $this->column_metadata_cache[ $cache_key ] ) ) {
+			return $this->column_metadata_cache[ $cache_key ];
+		}
+
 		$this->ensure_column_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
@@ -22291,7 +22415,8 @@ class WP_DuckDB_Driver {
 			'Failed to inspect DuckDB column metadata'
 		);
 
-		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+		$this->column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );
+		return $this->column_metadata_cache[ $cache_key ];
 	}
 
 	/**
@@ -22691,6 +22816,11 @@ class WP_DuckDB_Driver {
 	 * @return array<string,array<string,mixed>> Metadata keyed by table name.
 	 */
 	private function table_metadata_by_table( bool $temporary = false ): array {
+		$cache_key = $this->metadata_ensure_key( 'tables', $temporary );
+		if ( isset( $this->table_metadata_cache[ $cache_key ] ) ) {
+			return $this->table_metadata_cache[ $cache_key ];
+		}
+
 		$this->ensure_table_metadata_table( $temporary );
 
 		$stmt = $this->execute_duckdb_query(
@@ -22708,6 +22838,7 @@ class WP_DuckDB_Driver {
 			$metadata[ (string) $row['table_name'] ] = $row;
 		}
 
+		$this->table_metadata_cache[ $cache_key ] = $metadata;
 		return $metadata;
 	}
 
@@ -23678,6 +23809,11 @@ class WP_DuckDB_Driver {
 	 * @return string[] Table names.
 	 */
 	private function user_table_names(): array {
+		$cache_key = $this->metadata_ensure_key( 'tables', false );
+		if ( isset( $this->table_name_cache[ $cache_key ] ) ) {
+			return $this->table_name_cache[ $cache_key ];
+		}
+
 		$stmt = $this->execute_duckdb_query(
 			'SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()'
 				. " AND table_type = 'BASE TABLE'"
@@ -23709,10 +23845,11 @@ class WP_DuckDB_Driver {
 			'Failed to inspect DuckDB tables'
 		);
 
-		return array_map(
+		$this->table_name_cache[ $cache_key ] = array_map(
 			'strval',
 			$stmt->fetchAll( PDO::FETCH_COLUMN )
 		);
+		return $this->table_name_cache[ $cache_key ];
 	}
 
 	/**
@@ -23721,6 +23858,11 @@ class WP_DuckDB_Driver {
 	 * @return string[] Table names.
 	 */
 	private function temporary_user_table_names(): array {
+		$cache_key = $this->metadata_ensure_key( 'tables', true );
+		if ( isset( $this->table_name_cache[ $cache_key ] ) ) {
+			return $this->table_name_cache[ $cache_key ];
+		}
+
 		$stmt = $this->execute_duckdb_query(
 			"SELECT table_name FROM information_schema.tables WHERE table_type = 'LOCAL TEMPORARY'"
 				. ' AND table_name NOT LIKE '
@@ -23730,10 +23872,11 @@ class WP_DuckDB_Driver {
 			'Failed to inspect DuckDB temporary tables'
 		);
 
-		return array_map(
+		$this->table_name_cache[ $cache_key ] = array_map(
 			'strval',
 			$stmt->fetchAll( PDO::FETCH_COLUMN )
 		);
+		return $this->table_name_cache[ $cache_key ];
 	}
 
 	/**
