@@ -2268,6 +2268,49 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_on_duplicate_key_update_serialized_nul_payload_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL,
+					autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+					PRIMARY KEY (option_id),
+					UNIQUE KEY option_name (option_name)
+				)",
+			)
+		);
+
+		$payload = serialize(
+			array(
+				"\0*\0data" => "line\n<iframe class='youtube-player' rel=\"https://api.w.org/\">",
+			)
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO wp_options (option_name, option_value, autoload)
+			VALUES ('_transient_feed_mod_example', " . $this->mysql_single_quoted_literal( $payload ) . ", 'off')
+			ON DUPLICATE KEY UPDATE option_name = VALUES(option_name),
+				option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$updated_payload = serialize(
+			array(
+				"\0*\0data" => "line\n<iframe class='youtube-player' rel=\"https://api.w.org/\">",
+				'updated'   => "tail\0value",
+			)
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO wp_options (option_name, option_value, autoload)
+			VALUES ('_transient_feed_mod_example', " . $this->mysql_single_quoted_literal( $updated_payload ) . ", 'off')
+			ON DUPLICATE KEY UPDATE option_name = VALUES(option_name),
+				option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+		$this->assertParityRows( "SELECT option_name, option_value, autoload FROM wp_options WHERE option_name = '_transient_feed_mod_example'" );
+	}
+
 	public function test_on_duplicate_key_update_qualified_target_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -5403,6 +5446,23 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				ORDER BY table_name"
 			)->fetchAll( PDO::FETCH_ASSOC )
 		);
+	}
+
+	private function mysql_single_quoted_literal( string $value ): string {
+		$backslash = chr( 92 );
+
+		return "'" . strtr(
+			$value,
+			array(
+				$backslash => $backslash . $backslash,
+				chr( 0 )   => $backslash . '0',
+				chr( 10 )  => $backslash . 'n',
+				chr( 13 )  => $backslash . 'r',
+				chr( 26 )  => $backslash . 'Z',
+				"'"        => $backslash . "'",
+				'"'        => $backslash . '"',
+			)
+		) . "'";
 	}
 
 	private function lifecycleTableSql( string $table_name ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid

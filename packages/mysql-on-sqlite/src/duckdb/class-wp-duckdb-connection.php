@@ -309,7 +309,22 @@ class WP_DuckDB_Connection {
 		if ( is_int( $value ) || is_float( $value ) ) {
 			return (string) $value;
 		}
-		return "'" . str_replace( "'", "''", (string) $value ) . "'";
+		$value = (string) $value;
+		if ( false === strpos( $value, "\0" ) ) {
+			return "'" . str_replace( "'", "''", $value ) . "'";
+		}
+
+		$pieces = array();
+		foreach ( explode( "\0", $value ) as $offset => $part ) {
+			if ( 0 !== $offset ) {
+				$pieces[] = 'chr(0)';
+			}
+			if ( '' !== $part ) {
+				$pieces[] = "'" . str_replace( "'", "''", $part ) . "'";
+			}
+		}
+
+		return implode( ' || ', $pieces );
 	}
 
 	/**

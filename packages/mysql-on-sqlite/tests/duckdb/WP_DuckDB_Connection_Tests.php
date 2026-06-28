@@ -1119,6 +1119,14 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( '"table""name"', $duckdb->quote_identifier( 'table"name' ) );
 	}
 
+	public function test_quote_uses_chr_expression_for_nul_bytes(): void {
+		$duckdb = new WP_DuckDB_Connection( array( 'duckdb' => new stdClass() ) );
+
+		$this->assertSame( 'chr(0)', $duckdb->quote( "\0" ) );
+		$this->assertSame( "'a' || chr(0) || 'b''c'", $duckdb->quote( "a\0b'c" ) );
+		$this->assertSame( "'a' || chr(0) || chr(0) || 'b'", $duckdb->quote( "a\0\0b" ) );
+	}
+
 	private function createDuckDBResult( array $columns, array $rows ) {
 		return new class( $columns, $rows ) {
 			private $columns;

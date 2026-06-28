@@ -9033,6 +9033,73 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_insert_on_duplicate_key_update_preserves_serialized_nul_payloads(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name)
+			)"
+		);
+
+		$payload = serialize(
+			array(
+				"\0*\0data" => "line\n<iframe class='youtube-player' rel=\"https://api.w.org/\">",
+			)
+		);
+		$driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('_transient_feed_mod_example', " . $this->mysql_single_quoted_literal( $payload ) . ", 'off')
+			ON DUPLICATE KEY UPDATE option_name = VALUES(option_name),
+				option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$this->assertNotEmpty(
+			array_filter(
+				$duckdb_queries,
+				static function ( string $sql ): bool {
+					return false !== strpos( $sql, 'chr(0)' );
+				}
+			)
+		);
+		$stored_payload = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = '_transient_feed_mod_example'" )->fetchColumn();
+		$this->assertSame( bin2hex( $payload ), bin2hex( $stored_payload ) );
+		$this->assertSame(
+			$payload,
+			$stored_payload
+		);
+
+		$updated_payload = serialize(
+			array(
+				"\0*\0data" => "line\n<iframe class='youtube-player' rel=\"https://api.w.org/\">",
+				'updated'   => "tail\0value",
+			)
+		);
+		$updated         = $driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('_transient_feed_mod_example', " . $this->mysql_single_quoted_literal( $updated_payload ) . ", 'off')
+			ON DUPLICATE KEY UPDATE option_name = VALUES(option_name),
+				option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$this->assertSame( 1, $updated->rowCount() );
+		$stored_updated_payload = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = '_transient_feed_mod_example'" )->fetchColumn();
+		$this->assertSame( bin2hex( $updated_payload ), bin2hex( $stored_updated_payload ) );
+		$this->assertSame(
+			$updated_payload,
+			$stored_updated_payload
+		);
+	}
+
 	public function test_case_insensitive_unique_conflicts_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -17163,6 +17230,23 @@ SQL
 	private function lastDuckDBQuery( WP_DuckDB_Driver $driver ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 		$queries = $driver->get_last_duckdb_queries();
 		return $queries[ count( $queries ) - 1 ];
+	}
+
+	private function mysql_single_quoted_literal( string $value ): string {
+		$backslash = chr( 92 );
+
+		return "'" . strtr(
+			$value,
+			array(
+				$backslash => $backslash . $backslash,
+				chr( 0 )   => $backslash . '0',
+				chr( 10 )  => $backslash . 'n',
+				chr( 13 )  => $backslash . 'r',
+				chr( 26 )  => $backslash . 'Z',
+				"'"        => $backslash . "'",
+				'"'        => $backslash . '"',
+			)
+		) . "'";
 	}
 
 	private function count_duckdb_column_metadata_queries( array $queries, string $table_name ): int {
