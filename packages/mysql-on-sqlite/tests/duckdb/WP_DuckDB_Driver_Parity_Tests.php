@@ -1227,6 +1227,34 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_select_archive_year_month_group_order_by_post_date_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wptests_posts (ID, post_date, post_type, post_status) VALUES
+					(1, '2024-02-01 00:00:00', 'post', 'publish'),
+					(2, '2024-01-10 00:00:00', 'post', 'publish'),
+					(3, '2023-12-31 00:00:00', 'post', 'publish'),
+					(4, '2024-02-02 00:00:00', 'page', 'publish'),
+					(5, '2024-03-01 00:00:00', 'post', 'draft')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts
+			FROM wptests_posts
+			WHERE post_type = 'post' AND post_status = 'publish'
+			GROUP BY YEAR(post_date), MONTH(post_date)
+			ORDER BY post_date DESC"
+		);
+	}
+
 	public function test_select_index_hints_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

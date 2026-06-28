@@ -806,7 +806,8 @@ class WP_DuckDB_Driver {
 			$sql_tokens = $seeded_rand_ordering['tokens'];
 		}
 
-		$seeded_rand_rewrites = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
+		$seeded_rand_rewrites        = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
+		$grouped_date_order_rewrites = $this->grouped_date_order_by_rewrites( $sql_tokens );
 
 		$rewrite_information_schema_tables                  = $this->uses_information_schema_tables( $sql_tokens );
 		$rewrite_information_schema_columns                 = $this->uses_information_schema_columns( $sql_tokens );
@@ -848,7 +849,8 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_check_constraints,
 			$seeded_rand_rewrites,
 			false,
-			$group_by_expansion
+			$group_by_expansion,
+			$grouped_date_order_rewrites
 		);
 
 		if ( $has_sql_calc_found_rows ) {
@@ -863,7 +865,8 @@ class WP_DuckDB_Driver {
 					$rewrite_information_schema_referential_constraints,
 					$rewrite_information_schema_check_constraints,
 					$seeded_rand_rewrites,
-					$group_by_expansion
+					$group_by_expansion,
+					$grouped_date_order_rewrites
 				);
 				$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 				$result           = $this->apply_result_column_metadata( $result, $column_meta );
@@ -2356,6 +2359,175 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Parse a simple ORDER BY column reference and its optional direction.
+	 *
+	 * @param WP_Parser_Token[] $tokens ORDER BY item tokens.
+	 * @return array{column_name:string,qualifier:string|null,direction:string}|null Column reference, or null when unsupported.
+	 */
+	private function parse_order_by_column_reference_with_direction( array $tokens ): ?array {
+		$direction = 'ASC';
+		if ( count( $tokens ) > 0 ) {
+			$last = $tokens[ count( $tokens ) - 1 ];
+			if ( WP_MySQL_Lexer::ASC_SYMBOL === $last->id || WP_MySQL_Lexer::DESC_SYMBOL === $last->id ) {
+				$direction = WP_MySQL_Lexer::DESC_SYMBOL === $last->id ? 'DESC' : 'ASC';
+				array_pop( $tokens );
+			}
+		}
+
+		$column = $this->parse_group_by_column_reference( $tokens );
+		if ( null === $column ) {
+			return null;
+		}
+
+		return array(
+			'column_name' => $column['column_name'],
+			'qualifier'   => $column['qualifier'],
+			'direction'   => $direction,
+		);
+	}
+
+	/**
+	 * Build ORDER BY item rewrites for date-bucket GROUP BY queries.
+	 *
+	 * MySQL permits WordPress archive queries to group by YEAR(post_date), MONTH(post_date)
+	 * and order by the raw post_date. DuckDB requires that ORDER BY expression to be
+	 * grouped or aggregated, so use the bucket boundary date for deterministic ordering.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array<int,array{end:int,sql:string}> Rewrites keyed by ORDER BY item start offset.
+	 */
+	private function grouped_date_order_by_rewrites( array $tokens ): array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return array();
+		}
+		if (
+			null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::HAVING_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL )
+		) {
+			return array();
+		}
+
+		$group_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::GROUP_SYMBOL );
+		if (
+			null === $group_index
+			|| ! isset( $tokens[ $group_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_index + 1 ]->id
+		) {
+			return array();
+		}
+
+		$group_end = $this->primary_key_group_by_clause_end( $tokens, $group_index + 2 );
+		if (
+			! isset( $tokens[ $group_end ] )
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $group_end ]->id
+			|| ! isset( $tokens[ $group_end + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_end + 1 ]->id
+		) {
+			return array();
+		}
+
+		$grouped_date_columns = array();
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, $group_index + 2, $group_end ) as $item ) {
+			$column = $this->parse_date_group_by_column_reference( $item['tokens'] );
+			if ( null === $column ) {
+				continue;
+			}
+			$grouped_date_columns[ strtolower( $column['column_name'] ) ][] = $column['qualifier'];
+		}
+
+		if ( count( $grouped_date_columns ) === 0 ) {
+			return array();
+		}
+
+		$rewrites  = array();
+		$order_end = $this->primary_key_order_by_clause_end( $tokens, $group_end + 2 );
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, $group_end + 2, $order_end ) as $item ) {
+			$column = $this->parse_order_by_column_reference_with_direction( $item['tokens'] );
+			if (
+				null === $column
+				|| ! $this->grouped_date_column_matches_order_column( $grouped_date_columns, $column )
+			) {
+				continue;
+			}
+
+			$column_sql = '';
+			if ( null !== $column['qualifier'] ) {
+				$column_sql .= $this->connection->quote_identifier( $column['qualifier'] ) . '.';
+			}
+			$column_sql .= $this->connection->quote_identifier( $column['column_name'] );
+
+			$aggregate = 'DESC' === $column['direction'] ? 'MAX' : 'MIN';
+
+			$rewrites[ $item['start'] ] = array(
+				'end' => $item['end'],
+				'sql' => $aggregate . '(' . $column_sql . ') ' . $column['direction'],
+			);
+		}
+
+		return $rewrites;
+	}
+
+	/**
+	 * Parse YEAR/MONTH/DAY/DATE group bucket functions over a simple column.
+	 *
+	 * @param WP_Parser_Token[] $tokens GROUP BY item tokens.
+	 * @return array{column_name:string,qualifier:string|null}|null Column reference, or null when unsupported.
+	 */
+	private function parse_date_group_by_column_reference( array $tokens ): ?array {
+		if (
+			count( $tokens ) < 4
+			|| ! isset( $tokens[1] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$name = strtoupper( $tokens[0]->get_value() );
+		if ( ! in_array( $name, array( 'DATE', 'DAY', 'DAYOFMONTH', 'MONTH', 'YEAR' ), true ) ) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, 1 );
+		if ( count( $tokens ) !== $end_index ) {
+			return null;
+		}
+
+		$body  = array_slice( $tokens, 2, $end_index - 3 );
+		$items = $this->split_top_level_comma_items( $body );
+		if ( 1 !== count( $items ) || count( $items[0] ) === 0 ) {
+			return null;
+		}
+
+		return $this->parse_group_by_column_reference( $items[0] );
+	}
+
+	/**
+	 * Check whether an ORDER BY column is the source of a grouped date bucket.
+	 *
+	 * @param array<string,list<string|null>>                    $grouped_date_columns Grouped date columns keyed by lower-case column name.
+	 * @param array{column_name:string,qualifier:string|null,direction:string} $order_column         Parsed ORDER BY column.
+	 * @return bool Whether the order column is a grouped date bucket source.
+	 */
+	private function grouped_date_column_matches_order_column( array $grouped_date_columns, array $order_column ): bool {
+		$column_key = strtolower( $order_column['column_name'] );
+		if ( ! isset( $grouped_date_columns[ $column_key ] ) ) {
+			return false;
+		}
+
+		if ( null === $order_column['qualifier'] ) {
+			return true;
+		}
+
+		foreach ( $grouped_date_columns[ $column_key ] as $group_qualifier ) {
+			if ( null === $group_qualifier || 0 === strcasecmp( $group_qualifier, $order_column['qualifier'] ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
 	 * Check whether a token stream contains a top-level aggregate function call.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
@@ -2918,7 +3090,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_referential_constraints,
 		bool $rewrite_information_schema_check_constraints,
 		array $seeded_rand_rewrites = array(),
-		?array $group_by_expansion = null
+		?array $group_by_expansion = null,
+		array $order_by_item_rewrites = array()
 	): int {
 		$sql = $this->translate_tokens_to_duckdb_sql(
 			$tokens,
@@ -2931,7 +3104,8 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_check_constraints,
 			$seeded_rand_rewrites,
 			false,
-			$group_by_expansion
+			$group_by_expansion,
+			$order_by_item_rewrites
 		);
 
 		return (int) $this->execute_duckdb_query(
@@ -14664,7 +14838,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_check_constraints = false,
 		array $seeded_rand_rewrites = array(),
 		bool $rewrite_option_value_numeric_literal_comparisons = false,
-		?array $group_by_expansion = null
+		?array $group_by_expansion = null,
+		array $order_by_item_rewrites = array()
 	): string {
 		$pieces = array();
 
@@ -14684,6 +14859,12 @@ class WP_DuckDB_Driver {
 					$rewrite_information_schema_check_constraints
 				);
 				$index    = $group_by_expansion['group_end'] - 1;
+				continue;
+			}
+
+			if ( isset( $order_by_item_rewrites[ $index ] ) ) {
+				$pieces[] = $order_by_item_rewrites[ $index ]['sql'];
+				$index    = $order_by_item_rewrites[ $index ]['end'] - 1;
 				continue;
 			}
 
