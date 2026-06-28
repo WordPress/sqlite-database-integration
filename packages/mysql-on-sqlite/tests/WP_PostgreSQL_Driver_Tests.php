@@ -193,6 +193,198 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests result fetching avoids fetchAll() only for plain row fetch modes.
+	 */
+	public function test_result_fetch_helper_uses_incremental_path_only_for_plain_row_modes(): void {
+		$driver = ( new ReflectionClass( WP_PostgreSQL_Driver::class ) )->newInstanceWithoutConstructor();
+		$method = new ReflectionMethod( WP_PostgreSQL_Driver::class, 'fetch_and_decode_postgresql_result_rows' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$method->setAccessible( true );
+		}
+
+		$first_row        = (object) array(
+			'id'    => '1',
+			'label' => 'first',
+		);
+		$second_row       = (object) array(
+			'id'    => '2',
+			'label' => 'second',
+		);
+		$plain_statement  = new WP_PostgreSQL_Result_Materialization_Test_Statement(
+			array( $first_row, $second_row )
+		);
+		$plain_fetch_rows = $method->invoke(
+			$driver,
+			$plain_statement,
+			PDO::FETCH_OBJ,
+			array()
+		);
+
+		$this->assertSame( array( $first_row, $second_row ), $plain_fetch_rows );
+		$this->assertSame( array( PDO::FETCH_OBJ, PDO::FETCH_OBJ, PDO::FETCH_OBJ ), $plain_statement->fetch_modes );
+		$this->assertSame( array(), $plain_statement->fetch_all_modes );
+
+		$grouped_fetch_rows = array(
+			'odd' => array(
+				array(
+					'label' => 'first',
+				),
+			),
+		);
+		$grouped_statement  = new WP_PostgreSQL_Result_Materialization_Test_Statement(
+			array(),
+			$grouped_fetch_rows
+		);
+		$fallback_rows      = $method->invoke(
+			$driver,
+			$grouped_statement,
+			PDO::FETCH_GROUP | PDO::FETCH_ASSOC,
+			array()
+		);
+
+		$this->assertSame( $grouped_fetch_rows, $fallback_rows );
+		$this->assertSame( array(), $grouped_statement->fetch_modes );
+		$this->assertSame( array( PDO::FETCH_GROUP | PDO::FETCH_ASSOC ), $grouped_statement->fetch_all_modes );
+		$this->assertSame( array( array() ), $grouped_statement->fetch_all_args );
+	}
+
+	/**
+	 * Tests default object row materialization preserves ordering and metadata.
+	 */
+	public function test_query_materializes_default_object_rows_without_changing_public_contract(): void {
+		$driver = $this->create_driver();
+
+		$driver->get_connection()->query(
+			'CREATE TABLE result_materialization_order (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL
+			)'
+		);
+		$driver->get_connection()->query(
+			"INSERT INTO result_materialization_order (id, label) VALUES
+				(1, 'first'),
+				(2, 'second'),
+				(3, 'third')"
+		);
+
+		$rows = $driver->query( 'SELECT id, label FROM result_materialization_order ORDER BY id DESC' );
+
+		$row_ids    = array();
+		$row_labels = array();
+		foreach ( $rows as $row ) {
+			$row_ids[]    = $row->id;
+			$row_labels[] = $row->label;
+		}
+
+		$this->assertSame( $rows, $driver->get_last_return_value() );
+		$this->assertSame( array( '3', '2', '1' ), $row_ids );
+		$this->assertSame( array( 'third', 'second', 'first' ), $row_labels );
+		$this->assertSame( 2, $driver->get_last_column_count() );
+		$this->assertSame( array(), $this->get_driver_private_property( $driver, 'last_column_meta' ) );
+		$this->assertInstanceOf( PDOStatement::class, $this->get_driver_private_property( $driver, 'last_column_meta_statement' ) );
+		$this->assertSame( array( 'id', 'label' ), array_column( $driver->get_last_column_meta(), 'name' ) );
+	}
+
+	/**
+	 * Tests associative and grouped fetch modes keep their public result shapes.
+	 */
+	public function test_query_preserves_associative_and_grouped_fetch_modes(): void {
+		$driver = $this->create_driver();
+
+		$driver->get_connection()->query(
+			'CREATE TABLE result_materialization_fetch_modes (
+				id INTEGER PRIMARY KEY,
+				category TEXT NOT NULL,
+				label TEXT NOT NULL
+			)'
+		);
+		$driver->get_connection()->query(
+			"INSERT INTO result_materialization_fetch_modes (id, category, label) VALUES
+				(1, 'odd', 'first'),
+				(2, 'even', 'second'),
+				(3, 'odd', 'third')"
+		);
+
+		$assoc_rows = $driver->query(
+			'SELECT id, label FROM result_materialization_fetch_modes ORDER BY id ASC',
+			PDO::FETCH_ASSOC
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'id'    => '1',
+					'label' => 'first',
+				),
+				array(
+					'id'    => '2',
+					'label' => 'second',
+				),
+				array(
+					'id'    => '3',
+					'label' => 'third',
+				),
+			),
+			$assoc_rows
+		);
+		$this->assertSame( $assoc_rows, $driver->get_last_return_value() );
+
+		$grouped_rows = $driver->query(
+			'SELECT category, label FROM result_materialization_fetch_modes ORDER BY category ASC, id ASC',
+			PDO::FETCH_GROUP | PDO::FETCH_ASSOC
+		);
+
+		$this->assertSame(
+			array(
+				'even' => array(
+					array(
+						'label' => 'second',
+					),
+				),
+				'odd'  => array(
+					array(
+						'label' => 'first',
+					),
+					array(
+						'label' => 'third',
+					),
+				),
+			),
+			$grouped_rows
+		);
+		$this->assertSame( $grouped_rows, $driver->get_last_return_value() );
+	}
+
+	/**
+	 * Tests larger result sets stay fully materialized for wpdb compatibility.
+	 */
+	public function test_query_keeps_large_results_materialized_for_wpdb_compatibility(): void {
+		$driver = $this->create_driver();
+
+		$driver->get_connection()->query(
+			'CREATE TABLE result_materialization_large (
+				id INTEGER PRIMARY KEY,
+				label TEXT NOT NULL
+			)'
+		);
+		$driver->get_connection()->query(
+			"INSERT INTO result_materialization_large (id, label)
+			SELECT g, 'row-' || CAST(g AS text)
+			FROM generate_series(1, 256) AS g"
+		);
+
+		$rows = $driver->query( 'SELECT id, label FROM result_materialization_large ORDER BY id ASC' );
+
+		$this->assertCount( 256, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'row-1', $rows[0]->label );
+		$this->assertSame( '256', $rows[255]->id );
+		$this->assertSame( 'row-256', $rows[255]->label );
+		$this->assertSame( $rows, $driver->get_last_return_value() );
+		$this->assertSame( 2, $driver->get_last_column_count() );
+	}
+
+	/**
 	 * Tests write queries return PDO row counts.
 	 */
 	public function test_write_query_returns_row_count(): void {
@@ -34795,6 +34987,98 @@ $$'
 				"CREATE TABLE wp_posts ( ID bigint(20) unsigned NOT NULL auto_increment, post_author bigint(20) unsigned NOT NULL default '0', post_date datetime NOT NULL default '0000-00-00 00:00:00', post_date_gmt datetime NOT NULL default '0000-00-00 00:00:00', post_content longtext NOT NULL, post_title text NOT NULL, post_excerpt text NOT NULL, post_status varchar(20) NOT NULL default 'publish', comment_status varchar(20) NOT NULL default 'open', ping_status varchar(20) NOT NULL default 'open', post_password varchar(255) NOT NULL default '', post_name varchar(200) NOT NULL default '', to_ping text NOT NULL, pinged text NOT NULL, post_modified datetime NOT NULL default '0000-00-00 00:00:00', post_modified_gmt datetime NOT NULL default '0000-00-00 00:00:00', post_content_filtered longtext NOT NULL, post_parent bigint(20) unsigned NOT NULL default '0', guid varchar(255) NOT NULL default '', menu_order int(11) NOT NULL default '0', post_type varchar(20) NOT NULL default 'post', post_mime_type varchar(100) NOT NULL default '', comment_count bigint(20) NOT NULL default '0', PRIMARY KEY (ID), KEY post_name (post_name(191)), KEY type_status_date (post_type,post_status,post_date,ID), KEY post_parent (post_parent), KEY post_author (post_author) ) DEFAULT CHARACTER SET utf8mb4;",
 			)
 		);
+	}
+}
+
+/**
+ * PDOStatement test double for result materialization tests.
+ */
+class WP_PostgreSQL_Result_Materialization_Test_Statement extends PDOStatement {
+	/**
+	 * Fetch mode values received by fetch().
+	 *
+	 * @var array
+	 */
+	public $fetch_modes = array();
+
+	/**
+	 * Fetch mode values received by fetchAll().
+	 *
+	 * @var array
+	 */
+	public $fetch_all_modes = array();
+
+	/**
+	 * Additional argument lists received by fetchAll().
+	 *
+	 * @var array
+	 */
+	public $fetch_all_args = array();
+
+	/**
+	 * Rows returned by fetch().
+	 *
+	 * @var array
+	 */
+	private $fetch_rows;
+
+	/**
+	 * Current fetch() offset.
+	 *
+	 * @var int
+	 */
+	private $fetch_position = 0;
+
+	/**
+	 * Rows returned by fetchAll().
+	 *
+	 * @var array
+	 */
+	private $fetch_all_rows;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param array $fetch_rows     Rows returned one-by-one by fetch().
+	 * @param array $fetch_all_rows Rows returned by fetchAll().
+	 */
+	public function __construct( array $fetch_rows, array $fetch_all_rows = array() ) {
+		$this->fetch_rows     = $fetch_rows;
+		$this->fetch_all_rows = $fetch_all_rows;
+	}
+
+	/**
+	 * Fetch the next row.
+	 *
+	 * @param int|null $mode              Fetch mode.
+	 * @param int      $cursorOrientation Cursor orientation.
+	 * @param int      $cursorOffset      Cursor offset.
+	 * @return mixed Next row, or false when exhausted.
+	 */
+	// phpcs:disable WordPress.NamingConventions.ValidVariableName.VariableNotSnakeCase
+	#[\ReturnTypeWillChange]
+	public function fetch( $mode = null, $cursorOrientation = PDO::FETCH_ORI_NEXT, $cursorOffset = 0 ) {
+		$this->fetch_modes[] = $mode;
+		if ( ! array_key_exists( $this->fetch_position, $this->fetch_rows ) ) {
+			return false;
+		}
+
+		return $this->fetch_rows[ $this->fetch_position++ ];
+	}
+	// phpcs:enable WordPress.NamingConventions.ValidVariableName.VariableNotSnakeCase
+
+	/**
+	 * Fetch all rows.
+	 *
+	 * @param int|null $mode Fetch mode.
+	 * @param mixed    ...$args Additional fetch mode arguments.
+	 * @return array Rows.
+	 */
+	#[\ReturnTypeWillChange]
+	public function fetchAll( $mode = null, ...$args ) { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		$this->fetch_all_modes[] = $mode;
+		$this->fetch_all_args[]  = $args;
+		return $this->fetch_all_rows;
 	}
 }
 
