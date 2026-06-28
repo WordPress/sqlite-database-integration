@@ -521,6 +521,7 @@ class WP_DuckDB_Driver {
 			if ( $this->connection->inTransaction() ) {
 				$this->last_duckdb_queries[] = 'ROLLBACK';
 				$this->connection->rollback();
+				$this->clear_schema_state_after_rollback();
 			}
 			$this->table_lock_active = false;
 			return $this->empty_ddl_result();
@@ -607,11 +608,13 @@ class WP_DuckDB_Driver {
 			if ( $this->is_current_transaction_aborted_error( $error ) ) {
 				$this->last_duckdb_queries[] = 'ROLLBACK';
 				$this->connection->rollbackNativeTransaction();
+				$this->clear_schema_state_after_rollback();
 			}
 			return;
 		}
 
 		$this->connection->rollback();
+		$this->clear_schema_state_after_rollback();
 	}
 
 	/**
@@ -688,6 +691,7 @@ class WP_DuckDB_Driver {
 
 			$this->last_duckdb_queries[] = 'ROLLBACK';
 			$this->connection->rollbackNativeTransaction();
+			$this->clear_schema_state_after_rollback();
 			return;
 		}
 
@@ -706,6 +710,7 @@ class WP_DuckDB_Driver {
 
 			$this->last_duckdb_queries[] = 'ROLLBACK';
 			$this->connection->rollbackNativeTransaction();
+			$this->clear_schema_state_after_rollback();
 		}
 	}
 
@@ -4717,6 +4722,7 @@ class WP_DuckDB_Driver {
 		} catch ( Throwable $e ) {
 			if ( $started_transaction && $this->connection->inTransaction() ) {
 				$this->connection->rollback();
+				$this->clear_schema_state_after_rollback();
 			}
 			throw $e;
 		}
@@ -6234,6 +6240,7 @@ class WP_DuckDB_Driver {
 		} catch ( Throwable $e ) {
 			if ( $started_transaction && $this->connection->inTransaction() ) {
 				$this->connection->rollback();
+				$this->clear_schema_state_after_rollback();
 			}
 			throw $e;
 		}
@@ -7654,6 +7661,7 @@ class WP_DuckDB_Driver {
 		if ( $this->connection->inTransaction() ) {
 			$this->last_duckdb_queries[] = 'ROLLBACK';
 			$this->connection->rollback();
+			$this->clear_schema_state_after_rollback();
 		}
 		$this->table_lock_active = false;
 		return $this->empty_ddl_result();
@@ -11546,7 +11554,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$this->ensure_column_metadata_table( $temporary );
-		$this->execute_duckdb_query(
+		$this->execute_column_metadata_query(
 			'UPDATE '
 				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' SET column_name = '
@@ -11569,7 +11577,8 @@ class WP_DuckDB_Driver {
 				. $this->connection->quote( $table_name )
 				. ' AND column_name = '
 				. $this->connection->quote( $old_column_name ),
-			'Failed to update DuckDB column metadata'
+			'Failed to update DuckDB column metadata',
+			$temporary
 		);
 
 		$this->clear_schema_metadata_cache( $table_name, $temporary );
@@ -11585,14 +11594,15 @@ class WP_DuckDB_Driver {
 	private function delete_column_metadata( string $table_name, string $column_name, bool $temporary = false ): void {
 		$this->ensure_column_metadata_table( $temporary );
 
-		$this->execute_duckdb_query(
+		$this->execute_column_metadata_query(
 			'DELETE FROM '
 				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. ' AND column_name = '
 				. $this->connection->quote( $column_name ),
-			'Failed to delete DuckDB column metadata'
+			'Failed to delete DuckDB column metadata',
+			$temporary
 		);
 
 		$this->clear_schema_metadata_cache( $table_name, $temporary );
@@ -17113,6 +17123,7 @@ class WP_DuckDB_Driver {
 		} catch ( Throwable $e ) {
 			if ( $started_transaction && $this->connection->inTransaction() ) {
 				$this->connection->rollback();
+				$this->clear_schema_state_after_rollback();
 			}
 			throw $e;
 		}
@@ -19342,6 +19353,7 @@ class WP_DuckDB_Driver {
 		} catch ( Throwable $e ) {
 			if ( $started_transaction && $this->connection->inTransaction() ) {
 				$this->connection->rollback();
+				$this->clear_schema_state_after_rollback();
 			}
 			throw $e;
 		}
@@ -21516,13 +21528,14 @@ class WP_DuckDB_Driver {
 	private function auto_increment_sequences_for_table( string $table_name, bool $temporary = false ): array {
 		$this->ensure_column_metadata_table( $temporary );
 
-		$stmt = $this->execute_duckdb_query(
+		$stmt = $this->execute_column_metadata_query(
 			'SELECT column_name FROM '
 				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. " AND extra = 'auto_increment' ORDER BY ordinal_position",
-			'Failed to inspect DuckDB AUTO_INCREMENT metadata'
+			'Failed to inspect DuckDB AUTO_INCREMENT metadata',
+			$temporary
 		);
 
 		$sequence_names = array();
@@ -21822,6 +21835,7 @@ class WP_DuckDB_Driver {
 
 			$this->last_duckdb_queries[] = 'ROLLBACK';
 			$this->connection->rollbackNativeTransaction();
+			$this->clear_schema_state_after_rollback();
 			return $this->execute_duckdb_query( $sql, $context );
 		}
 	}
@@ -21966,6 +21980,33 @@ class WP_DuckDB_Driver {
 	 */
 	private function metadata_table_cache_key( string $table_name, bool $temporary ): string {
 		return $this->metadata_ensure_key( strtolower( $table_name ), $temporary );
+	}
+
+	/**
+	 * Clear cached schema metadata and metadata-table ensure state after rollback.
+	 */
+	private function clear_schema_state_after_rollback(): void {
+		$this->clear_schema_metadata_cache();
+		$this->clear_metadata_table_ensure_cache();
+	}
+
+	/**
+	 * Clear cached internal metadata table ensure state.
+	 *
+	 * @param bool|null $temporary Optional metadata table set to clear.
+	 */
+	private function clear_metadata_table_ensure_cache( ?bool $temporary = null ): void {
+		if ( null === $temporary ) {
+			$this->ensured_metadata_tables = array();
+			return;
+		}
+
+		$prefix = $temporary ? 'temporary:' : 'persistent:';
+		foreach ( array_keys( $this->ensured_metadata_tables ) as $ensure_key ) {
+			if ( 0 === strpos( $ensure_key, $prefix ) ) {
+				unset( $this->ensured_metadata_tables[ $ensure_key ] );
+			}
+		}
 	}
 
 	/**
@@ -22232,12 +22273,13 @@ class WP_DuckDB_Driver {
 	private function record_column_metadata( string $table_name, array $metadata, bool $temporary = false ): void {
 		$this->ensure_column_metadata_table( $temporary );
 
-		$this->execute_duckdb_query(
+		$this->execute_column_metadata_query(
 			'DELETE FROM '
 				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name ),
-			'Failed to reset DuckDB column metadata'
+			'Failed to reset DuckDB column metadata',
+			$temporary
 		);
 
 		$value_rows = array();
@@ -22275,6 +22317,48 @@ class WP_DuckDB_Driver {
 		);
 
 		$this->clear_schema_metadata_cache( $table_name, $temporary );
+	}
+
+	/**
+	 * Execute a column metadata query, repairing stale ensure cache if DuckDB lost the internal metadata table.
+	 *
+	 * @param string $sql       DuckDB SQL.
+	 * @param string $context   Error context.
+	 * @param bool   $temporary Whether the metadata table is temporary.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_column_metadata_query( string $sql, string $context, bool $temporary ): WP_DuckDB_Result_Statement {
+		try {
+			return $this->execute_duckdb_query( $sql, $context );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			if ( ! $this->is_missing_internal_metadata_table_exception( $e, $this->column_metadata_table_name( $temporary ) ) ) {
+				throw $e;
+			}
+
+			$this->clear_metadata_table_ensure_cache( $temporary );
+			$this->column_metadata_cache       = array();
+			$this->table_column_metadata_cache = array();
+			$this->ensure_column_metadata_table( $temporary );
+
+			return $this->execute_duckdb_query( $sql, $context );
+		}
+	}
+
+	/**
+	 * Check whether a DuckDB exception reports a missing internal metadata table.
+	 *
+	 * @param WP_DuckDB_Driver_Exception $exception      Driver exception.
+	 * @param string                     $metadata_table Internal metadata table name.
+	 * @return bool Whether the exception is a missing metadata table error.
+	 */
+	private function is_missing_internal_metadata_table_exception( WP_DuckDB_Driver_Exception $exception, string $metadata_table ): bool {
+		$message = $exception->getMessage();
+		if ( false === strpos( $message, $metadata_table ) ) {
+			return false;
+		}
+
+		return false !== stripos( $message, 'does not exist' )
+			|| false !== stripos( $message, 'not found' );
 	}
 
 	/**
@@ -22462,19 +22546,20 @@ class WP_DuckDB_Driver {
 	private function append_column_metadata( string $table_name, array $column, bool $temporary = false ): void {
 		$this->ensure_column_metadata_table( $temporary );
 
-		$stmt = $this->execute_duckdb_query(
+		$stmt = $this->execute_column_metadata_query(
 			'SELECT COUNT(*) AS column_count, COALESCE(MAX(ordinal_position), 0) AS max_ordinal FROM '
 				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name ),
-			'Failed to inspect DuckDB column metadata'
+			'Failed to inspect DuckDB column metadata',
+			$temporary
 		);
 		$row  = $stmt->fetch( PDO::FETCH_ASSOC );
 		if ( ! is_array( $row ) || 0 === (int) $row['column_count'] ) {
 			return;
 		}
 
-		$this->execute_duckdb_query(
+		$this->execute_column_metadata_query(
 			'INSERT INTO '
 				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' (table_name, ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment) VALUES ('
@@ -22498,7 +22583,8 @@ class WP_DuckDB_Driver {
 				. ', '
 				. $this->connection->quote( $column['comment'] )
 				. ')',
-			'Failed to store DuckDB column metadata'
+			'Failed to store DuckDB column metadata',
+			$temporary
 		);
 
 		$this->clear_schema_metadata_cache( $table_name, $temporary );
@@ -22691,13 +22777,17 @@ class WP_DuckDB_Driver {
 		);
 
 		foreach ( $metadata_tables as $metadata_table => $label ) {
-			$this->execute_duckdb_query(
-				'DELETE FROM '
-					. $this->connection->quote_identifier( $metadata_table )
-					. ' WHERE table_name = '
-					. $this->connection->quote( $table_name ),
-				'Failed to delete DuckDB ' . $label . ' metadata'
-			);
+			$sql     = 'DELETE FROM '
+				. $this->connection->quote_identifier( $metadata_table )
+				. ' WHERE table_name = '
+				. $this->connection->quote( $table_name );
+			$context = 'Failed to delete DuckDB ' . $label . ' metadata';
+
+			if ( $this->column_metadata_table_name( $temporary ) === $metadata_table ) {
+				$this->execute_column_metadata_query( $sql, $context, $temporary );
+			} else {
+				$this->execute_duckdb_query( $sql, $context );
+			}
 		}
 
 		$this->clear_schema_metadata_cache( $table_name, $temporary );
@@ -22734,7 +22824,7 @@ class WP_DuckDB_Driver {
 		);
 
 		foreach ( $metadata as $column ) {
-			$this->execute_duckdb_query(
+			$this->execute_column_metadata_query(
 				'UPDATE '
 					. $metadata_table
 					. ' SET column_key = '
@@ -22743,7 +22833,8 @@ class WP_DuckDB_Driver {
 					. $this->connection->quote( $table_name )
 					. ' AND column_name = '
 					. $this->connection->quote( $column['column_name'] ),
-				'Failed to refresh DuckDB column metadata'
+				'Failed to refresh DuckDB column metadata',
+				$temporary
 			);
 		}
 
@@ -22947,13 +23038,14 @@ class WP_DuckDB_Driver {
 
 		$this->ensure_column_metadata_table( $temporary );
 
-		$stmt = $this->execute_duckdb_query(
+		$stmt = $this->execute_column_metadata_query(
 			'SELECT ordinal_position, column_name, column_type, is_nullable, column_key, column_default, extra, collation_name, comment FROM '
 				. $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) )
 				. ' WHERE table_name = '
 				. $this->connection->quote( $table_name )
 				. ' ORDER BY ordinal_position',
-			'Failed to inspect DuckDB column metadata'
+			'Failed to inspect DuckDB column metadata',
+			$temporary
 		);
 
 		$this->column_metadata_cache[ $cache_key ] = $stmt->fetchAll( PDO::FETCH_ASSOC );

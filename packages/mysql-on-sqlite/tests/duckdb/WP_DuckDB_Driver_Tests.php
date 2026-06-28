@@ -11638,6 +11638,92 @@ SQL
 		$this->assertSame( array(), $driver->query( 'SHOW CREATE TABLE temp_items' )->fetchAll( PDO::FETCH_ASSOC ) );
 	}
 
+	public function test_temporary_column_metadata_recovers_after_internal_table_disappears(): void {
+		$this->requireDuckDBRuntime();
+
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$driver     = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TEMPORARY TABLE temp_metadata_seed (id INT, name VARCHAR(20))' );
+
+		$connection->query( 'DROP TABLE "__wp_duckdb_temp_column_metadata"' );
+
+		$driver->query(
+			'CREATE TEMPORARY TABLE temp_metadata_recovered (
+				id INT,
+				label VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+		);
+
+		$columns = array_column(
+			$driver->query( 'SHOW FULL COLUMNS FROM temp_metadata_recovered' )->fetchAll( PDO::FETCH_ASSOC ),
+			null,
+			'Field'
+		);
+
+		$this->assertSame( 'int', $columns['id']['Type'] );
+		$this->assertSame( 'varchar(20)', $columns['label']['Type'] );
+		$this->assertSame( 'utf8mb4_unicode_ci', $columns['label']['Collation'] );
+	}
+
+	public function test_temporary_metadata_tables_are_reensured_after_rollback(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( 'BEGIN' );
+		$driver->query(
+			'CREATE TEMPORARY TABLE rollback_temp_metadata (
+				c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+		);
+		$driver->query( 'ROLLBACK' );
+
+		$driver->query(
+			'CREATE TEMPORARY TABLE temp_metadata_after_rollback (
+				c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+		);
+
+		$create_queries = $driver->get_last_duckdb_queries();
+		$this->assertNotEmpty(
+			array_filter(
+				$create_queries,
+				function ( string $sql ): bool {
+					return false !== strpos( $sql, 'CREATE TEMP TABLE IF NOT EXISTS "__wp_duckdb_temp_column_metadata"' );
+				}
+			)
+		);
+		$this->assertNotEmpty(
+			array_filter(
+				$create_queries,
+				function ( string $sql ): bool {
+					return false !== strpos( $sql, 'CREATE TEMP TABLE IF NOT EXISTS "__wp_duckdb_temp_table_metadata"' );
+				}
+			)
+		);
+
+		$columns = $driver->query( 'SHOW FULL COLUMNS FROM temp_metadata_after_rollback' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( 'c', $columns[0]['Field'] );
+		$this->assertSame( 'utf8mb4_unicode_ci', $columns[0]['Collation'] );
+
+		try {
+			$driver->query( 'SHOW FULL COLUMNS FROM missing_temp_table' );
+			$this->fail( 'Expected missing user table to remain an error.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'DuckDB table does not exist: missing_temp_table.', $e->getMessage() );
+		}
+	}
+
 	public function test_repeated_metadata_reads_do_not_reensure_metadata_tables(): void {
 		$this->requireDuckDBRuntime();
 
