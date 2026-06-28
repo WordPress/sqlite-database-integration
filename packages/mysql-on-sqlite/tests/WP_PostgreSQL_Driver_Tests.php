@@ -16083,6 +16083,100 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 	}
 
 	/**
+	 * Tests SHOW COLUMNS and SHOW INDEX consume CREATE-time metadata without catalog reads.
+	 */
+	public function test_real_pgsql_show_columns_and_index_use_create_metadata_preseed(): void {
+		list( $driver, $connection ) = $this->create_create_metadata_preseed_capture_driver();
+		$table                       = 'wptests_show_metadata_preseed_columns_index';
+
+		$this->assertSame(
+			0,
+			$driver->query(
+				"CREATE TABLE `{$table}` (
+					`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					`title` varchar(64) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL DEFAULT '' COMMENT 'Title note',
+					`body` text CHARACTER SET big5,
+					`status` enum('draft','published') NOT NULL DEFAULT 'draft',
+					PRIMARY KEY (`id`),
+					UNIQUE KEY `title_lookup` (`title`) COMMENT 'Title lookup note',
+					KEY `body_prefix` (`body`(12)) COMMENT 'Body prefix note'
+				) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='metadata preseed table'"
+			)
+		);
+
+		$connection->clear_queries();
+		$preseed_columns = $driver->query( 'SHOW FULL COLUMNS FROM `' . $table . '`', PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $connection->get_queries() );
+		$this->assertCount( 4, $preseed_columns );
+
+		$id_column = $this->find_row_by_value( $preseed_columns, 'Field', 'id' );
+		$this->assertSame( 'bigint(20) unsigned', $this->get_row_value( $id_column, 'Type' ) );
+		$this->assertSame( 'NO', $this->get_row_value( $id_column, 'Null' ) );
+		$this->assertSame( 'PRI', $this->get_row_value( $id_column, 'Key' ) );
+		$this->assertSame( 'auto_increment', $this->get_row_value( $id_column, 'Extra' ) );
+
+		$title_column = $this->find_row_by_value( $preseed_columns, 'Field', 'title' );
+		$this->assertSame( 'varchar(64)', $this->get_row_value( $title_column, 'Type' ) );
+		$this->assertSame( 'latin1_swedish_ci', $this->get_row_value( $title_column, 'Collation' ) );
+		$this->assertSame( 'UNI', $this->get_row_value( $title_column, 'Key' ) );
+		$this->assertSame( '', $this->get_row_value( $title_column, 'Default' ) );
+		$this->assertSame( 'select,insert,update,references', $this->get_row_value( $title_column, 'Privileges' ) );
+		$this->assertSame( 'Title note', $this->get_row_value( $title_column, 'Comment' ) );
+
+		$body_column = $this->find_row_by_value( $preseed_columns, 'Field', 'body' );
+		$this->assertSame( 'MUL', $this->get_row_value( $body_column, 'Key' ) );
+		$this->assertSame( 'big5_chinese_ci', $this->get_row_value( $body_column, 'Collation' ) );
+
+		$connection->clear_queries();
+		$filtered_columns = $driver->query( 'SHOW COLUMNS FROM `' . $table . "` LIKE 'tit%'", PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $connection->get_queries() );
+		$this->assertSame( array( 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ), array_keys( $filtered_columns[0] ) );
+		$this->assertCount( 1, $filtered_columns );
+		$this->assertSame( 'title', $this->get_row_value( $filtered_columns[0], 'Field' ) );
+
+		$connection->clear_queries();
+		$preseed_indexes = $driver->query( 'SHOW INDEX FROM `' . $table . "` WHERE Key_name = 'body_prefix'", PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $connection->get_queries() );
+		$this->assertCount( 1, $preseed_indexes );
+		$body_index = $preseed_indexes[0];
+		$this->assertSame( $table, $this->get_row_value( $body_index, 'Table' ) );
+		$this->assertSame( '1', $this->get_row_value( $body_index, 'Non_unique' ) );
+		$this->assertSame( 'body_prefix', $this->get_row_value( $body_index, 'Key_name' ) );
+		$this->assertSame( 'body', $this->get_row_value( $body_index, 'Column_name' ) );
+		$this->assertSame( '12', $this->get_row_value( $body_index, 'Sub_part' ) );
+		$this->assertSame( '', $this->get_row_value( $body_index, 'Null' ) );
+		$this->assertSame( 'Body prefix note', $this->get_row_value( $body_index, 'Index_comment' ) );
+
+		$connection->clear_queries();
+		$unique_indexes = $driver->query( 'SHOW INDEX FROM `' . $table . '` WHERE Non_unique = 0', PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $connection->get_queries() );
+		$this->assertCount( 2, $unique_indexes );
+		$this->assertSame( array( 'PRIMARY', 'title_lookup' ), array_column( $unique_indexes, 'Key_name' ) );
+
+		$this->clear_driver_mysql_metadata_caches( $driver );
+
+		$connection->clear_queries();
+		$catalog_columns = $driver->query( 'SHOW FULL COLUMNS FROM `' . $table . '`', PDO::FETCH_ASSOC );
+		$this->assertGreaterThanOrEqual( 1, count( $connection->get_queries() ) );
+		$this->assertEquals( $catalog_columns, $preseed_columns );
+
+		$connection->clear_queries();
+		$catalog_indexes = $driver->query( 'SHOW INDEX FROM `' . $table . "` WHERE Key_name = 'body_prefix'", PDO::FETCH_ASSOC );
+		$this->assertGreaterThanOrEqual( 1, count( $connection->get_queries() ) );
+		$this->assertEquals( $catalog_indexes, $preseed_indexes );
+
+		$connection->clear_queries();
+		$catalog_tables = $driver->query( 'SHOW FULL TABLES LIKE ' . $driver->get_connection()->quote( $table ), PDO::FETCH_ASSOC );
+		$this->assertGreaterThanOrEqual( 1, count( $connection->get_queries() ) );
+		$this->assertCount( 1, $catalog_tables );
+
+		$connection->clear_queries();
+		$cached_tables = $driver->query( 'SHOW FULL TABLES LIKE ' . $driver->get_connection()->quote( $table ), PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $connection->get_queries() );
+		$this->assertEquals( $catalog_tables, $cached_tables );
+	}
+
+	/**
 	 * Tests SHOW CREATE TABLE preseed keeps temporary table shadowing separate.
 	 */
 	public function test_real_pgsql_show_create_table_preseed_uses_temporary_shadow_table(): void {
@@ -16819,11 +16913,10 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			foreach ( $current_database_full_tables as $current_database_full_table ) {
 				$current_full_table_types[ (string) $this->get_row_value( $current_database_full_table, $table_column ) ] = (string) $this->get_row_value( $current_database_full_table, 'Table_type' );
 			}
-				$this->assertSame( 'BASE TABLE', $current_full_table_types[ $child_table ] ?? null );
-				$this->assertSame( 'VIEW', $current_full_table_types[ $view_table ] ?? null );
-				$this->assertCount( 1, $current_database_full_queries );
-				$this->assertStringNotContainsString( 'SHOW TABLES', $current_database_full_queries[0]['sql'] );
-				$this->assertSame( array( $database_name, $task_show_tables_pattern ), $current_database_full_queries[0]['params'] );
+					$this->assertSame( 'BASE TABLE', $current_full_table_types[ $child_table ] ?? null );
+					$this->assertSame( 'VIEW', $current_full_table_types[ $view_table ] ?? null );
+				$this->assertSame( array(), $current_database_full_queries );
+				$this->assertEquals( $full_tables, $current_database_full_tables );
 
 				$this->clear_driver_mysql_metadata_caches( $driver );
 				$create_rows = $driver->query( 'SHOW CREATE TABLE `' . $child_table . '`' );
@@ -24265,10 +24358,12 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 
-		$primary_rows    = $driver->query( "SHOW INDEX FROM `{$table_name}` WHERE Key_name = 'PRIMARY'" );
-		$primary_queries = $driver->get_last_postgresql_queries();
-		$this->assertCount( 1, $primary_rows );
-		$this->assertSame( 'PRIMARY', $this->get_row_value( $primary_rows[0], 'Key_name' ) );
+			$this->clear_driver_mysql_metadata_caches( $driver );
+
+			$primary_rows    = $driver->query( "SHOW INDEX FROM `{$table_name}` WHERE Key_name = 'PRIMARY'" );
+			$primary_queries = $driver->get_last_postgresql_queries();
+			$this->assertCount( 1, $primary_rows );
+			$this->assertSame( 'PRIMARY', $this->get_row_value( $primary_rows[0], 'Key_name' ) );
 		$this->assertStringContainsString( 'CASE WHEN CAST("Key_name" AS text) ~ ', $primary_queries[0]['sql'] );
 		$this->assertStringContainsString( 'translate(CAST("Key_name" AS text), ', $primary_queries[0]['sql'] );
 		$this->assertSame( array( $schema_name, $table_name, 'PRIMARY', 'PRIMARY', 'PRIMARY' ), $primary_queries[0]['params'] );
@@ -24490,18 +24585,20 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			)
 		);
 
-		$rows    = $driver->query( "SHOW FULL COLUMNS FROM `{$table_name}` WHERE Comment LIKE '%'" );
-		$queries = $driver->get_last_postgresql_queries();
+			$this->clear_driver_mysql_metadata_caches( $driver );
 
-		$this->assertSame(
-			array( 'id' ),
-			array_map(
-				static function ( $row ): string {
-					return $row->Field;
-				},
-				$rows
-			)
-		);
+			$rows    = $driver->query( "SHOW FULL COLUMNS FROM `{$table_name}` WHERE Comment LIKE '%'" );
+			$queries = $driver->get_last_postgresql_queries();
+
+			$this->assertSame(
+				array( 'id' ),
+				array_map(
+					static function ( $row ): string {
+						return $row->Field;
+					},
+					$rows
+				)
+			);
 		$this->assertStringNotContainsString( ' LIKE translate(CAST(? AS text), ', $queries[0]['sql'] );
 		$this->assertSame( array( $schema_name, $table_name ), $queries[0]['params'] );
 	}

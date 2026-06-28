@@ -9764,7 +9764,90 @@ $wp_mysql_primary_index_comment$',
 			return $this->execute_direct_information_schema_show_columns_query( $table_name, $is_full, $like, $where_filter, $fetch_mode, ...$fetch_mode_args );
 		}
 
+		$cached_result = $this->execute_mysql_cached_show_columns_query( $resolved_schema, $table_name, $is_full, $like, $where_filter, $fetch_mode, ...$fetch_mode_args );
+		if ( null !== $cached_result ) {
+			return $cached_result;
+		}
+
 		return $this->execute_mysql_catalog_projected_show_result( $this->get_mysql_catalog_projected_show_statement_descriptor( 'columns', compact( 'resolved_schema', 'table_name', 'is_full', 'like', 'where_filter', 'fetch_mode', 'fetch_mode_args' ) ), $fetch_mode, ...$fetch_mode_args );
+	}
+	private function execute_mysql_cached_show_columns_query( string $schema_name, string $table_name, bool $is_full, ?string $like, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ): ?array {
+		$cache_key = $schema_name . "\0" . $table_name;
+		if ( ! isset( $this->mysql_show_create_table_metadata_introspection_cache[ $cache_key ] ) ) {
+			return null;
+		}
+
+		$metadata = $this->mysql_show_create_table_metadata_introspection_cache[ $cache_key ];
+		if ( ! isset( $metadata['columns'], $metadata['indexes'] ) || ! is_array( $metadata['columns'] ) || ! is_array( $metadata['indexes'] ) ) {
+			return null;
+		}
+
+		$output_columns = $this->get_mysql_show_output_columns( $is_full ? 'columns_full' : 'columns' );
+		$rows           = $this->get_mysql_show_columns_rows_from_metadata(
+			$metadata['columns'],
+			$metadata['indexes'],
+			$output_columns
+		);
+
+		return $this->execute_mysql_static_show_result_with_filters(
+			$output_columns,
+			$rows,
+			$this->get_mysql_show_like_filter( 'Field', $like ),
+			$where_filter,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+	private function get_mysql_show_columns_rows_from_metadata( array $columns, array $indexes, array $output_columns ): array {
+		$column_key_map = $this->get_mysql_show_column_key_map_from_metadata( $indexes );
+		$rows           = array();
+		foreach ( $columns as $column ) {
+			$column_name = (string) ( $column['column_name'] ?? '' );
+			$row         = array(
+				'Field'      => $column_name,
+				'Type'       => (string) ( $column['column_type'] ?? '' ),
+				'Collation'  => $column['collation_name'] ?? null,
+				'Null'       => (string) ( $column['is_nullable'] ?? '' ),
+				'Key'        => $column_key_map[ strtolower( $column_name ) ] ?? '',
+				'Default'    => $column['column_default'] ?? null,
+				'Extra'      => (string) ( $column['extra'] ?? '' ),
+				'Privileges' => 'select,insert,update,references',
+				'Comment'    => (string) ( $column['column_comment'] ?? '' ),
+			);
+
+			$rows[] = $this->project_mysql_show_row_columns( $row, $output_columns );
+		}
+		return $rows;
+	}
+	private function get_mysql_show_column_key_map_from_metadata( array $indexes ): array {
+		$priorities = array(
+			''    => 0,
+			'MUL' => 1,
+			'UNI' => 2,
+			'PRI' => 3,
+		);
+		$keys       = array();
+		foreach ( $indexes as $index ) {
+			$column_name = (string) ( $index['column_name'] ?? '' );
+			if ( '' === $column_name ) {
+				continue;
+			}
+
+			$key_name = strtoupper( (string) ( $index['key_name'] ?? '' ) );
+			$key      = 'PRIMARY' === $key_name ? 'PRI' : ( '0' === (string) ( $index['non_unique'] ?? '1' ) ? 'UNI' : 'MUL' );
+			$map_key  = strtolower( $column_name );
+			if ( ! isset( $keys[ $map_key ] ) || $priorities[ $key ] > $priorities[ $keys[ $map_key ] ] ) {
+				$keys[ $map_key ] = $key;
+			}
+		}
+		return $keys;
+	}
+	private function project_mysql_show_row_columns( array $row, array $columns ): array {
+		$projected = array();
+		foreach ( $columns as $column ) {
+			$projected[ $column ] = $row[ $column ] ?? null;
+		}
+		return $projected;
 	}
 	private function execute_direct_information_schema_show_columns_query( string $table_name, bool $is_full, ?string $like, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ) {
 		$output_columns = $this->get_mysql_show_output_columns( $is_full ? 'columns_full' : 'columns' );
@@ -9828,7 +9911,7 @@ $wp_mysql_primary_index_comment$',
 			$columns = $this->get_show_tables_output_columns( $context['database_name'], $context['is_full'] );
 			list( $schema_column, $table_name_sql, $table_type_sql, $table_type_filter_sql, $from, $schema_param ) = array( '"TABLE_SCHEMA"', '"TABLE_NAME"', '"TABLE_TYPE"', '"TABLE_TYPE"', '(' . $this->get_direct_information_schema_relation_sql( 'tables' ) . ') information_schema_tables', $this->get_direct_information_schema_display_schema( $context['schema_name'] ) );
 			$expressions = $this->get_mysql_key_value_array( $columns[0], $table_name_sql, 'Table_type', $table_type_sql );
-			return $this->get_mysql_catalog_projected_show_descriptor( $columns, $expressions, $from, sprintf( '%1$s = ?' . "\n\t" . 'AND %2$s IN (\'BASE TABLE\', \'VIEW\')' . "\n\t" . 'AND %3$s NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE %4$s', $schema_column, $table_type_filter_sql, $table_name_sql, $this->get_mysql_like_default_escape_sql() ), array( $schema_param ), 'ORDER BY ' . $table_name_sql, $this->get_mysql_key_value_array( 'filter', $context['where_filter'], 'like', $context['like'], 'like_expression', $table_name_sql, 'filter_columns', $expressions, 'unsupported_message', 'Unsupported SHOW TABLES statement.' ) );
+			return $this->get_mysql_catalog_projected_show_descriptor( $columns, $expressions, $from, sprintf( '%1$s = ?' . "\n\t" . 'AND %2$s IN (\'BASE TABLE\', \'VIEW\')' . "\n\t" . 'AND %3$s NOT LIKE \'__wp_postgresql_\' || \'mysql\_%%\' ESCAPE %4$s', $schema_column, $table_type_filter_sql, $table_name_sql, $this->get_mysql_like_default_escape_sql() ), array( $schema_param ), 'ORDER BY ' . $table_name_sql, $this->get_mysql_key_value_array( 'filter', $context['where_filter'], 'like', $context['like'], 'like_expression', $table_name_sql, 'filter_columns', $expressions, 'cache_key', $this->get_mysql_introspection_result_cache_key( 'show_tables', $context['fetch_mode'], array( $context['schema_name'], $context['database_name'], $context['is_full'], $context['like'], $context['where_filter'], $context['fetch_mode'], $context['fetch_mode_args'] ) ), 'unsupported_message', 'Unsupported SHOW TABLES statement.' ) );
 		}
 		if ( 'table_status' === $type ) {
 			$columns = $this->get_mysql_show_output_columns( 'table_status' );
@@ -10081,7 +10164,7 @@ FROM ' . $descriptor['from'];
 			);
 		}
 
-		return $this->execute_mysql_catalog_projected_show_result( $this->get_mysql_catalog_projected_show_statement_descriptor( 'tables', compact( 'is_full', 'schema_name', 'database_name', 'like', 'where_filter' ) ), $fetch_mode, ...$fetch_mode_args );
+		return $this->execute_mysql_catalog_projected_show_result( $this->get_mysql_catalog_projected_show_statement_descriptor( 'tables', compact( 'is_full', 'schema_name', 'database_name', 'like', 'where_filter', 'fetch_mode', 'fetch_mode_args' ) ), $fetch_mode, ...$fetch_mode_args );
 	}
 	private function get_mysql_like_default_escape_sql(): string {
 		return $this->connection->quote( '\\' );
@@ -11218,7 +11301,64 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			return $this->set_mysql_static_show_result( $index_columns, array(), $fetch_mode, ...$fetch_mode_args );
 		}
 
+		$cached_result = $this->execute_mysql_cached_show_index_query( $resolved_schema, $table_name, $where_filter, $fetch_mode, ...$fetch_mode_args );
+		if ( null !== $cached_result ) {
+			return $cached_result;
+		}
+
 		return $this->execute_mysql_catalog_projected_show_result( $this->get_mysql_catalog_projected_show_statement_descriptor( 'index', compact( 'resolved_schema', 'table_name', 'where_filter', 'fetch_mode', 'fetch_mode_args' ) ), $fetch_mode, ...$fetch_mode_args );
+	}
+	private function execute_mysql_cached_show_index_query( string $schema_name, string $table_name, ?array $where_filter, $fetch_mode, ...$fetch_mode_args ): ?array {
+		$cache_key = $schema_name . "\0" . $table_name;
+		if ( ! isset( $this->mysql_show_create_table_metadata_introspection_cache[ $cache_key ] ) ) {
+			return null;
+		}
+
+		$metadata = $this->mysql_show_create_table_metadata_introspection_cache[ $cache_key ];
+		if ( ! isset( $metadata['columns'], $metadata['indexes'] ) || ! is_array( $metadata['columns'] ) || ! is_array( $metadata['indexes'] ) ) {
+			return null;
+		}
+
+		$columns = $this->get_mysql_show_output_columns( 'index' );
+		return $this->execute_mysql_filtered_static_show_result(
+			$columns,
+			$this->get_mysql_show_index_rows_from_metadata( $table_name, $metadata['indexes'], $metadata['columns'], $columns ),
+			$where_filter,
+			$fetch_mode,
+			...$fetch_mode_args
+		);
+	}
+	private function get_mysql_show_index_rows_from_metadata( string $table_name, array $indexes, array $columns, array $output_columns ): array {
+		$nullable_columns = array();
+		foreach ( $columns as $column ) {
+			$nullable_columns[ strtolower( (string) ( $column['column_name'] ?? '' ) ) ] = 'NO' === strtoupper( (string) ( $column['is_nullable'] ?? '' ) ) ? '' : 'YES';
+		}
+
+		$rows = array();
+		foreach ( $indexes as $index ) {
+			$column_name = (string) ( $index['column_name'] ?? '' );
+			$sub_part    = $index['sub_part'] ?? null;
+			$row         = array(
+				'Table'         => $table_name,
+				'Non_unique'    => (string) ( $index['non_unique'] ?? '' ),
+				'Key_name'      => (string) ( $index['key_name'] ?? '' ),
+				'Seq_in_index'  => (string) ( $index['seq_in_index'] ?? '' ),
+				'Column_name'   => $column_name,
+				'Collation'     => $index['collation'] ?? null,
+				'Cardinality'   => '0',
+				'Sub_part'      => $sub_part,
+				'Packed'        => null,
+				'Null'          => null === $sub_part ? ( $nullable_columns[ strtolower( $column_name ) ] ?? '' ) : '',
+				'Index_type'    => (string) ( $index['index_type'] ?? '' ),
+				'Comment'       => '',
+				'Index_comment' => (string) ( $index['index_comment'] ?? '' ),
+				'Visible'       => 'YES',
+				'Expression'    => null,
+			);
+
+			$rows[] = $this->project_mysql_show_row_columns( $row, $output_columns );
+		}
+		return $rows;
 	}
 	private function load_mysql_introspection_result_from_cache( ?string $cache_key ): bool {
 		if ( null === $cache_key ) {
