@@ -1457,6 +1457,56 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$descending = $driver->query( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1) DESC' )->fetchAll( PDO::FETCH_COLUMN );
 		$this->assertSame( array( 2, 1, 3, 4, 5 ), array_map( 'intval', $descending ) );
+
+		$limited = $driver->query( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1) DESC LIMIT 1, 2' )->fetchAll( PDO::FETCH_COLUMN );
+		$this->assertSame( array( 1, 3 ), array_map( 'intval', $limited ) );
+	}
+
+	public function test_sql_calc_found_rows_order_by_seeded_rand_literal_with_limit_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_type, post_status) VALUES
+				(1, 'post', 'publish'),
+				(2, 'post', 'publish'),
+				(3, 'post', 'publish'),
+				(4, 'post', 'publish'),
+				(5, 'post', 'publish'),
+				(6, 'post', 'publish'),
+				(7, 'post', 'publish'),
+				(8, 'post', 'publish'),
+				(9, 'post', 'publish'),
+				(10, 'post', 'publish'),
+				(11, 'post', 'publish'),
+				(12, 'post', 'publish')"
+		);
+
+		$rows = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE 1=1
+				AND ((wptests_posts.post_type = 'post'
+				AND (wptests_posts.post_status = 'publish')))
+			ORDER BY RAND(5) DESC
+			LIMIT 0, 10"
+		)->fetchAll( PDO::FETCH_COLUMN );
+
+		$this->assertSame( array( 6, 2, 7, 12, 8, 10, 1, 11, 5, 3 ), array_map( 'intval', $rows ) );
+		$this->assertStringNotContainsString( 'RAND(', $this->lastDuckDBQuery( $driver ) );
+		$this->assertStringNotContainsString( 'LIMIT', $this->lastDuckDBQuery( $driver ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 12 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_select_seeded_rand_where_literal_is_emulated(): void {

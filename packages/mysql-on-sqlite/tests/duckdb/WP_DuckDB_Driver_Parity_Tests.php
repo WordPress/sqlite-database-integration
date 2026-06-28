@@ -154,6 +154,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 
 		$this->assertParityRows( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1)' );
 		$this->assertParityRows( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1) DESC' );
+		$this->assertParityRows( 'SELECT id FROM seeded_rand_order ORDER BY RAND(1) DESC LIMIT 1, 2' );
 	}
 
 	public function test_seeded_rand_select_and_update_where_match_sqlite(): void {

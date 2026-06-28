@@ -1406,7 +1406,7 @@ class WP_DuckDB_Driver {
 	 * Parse a bounded SELECT ORDER BY RAND(seed) clause.
 	 *
 	 * @param WP_Parser_Token[] $tokens SELECT tokens.
-	 * @return array{seed:int,descending:bool,tokens:array<int,WP_Parser_Token>}|null Parsed ordering, or null when unsupported/not present.
+	 * @return array{seed:int,descending:bool,limit:array{offset:int,count:int}|null,tokens:array<int,WP_Parser_Token>}|null Parsed ordering, or null when unsupported/not present.
 	 */
 	private function parse_seeded_rand_order_by_clause( array $tokens ): ?array {
 		$order_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::ORDER_SYMBOL );
@@ -1414,12 +1414,12 @@ class WP_DuckDB_Driver {
 			null === $order_index
 			|| ! isset( $tokens[ $order_index + 1 ] )
 			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_index + 1 ]->id
-			|| null !== $this->find_top_level_token_index( $tokens, $order_index + 2, WP_MySQL_Lexer::LIMIT_SYMBOL )
 		) {
 			return null;
 		}
 
-		$order_tokens = array_slice( $tokens, $order_index + 2 );
+		$order_end    = $this->primary_key_order_by_clause_end( $tokens, $order_index + 2 );
+		$order_tokens = array_slice( $tokens, $order_index + 2, $order_end - $order_index - 2 );
 		$order_items  = $this->split_top_level_comma_items( $order_tokens );
 		if ( 1 !== count( $order_items ) ) {
 			return null;
@@ -1438,10 +1438,74 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
+		$limit      = null;
+		$tail_index = $order_end;
+		if ( isset( $tokens[ $order_end ] ) ) {
+			if ( WP_MySQL_Lexer::LIMIT_SYMBOL !== $tokens[ $order_end ]->id ) {
+				return null;
+			}
+
+			$limit = $this->parse_seeded_rand_order_by_limit_clause( $tokens, $order_end );
+			if ( null === $limit ) {
+				return null;
+			}
+			$tail_index = $limit['end'];
+		}
+
 		return array(
 			'seed'       => $seed,
 			'descending' => $descending,
-			'tokens'     => array_slice( $tokens, 0, $order_index ),
+			'limit'      => null === $limit ? null : array(
+				'offset' => $limit['offset'],
+				'count'  => $limit['count'],
+			),
+			'tokens'     => array_merge(
+				array_slice( $tokens, 0, $order_index ),
+				array_slice( $tokens, $tail_index )
+			),
+		);
+	}
+
+	/**
+	 * Parse a literal LIMIT clause after ORDER BY RAND(seed).
+	 *
+	 * @param WP_Parser_Token[] $tokens      SELECT tokens.
+	 * @param int               $limit_index LIMIT token offset.
+	 * @return array{offset:int,count:int,end:int}|null Parsed limit, or null when unsupported.
+	 */
+	private function parse_seeded_rand_order_by_limit_clause( array $tokens, int $limit_index ): ?array {
+		if (
+			! isset( $tokens[ $limit_index + 1 ] )
+			|| WP_MySQL_Lexer::LIMIT_SYMBOL !== $tokens[ $limit_index ]->id
+			|| ! $this->is_integer_number_token( $tokens[ $limit_index + 1 ] )
+		) {
+			return null;
+		}
+
+		$offset = 0;
+		$count  = (int) $this->number_token_value( $tokens[ $limit_index + 1 ] );
+		$end    = $limit_index + 2;
+		if ( isset( $tokens[ $limit_index + 2 ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $limit_index + 2 ]->id ) {
+			if (
+				! isset( $tokens[ $limit_index + 3 ] )
+				|| ! $this->is_integer_number_token( $tokens[ $limit_index + 3 ] )
+			) {
+				return null;
+			}
+
+			$offset = $count;
+			$count  = (int) $this->number_token_value( $tokens[ $limit_index + 3 ] );
+			$end    = $limit_index + 4;
+		}
+
+		if ( $offset < 0 || $count < 0 ) {
+			return null;
+		}
+
+		return array(
+			'offset' => $offset,
+			'count'  => $count,
+			'end'    => $end,
 		);
 	}
 
@@ -1710,7 +1774,7 @@ class WP_DuckDB_Driver {
 	 * Apply a bounded seeded RAND() ORDER BY to materialized SELECT rows.
 	 *
 	 * @param WP_DuckDB_Result_Statement $result   Result statement.
-	 * @param array{seed:int,descending:bool,tokens:array<int,WP_Parser_Token>}|null $ordering Parsed ordering.
+	 * @param array{seed:int,descending:bool,limit:array{offset:int,count:int}|null,tokens:array<int,WP_Parser_Token>}|null $ordering Parsed ordering.
 	 * @return WP_DuckDB_Result_Statement Result with rows sorted.
 	 */
 	private function apply_seeded_rand_ordering( WP_DuckDB_Result_Statement $result, ?array $ordering ): WP_DuckDB_Result_Statement {
@@ -1751,6 +1815,9 @@ class WP_DuckDB_Driver {
 		$rows = array();
 		foreach ( $decorated as $item ) {
 			$rows[] = $item['row'];
+		}
+		if ( null !== $ordering['limit'] ) {
+			$rows = array_slice( $rows, $ordering['limit']['offset'], $ordering['limit']['count'] );
 		}
 
 		return new WP_DuckDB_Result_Statement( $columns, $rows, $result->rowCount(), $column_meta );
