@@ -10336,6 +10336,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'wptests_options', $rows[0]['table'] );
 		$this->assertSame( 0, (int) $rows[0]['rows'] );
 		$this->assertSame( 0, (int) $rows[0]['bytes'] );
+		$this->assertContains(
+			'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_transaction_recovery_probe" AS SELECT 1 AS ok',
+			$driver->get_last_duckdb_queries()
+		);
 		$this->assertContains( 'ROLLBACK', $driver->get_last_duckdb_queries() );
 	}
 
@@ -10381,7 +10385,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'wptests_options', $rows[0]['table'] );
 		$this->assertSame( 0, (int) $rows[0]['rows'] );
 		$this->assertSame( 0, (int) $rows[0]['bytes'] );
-		$this->assertContains( 'SELECT 1', $driver->get_last_duckdb_queries() );
+		$this->assertContains(
+			'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_transaction_recovery_probe" AS SELECT 1 AS ok',
+			$driver->get_last_duckdb_queries()
+		);
 		$this->assertContains( 'ROLLBACK', $driver->get_last_duckdb_queries() );
 	}
 

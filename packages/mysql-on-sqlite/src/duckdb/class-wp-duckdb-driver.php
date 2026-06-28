@@ -36,6 +36,7 @@ class WP_DuckDB_Driver {
 	const INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE        = '__wp_duckdb_information_schema_key_column_usage';
 	const INFO_SCHEMA_REFERENTIAL_CONSTRAINTS_TABLE = '__wp_duckdb_information_schema_referential_constraints';
 	const INFO_SCHEMA_CHECK_CONSTRAINTS_TABLE       = '__wp_duckdb_information_schema_check_constraints';
+	const TRANSACTION_RECOVERY_PROBE_TABLE          = '__wp_duckdb_transaction_recovery_probe';
 
 	const SUPPORTED_SESSION_SYSTEM_VARIABLES = array(
 		'autocommit'                              => true,
@@ -616,11 +617,11 @@ class WP_DuckDB_Driver {
 	 * "Current transaction is aborted" errors.
 	 */
 	private function recover_aborted_transaction_before_information_schema_refresh(): void {
-		$probe_sql                   = 'SELECT 1';
+		$probe_table                 = $this->connection->quote_identifier( self::TRANSACTION_RECOVERY_PROBE_TABLE );
+		$probe_sql                   = 'CREATE OR REPLACE TEMP TABLE ' . $probe_table . ' AS SELECT 1 AS ok';
 		$this->last_duckdb_queries[] = $probe_sql;
 		try {
 			$this->connection->query( $probe_sql );
-			return;
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
 			if ( ! $this->is_current_transaction_aborted_error( $e ) ) {
 				throw new WP_DuckDB_Driver_Exception(
@@ -629,10 +630,28 @@ class WP_DuckDB_Driver {
 					$e
 				);
 			}
+
+			$this->last_duckdb_queries[] = 'ROLLBACK';
+			$this->connection->rollbackNativeTransaction();
+			return;
 		}
 
-		$this->last_duckdb_queries[] = 'ROLLBACK';
-		$this->connection->rollbackNativeTransaction();
+		$drop_probe_sql              = 'DROP TABLE IF EXISTS ' . $probe_table;
+		$this->last_duckdb_queries[] = $drop_probe_sql;
+		try {
+			$this->connection->query( $drop_probe_sql );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			if ( ! $this->is_current_transaction_aborted_error( $e ) ) {
+				throw new WP_DuckDB_Driver_Exception(
+					'Failed to clean up DuckDB transaction state probe before information_schema refresh: ' . $e->getMessage(),
+					0,
+					$e
+				);
+			}
+
+			$this->last_duckdb_queries[] = 'ROLLBACK';
+			$this->connection->rollbackNativeTransaction();
+		}
 	}
 
 	/**

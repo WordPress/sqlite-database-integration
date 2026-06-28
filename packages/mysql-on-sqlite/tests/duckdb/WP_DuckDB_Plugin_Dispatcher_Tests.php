@@ -535,6 +535,28 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertFalse( $cases['inactive_current_aborted_marker']['in_transaction_after'] );
 	}
 
+	public function test_duckdb_wpdb_information_schema_tables_recovers_untracked_aborted_native_transaction(): void {
+		if ( null !== WP_DuckDB_Runtime::get_unavailable_reason() ) {
+			$this->markTestSkipped( 'DuckDB runtime is unavailable in this environment.' );
+		}
+
+		$result = $this->run_information_schema_recovery_state_script();
+
+		$this->assertTrue( $result['connected'] );
+		$this->assertSame( 1, $result['query_return'] );
+		$this->assertSame( '', $result['last_error'] );
+		$this->assertFalse( $result['in_transaction_after'] );
+		$this->assertCount( 1, $result['rows'] );
+		$this->assertSame( 'wptests_options', $result['rows'][0]['table'] );
+		$this->assertSame( 0, (int) $result['rows'][0]['rows'] );
+		$this->assertSame( 0, (int) $result['rows'][0]['bytes'] );
+		$this->assertContains(
+			'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_transaction_recovery_probe" AS SELECT 1 AS ok',
+			$result['duckdb_queries']
+		);
+		$this->assertContains( 'ROLLBACK', $result['duckdb_queries'] );
+	}
+
 	public function test_duckdb_wpdb_db_connect_sets_filtered_sql_mode(): void {
 		$result = $this->run_sql_mode_boot_state_script( false );
 
@@ -921,6 +943,71 @@ $cases = array(
 echo json_encode(
 	array(
 		'cases' => $cases,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_information_schema_recovery_state_script(): array {
+		$plugin_dir  = $this->get_plugin_dir();
+		$driver_load = dirname( __DIR__, 2 ) . '/src/load.php';
+		$code        = $this->get_wordpress_stub_code();
+		$code       .= "\nrequire_once " . var_export( $driver_load, true ) . ";\n";
+		$code       .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code       .= <<<'PHP'
+
+if ( defined( 'DUCKDB_PHP_AUTOLOAD' ) ) {
+	require_once DUCKDB_PHP_AUTOLOAD;
+}
+
+$connection         = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+$GLOBALS['@duckdb'] = $connection;
+$db                 = new WP_DuckDB_DB( 'wordpress_develop_tests' );
+$connected          = $db->db_connect( false );
+$db->suppress_errors( true );
+$driver             = $GLOBALS['@duckdb_driver'];
+$tracked_connection = $driver->get_connection();
+
+$db->query(
+	"CREATE TABLE wptests_options (
+		option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		option_name VARCHAR(191) NOT NULL DEFAULT '',
+		option_value LONGTEXT NOT NULL
+	)"
+);
+
+$tracked_connection->query( 'BEGIN TRANSACTION' );
+try {
+	$tracked_connection->query( "SELECT CAST('not-an-integer' AS INTEGER)" );
+} catch ( WP_DuckDB_Driver_Exception $e ) {
+}
+
+$query_return = $db->query(
+	"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows',
+		SUM(data_length + index_length) as 'bytes'
+	FROM information_schema.TABLES
+	WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+		AND TABLE_NAME IN ('wptests_comments','wptests_options','wptests_posts','wptests_terms','wptests_users')
+	GROUP BY TABLE_NAME"
+);
+
+$rows = array_map(
+	function ( $row ) {
+		return get_object_vars( $row );
+	},
+	$db->last_result
+);
+
+echo json_encode(
+	array(
+		'connected'            => $connected,
+		'query_return'         => $query_return,
+		'last_error'           => $db->last_error,
+		'rows'                 => $rows,
+		'in_transaction_after' => $tracked_connection->inTransaction(),
+		'duckdb_queries'       => $driver->get_last_duckdb_queries(),
 	)
 );
 PHP;
