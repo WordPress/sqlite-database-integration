@@ -177,8 +177,14 @@ class WP_DuckDB_Driver {
 	);
 
 	const STRING_IMPLICIT_DEFAULT_MAP = array(
-		'enum' => '',
-		'set'  => '',
+		'char'       => '',
+		'enum'       => '',
+		'longtext'   => '',
+		'mediumtext' => '',
+		'set'        => '',
+		'text'       => '',
+		'tinytext'   => '',
+		'varchar'    => '',
 	);
 
 	/**
@@ -913,6 +919,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$seeded_rand_rewrites        = $this->seeded_rand_rewrite_map( $seeded_rand_expressions );
+		$sql_tokens                  = $this->strip_irrelevant_order_by_for_count_select( $sql_tokens );
 		$grouped_date_order_rewrites = $this->grouped_date_order_by_rewrites( $sql_tokens );
 
 		$rewrite_information_schema_tables                  = $this->uses_information_schema_tables( $sql_tokens );
@@ -958,6 +965,19 @@ class WP_DuckDB_Driver {
 			$this->refresh_information_schema_check_constraints_table();
 		}
 
+		$order_by_item_rewrites = $grouped_date_order_rewrites + $this->primary_key_group_by_order_by_rewrites(
+			$sql_tokens,
+			$group_by_expansion,
+			$grouped_date_order_rewrites,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+
 		$sql = $this->translate_tokens_to_duckdb_sql(
 			$sql_tokens,
 			$rewrite_information_schema_tables,
@@ -970,7 +990,7 @@ class WP_DuckDB_Driver {
 			$seeded_rand_rewrites,
 			false,
 			$group_by_expansion,
-			$grouped_date_order_rewrites
+			$order_by_item_rewrites
 		);
 
 		if ( $has_sql_calc_found_rows ) {
@@ -986,7 +1006,7 @@ class WP_DuckDB_Driver {
 					$rewrite_information_schema_check_constraints,
 					$seeded_rand_rewrites,
 					$group_by_expansion,
-					$grouped_date_order_rewrites
+					$order_by_item_rewrites
 				);
 				$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 				$result           = $this->apply_result_column_metadata( $result, $column_meta );
@@ -2018,7 +2038,7 @@ class WP_DuckDB_Driver {
 	 * Build a bounded GROUP BY expansion for simple SELECTs grouped by a table's full primary key.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
-	 * @return array{group_index:int,group_end:int,table_alias:string,columns:string[]}|null Expansion data, or null when outside the supported slice.
+	 * @return array{group_index:int,group_end:int,table_alias:string,table_name:string,joined:bool,columns:string[],grouped_columns:array<string,bool>,metadata_columns:array<string,bool>,selected_aliases:array<string,bool>}|null Expansion data, or null when outside the supported slice.
 	 */
 	private function primary_key_group_by_expansion( array $tokens ): ?array {
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
@@ -2060,6 +2080,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$selected_columns    = array();
+		$selected_aliases    = array();
 		$select_has_wildcard = false;
 		foreach ( $select_items as $item ) {
 			$column = $this->parse_simple_select_column_reference( $item );
@@ -2075,6 +2096,7 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$selected_aliases[ strtolower( $column['name'] ) ]        = true;
 			$selected_columns[ strtolower( $column['column_name'] ) ] = true;
 		}
 
@@ -2112,6 +2134,7 @@ class WP_DuckDB_Driver {
 		foreach ( $metadata_rows as $metadata ) {
 			$metadata_by_column[ strtolower( (string) $metadata['column_name'] ) ] = $metadata;
 		}
+		$metadata_columns = array_fill_keys( array_keys( $metadata_by_column ), true );
 
 		$columns_by_key = array();
 		if ( $select_has_wildcard ) {
@@ -2144,15 +2167,16 @@ class WP_DuckDB_Driver {
 			$columns[] = $column_name;
 		}
 
-		if ( count( $columns ) === 0 ) {
-			return null;
-		}
-
 		return array(
-			'group_index' => $group_index,
-			'group_end'   => $group_end,
-			'table_alias' => $table['alias'],
-			'columns'     => $columns,
+			'group_index'      => $group_index,
+			'group_end'        => $group_end,
+			'table_alias'      => $table['alias'],
+			'table_name'       => $table['table_name'],
+			'joined'           => isset( $table['joined'] ) && $table['joined'],
+			'columns'          => $columns,
+			'grouped_columns'  => $grouped_columns,
+			'metadata_columns' => $metadata_columns,
+			'selected_aliases' => $selected_aliases,
 		);
 	}
 
@@ -2761,6 +2785,162 @@ class WP_DuckDB_Driver {
 		}
 
 		return $rewrites;
+	}
+
+	/**
+	 * Build ORDER BY item rewrites for SELECTs grouped by a full primary key.
+	 *
+	 * MySQL permits WordPress meta queries to group by the primary table ID while
+	 * ordering by joined meta expressions. DuckDB requires those sort expressions
+	 * to be grouped or aggregated, so aggregate only the non-primary ORDER BY
+	 * expressions in this proven primary-key grouping shape.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param array{group_index:int,group_end:int,table_alias:string,table_name:string,joined:bool,columns:string[],grouped_columns:array<string,bool>,metadata_columns:array<string,bool>,selected_aliases:array<string,bool>}|null $group_by_expansion Primary-key grouping metadata.
+	 * @param array<int,array{end:int,sql:string}> $existing_rewrites Existing ORDER BY rewrites keyed by item start offset.
+	 * @return array<int,array{end:int,sql:string}> Rewrites keyed by ORDER BY item start offset.
+	 */
+	private function primary_key_group_by_order_by_rewrites(
+		array $tokens,
+		?array $group_by_expansion,
+		array $existing_rewrites,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): array {
+		if ( null === $group_by_expansion ) {
+			return array();
+		}
+
+		$group_end = $group_by_expansion['group_end'];
+		if (
+			! isset( $tokens[ $group_end ] )
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $group_end ]->id
+			|| ! isset( $tokens[ $group_end + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_end + 1 ]->id
+		) {
+			return array();
+		}
+
+		$rewrites  = array();
+		$order_end = $this->primary_key_order_by_clause_end( $tokens, $group_end + 2 );
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, $group_end + 2, $order_end ) as $item ) {
+			if ( isset( $existing_rewrites[ $item['start'] ] ) ) {
+				continue;
+			}
+
+			$order_item = $this->order_by_item_expression_and_direction( $item['tokens'] );
+			if (
+				count( $order_item['tokens'] ) === 0
+				|| $this->order_by_expression_is_literal_or_ordinal( $order_item['tokens'] )
+				|| $this->contains_top_level_aggregate_function_call( $order_item['tokens'] )
+			) {
+				continue;
+			}
+
+			$column = $this->parse_order_by_column_reference( $item['tokens'] );
+			if ( null !== $column ) {
+				$column_key = strtolower( $column['column_name'] );
+				if (
+					null === $column['qualifier']
+					&& isset( $group_by_expansion['selected_aliases'][ $column_key ] )
+					&& ! isset( $group_by_expansion['metadata_columns'][ $column_key ] )
+				) {
+					continue;
+				}
+				if ( $this->primary_key_group_by_order_column_matches_primary_table( $column, $group_by_expansion ) ) {
+					continue;
+				}
+			}
+
+			$expression_sql = $this->translate_tokens_to_duckdb_sql(
+				$order_item['tokens'],
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+
+			$rewrites[ $item['start'] ] = array(
+				'end' => $item['end'],
+				'sql' => 'ANY_VALUE(' . $expression_sql . ')' . $order_item['direction_sql'],
+			);
+		}
+
+		return $rewrites;
+	}
+
+	/**
+	 * Split ORDER BY item tokens into the expression and optional direction.
+	 *
+	 * @param WP_Parser_Token[] $tokens ORDER BY item tokens.
+	 * @return array{tokens:array<int,WP_Parser_Token>,direction_sql:string}
+	 */
+	private function order_by_item_expression_and_direction( array $tokens ): array {
+		$direction_sql = '';
+		if ( count( $tokens ) > 0 ) {
+			$last = $tokens[ count( $tokens ) - 1 ];
+			if ( WP_MySQL_Lexer::ASC_SYMBOL === $last->id || WP_MySQL_Lexer::DESC_SYMBOL === $last->id ) {
+				$direction_sql = WP_MySQL_Lexer::DESC_SYMBOL === $last->id ? ' DESC' : ' ASC';
+				array_pop( $tokens );
+			}
+		}
+
+		return array(
+			'tokens'        => $tokens,
+			'direction_sql' => $direction_sql,
+		);
+	}
+
+	/**
+	 * Check whether an ORDER BY expression is a literal/ordinal that needs no aggregate rewrite.
+	 *
+	 * @param WP_Parser_Token[] $tokens ORDER BY expression tokens.
+	 * @return bool Whether the expression is a single literal.
+	 */
+	private function order_by_expression_is_literal_or_ordinal( array $tokens ): bool {
+		if ( 1 !== count( $tokens ) ) {
+			return false;
+		}
+
+		$token = $tokens[0];
+		return $this->is_number_token( $token )
+			|| WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id
+			|| WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id
+			|| WP_MySQL_Lexer::TRUE_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::FALSE_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::NULL_SYMBOL === $token->id
+			|| WP_MySQL_Lexer::NULL2_SYMBOL === $token->id;
+	}
+
+	/**
+	 * Check whether a simple ORDER BY column belongs to the grouped primary table.
+	 *
+	 * @param array{column_name:string,qualifier:string|null} $column ORDER BY column.
+	 * @param array{table_alias:string,table_name:string,joined:bool,metadata_columns:array<string,bool>} $group_by_expansion Primary-key grouping metadata.
+	 * @return bool Whether the column is from the grouped primary table.
+	 */
+	private function primary_key_group_by_order_column_matches_primary_table( array $column, array $group_by_expansion ): bool {
+		$column_key = strtolower( $column['column_name'] );
+		if ( ! isset( $group_by_expansion['metadata_columns'][ $column_key ] ) ) {
+			return false;
+		}
+
+		$qualifier = $column['qualifier'];
+		if ( $group_by_expansion['joined'] ) {
+			return null !== $qualifier && 0 === strcasecmp( $qualifier, $group_by_expansion['table_alias'] );
+		}
+
+		return null === $qualifier
+			|| 0 === strcasecmp( $qualifier, $group_by_expansion['table_alias'] )
+			|| 0 === strcasecmp( $qualifier, $group_by_expansion['table_name'] );
 	}
 
 	/**
@@ -15652,6 +15832,84 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Strip ORDER BY from a single aggregate count SELECT where it cannot affect the count.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_Parser_Token[] Tokens without an irrelevant top-level ORDER BY clause.
+	 */
+	private function strip_irrelevant_order_by_for_count_select( array $tokens ): array {
+		if (
+			! $this->is_single_count_aggregate_select( $tokens )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::GROUP_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::HAVING_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL )
+		) {
+			return $tokens;
+		}
+
+		$order_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::ORDER_SYMBOL );
+		if (
+			null === $order_index
+			|| ! isset( $tokens[ $order_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_index + 1 ]->id
+		) {
+			return $tokens;
+		}
+
+		$order_end = $this->primary_key_order_by_clause_end( $tokens, $order_index + 2 );
+		return array_merge(
+			array_slice( $tokens, 0, $order_index ),
+			array_slice( $tokens, $order_end )
+		);
+	}
+
+	/**
+	 * Check whether a SELECT list is exactly one COUNT(...) aggregate.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return bool Whether the SELECT is a single count aggregate.
+	 */
+	private function is_single_count_aggregate_select( array $tokens ): bool {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		$from_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::FROM_SYMBOL );
+		if ( null === $from_index || 1 === $from_index ) {
+			return false;
+		}
+
+		$select_items = $this->split_top_level_comma_items( array_slice( $tokens, 1, $from_index - 1 ) );
+		return 1 === count( $select_items ) && $this->is_count_aggregate_select_item( $select_items[0] );
+	}
+
+	/**
+	 * Check whether a SELECT-list item is COUNT(...) with an optional alias.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT-list item tokens.
+	 * @return bool Whether the item is COUNT(...).
+	 */
+	private function is_count_aggregate_select_item( array $tokens ): bool {
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| $this->is_non_identifier_token( $tokens[0] )
+			|| 0 !== strcasecmp( $tokens[0]->get_value(), 'COUNT' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[1]->id
+		) {
+			return false;
+		}
+
+		$index = $this->skip_balanced_parentheses( $tokens, 1 );
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			$index += 2;
+		} elseif ( isset( $tokens[ $index ] ) && null !== $this->metadata_identifier_value( $tokens[ $index ] ) ) {
+			++$index;
+		}
+
+		return count( $tokens ) === $index;
+	}
+
+	/**
 	 * Strip MySQL index hints, which are optimizer directives only.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL SELECT tokens.
@@ -17952,7 +18210,20 @@ class WP_DuckDB_Driver {
 		}
 
 		if ( $this->is_character_write_data_type( $data_type ) ) {
-			return $this->coerce_character_write_value_sql( $value_tokens, $value_sql );
+			$value_sql = $this->coerce_character_write_value_sql( $value_tokens, $value_sql );
+			if (
+				$coalesce_non_strict_not_null
+				&& ! $this->is_strict_sql_mode_active()
+				&& isset( $metadata['is_nullable'] )
+				&& 'NO' === strtoupper( (string) $metadata['is_nullable'] )
+			) {
+				$implicit_default = $this->non_strict_implicit_default( $data_type );
+				if ( null !== $implicit_default ) {
+					$value_sql = 'COALESCE(' . $value_sql . ', ' . $this->connection->quote( $implicit_default ) . ')';
+				}
+			}
+
+			return $value_sql;
 		}
 
 		if ( $this->is_blob_write_data_type( $data_type ) ) {

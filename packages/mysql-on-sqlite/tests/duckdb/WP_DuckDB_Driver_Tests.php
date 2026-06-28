@@ -1024,6 +1024,193 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_select_comments_group_by_primary_key_orders_by_joined_meta_value(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_comment_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			"SELECT wptests_comments.comment_ID
+			 FROM wptests_comments INNER JOIN wptests_commentmeta ON ( wptests_comments.comment_ID = wptests_commentmeta.comment_id )
+			 WHERE ( ( comment_approved = '0' OR comment_approved = '1' ) ) AND (
+				wptests_commentmeta.meta_key = 'key'
+			 )
+			 GROUP BY wptests_comments.comment_ID
+			 ORDER BY wptests_commentmeta.meta_value DESC, wptests_comments.comment_ID DESC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array( 'comment_ID' => 2 ),
+				array( 'comment_ID' => 3 ),
+				array( 'comment_ID' => 1 ),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE(wptests_commentmeta.meta_value) DESC', $select_sql );
+		$this->assertStringContainsString( 'ORDER BY ANY_VALUE(wptests_commentmeta.meta_value) DESC, wptests_comments.comment_ID DESC', $select_sql );
+	}
+
+	public function test_select_comments_group_by_primary_key_orders_by_cast_joined_meta_value(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_comment_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			"SELECT wptests_comments.comment_ID
+			 FROM wptests_comments INNER JOIN wptests_commentmeta ON ( wptests_comments.comment_ID = wptests_commentmeta.comment_id )
+			 WHERE ( ( comment_approved = '0' OR comment_approved = '1' ) ) AND (
+				wptests_commentmeta.meta_key = 'foo'
+			 )
+			 GROUP BY wptests_comments.comment_ID
+			 ORDER BY wptests_comments.comment_date ASC, CAST(wptests_commentmeta.meta_value AS CHAR) ASC, wptests_comments.comment_ID ASC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array( 'comment_ID' => 1 ),
+				array( 'comment_ID' => 2 ),
+				array( 'comment_ID' => 3 ),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString( 'GROUP BY wptests_comments.comment_ID, "wptests_comments"."comment_date"', $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE(CAST(wptests_commentmeta.meta_value AS VARCHAR)) ASC', $select_sql );
+	}
+
+	public function test_select_comments_group_by_primary_key_orders_by_multiple_cast_joined_meta_values(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_comment_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			"SELECT wptests_comments.comment_ID
+			 FROM wptests_comments
+				INNER JOIN wptests_commentmeta ON ( wptests_comments.comment_ID = wptests_commentmeta.comment_id )
+				INNER JOIN wptests_commentmeta AS mt1 ON ( wptests_comments.comment_ID = mt1.comment_id )
+			 WHERE ( ( comment_approved = '0' OR comment_approved = '1' ) ) AND (
+				wptests_commentmeta.meta_key = 'foo'
+				AND
+				mt1.meta_key = 'bar'
+			 )
+			 GROUP BY wptests_comments.comment_ID
+			 ORDER BY CAST(wptests_commentmeta.meta_value AS CHAR) ASC, CAST(mt1.meta_value AS CHAR) DESC, wptests_comments.comment_ID DESC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array( 'comment_ID' => 1 ),
+				array( 'comment_ID' => 2 ),
+				array( 'comment_ID' => 3 ),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE(CAST(wptests_commentmeta.meta_value AS VARCHAR)) ASC', $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE(CAST(mt1.meta_value AS VARCHAR)) DESC', $select_sql );
+	}
+
+	public function test_select_count_strips_irrelevant_order_by(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_comment_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			"SELECT COUNT(*)
+			 FROM wptests_comments
+			 WHERE ( ( comment_approved = '0' OR comment_approved = '1' ) )
+			 ORDER BY wptests_comments.comment_date_gmt ASC
+			 LIMIT 0,3"
+		)->fetchAll( PDO::FETCH_NUM );
+
+		$this->assertSame( array( array( 3 ) ), $rows );
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringNotContainsString( 'ORDER BY', $select_sql );
+		$this->assertStringContainsString( 'LIMIT 3 OFFSET 0', $select_sql );
+	}
+
+	public function test_non_strict_wordpress_text_defaults_for_comments_and_options(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( "SET SESSION sql_mode = ''" );
+		$driver->query(
+			"CREATE TABLE wptests_comments (
+				comment_ID bigint(20) unsigned NOT NULL auto_increment,
+				comment_post_ID bigint(20) unsigned NOT NULL default '0',
+				comment_author tinytext NOT NULL,
+				comment_author_email varchar(100) NOT NULL default '',
+				comment_author_url varchar(200) NOT NULL default '',
+				comment_author_IP varchar(100) NOT NULL default '',
+				comment_date datetime NOT NULL default '0000-00-00 00:00:00',
+				comment_date_gmt datetime NOT NULL default '0000-00-00 00:00:00',
+				comment_content text NOT NULL,
+				comment_karma int(11) NOT NULL default '0',
+				comment_approved varchar(20) NOT NULL default '1',
+				comment_agent varchar(255) NOT NULL default '',
+				comment_type varchar(20) NOT NULL default 'comment',
+				comment_parent bigint(20) unsigned NOT NULL default '0',
+				user_id bigint(20) unsigned NOT NULL default '0',
+				PRIMARY KEY (comment_ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( 'INSERT INTO wptests_comments (comment_ID) VALUES (1)' );
+
+		$comment = $driver->query(
+			'SELECT comment_ID, comment_author, comment_content FROM wptests_comments WHERE comment_ID = 1'
+		)->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'comment_ID'      => 1,
+				'comment_author'  => '',
+				'comment_content' => '',
+			),
+			$comment
+		);
+
+		$driver->query(
+			"CREATE TABLE wptests_options (
+				option_id bigint(20) unsigned NOT NULL auto_increment,
+				option_name varchar(191) NOT NULL default '',
+				option_value longtext NOT NULL,
+				autoload varchar(20) NOT NULL default 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name),
+				KEY autoload (autoload)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( "INSERT INTO wptests_options (option_id, option_name, option_value) VALUES (1, 'cron', 'payload')" );
+		$driver->query( "UPDATE wptests_options SET option_value = NULL WHERE option_name = 'cron'" );
+
+		$this->assertSame(
+			'',
+			$driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'cron'" )->fetchColumn()
+		);
+	}
+
 	public function test_select_seeded_rand_literals_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -16384,6 +16571,47 @@ SQL
 				(1, 12, 0),
 				(2, 11, 0),
 				(4, 11, 0)'
+		);
+	}
+
+	private function create_wordpress_comment_group_by_tables( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_comments (
+				comment_ID BIGINT(20) UNSIGNED NOT NULL,
+				comment_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				comment_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				comment_approved VARCHAR(20) NOT NULL DEFAULT '1',
+				PRIMARY KEY (comment_ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_commentmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL,
+				comment_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY comment_id (comment_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_comments (comment_ID, comment_date, comment_date_gmt, comment_approved) VALUES
+				(1, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '1'),
+				(2, '2026-02-01 00:00:00', '2026-02-01 00:00:00', '1'),
+				(3, '2026-03-01 00:00:00', '2026-03-01 00:00:00', '1')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_commentmeta (meta_id, comment_id, meta_key, meta_value) VALUES
+				(1, 1, 'key', 'alpha'),
+				(2, 2, 'key', 'charlie'),
+				(3, 3, 'key', 'bravo'),
+				(4, 1, 'foo', 'alpha'),
+				(5, 2, 'foo', 'bravo'),
+				(6, 3, 'foo', 'charlie'),
+				(7, 1, 'bar', 'zulu'),
+				(8, 2, 'bar', 'yankee'),
+				(9, 3, 'bar', 'xray')"
 		);
 	}
 

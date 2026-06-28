@@ -356,6 +356,41 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, int_value, decimal_value, float_value FROM numeric_not_null_coercions ORDER BY id' );
 	}
 
+	public function test_non_strict_character_implicit_defaults_match_sqlite(): void {
+		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE character_implicit_defaults (
+					id INT PRIMARY KEY,
+					required_tinytext TINYTEXT NOT NULL,
+					required_text TEXT NOT NULL,
+					required_longtext LONGTEXT NOT NULL,
+					required_varchar VARCHAR(20) NOT NULL
+				)',
+				"INSERT INTO character_implicit_defaults
+					(id, required_tinytext, required_text, required_longtext, required_varchar)
+					VALUES (3, 'tiny', 'text', 'long', 'varchar')",
+			)
+		);
+
+		$this->assertParityRowCount( 'INSERT INTO character_implicit_defaults (id) VALUES (1)' );
+		$this->assertParityRowCount( 'INSERT INTO character_implicit_defaults SET id = 2' );
+		$this->assertParityRowCount(
+			'UPDATE character_implicit_defaults
+			SET required_tinytext = NULL,
+				required_text = NULL,
+				required_longtext = NULL,
+				required_varchar = NULL
+			WHERE id = 3'
+		);
+
+		$this->assertParityRows(
+			'SELECT id, required_tinytext, required_text, required_longtext, required_varchar
+			FROM character_implicit_defaults
+			ORDER BY id'
+		);
+	}
+
 	public function test_non_strict_numeric_insert_select_write_coercions_match_sqlite(): void {
 		$this->assertParityRowCount( "SET SESSION sql_mode = ''" );
 		$this->runParitySetup(
