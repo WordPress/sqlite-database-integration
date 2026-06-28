@@ -1739,6 +1739,84 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_meta_value_numeric_literal_predicates_coerce_strings(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE wptests_postmeta (post_id BIGINT(20), meta_key VARCHAR(255), meta_value LONGTEXT)' );
+		$driver->query( 'CREATE TABLE wptests_commentmeta (comment_id BIGINT(20), meta_key VARCHAR(255), meta_value LONGTEXT)' );
+		$driver->query(
+			"INSERT INTO wptests_postmeta (post_id, meta_key, meta_value) VALUES
+				(101, '_wp_trash_meta_time', '1780093651'),
+				(102, '_wp_trash_meta_time', '1780093652'),
+				(103, '_wp_trash_meta_time', '1780093653'),
+				(104, '_wp_trash_meta_status', 'publish')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_commentmeta (comment_id, meta_key, meta_value) VALUES
+				(201, '_wp_trash_meta_time', '1780093651'),
+				(202, '_wp_trash_meta_time', '1780093652'),
+				(203, '_wp_trash_meta_time', '1780093653'),
+				(204, '_wp_trash_meta_status', 'approve')"
+		);
+
+		$cases = array(
+			array(
+				'sql'      => "SELECT post_id FROM wptests_postmeta
+					WHERE meta_key = '_wp_trash_meta_time' AND meta_value < 1780093652
+					ORDER BY post_id",
+				'expected' => array( array( 'post_id' => 101 ) ),
+				'cast'     => 'TRY_CAST("meta_value" AS BIGINT) < 1780093652',
+			),
+			array(
+				'sql'      => "SELECT wptests_postmeta.post_id FROM wptests_postmeta
+					WHERE wptests_postmeta.meta_key = '_wp_trash_meta_time'
+						AND wptests_postmeta.meta_value < 1780093652
+					ORDER BY wptests_postmeta.post_id",
+				'expected' => array( array( 'post_id' => 101 ) ),
+				'cast'     => 'TRY_CAST("wptests_postmeta"."meta_value" AS BIGINT) < 1780093652',
+			),
+			array(
+				'sql'      => "SELECT pm.post_id FROM wptests_postmeta pm
+					WHERE pm.meta_key = '_wp_trash_meta_time' AND pm.meta_value < 1780093652
+					ORDER BY pm.post_id",
+				'expected' => array( array( 'post_id' => 101 ) ),
+				'cast'     => 'TRY_CAST("pm"."meta_value" AS BIGINT) < 1780093652',
+			),
+			array(
+				'sql'      => "SELECT comment_id FROM wptests_commentmeta
+					WHERE meta_key = '_wp_trash_meta_time' AND meta_value < 1780093652
+					ORDER BY comment_id",
+				'expected' => array( array( 'comment_id' => 201 ) ),
+				'cast'     => 'TRY_CAST("meta_value" AS BIGINT) < 1780093652',
+			),
+			array(
+				'sql'      => "SELECT wptests_commentmeta.comment_id FROM wptests_commentmeta
+					WHERE wptests_commentmeta.meta_key = '_wp_trash_meta_time'
+						AND wptests_commentmeta.meta_value < 1780093652
+					ORDER BY wptests_commentmeta.comment_id",
+				'expected' => array( array( 'comment_id' => 201 ) ),
+				'cast'     => 'TRY_CAST("wptests_commentmeta"."meta_value" AS BIGINT) < 1780093652',
+			),
+			array(
+				'sql'      => "SELECT cm.comment_id FROM wptests_commentmeta cm
+					WHERE cm.meta_key = '_wp_trash_meta_time' AND cm.meta_value < 1780093652
+					ORDER BY cm.comment_id",
+				'expected' => array( array( 'comment_id' => 201 ) ),
+				'cast'     => 'TRY_CAST("cm"."meta_value" AS BIGINT) < 1780093652',
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$this->assertSame(
+				$case['expected'],
+				$driver->query( $case['sql'] )->fetchAll( PDO::FETCH_ASSOC ),
+				$case['sql']
+			);
+			$this->assertStringContainsString( $case['cast'], $this->lastDuckDBQuery( $driver ), $case['sql'] );
+		}
+	}
+
 	public function test_date_format_function_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -4851,6 +4929,60 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$driver->query( $case['mysql'] );
 
 			$this->assertSame( array( $case['duckdb'] ), $driver->get_last_duckdb_queries() );
+		}
+	}
+
+	public function test_text_value_numeric_literal_predicates_are_translated_without_duckdb_runtime(): void {
+		$duckdb = new class() {
+			public function query( string $sql ) {
+				return new class() {
+					public function columnNames(): ArrayIterator { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+						return new ArrayIterator( array( 'id' ) );
+					}
+
+					public function rows( bool $assoc ): array {
+						return array();
+					}
+				};
+			}
+		};
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => new WP_DuckDB_Connection( array( 'duckdb' => $duckdb ) ),
+			)
+		);
+
+		$rewrite_cases = array(
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value < 1780093652 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE TRY_CAST("meta_value" AS BIGINT) < 1780093652 ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT pm.id FROM postmeta pm WHERE pm.meta_value < 1780093652 ORDER BY pm.id',
+				'duckdb' => 'SELECT pm.id FROM postmeta pm WHERE TRY_CAST("pm"."meta_value" AS BIGINT) < 1780093652 ORDER BY pm.id',
+			),
+			array(
+				'mysql'  => 'SELECT b.id FROM options b WHERE b.option_value < 1782556962 ORDER BY b.id',
+				'duckdb' => 'SELECT b.id FROM options b WHERE TRY_CAST("b"."option_value" AS BIGINT) < 1782556962 ORDER BY b.id',
+			),
+		);
+
+		foreach ( $rewrite_cases as $case ) {
+			$driver->query( $case['mysql'] );
+
+			$this->assertSame( $case['duckdb'], $this->lastDuckDBQuery( $driver ) );
+		}
+
+		foreach (
+			array(
+				'SELECT id FROM postmeta WHERE title < 1780093652 ORDER BY id',
+				"SELECT id FROM postmeta WHERE meta_value < '1780093652' ORDER BY id",
+				'SELECT id FROM postmeta WHERE meta_value < 1780093652.5 ORDER BY id',
+			) as $sql
+		) {
+			$driver->query( $sql );
+
+			$this->assertStringNotContainsString( 'TRY_CAST(', $this->lastDuckDBQuery( $driver ), $sql );
 		}
 	}
 

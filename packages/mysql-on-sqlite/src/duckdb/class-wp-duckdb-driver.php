@@ -1012,7 +1012,7 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_referential_constraints,
 			$rewrite_information_schema_check_constraints,
 			$seeded_rand_rewrites,
-			false,
+			true,
 			$group_by_expansion,
 			$order_by_item_rewrites
 		);
@@ -3603,7 +3603,7 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_referential_constraints,
 			$rewrite_information_schema_check_constraints,
 			$seeded_rand_rewrites,
-			false,
+			true,
 			$group_by_expansion,
 			$order_by_item_rewrites
 		);
@@ -15827,7 +15827,7 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_referential_constraints = false,
 		bool $rewrite_information_schema_check_constraints = false,
 		array $seeded_rand_rewrites = array(),
-		bool $rewrite_option_value_numeric_literal_comparisons = false,
+		bool $rewrite_text_value_numeric_literal_comparisons = false,
 		?array $group_by_expansion = null,
 		array $order_by_item_rewrites = array()
 	): string {
@@ -16170,10 +16170,10 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
-			if ( $rewrite_option_value_numeric_literal_comparisons ) {
-				$option_value_comparison = $this->translate_option_value_numeric_literal_comparison( $tokens, $index );
-				if ( null !== $option_value_comparison ) {
-					$pieces[] = $option_value_comparison;
+			if ( $rewrite_text_value_numeric_literal_comparisons ) {
+				$text_value_comparison = $this->translate_text_value_numeric_literal_comparison( $tokens, $index );
+				if ( null !== $text_value_comparison ) {
+					$pieces[] = $text_value_comparison;
 					continue;
 				}
 			}
@@ -21287,14 +21287,14 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Translate WordPress transient timeout string comparisons in multi-table DELETE collection.
+	 * Translate WordPress text-value string comparisons against integer literals.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
 	 * @param int               $index  Current index, advanced on match.
 	 * @return string|null Translated comparison, or null when the pattern does not match.
 	 */
-	private function translate_option_value_numeric_literal_comparison( array $tokens, int &$index ): ?string {
-		$operand = $this->option_value_numeric_comparison_operand_sql( $tokens, $index );
+	private function translate_text_value_numeric_literal_comparison( array $tokens, int &$index ): ?string {
+		$operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index );
 		if ( null === $operand ) {
 			return null;
 		}
@@ -21311,7 +21311,7 @@ class WP_DuckDB_Driver {
 
 		if (
 			isset( $tokens[ $literal_index + 1 ] )
-			&& ! $this->is_option_value_numeric_comparison_boundary_token( $tokens[ $literal_index + 1 ] )
+			&& ! $this->is_text_value_numeric_comparison_boundary_token( $tokens[ $literal_index + 1 ] )
 		) {
 			return null;
 		}
@@ -21326,13 +21326,13 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Build an option_value operand SQL fragment for a bounded numeric comparison.
+	 * Build a WordPress text-value operand SQL fragment for a bounded numeric comparison.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
 	 * @param int               $index  Current index.
 	 * @return array{sql:string,next_index:int}|null Operand SQL and next token index, or null when not matched.
 	 */
-	private function option_value_numeric_comparison_operand_sql( array $tokens, int $index ): ?array {
+	private function text_value_numeric_comparison_operand_sql( array $tokens, int $index ): ?array {
 		if ( ! isset( $tokens[ $index ] ) || $this->is_non_identifier_token( $tokens[ $index ] ) ) {
 			return null;
 		}
@@ -21343,7 +21343,7 @@ class WP_DuckDB_Driver {
 			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
 		) {
 			$column_name = $this->identifier_value( $tokens[ $index + 2 ] );
-			if ( 0 !== strcasecmp( $column_name, 'option_value' ) ) {
+			if ( ! $this->is_text_value_numeric_comparison_column( $column_name ) ) {
 				return null;
 			}
 
@@ -21356,13 +21356,30 @@ class WP_DuckDB_Driver {
 		}
 
 		$column_name = $this->identifier_value( $tokens[ $index ] );
-		if ( 0 !== strcasecmp( $column_name, 'option_value' ) ) {
+		if ( ! $this->is_text_value_numeric_comparison_column( $column_name ) ) {
 			return null;
 		}
 
 		return array(
 			'sql'        => $this->connection->quote_identifier( $column_name ),
 			'next_index' => $index + 1,
+		);
+	}
+
+	/**
+	 * Check whether a column should receive text-to-number comparison parity.
+	 *
+	 * @param string $column_name Column name.
+	 * @return bool Whether the column is a supported WordPress text value column.
+	 */
+	private function is_text_value_numeric_comparison_column( string $column_name ): bool {
+		return in_array(
+			strtolower( $column_name ),
+			array(
+				'option_value',
+				'meta_value',
+			),
+			true
 		);
 	}
 
@@ -21388,19 +21405,23 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Check whether a token can end an option_value numeric literal predicate.
+	 * Check whether a token can end a WordPress text-value numeric literal predicate.
 	 *
 	 * @param WP_Parser_Token $token Token.
 	 * @return bool Whether the token is a predicate boundary.
 	 */
-	private function is_option_value_numeric_comparison_boundary_token( WP_Parser_Token $token ): bool {
+	private function is_text_value_numeric_comparison_boundary_token( WP_Parser_Token $token ): bool {
 		return in_array(
 			$token->id,
 			array(
 				WP_MySQL_Lexer::AND_SYMBOL,
-				WP_MySQL_Lexer::OR_SYMBOL,
 				WP_MySQL_Lexer::XOR_SYMBOL,
+				WP_MySQL_Lexer::OR_SYMBOL,
 				WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
 			),
 			true
 		);
