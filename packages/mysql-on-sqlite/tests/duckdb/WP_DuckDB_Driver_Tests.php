@@ -7757,6 +7757,9 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( "INSERT INTO auto_items (id, name) VALUES (42, 'explicit')" );
 		$this->assertSame( 42, $driver->get_insert_id() );
 
+		$driver->query( "INSERT INTO auto_items (name) VALUES ('after-explicit')" );
+		$this->assertSame( 43, $driver->get_insert_id() );
+
 		$driver->query( "INSERT IGNORE INTO auto_items (name) VALUES ('first')" );
 		$this->assertSame( 0, $driver->get_insert_id() );
 
@@ -7768,6 +7771,46 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 
 		$this->fail( 'Expected duplicate insert to fail.' );
+	}
+
+	public function test_explicit_auto_increment_insert_primes_next_generated_value(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE wptests_terms (
+				term_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				name VARCHAR(200) NOT NULL DEFAULT "",
+				slug VARCHAR(200) NOT NULL DEFAULT "",
+				term_group BIGINT(10) NOT NULL DEFAULT 0,
+				PRIMARY KEY (term_id)
+			)'
+		);
+
+		$driver->query( "INSERT INTO wptests_terms (term_id, name, slug, term_group) VALUES (1, 'first', 'first', 0)" );
+		$this->assertSame( 1, $driver->get_insert_id() );
+
+		$insert = $driver->query( "INSERT INTO wptests_terms (name, slug, term_group) VALUES ('foo', 'bar', 0)" );
+		$this->assertSame( 1, $insert->rowCount() );
+		$this->assertSame( 2, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'term_id' => 1,
+					'name'    => 'first',
+				),
+				array(
+					'term_id' => 2,
+					'name'    => 'foo',
+				),
+			),
+			$driver->query( 'SELECT term_id, name FROM wptests_terms ORDER BY term_id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_insert_id_tracks_wordpress_usermeta_shape(): void {
@@ -7908,6 +7951,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			$driver->query( 'SELECT id, name FROM ignore_primary_after ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
+		$driver->query( "INSERT INTO ignore_primary_after (name) VALUES ('generated-after-ignore')" );
+		$this->assertSame( 5, $driver->get_insert_id() );
 
 		$driver->query( "INSERT INTO ignore_secondary_after (id, name) VALUES (1, 'taken')" );
 		$inserted_before_secondary_conflict = $driver->query(

@@ -19884,16 +19884,19 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement
 	 */
 	private function execute_auto_increment_write( string $table_name, string $sql, string $context, array $tokens = array(), ?int $table_index = null ): WP_DuckDB_Result_Statement {
-		$table_reference    = $this->resolve_visible_user_table_reference( $table_name );
-		$metadata           = null === $table_reference ? null : $this->auto_increment_metadata_for_table( $table_reference['table_name'], $table_reference['temporary'] );
-		$sequence_name      = null === $metadata ? null : $metadata['sequence_name'];
-		$explicit_insert_id = null === $metadata || null === $table_index
-			? null
-			: $this->explicit_auto_increment_value_for_write( $tokens, $table_index, $metadata['column_name'] );
-		$column_was_omitted = null !== $metadata && null !== $table_index
+		$table_reference     = $this->resolve_visible_user_table_reference( $table_name );
+		$metadata            = null === $table_reference ? null : $this->auto_increment_metadata_for_table( $table_reference['table_name'], $table_reference['temporary'] );
+		$sequence_name       = null === $metadata ? null : $metadata['sequence_name'];
+		$explicit_insert_ids = null === $metadata || null === $table_index
+			? array()
+			: $this->explicit_auto_increment_values_for_write( $tokens, $table_index, $metadata['column_name'] );
+		$explicit_insert_id  = count( $explicit_insert_ids ) > 0
+			? $explicit_insert_ids[ count( $explicit_insert_ids ) - 1 ]
+			: null;
+		$column_was_omitted  = null !== $metadata && null !== $table_index
 			? $this->auto_increment_column_omitted_from_write( $tokens, $table_index, $metadata['column_name'] )
 			: false;
-		$before             = null === $sequence_name || $column_was_omitted ? null : $this->sequence_currval( $sequence_name );
+		$before              = null === $sequence_name || $column_was_omitted ? null : $this->sequence_currval( $sequence_name );
 
 		$insert_ignore_write                  = null !== $metadata
 			&& null !== $table_reference
@@ -19903,7 +19906,7 @@ class WP_DuckDB_Driver {
 		$insert_ignore_explicit_ids_existed   = array();
 		$tracks_insert_ignore_explicit_values = $insert_ignore_write;
 		if ( $tracks_insert_ignore_explicit_values ) {
-			$insert_ignore_explicit_ids = $this->explicit_auto_increment_values_for_write( $tokens, $table_index, $metadata['column_name'] );
+			$insert_ignore_explicit_ids = $explicit_insert_ids;
 			foreach ( $insert_ignore_explicit_ids as $insert_ignore_explicit_id ) {
 				$key = (string) $insert_ignore_explicit_id;
 				if ( ! array_key_exists( $key, $insert_ignore_explicit_ids_existed ) ) {
@@ -19967,6 +19970,25 @@ class WP_DuckDB_Driver {
 			}
 		}
 
+		if (
+			null !== $metadata
+			&& null !== $sequence_name
+			&& null !== $table_reference
+			&& $result->rowCount() > 0
+			&& count( $explicit_insert_ids ) > 0
+		) {
+			$inserted_explicit_ids = $tracks_insert_ignore_explicit_values
+				? $this->inserted_explicit_auto_increment_values_for_insert_ignore(
+					$table_reference['table_name'],
+					$metadata['column_name'],
+					$insert_ignore_explicit_ids,
+					$insert_ignore_explicit_ids_existed,
+					$table_reference['temporary']
+				)
+				: $explicit_insert_ids;
+			$this->advance_auto_increment_sequence_after_explicit_write( $sequence_name, $inserted_explicit_ids );
+		}
+
 		return $result;
 	}
 
@@ -20002,17 +20024,36 @@ class WP_DuckDB_Driver {
 	 * @return int|null Last inserted explicit AUTO_INCREMENT value.
 	 */
 	private function inserted_explicit_auto_increment_value_for_insert_ignore( string $table_name, string $column_name, array $explicit_ids, array $ids_existed, bool $temporary = false ): ?int {
-		for ( $index = count( $explicit_ids ) - 1; $index >= 0; --$index ) {
-			$explicit_id = $explicit_ids[ $index ];
+		$inserted_ids = $this->inserted_explicit_auto_increment_values_for_insert_ignore( $table_name, $column_name, $explicit_ids, $ids_existed, $temporary );
+		if ( count( $inserted_ids ) > 0 ) {
+			return $inserted_ids[ count( $inserted_ids ) - 1 ];
+		}
+
+		return null;
+	}
+
+	/**
+	 * Find explicit AUTO_INCREMENT values inserted by INSERT IGNORE.
+	 *
+	 * @param string             $table_name   Table name.
+	 * @param string             $column_name  AUTO_INCREMENT column name.
+	 * @param int[]              $explicit_ids Explicit AUTO_INCREMENT IDs in statement order.
+	 * @param array<string,bool> $ids_existed  Whether each explicit ID existed before the write.
+	 * @param bool               $temporary    Whether the target is a temporary table.
+	 * @return int[] Inserted explicit AUTO_INCREMENT values in statement order.
+	 */
+	private function inserted_explicit_auto_increment_values_for_insert_ignore( string $table_name, string $column_name, array $explicit_ids, array $ids_existed, bool $temporary = false ): array {
+		$inserted_ids = array();
+		foreach ( $explicit_ids as $explicit_id ) {
 			if ( ! empty( $ids_existed[ (string) $explicit_id ] ) ) {
 				continue;
 			}
 			if ( $this->auto_increment_value_exists( $table_name, $column_name, $explicit_id ) ) {
-				return $explicit_id;
+				$inserted_ids[] = $explicit_id;
 			}
 		}
 
-		return null;
+		return $inserted_ids;
 	}
 
 	/**
@@ -20233,23 +20274,6 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Parse the last explicit literal assigned to an AUTO_INCREMENT column.
-	 *
-	 * @param WP_Parser_Token[] $tokens      MySQL token stream.
-	 * @param int               $table_index Index of the table token.
-	 * @param string            $column_name AUTO_INCREMENT column name.
-	 * @return int|null Explicit value, or null when the statement uses generated/default values.
-	 */
-	private function explicit_auto_increment_value_for_write( array $tokens, int $table_index, string $column_name ): ?int {
-		$explicit_values = $this->explicit_auto_increment_values_for_write( $tokens, $table_index, $column_name );
-		if ( count( $explicit_values ) > 0 ) {
-			return $explicit_values[ count( $explicit_values ) - 1 ];
-		}
-
-		return null;
-	}
-
-	/**
 	 * Parse explicit literal values assigned to an AUTO_INCREMENT column.
 	 *
 	 * @param WP_Parser_Token[] $tokens      MySQL token stream.
@@ -20416,6 +20440,59 @@ class WP_DuckDB_Driver {
 		}
 
 		return false === $value || null === $value ? null : (int) $value;
+	}
+
+	/**
+	 * Advance a sequence once and return the generated value.
+	 *
+	 * @param string $sequence_name Sequence name.
+	 * @return int Generated value.
+	 */
+	private function next_auto_increment_sequence_value( string $sequence_name ): int {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT nextval(' . $this->connection->quote( $sequence_name ) . ') AS value',
+			'Failed to advance DuckDB AUTO_INCREMENT sequence'
+		);
+
+		$value = $stmt->fetchColumn();
+		return false === $value || null === $value ? 0 : (int) $value;
+	}
+
+	/**
+	 * Advance a sequence so the next generated value follows explicit inserts.
+	 *
+	 * @param string $sequence_name Sequence name.
+	 * @param int[]  $explicit_ids  Explicit AUTO_INCREMENT IDs that were inserted.
+	 */
+	private function advance_auto_increment_sequence_after_explicit_write( string $sequence_name, array $explicit_ids ): void {
+		$positive_ids = array_filter(
+			$explicit_ids,
+			function ( int $explicit_id ): bool {
+				return $explicit_id > 0;
+			}
+		);
+		if ( count( $positive_ids ) === 0 ) {
+			return;
+		}
+
+		$target_value = max( $positive_ids );
+		$current      = $this->sequence_currval( $sequence_name );
+		if ( null === $current ) {
+			$current = $this->next_auto_increment_sequence_value( $sequence_name );
+		}
+		if ( $current >= $target_value ) {
+			return;
+		}
+
+		$steps = $target_value - $current;
+		$this->execute_duckdb_query(
+			'SELECT max(nextval('
+				. $this->connection->quote( $sequence_name )
+				. ')) AS value FROM range('
+				. $steps
+				. ')',
+			'Failed to advance DuckDB AUTO_INCREMENT sequence'
+		);
 	}
 
 	/**
