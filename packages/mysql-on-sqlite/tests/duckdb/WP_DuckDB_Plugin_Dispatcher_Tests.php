@@ -145,7 +145,7 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		);
 		$this->assertSame(
 			array(
-				'CREATE OR REPLACE MACRO date_format(d, f) AS strftime(d, f)',
+				'CREATE OR REPLACE MACRO date_format(d, f) AS strftime(TRY_CAST(d AS TIMESTAMP), f)',
 				'SELECT 42 AS answer',
 				'INSERT INTO t VALUES (1), (2)',
 				'CREATE TABLE "t" ("id" INTEGER)',

@@ -2181,12 +2181,15 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->runParitySetup(
 			array(
 				'CREATE TABLE options (option_name VARCHAR(100))',
-				"INSERT INTO options VALUES ('rss_123'), ('transient')",
+				"INSERT INTO options VALUES ('rss_123'), ('RSS_456'), ('transient')",
 			)
 		);
 
 		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name REGEXP '^rss_.+$' ORDER BY option_name" );
+		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name RLIKE '^rss_.+$' ORDER BY option_name" );
+		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name REGEXP BINARY '^rss_.+$' ORDER BY option_name" );
 		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name NOT REGEXP '^rss_.+$' ORDER BY option_name" );
+		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name NOT RLIKE BINARY '^RSS_.+$' ORDER BY option_name" );
 	}
 
 	public function test_replace_values_match_sqlite(): void {

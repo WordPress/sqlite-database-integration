@@ -739,7 +739,7 @@ class WP_DuckDB_Connection_Tests extends WP_DuckDB_TestCase {
 
 		$this->assertSame(
 			array(
-				'CREATE OR REPLACE MACRO date_format(d, f) AS strftime(d, f)',
+				'CREATE OR REPLACE MACRO date_format(d, f) AS strftime(TRY_CAST(d AS TIMESTAMP), f)',
 			),
 			$duckdb->queries
 		);

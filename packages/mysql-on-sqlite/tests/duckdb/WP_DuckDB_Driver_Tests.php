@@ -1024,6 +1024,81 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_sql_calc_found_rows_meta_query_regexp_and_numeric_like_counts(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_meta_query_found_rows_tables( $driver );
+
+		$regexp = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND ( wptests_postmeta.meta_key = 'foo' AND wptests_postmeta.meta_value REGEXP 'z$' )
+				AND ((wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish')))
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( array( 'ID' => 1 ) ), $regexp );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$not_regexp = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND ( wptests_postmeta.meta_key = 'foo' AND wptests_postmeta.meta_value NOT REGEXP 'z$' )
+				AND ((wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish')))
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( array( 'ID' => 2 ) ), $not_regexp );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$numeric_like = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND ( wptests_postmeta.meta_key = 'decimal_value' AND CAST(wptests_postmeta.meta_value AS DECIMAL(10,2)) LIKE '%.3%' )
+				AND ((wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish')))
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( array( 'ID' => 1 ) ), $numeric_like );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$numeric_not_like = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts INNER JOIN wptests_postmeta ON ( wptests_posts.ID = wptests_postmeta.post_id )
+			WHERE 1=1
+				AND ( wptests_postmeta.meta_key = 'decimal_value' AND CAST(wptests_postmeta.meta_id AS SIGNED) NOT LIKE '3' )
+				AND ((wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish')))
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( array( 'ID' => 2 ) ), $numeric_not_like );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_select_comments_group_by_primary_key_orders_by_joined_meta_value(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1561,9 +1636,12 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
-		$row    = $driver->query( "SELECT DATE_FORMAT(DATE '2026-06-26', '%Y-%m-%d') AS formatted_date" )->fetch( PDO::FETCH_ASSOC );
+		$row    = $driver->query( "SELECT DATE_FORMAT(DATE '2026-06-26', '%Y-%m-%d') AS formatted_date, DATE_FORMAT('2026-06-26 14:15:16', '%Y-%m-%d %H:%i:%s') AS formatted_datetime, DATE_FORMAT('2026-06-26 14:15:16', '%M %W %h:%i %p') AS formatted_names, DATE_FORMAT('2026-06-26 14:15:16', '%H.%i') AS hm" )->fetch( PDO::FETCH_ASSOC );
 
 		$this->assertSame( '2026-06-26', $row['formatted_date'] );
+		$this->assertSame( '2026-06-26 14:15:16', $row['formatted_datetime'] );
+		$this->assertSame( 'June Friday 02:15 PM', $row['formatted_names'] );
+		$this->assertEqualsWithDelta( 14.15, (float) $row['hm'], 0.000001 );
 	}
 
 	public function test_date_part_functions_translate_wordpress_datetime_strings_with_try_cast(): void {
@@ -1598,6 +1676,36 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringContainsString( 'year(TRY_CAST((post_date) AS TIMESTAMP)) AS year', $sql );
 		$this->assertStringContainsString( 'month(TRY_CAST((post_date) AS TIMESTAMP)) AS month', $sql );
 		$this->assertStringContainsString( 'dayofmonth(TRY_CAST((post_date) AS TIMESTAMP)) AS day', $sql );
+
+		$tokens = $tokenize->invoke(
+			$driver,
+			'SELECT DATE(post_date) AS post_day, DATEDIFF(post_modified, post_date) AS days_old, MONTHNUM(post_date) AS monthnum
+			FROM wp_posts'
+		);
+		$sql    = $translate->invoke( $driver, $tokens );
+
+		$this->assertStringContainsString( "strftime(TRY_CAST((post_date) AS TIMESTAMP), '%Y-%m-%d') AS post_day", $sql );
+		$this->assertStringContainsString( 'CAST(TRY_CAST((post_modified) AS DATE) - TRY_CAST((post_date) AS DATE) AS BIGINT) AS days_old', $sql );
+		$this->assertStringContainsString( 'month(TRY_CAST((post_date) AS TIMESTAMP)) AS monthnum', $sql );
+
+		$tokens = $tokenize->invoke(
+			$driver,
+			"SELECT HOUR(post_date) AS hour, MINUTE(post_date) AS minute, SECOND(post_date) AS second,
+				DAYOFWEEK(post_date) AS day_of_week, WEEKDAY(post_date) AS weekday,
+				WEEK(post_date, 1) AS week, DATE_FORMAT(post_date, '%Y-%m-%d %H:%i:%s') AS formatted,
+				DATE_FORMAT(post_date, '%H.%i') AS hm
+			FROM wp_posts"
+		);
+		$sql    = $translate->invoke( $driver, $tokens );
+
+		$this->assertStringContainsString( 'hour(TRY_CAST((post_date) AS TIME)) AS hour', $sql );
+		$this->assertStringContainsString( 'minute(TRY_CAST((post_date) AS TIME)) AS minute', $sql );
+		$this->assertStringContainsString( 'second(TRY_CAST((post_date) AS TIME)) AS second', $sql );
+		$this->assertStringContainsString( '(dayofweek(TRY_CAST((post_date) AS DATE)) + 1) AS day_of_week', $sql );
+		$this->assertStringContainsString( '((dayofweek(TRY_CAST((post_date) AS DATE)) + 6) % 7) AS weekday', $sql );
+		$this->assertStringContainsString( 'week(TRY_CAST((post_date) AS DATE)) AS week', $sql );
+		$this->assertStringContainsString( "strftime(TRY_CAST((post_date) AS TIMESTAMP), '%Y-%m-%d %H:%M:%S') AS formatted", $sql );
+		$this->assertStringContainsString( "CAST(strftime(TRY_CAST((post_date) AS TIMESTAMP), '%H.%M') AS DOUBLE) AS hm", $sql );
 	}
 
 	public function test_date_part_functions_try_cast_wordpress_datetime_strings(): void {
@@ -1650,9 +1758,56 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				FROM wp_posts
 				WHERE YEAR(post_date) = 2026
 					AND MONTH(post_date) = 6
+					AND MONTHNUM(post_date) = 6
 					AND DAYOFMONTH(post_date) = 26
 					AND post_type = 'attachment'"
 			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array( array( 'ID' => 1 ) ),
+			$driver->query(
+				"SELECT ID
+				FROM wp_posts
+				WHERE DATE_FORMAT(post_date, '%H.%i') = 14.15
+					AND post_type = 'attachment'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$row = $driver->query(
+			"SELECT HOUR(post_date) AS hour, MINUTE(post_date) AS minute, SECOND(post_date) AS second,
+				DAYOFWEEK(post_date) AS day_of_week, WEEKDAY(post_date) AS weekday,
+				WEEK(post_date, 1) AS week, DATE_FORMAT(post_date, '%Y-%m-%d %H:%i:%s') AS formatted,
+				DATE_FORMAT(post_date, '%H.%i') AS hm
+			FROM wp_posts
+			WHERE post_date = '2026-06-26 14:15:16'"
+		)->fetch( PDO::FETCH_ASSOC );
+
+		$hour_minute = $row['hm'];
+		unset( $row['hm'] );
+
+		$this->assertSame(
+			array(
+				'hour'        => 14,
+				'minute'      => 15,
+				'second'      => 16,
+				'day_of_week' => 6,
+				'weekday'     => 4,
+				'week'        => 26,
+				'formatted'   => '2026-06-26 14:15:16',
+			),
+			$row
+		);
+		$this->assertEqualsWithDelta( 14.15, (float) $hour_minute, 0.000001 );
+
+		$time_row = $driver->query( "SELECT HOUR('14:15:16') AS hour, MINUTE('14:15:16') AS minute, SECOND('14:15:16') AS second" )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				'hour'   => 14,
+				'minute' => 15,
+				'second' => 16,
+			),
+			$time_row
 		);
 
 		$row = $driver->query(
@@ -1660,6 +1815,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				YEAR('0000-00-00 00:00:00') AS zero_date_year,
 				MONTH('0000-00-00 00:00:00') AS zero_date_month,
 				DAYOFMONTH('0000-00-00 00:00:00') AS zero_date_day,
+				DATE('0000-00-00 00:00:00') AS zero_date_date,
+				DATEDIFF('0000-00-00 00:00:00', '2026-06-26 14:15:16') AS zero_date_delta,
 				YEAR(DATE '2026-07-01') AS date_year,
 				MONTH(TIMESTAMP '2026-08-02 03:04:05') AS timestamp_month,
 				DAY(TIMESTAMP '2026-08-02 03:04:05') AS timestamp_day"
@@ -1668,6 +1825,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertNull( $row['zero_date_year'] );
 		$this->assertNull( $row['zero_date_month'] );
 		$this->assertNull( $row['zero_date_day'] );
+		$this->assertNull( $row['zero_date_date'] );
+		$this->assertNull( $row['zero_date_delta'] );
 		$this->assertSame( 2026, $row['date_year'] );
 		$this->assertSame( 8, $row['timestamp_month'] );
 		$this->assertSame( 2, $row['timestamp_day'] );
@@ -4535,6 +4694,49 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				'mysql'  => "SELECT 'a_aa' LIKE 'a{$backslash}{$backslash}_aa' AS matched",
 				'duckdb' => "SELECT 'a_aa' LIKE 'a{$backslash}_aa' ESCAPE '{$backslash}' AS matched",
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$driver->query( $case['mysql'] );
+
+			$this->assertSame( array( $case['duckdb'] ), $driver->get_last_duckdb_queries() );
+		}
+	}
+
+	public function test_numeric_cast_like_predicates_are_translated_without_duckdb_runtime(): void {
+		$duckdb = new class() {
+			public function query( string $sql ) {
+				return new class() {
+					public function columnNames(): ArrayIterator { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+						return new ArrayIterator( array( 'matched' ) );
+					}
+
+					public function rows( bool $assoc ): array {
+						return array( array( 'matched' => 1 ) );
+					}
+				};
+			}
+		};
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => new WP_DuckDB_Connection( array( 'duckdb' => $duckdb ) ),
+			)
+		);
+
+		$backslash = chr( 92 );
+		$cases     = array(
+			array(
+				'mysql'  => "SELECT CAST(meta_value AS DECIMAL(10,2)) LIKE '10{$backslash}_%' AS matched FROM postmeta",
+				'duckdb' => "SELECT CAST((CAST(meta_value AS DOUBLE)) AS VARCHAR) LIKE '10{$backslash}_%' ESCAPE '{$backslash}' AS matched FROM postmeta",
+			),
+			array(
+				'mysql'  => "SELECT CAST(meta_id AS SIGNED) NOT LIKE '3' AS matched FROM postmeta",
+				'duckdb' => "SELECT CAST((CAST(meta_id AS BIGINT)) AS VARCHAR) NOT LIKE '3' AS matched FROM postmeta",
+			),
+			array(
+				'mysql'  => "SELECT CAST(meta_id AS UNSIGNED) LIKE '4%' ESCAPE '!' AS matched FROM postmeta",
+				'duckdb' => "SELECT CAST((CAST(meta_id AS BIGINT)) AS VARCHAR) LIKE '4%' ESCAPE '!' AS matched FROM postmeta",
 			),
 		);
 
@@ -7833,13 +8035,25 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 		$driver->query( 'CREATE TABLE options (option_name VARCHAR(100))' );
-		$driver->query( "INSERT INTO options VALUES ('rss_123'), ('transient')" );
+		$driver->query( "INSERT INTO options VALUES ('rss_123'), ('RSS_456'), ('transient')" );
 
-		$regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name REGEXP '^rss_.+$'" )->fetchAll( PDO::FETCH_ASSOC );
-		$this->assertSame( array( array( 'option_name' => 'rss_123' ) ), $regexp_rows );
+		$regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name REGEXP '^rss_.+$' ORDER BY lower(option_name), option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'rss_123' ), array( 'option_name' => 'RSS_456' ) ), $regexp_rows );
 
-		$not_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name NOT REGEXP '^rss_.+$'" )->fetchAll( PDO::FETCH_ASSOC );
+		$rlike_rows = $driver->query( "SELECT option_name FROM options WHERE option_name RLIKE '^rss_.+$' ORDER BY lower(option_name), option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'rss_123' ), array( 'option_name' => 'RSS_456' ) ), $rlike_rows );
+
+		$binary_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name REGEXP BINARY '^rss_.+$' ORDER BY option_name" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'rss_123' ) ), $binary_regexp_rows );
+
+		$not_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name NOT REGEXP '^rss_.+$' ORDER BY option_name" )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( array( 'option_name' => 'transient' ) ), $not_regexp_rows );
+
+		$not_binary_rlike_rows = $driver->query( "SELECT option_name FROM options WHERE option_name NOT RLIKE BINARY '^RSS_.+$' ORDER BY option_name" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'rss_123' ), array( 'option_name' => 'transient' ) ), $not_binary_rlike_rows );
+
+		$numeric_regexp = $driver->query( "SELECT 123 REGEXP '23$' AS matched" )->fetch( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'matched' => true ), $numeric_regexp );
 	}
 
 	public function test_table_level_primary_key_is_supported(): void {
@@ -16621,10 +16835,47 @@ SQL
 		);
 		$driver->query(
 			'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order) VALUES
-				(1, 11, 0),
-				(1, 12, 0),
-				(2, 11, 0),
-				(4, 11, 0)'
+					(1, 11, 0),
+					(1, 12, 0),
+					(2, 11, 0),
+					(4, 11, 0)'
+		);
+	}
+
+	private function create_wordpress_meta_query_found_rows_tables( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_postmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL,
+				post_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY post_id (post_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_type, post_status) VALUES
+				(1, '2026-01-01 00:00:00', 'post', 'publish'),
+				(2, '2026-02-01 00:00:00', 'post', 'publish'),
+				(3, '2026-03-01 00:00:00', 'page', 'publish')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_postmeta (meta_id, post_id, meta_key, meta_value) VALUES
+				(1, 1, 'foo', 'buzz'),
+				(2, 2, 'foo', 'bar'),
+				(3, 1, 'decimal_value', '10.30'),
+				(4, 2, 'decimal_value', '10.40'),
+				(5, 3, 'foo', 'fizz')"
 		);
 	}
 
