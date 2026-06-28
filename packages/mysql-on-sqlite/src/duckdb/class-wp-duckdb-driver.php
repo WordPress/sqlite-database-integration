@@ -2036,7 +2036,7 @@ class WP_DuckDB_Driver {
 	/**
 	 * Parse the FROM clause supported by primary-key GROUP BY expansion.
 	 *
-	 * Joined tables are accepted only as direct INNER JOIN sources. Projected,
+	 * Joined tables are accepted only as direct INNER/LEFT JOIN sources. Projected,
 	 * grouped, and ordered columns must still qualify the primary table.
 	 *
 	 * @param WP_Parser_Token[] $tokens FROM clause tokens.
@@ -2081,6 +2081,14 @@ class WP_DuckDB_Driver {
 		while ( $index < count( $tokens ) ) {
 			if ( WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id ) {
 				++$index;
+				if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
+					return false;
+				}
+			} elseif ( WP_MySQL_Lexer::LEFT_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+				if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::OUTER_SYMBOL === $tokens[ $index ]->id ) {
+					++$index;
+				}
 				if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
 					return false;
 				}
@@ -14758,6 +14766,22 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$sum_length_function = $this->translate_sum_length_function_call(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $sum_length_function ) {
+				$pieces[] = $sum_length_function;
+				continue;
+			}
+
 			if (
 				WP_MySQL_Lexer::NOT_SYMBOL === $token->id
 				&& isset( $tokens[ $index + 1 ], $tokens[ $index + 2 ] )
@@ -15347,6 +15371,69 @@ class WP_DuckDB_Driver {
 
 		$index = $next_index - 1;
 		return implode( ' ', $cases );
+	}
+
+	/**
+	 * Translate SUM(LENGTH(...)) to a PHP-int-compatible result type.
+	 *
+	 * DuckDB returns HUGEINT for SUM(BIGINT), and its PHP client requires bcmath
+	 * when reading HUGEINT values. WordPress uses this bounded shape for Site
+	 * Health autoloaded option-size checks where MySQL returns an integer.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current token index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when the token does not start SUM(LENGTH(...)).
+	 */
+	private function translate_sum_length_function_call(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if (
+			! isset( $tokens[ $index + 1 ] )
+			|| $this->is_non_identifier_token( $tokens[ $index ] )
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_value(), 'SUM' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$items     = $this->split_top_level_comma_items( $body );
+		if ( 1 !== count( $items ) || count( $items[0] ) < 3 ) {
+			return null;
+		}
+
+		$item = $items[0];
+		if (
+			$this->is_non_identifier_token( $item[0] )
+			|| 0 !== strcasecmp( $item[0]->get_value(), 'LENGTH' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $item[1]->id
+			|| $this->skip_balanced_parentheses( $item, 1 ) !== count( $item )
+		) {
+			return null;
+		}
+
+		$index = $end_index - 1;
+		return 'CAST(SUM('
+			. $this->translate_tokens_to_duckdb_sql(
+				$item,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			)
+			. ') AS BIGINT)';
 	}
 
 	/**
@@ -18840,7 +18927,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$name = strtoupper( $tokens[ $index ]->get_value() );
-		if ( ! in_array( $name, array( 'DATE', 'DATEDIFF', 'DATE_ADD', 'DATE_SUB', 'MONTH', 'YEAR' ), true ) ) {
+		if ( ! in_array( $name, array( 'DATE', 'DATEDIFF', 'DATE_ADD', 'DATE_SUB', 'DAY', 'DAYOFMONTH', 'MONTH', 'YEAR' ), true ) ) {
 			return null;
 		}
 
@@ -18898,13 +18985,15 @@ class WP_DuckDB_Driver {
 			return 'CAST(CAST((' . $start_sql . ') AS DATE) - CAST((' . $end_sql . ') AS DATE) AS BIGINT)';
 		}
 
-		if ( 'MONTH' === $name || 'YEAR' === $name ) {
+		if ( in_array( $name, array( 'DAY', 'DAYOFMONTH', 'MONTH', 'YEAR' ), true ) ) {
 			if ( 1 !== count( $items ) || count( $items[0] ) === 0 ) {
 				return null;
 			}
 
+			$function = 'DAY' === $name ? 'dayofmonth' : strtolower( $name );
+
 			$index = $end_index - 1;
-			return strtolower( $name ) . '(TRY_CAST(('
+			return $function . '(TRY_CAST(('
 				. $this->translate_tokens_to_duckdb_sql(
 					$items[0],
 					$rewrite_information_schema_tables,

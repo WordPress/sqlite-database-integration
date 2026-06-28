@@ -957,6 +957,73 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringNotContainsString( '"wptests_posts"."post_author"', $select_sql );
 	}
 
+	public function test_select_left_join_group_by_primary_key_orders_by_functionally_dependent_column(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_left_join_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			"SELECT wptests_posts.ID
+			FROM wptests_posts
+			LEFT JOIN wptests_term_relationships
+				ON (wptests_posts.ID = wptests_term_relationships.object_id)
+			WHERE wptests_posts.post_type = 'post'
+				AND wptests_posts.post_status = 'publish'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date ASC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array( 'ID' => 1 ),
+				array( 'ID' => 2 ),
+				array( 'ID' => 3 ),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString(
+			'GROUP BY wptests_posts.ID, "wptests_posts"."post_date"',
+			$select_sql
+		);
+	}
+
+	public function test_sql_calc_found_rows_left_join_group_by_primary_key_expands_group_by_for_count(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_left_join_group_by_tables( $driver );
+
+		$result = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			LEFT OUTER JOIN wptests_term_relationships
+				ON (wptests_posts.ID = wptests_term_relationships.object_id)
+			WHERE wptests_posts.post_type = 'post'
+				AND wptests_posts.post_status = 'publish'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date ASC
+			LIMIT 0, 2"
+		);
+
+		$this->assertSame(
+			array(
+				array( 'ID' => 1 ),
+				array( 'ID' => 2 ),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_select_seeded_rand_literals_are_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1312,7 +1379,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( '2026-06-26', $row['formatted_date'] );
 	}
 
-	public function test_year_and_month_functions_translate_wordpress_datetime_strings_with_try_cast(): void {
+	public function test_date_part_functions_translate_wordpress_datetime_strings_with_try_cast(): void {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public function __construct() {}
 
@@ -1334,7 +1401,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$tokens = $tokenize->invoke(
 			$driver,
-			"SELECT DISTINCT YEAR( post_date ) AS year, MONTH( post_date ) AS month
+			"SELECT DISTINCT YEAR( post_date ) AS year, MONTH( post_date ) AS month, DAYOFMONTH( post_date ) AS day
 			FROM wp_posts
 			WHERE post_type = 'attachment'
 			ORDER BY post_date DESC"
@@ -1343,9 +1410,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$this->assertStringContainsString( 'year(TRY_CAST((post_date) AS TIMESTAMP)) AS year', $sql );
 		$this->assertStringContainsString( 'month(TRY_CAST((post_date) AS TIMESTAMP)) AS month', $sql );
+		$this->assertStringContainsString( 'dayofmonth(TRY_CAST((post_date) AS TIMESTAMP)) AS day', $sql );
 	}
 
-	public function test_year_and_month_functions_try_cast_wordpress_datetime_strings(): void {
+	public function test_date_part_functions_try_cast_wordpress_datetime_strings(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
@@ -1366,7 +1434,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$rows = $driver->query(
-			"SELECT DISTINCT YEAR(post_date) AS year, MONTH(post_date) AS month
+			"SELECT DISTINCT YEAR(post_date) AS year, MONTH(post_date) AS month, DAYOFMONTH(post_date) AS day
 			FROM wp_posts
 			WHERE post_type = 'attachment'
 			ORDER BY post_date DESC"
@@ -1377,27 +1445,76 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array(
 					'year'  => 2026,
 					'month' => 6,
+					'day'   => 26,
 				),
 				array(
 					'year'  => 2026,
 					'month' => 5,
+					'day'   => 1,
 				),
 			),
 			$rows
+		);
+
+		$this->assertSame(
+			array( array( 'ID' => 1 ) ),
+			$driver->query(
+				"SELECT ID
+				FROM wp_posts
+				WHERE YEAR(post_date) = 2026
+					AND MONTH(post_date) = 6
+					AND DAYOFMONTH(post_date) = 26
+					AND post_type = 'attachment'"
+			)->fetchAll( PDO::FETCH_ASSOC )
 		);
 
 		$row = $driver->query(
 			"SELECT
 				YEAR('0000-00-00 00:00:00') AS zero_date_year,
 				MONTH('0000-00-00 00:00:00') AS zero_date_month,
+				DAYOFMONTH('0000-00-00 00:00:00') AS zero_date_day,
 				YEAR(DATE '2026-07-01') AS date_year,
-				MONTH(TIMESTAMP '2026-08-02 03:04:05') AS timestamp_month"
+				MONTH(TIMESTAMP '2026-08-02 03:04:05') AS timestamp_month,
+				DAY(TIMESTAMP '2026-08-02 03:04:05') AS timestamp_day"
 		)->fetch( PDO::FETCH_ASSOC );
 
 		$this->assertNull( $row['zero_date_year'] );
 		$this->assertNull( $row['zero_date_month'] );
+		$this->assertNull( $row['zero_date_day'] );
 		$this->assertSame( 2026, $row['date_year'] );
 		$this->assertSame( 8, $row['timestamp_month'] );
+		$this->assertSame( 2, $row['timestamp_day'] );
+	}
+
+	public function test_sum_length_result_does_not_require_bcmath(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload) VALUES
+				('autoload_yes', 'abcd', 'yes'),
+				('autoload_on', 'xy', 'on'),
+				('autoload_auto', 'z', 'auto'),
+				('manual', 'ignored', 'no')"
+		);
+
+		$row = $driver->query(
+			"SELECT SUM(LENGTH(option_value)) FROM wptests_options
+			WHERE autoload IN ('yes','on','auto-on','auto')"
+		)->fetch( PDO::FETCH_NUM );
+
+		$this->assertSame( 7, $row[0] );
+		$this->assertStringContainsString( 'CAST(SUM(', $this->lastDuckDBQuery( $driver ) );
+		$this->assertStringContainsString( ' AS BIGINT)', $this->lastDuckDBQuery( $driver ) );
 	}
 
 	public function test_create_table_insert_update_delete_show_and_describe(): void {
@@ -16000,6 +16117,41 @@ SQL
 				(3, 2, '_wp_page_template', 'default'),
 				(4, 3, '_wp_page_template', 'default'),
 				(5, 2, '_edit_lock', 'ignored')"
+		);
+	}
+
+	private function create_wordpress_left_join_group_by_tables( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_term_relationships (
+				object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				term_order INT(11) NOT NULL DEFAULT '0',
+				PRIMARY KEY (object_id, term_taxonomy_id),
+				KEY term_taxonomy_id (term_taxonomy_id)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_type, post_status) VALUES
+				(1, '2026-01-01 00:00:00', 'post', 'publish'),
+				(2, '2026-02-01 00:00:00', 'post', 'publish'),
+				(3, '2026-03-01 00:00:00', 'post', 'publish'),
+				(4, '2026-04-01 00:00:00', 'page', 'publish')"
+		);
+		$driver->query(
+			'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order) VALUES
+				(1, 11, 0),
+				(1, 12, 0),
+				(2, 11, 0),
+				(4, 11, 0)'
 		);
 	}
 
