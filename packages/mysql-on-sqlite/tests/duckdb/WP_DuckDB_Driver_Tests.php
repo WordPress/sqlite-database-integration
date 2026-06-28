@@ -62,6 +62,79 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_charset_convert_sanitizer_select_returns_invalid_bytes_without_duckdb_runtime(): void {
+		$driver = $this->new_byte_safe_duckdb_driver();
+		$big5   = "a\xa6\x40b";
+		$ujis   = "\xe8\x87\xaa\xe5\x8b\x95\xe4\xb8\x8b\xe6\x9b\xb8\xe3\x81\x8d";
+
+		$cases = array(
+			'cp1251_no_length'   => array(
+				"SELECT CONVERT( CONVERT( '\xd8ord\xd0ress' USING cp1251 ) USING cp1251 ) AS x_0",
+				"\xd8ord\xd0ress",
+			),
+			'koi8r_char_length'  => array(
+				"SELECT CONVERT( LEFT( CONVERT( '" . str_repeat( "\xfd\xf2", 10 ) . "' USING koi8r ), 10 ) USING koi8r ) AS x_0",
+				str_repeat( "\xfd\xf2", 5 ),
+			),
+			'hebrew_byte_length' => array(
+				"SELECT CONVERT( LEFT( CONVERT( '" . str_repeat( "\xf9\xf7", 10 ) . "' USING binary ), 10 ) USING hebrew ) AS x_0",
+				str_repeat( "\xf9\xf7", 5 ),
+			),
+			'tis620_char_length' => array(
+				"SELECT CONVERT( LEFT( CONVERT( '" . str_repeat( "\xcc\xe3", 10 ) . "' USING tis620 ), 10 ) USING tis620 ) AS x_0",
+				str_repeat( "\xcc\xe3", 5 ),
+			),
+			'big5_char_length'   => array(
+				"SELECT CONVERT( LEFT( CONVERT( '" . str_repeat( $big5, 10 ) . "' USING big5 ), 10 ) USING big5 ) AS x_0",
+				str_repeat( $big5, 3 ) . 'a',
+			),
+			'big5_byte_length'   => array(
+				"SELECT CONVERT( LEFT( CONVERT( '" . str_repeat( $big5, 10 ) . "' USING binary ), 10 ) USING big5 ) AS x_0",
+				str_repeat( $big5, 2 ) . 'a',
+			),
+			'ujis_utf8_length'   => array(
+				"SELECT CONVERT( LEFT( CONVERT( '{$ujis}' USING ujis ), 4 ) USING utf8 ) AS x_0",
+				"\xe8\x87\xaa\xe5\x8b\x95\xe4\xb8\x8b\xe6\x9b\xb8",
+			),
+		);
+
+		foreach ( $cases as $label => $case ) {
+			$row = $driver->query( $case[0] )->fetch( PDO::FETCH_ASSOC );
+			$this->assertSame( bin2hex( $case[1] ), bin2hex( $row['x_0'] ), $label );
+		}
+	}
+
+	public function test_charset_convert_sanitizer_select_handles_multiple_columns(): void {
+		$driver = $this->new_byte_safe_duckdb_driver();
+		$sql    = 'SELECT '
+			. "CONVERT( CONVERT( '\xd8ord\xd0ress' USING cp1251 ) USING cp1251 ) AS x_0, "
+			. "CONVERT( LEFT( CONVERT( '" . str_repeat( "\xf9\xf7", 10 ) . "' USING binary ), 10 ) USING hebrew ) AS x_1";
+
+		$row = $driver->query( $sql )->fetch( PDO::FETCH_ASSOC );
+
+		$this->assertSame( bin2hex( "\xd8ord\xd0ress" ), bin2hex( $row['x_0'] ) );
+		$this->assertSame( bin2hex( str_repeat( "\xf9\xf7", 5 ) ), bin2hex( $row['x_1'] ) );
+	}
+
+	public function test_charset_convert_sanitizer_select_does_not_intercept_generic_convert_using(): void {
+		$driver       = $this->new_byte_safe_duckdb_driver();
+		$invalid_byte = "\xA1";
+		$queries      = array(
+			'simple_convert'  => "SELECT CONVERT( 'Customer' USING utf8mb4 ) AS v",
+			'mixed_select'    => "SELECT CONVERT( CONVERT( '{$invalid_byte}' USING cp1251 ) USING cp1251 ) AS x_0, 1 AS one",
+			'from_expression' => "SELECT CONVERT( CONVERT( '{$invalid_byte}' USING cp1251 ) USING cp1251 ) AS x_0 FROM DUAL",
+		);
+
+		foreach ( $queries as $label => $sql ) {
+			try {
+				$driver->query( $sql );
+				$this->fail( $label . ' should have used the generic DuckDB query path.' );
+			} catch ( RuntimeException $e ) {
+				$this->assertStringContainsString( 'Unexpected DuckDB query:', $e->getMessage(), $label );
+			}
+		}
+	}
+
 	public function test_invalid_byte_write_display_sql_uses_byte_safe_token_value(): void {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public function __construct() {}
@@ -108,6 +181,40 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$this->assertSame( bin2hex( "'{$invalid_byte}'" ), bin2hex( $display->invoke( $driver, $value_tokens, "'{$invalid_byte}'" ) ) );
+	}
+
+	private function new_byte_safe_duckdb_driver(): WP_DuckDB_Driver {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				throw new RuntimeException( 'Unexpected DuckDB query: ' . $sql );
+			}
+		};
+		$driver     = ( new ReflectionClass( WP_DuckDB_Driver::class ) )->newInstanceWithoutConstructor();
+
+		foreach (
+			array(
+				'mysql_version'    => WP_DuckDB_Driver::DEFAULT_MYSQL_VERSION,
+				'connection'       => $connection,
+				'database'         => 'wp',
+				'current_database' => 'wp',
+			) as $property => $value
+		) {
+			$reflection_property = new ReflectionProperty( WP_DuckDB_Driver::class, $property );
+			if ( PHP_VERSION_ID < 80100 ) {
+				$reflection_property->setAccessible( true );
+			}
+			$reflection_property->setValue( $driver, $value );
+		}
+
+		$grammar = new ReflectionProperty( WP_DuckDB_Driver::class, 'mysql_grammar' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$grammar->setAccessible( true );
+		}
+		$grammar->setValue( null, new WP_Parser_Grammar( require WP_DuckDB_Driver::MYSQL_GRAMMAR_PATH ) );
+
+		return $driver;
 	}
 
 	public function test_auto_increment_insert_id_falls_back_to_max_when_currval_is_unavailable(): void {

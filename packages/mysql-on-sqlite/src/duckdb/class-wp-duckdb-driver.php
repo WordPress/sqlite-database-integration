@@ -906,6 +906,11 @@ class WP_DuckDB_Driver {
 			return $this->record_found_rows_from_result( $variable_expression_select );
 		}
 
+		$charset_convert_select = $this->execute_charset_convert_select( $tokens );
+		if ( null !== $charset_convert_select ) {
+			return $this->record_found_rows_from_result( $charset_convert_select );
+		}
+
 		$has_sql_calc_found_rows = $this->has_top_level_sql_calc_found_rows( $tokens );
 		$tokens                  = $this->normalize_select_helper_tokens( $tokens );
 		$column_meta             = $this->simple_select_column_metadata( $tokens );
@@ -3690,6 +3695,475 @@ class WP_DuckDB_Driver {
 			'SELECT ' . implode( ', ', $sql_items ),
 			'Failed to execute DuckDB MySQL variable expression SELECT'
 		);
+	}
+
+	/**
+	 * Execute WordPress charset sanitizer SELECTs without constructing invalid DuckDB VARCHAR values.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return WP_DuckDB_Result_Statement|null Statement when emulated, null for generic SELECT handling.
+	 */
+	private function execute_charset_convert_select( array $tokens ): ?WP_DuckDB_Result_Statement {
+		$items = $this->parse_charset_convert_select_items( $tokens );
+		if ( null === $items ) {
+			return null;
+		}
+
+		$columns = array();
+		$row     = array();
+		foreach ( $items as $item ) {
+			$columns[] = $item['alias'];
+			$row[]     = $item['value'];
+		}
+
+		return new WP_DuckDB_Result_Statement( $columns, array( $row ), 0 );
+	}
+
+	/**
+	 * Parse a SELECT list made only of WordPress charset sanitizer expressions.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @return array<int,array{alias:string,value:string}>|null Parsed items.
+	 */
+	private function parse_charset_convert_select_items( array $tokens ): ?array {
+		if ( ! isset( $tokens[0], $tokens[1] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$select_list_end = $this->top_level_select_list_end( $tokens );
+		if ( 1 >= $select_list_end || count( $tokens ) !== $select_list_end ) {
+			return null;
+		}
+
+		$items = array();
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, 1, $select_list_end ) as $range ) {
+			$item = $this->parse_charset_convert_select_item( $range['tokens'] );
+			if ( null === $item ) {
+				return null;
+			}
+			$items[] = $item;
+		}
+
+		return count( $items ) > 0 ? $items : null;
+	}
+
+	/**
+	 * Parse one charset sanitizer SELECT item.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT item tokens.
+	 * @return array{alias:string,value:string}|null Parsed item.
+	 */
+	private function parse_charset_convert_select_item( array $tokens ): ?array {
+		$as_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::AS_SYMBOL );
+		if ( null !== $as_index ) {
+			if ( 0 === $as_index || count( $tokens ) !== $as_index + 2 ) {
+				return null;
+			}
+
+			$alias       = $this->identifier_value( $tokens[ $as_index + 1 ] );
+			$expr_tokens = array_slice( $tokens, 0, $as_index );
+		} else {
+			if ( $this->select_item_has_implicit_alias( $tokens ) ) {
+				return null;
+			}
+			$alias       = $this->concatenate_token_bytes( $tokens );
+			$expr_tokens = $tokens;
+		}
+
+		$value = $this->evaluate_charset_convert_expression( $expr_tokens );
+		if ( null === $value ) {
+			return null;
+		}
+
+		return array(
+			'alias' => $alias,
+			'value' => $value,
+		);
+	}
+
+	/**
+	 * Evaluate a supported nested CONVERT(... USING charset) expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return string|null Evaluated value, or null when unsupported.
+	 */
+	private function evaluate_charset_convert_expression( array $tokens ): ?string {
+		$outer = $this->parse_convert_using_expression( $tokens );
+		if ( null === $outer || ! $this->is_supported_charset_convert_name( $outer['charset'] ) ) {
+			return null;
+		}
+
+		$length      = null;
+		$expr_tokens = $outer['expr_tokens'];
+		$left        = $this->parse_left_function_expression( $expr_tokens );
+		if ( null !== $left ) {
+			$length      = $left['length'];
+			$expr_tokens = $left['expr_tokens'];
+		}
+
+		$inner = $this->parse_convert_using_expression( $expr_tokens );
+		if ( null === $inner || ! $this->is_supported_charset_convert_name( $inner['charset'] ) ) {
+			return null;
+		}
+
+		$value = $this->parse_single_quoted_literal_expression( $inner['expr_tokens'] );
+		if ( null === $value ) {
+			return null;
+		}
+
+		if ( null !== $length ) {
+			$byte_length = 'binary' === $inner['charset'];
+			$charset     = $byte_length ? $outer['charset'] : $inner['charset'];
+			$value       = $this->truncate_mysql_charset_bytes( $value, $charset, $length, $byte_length );
+		}
+
+		return $value;
+	}
+
+	/**
+	 * Parse CONVERT(expr USING charset).
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return array{expr_tokens:array<int,WP_Parser_Token>,charset:string}|null Parsed expression.
+	 */
+	private function parse_convert_using_expression( array $tokens ): ?array {
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::CONVERT_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, 1 );
+		if ( count( $tokens ) !== $end_index ) {
+			return null;
+		}
+
+		$body        = array_slice( $tokens, 2, $end_index - 3 );
+		$using_index = $this->find_top_level_token_index( $body, 0, WP_MySQL_Lexer::USING_SYMBOL );
+		if ( null === $using_index || 0 === $using_index ) {
+			return null;
+		}
+
+		$charset = $this->parse_charset_name( array_slice( $body, $using_index + 1 ) );
+		if ( null === $charset ) {
+			return null;
+		}
+
+		return array(
+			'expr_tokens' => array_slice( $body, 0, $using_index ),
+			'charset'     => $charset,
+		);
+	}
+
+	/**
+	 * Parse LEFT(expr, integer).
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return array{expr_tokens:array<int,WP_Parser_Token>,length:int}|null Parsed expression.
+	 */
+	private function parse_left_function_expression( array $tokens ): ?array {
+		if (
+			! isset( $tokens[0], $tokens[1] )
+			|| WP_MySQL_Lexer::LEFT_SYMBOL !== $tokens[0]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[1]->id
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, 1 );
+		if ( count( $tokens ) !== $end_index ) {
+			return null;
+		}
+
+		$items = $this->split_top_level_comma_items( array_slice( $tokens, 2, $end_index - 3 ) );
+		if ( 2 !== count( $items ) ) {
+			return null;
+		}
+
+		$length = $this->parse_non_negative_integer_literal( $items[1] );
+		if ( null === $length ) {
+			return null;
+		}
+
+		return array(
+			'expr_tokens' => $items[0],
+			'length'      => $length,
+		);
+	}
+
+	/**
+	 * Parse a one-token charset name.
+	 *
+	 * @param WP_Parser_Token[] $tokens Charset tokens.
+	 * @return string|null Charset name.
+	 */
+	private function parse_charset_name( array $tokens ): ?string {
+		if ( 1 !== count( $tokens ) ) {
+			return null;
+		}
+
+		$name = strtolower( $this->token_value( $tokens[0] ) );
+		return '' === $name ? null : $name;
+	}
+
+	/**
+	 * Parse a one-token quoted string literal.
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return string|null Literal value.
+	 */
+	private function parse_single_quoted_literal_expression( array $tokens ): ?string {
+		if (
+			1 !== count( $tokens )
+			|| (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $tokens[0]->id
+				&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $tokens[0]->id
+			)
+		) {
+			return null;
+		}
+
+		return $this->token_value( $tokens[0] );
+	}
+
+	/**
+	 * Parse a non-negative integer literal.
+	 *
+	 * @param WP_Parser_Token[] $tokens Expression tokens.
+	 * @return int|null Integer value.
+	 */
+	private function parse_non_negative_integer_literal( array $tokens ): ?int {
+		if ( 1 !== count( $tokens ) || ! $this->is_number_token( $tokens[0] ) ) {
+			return null;
+		}
+
+		$value = $this->token_value( $tokens[0] );
+		if ( ! preg_match( '/^\d+$/', $value ) ) {
+			return null;
+		}
+
+		return (int) $value;
+	}
+
+	/**
+	 * Check whether a charset is handled by the literal sanitizer emulator.
+	 *
+	 * @param string $charset Charset name.
+	 * @return bool Whether the charset is supported.
+	 */
+	private function is_supported_charset_convert_name( string $charset ): bool {
+		return in_array(
+			$charset,
+			array(
+				'ascii',
+				'binary',
+				'big5',
+				'cp1251',
+				'hebrew',
+				'koi8r',
+				'latin1',
+				'tis620',
+				'ujis',
+				'utf8',
+				'utf8mb3',
+				'utf8mb4',
+			),
+			true
+		);
+	}
+
+	/**
+	 * Truncate a byte string with MySQL-like character-boundary behavior for supported charsets.
+	 *
+	 * @param string $value       Value bytes.
+	 * @param string $charset     Charset name.
+	 * @param int    $length      Length.
+	 * @param bool   $byte_length Whether length is measured in bytes.
+	 * @return string Truncated value.
+	 */
+	private function truncate_mysql_charset_bytes( string $value, string $charset, int $length, bool $byte_length ): string {
+		if ( $length <= 0 ) {
+			return '';
+		}
+
+		if ( $byte_length ) {
+			if ( 'big5' === $charset ) {
+				return $this->big5_prefix_by_bytes( $value, $length );
+			}
+			if ( $this->is_utf8_charset_name( $charset ) ) {
+				return $this->utf8_prefix_by_bytes( $value, $length );
+			}
+			return substr( $value, 0, $length );
+		}
+
+		if ( 'big5' === $charset ) {
+			return $this->big5_prefix_by_chars( $value, $length );
+		}
+		if ( $this->is_utf8_charset_name( $charset ) || ( 'ujis' === $charset && $this->is_valid_utf8( $value ) ) ) {
+			return $this->utf8_prefix_by_chars( $value, $length );
+		}
+
+		return substr( $value, 0, $length );
+	}
+
+	/**
+	 * Check whether a charset name is UTF-8 compatible.
+	 *
+	 * @param string $charset Charset name.
+	 * @return bool Whether charset is UTF-8.
+	 */
+	private function is_utf8_charset_name( string $charset ): bool {
+		return 'utf8' === $charset || 'utf8mb3' === $charset || 'utf8mb4' === $charset;
+	}
+
+	/**
+	 * Check whether bytes are valid UTF-8.
+	 *
+	 * @param string $value Value bytes.
+	 * @return bool Whether bytes are valid UTF-8.
+	 */
+	private function is_valid_utf8( string $value ): bool {
+		return 1 === preg_match( '//u', $value );
+	}
+
+	/**
+	 * Return a UTF-8 prefix measured in characters.
+	 *
+	 * @param string $value  Value bytes.
+	 * @param int    $length Character length.
+	 * @return string Prefix.
+	 */
+	private function utf8_prefix_by_chars( string $value, int $length ): string {
+		if ( function_exists( 'mb_substr' ) ) {
+			return mb_substr( $value, 0, $length, 'UTF-8' );
+		}
+
+		if ( 1 !== preg_match_all( '/./us', $value, $matches ) ) {
+			return substr( $value, 0, $length );
+		}
+
+		return implode( '', array_slice( $matches[0], 0, $length ) );
+	}
+
+	/**
+	 * Return a valid UTF-8 prefix measured in bytes.
+	 *
+	 * @param string $value  Value bytes.
+	 * @param int    $length Byte length.
+	 * @return string Prefix.
+	 */
+	private function utf8_prefix_by_bytes( string $value, int $length ): string {
+		$prefix = substr( $value, 0, $length );
+		while ( '' !== $prefix && ! $this->is_valid_utf8( $prefix ) ) {
+			$prefix = substr( $prefix, 0, -1 );
+		}
+		return $prefix;
+	}
+
+	/**
+	 * Return a Big5 prefix measured in characters.
+	 *
+	 * @param string $value  Value bytes.
+	 * @param int    $length Character length.
+	 * @return string Prefix.
+	 */
+	private function big5_prefix_by_chars( string $value, int $length ): string {
+		$offset = 0;
+		$chars  = 0;
+		$size   = strlen( $value );
+
+		while ( $offset < $size && $chars < $length ) {
+			$byte = ord( $value[ $offset ] );
+			if ( $byte <= 0x7f ) {
+				++$offset;
+				++$chars;
+				continue;
+			}
+
+			if (
+				$this->is_big5_lead_byte( $byte )
+				&& $offset + 1 < $size
+				&& $this->is_big5_trail_byte( ord( $value[ $offset + 1 ] ) )
+			) {
+				$offset += 2;
+				++$chars;
+				continue;
+			}
+
+			break;
+		}
+
+		return substr( $value, 0, $offset );
+	}
+
+	/**
+	 * Return a Big5 prefix measured in bytes without a partial trailing character.
+	 *
+	 * @param string $value  Value bytes.
+	 * @param int    $length Byte length.
+	 * @return string Prefix.
+	 */
+	private function big5_prefix_by_bytes( string $value, int $length ): string {
+		$prefix = substr( $value, 0, $length );
+		return substr( $prefix, 0, $this->big5_valid_prefix_length( $prefix ) );
+	}
+
+	/**
+	 * Return the valid Big5 prefix length in bytes.
+	 *
+	 * @param string $value Value bytes.
+	 * @return int Valid prefix byte length.
+	 */
+	private function big5_valid_prefix_length( string $value ): int {
+		$offset = 0;
+		$valid  = 0;
+		$size   = strlen( $value );
+
+		while ( $offset < $size ) {
+			$byte = ord( $value[ $offset ] );
+			if ( $byte <= 0x7f ) {
+				++$offset;
+				$valid = $offset;
+				continue;
+			}
+
+			if (
+				$this->is_big5_lead_byte( $byte )
+				&& $offset + 1 < $size
+				&& $this->is_big5_trail_byte( ord( $value[ $offset + 1 ] ) )
+			) {
+				$offset += 2;
+
+				$valid = $offset;
+				continue;
+			}
+
+			break;
+		}
+
+		return $valid;
+	}
+
+	/**
+	 * Check whether a byte can start a Big5 double-byte sequence.
+	 *
+	 * @param int $byte Byte value.
+	 * @return bool Whether byte is a Big5 lead byte.
+	 */
+	private function is_big5_lead_byte( int $byte ): bool {
+		return $byte >= 0x81 && $byte <= 0xfe;
+	}
+
+	/**
+	 * Check whether a byte can end a Big5 double-byte sequence.
+	 *
+	 * @param int $byte Byte value.
+	 * @return bool Whether byte is a Big5 trail byte.
+	 */
+	private function is_big5_trail_byte( int $byte ): bool {
+		return ( $byte >= 0x40 && $byte <= 0x7e ) || ( $byte >= 0xa1 && $byte <= 0xfe );
 	}
 
 	/**
