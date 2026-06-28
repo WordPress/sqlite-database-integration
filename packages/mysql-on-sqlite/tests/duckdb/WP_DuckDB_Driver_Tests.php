@@ -10392,6 +10392,79 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertContains( 'ROLLBACK', $driver->get_last_duckdb_queries() );
 	}
 
+	public function test_information_schema_tables_retries_refresh_after_aborted_transaction_probe_miss(): void {
+		$this->requireDuckDBRuntime();
+
+		$inner_connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection       = new class( $inner_connection ) extends WP_DuckDB_Connection {
+			public $queries = array();
+			private $inner_connection;
+			private $fail_information_schema_tables_refresh = true;
+
+			public function __construct( WP_DuckDB_Connection $inner_connection ) {
+				$this->inner_connection = $inner_connection;
+			}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				$this->queries[] = $sql;
+				if (
+					$this->fail_information_schema_tables_refresh
+					&& 0 === strpos( $sql, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_tables"' )
+				) {
+					$this->fail_information_schema_tables_refresh = false;
+					throw new WP_DuckDB_Driver_Exception( 'DuckDB query failed: TransactionContext Error: Current transaction is aborted (please ROLLBACK)' );
+				}
+
+				return $this->inner_connection->query( $sql, $params );
+			}
+
+			public function rollbackNativeTransaction(): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+				$this->queries[] = 'ROLLBACK';
+				try {
+					$this->inner_connection->query( 'ROLLBACK' );
+				} catch ( WP_DuckDB_Driver_Exception $e ) {
+				}
+				return true;
+			}
+		};
+		$driver           = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wordpress_develop_tests',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE wptests_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL
+			)"
+		);
+
+		$rows = $driver->query(
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows',
+				SUM(data_length + index_length) as 'bytes'
+			FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+				AND TABLE_NAME IN ('wptests_options')
+			GROUP BY TABLE_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$refresh_attempts = array_values(
+			array_filter(
+				$driver->get_last_duckdb_queries(),
+				function ( string $sql ): bool {
+					return 0 === strpos( $sql, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_tables"' );
+				}
+			)
+		);
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'wptests_options', $rows[0]['table'] );
+		$this->assertCount( 2, $refresh_attempts );
+		$this->assertContains( 'ROLLBACK', $driver->get_last_duckdb_queries() );
+	}
+
 	public function test_information_schema_tables_exposes_mysql_shaped_table_metadata(): void {
 		$this->requireDuckDBRuntime();
 

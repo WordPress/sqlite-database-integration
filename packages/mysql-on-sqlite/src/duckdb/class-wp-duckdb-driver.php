@@ -21217,6 +21217,27 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute DuckDB SQL, rolling back and retrying once if the native transaction is aborted.
+	 *
+	 * @param string $sql     DuckDB SQL.
+	 * @param string $context Failure context.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_duckdb_query_recovering_aborted_transaction( string $sql, string $context ): WP_DuckDB_Result_Statement {
+		try {
+			return $this->execute_duckdb_query( $sql, $context );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			if ( ! $this->is_current_transaction_aborted_error( $e ) ) {
+				throw $e;
+			}
+
+			$this->last_duckdb_queries[] = 'ROLLBACK';
+			$this->connection->rollbackNativeTransaction();
+			return $this->execute_duckdb_query( $sql, $context );
+		}
+	}
+
+	/**
 	 * Ensure the internal index metadata table exists.
 	 */
 	private function ensure_index_metadata_table( bool $temporary = false ): void {
@@ -22552,7 +22573,7 @@ class WP_DuckDB_Driver {
 			$column_sql[] = $this->connection->quote_identifier( $column_name ) . ' ' . $type;
 		}
 
-		$this->execute_duckdb_query(
+		$this->execute_duckdb_query_recovering_aborted_transaction(
 			'CREATE OR REPLACE TEMP TABLE '
 				. $this->connection->quote_identifier( self::INFO_SCHEMA_TABLES_TABLE )
 				. ' ('
