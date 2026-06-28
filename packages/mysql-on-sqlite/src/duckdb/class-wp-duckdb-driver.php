@@ -317,6 +317,20 @@ class WP_DuckDB_Driver {
 	private $auto_increment_metadata_cache = array();
 
 	/**
+	 * Cached SHOW INDEX-compatible primary-key rows by table.
+	 *
+	 * @var array<string,array<int,array<int,mixed>>>
+	 */
+	private $primary_key_index_rows_cache = array();
+
+	/**
+	 * Cached primary and unique secondary key column sets by table.
+	 *
+	 * @var array<string,array<int,string[]>>
+	 */
+	private $unique_key_column_sets_cache = array();
+
+	/**
 	 * Whether a MySQL LOCK TABLES statement opened the current transaction.
 	 *
 	 * @var bool
@@ -13074,6 +13088,11 @@ class WP_DuckDB_Driver {
 	 * @return array<int,array<int,mixed>>
 	 */
 	private function primary_key_index_rows( string $table_name ): array {
+		$cache_key = $this->metadata_table_cache_key( $table_name, false );
+		if ( isset( $this->primary_key_index_rows_cache[ $cache_key ] ) ) {
+			return $this->primary_key_index_rows_cache[ $cache_key ];
+		}
+
 		$pragma = $this->execute_duckdb_query(
 			'SELECT name FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') WHERE pk > 0 ORDER BY pk, cid',
 			'Failed to inspect DuckDB primary key'
@@ -13091,6 +13110,7 @@ class WP_DuckDB_Driver {
 			);
 		}
 
+		$this->primary_key_index_rows_cache[ $cache_key ] = $rows;
 		return $rows;
 	}
 
@@ -19436,19 +19456,16 @@ class WP_DuckDB_Driver {
 	 * @return array<int,string[]>
 	 */
 	private function unique_key_column_sets( string $table_name, bool $temporary = false ): array {
+		$cache_key = $this->metadata_table_cache_key( $table_name, $temporary );
+		if ( isset( $this->unique_key_column_sets_cache[ $cache_key ] ) ) {
+			return $this->unique_key_column_sets_cache[ $cache_key ];
+		}
+
 		$sets = array();
 
-		$primary = $this->execute_duckdb_query(
-			'SELECT name FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') WHERE pk > 0 ORDER BY pk',
-			'Failed to inspect DuckDB primary key'
-		)->fetchAll( PDO::FETCH_ASSOC );
+		$primary = $this->primary_key_columns_for_table( $table_name );
 		if ( count( $primary ) > 0 ) {
-			$sets[] = array_map(
-				function ( array $row ): string {
-					return (string) $row['name'];
-				},
-				$primary
-			);
+			$sets[] = $primary;
 		}
 
 		$this->ensure_index_metadata_table( $temporary );
@@ -19471,6 +19488,7 @@ class WP_DuckDB_Driver {
 			$sets[] = $columns;
 		}
 
+		$this->unique_key_column_sets_cache[ $cache_key ] = $sets;
 		return $sets;
 	}
 
@@ -21716,8 +21734,12 @@ class WP_DuckDB_Driver {
 			$this->column_metadata_cache         = array();
 			$this->table_column_metadata_cache   = array();
 			$this->auto_increment_metadata_cache = array();
+			$this->primary_key_index_rows_cache  = array();
+			$this->unique_key_column_sets_cache  = array();
 			return;
 		}
+
+		unset( $this->primary_key_index_rows_cache[ $this->metadata_table_cache_key( $table_name, false ) ] );
 
 		$sets = null === $temporary ? array( false, true ) : array( $temporary );
 		foreach ( $sets as $temporary_set ) {
@@ -21725,7 +21747,8 @@ class WP_DuckDB_Driver {
 			unset(
 				$this->column_metadata_cache[ $key ],
 				$this->table_column_metadata_cache[ $key ],
-				$this->auto_increment_metadata_cache[ $key ]
+				$this->auto_increment_metadata_cache[ $key ],
+				$this->unique_key_column_sets_cache[ $key ]
 			);
 
 			$table_set_key = $this->metadata_ensure_key( 'tables', $temporary_set );
@@ -24157,41 +24180,14 @@ class WP_DuckDB_Driver {
 	 * @return string|null Actual table name, or null when no persistent user table matches.
 	 */
 	private function resolve_persistent_user_table_name( string $table_name ): ?string {
-		$stmt = $this->execute_duckdb_query(
-			'SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()'
-				. " AND table_type = 'BASE TABLE'"
-				. ' AND lower(table_name) = '
-				. $this->connection->quote( strtolower( $table_name ) )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INDEX_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::COLUMN_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::TABLE_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::CHECK_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::FOREIGN_KEY_METADATA_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_TABLES_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_COLUMNS_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_STATISTICS_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_TABLE_CONSTRAINTS_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_KEY_COLUMN_USAGE_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_REFERENTIAL_CONSTRAINTS_TABLE )
-				. ' AND table_name <> '
-				. $this->connection->quote( self::INFO_SCHEMA_CHECK_CONSTRAINTS_TABLE )
-				. ' LIMIT 1',
-			'Failed to inspect DuckDB table'
-		);
+		$normalized = strtolower( $table_name );
+		foreach ( $this->user_table_names() as $candidate ) {
+			if ( strtolower( $candidate ) === $normalized ) {
+				return $candidate;
+			}
+		}
 
-		$resolved = $stmt->fetchColumn();
-		return false === $resolved || null === $resolved ? null : (string) $resolved;
+		return null;
 	}
 
 	/**
@@ -24201,19 +24197,14 @@ class WP_DuckDB_Driver {
 	 * @return string|null Actual table name, or null when no temporary user table matches.
 	 */
 	private function resolve_temporary_user_table_name( string $table_name ): ?string {
-		$stmt = $this->execute_duckdb_query(
-			"SELECT table_name FROM information_schema.tables WHERE table_type = 'LOCAL TEMPORARY'"
-				. ' AND lower(table_name) = '
-				. $this->connection->quote( strtolower( $table_name ) )
-				. ' AND table_name NOT LIKE '
-				. $this->connection->quote( '\_\_wp\_duckdb\_%' )
-				. " ESCAPE '\\'"
-				. ' LIMIT 1',
-			'Failed to inspect DuckDB temporary table'
-		);
+		$normalized = strtolower( $table_name );
+		foreach ( $this->temporary_user_table_names() as $candidate ) {
+			if ( strtolower( $candidate ) === $normalized ) {
+				return $candidate;
+			}
+		}
 
-		$resolved = $stmt->fetchColumn();
-		return false === $resolved || null === $resolved ? null : (string) $resolved;
+		return null;
 	}
 
 	/**

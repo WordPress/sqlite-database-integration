@@ -11506,6 +11506,49 @@ SQL
 		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'metadata_query_cache_items' ) );
 	}
 
+	public function test_repeated_simple_select_reuses_table_resolution_cache(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE table_resolution_cache_options (
+				option_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL,
+				option_value LONGTEXT NOT NULL,
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name)
+			)'
+		);
+
+		$queries = array();
+		$this->assertSame(
+			array(),
+			$driver->query( "SELECT option_value FROM table_resolution_cache_options WHERE option_name = 'missing' LIMIT 1" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( 2, $this->count_duckdb_table_resolution_queries( $queries ) );
+
+		$queries = array();
+		$this->assertSame(
+			array(),
+			$driver->query( "SELECT option_value FROM table_resolution_cache_options WHERE option_name = 'missing' LIMIT 1" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+	}
+
 	public function test_create_table_metadata_inserts_are_batched(): void {
 		$this->requireDuckDBRuntime();
 
@@ -16483,6 +16526,17 @@ SQL
 				&& false !== strpos( $query, 'ORDER BY ordinal_position' )
 				&& false !== strpos( $query, "'" . $table_name . "'" )
 			) {
+				++$count;
+			}
+		}
+
+		return $count;
+	}
+
+	private function count_duckdb_table_resolution_queries( array $queries ): int {
+		$count = 0;
+		foreach ( $queries as $query ) {
+			if ( false !== strpos( $query, 'information_schema.tables' ) ) {
 				++$count;
 			}
 		}
