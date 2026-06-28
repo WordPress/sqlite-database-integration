@@ -158,6 +158,10 @@ jobs:
         timeout-minutes: 5
         run: ./bin/wp-test-duckdb-smoke.sh
 
+      - name: Build and load parser extension in WordPress DuckDB PHP containers
+        timeout-minutes: 8
+        run: bash .github/workflows/wp-tests-phpunit-native-extension-setup.sh
+
       - name: Run full WordPress PHPUnit tests with DuckDB
         timeout-minutes: 15
         env:
@@ -165,6 +169,7 @@ jobs:
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
           WP_SQLITE_DISABLE_EXPECTED_RESULTS: '1'
           WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND: 'true'
+          WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
           WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-full
           WP_SQLITE_PHPUNIT_BASELINE_SECONDS: '380'
           WP_SQLITE_PHPUNIT_MAX_SECONDS: '420'
@@ -348,10 +353,24 @@ jobs:
                   php-fpm -tt
                   exec php-fpm
           YAML
-          docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml up -d --no-deps --force-recreate php
-          docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml exec -T php sh -lc 'grep -Eq "^[[:space:]]*pm[[:space:]]*=[[:space:]]*static" /usr/local/etc/php-fpm.d/www.conf && grep -Eq "^[[:space:]]*pm\\.max_children[[:space:]]*=[[:space:]]*1" /usr/local/etc/php-fpm.d/www.conf'
-          docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml exec -T php php -r 'exit( extension_loaded( "ffi" ) ? 0 : 1 );'
+          compose=( docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.duckdb-e2e.yml )
+          "${compose[@]}" config --quiet
+          "${compose[@]}" up -d --no-deps --force-recreate php
+
+          for attempt in $(seq 1 20); do
+            if "${compose[@]}" exec -T php sh -lc 'grep -Eq "^[[:space:]]*pm[[:space:]]*=[[:space:]]*static" /usr/local/etc/php-fpm.d/www.conf && grep -Eq "^[[:space:]]*pm\\.max_children[[:space:]]*=[[:space:]]*1" /usr/local/etc/php-fpm.d/www.conf' \
+              && "${compose[@]}" exec -T php php -r 'exit( extension_loaded( "ffi" ) ? 0 : 1 );'; then
+              exit 0
+            fi
+
+            echo "PHP-FPM serialization probe failed on attempt ${attempt}; retrying..."
+            sleep 1
+          done
+
+          echo "PHP-FPM serialization probe did not pass after retries." >&2
+          "${compose[@]}" ps || true
+          "${compose[@]}" logs --no-color --tail=120 php || true
+          exit 1
 
       - name: Install WordPress 500 response diagnostics
         timeout-minutes: 5
