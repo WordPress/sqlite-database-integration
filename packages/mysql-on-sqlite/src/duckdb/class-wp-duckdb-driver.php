@@ -638,9 +638,9 @@ class WP_DuckDB_Driver {
 			return $wordpress_term_relationships_distinct_terms_result;
 		}
 
-		$wordpress_usermeta_cache_load_result = $this->execute_wordpress_usermeta_cache_load_fast_path_statement( $normalized );
-		if ( null !== $wordpress_usermeta_cache_load_result ) {
-			return $wordpress_usermeta_cache_load_result;
+		$wordpress_meta_cache_load_result = $this->execute_wordpress_meta_cache_load_fast_path_statement( $normalized );
+		if ( null !== $wordpress_meta_cache_load_result ) {
+			return $wordpress_meta_cache_load_result;
 		}
 
 		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
@@ -1292,15 +1292,15 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Execute WordPress' usermeta cache-load SELECT without parser/metadata fanout.
+	 * Execute WordPress' meta cache-load SELECT without parser/metadata fanout.
 	 *
 	 * @param string $normalized_query Normalized MySQL query.
 	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
 	 */
-	private function execute_wordpress_usermeta_cache_load_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+	private function execute_wordpress_meta_cache_load_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
 		if (
 			! preg_match(
-				'/^SELECT\s+(?:`user_id`|user_id)\s*,\s*(?:`meta_key`|meta_key)\s*,\s*(?:`meta_value`|meta_value)\s+FROM\s+(?<table>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+(?:`user_id`|user_id)\s+IN\s*\(\s*(?<ids>[0-9]+(?:\s*,\s*[0-9]+)*)\s*\)\s+ORDER\s+BY\s+(?:`umeta_id`|umeta_id)\s+ASC$/i',
+				'/^SELECT\s+(?<object_column>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s*,\s*(?:`meta_key`|meta_key)\s*,\s*(?:`meta_value`|meta_value)\s+FROM\s+(?<table>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+(?<where_column>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+IN\s*\(\s*(?<ids>[0-9]+(?:\s*,\s*[0-9]+)*)\s*\)\s+ORDER\s+BY\s+(?<order_column>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+ASC$/i',
 				$normalized_query,
 				$matches
 			)
@@ -1308,26 +1308,35 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
-		if ( ! $this->is_wordpress_usermeta_table_name( $table_name ) ) {
+		$table_name    = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		$object_column = $this->fast_path_mysql_identifier_value( $matches['object_column'] );
+		$where_column  = $this->fast_path_mysql_identifier_value( $matches['where_column'] );
+		$order_column  = $this->fast_path_mysql_identifier_value( $matches['order_column'] );
+
+		if ( 0 !== strcasecmp( $object_column, $where_column ) ) {
 			return null;
 		}
 
-		$user_ids = array();
-		foreach ( preg_split( '/\s*,\s*/', trim( $matches['ids'] ) ) as $id_literal ) {
-			$user_id = $this->fast_path_mysql_unsigned_integer_literal_value( $id_literal );
-			if ( null === $user_id ) {
-				return null;
-			}
-			$user_ids[] = $user_id;
+		$family = $this->wordpress_meta_cache_load_family( $table_name, $object_column, $order_column );
+		if ( null === $family ) {
+			return null;
 		}
 
-		if ( count( $user_ids ) === 0 ) {
+		$object_ids = array();
+		foreach ( preg_split( '/\s*,\s*/', trim( $matches['ids'] ) ) as $id_literal ) {
+			$object_id = $this->fast_path_mysql_unsigned_integer_literal_value( $id_literal );
+			if ( null === $object_id ) {
+				return null;
+			}
+			$object_ids[] = $object_id;
+		}
+
+		if ( count( $object_ids ) === 0 ) {
 			return null;
 		}
 
 		$sql = 'SELECT '
-			. $this->connection->quote_identifier( 'user_id' )
+			. $this->connection->quote_identifier( $family['object_column'] )
 			. ', '
 			. $this->connection->quote_identifier( 'meta_key' )
 			. ', '
@@ -1335,11 +1344,11 @@ class WP_DuckDB_Driver {
 			. ' FROM '
 			. $this->connection->quote_identifier( $table_name )
 			. ' WHERE '
-			. $this->connection->quote_identifier( 'user_id' )
+			. $this->connection->quote_identifier( $family['object_column'] )
 			. ' IN ('
-			. implode( ', ', array_map( 'strval', $user_ids ) )
+			. implode( ', ', array_map( 'strval', $object_ids ) )
 			. ') ORDER BY '
-			. $this->connection->quote_identifier( 'umeta_id' )
+			. $this->connection->quote_identifier( $family['order_column'] )
 			. ' ASC';
 
 		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
@@ -1347,7 +1356,7 @@ class WP_DuckDB_Driver {
 
 		return $this->apply_result_column_metadata(
 			$result,
-			$this->wordpress_usermeta_cache_load_result_column_metadata( $table_name )
+			$this->wordpress_meta_cache_load_result_column_metadata( $table_name, $family['object_column'] )
 		);
 	}
 
@@ -1450,6 +1459,36 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a table name is the WordPress postmeta table shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table name is postmeta or a prefixed postmeta table.
+	 */
+	private function is_wordpress_postmeta_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/^(?:postmeta|[A-Za-z0-9_]+_postmeta)$/i', $table_name );
+	}
+
+	/**
+	 * Check whether a table name is the WordPress termmeta table shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table name is termmeta or a prefixed termmeta table.
+	 */
+	private function is_wordpress_termmeta_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/^(?:termmeta|[A-Za-z0-9_]+_termmeta)$/i', $table_name );
+	}
+
+	/**
+	 * Check whether a table name is the WordPress commentmeta table shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table name is commentmeta or a prefixed commentmeta table.
+	 */
+	private function is_wordpress_commentmeta_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/^(?:commentmeta|[A-Za-z0-9_]+_commentmeta)$/i', $table_name );
+	}
+
+	/**
 	 * Check whether a table name is the WordPress terms table shape.
 	 *
 	 * @param string $table_name Table name.
@@ -1524,14 +1563,63 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Build minimal MySQL-shaped metadata for WordPress' usermeta cache-load SELECT.
+	 * Resolve a WordPress meta cache-load table/column family.
 	 *
-	 * @param string $table_name Usermeta table name.
+	 * @param string $table_name    Meta table name.
+	 * @param string $object_column Object ID column name.
+	 * @param string $order_column  Meta ID order column name.
+	 * @return array{object_column:string,order_column:string}|null Resolved family, or null.
+	 */
+	private function wordpress_meta_cache_load_family( string $table_name, string $object_column, string $order_column ): ?array {
+		$families = array(
+			array(
+				'table_match'   => 'is_wordpress_usermeta_table_name',
+				'object_column' => 'user_id',
+				'order_column'  => 'umeta_id',
+			),
+			array(
+				'table_match'   => 'is_wordpress_postmeta_table_name',
+				'object_column' => 'post_id',
+				'order_column'  => 'meta_id',
+			),
+			array(
+				'table_match'   => 'is_wordpress_termmeta_table_name',
+				'object_column' => 'term_id',
+				'order_column'  => 'meta_id',
+			),
+			array(
+				'table_match'   => 'is_wordpress_commentmeta_table_name',
+				'object_column' => 'comment_id',
+				'order_column'  => 'meta_id',
+			),
+		);
+
+		foreach ( $families as $family ) {
+			if (
+				0 === strcasecmp( $family['object_column'], $object_column )
+				&& 0 === strcasecmp( $family['order_column'], $order_column )
+				&& $this->{$family['table_match']}( $table_name )
+			) {
+				return array(
+					'object_column' => $family['object_column'],
+					'order_column'  => $family['order_column'],
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Build minimal MySQL-shaped metadata for WordPress' meta cache-load SELECT.
+	 *
+	 * @param string $table_name    Meta table name.
+	 * @param string $object_column Object ID column name.
 	 * @return array<int,array<string,mixed>> Column metadata.
 	 */
-	private function wordpress_usermeta_cache_load_result_column_metadata( string $table_name ): array {
+	private function wordpress_meta_cache_load_result_column_metadata( string $table_name, string $object_column ): array {
 		$column_meta = array();
-		foreach ( array( 'user_id', 'meta_key', 'meta_value' ) as $column_name ) {
+		foreach ( array( $object_column, 'meta_key', 'meta_value' ) as $column_name ) {
 			$column_meta[] = array(
 				'table'           => $table_name,
 				'name'            => $column_name,

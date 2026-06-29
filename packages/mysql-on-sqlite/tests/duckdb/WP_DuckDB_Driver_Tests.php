@@ -15569,6 +15569,252 @@ SQL
 		$this->assertStringContainsString( "'1'", implode( "\n", $queries ) );
 	}
 
+	public function test_wordpress_non_user_meta_cache_load_fast_path_uses_one_native_query_on_fresh_driver(): void {
+		$this->requireDuckDBRuntime();
+
+		foreach ( $this->wordpress_non_user_meta_cache_load_cases() as $case ) {
+			$path = tempnam( sys_get_temp_dir(), 'wp-duckdb-meta-cache-fastpath-' );
+			if ( false === $path ) {
+				$this->fail( 'Failed to allocate a temporary DuckDB path.' );
+			}
+			unlink( $path );
+
+			try {
+				$setup_driver = new WP_DuckDB_Driver(
+					array(
+						'path'     => $path,
+						'database' => 'wp',
+					)
+				);
+				$this->create_wordpress_meta_cache_load_fixture( $setup_driver, $case['table'], $case['object_column'] );
+				unset( $setup_driver );
+				gc_collect_cycles();
+
+				$queries = array();
+				$driver  = $this->query_logged_duckdb_driver( $queries, $path );
+
+				$queries = array();
+				$result  = $driver->query(
+					$this->wordpress_meta_cache_load_select_sql(
+						$case['object_column'],
+						'2, 1',
+						$case['table'],
+						$case['order_column']
+					)
+				);
+				$this->assertSame(
+					$this->wordpress_meta_cache_load_expected_rows( $case['table'], $case['object_column'] ),
+					$result->fetchAll( PDO::FETCH_ASSOC ),
+					$case['table']
+				);
+				$this->assert_wordpress_meta_cache_load_select_used_one_native_query(
+					$queries,
+					$case['table'],
+					$case['object_column'],
+					$case['order_column'],
+					'2, 1'
+				);
+				$this->assert_wordpress_meta_cache_load_metadata( $result, $case['table'], $case['object_column'] );
+
+				$this->assertSame(
+					array(
+						array(
+							'found_rows' => 3,
+						),
+					),
+					$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC ),
+					$case['table']
+				);
+
+				$queries = array();
+				$result  = $driver->query(
+					$this->wordpress_meta_cache_load_select_sql(
+						$case['object_column'],
+						'999',
+						$case['table'],
+						$case['order_column']
+					)
+				);
+				$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ), $case['table'] );
+				$this->assert_wordpress_meta_cache_load_select_used_one_native_query(
+					$queries,
+					$case['table'],
+					$case['object_column'],
+					$case['order_column'],
+					'999'
+				);
+				$this->assertSame(
+					array(
+						array(
+							'found_rows' => 0,
+						),
+					),
+					$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC ),
+					$case['table']
+				);
+			} finally {
+				unset( $driver );
+				@unlink( $path );
+				@unlink( $path . '.wal' );
+			}
+		}
+	}
+
+	public function test_wordpress_non_user_meta_cache_load_fast_path_supports_backticks_and_temp_shadow(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_meta_cache_load_fixture( $driver, 'wptests_postmeta', 'post_id' );
+
+		$queries = array();
+		$result  = $driver->query(
+			'SELECT `post_id`, `meta_key`, `meta_value` FROM `wptests_postmeta` WHERE `post_id` IN (1) ORDER BY `meta_id` ASC'
+		);
+		$this->assertSame(
+			array(
+				array(
+					'post_id'    => 1,
+					'meta_key'   => 'first_name',
+					'meta_value' => 'wptests_postmeta-Alice',
+				),
+				array(
+					'post_id'    => 1,
+					'meta_key'   => 'last_name',
+					'meta_value' => 'wptests_postmeta-Adams',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assert_wordpress_meta_cache_load_select_used_one_native_query(
+			$queries,
+			'wptests_postmeta',
+			'post_id',
+			'meta_id',
+			'1'
+		);
+
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_postmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL,
+				post_id BIGINT(20) UNSIGNED NOT NULL DEFAULT \'0\',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+		$driver->query(
+			"INSERT INTO wptests_postmeta (meta_id, post_id, meta_key, meta_value)
+			VALUES (10, 1, 'temporary_key', 'temporary_value')"
+		);
+
+		$queries = array();
+		$result  = $driver->query(
+			$this->wordpress_meta_cache_load_select_sql( 'post_id', '1', 'wptests_postmeta', 'meta_id' )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'post_id'    => 1,
+					'meta_key'   => 'temporary_key',
+					'meta_value' => 'temporary_value',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assert_wordpress_meta_cache_load_select_used_one_native_query(
+			$queries,
+			'wptests_postmeta',
+			'post_id',
+			'meta_id',
+			'1'
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'found_rows' => 1,
+				),
+			),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_postmeta' );
+		$result = $driver->query(
+			$this->wordpress_meta_cache_load_select_sql( 'post_id', '1', 'wptests_postmeta', 'meta_id' )
+		);
+		$this->assertSame( 'first_name', $result->fetchAll( PDO::FETCH_ASSOC )[0]['meta_key'] );
+	}
+
+	public function test_wordpress_non_user_meta_cache_load_fast_path_does_not_capture_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_meta_cache_load_fixture( $driver, 'wptests_postmeta', 'post_id' );
+		$this->create_wordpress_meta_cache_load_fixture( $driver, 'wptests_custommeta', 'post_id' );
+
+		$queries = array();
+		$result  = $driver->query(
+			'SELECT SQL_CALC_FOUND_ROWS post_id, meta_key, meta_value FROM wptests_postmeta WHERE post_id IN (1) ORDER BY meta_id ASC'
+		);
+		$this->assertSame( 2, count( $result->fetchAll( PDO::FETCH_ASSOC ) ) );
+		$this->assertGreaterThan( 1, count( $queries ), implode( "\n", $queries ) );
+		$this->assertStringContainsString( '__wp_duckdb_found_rows', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			'SELECT post_id, meta_key, meta_value FROM wptests_postmeta AS pm WHERE post_id IN (1) ORDER BY meta_id ASC'
+		);
+		$this->assertSame( 2, count( $result->fetchAll( PDO::FETCH_ASSOC ) ) );
+		$this->assertStringContainsString( ' AS ', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			'SELECT post_id AS pid, meta_key, meta_value FROM wptests_postmeta WHERE post_id IN (1) ORDER BY meta_id ASC'
+		);
+		$this->assertSame( 'pid', $result->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 2, count( $result->fetchAll( PDO::FETCH_ASSOC ) ) );
+		$this->assertStringContainsString( 'post_id AS pid', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT post_id, meta_key, meta_value FROM wptests_postmeta WHERE post_id IN (1) AND meta_key = 'first_name' ORDER BY meta_id ASC"
+		);
+		$this->assertSame(
+			array(
+				array(
+					'post_id'    => 1,
+					'meta_key'   => 'first_name',
+					'meta_value' => 'wptests_postmeta-Alice',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString( 'meta_key', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			'SELECT post_id, meta_key, meta_value FROM wptests_postmeta WHERE post_id IN (1) ORDER BY meta_id DESC'
+		);
+		$this->assertSame( 'last_name', $result->fetchAll( PDO::FETCH_ASSOC )[0]['meta_key'] );
+		$this->assertStringContainsString( 'DESC', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT post_id, meta_key, meta_value FROM wptests_postmeta WHERE post_id IN ('1') ORDER BY meta_id ASC"
+		);
+		$this->assertSame( 2, count( $result->fetchAll( PDO::FETCH_ASSOC ) ) );
+		$this->assertStringContainsString( "'1'", implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			'SELECT post_id, meta_key, meta_value FROM wptests_custommeta WHERE post_id IN (1) ORDER BY meta_id ASC'
+		);
+		$this->assertSame( 2, count( $result->fetchAll( PDO::FETCH_ASSOC ) ) );
+		$this->assertStringNotContainsString( 'SELECT "post_id", "meta_key", "meta_value" FROM "wptests_custommeta"', implode( "\n", $queries ) );
+	}
+
 	public function test_wordpress_options_autoload_fast_path_does_not_capture_sql_calc_found_rows(): void {
 		$this->requireDuckDBRuntime();
 
@@ -20779,6 +21025,27 @@ SQL
 		);
 	}
 
+	private function create_wordpress_meta_cache_load_fixture( WP_DuckDB_Driver $driver, string $table_name, string $object_column ): void {
+		$driver->query(
+			"CREATE TABLE {$table_name} (
+				meta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				{$object_column} BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY object_id ({$object_column}),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO {$table_name} (meta_id, {$object_column}, meta_key, meta_value) VALUES
+				(1, 1, 'first_name', '{$table_name}-Alice'),
+				(2, 2, 'first_name', '{$table_name}-Bob'),
+				(3, 1, 'last_name', '{$table_name}-Adams'),
+				(4, 3, 'first_name', '{$table_name}-Cara')"
+		);
+	}
+
 	private function create_wordpress_posts_auto_increment_insert_fixture( WP_DuckDB_Driver $driver ): void {
 		$driver->query(
 			"CREATE TABLE wptests_posts (
@@ -20800,6 +21067,50 @@ SQL
 
 	private function wordpress_usermeta_cache_load_select_sql( string $id_list = '1', string $table_name = 'wptests_usermeta' ): string {
 		return 'SELECT user_id, meta_key, meta_value FROM ' . $table_name . ' WHERE user_id IN (' . $id_list . ') ORDER BY umeta_id ASC';
+	}
+
+	private function wordpress_meta_cache_load_select_sql( string $object_column, string $id_list, string $table_name, string $order_column ): string {
+		return 'SELECT ' . $object_column . ', meta_key, meta_value FROM ' . $table_name . ' WHERE ' . $object_column . ' IN (' . $id_list . ') ORDER BY ' . $order_column . ' ASC';
+	}
+
+	private function wordpress_non_user_meta_cache_load_cases(): array {
+		return array(
+			array(
+				'table'         => 'wptests_postmeta',
+				'object_column' => 'post_id',
+				'order_column'  => 'meta_id',
+			),
+			array(
+				'table'         => 'wptests_termmeta',
+				'object_column' => 'term_id',
+				'order_column'  => 'meta_id',
+			),
+			array(
+				'table'         => 'wptests_commentmeta',
+				'object_column' => 'comment_id',
+				'order_column'  => 'meta_id',
+			),
+		);
+	}
+
+	private function wordpress_meta_cache_load_expected_rows( string $table_name, string $object_column ): array {
+		return array(
+			array(
+				$object_column => 1,
+				'meta_key'     => 'first_name',
+				'meta_value'   => $table_name . '-Alice',
+			),
+			array(
+				$object_column => 2,
+				'meta_key'     => 'first_name',
+				'meta_value'   => $table_name . '-Bob',
+			),
+			array(
+				$object_column => 1,
+				'meta_key'     => 'last_name',
+				'meta_value'   => $table_name . '-Adams',
+			),
+		);
 	}
 
 	private function wordpress_posts_slug_status_lookup_select_sql(): string {
@@ -20910,10 +21221,35 @@ SQL
 		$this->assertStringContainsString( 'ORDER BY "umeta_id" ASC', $queries[0] );
 	}
 
+	private function assert_wordpress_meta_cache_load_select_used_one_native_query( array $queries, string $table_name, string $object_column, string $order_column, string $id_list ): void {
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, $table_name ) );
+		$this->assertStringContainsString(
+			'SELECT "' . $object_column . '", "meta_key", "meta_value" FROM "' . $table_name . '"',
+			$queries[0]
+		);
+		$this->assertStringContainsString( 'WHERE "' . $object_column . '" IN (' . $id_list . ')', $queries[0] );
+		$this->assertStringContainsString( 'ORDER BY "' . $order_column . '" ASC', $queries[0] );
+	}
+
 	private function assert_wordpress_usermeta_cache_load_metadata( WP_DuckDB_Result_Statement $result, string $table_name = 'wptests_usermeta' ): void {
 		$this->assertSame( 3, $result->columnCount() );
 
 		foreach ( array( 'user_id', 'meta_key', 'meta_value' ) as $index => $column_name ) {
+			$column_meta = $result->getColumnMeta( $index );
+			$this->assertSame( $column_name, $column_meta['name'] );
+			$this->assertSame( $table_name, $column_meta['table'] );
+			$this->assertSame( $column_name, $column_meta['mysqli:orgname'] );
+			$this->assertSame( $table_name, $column_meta['mysqli:orgtable'] );
+			$this->assertSame( 'wp', $column_meta['mysqli:db'] );
+		}
+	}
+
+	private function assert_wordpress_meta_cache_load_metadata( WP_DuckDB_Result_Statement $result, string $table_name, string $object_column ): void {
+		$this->assertSame( 3, $result->columnCount() );
+
+		foreach ( array( $object_column, 'meta_key', 'meta_value' ) as $index => $column_name ) {
 			$column_meta = $result->getColumnMeta( $index );
 			$this->assertSame( $column_name, $column_meta['name'] );
 			$this->assertSame( $table_name, $column_meta['table'] );
