@@ -458,6 +458,10 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t$db_engine = defined( 'DB_ENGINE' ) ? DB_ENGINE : null;
 \t\t$autoload  = defined( 'DUCKDB_PHP_AUTOLOAD' ) ? DUCKDB_PHP_AUTOLOAD : null;
 \t\t$wpdb      = isset( $GLOBALS['wpdb'] ) && is_object( $GLOBALS['wpdb'] ) ? get_class( $GLOBALS['wpdb'] ) : null;
+\t\t$wp_tests_skip_install = getenv( 'WP_TESTS_SKIP_INSTALL' );
+\t\tif ( ! is_string( $wp_tests_skip_install ) ) {
+\t\t\t$wp_tests_skip_install = null;
+\t\t}
 \t\t$reason    = null;
 \t\t$previous_stage = isset( $GLOBALS['wp_sqlite_duckdb_child_last_stage'] ) && is_string( $GLOBALS['wp_sqlite_duckdb_child_last_stage'] )
 \t\t\t? $GLOBALS['wp_sqlite_duckdb_child_last_stage']
@@ -551,6 +555,7 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\t'php_binary'               => PHP_BINARY,
 \t\t\t'cwd'                      => getcwd(),
 \t\t\t'argv'                     => isset( $_SERVER['argv'] ) ? $_SERVER['argv'] : null,
+\t\t\t'wp_tests_skip_install'    => $wp_tests_skip_install,
 \t\t\t'db_engine_defined'        => defined( 'DB_ENGINE' ),
 \t\t\t'db_engine'                => $db_engine,
 \t\t\t'duckdb_autoload_defined'  => defined( 'DUCKDB_PHP_AUTOLOAD' ),
@@ -865,6 +870,9 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 		"putenv( 'DB_ENGINE=duckdb' );",
 		"$_ENV[ 'DB_ENGINE' ] = 'duckdb';",
 		"$_SERVER[ 'DB_ENGINE' ] = 'duckdb';",
+		"putenv( 'WP_TESTS_SKIP_INSTALL=1' );",
+		"$_ENV[ 'WP_TESTS_SKIP_INSTALL' ] = '1';",
+		"$_SERVER[ 'WP_TESTS_SKIP_INSTALL' ] = '1';",
 		getPhpunitForwardedEnvironmentPhp(),
 		"if ( defined( 'DUCKDB_PHP_AUTOLOAD' ) && is_readable( DUCKDB_PHP_AUTOLOAD ) ) {",
 		"\trequire_once DUCKDB_PHP_AUTOLOAD;",
