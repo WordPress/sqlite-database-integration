@@ -84,6 +84,12 @@
 			"rm -rf wordpress/src/wp-content/database/.ht.duckdb wordpress/src/wp-content/database/.ht.duckdb.wal @no_additional_args",
 			"npm --prefix wordpress run test:php -- @additional_args"
 		],
+		"wp-test-duckdb-fast-fail": [
+			"./bin/wp-test-duckdb-fast-fail.sh @additional_args"
+		],
+		"wp-test-duckdb-fast-fail-with-setup": [
+			"WP_DUCKDB_FAST_FAIL_PREPARED=0 ./bin/wp-test-duckdb-fast-fail.sh @additional_args"
+		],
 		"wp-smoke-duckdb-local": [
 			"./bin/wp-duckdb-local-smoke.sh"
 		],
