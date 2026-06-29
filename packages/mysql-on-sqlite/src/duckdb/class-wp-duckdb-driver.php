@@ -608,6 +608,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_options_autoload_result;
 		}
 
+		$wordpress_options_single_option_result = $this->execute_wordpress_options_single_option_fast_path_statement( $normalized );
+		if ( null !== $wordpress_options_single_option_result ) {
+			return $wordpress_options_single_option_result;
+		}
+
 		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
 			$this->found_rows                             = 0;
 			$this->session_system_variables['autocommit'] = (int) $matches[1];
@@ -700,6 +705,67 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute WordPress' high-frequency single-option SELECT without parser/metadata fanout.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_options_single_option_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		if (
+			! preg_match(
+				'/^SELECT\s+(?<column>`(?:autoload|option_value)`|autoload|option_value)\s+FROM\s+(?<table>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+(?<name_column>`option_name`|option_name)\s*=\s*(?<option_name>\'(?:\\\\.|\'\'|[^\'\\\\\s])*\')(?:\s+LIMIT\s+1)?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		if ( ! $this->is_wordpress_options_table_name( $table_name ) ) {
+			return null;
+		}
+
+		$column_name = strtolower( $this->fast_path_mysql_identifier_value( $matches['column'] ) );
+		if ( 'autoload' !== $column_name && 'option_value' !== $column_name ) {
+			return null;
+		}
+
+		$name_column = strtolower( $this->fast_path_mysql_identifier_value( $matches['name_column'] ) );
+		if ( 'option_name' !== $name_column ) {
+			return null;
+		}
+
+		$option_name = $this->fast_path_mysql_single_quoted_literal_value( $matches['option_name'] );
+		if ( preg_match( '/\s/', $option_name ) ) {
+			return null;
+		}
+
+		$option_name_sql = $this->connection->quote( $option_name );
+		$sql             = 'SELECT '
+			. $this->connection->quote_identifier( $column_name )
+			. ' FROM '
+			. $this->connection->quote_identifier( $table_name )
+			. ' WHERE lower('
+			. $this->connection->quote_identifier( 'option_name' )
+			. ') IS NOT DISTINCT FROM lower(CAST('
+			. $option_name_sql
+			. ' AS VARCHAR))';
+
+		if ( preg_match( '/\s+LIMIT\s+1$/i', $normalized_query ) ) {
+			$sql .= ' LIMIT 1';
+		}
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata(
+			$result,
+			$this->wordpress_options_single_column_result_metadata( $table_name, $column_name )
+		);
+	}
+
+	/**
 	 * Decode a simple MySQL identifier accepted by the fast-path regex.
 	 *
 	 * @param string $identifier MySQL identifier.
@@ -711,6 +777,35 @@ class WP_DuckDB_Driver {
 		}
 
 		return $identifier;
+	}
+
+	/**
+	 * Decode a simple MySQL single-quoted literal accepted by the fast-path regex.
+	 *
+	 * @param string $literal MySQL single-quoted literal.
+	 * @return string Literal value.
+	 */
+	private function fast_path_mysql_single_quoted_literal_value( string $literal ): string {
+		$value = substr( $literal, 1, -1 );
+
+		$backslash    = chr( 92 );
+		$replacements = array(
+			( $backslash . '0' )        => chr( 0 ),
+			( $backslash . "'" )        => chr( 39 ),
+			( $backslash . '"' )        => chr( 34 ),
+			( $backslash . 'b' )        => chr( 8 ),
+			( $backslash . 'n' )        => chr( 10 ),
+			( $backslash . 'r' )        => chr( 13 ),
+			( $backslash . 't' )        => chr( 9 ),
+			( $backslash . 'Z' )        => chr( 26 ),
+			( $backslash . '%' )        => $backslash . $backslash . '%',
+			( $backslash . '_' )        => $backslash . $backslash . '_',
+			( $backslash . $backslash ) => $backslash . $backslash,
+			"''"                        => "'",
+		);
+
+		$value = strtr( $value, $replacements );
+		return preg_replace( '/' . preg_quote( $backslash, '/' ) . '(.)/s', '$1', $value );
 	}
 
 	/**
@@ -742,6 +837,25 @@ class WP_DuckDB_Driver {
 				'table'           => $table_name,
 				'name'            => 'option_value',
 				'mysqli:orgname'  => 'option_value',
+				'mysqli:orgtable' => $table_name,
+				'mysqli:db'       => $this->database,
+			),
+		);
+	}
+
+	/**
+	 * Build minimal MySQL-shaped metadata for a WordPress options single-column SELECT.
+	 *
+	 * @param string $table_name  Options table name.
+	 * @param string $column_name Selected column name.
+	 * @return array<int,array<string,mixed>> Column metadata.
+	 */
+	private function wordpress_options_single_column_result_metadata( string $table_name, string $column_name ): array {
+		return array(
+			array(
+				'table'           => $table_name,
+				'name'            => $column_name,
+				'mysqli:orgname'  => $column_name,
 				'mysqli:orgtable' => $table_name,
 				'mysqli:db'       => $this->database,
 			),

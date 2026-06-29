@@ -14158,6 +14158,178 @@ SQL
 		$this->assert_wordpress_options_autoload_rows( $driver );
 	}
 
+	public function test_wordpress_options_single_option_fast_path_uses_one_native_query_on_fresh_driver(): void {
+		$this->requireDuckDBRuntime();
+
+		$path = tempnam( sys_get_temp_dir(), 'wp-duckdb-single-option-fastpath-' );
+		if ( false === $path ) {
+			$this->fail( 'Failed to allocate a temporary DuckDB path.' );
+		}
+		unlink( $path );
+
+		try {
+			$setup_driver = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$this->create_wordpress_options_autoload_fixture( $setup_driver );
+			unset( $setup_driver );
+			gc_collect_cycles();
+
+			$queries = array();
+			$driver  = $this->query_logged_duckdb_driver( $queries, $path );
+
+			$queries = array();
+			$result  = $driver->query( "SELECT autoload FROM wptests_options WHERE option_name = 'siteurl' LIMIT 1" );
+			$this->assertSame( array( array( 'autoload' => 'yes' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+			$this->assert_wordpress_options_single_option_select_used_one_native_query( $queries );
+			$this->assert_wordpress_options_single_option_metadata( $result, 'autoload' );
+
+			$queries = array();
+			$result  = $driver->query( "SELECT autoload FROM wptests_options WHERE option_name = 'siteurl'" );
+			$this->assertSame( array( array( 'autoload' => 'yes' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+			$this->assert_wordpress_options_single_option_select_used_one_native_query( $queries );
+			$this->assert_wordpress_options_single_option_metadata( $result, 'autoload' );
+
+			$queries = array();
+			$result  = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl' LIMIT 1" );
+			$this->assertSame( array( array( 'option_value' => 'https://example.test' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+			$this->assert_wordpress_options_single_option_select_used_one_native_query( $queries );
+			$this->assert_wordpress_options_single_option_metadata( $result, 'option_value' );
+
+			$this->assertSame(
+				array(
+					array(
+						'found_rows' => 1,
+					),
+				),
+				$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		} finally {
+			unset( $driver );
+			@unlink( $path );
+			@unlink( $path . '.wal' );
+		}
+	}
+
+	public function test_wordpress_options_single_option_fast_path_respects_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_options_autoload_fixture( $driver );
+
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_options (
+				option_name VARCHAR(191) NOT NULL,
+				option_value VARCHAR(191) NOT NULL,
+				autoload VARCHAR(20) NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('siteurl', 'temporary_value', 'no')"
+		);
+
+		$queries = array();
+		$result  = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl' LIMIT 1" );
+		$this->assertSame( array( array( 'option_value' => 'temporary_value' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assert_wordpress_options_single_option_select_used_one_native_query( $queries );
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_options' );
+		$result = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl' LIMIT 1" );
+		$this->assertSame( array( array( 'option_value' => 'https://example.test' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+	}
+
+	public function test_wordpress_options_single_option_fast_path_uses_case_insensitive_option_name_comparison(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_options_autoload_fixture( $driver );
+
+		$queries = array();
+		$result  = $driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'SITEURL' LIMIT 1" );
+		$this->assertSame( array( array( 'option_value' => 'https://example.test' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assert_wordpress_options_single_option_select_used_one_native_query( $queries );
+		$this->assertStringContainsString( 'lower("option_name")', $queries[0] );
+	}
+
+	public function test_wordpress_options_single_option_fast_path_decodes_mysql_escaped_literal(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries     = array();
+		$driver      = $this->query_logged_duckdb_driver( $queries );
+		$option_name = "quote'key\\slash";
+		$this->create_wordpress_options_autoload_fixture( $driver );
+		$driver->query(
+			'INSERT INTO wptests_options (option_name, option_value, autoload) VALUES ('
+			. $this->mysql_single_quoted_literal( $option_name )
+			. ", 'escaped-value', 'yes')"
+		);
+
+		$queries = array();
+		$result  = $driver->query(
+			'SELECT option_value FROM wptests_options WHERE option_name = '
+			. $this->mysql_single_quoted_literal( $option_name )
+			. ' LIMIT 1'
+		);
+		$this->assertSame( array( array( 'option_value' => 'escaped-value' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assert_wordpress_options_single_option_select_used_one_native_query( $queries );
+	}
+
+	public function test_wordpress_options_single_option_fast_path_does_not_capture_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_options_autoload_fixture( $driver );
+
+		$queries = array();
+		$result  = $driver->query( "SELECT SQL_CALC_FOUND_ROWS autoload FROM wptests_options WHERE option_name = 'siteurl' LIMIT 1" );
+		$this->assertSame( array( array( 'autoload' => 'yes' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertGreaterThan( 1, count( $queries ), implode( "\n", $queries ) );
+		$this->assertTrue(
+			count(
+				array_filter(
+					$queries,
+					function ( string $query ): bool {
+						return false !== strpos( $query, '__wp_duckdb_found_rows' );
+					}
+				)
+			) > 0,
+			implode( "\n", $queries )
+		);
+
+		$queries = array();
+		$result  = $driver->query( "SELECT autoload AS a FROM wptests_options WHERE option_name = 'siteurl' LIMIT 1" );
+		$this->assertSame( array( array( 'a' => 'yes' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( 'a', $result->getColumnMeta( 0 )['name'] );
+		$this->assertStringContainsString( ' AS a ', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query( "SELECT autoload FROM wptests_options WHERE option_name = 'siteurl' AND autoload = 'yes' LIMIT 1" );
+		$this->assertSame( array( array( 'autoload' => 'yes' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertStringContainsString( "autoload = 'yes'", implode( "\n", $queries ) );
+
+		$driver->query(
+			'CREATE TABLE notoptions (
+				option_name VARCHAR(191) NOT NULL,
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO notoptions (option_name, option_value, autoload) VALUES ('siteurl', 'value', 'yes')" );
+
+		$queries = array();
+		$result  = $driver->query( "SELECT autoload FROM notoptions WHERE option_name = 'siteurl' LIMIT 1" );
+		$this->assertSame( array( array( 'autoload' => 'yes' ) ), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertStringContainsString( 'notoptions', implode( "\n", $queries ) );
+		$this->assertStringNotContainsString( 'lower("option_name")', implode( "\n", $queries ) );
+	}
+
 	public function test_wordpress_options_autoload_fast_path_does_not_capture_sql_calc_found_rows(): void {
 		$this->requireDuckDBRuntime();
 
@@ -19361,6 +19533,23 @@ SQL
 		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
 		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_options' ) );
 		$this->assertStringContainsString( 'wptests_options', $queries[0] );
+	}
+
+	private function assert_wordpress_options_single_option_select_used_one_native_query( array $queries ): void {
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_options' ) );
+		$this->assertStringContainsString( 'wptests_options', $queries[0] );
+		$this->assertStringContainsString( 'lower("option_name")', $queries[0] );
+	}
+
+	private function assert_wordpress_options_single_option_metadata( WP_DuckDB_Result_Statement $result, string $column_name ): void {
+		$column_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( $column_name, $column_meta['name'] );
+		$this->assertSame( 'wptests_options', $column_meta['table'] );
+		$this->assertSame( $column_name, $column_meta['mysqli:orgname'] );
+		$this->assertSame( 'wptests_options', $column_meta['mysqli:orgtable'] );
+		$this->assertSame( 'wp', $column_meta['mysqli:db'] );
 	}
 
 	private function count_duckdb_column_metadata_queries( array $queries, string $table_name ): int {
