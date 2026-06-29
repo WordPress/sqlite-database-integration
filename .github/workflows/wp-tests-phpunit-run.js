@@ -37,6 +37,7 @@ const duckdbChildDiagnosticsContainerPath = '/var/www/duckdb-child-process-diagn
 const duckdbChildDiagnosticsLogContainerPath = '/var/www/duckdb-child-process-diagnostics.log';
 const wordPressPhpunitBootstrapContainerPath = '/var/www/tests/phpunit/includes/bootstrap.php';
 const enableDuckDBChildDiagnostics = isDuckDBPhpunitRun && process.env.WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS === '1';
+const enableDuckDBChildDatabaseCopy = enableDuckDBChildDiagnostics && process.env.WP_SQLITE_DUCKDB_CHILD_DB_COPY === '1';
 
 const sqliteExpectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
@@ -529,6 +530,8 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\tif ( ! is_string( $wp_tests_skip_install ) ) {
 \t\t\t$wp_tests_skip_install = null;
 \t\t}
+\t\t$duckdb_file = defined( 'DUCKDB_FILE' ) ? DUCKDB_FILE : null;
+\t\t$fqduckdb    = defined( 'FQDUCKDB' ) ? FQDUCKDB : null;
 \t\t$reason    = null;
 \t\t$previous_stage = isset( $GLOBALS['wp_sqlite_duckdb_child_last_stage'] ) && is_string( $GLOBALS['wp_sqlite_duckdb_child_last_stage'] )
 \t\t\t? $GLOBALS['wp_sqlite_duckdb_child_last_stage']
@@ -598,6 +601,9 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t$factory_sequence_alignment = isset( $GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment'] )
 \t\t\t? $GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment']
 \t\t\t: null;
+\t\t$child_database_copy = isset( $GLOBALS['wp_sqlite_duckdb_child_database_copy'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_database_copy'] )
+\t\t\t? $GLOBALS['wp_sqlite_duckdb_child_database_copy']
+\t\t\t: null;
 
 \t\tif ( class_exists( 'WP_DuckDB_Runtime', false ) && method_exists( 'WP_DuckDB_Runtime', 'get_unavailable_reason' ) ) {
 \t\t\ttry {
@@ -649,6 +655,10 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\t'wp_tests_skip_install'    => $wp_tests_skip_install,
 \t\t\t'db_engine_defined'        => defined( 'DB_ENGINE' ),
 \t\t\t'db_engine'                => $db_engine,
+\t\t\t'duckdb_file_defined'      => defined( 'DUCKDB_FILE' ),
+\t\t\t'duckdb_file'              => $duckdb_file,
+\t\t\t'fqduckdb_defined'         => defined( 'FQDUCKDB' ),
+\t\t\t'fqduckdb'                 => $fqduckdb,
 \t\t\t'duckdb_autoload_defined'  => defined( 'DUCKDB_PHP_AUTOLOAD' ),
 \t\t\t'duckdb_autoload'          => $autoload,
 \t\t\t'duckdb_autoload_readable' => is_string( $autoload ) && is_readable( $autoload ),
@@ -671,6 +681,7 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\t'test_identity'            => $test_identity,
 \t\t\t'result_write'             => $result_write,
 \t\t\t'factory_sequence_alignment' => $factory_sequence_alignment,
+\t\t\t'child_database_copy'      => $child_database_copy,
 \t\t\t'output_buffer_level'      => ob_get_level(),
 \t\t\t'output_buffer_size'       => $output_buffer_size,
 \t\t\t'output_buffer_sha1'       => $output_buffer_sha1,
@@ -786,6 +797,11 @@ function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 		"$wp_sqlite_duckdb_child_diagnostics = dirname( __DIR__, 3 ) . '/duckdb-child-process-diagnostics.php';",
 		"if ( is_readable( $wp_sqlite_duckdb_child_diagnostics ) ) {",
 		"\trequire_once $wp_sqlite_duckdb_child_diagnostics;",
+		'}',
+		"if ( function_exists( 'wp_sqlite_duckdb_prepare_child_database_copy' ) ) {",
+		"\twp_sqlite_duckdb_prepare_child_database_copy();",
+		'}',
+		"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
 		"\twp_sqlite_duckdb_child_diagnostics_report( 'bootstrap_pre_wp_settings', true );",
 		'}',
 		'',
@@ -952,6 +968,242 @@ function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 	}
 }
 
+function getDuckDBChildDatabaseCopyPhp() {
+	if ( ! enableDuckDBChildDatabaseCopy ) {
+		return '';
+	}
+
+	return `if ( ! function_exists( 'wp_sqlite_duckdb_prepare_child_database_copy' ) ) {
+\tfunction wp_sqlite_duckdb_child_database_copy_record( $updates = array() ) {
+\t\t$current = isset( $GLOBALS['wp_sqlite_duckdb_child_database_copy'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_database_copy'] )
+\t\t\t? $GLOBALS['wp_sqlite_duckdb_child_database_copy']
+\t\t\t: array();
+\t\t$GLOBALS['wp_sqlite_duckdb_child_database_copy'] = array_merge( $current, $updates );
+\t}
+
+\tfunction wp_sqlite_duckdb_child_database_copy_size( $path ) {
+\t\tif ( ! is_string( $path ) || ! is_file( $path ) ) {
+\t\t\treturn null;
+\t\t}
+\t\t$size = filesize( $path );
+\t\treturn false === $size ? null : $size;
+\t}
+
+\tfunction wp_sqlite_duckdb_child_database_copy_dir() {
+\t\tif ( defined( 'DB_DIR' ) ) {
+\t\t\treturn rtrim( (string) DB_DIR, '/' ) . '/';
+\t\t}
+\t\tif ( defined( 'WP_CONTENT_DIR' ) ) {
+\t\t\treturn rtrim( (string) WP_CONTENT_DIR, '/' ) . '/database/';
+\t\t}
+\t\tif ( defined( 'ABSPATH' ) ) {
+\t\t\treturn rtrim( (string) ABSPATH, '/' ) . '/wp-content/database/';
+\t\t}
+\t\treturn null;
+\t}
+
+\tfunction wp_sqlite_duckdb_child_database_copy_cleanup() {
+\t\t$copy = isset( $GLOBALS['wp_sqlite_duckdb_child_database_copy'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_database_copy'] )
+\t\t\t? $GLOBALS['wp_sqlite_duckdb_child_database_copy']
+\t\t\t: array();
+\t\t$paths = isset( $copy['cleanup_paths'] ) && is_array( $copy['cleanup_paths'] )
+\t\t\t? $copy['cleanup_paths']
+\t\t\t: array();
+\t\t$cleanup = array(
+\t\t\t'cleanup_attempted' => true,
+\t\t\t'cleanup_success'   => true,
+\t\t\t'cleanup_paths'     => array(),
+\t\t);
+
+\t\ttry {
+\t\t\tif ( isset( $GLOBALS['wpdb'] ) && is_object( $GLOBALS['wpdb'] ) ) {
+\t\t\t\tif ( method_exists( $GLOBALS['wpdb'], 'flush' ) ) {
+\t\t\t\t\t$GLOBALS['wpdb']->flush();
+\t\t\t\t}
+\t\t\t\tif ( method_exists( $GLOBALS['wpdb'], 'close' ) ) {
+\t\t\t\t\t$GLOBALS['wpdb']->close();
+\t\t\t\t}
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t$cleanup['close_error'] = get_class( $e ) . ': ' . $e->getMessage();
+\t\t}
+
+\t\tunset( $GLOBALS['@duckdb_driver'], $GLOBALS['@duckdb'] );
+\t\tif ( function_exists( 'gc_collect_cycles' ) ) {
+\t\t\t$cleanup['gc_cycles'] = array( gc_collect_cycles(), gc_collect_cycles() );
+\t\t}
+
+\t\tforeach ( array_reverse( $paths ) as $path ) {
+\t\t\t$item = array(
+\t\t\t\t'path'          => $path,
+\t\t\t\t'existed_before' => is_string( $path ) && file_exists( $path ),
+\t\t\t\t'deleted'       => false,
+\t\t\t);
+\t\t\tif ( is_string( $path ) && is_file( $path ) ) {
+\t\t\t\t$item['deleted'] = @unlink( $path );
+\t\t\t\tif ( ! $item['deleted'] ) {
+\t\t\t\t\t$cleanup['cleanup_success'] = false;
+\t\t\t\t}
+\t\t\t}
+\t\t\t$item['exists_after'] = is_string( $path ) && file_exists( $path );
+\t\t\t$cleanup['cleanup_paths'][] = $item;
+\t\t}
+
+\t\twp_sqlite_duckdb_child_database_copy_record( $cleanup );
+\t\tif ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
+\t\t\twp_sqlite_duckdb_child_diagnostics_report( 'child_db_copy_cleanup', true );
+\t\t}
+\t}
+
+\tfunction wp_sqlite_duckdb_prepare_child_database_copy() {
+\t\tif ( '1' !== getenv( 'WP_SQLITE_DUCKDB_CHILD_DB_COPY' ) ) {
+\t\t\treturn;
+\t\t}
+\t\tif ( '1' !== getenv( 'WP_TESTS_SKIP_INSTALL' ) ) {
+\t\t\treturn;
+\t\t}
+\t\tif ( defined( 'DB_ENGINE' ) && 'duckdb' !== strtolower( (string) DB_ENGINE ) ) {
+\t\t\treturn;
+\t\t}
+\t\tif ( defined( 'FQDUCKDB' ) ) {
+\t\t\twp_sqlite_duckdb_child_database_copy_record(
+\t\t\t\tarray(
+\t\t\t\t\t'enabled' => true,
+\t\t\t\t\t'attempted' => false,
+\t\t\t\t\t'copy_success' => false,
+\t\t\t\t\t'copy_error' => 'FQDUCKDB was already defined before the child copy hook.',
+\t\t\t\t\t'fqduckdb' => FQDUCKDB,
+\t\t\t\t)
+\t\t\t);
+\t\t\tif ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
+\t\t\t\twp_sqlite_duckdb_child_diagnostics_report( 'after_child_db_copy', true );
+\t\t\t}
+\t\t\tfwrite( STDERR, 'Error: DuckDB child DB copy hook ran after FQDUCKDB was defined.' . PHP_EOL );
+\t\t\texit( 1 );
+\t\t}
+\t\tif ( defined( 'DUCKDB_FILE' ) ) {
+\t\t\twp_sqlite_duckdb_child_database_copy_record(
+\t\t\t\tarray(
+\t\t\t\t\t'enabled' => true,
+\t\t\t\t\t'attempted' => false,
+\t\t\t\t\t'copy_success' => false,
+\t\t\t\t\t'copy_error' => 'DUCKDB_FILE was already defined before the child copy hook.',
+\t\t\t\t\t'duckdb_file' => DUCKDB_FILE,
+\t\t\t\t)
+\t\t\t);
+\t\t\tif ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
+\t\t\t\twp_sqlite_duckdb_child_diagnostics_report( 'after_child_db_copy', true );
+\t\t\t}
+\t\t\tfwrite( STDERR, 'Error: DuckDB child DB copy hook cannot override an existing DUCKDB_FILE.' . PHP_EOL );
+\t\t\texit( 1 );
+\t\t}
+
+\t\t$result_file = isset( $GLOBALS['wp_sqlite_duckdb_child_result_file'] ) && is_string( $GLOBALS['wp_sqlite_duckdb_child_result_file'] )
+\t\t\t? $GLOBALS['wp_sqlite_duckdb_child_result_file']
+\t\t\t: '';
+\t\t$database_dir = wp_sqlite_duckdb_child_database_copy_dir();
+\t\t$hash = substr( sha1( $result_file . '|' . getmypid() ), 0, 16 );
+\t\t$duckdb_file = '.ht.duckdb.phpunit-' . getmypid() . '-' . $hash . '.duckdb';
+\t\t$source_path = is_string( $database_dir ) ? $database_dir . '.ht.duckdb' : null;
+\t\t$target_path = is_string( $database_dir ) ? $database_dir . $duckdb_file : null;
+\t\t$copy_paths = array();
+\t\t$sidecars = array();
+\t\t$copy_error = null;
+
+\t\twp_sqlite_duckdb_child_database_copy_record(
+\t\t\tarray(
+\t\t\t\t'enabled' => true,
+\t\t\t\t'attempted' => true,
+\t\t\t\t'result_file' => $result_file,
+\t\t\t\t'database_dir' => $database_dir,
+\t\t\t\t'source_path' => $source_path,
+\t\t\t\t'source_exists' => is_string( $source_path ) && file_exists( $source_path ),
+\t\t\t\t'source_readable' => is_string( $source_path ) && is_readable( $source_path ),
+\t\t\t\t'source_size' => wp_sqlite_duckdb_child_database_copy_size( $source_path ),
+\t\t\t\t'duckdb_file' => $duckdb_file,
+\t\t\t\t'target_path' => $target_path,
+\t\t\t\t'target_exists_before' => is_string( $target_path ) && file_exists( $target_path ),
+\t\t\t\t'fqduckdb_defined_before_copy' => defined( 'FQDUCKDB' ),
+\t\t\t\t'duckdb_file_defined_before_copy' => defined( 'DUCKDB_FILE' ),
+\t\t\t)
+\t\t);
+\t\tif ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
+\t\t\twp_sqlite_duckdb_child_diagnostics_report( 'before_child_db_copy', true );
+\t\t}
+
+\t\tif ( '' === $result_file ) {
+\t\t\t$copy_error = 'Missing PHPUnit process result file for child DB copy.';
+\t\t} elseif ( ! is_string( $database_dir ) || '' === $database_dir ) {
+\t\t\t$copy_error = 'Unable to resolve WordPress database directory for child DB copy.';
+\t\t} elseif ( ! is_string( $source_path ) || ! is_file( $source_path ) || ! is_readable( $source_path ) ) {
+\t\t\t$copy_error = 'Source DuckDB database is not readable for child DB copy.';
+\t\t} elseif ( ! is_dir( $database_dir ) || ! is_writable( $database_dir ) ) {
+\t\t\t$copy_error = 'WordPress database directory is not writable for child DB copy.';
+\t\t} elseif ( ! is_string( $target_path ) || ! copy( $source_path, $target_path ) ) {
+\t\t\t$copy_error = 'Failed to copy source DuckDB database for child process.';
+\t\t} else {
+\t\t\t$copy_paths[] = $target_path;
+\t\t\tforeach ( array( '.wal' ) as $suffix ) {
+\t\t\t\t$source_sidecar = $source_path . $suffix;
+\t\t\t\t$target_sidecar = $target_path . $suffix;
+\t\t\t\t$sidecar = array(
+\t\t\t\t\t'suffix' => $suffix,
+\t\t\t\t\t'source_path' => $source_sidecar,
+\t\t\t\t\t'source_exists' => file_exists( $source_sidecar ),
+\t\t\t\t\t'source_size' => wp_sqlite_duckdb_child_database_copy_size( $source_sidecar ),
+\t\t\t\t\t'target_path' => $target_sidecar,
+\t\t\t\t\t'copied' => false,
+\t\t\t\t);
+\t\t\t\tif ( is_file( $source_sidecar ) ) {
+\t\t\t\t\t$sidecar['copied'] = copy( $source_sidecar, $target_sidecar );
+\t\t\t\t\t$sidecar['target_size'] = wp_sqlite_duckdb_child_database_copy_size( $target_sidecar );
+\t\t\t\t\tif ( $sidecar['copied'] ) {
+\t\t\t\t\t\t$copy_paths[] = $target_sidecar;
+\t\t\t\t\t} else {
+\t\t\t\t\t\t$copy_error = 'Failed to copy DuckDB sidecar for child process: ' . $suffix;
+\t\t\t\t\t}
+\t\t\t\t}
+\t\t\t\t$sidecars[] = $sidecar;
+\t\t\t}
+\t\t}
+
+\t\tif ( null === $copy_error ) {
+\t\t\tdefine( 'DUCKDB_FILE', $duckdb_file );
+\t\t\tputenv( 'DUCKDB_FILE=' . $duckdb_file );
+\t\t\t$_ENV['DUCKDB_FILE'] = $duckdb_file;
+\t\t\t$_SERVER['DUCKDB_FILE'] = $duckdb_file;
+\t\t\tregister_shutdown_function( 'wp_sqlite_duckdb_child_database_copy_cleanup' );
+\t\t}
+
+\t\twp_sqlite_duckdb_child_database_copy_record(
+\t\t\tarray(
+\t\t\t\t'copy_success' => null === $copy_error,
+\t\t\t\t'copy_error' => $copy_error,
+\t\t\t\t'target_exists_after' => is_string( $target_path ) && file_exists( $target_path ),
+\t\t\t\t'target_size' => wp_sqlite_duckdb_child_database_copy_size( $target_path ),
+\t\t\t\t'sidecars' => $sidecars,
+\t\t\t\t'cleanup_paths' => $copy_paths,
+\t\t\t\t'cleanup_registered' => null === $copy_error,
+\t\t\t\t'duckdb_file_defined_after_copy' => defined( 'DUCKDB_FILE' ),
+\t\t\t)
+\t\t);
+\t\tif ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
+\t\t\twp_sqlite_duckdb_child_diagnostics_report( 'after_child_db_copy', true );
+\t\t}
+
+\t\tif ( null !== $copy_error ) {
+\t\t\tforeach ( array_reverse( $copy_paths ) as $path ) {
+\t\t\t\tif ( is_string( $path ) && is_file( $path ) ) {
+\t\t\t\t\t@unlink( $path );
+\t\t\t\t}
+\t\t\t}
+\t\t\tfwrite( STDERR, 'Error: ' . $copy_error . PHP_EOL );
+\t\t\texit( 1 );
+\t\t}
+\t}
+}`;
+}
+
 function getDuckDBChildFactorySequenceAlignmentPhp() {
 	return `if ( ! function_exists( 'wp_sqlite_duckdb_align_child_factory_sequence_with_database' ) ) {
 \tfunction wp_sqlite_duckdb_align_child_factory_sequence_with_database() {
@@ -1055,6 +1307,7 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 		`\trequire_once ${ phpSingleQuote( duckdbChildDiagnosticsContainerPath ) };`,
 		"\twp_sqlite_duckdb_child_diagnostics_report( 'phpunit_child_template_start', true );",
 		'}',
+		getDuckDBChildDatabaseCopyPhp(),
 		getDuckDBChildFactorySequenceAlignmentPhp(),
 		'',
 	].join( '\n' );
@@ -1378,6 +1631,7 @@ function getPhpunitForwardedEnvironmentPhp() {
 		'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS',
 		'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_VERBOSE',
 		'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_STDERR',
+		'WP_SQLITE_DUCKDB_CHILD_DB_COPY',
 		'WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS',
 	];
 
