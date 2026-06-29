@@ -11668,11 +11668,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertTrue( $entry['translated'] );
 		$this->assertStringContainsString( 'p."ID"', $entry['sql'] );
 
+		$last_cache = $this->get_driver_private_property( $driver, 'mysql_select_translation_last_cache' );
+		$this->assertIsArray( $last_cache );
+		$this->assertSame( $query, $last_cache['query'] );
+		$this->assertSame( $entry['sql'], $last_cache['sql'] );
+		$this->assertTrue( $last_cache['translated'] );
+
 		$driver->query( $query );
 
 		$this->assertSame(
 			$cache,
 			$this->get_driver_private_property( $driver, 'mysql_select_translation_cache' )
+		);
+		$this->assertSame(
+			$last_cache,
+			$this->get_driver_private_property( $driver, 'mysql_select_translation_last_cache' )
 		);
 
 		$this->install_mysql_schema_metadata_fixture(
@@ -11687,6 +11697,108 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame(
 			array(),
 			$this->get_driver_private_property( $driver, 'mysql_select_translation_cache' )
+		);
+		$this->assertNull( $this->get_driver_private_property( $driver, 'mysql_select_translation_last_cache' ) );
+	}
+
+	/**
+	 * Tests query context keeps the first semantic token after hidden comments.
+	 */
+	public function test_query_context_first_token_ignores_hidden_comments(): void {
+		$driver = $this->create_backendless_driver();
+		$query  = "/* plugin preamble */\n-- runtime marker\nSELECT `ID` FROM `wptests_posts` WHERE `post_status` = 'publish'";
+
+		$context = $this->call_driver_private_method( $driver, 'get_mysql_query_context', array( $query ) );
+
+		$this->assertSame( WP_MySQL_Lexer::SELECT_SYMBOL, $context['first_token_id'] );
+		$this->assertSame( WP_MySQL_Lexer::SELECT_SYMBOL, $context['tokens'][0]->id );
+		$this->assertSame( 'SELECT', strtoupper( $context['tokens'][0]->get_bytes() ) );
+	}
+
+	/**
+	 * Tests query context tokenization follows SQL mode changes.
+	 */
+	public function test_query_context_respects_sql_mode_changes(): void {
+		$driver = $this->create_backendless_driver();
+
+		$default_context = $this->call_driver_private_method( $driver, 'get_mysql_query_context', array( 'SELECT "quoted_name"' ) );
+		$this->assertSame( WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT, $default_context['tokens'][1]->id );
+
+		$driver->set_sql_mode( 'ANSI_QUOTES' );
+
+		$ansi_context = $this->call_driver_private_method( $driver, 'get_mysql_query_context', array( 'SELECT "quoted_name"' ) );
+		$this->assertSame( WP_MySQL_Lexer::BACK_TICK_QUOTED_ID, $ansi_context['tokens'][1]->id );
+		$this->assertSame( 'quoted_name', $ansi_context['tokens'][1]->get_value() );
+	}
+
+	/**
+	 * Tests SELECT clause indexing ignores nested parentheses and subqueries.
+	 */
+	public function test_query_context_select_clause_index_ignores_nested_parentheses(): void {
+		$driver = $this->create_backendless_driver();
+		$query  = "SELECT IF(id IN (SELECT post_id FROM nested_posts WHERE flag = 1), title, 'fallback') AS label
+			FROM wptests_posts
+			WHERE id IN (SELECT post_id FROM wptests_postmeta WHERE meta_key = 'featured')
+			GROUP BY label
+			HAVING COUNT(*) > 0
+			ORDER BY label
+			LIMIT 5";
+
+		$context = $this->call_driver_private_method( $driver, 'get_mysql_query_context', array( $query ) );
+		$reader  = Closure::bind(
+			function ( array $bound_context ): ?array {
+				$statement_end = $this->get_mysql_query_context_statement_end_position( $bound_context, 1 );
+				return $this->get_mysql_query_context_select_clause_positions( $bound_context, 1, $statement_end );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+		$clauses = $reader( $context );
+
+		$this->assertIsArray( $clauses );
+		$this->assertSame( WP_MySQL_Lexer::FROM_SYMBOL, $context['tokens'][ $clauses['from_position'] ]->id );
+		$this->assertSame( WP_MySQL_Lexer::WHERE_SYMBOL, $context['tokens'][ $clauses['where_position'] ]->id );
+		$this->assertSame( WP_MySQL_Lexer::GROUP_SYMBOL, $context['tokens'][ $clauses['group_position'] ]->id );
+		$this->assertSame( WP_MySQL_Lexer::HAVING_SYMBOL, $context['tokens'][ $clauses['having_position'] ]->id );
+		$this->assertSame( WP_MySQL_Lexer::ORDER_SYMBOL, $context['tokens'][ $clauses['order_position'] ]->id );
+		$this->assertSame( WP_MySQL_Lexer::LIMIT_SYMBOL, $context['tokens'][ $clauses['limit_position'] ]->id );
+
+		$first_from_position = null;
+		foreach ( $context['tokens'] as $position => $token ) {
+			if ( WP_MySQL_Lexer::FROM_SYMBOL === $token->id ) {
+				$first_from_position = $position;
+				break;
+			}
+		}
+
+		$this->assertNotNull( $first_from_position );
+		$this->assertLessThan( $clauses['from_position'], $first_from_position );
+	}
+
+	/**
+	 * Tests commented SELECT and DML statements still dispatch through MySQL rewrites.
+	 */
+	public function test_query_context_preserves_commented_select_and_dml_dispatch(): void {
+		$driver = $this->create_driver();
+
+		$driver->query( 'CREATE TABLE wptests_query_context (id INTEGER PRIMARY KEY, value TEXT NOT NULL)' );
+
+		$insert = "/* plugin preamble */\nINSERT INTO `wptests_query_context` (`id`, `value`) VALUES (1, 'first')";
+		$this->assertSame( 1, $driver->query( $insert ) );
+		$this->assertSame(
+			'INSERT INTO "wptests_query_context" ("id", "value") VALUES (1, \'first\')',
+			$this->remove_real_pgsql_test_schema_qualifiers( $this->get_last_single_postgresql_sql( $driver ) )
+		);
+
+		$select = "/* plugin preamble */\n-- runtime marker\nSELECT `id`, `value` FROM `wptests_query_context` WHERE (`id` IN (SELECT 1)) ORDER BY `id`";
+		$rows   = $driver->query( $select );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '1', $rows[0]->id );
+		$this->assertSame( 'first', $rows[0]->value );
+		$this->assertSame(
+			'SELECT "id", "value" FROM "wptests_query_context" WHERE ("id" IN (SELECT 1)) ORDER BY "id"',
+			$this->remove_real_pgsql_test_schema_qualifiers( $this->get_last_single_postgresql_sql( $driver ) )
 		);
 	}
 
@@ -33980,6 +34092,26 @@ $$'
 		sort( $functions );
 
 		return $functions;
+	}
+
+	/**
+	 * Call a private driver method.
+	 *
+	 * @param WP_PostgreSQL_Driver $driver      Driver under test.
+	 * @param string               $method_name Private driver method name.
+	 * @param array                $args        Method arguments.
+	 * @return mixed Private method return value.
+	 */
+	private function call_driver_private_method( WP_PostgreSQL_Driver $driver, string $method_name, array $args = array() ) {
+		$caller = Closure::bind(
+			function ( string $bound_method_name, array $bound_args ) {
+				return $this->$bound_method_name( ...$bound_args );
+			},
+			$driver,
+			WP_PostgreSQL_Driver::class
+		);
+
+		return $caller( $method_name, $args );
 	}
 
 	/**

@@ -9,9 +9,9 @@
  * PostgreSQL driver rewrite rule translators and dispatch helpers.
  */
 trait WP_PostgreSQL_Driver_Rewrite_Rules {
-	private function apply_mysql_top_level_query_dispatch_rules( string &$query, bool &$translated_for_postgresql, $fetch_mode, array $fetch_mode_args ) {
+	private function apply_mysql_top_level_query_dispatch_rules( string &$query, bool &$translated_for_postgresql, $fetch_mode, array $fetch_mode_args, ?array &$query_context = null ) {
 		foreach ( $this->get_mysql_top_level_query_dispatch_rules() as $rule ) {
-			$result = $this->apply_mysql_top_level_query_dispatch_rule( $rule, $query, $translated_for_postgresql, $fetch_mode, $fetch_mode_args );
+			$result = $this->apply_mysql_top_level_query_dispatch_rule( $rule, $query, $translated_for_postgresql, $fetch_mode, $fetch_mode_args, $query_context );
 			if ( null !== $result ) {
 				return $result;
 			}
@@ -21,7 +21,7 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 	private function get_mysql_top_level_query_dispatch_rules(): array {
 		return array( array( 'result', 'execute_mysql_runtime_setting_query' ), array( 'parse_result', 'get_mysql_use_database_name', 'execute_mysql_use_statement' ), array( 'parse_result', 'get_mysql_transaction_control_query', 'execute_mysql_transaction_control_query' ), array( 'parse_result', 'get_mysql_savepoint_query', 'execute_mysql_savepoint_query' ), array( 'fetch_result', 'execute_mysql_static_select_query' ), array( 'fetch_result', 'execute_mysql_show_query' ), array( 'reject', 'reject_unsupported_mysql_constructs', array( array( 'contains_unsupported_mysql_group_concat_function_query', 'Unsupported MySQL runtime function form.' ), array( 'contains_unsupported_mysql_extract_function_query', 'Unsupported MySQL runtime function form.' ), array( 'contains_unsupported_mysql_fulltext_search_query', 'Unsupported MySQL full-text search syntax.' ) ) ), array( 'translate_first', array( 'translate_direct_information_schema_cte_select_query', 'translate_direct_information_schema_select_query', 'translate_application_select_with_direct_information_schema_nested_selects' ) ), array( 'reject_untranslated', 'should_reject_information_schema_backend_query', 'Unsupported information_schema query.' ), array( 'parse_result', 'get_mysql_lock_tables_query', 'execute_mysql_lock_tables_query' ), array( 'parse_noop', 'get_mysql_flush_query' ), array( 'parse_result', 'get_mysql_truncate_table_query', 'execute_mysql_truncate_table_query' ), array( 'parse_result', 'get_found_rows_query_column_name', 'execute_mysql_found_rows_query' ), array( 'parse_result', 'translate_mysql_create_table_select_query', 'execute_mysql_translated_create_table_query' ), array( 'parse_result', 'translate_mysql_create_table_like_query', 'execute_mysql_translated_create_table_query' ), array( 'reject_if', 'contains_unsupported_mysql_create_table_column_attribute_query', 'Unsupported CREATE TABLE column attribute.' ), array( 'result', 'execute_mysql_create_table_query' ), array( 'parse_statements', 'translate_mysql_view_query', null, array( WP_MySQL_Lexer::CREATE_SYMBOL, 'CREATE VIEW' ) ), array( 'parse_result', 'translate_mysql_create_index_query', 'execute_mysql_create_index_query' ), array( 'message', 'get_unsupported_mysql_create_statement_message' ), array( 'parse_result', 'translate_mysql_dbdelta_alter_table_query', 'execute_mysql_dbdelta_alter_query' ), array( 'reject', 'reject_mysql_statement_prefix', array( WP_MySQL_Lexer::ALTER_SYMBOL, WP_MySQL_Lexer::TABLE_SYMBOL ), 'Unsupported ALTER TABLE statement.' ), array( 'parse_statements', 'translate_mysql_view_query', null, array( WP_MySQL_Lexer::ALTER_SYMBOL, 'ALTER VIEW' ) ), array( 'parse_admin', 'translate_mysql_drop_table_query', true ), array( 'parse_admin', 'translate_mysql_drop_view_query', false ), array( 'parse_admin', 'translate_mysql_drop_index_query', true ), array( 'message', 'get_unsupported_mysql_drop_statement_message' ), array( 'parse_admin', 'translate_mysql_rename_table_query', true ), array( 'reject', 'reject_mysql_statement_prefix', array( WP_MySQL_Lexer::RENAME_SYMBOL, WP_MySQL_Lexer::TABLE_SYMBOL ), 'Unsupported RENAME TABLE statement.' ), array( 'fetch_result', 'execute_mysql_metadata_show_query' ) );
 	}
-	private function apply_mysql_top_level_query_dispatch_rule( array $rule, string &$query, bool &$translated_for_postgresql, $fetch_mode, array $fetch_mode_args ) {
+	private function apply_mysql_top_level_query_dispatch_rule( array $rule, string &$query, bool &$translated_for_postgresql, $fetch_mode, array $fetch_mode_args, ?array &$query_context = null ) {
 		switch ( $rule[0] ) {
 			case 'result':
 				return $this->{$rule[1]}( $query );
@@ -31,7 +31,7 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 				$this->{$rule[1]}( $query, $rule[2], ...( isset( $rule[3] ) ? array( $rule[3] ) : array() ) );
 				return null;
 			case 'translate_first':
-				$translated_query = $this->translate_first_mysql_query( $query, $rule[1] );
+				$translated_query = $this->translate_first_mysql_query( $query, $rule[1], $query_context );
 				if ( null !== $translated_query ) {
 					$query                     = $translated_query;
 					$translated_for_postgresql = true;
@@ -39,7 +39,7 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 				return null;
 			case 'reject_if':
 			case 'reject_untranslated':
-				if ( ( 'reject_if' === $rule[0] || ! $translated_for_postgresql ) && $this->{$rule[1]}( $query ) ) {
+				if ( ( 'reject_if' === $rule[0] || ! $translated_for_postgresql ) && $this->evaluate_mysql_query_context_guard( $rule[1], $query, $query_context ) ) {
 					throw new InvalidArgumentException( $rule[2] );
 				}
 				return null;
@@ -78,6 +78,12 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 			}
 		}
 		throw new InvalidArgumentException( $message );
+	}
+	private function evaluate_mysql_query_context_guard( string $guard_name, string $query, ?array &$query_context = null ): bool {
+		if ( 'should_reject_information_schema_backend_query' === $guard_name ) {
+			return $this->should_reject_information_schema_backend_query( $query, $query_context );
+		}
+		return $this->$guard_name( $query );
 	}
 
 	private function get_mysql_post_translation_unsupported_construct_guards(): array {
@@ -142,8 +148,8 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 		return $result;
 	}
 
-	private function apply_mysql_dml_rewrite_rules( string &$query, bool &$translated_for_postgresql, ?array &$dml_identity_repair_query, ?int &$replace_return_value, bool $mysql_update_ignore_query ) {
-		$first_token = $this->get_mysql_tokens( $query )[0]->id ?? null;
+	private function apply_mysql_dml_rewrite_rules( string &$query, bool &$translated_for_postgresql, ?array &$dml_identity_repair_query, ?int &$replace_return_value, bool $mysql_update_ignore_query, ?array &$query_context = null ) {
+		$first_token = $this->get_mysql_query_context_first_token_id( $query, $query_context );
 		foreach ( $this->get_mysql_dml_rewrite_rules() as $rule ) {
 			$contains = $rule[1] ?? null;
 			if ( ! in_array( $first_token, (array) $rule[0], true ) || ( null !== $contains && false === stripos( $query, $contains ) ) ) {
@@ -155,7 +161,7 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 				if ( ( true === $guard || true === ( $rule[5] ?? false ) ) && $translated_for_postgresql ) {
 					continue;
 				}
-				if ( true !== $guard && null !== $guard && ! $this->{$guard}( $query ) ) {
+				if ( true !== $guard && null !== $guard && ! $this->evaluate_mysql_dml_context_guard( $guard, $query, $query_context ) ) {
 					continue;
 				}
 				throw new InvalidArgumentException( $rule[3] );
@@ -170,7 +176,7 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 			if ( null !== $result ) {
 				return $result;
 			}
-			$first_token = $this->get_mysql_tokens( $query )[0]->id ?? null;
+			$first_token = $this->get_mysql_query_context_first_token_id( $query, $query_context );
 		}
 		return null;
 	}
@@ -220,14 +226,27 @@ trait WP_PostgreSQL_Driver_Rewrite_Rules {
 		$translated_for_postgresql = true;
 		return null;
 	}
+	private function evaluate_mysql_dml_context_guard( string $guard_name, string $query, ?array &$query_context = null ): bool {
+		switch ( $guard_name ) {
+			case 'is_mysql_replace_query':
+				return $this->is_mysql_replace_query( $query, $query_context );
+			case 'is_unsupported_mysql_insert_query':
+				return $this->is_unsupported_mysql_insert_query( $query, $query_context );
+			case 'is_unsupported_mysql_insert_set_query':
+				return $this->is_unsupported_mysql_insert_set_query( $query, $query_context );
+			case 'is_unsupported_mysql_update_rewrite_query':
+				return $this->is_unsupported_mysql_update_rewrite_query( $query, $query_context );
+		}
+		return $this->$guard_name( $query );
+	}
 
-	private function is_unsupported_mysql_update_rewrite_query( string $query ): bool {
-		$update_tokens = $this->get_mysql_tokens( $query );
+	private function is_unsupported_mysql_update_rewrite_query( string $query, ?array &$query_context = null ): bool {
+		$update_tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $update_tokens[0] ) || WP_MySQL_Lexer::WITH_SYMBOL !== $update_tokens[0]->id ) {
 			return isset( $update_tokens[0] ) && WP_MySQL_Lexer::UPDATE_SYMBOL === $update_tokens[0]->id;
 		}
-		$update_end = $this->get_mysql_statement_end_position( $update_tokens, 1 );
-		return null !== $update_end && null !== $this->find_top_level_mysql_token( $update_tokens, WP_MySQL_Lexer::UPDATE_SYMBOL, 1, $update_end );
+		$update_end = $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
+		return null !== $update_end && null !== $this->find_top_level_mysql_query_context_token( $query_context, WP_MySQL_Lexer::UPDATE_SYMBOL, 1, $update_end );
 	}
 
 	private function translate_wordpress_options_regexp_delete_query( string $query ): ?string {

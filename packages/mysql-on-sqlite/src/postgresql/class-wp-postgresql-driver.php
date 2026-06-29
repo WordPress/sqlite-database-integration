@@ -489,6 +489,13 @@ class WP_PostgreSQL_Driver {
 	private $mysql_select_translation_cache = array();
 
 	/**
+	 * Most recently used exact MySQL SELECT translation.
+	 *
+	 * @var array{db_name: string, query: string, sql: string, sql_modes: array<string, true>, translated: bool}|null
+	 */
+	private $mysql_select_translation_last_cache = null;
+
+	/**
 	 * Cached WordPress metadata priming SELECT templates keyed by query shape.
 	 *
 	 * @var array<string, array{prefix_sql: string, suffix_sql: string}>
@@ -687,6 +694,7 @@ class WP_PostgreSQL_Driver {
 		$this->mysql_token_cache_sql_mode                  = null;
 		$this->mysql_token_cache_tokens                    = array();
 		$this->mysql_select_translation_cache              = array();
+		$this->mysql_select_translation_last_cache         = null;
 		$this->mysql_meta_priming_select_template_cache    = array();
 		$this->mysql_sql_calc_found_rows_count_query_cache = array();
 	}
@@ -843,33 +851,45 @@ class WP_PostgreSQL_Driver {
 		$this->last_result      = -1;
 		$this->last_mysql_query = $query;
 
+		$mysql_query_context       = null;
 		$translated_for_postgresql = false;
-		$top_level_query_result    = $this->apply_mysql_top_level_query_dispatch_rules( $query, $translated_for_postgresql, $fetch_mode, $fetch_mode_args );
+		$top_level_query_result    = $this->apply_mysql_top_level_query_dispatch_rules( $query, $translated_for_postgresql, $fetch_mode, $fetch_mode_args, $mysql_query_context );
 		if ( null !== $top_level_query_result ) {
 			return $top_level_query_result;
 		}
 
 		list( $dml_identity_repair_query, $last_insert_id_after_success, $replace_return_value ) = array( null, null, null );
-		$mysql_update_ignore_query = $this->is_mysql_update_ignore_query( $query );
+		$mysql_update_ignore_query = $this->is_mysql_update_ignore_query( $query, $mysql_query_context );
 
 		$dml_rewrite_result = $this->apply_mysql_dml_rewrite_rules(
 			$query,
 			$translated_for_postgresql,
 			$dml_identity_repair_query,
 			$replace_return_value,
-			$mysql_update_ignore_query
+			$mysql_update_ignore_query,
+			$mysql_query_context
 		);
 		if ( null !== $dml_rewrite_result ) {
 			return $dml_rewrite_result;
 		}
 
-		$is_sql_calc_found_rows_query = null !== $this->get_sql_calc_found_rows_select_parts( $query, true, true );
+		$cached_select_translation = (
+			! $translated_for_postgresql
+			&& false === stripos( $query, 'SQL_CALC_FOUND_ROWS' )
+			&& 1 === preg_match( '/\A\s*SELECT\b/i', $query )
+		) ? $this->get_last_mysql_select_query_translation( $query ) : null;
+		if ( null !== $cached_select_translation ) {
+			$query                     = $cached_select_translation['sql'];
+			$translated_for_postgresql = $cached_select_translation['translated'];
+		}
+
+		$is_sql_calc_found_rows_query = $translated_for_postgresql ? false : null !== $this->get_sql_calc_found_rows_select_parts( $query, true, true, $mysql_query_context );
 		$sql_calc_found_rows_query    = $is_sql_calc_found_rows_query ? $query : null;
 		$sql_calc_found_rows_window   = false;
 
 		if ( ! $translated_for_postgresql ) {
 			$translated_query = null !== $sql_calc_found_rows_query && in_array( (int) $fetch_mode, array( PDO::FETCH_OBJ, PDO::FETCH_ASSOC ), true )
-				? $this->translate_sql_calc_found_rows_window_select_query( $query )
+				? $this->translate_sql_calc_found_rows_window_select_query( $query, $mysql_query_context )
 				: null;
 			if ( null !== $translated_query ) {
 				$query                      = $translated_query;
@@ -877,23 +897,23 @@ class WP_PostgreSQL_Driver {
 				$sql_calc_found_rows_window = true;
 			} elseif (
 				1 === preg_match( '/\A\s*SELECT\b/i', $query )
-				&& ! $this->contains_uncacheable_mysql_runtime_function_query( $query )
+				&& ! $this->contains_uncacheable_mysql_runtime_function_query( $query, $mysql_query_context )
 			) {
-				$select_translation        = $this->get_mysql_select_query_translation( $query );
+				$select_translation        = $this->get_mysql_select_query_translation( $query, $mysql_query_context );
 				$query                     = $select_translation['sql'];
 				$translated_for_postgresql = $select_translation['translated'];
 				if ( array_key_exists( 'last_insert_id', $select_translation ) ) {
 					$last_insert_id_after_success = $select_translation['last_insert_id'];
 				}
-			} elseif ( $this->is_mysql_top_level_select_query( $query ) ) {
-				$select_translation        = $this->translate_mysql_select_query_for_postgresql( $query );
+			} elseif ( $this->is_mysql_top_level_select_query( $query, $mysql_query_context ) ) {
+				$select_translation        = $this->translate_mysql_select_query_for_postgresql( $query, $mysql_query_context );
 				$query                     = $select_translation['sql'];
 				$translated_for_postgresql = $select_translation['translated'];
 				if ( array_key_exists( 'last_insert_id', $select_translation ) ) {
 					$last_insert_id_after_success = $select_translation['last_insert_id'];
 				}
 			} else {
-				$translated_query = $this->translate_mysql_compatible_query( $query );
+				$translated_query = $this->translate_mysql_compatible_query( $query, $mysql_query_context );
 				if ( null !== $translated_query ) {
 					$query = $translated_query;
 				}
@@ -1094,14 +1114,50 @@ class WP_PostgreSQL_Driver {
 			}
 		}
 	}
-	private function translate_first_mysql_query( string $query, array $translator_names ): ?string {
+	private function translate_first_mysql_query( string $query, array $translator_names, ?array &$query_context = null ): ?string {
 		foreach ( $translator_names as $translator_name ) {
-			$translated_query = $this->{$translator_name}( $query );
+			$translated_query = $this->translate_mysql_query_with_context( $translator_name, $query, $query_context );
 			if ( null !== $translated_query ) {
 				return $translated_query;
 			}
 		}
 		return null;
+	}
+	private function translate_mysql_query_with_context( string $translator_name, string $query, ?array &$query_context = null ): ?string {
+		switch ( $translator_name ) {
+			case 'translate_application_select_with_direct_information_schema_nested_selects':
+			case 'translate_direct_information_schema_select_query':
+				if ( WP_MySQL_Lexer::SELECT_SYMBOL !== $this->get_mysql_query_context_first_token_id( $query, $query_context ) ) {
+					return null;
+				}
+				break;
+		}
+
+		switch ( $translator_name ) {
+			case 'translate_application_select_with_direct_information_schema_nested_selects':
+				return $this->translate_application_select_with_direct_information_schema_nested_selects( $query, $query_context );
+			case 'translate_direct_information_schema_select_query':
+				return $this->translate_direct_information_schema_select_query( $query, array(), $query_context );
+			case 'translate_distinct_order_by_query':
+				return $this->translate_distinct_order_by_query( $query, true, $query_context );
+			case 'translate_grouped_having_alias_query':
+				return $this->translate_grouped_having_alias_query( $query, $query_context );
+			case 'translate_information_schema_main_database_select_query':
+				return $this->translate_information_schema_main_database_select_query( $query, $query_context );
+			case 'translate_mysql_compatible_query':
+				return $this->translate_mysql_compatible_query( $query, $query_context );
+			case 'translate_mysql_select_row_locking_query':
+				return $this->translate_mysql_select_row_locking_query( $query, $query_context );
+			case 'translate_mysql_version_function_select_query':
+				return $this->translate_mysql_version_function_select_query( $query, $query_context );
+			case 'translate_simple_mysql_select_query':
+				return $this->translate_simple_mysql_select_query( $query, $query_context );
+			case 'translate_sql_calc_found_rows_select_query':
+				return $this->translate_sql_calc_found_rows_select_query( $query, true, $query_context );
+			case 'translate_strict_aggregate_grouped_order_by_query':
+				return $this->translate_strict_aggregate_grouped_order_by_query( $query, true, $query_context );
+		}
+		return $this->{$translator_name}( $query );
 	}
 	private function execute_mysql_admin_statements( array $statements, bool $clear_metadata_caches ): int {
 		$this->execute_postgresql_statements( $statements );
@@ -1303,13 +1359,13 @@ class WP_PostgreSQL_Driver {
 		}
 		return false;
 	}
-	private function contains_uncacheable_mysql_runtime_function_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function contains_uncacheable_mysql_runtime_function_query( string $query, ?array &$query_context = null ): bool {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return false;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$statement_end = $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 		if ( null === $statement_end ) {
 			return false;
 		}
@@ -1333,9 +1389,36 @@ class WP_PostgreSQL_Driver {
 		}
 		return false;
 	}
-	private function get_mysql_select_query_translation( string $query ): array {
-		$meta_priming_translation = $this->get_mysql_usermeta_priming_select_template_translation( $query );
+	private function get_last_mysql_select_query_translation( string $query ): ?array {
+		if (
+			null === $this->mysql_select_translation_last_cache
+			|| $this->mysql_select_translation_last_cache['query'] !== $query
+			|| $this->mysql_select_translation_last_cache['db_name'] !== $this->db_name
+			|| $this->mysql_select_translation_last_cache['sql_modes'] !== $this->active_sql_modes
+		) {
+			return null;
+		}
+
+		return array(
+			'sql'        => $this->mysql_select_translation_last_cache['sql'],
+			'translated' => $this->mysql_select_translation_last_cache['translated'],
+		);
+	}
+	private function get_mysql_select_query_translation( string $query, ?array &$query_context = null ): array {
+		$last_translation = $this->get_last_mysql_select_query_translation( $query );
+		if ( null !== $last_translation ) {
+			return $last_translation;
+		}
+
+		$meta_priming_translation = $this->get_mysql_usermeta_priming_select_template_translation( $query, $query_context );
 		if ( null !== $meta_priming_translation ) {
+			$this->mysql_select_translation_last_cache = array(
+				'db_name'    => $this->db_name,
+				'query'      => $query,
+				'sql'        => $meta_priming_translation['sql'],
+				'sql_modes'  => $this->active_sql_modes,
+				'translated' => $meta_priming_translation['translated'],
+			);
 			return $meta_priming_translation;
 		}
 
@@ -1344,23 +1427,37 @@ class WP_PostgreSQL_Driver {
 			isset( $this->mysql_select_translation_cache[ $cache_key ] )
 			&& $this->mysql_select_translation_cache[ $cache_key ]['query'] === $query
 		) {
+			$this->mysql_select_translation_last_cache = array(
+				'db_name'    => $this->db_name,
+				'query'      => $query,
+				'sql'        => $this->mysql_select_translation_cache[ $cache_key ]['sql'],
+				'sql_modes'  => $this->active_sql_modes,
+				'translated' => $this->mysql_select_translation_cache[ $cache_key ]['translated'],
+			);
 			return array(
 				'sql'        => $this->mysql_select_translation_cache[ $cache_key ]['sql'],
 				'translated' => $this->mysql_select_translation_cache[ $cache_key ]['translated'],
 			);
 		}
 
-		$translation                                        = $this->translate_mysql_select_query_for_postgresql( $query );
+		$translation                                        = $this->translate_mysql_select_query_for_postgresql( $query, $query_context );
 		$this->mysql_select_translation_cache[ $cache_key ] = array(
 			'query'      => $query,
 			'sql'        => $translation['sql'],
 			'translated' => $translation['translated'],
 		);
+		$this->mysql_select_translation_last_cache          = array(
+			'db_name'    => $this->db_name,
+			'query'      => $query,
+			'sql'        => $translation['sql'],
+			'sql_modes'  => $this->active_sql_modes,
+			'translated' => $translation['translated'],
+		);
 		$this->limit_mysql_query_translation_cache( $this->mysql_select_translation_cache );
 		return $translation;
 	}
-	private function get_mysql_usermeta_priming_select_template_translation( string $query ): ?array {
-		$shape = $this->get_mysql_usermeta_priming_select_template_shape( $query );
+	private function get_mysql_usermeta_priming_select_template_translation( string $query, ?array &$query_context = null ): ?array {
+		$shape = $this->get_mysql_usermeta_priming_select_template_shape( $query, $query_context );
 		if ( null === $shape ) {
 			return null;
 		}
@@ -1377,12 +1474,12 @@ class WP_PostgreSQL_Driver {
 			'translated' => true,
 		);
 	}
-	private function get_mysql_usermeta_priming_select_template_shape( string $query ): ?array {
+	private function get_mysql_usermeta_priming_select_template_shape( string $query, ?array &$query_context = null ): ?array {
 		if ( 0 === strcasecmp( $this->db_name, 'information_schema' ) ) {
 			return null;
 		}
 
-		$select = $this->get_mysql_top_level_select_parts( $query );
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -1390,8 +1487,8 @@ class WP_PostgreSQL_Driver {
 		$tokens        = $select['tokens'];
 		$statement_end = $select['statement_end'];
 		if (
-			$this->contains_top_level_mysql_token(
-				$tokens,
+			$this->contains_top_level_mysql_query_context_token(
+				$query_context,
 				1,
 				$statement_end,
 				array(
@@ -1416,13 +1513,13 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
+		$from_position = $this->find_top_level_mysql_query_context_token( $query_context, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
 		if ( null === $from_position || ! $this->is_mysql_usermeta_priming_select_projection( $tokens, 1, $from_position ) ) {
 			return null;
 		}
 
-		$where_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $statement_end );
-		$order_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::ORDER_SYMBOL, $from_position + 1, $statement_end );
+		$where_position = $this->find_top_level_mysql_query_context_token( $query_context, WP_MySQL_Lexer::WHERE_SYMBOL, $from_position + 1, $statement_end );
+		$order_position = $this->find_top_level_mysql_query_context_token( $query_context, WP_MySQL_Lexer::ORDER_SYMBOL, $from_position + 1, $statement_end );
 		if ( null === $where_position || null === $order_position || $where_position > $order_position ) {
 			return null;
 		}
@@ -1632,21 +1729,21 @@ class WP_PostgreSQL_Driver {
 		}
 		return $slot_sql;
 	}
-	private function is_mysql_top_level_select_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function is_mysql_top_level_select_query( string $query, ?array &$query_context = null ): bool {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		return isset( $tokens[0] )
 			&& WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[0]->id
-			&& null !== $this->get_mysql_statement_end_position( $tokens, 1 );
+			&& null !== $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 	}
-	private function translate_mysql_select_query_for_postgresql( string $query ): array {
+	private function translate_mysql_select_query_for_postgresql( string $query, ?array &$query_context = null ): array {
 		foreach ( array( array( 'translate_first', array( 'translate_mysql_select_row_locking_query', 'translate_direct_information_schema_select_query', 'translate_application_select_with_direct_information_schema_nested_selects' ) ), array( 'reject_information_schema' ), array( 'translate_first', array( 'translate_strict_aggregate_grouped_order_by_query', 'translate_grouped_having_alias_query' ) ), array( 'last_insert_id' ), array( 'translate_first', array( 'translate_mysql_version_function_select_query', 'translate_simple_mysql_select_query', 'translate_information_schema_main_database_select_query', 'translate_distinct_order_by_query', 'translate_sql_calc_found_rows_select_query', 'translate_mysql_compatible_query' ) ) )
 			as $rule ) {
 			if ( 'reject_information_schema' === $rule[0] ) {
-				$this->reject_unsupported_information_schema_select_query( $query );
+				$this->reject_unsupported_information_schema_select_query( $query, $query_context );
 				continue;
 			}
 
-			$translation = 'last_insert_id' === $rule[0] ? $this->translate_mysql_last_insert_id_assignment_select_query( $query ) : $this->translate_first_mysql_query( $query, $rule[1] );
+			$translation = 'last_insert_id' === $rule[0] ? $this->translate_mysql_last_insert_id_assignment_select_query( $query, $query_context ) : $this->translate_first_mysql_query( $query, $rule[1], $query_context );
 			if ( null === $translation ) {
 				continue;
 			}
@@ -1669,10 +1766,10 @@ class WP_PostgreSQL_Driver {
 			'translated' => false,
 		);
 	}
-	private function reject_unsupported_information_schema_select_query( string $query ): void {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function reject_unsupported_information_schema_select_query( string $query, ?array &$query_context = null ): void {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( isset( $tokens[0] ) && WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[0]->id ) {
-			$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+			$statement_end = $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 			if (
 				null !== $statement_end
 				&& (
@@ -1822,8 +1919,8 @@ class WP_PostgreSQL_Driver {
 		}
 		return (int) $row[ self::SQL_CALC_FOUND_ROWS_WINDOW_COLUMN ];
 	}
-	private function get_sql_calc_found_rows_select_parts( string $query, bool $allow_distinct, bool $require_sql_calc ): ?array {
-		$select = $this->get_mysql_top_level_select_parts( $query );
+	private function get_sql_calc_found_rows_select_parts( string $query, bool $allow_distinct, bool $require_sql_calc, ?array &$query_context = null ): ?array {
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -1846,7 +1943,7 @@ class WP_PostgreSQL_Driver {
 			return null;
 		}
 
-		$clauses = $this->get_mysql_select_clause_positions( $tokens, $projection_start, $select['statement_end'] );
+		$clauses = $this->get_mysql_query_context_select_clause_positions( $query_context, $projection_start, $select['statement_end'] );
 		if ( null === $clauses ) {
 			return null;
 		}
@@ -1915,12 +2012,12 @@ class WP_PostgreSQL_Driver {
 			'source_select' => $source_select,
 		);
 	}
-	private function translate_sql_calc_found_rows_window_select_query( string $query ): ?string {
+	private function translate_sql_calc_found_rows_window_select_query( string $query, ?array &$query_context = null ): ?string {
 		if ( false !== stripos( $query, self::SQL_CALC_FOUND_ROWS_WINDOW_COLUMN ) ) {
 			return null;
 		}
 
-		$select = $this->get_sql_calc_found_rows_select_parts( $query, false, true );
+		$select = $this->get_sql_calc_found_rows_select_parts( $query, false, true, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -1929,8 +2026,8 @@ class WP_PostgreSQL_Driver {
 		$projection_start = $select['projection_start'];
 		$select_end       = $select['select_end'];
 		if (
-			$this->contains_top_level_mysql_token(
-				$tokens,
+			$this->contains_top_level_mysql_query_context_token(
+				$query_context,
 				$projection_start,
 				$select_end,
 				array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL )
@@ -3297,6 +3394,7 @@ class WP_PostgreSQL_Driver {
 		$this->mysql_dml_identity_repair_eligibility_cache          = array();
 		$this->mysql_unique_index_metadata_introspection_cache      = array();
 		$this->mysql_select_translation_cache                       = array();
+		$this->mysql_select_translation_last_cache                  = null;
 		$this->mysql_meta_priming_select_template_cache             = array();
 		$this->mysql_sql_calc_found_rows_count_query_cache          = array();
 	}
@@ -11885,39 +11983,39 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			'insert_column_list' => $insert_column_list,
 		);
 	}
-	private function is_mysql_replace_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function is_mysql_replace_query( string $query, ?array &$query_context = null ): bool {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		return isset( $tokens[0] ) && WP_MySQL_Lexer::REPLACE_SYMBOL === $tokens[0]->id;
 	}
-	private function is_unsupported_mysql_insert_set_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function is_unsupported_mysql_insert_set_query( string $query, ?array &$query_context = null ): bool {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
 			return false;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$statement_end = $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 		if ( null === $statement_end ) {
 			return false;
 		}
-		return null !== $this->find_top_level_mysql_token(
-			$tokens,
+		return null !== $this->find_top_level_mysql_query_context_token(
+			$query_context,
 			WP_MySQL_Lexer::SET_SYMBOL,
 			1,
 			$statement_end
 		);
 	}
-	private function is_unsupported_mysql_insert_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function is_unsupported_mysql_insert_query( string $query, ?array &$query_context = null ): bool {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
 			return false;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$statement_end = $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 		if ( null === $statement_end ) {
 			return false;
 		}
-		return $this->contains_top_level_mysql_token(
-			$tokens,
+		return $this->contains_top_level_mysql_query_context_token(
+			$query_context,
 			1,
 			$statement_end,
 			array(
@@ -13188,13 +13286,13 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		}
 		return null;
 	}
-	private function is_mysql_update_ignore_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function is_mysql_update_ignore_query( string $query, ?array &$query_context = null ): bool {
+		$tokens = null === $query_context ? $this->get_mysql_tokens( $query ) : $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::UPDATE_SYMBOL !== $tokens[0]->id ) {
 			return false;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$statement_end = null === $query_context ? $this->get_mysql_statement_end_position( $tokens, 1 ) : $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 		if ( null === $statement_end ) {
 			return false;
 		}
@@ -16365,20 +16463,20 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		return $this->is_sql_mode_active( 'STRICT_TRANS_TABLES' )
 			|| $this->is_sql_mode_active( 'STRICT_ALL_TABLES' );
 	}
-	private function get_mysql_top_level_select_parts( string $query, int $statement_start = 1 ): ?array {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function get_mysql_top_level_select_parts( string $query, int $statement_start = 1, ?array &$query_context = null ): ?array {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, $statement_start );
+		$statement_end = $this->get_mysql_query_context_statement_end_position( $query_context, $statement_start );
 		return null === $statement_end ? null : array(
 			'tokens'        => $tokens,
 			'statement_end' => $statement_end,
 		);
 	}
-	private function translate_mysql_last_insert_id_assignment_select_query( string $query ): ?array {
-		$select = $this->get_mysql_top_level_select_parts( $query );
+	private function translate_mysql_last_insert_id_assignment_select_query( string $query, ?array &$query_context = null ): ?array {
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -16386,8 +16484,8 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		$tokens        = $select['tokens'];
 		$statement_end = $select['statement_end'];
 		if (
-			$this->contains_top_level_mysql_token(
-				$tokens,
+			$this->contains_top_level_mysql_query_context_token(
+				$query_context,
 				1,
 				$statement_end,
 				array(
@@ -16532,8 +16630,8 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		$arguments = $this->split_top_level_mysql_arguments( $tokens, $bounds['arguments_start'], $bounds['arguments_end'] );
 		return null !== $arguments && 1 === count( $arguments ) ? $arguments[0] : null;
 	}
-	private function translate_mysql_version_function_select_query( string $query ): ?string {
-		$select = $this->get_mysql_top_level_select_parts( $query );
+	private function translate_mysql_version_function_select_query( string $query, ?array &$query_context = null ): ?string {
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -16560,13 +16658,13 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			$this->connection->quote_identifier( 'VERSION()' )
 		);
 	}
-	private function translate_simple_mysql_select_query( string $query ): ?string {
-		$select = $this->get_mysql_top_level_select_parts( $query );
+	private function translate_simple_mysql_select_query( string $query, ?array &$query_context = null ): ?string {
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
 
-		$context = $this->get_simple_mysql_single_table_select_context( $select['tokens'], $select['statement_end'] );
+		$context = $this->get_simple_mysql_single_table_select_context( $select['tokens'], $select['statement_end'], false, false, $query_context );
 		if ( null === $context ) {
 			return null;
 		}
@@ -16576,14 +16674,15 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		array $tokens,
 		int $statement_end,
 		bool $skip_where_validation = false,
-		bool $reject_direct_information_schema_source = false
+		bool $reject_direct_information_schema_source = false,
+		?array &$query_context = null
 	): ?array {
-		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, self::MYSQL_SIMPLE_SELECT_UNSUPPORTED_TOKENS ) ) {
+		if ( $this->contains_top_level_mysql_context_token( $tokens, $query_context, 1, $statement_end, self::MYSQL_SIMPLE_SELECT_UNSUPPORTED_TOKENS ) ) {
 			return null;
 		}
 
 		$select_end     = $statement_end;
-		$limit_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::LIMIT_SYMBOL, 1, $statement_end );
+		$limit_position = $this->find_top_level_mysql_context_token( $tokens, $query_context, WP_MySQL_Lexer::LIMIT_SYMBOL, 1, $statement_end );
 		if ( null !== $limit_position ) {
 			if ( ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
 				return null;
@@ -16592,7 +16691,7 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			$select_end = $limit_position;
 		}
 
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $select_end );
+		$from_position = $this->find_top_level_mysql_context_token( $tokens, $query_context, WP_MySQL_Lexer::FROM_SYMBOL, 1, $select_end );
 		if (
 			null === $from_position
 			|| 1 === $from_position
@@ -16601,8 +16700,9 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 			return null;
 		}
 
-		$source_end = $this->find_first_top_level_mysql_token(
+		$source_end = $this->find_first_top_level_mysql_context_token(
 			$tokens,
+			$query_context,
 			array( WP_MySQL_Lexer::ORDER_SYMBOL, WP_MySQL_Lexer::WHERE_SYMBOL ),
 			$from_position + 1,
 			$select_end
@@ -16986,15 +17086,15 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		}
 		return false;
 	}
-	private function translate_direct_information_schema_select_query( string $query, array $cte_sources = array() ): ?string {
-		$select = $this->get_mysql_top_level_select_parts( $query );
+	private function translate_direct_information_schema_select_query( string $query, array $cte_sources = array(), ?array &$query_context = null ): ?string {
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
 
 		$tokens        = $select['tokens'];
 		$statement_end = $select['statement_end'];
-		if ( $this->contains_top_level_mysql_token( $tokens, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) ) ) {
+		if ( $this->contains_top_level_mysql_query_context_token( $query_context, 1, $statement_end, array( WP_MySQL_Lexer::UNION_SYMBOL ) ) ) {
 			return $this->translate_direct_information_schema_union_select_query( $query, $tokens, $statement_end );
 		}
 
@@ -17395,8 +17495,8 @@ INNER JOIN (' . $this->get_direct_information_schema_relation_sql( 'referential_
 		$replacements = $this->get_direct_information_schema_range_replacements( $query, $tokens, $start, $end, $context, $options );
 		return null === $replacements ? null : $this->translate_mysql_token_sequence_with_replacements_to_postgresql( $tokens, $start, $end, $replacements );
 	}
-	private function translate_application_select_with_direct_information_schema_nested_selects( string $query ): ?string {
-		$select = $this->get_mysql_top_level_select_parts( $query );
+	private function translate_application_select_with_direct_information_schema_nested_selects( string $query, ?array &$query_context = null ): ?string {
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -19637,8 +19737,8 @@ END',
 			$alias
 		);
 	}
-	private function translate_distinct_order_by_query( string $query, bool $include_limit = true ): ?string {
-		$select = $this->get_sql_calc_found_rows_select_parts( $query, true, false );
+	private function translate_distinct_order_by_query( string $query, bool $include_limit = true, ?array &$query_context = null ): ?string {
+		$select = $this->get_sql_calc_found_rows_select_parts( $query, true, false, $query_context );
 		if ( null === $select || ! $select['has_distinct'] ) {
 			return null;
 		}
@@ -19677,8 +19777,8 @@ END',
 		}
 
 		if (
-			$this->contains_top_level_mysql_token(
-				$tokens,
+			$this->contains_top_level_mysql_query_context_token(
+				$query_context,
 				$projection_start,
 				$select_end,
 				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL )
@@ -19774,6 +19874,48 @@ END',
 			'where_end'       => $clause_ends['where'],
 			'where_position'  => $clause_positions['where'],
 		);
+	}
+	private function get_mysql_query_context_select_clause_positions( array &$query_context, int $projection_start, int $statement_end, bool $require_supported_limit = true ): ?array {
+		$cache_key = $projection_start . ':' . $statement_end . ':' . ( $require_supported_limit ? '1' : '0' );
+		if ( array_key_exists( $cache_key, $query_context['select_clause_positions'] ) ) {
+			return $query_context['select_clause_positions'][ $cache_key ];
+		}
+
+		$tokens         = $query_context['tokens'];
+		$limit_position = $this->find_top_level_mysql_query_context_token( $query_context, WP_MySQL_Lexer::LIMIT_SYMBOL, $projection_start, $statement_end );
+		if ( $require_supported_limit && null !== $limit_position && ! $this->is_supported_simple_select_limit_clause( $tokens, $limit_position, $statement_end ) ) {
+			$query_context['select_clause_positions'][ $cache_key ] = null;
+			return null;
+		}
+
+		$select_end       = $limit_position ?? $statement_end;
+		$projection_end   = $this->find_first_top_level_mysql_query_context_token( $query_context, self::MYSQL_SELECT_PROJECTION_BOUNDARY_TOKENS, $projection_start, $statement_end ) ?? $select_end;
+		$clause_positions = array();
+		foreach ( self::MYSQL_SELECT_CLAUSE_POSITION_TOKENS as $clause => $token ) {
+			$clause_positions[ $clause ] = $this->find_top_level_mysql_query_context_token( $query_context, $token, $projection_start, $select_end );
+		}
+		$clause_ends = array();
+		foreach ( self::MYSQL_SELECT_CLAUSE_END_DESCRIPTORS as $clause => $descriptor ) {
+			$position               = $clause_positions[ $clause ];
+			$clause_ends[ $clause ] = null === $position ? null : ( $this->find_first_top_level_mysql_query_context_token( $query_context, $descriptor[1], $position + $descriptor[0], $statement_end ) ?? $select_end );
+		}
+
+		$query_context['select_clause_positions'][ $cache_key ] = array(
+			'from_end'        => $clause_ends['from'],
+			'from_position'   => $clause_positions['from'],
+			'group_end'       => $clause_ends['group'],
+			'group_position'  => $clause_positions['group'],
+			'having_end'      => $clause_ends['having'],
+			'having_position' => $clause_positions['having'],
+			'limit_position'  => $limit_position,
+			'order_end'       => $clause_ends['order'],
+			'order_position'  => $clause_positions['order'],
+			'projection_end'  => $projection_end,
+			'select_end'      => $select_end,
+			'where_end'       => $clause_ends['where'],
+			'where_position'  => $clause_positions['where'],
+		);
+		return $query_context['select_clause_positions'][ $cache_key ];
 	}
 	private function is_valid_mysql_select_order_by_clause( array $tokens, ?int $order_position, int $order_end ): bool {
 		return null !== $order_position
@@ -20173,8 +20315,8 @@ END',
 		}
 		return implode( ', ', $order_sql );
 	}
-	private function translate_strict_aggregate_grouped_order_by_query( string $query, bool $include_limit = true ): ?string {
-		$select = $this->get_sql_calc_found_rows_select_parts( $query, true, false );
+	private function translate_strict_aggregate_grouped_order_by_query( string $query, bool $include_limit = true, ?array &$query_context = null ): ?string {
+		$select = $this->get_sql_calc_found_rows_select_parts( $query, true, false, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -20194,8 +20336,8 @@ END',
 		}
 
 		if (
-			$this->contains_top_level_mysql_token(
-				$tokens,
+			$this->contains_top_level_mysql_query_context_token(
+				$query_context,
 				$projection_start,
 				$select_end,
 				array(
@@ -20644,8 +20786,8 @@ END',
 		$pair          = $this->get_mysql_top_level_simple_column_equality_pair( $tokens, $position + 1, $predicate_end );
 		return null !== $pair && $this->is_mysql_wordpress_term_split_column_equality_pair( $pair );
 	}
-	private function translate_grouped_having_alias_query( string $query ): ?string {
-		$select = $this->get_mysql_top_level_select_parts( $query );
+	private function translate_grouped_having_alias_query( string $query, ?array &$query_context = null ): ?string {
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -20653,8 +20795,8 @@ END',
 		$tokens        = $select['tokens'];
 		$statement_end = $select['statement_end'];
 		if (
-			$this->contains_top_level_mysql_token(
-				$tokens,
+			$this->contains_top_level_mysql_query_context_token(
+				$query_context,
 				1,
 				$statement_end,
 				array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL )
@@ -20663,7 +20805,7 @@ END',
 			return null;
 		}
 
-		$clauses = $this->get_mysql_select_clause_positions( $tokens, 1, $statement_end );
+		$clauses = $this->get_mysql_query_context_select_clause_positions( $query_context, 1, $statement_end );
 		if ( null === $clauses ) {
 			return null;
 		}
@@ -21874,8 +22016,8 @@ END',
 		}
 		return strtolower( $left->get_bytes() ) === strtolower( $right->get_bytes() );
 	}
-	private function translate_sql_calc_found_rows_select_query( string $query, bool $include_limit = true ): ?string {
-		$select = $this->get_sql_calc_found_rows_select_parts( $query, false, true );
+	private function translate_sql_calc_found_rows_select_query( string $query, bool $include_limit = true, ?array &$query_context = null ): ?string {
+		$select = $this->get_sql_calc_found_rows_select_parts( $query, false, true, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -21896,8 +22038,8 @@ END',
 		$sql = 'SELECT ' . $this->translate_mysql_token_sequence_to_postgresql( $tokens, $projection_start, $select['select_end'] );
 		return $this->append_mysql_select_limit_sql( $sql, $tokens, $select['limit_position'], $select['statement_end'], $include_limit );
 	}
-	private function translate_mysql_compatible_query( string $query ): ?string {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function translate_mysql_compatible_query( string $query, ?array &$query_context = null ): ?string {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $tokens[0] ) ) {
 			return null;
 		}
@@ -21912,7 +22054,7 @@ END',
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$statement_end = $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 		if ( null === $statement_end ) {
 			return null;
 		}
@@ -21955,13 +22097,25 @@ END',
 		}
 		return $include_group_concat && $this->contains_unsupported_mysql_group_concat_function( $tokens, $start, $end );
 	}
-	private function should_reject_information_schema_backend_query( string $query ): bool {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function should_reject_information_schema_backend_query( string $query, ?array &$query_context = null ): bool {
+		if (
+			null === $query_context
+			&& 0 !== strcasecmp( $this->db_name, 'information_schema' )
+			&& ! in_array(
+				$this->get_mysql_query_context_first_token_id( $query, $query_context ),
+				array( WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::INSERT_SYMBOL ),
+				true
+			)
+		) {
+			return false;
+		}
+
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $tokens[0] ) ) {
 			return false;
 		}
 
-		$statement_end                = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$statement_end                = $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 		$pre_context_rejection_guards = array(
 			WP_MySQL_Lexer::SELECT_SYMBOL => 'get_information_schema_backend_select_rejection',
 			WP_MySQL_Lexer::INSERT_SYMBOL => 'get_information_schema_backend_insert_select_rejection',
@@ -22321,12 +22475,12 @@ END',
 		}
 		return ! empty( $table_references );
 	}
-	private function translate_information_schema_main_database_select_query( string $query ): ?string {
+	private function translate_information_schema_main_database_select_query( string $query, ?array &$query_context = null ): ?string {
 		if ( 0 !== strcasecmp( $this->db_name, 'information_schema' ) ) {
 			return null;
 		}
 
-		$select = $this->get_mysql_top_level_select_parts( $query );
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
 		if ( null === $select ) {
 			return null;
 		}
@@ -22335,8 +22489,8 @@ END',
 		$statement_end = $select['statement_end'];
 		if (
 			$this->select_references_direct_information_schema_relation( $tokens, 1, $statement_end )
-			|| $this->contains_top_level_mysql_token(
-				$tokens,
+			|| $this->contains_top_level_mysql_query_context_token(
+				$query_context,
 				1,
 				$statement_end,
 				array( WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL )
@@ -22349,7 +22503,7 @@ END',
 			return null;
 		}
 
-		$from_position = $this->find_top_level_mysql_token( $tokens, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
+		$from_position = $this->find_top_level_mysql_query_context_token( $query_context, WP_MySQL_Lexer::FROM_SYMBOL, 1, $statement_end );
 		if ( null === $from_position ) {
 			$nested_select_replacements = $this->get_information_schema_nested_select_replacements(
 				$query,
@@ -22652,6 +22806,43 @@ END',
 			'SELECT %s %s',
 			implode( ', ', $projection_sql ),
 			$this->translate_mysql_token_sequence_to_postgresql( $tokens, $from_position, $statement_end )
+		);
+	}
+	private function get_mysql_query_context( string $query, ?array &$query_context = null ): array {
+		if ( null !== $query_context ) {
+			$sql_mode = $this->get_sql_mode();
+			if (
+				( $query_context['query'] ?? null ) === $query
+				&& ( $query_context['sql_mode'] ?? null ) === $sql_mode
+			) {
+				return $query_context;
+			}
+		}
+
+		$query_context = $this->get_mysql_token_query_context( $this->get_mysql_tokens( $query ), $query, $this->mysql_token_cache_sql_mode );
+		return $query_context;
+	}
+	private function get_mysql_query_context_tokens( string $query, ?array &$query_context = null ): array {
+		$this->get_mysql_query_context( $query, $query_context );
+		return $query_context['tokens'];
+	}
+	private function get_mysql_query_context_first_token_id( string $query, ?array &$query_context = null ): ?int {
+		if ( null === $query_context ) {
+			return $this->get_mysql_tokens( $query )[0]->id ?? null;
+		}
+
+		$this->get_mysql_query_context( $query, $query_context );
+		return $query_context['first_token_id'];
+	}
+	private function get_mysql_token_query_context( array $tokens, ?string $query = null, ?string $sql_mode = null ): array {
+		return array(
+			'first_token_id'          => $tokens[0]->id ?? null,
+			'query'                   => $query,
+			'select_clause_positions' => array(),
+			'sql_mode'                => $sql_mode,
+			'statement_end_positions' => array(),
+			'tokens'                  => $tokens,
+			'top_level_token_indexes' => array(),
 		);
 	}
 	private function get_mysql_tokens( string $query ): array {
@@ -26517,13 +26708,13 @@ END',
 		}
 		return ' LIMIT ' . $tokens[ $start + 1 ]->get_bytes();
 	}
-	private function translate_mysql_select_row_locking_query( string $query ): ?string {
-		$tokens = $this->get_mysql_tokens( $query );
+	private function translate_mysql_select_row_locking_query( string $query, ?array &$query_context = null ): ?string {
+		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
 		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
 			return null;
 		}
 
-		$statement_end = $this->get_mysql_statement_end_position( $tokens, 1 );
+		$statement_end = $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 		if ( null === $statement_end ) {
 			return null;
 		}
@@ -26654,6 +26845,13 @@ END',
 		}
 		return null;
 	}
+	private function get_mysql_query_context_statement_end_position( array &$query_context, int $position ): ?int {
+		$cache_key = (string) $position;
+		if ( ! array_key_exists( $cache_key, $query_context['statement_end_positions'] ) ) {
+			$query_context['statement_end_positions'][ $cache_key ] = $this->get_mysql_statement_end_position( $query_context['tokens'], $position );
+		}
+		return $query_context['statement_end_positions'][ $cache_key ];
+	}
 	private function get_mysql_parenthesized_sequence_end( array $tokens, int $position, int $limit ): ?int {
 		if ( ! isset( $tokens[ $position ] ) || WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $position ]->id ) {
 			return null;
@@ -26684,6 +26882,14 @@ END',
 	private function find_top_level_mysql_token( array $tokens, int $token_id, int $start, int $end ): ?int {
 		return $this->find_first_top_level_mysql_token( $tokens, array( $token_id ), $start, $end );
 	}
+	private function find_top_level_mysql_context_token( array $tokens, ?array &$query_context, int $token_id, int $start, int $end ): ?int {
+		return null === $query_context
+			? $this->find_top_level_mysql_token( $tokens, $token_id, $start, $end )
+			: $this->find_top_level_mysql_query_context_token( $query_context, $token_id, $start, $end );
+	}
+	private function find_top_level_mysql_query_context_token( array &$query_context, int $token_id, int $start, int $end ): ?int {
+		return $this->find_first_top_level_mysql_query_context_token( $query_context, array( $token_id ), $start, $end );
+	}
 	private function find_first_top_level_mysql_token( array $tokens, array $token_ids, int $start, int $end ): ?int {
 		$lookup = array();
 		foreach ( $token_ids as $token_id ) {
@@ -26711,9 +26917,75 @@ END',
 		}
 		return null;
 	}
+	private function find_first_top_level_mysql_context_token( array $tokens, ?array &$query_context, array $token_ids, int $start, int $end ): ?int {
+		return null === $query_context
+			? $this->find_first_top_level_mysql_token( $tokens, $token_ids, $start, $end )
+			: $this->find_first_top_level_mysql_query_context_token( $query_context, $token_ids, $start, $end );
+	}
+	private function find_first_top_level_mysql_query_context_token( array &$query_context, array $token_ids, int $start, int $end ): ?int {
+		$index = $this->get_mysql_query_context_top_level_token_index( $query_context, $start, $end );
+		$first = null;
+		foreach ( $token_ids as $token_id ) {
+			if ( empty( $index[ $token_id ] ) ) {
+				continue;
+			}
+
+			$position = $index[ $token_id ][0];
+			if ( null === $first || $position < $first ) {
+				$first = $position;
+			}
+		}
+		return $first;
+	}
+	private function get_mysql_query_context_top_level_token_index( array &$query_context, int $start, int $end ): array {
+		$cache_key = $start . ':' . $end;
+		if ( array_key_exists( $cache_key, $query_context['top_level_token_indexes'] ) ) {
+			return $query_context['top_level_token_indexes'][ $cache_key ];
+		}
+
+		$tokens = $query_context['tokens'];
+		$index  = array();
+		$depth  = 0;
+		for ( $i = $start; $i < $end && isset( $tokens[ $i ] ); $i++ ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				++$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $i ]->id ) {
+				--$depth;
+				if ( $depth < 0 ) {
+					break;
+				}
+				continue;
+			}
+
+			if ( 0 === $depth ) {
+				$index[ $tokens[ $i ]->id ][] = $i;
+			}
+		}
+
+		$query_context['top_level_token_indexes'][ $cache_key ] = $index;
+		return $index;
+	}
 	private function contains_top_level_mysql_token( array $tokens, int $start, int $end, array $token_ids ): bool {
 		foreach ( $token_ids as $token_id ) {
 			if ( null !== $this->find_top_level_mysql_token( $tokens, $token_id, $start, $end ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+	private function contains_top_level_mysql_context_token( array $tokens, ?array &$query_context, int $start, int $end, array $token_ids ): bool {
+		if ( null === $query_context ) {
+			return $this->contains_top_level_mysql_token( $tokens, $start, $end, $token_ids );
+		}
+		return $this->contains_top_level_mysql_query_context_token( $query_context, $start, $end, $token_ids );
+	}
+	private function contains_top_level_mysql_query_context_token( array &$query_context, int $start, int $end, array $token_ids ): bool {
+		$index = $this->get_mysql_query_context_top_level_token_index( $query_context, $start, $end );
+		foreach ( $token_ids as $token_id ) {
+			if ( ! empty( $index[ $token_id ] ) ) {
 				return true;
 			}
 		}
