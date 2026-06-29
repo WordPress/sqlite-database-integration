@@ -1088,6 +1088,7 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_referential_constraints,
 			$rewrite_information_schema_check_constraints
 		);
+		$order_by_item_rewrites     += $this->posts_date_order_by_tiebreak_rewrites( $sql_tokens, $order_by_item_rewrites );
 
 		$sql                          = $this->translate_tokens_to_duckdb_sql(
 			$sql_tokens,
@@ -1236,7 +1237,7 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$table = $this->parse_attachment_mime_distinct_table_reference( array_slice( $tokens, $from_index + 1, $where_index - $from_index - 1 ) );
+		$table = $this->parse_unresolved_simple_select_table_reference( array_slice( $tokens, $from_index + 1, $where_index - $from_index - 1 ) );
 		if (
 			null === $table
 			|| ! $this->is_wordpress_posts_table_name( $table['table_name'] )
@@ -1270,12 +1271,12 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Parse the single-table FROM clause supported by the attachment MIME rewrite.
+	 * Parse a single-table FROM clause without checking whether the table exists.
 	 *
 	 * @param WP_Parser_Token[] $tokens Table reference tokens.
 	 * @return array{table_name:string,alias:string,temporary:bool}|null Parsed table, or null when unsupported.
 	 */
-	private function parse_attachment_mime_distinct_table_reference( array $tokens ): ?array {
+	private function parse_unresolved_simple_select_table_reference( array $tokens ): ?array {
 		if (
 			count( $tokens ) === 0
 			|| $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::COMMA_SYMBOL )
@@ -1333,6 +1334,159 @@ class WP_DuckDB_Driver {
 			'alias'      => $alias,
 			'temporary'  => false,
 		);
+	}
+
+	/**
+	 * Append a deterministic ID tie-breaker for WordPress posts date ordering.
+	 *
+	 * WordPress core relies on MySQL/SQLite's posts index order for equal
+	 * post_date/post_modified values. DuckDB does not preserve that secondary
+	 * index order, so add ID with the same direction as the date sort only for a
+	 * simple top-level posts-table SELECT where ID is not already ordered.
+	 *
+	 * @param WP_Parser_Token[]                      $tokens            MySQL tokens.
+	 * @param array<int,array{end:int,sql:string}> $existing_rewrites Existing ORDER BY rewrites keyed by item start offset.
+	 * @return array<int,array{end:int,sql:string}> Rewrites keyed by ORDER BY item start offset.
+	 */
+	private function posts_date_order_by_tiebreak_rewrites( array $tokens, array $existing_rewrites = array() ): array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return array();
+		}
+		if (
+			null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::GROUP_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::HAVING_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL )
+		) {
+			return array();
+		}
+
+		$select_start = 1;
+		while ( isset( $tokens[ $select_start ] ) && $this->is_select_option_token( $tokens[ $select_start ] ) ) {
+			if (
+				WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $select_start ]->id
+				|| WP_MySQL_Lexer::DISTINCTROW_SYMBOL === $tokens[ $select_start ]->id
+			) {
+				return array();
+			}
+			++$select_start;
+		}
+
+		$from_index  = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::FROM_SYMBOL );
+		$order_index = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::ORDER_SYMBOL );
+		if (
+			null === $from_index
+			|| null === $order_index
+			|| $from_index >= $order_index
+			|| ! isset( $tokens[ $order_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_index + 1 ]->id
+		) {
+			return array();
+		}
+
+		$table = $this->parse_unresolved_simple_select_table_reference(
+			array_slice(
+				$tokens,
+				$from_index + 1,
+				$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
+			)
+		);
+		if ( null === $table || ! $this->is_wordpress_posts_table_name( $table['table_name'] ) ) {
+			return array();
+		}
+
+		$order_end   = $this->primary_key_order_by_clause_end( $tokens, $order_index + 2 );
+		$order_items = $this->split_top_level_select_item_ranges( $tokens, $order_index + 2, $order_end );
+		if ( count( $order_items ) === 0 ) {
+			return array();
+		}
+
+		$tiebreak_direction = null;
+		foreach ( $order_items as $item ) {
+			$column = $this->parse_order_by_column_reference_with_direction( $item['tokens'] );
+			if ( null === $column || ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table ) ) {
+				continue;
+			}
+
+			if ( 0 === strcasecmp( $column['column_name'], 'ID' ) ) {
+				return array();
+			}
+
+			if ( null === $tiebreak_direction && $this->is_wordpress_posts_date_order_column( $column['column_name'] ) ) {
+				$tiebreak_direction = $this->posts_date_order_by_tiebreak_direction( $column['column_name'], $column['direction'] );
+			}
+		}
+
+		if ( null === $tiebreak_direction ) {
+			return array();
+		}
+
+		$last_item = $order_items[ count( $order_items ) - 1 ];
+		if ( isset( $existing_rewrites[ $last_item['start'] ] ) ) {
+			return array();
+		}
+
+		return array(
+			$last_item['start'] => array(
+				'end' => $last_item['end'],
+				'sql' => $this->translate_tokens_to_duckdb_sql( $last_item['tokens'] )
+					. ', '
+					. $this->posts_order_by_tiebreak_id_sql( $table )
+					. ' '
+					. $tiebreak_direction,
+			),
+		);
+	}
+
+	/**
+	 * Check whether an ORDER BY column is a WordPress posts date column.
+	 *
+	 * @param string $column_name Column name.
+	 * @return bool Whether the column is a posts date ordering column.
+	 */
+	private function is_wordpress_posts_date_order_column( string $column_name ): bool {
+		return in_array(
+			strtolower( $column_name ),
+			array(
+				'post_date',
+				'post_date_gmt',
+				'post_modified',
+				'post_modified_gmt',
+			),
+			true
+		);
+	}
+
+	/**
+	 * Choose the posts ID tie-break direction for a datetime ORDER BY column.
+	 *
+	 * WordPress' stock schema has an index on post_date, ID, so descending
+	 * post_date scans expose descending ID ties. The modified/GMT columns do not
+	 * have that secondary index in core and SQLite preserves rowid order there.
+	 *
+	 * @param string $column_name Column name.
+	 * @param string $direction   Date ORDER BY direction.
+	 * @return string ID ORDER BY direction.
+	 */
+	private function posts_date_order_by_tiebreak_direction( string $column_name, string $direction ): string {
+		if ( 0 === strcasecmp( $column_name, 'post_date' ) ) {
+			return $direction;
+		}
+
+		return 'ASC';
+	}
+
+	/**
+	 * Build the ID expression used as the posts date-order tie-breaker.
+	 *
+	 * @param array{table_name:string,alias:string,temporary:bool} $table Parsed table reference.
+	 * @return string Quoted ID expression.
+	 */
+	private function posts_order_by_tiebreak_id_sql( array $table ): string {
+		if ( 0 !== strcasecmp( $table['alias'], $table['table_name'] ) ) {
+			return $this->connection->quote_identifier( $table['alias'] ) . '.' . $this->connection->quote_identifier( 'ID' );
+		}
+
+		return $this->connection->quote_identifier( 'ID' );
 	}
 
 	/**

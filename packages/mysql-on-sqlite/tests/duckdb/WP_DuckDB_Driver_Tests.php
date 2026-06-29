@@ -222,6 +222,49 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_posts_date_order_by_appends_id_tiebreaker(): void {
+		$driver = $this->new_byte_safe_duckdb_driver();
+
+		$tokenize = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$rewrite  = new ReflectionMethod( WP_DuckDB_Driver::class, 'posts_date_order_by_tiebreak_rewrites' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$rewrite->setAccessible( true );
+		}
+
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, "SELECT ID FROM wptests_posts WHERE post_type = 'post' ORDER BY post_date DESC" ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'post_date DESC, "ID" DESC', $rewrites[0]['sql'] );
+
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, 'SELECT p.ID FROM wp.wp_posts AS p ORDER BY p.post_modified ASC' ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'p.post_modified ASC, "p"."ID" ASC', $rewrites[0]['sql'] );
+
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, 'SELECT ID FROM wp_posts ORDER BY post_modified DESC' ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'post_modified DESC, "ID" ASC', $rewrites[0]['sql'] );
+
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, 'SELECT ID FROM wp_posts ORDER BY post_date DESC, post_title ASC' ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'post_title ASC, "ID" DESC', $rewrites[0]['sql'] );
+
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, 'SELECT ID FROM wp_posts ORDER BY FIELD(ID, 4, 3) DESC, post_date DESC' ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'post_date DESC, "ID" DESC', $rewrites[0]['sql'] );
+
+		foreach (
+			array(
+				'SELECT DISTINCT ID FROM wp_posts ORDER BY post_date DESC',
+				'SELECT ID FROM wp_posts GROUP BY ID ORDER BY post_date DESC',
+				'SELECT ID FROM wp_posts ORDER BY post_date DESC, ID DESC',
+				'SELECT ID FROM media_items ORDER BY post_date DESC',
+				'SELECT p.ID FROM wp_posts p INNER JOIN wp_postmeta pm ON pm.post_id = p.ID ORDER BY p.post_date DESC',
+			) as $sql
+		) {
+			$this->assertSame( array(), $rewrite->invoke( $driver, $tokenize->invoke( $driver, $sql ) ), $sql );
+		}
+	}
+
 	private function new_byte_safe_duckdb_driver(): WP_DuckDB_Driver {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public function __construct() {}

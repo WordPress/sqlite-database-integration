@@ -247,6 +247,50 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SELECT DISTINCT `post_mime_type` FROM `wp_posts` WHERE `post_type` = 'attachment'" );
 	}
 
+	public function test_posts_date_order_ties_match_sqlite_index_order(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_modified DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_title VARCHAR(200) NOT NULL DEFAULT '',
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					PRIMARY KEY (ID),
+					KEY type_status_date (post_type, post_status, post_date, ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wptests_posts (ID, post_date, post_modified, post_title, post_type, post_status) VALUES
+					(1, '2024-01-01 00:00:00', '2024-02-01 00:00:00', 'same', 'post', 'publish'),
+					(2, '2024-01-01 00:00:00', '2024-02-01 00:00:00', 'same', 'post', 'publish'),
+					(3, '2024-01-01 00:00:00', '2024-02-01 00:00:00', 'same', 'post', 'publish'),
+					(4, '2024-01-02 00:00:00', '2024-02-02 00:00:00', 'same', 'post', 'publish'),
+					(5, '2024-01-03 00:00:00', '2024-02-03 00:00:00', 'same', 'post', 'draft')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT ID FROM wptests_posts
+			WHERE post_type = 'post' AND post_status = 'publish'
+			ORDER BY post_date DESC"
+		);
+		$this->assertParityRows(
+			"SELECT p.ID FROM wptests_posts AS p
+			WHERE p.post_type = 'post' AND p.post_status = 'publish'
+			ORDER BY p.post_modified ASC"
+		);
+		$this->assertParityRows(
+			"SELECT ID FROM wptests_posts
+			WHERE post_type = 'post' AND post_status = 'publish'
+			ORDER BY post_modified DESC"
+		);
+		$this->assertParityRows(
+			"SELECT ID FROM wptests_posts
+			WHERE post_type = 'post' AND post_status = 'publish'
+			ORDER BY post_date DESC, post_title ASC"
+		);
+	}
+
 	public function test_non_temporal_text_and_blob_write_coercions_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
