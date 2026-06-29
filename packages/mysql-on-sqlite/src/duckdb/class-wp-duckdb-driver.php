@@ -573,6 +573,11 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
+		$wordpress_options_autoload_result = $this->execute_wordpress_options_autoload_fast_path_statement( $normalized );
+		if ( null !== $wordpress_options_autoload_result ) {
+			return $wordpress_options_autoload_result;
+		}
+
 		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
 			$this->found_rows                             = 0;
 			$this->session_system_variables['autocommit'] = (int) $matches[1];
@@ -613,6 +618,104 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Execute WordPress' high-frequency alloptions SELECT without parser/metadata fanout.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_options_autoload_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		if (
+			! preg_match(
+				'/^SELECT\s+`?option_name`?\s*,\s*`?option_value`?\s+FROM\s+(?<table>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+`?autoload`?\s+IN\s*\(\s*\'yes\'\s*,\s*\'on\'\s*,\s*\'auto-on\'\s*,\s*\'auto\'\s*\)$/',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		if ( ! $this->is_wordpress_options_table_name( $table_name ) ) {
+			return null;
+		}
+
+		$sql = 'SELECT '
+			. $this->connection->quote_identifier( 'option_name' )
+			. ', '
+			. $this->connection->quote_identifier( 'option_value' )
+			. ' FROM '
+			. $this->connection->quote_identifier( $table_name )
+			. ' WHERE '
+			. $this->connection->quote_identifier( 'autoload' )
+			. ' IN ('
+			. implode(
+				', ',
+				array_map(
+					array( $this->connection, 'quote' ),
+					array( 'yes', 'on', 'auto-on', 'auto' )
+				)
+			)
+			. ')';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata(
+			$result,
+			$this->wordpress_options_autoload_result_column_metadata( $table_name )
+		);
+	}
+
+	/**
+	 * Decode a simple MySQL identifier accepted by the fast-path regex.
+	 *
+	 * @param string $identifier MySQL identifier.
+	 * @return string Identifier value.
+	 */
+	private function fast_path_mysql_identifier_value( string $identifier ): string {
+		if ( strlen( $identifier ) >= 2 && '`' === $identifier[0] && '`' === substr( $identifier, -1 ) ) {
+			return str_replace( '``', '`', substr( $identifier, 1, -1 ) );
+		}
+
+		return $identifier;
+	}
+
+	/**
+	 * Check whether a table name is the WordPress options table shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table name is options or a prefixed options table.
+	 */
+	private function is_wordpress_options_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/^(?:options|[A-Za-z0-9_]+_options)$/i', $table_name );
+	}
+
+	/**
+	 * Build minimal MySQL-shaped metadata for WordPress' alloptions SELECT.
+	 *
+	 * @param string $table_name Options table name.
+	 * @return array<int,array<string,mixed>> Column metadata.
+	 */
+	private function wordpress_options_autoload_result_column_metadata( string $table_name ): array {
+		return array(
+			array(
+				'table'           => $table_name,
+				'name'            => 'option_name',
+				'mysqli:orgname'  => 'option_name',
+				'mysqli:orgtable' => $table_name,
+				'mysqli:db'       => $this->database,
+			),
+			array(
+				'table'           => $table_name,
+				'name'            => 'option_value',
+				'mysqli:orgname'  => 'option_value',
+				'mysqli:orgtable' => $table_name,
+				'mysqli:db'       => $this->database,
+			),
+		);
 	}
 
 	/**
