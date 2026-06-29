@@ -613,6 +613,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_options_single_option_result;
 		}
 
+		$wordpress_posts_id_lookup_result = $this->execute_wordpress_posts_id_lookup_fast_path_statement( $normalized );
+		if ( null !== $wordpress_posts_id_lookup_result ) {
+			return $wordpress_posts_id_lookup_result;
+		}
+
 		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
 			$this->found_rows                             = 0;
 			$this->session_system_variables['autocommit'] = (int) $matches[1];
@@ -766,6 +771,70 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute WordPress' high-frequency posts primary-key lookup without full parsing.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_posts_id_lookup_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		if (
+			! preg_match(
+				'/^SELECT\s+\*\s+FROM\s+(?<table>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+(?<id_column>`ID`|ID)\s*=\s*(?<id>[0-9]+|\'[0-9]+\')\s+LIMIT\s+(?<limit>[0-9]+|\'[0-9]+\')$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$requested_table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		if ( ! $this->is_wordpress_posts_table_name( $requested_table_name ) ) {
+			return null;
+		}
+
+		$id_column = $this->fast_path_mysql_identifier_value( $matches['id_column'] );
+		if ( 0 !== strcasecmp( 'ID', $id_column ) ) {
+			return null;
+		}
+
+		$id = $this->fast_path_mysql_unsigned_integer_literal_value( $matches['id'] );
+		if ( null === $id ) {
+			return null;
+		}
+
+		$limit = $this->fast_path_mysql_unsigned_integer_literal_value( $matches['limit'] );
+		if ( 1 !== $limit ) {
+			return null;
+		}
+
+		$table_reference = $this->resolve_visible_user_table_reference( $requested_table_name );
+		if ( null === $table_reference ) {
+			return null;
+		}
+
+		$column_meta = $this->wordpress_posts_wildcard_result_column_metadata(
+			$table_reference['table_name'],
+			$table_reference['temporary']
+		);
+		if ( null === $column_meta ) {
+			return null;
+		}
+
+		$sql = 'SELECT * FROM '
+			. $this->connection->quote_identifier( $table_reference['table_name'] )
+			. ' WHERE '
+			. $this->connection->quote_identifier( 'ID' )
+			. ' = '
+			. (string) $id
+			. ' LIMIT 1';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
 	 * Decode a simple MySQL identifier accepted by the fast-path regex.
 	 *
 	 * @param string $identifier MySQL identifier.
@@ -777,6 +846,30 @@ class WP_DuckDB_Driver {
 		}
 
 		return $identifier;
+	}
+
+	/**
+	 * Decode an unsigned integer literal accepted by the fast-path regex.
+	 *
+	 * @param string $literal MySQL integer literal.
+	 * @return int|null Integer value, or null when outside PHP's integer range.
+	 */
+	private function fast_path_mysql_unsigned_integer_literal_value( string $literal ): ?int {
+		if ( strlen( $literal ) >= 2 && "'" === $literal[0] && "'" === substr( $literal, -1 ) ) {
+			$literal = substr( $literal, 1, -1 );
+		}
+
+		$value = filter_var(
+			$literal,
+			FILTER_VALIDATE_INT,
+			array(
+				'options' => array(
+					'min_range' => 0,
+				),
+			)
+		);
+
+		return false === $value ? null : $value;
 	}
 
 	/**
@@ -860,6 +953,32 @@ class WP_DuckDB_Driver {
 				'mysqli:db'       => $this->database,
 			),
 		);
+	}
+
+	/**
+	 * Build MySQL-shaped metadata for a WordPress posts wildcard SELECT.
+	 *
+	 * @param string $table_name Resolved posts table name.
+	 * @param bool   $temporary  Whether the resolved table is temporary.
+	 * @return array<int,array<string,mixed>>|null Column metadata, or null when unavailable.
+	 */
+	private function wordpress_posts_wildcard_result_column_metadata( string $table_name, bool $temporary ): ?array {
+		$metadata_rows = $this->table_column_metadata_rows( $table_name, $temporary );
+		if ( count( $metadata_rows ) === 0 ) {
+			return null;
+		}
+
+		$column_meta = array();
+		foreach ( $metadata_rows as $metadata ) {
+			$column_meta[] = $this->mysql_result_column_metadata(
+				$table_name,
+				$table_name,
+				$metadata,
+				(string) $metadata['column_name']
+			);
+		}
+
+		return $column_meta;
 	}
 
 	/**

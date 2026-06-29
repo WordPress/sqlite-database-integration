@@ -14330,6 +14330,179 @@ SQL
 		$this->assertStringNotContainsString( 'lower("option_name")', implode( "\n", $queries ) );
 	}
 
+	public function test_wordpress_posts_id_lookup_fast_path_uses_schema_metadata_on_fresh_driver(): void {
+		$this->requireDuckDBRuntime();
+
+		$path = tempnam( sys_get_temp_dir(), 'wp-duckdb-post-id-fastpath-' );
+		if ( false === $path ) {
+			$this->fail( 'Failed to allocate a temporary DuckDB path.' );
+		}
+		unlink( $path );
+
+		try {
+			$setup_driver = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$this->create_wordpress_posts_id_lookup_fixture( $setup_driver );
+			unset( $setup_driver );
+			gc_collect_cycles();
+
+			$queries = array();
+			$driver  = $this->query_logged_duckdb_driver( $queries, $path );
+
+			$queries = array();
+			$result  = $driver->query( 'SELECT * FROM wptests_posts WHERE ID = 1 LIMIT 1' );
+			$this->assertSame(
+				array(
+					array(
+						'ID'          => 1,
+						'post_author' => 10,
+						'post_date'   => '2026-01-01 00:00:00',
+						'post_title'  => 'First',
+						'post_type'   => 'post',
+					),
+				),
+				$result->fetchAll( PDO::FETCH_ASSOC )
+			);
+			$this->assert_wordpress_posts_id_lookup_metadata( $result, 'wptests_posts' );
+			$this->assertStringContainsString( 'SELECT * FROM "wptests_posts" WHERE "ID" = 1 LIMIT 1', end( $queries ) );
+
+			$queries = array();
+			$result  = $driver->query( "SELECT * FROM wptests_posts WHERE ID = '2' LIMIT 1" );
+			$this->assertSame(
+				array(
+					array(
+						'ID'          => 2,
+						'post_author' => 20,
+						'post_date'   => '2026-02-01 00:00:00',
+						'post_title'  => 'Second',
+						'post_type'   => 'page',
+					),
+				),
+				$result->fetchAll( PDO::FETCH_ASSOC )
+			);
+			$this->assert_wordpress_posts_id_lookup_select_used_one_native_query( $queries, 2 );
+			$this->assert_wordpress_posts_id_lookup_metadata( $result, 'wptests_posts' );
+
+			$queries = array();
+			$result  = $driver->query( 'SELECT * FROM wptests_posts WHERE ID = 999 LIMIT 1' );
+			$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+			$this->assert_wordpress_posts_id_lookup_select_used_one_native_query( $queries, 999 );
+			$this->assertSame(
+				array(
+					array(
+						'found_rows' => 0,
+					),
+				),
+				$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		} finally {
+			unset( $driver );
+			@unlink( $path );
+			@unlink( $path . '.wal' );
+		}
+	}
+
+	public function test_wordpress_posts_id_lookup_fast_path_respects_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_posts_id_lookup_fixture( $driver );
+
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				temp_title VARCHAR(191) NOT NULL DEFAULT \'\',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+		$driver->query( "INSERT INTO wptests_posts (ID, temp_title) VALUES (1, 'temporary')" );
+
+		$queries = array();
+		$result  = $driver->query( 'SELECT * FROM wptests_posts WHERE ID = 1 LIMIT 1' );
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'temp_title' => 'temporary',
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assert_wordpress_posts_id_lookup_select_used_one_native_query( $queries, 1 );
+		$this->assertSame( 'temp_title', $result->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'wptests_posts', $result->getColumnMeta( 1 )['mysqli:orgtable'] );
+
+		$this->assertSame(
+			array(
+				array(
+					'found_rows' => 1,
+				),
+			),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_posts' );
+		$result = $driver->query( 'SELECT * FROM wptests_posts WHERE ID = 1 LIMIT 1' );
+		$this->assertSame( 'First', $result->fetchAll( PDO::FETCH_ASSOC )[0]['post_title'] );
+	}
+
+	public function test_wordpress_posts_id_lookup_fast_path_does_not_capture_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_posts_id_lookup_fixture( $driver );
+
+		$queries = array();
+		$result  = $driver->query( 'SELECT SQL_CALC_FOUND_ROWS * FROM wptests_posts WHERE ID = 1 LIMIT 1' );
+		$this->assertSame( 1, $result->fetchAll( PDO::FETCH_ASSOC )[0]['ID'] );
+		$this->assertTrue(
+			count(
+				array_filter(
+					$queries,
+					function ( string $query ): bool {
+						return false !== strpos( $query, '__wp_duckdb_found_rows' );
+					}
+				)
+			) > 0,
+			implode( "\n", $queries )
+		);
+
+		$queries = array();
+		$result  = $driver->query( 'SELECT p.* FROM wptests_posts AS p WHERE p.ID = 1 LIMIT 1' );
+		$this->assertSame( 1, $result->fetchAll( PDO::FETCH_ASSOC )[0]['ID'] );
+		$this->assertSame( 'p', $result->getColumnMeta( 0 )['table'] );
+
+		$queries = array();
+		$result  = $driver->query( "SELECT * FROM wptests_posts WHERE ID = 1 AND post_type = 'page' LIMIT 1" );
+		$this->assertSame( array(), $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertStringContainsString( 'post_type', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query( 'SELECT * FROM wptests_posts WHERE ID = 1 LIMIT 2' );
+		$this->assertCount( 1, $result->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertStringContainsString( 'LIMIT 2', implode( "\n", $queries ) );
+
+		$driver->query(
+			'CREATE TABLE post_lookup_items (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_title VARCHAR(191) NOT NULL DEFAULT \'\',
+				PRIMARY KEY (ID)
+			)'
+		);
+		$driver->query( "INSERT INTO post_lookup_items (ID, post_title) VALUES (1, 'not posts')" );
+
+		$queries = array();
+		$result  = $driver->query( 'SELECT * FROM post_lookup_items WHERE ID = 1 LIMIT 1' );
+		$this->assertSame( 'not posts', $result->fetchAll( PDO::FETCH_ASSOC )[0]['post_title'] );
+		$this->assertStringContainsString( 'post_lookup_items', implode( "\n", $queries ) );
+	}
+
 	public function test_wordpress_options_autoload_fast_path_does_not_capture_sql_calc_found_rows(): void {
 		$this->requireDuckDBRuntime();
 
@@ -19473,6 +19646,24 @@ SQL
 		);
 	}
 
+	private function create_wordpress_posts_id_lookup_fixture( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_title TEXT NOT NULL,
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_author, post_date, post_title, post_type) VALUES
+				(1, 10, '2026-01-01 00:00:00', 'First', 'post'),
+				(2, 20, '2026-02-01 00:00:00', 'Second', 'page')"
+		);
+	}
+
 	private function wordpress_options_autoload_select_sql(): string {
 		return "SELECT option_name, option_value FROM wptests_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')";
 	}
@@ -19550,6 +19741,33 @@ SQL
 		$this->assertSame( $column_name, $column_meta['mysqli:orgname'] );
 		$this->assertSame( 'wptests_options', $column_meta['mysqli:orgtable'] );
 		$this->assertSame( 'wp', $column_meta['mysqli:db'] );
+	}
+
+	private function assert_wordpress_posts_id_lookup_select_used_one_native_query( array $queries, int $id ): void {
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_posts' ) );
+		$this->assertStringContainsString( 'SELECT * FROM "wptests_posts" WHERE "ID" = ' . $id . ' LIMIT 1', $queries[0] );
+	}
+
+	private function assert_wordpress_posts_id_lookup_metadata( WP_DuckDB_Result_Statement $result, string $table_name ): void {
+		$this->assertSame( 5, $result->columnCount() );
+
+		$id_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( 'ID', $id_meta['name'] );
+		$this->assertSame( $table_name, $id_meta['table'] );
+		$this->assertSame( 'ID', $id_meta['mysqli:orgname'] );
+		$this->assertSame( $table_name, $id_meta['mysqli:orgtable'] );
+		$this->assertSame( 'wp', $id_meta['mysqli:db'] );
+		$this->assertSame( 20, $id_meta['len'] );
+		$this->assertSame( 8, $id_meta['mysqli:type'] );
+
+		$title_meta = $result->getColumnMeta( 3 );
+		$this->assertSame( 'post_title', $title_meta['name'] );
+		$this->assertSame( $table_name, $title_meta['table'] );
+		$this->assertSame( 'post_title', $title_meta['mysqli:orgname'] );
+		$this->assertSame( $table_name, $title_meta['mysqli:orgtable'] );
+		$this->assertSame( 252, $title_meta['mysqli:type'] );
 	}
 
 	private function count_duckdb_column_metadata_queries( array $queries, string $table_name ): int {
