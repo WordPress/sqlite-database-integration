@@ -2181,7 +2181,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 			$insert = $driver->query( "INSERT INTO `users` (`name`) VALUES ('Ada'), ('Grace')" );
 			$this->assertSame( 2, $insert->rowCount() );
-			$this->assertSame( 'INSERT INTO "users"("name") VALUES (\'Ada\'), (\'Grace\')', $this->lastDuckDBQuery( $driver ) );
+			$this->assertSame( 'INSERT INTO "users"("name") VALUES (\'Ada\'), (\'Grace\') RETURNING "id"', $this->lastDuckDBQuery( $driver ) );
 
 			$rows = $driver->query( 'SELECT id, name, visits FROM `users` ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame(
@@ -8839,6 +8839,52 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			$driver->query( 'SELECT id, name FROM ignore_secondary_after ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
+	}
+
+	public function test_insert_ignore_omitted_auto_increment_insert_id_skips_ignored_rows(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE ignore_generated (
+				id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(100) UNIQUE
+			)'
+		);
+
+		$driver->query( "INSERT INTO ignore_generated (name) VALUES ('existing')" );
+		$ignored = $driver->query( "INSERT IGNORE INTO ignore_generated (name) VALUES ('existing')" );
+		$this->assertSame( 0, $ignored->rowCount() );
+		$this->assertSame( 0, $driver->get_insert_id() );
+
+		$mixed = $driver->query(
+			"INSERT IGNORE INTO ignore_generated (name)
+			VALUES ('inserted-before'), ('existing'), ('inserted-after')"
+		);
+		$this->assertSame( 2, $mixed->rowCount() );
+		$this->assertSame( 5, $driver->get_insert_id() );
+		$mixed_duckdb_queries = $driver->get_last_duckdb_queries();
+		$this->assertSame(
+			array(
+				array(
+					'id'   => 1,
+					'name' => 'existing',
+				),
+				array(
+					'id'   => 3,
+					'name' => 'inserted-before',
+				),
+				array(
+					'id'   => 5,
+					'name' => 'inserted-after',
+				),
+			),
+			$driver->query( 'SELECT id, name FROM ignore_generated ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString( ' RETURNING "id"', end( $mixed_duckdb_queries ) );
+		foreach ( $mixed_duckdb_queries as $duckdb_sql ) {
+			$this->assertStringNotContainsString( 'SELECT MAX', $duckdb_sql );
+		}
 	}
 
 	public function test_serial_alias_tracks_generated_insert_id_and_metadata(): void {

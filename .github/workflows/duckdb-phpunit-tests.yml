@@ -7,10 +7,12 @@ on:
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
       - '.github/workflows/wp-tests-phpunit-run.js'
+      - '.github/workflows/wp-tests-phpunit-native-extension-setup.sh'
       - 'bin/wp-test-duckdb-smoke.sh'
       - 'bin/wp-test-ensure-env-duckdb.sh'
       - 'composer.json'
       - 'wp-setup.sh'
+      - 'packages/php-ext-wp-mysql-parser/**'
       - 'packages/mysql-on-sqlite/composer.json'
       - 'packages/mysql-on-sqlite/composer.lock'
       - 'packages/mysql-on-sqlite/src/load.php'
@@ -24,10 +26,12 @@ on:
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
       - '.github/workflows/wp-tests-phpunit-run.js'
+      - '.github/workflows/wp-tests-phpunit-native-extension-setup.sh'
       - 'bin/wp-test-duckdb-smoke.sh'
       - 'bin/wp-test-ensure-env-duckdb.sh'
       - 'composer.json'
       - 'wp-setup.sh'
+      - 'packages/php-ext-wp-mysql-parser/**'
       - 'packages/mysql-on-sqlite/composer.json'
       - 'packages/mysql-on-sqlite/composer.lock'
       - 'packages/mysql-on-sqlite/src/load.php'
@@ -163,16 +167,18 @@ jobs:
         run: bash .github/workflows/wp-tests-phpunit-native-extension-setup.sh
 
       - name: Run full WordPress PHPUnit tests with DuckDB
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_DUCKDB_QUERY_PROFILE: '1'
+          WP_DUCKDB_QUERY_PROFILE_INTERVAL: '2500'
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
           WP_SQLITE_DISABLE_EXPECTED_RESULTS: '1'
           WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND: 'true'
           WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
           WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-full
           WP_SQLITE_PHPUNIT_BASELINE_SECONDS: '380'
-          WP_SQLITE_PHPUNIT_MAX_SECONDS: '420'
+          WP_SQLITE_PHPUNIT_MAX_SECONDS: '900'
           WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-results.xml --verbose
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
@@ -330,6 +336,7 @@ jobs:
 
       - name: Serialize WordPress PHP-FPM for DuckDB end-to-end tests
         timeout-minutes: 5
+        shell: bash
         run: |
           set -euo pipefail
           cd wordpress

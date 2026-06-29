@@ -331,6 +331,56 @@ class WP_DuckDB_Driver {
 	private $unique_key_column_sets_cache = array();
 
 	/**
+	 * Whether the optional query profiler is enabled.
+	 *
+	 * @var bool|null
+	 */
+	private static $query_profile_enabled;
+
+	/**
+	 * Whether the optional query profiler shutdown hook has been registered.
+	 *
+	 * @var bool
+	 */
+	private static $query_profile_shutdown_registered = false;
+
+	/**
+	 * Aggregate optional query profiler counters.
+	 *
+	 * @var array<string,mixed>
+	 */
+	private static $query_profile = array(
+		'queries'        => 0,
+		'errors'         => 0,
+		'total_seconds'  => 0.0,
+		'parse_seconds'  => 0.0,
+		'native_seconds' => 0.0,
+		'native_queries' => 0,
+		'shapes'         => array(),
+	);
+
+	/**
+	 * Native DuckDB time accumulated while handling the current MySQL query.
+	 *
+	 * @var float
+	 */
+	private $profile_current_native_seconds = 0.0;
+
+	/**
+	 * Native DuckDB query count accumulated while handling the current MySQL query.
+	 *
+	 * @var int
+	 */
+	private $profile_current_native_queries = 0;
+
+	/**
+	 * Tokenize/parse time accumulated while handling the current MySQL query.
+	 *
+	 * @var float
+	 */
+	private $profile_current_parse_seconds = 0.0;
+
+	/**
 	 * Whether a MySQL LOCK TABLES statement opened the current transaction.
 	 *
 	 * @var bool
@@ -389,6 +439,13 @@ class WP_DuckDB_Driver {
 		$this->last_mysql_query    = $query;
 		$this->last_duckdb_queries = array();
 		$this->last_insert_id      = 0;
+
+		$profile_enabled                      = self::query_profile_enabled();
+		$profile_started_at                   = $profile_enabled ? microtime( true ) : 0.0;
+		$profile_error                        = false;
+		$this->profile_current_native_seconds = 0.0;
+		$this->profile_current_native_queries = 0;
+		$this->profile_current_parse_seconds  = 0.0;
 
 		try {
 			$fast_path_result = $this->execute_fast_path_statement( $query );
@@ -467,9 +524,18 @@ class WP_DuckDB_Driver {
 
 			throw $this->new_unsupported_statement_exception( $tokens[0] );
 		} catch ( Throwable $e ) {
+			$profile_error    = true;
 			$this->found_rows = 0;
 			$this->rollback_failed_active_transaction( $e );
 			throw $e;
+		} finally {
+			if ( $profile_enabled ) {
+				$this->record_query_profile(
+					$query,
+					microtime( true ) - $profile_started_at,
+					$profile_error
+				);
+			}
 		}
 	}
 
@@ -776,18 +842,27 @@ class WP_DuckDB_Driver {
 	 * @throws WP_DuckDB_Driver_Exception When parsing fails or multiple statements are supplied.
 	 */
 	private function tokenize_and_validate( string $query ): array {
-		$lexer  = new WP_MySQL_Lexer( $query, $this->mysql_version );
-		$tokens = $this->lexer_tokens_to_array( $lexer );
+		$profile_enabled    = self::query_profile_enabled();
+		$profile_started_at = $profile_enabled ? microtime( true ) : 0.0;
 
-		$this->assert_single_statement( $tokens );
-		$this->parse_tokens( $tokens );
+		try {
+			$lexer  = new WP_MySQL_Lexer( $query, $this->mysql_version );
+			$tokens = $this->lexer_tokens_to_array( $lexer );
 
-		$tokens = $this->without_eof( $tokens );
-		if ( count( $tokens ) > 0 && WP_MySQL_Lexer::SEMICOLON_SYMBOL === $tokens[ count( $tokens ) - 1 ]->id ) {
-			array_pop( $tokens );
+			$this->assert_single_statement( $tokens );
+			$this->parse_tokens( $tokens );
+
+			$tokens = $this->without_eof( $tokens );
+			if ( count( $tokens ) > 0 && WP_MySQL_Lexer::SEMICOLON_SYMBOL === $tokens[ count( $tokens ) - 1 ]->id ) {
+				array_pop( $tokens );
+			}
+
+			return array_values( $tokens );
+		} finally {
+			if ( $profile_enabled ) {
+				$this->profile_current_parse_seconds += microtime( true ) - $profile_started_at;
+			}
 		}
-
-		return array_values( $tokens );
 	}
 
 	/**
@@ -22001,8 +22076,15 @@ class WP_DuckDB_Driver {
 				}
 			}
 		}
+		$use_returning_insert_id = null !== $metadata
+			&& null !== $table_reference
+			&& null !== $table_index
+			&& $column_was_omitted
+			&& WP_DuckDB_Connection::class === get_class( $this->connection )
+			&& ! $this->is_insert_on_duplicate_key_update_write( $tokens, $table_index );
+
 		$before_max = null;
-		if ( $column_was_omitted && null !== $table_reference ) {
+		if ( ! $use_returning_insert_id && $column_was_omitted && null !== $table_reference ) {
 			$before_max = $this->max_auto_increment_column_value( $table_reference['table_name'], $metadata['column_name'], $table_reference['temporary'] );
 		}
 		if (
@@ -22013,6 +22095,11 @@ class WP_DuckDB_Driver {
 		) {
 			throw new WP_DuckDB_Driver_Exception( 'UNIQUE constraint failed: ' . $table_reference['table_name'] . '.' . $metadata['column_name'] );
 		}
+
+		if ( $use_returning_insert_id ) {
+			return $this->execute_auto_increment_returning_write( $sql, $context, $metadata['column_name'] );
+		}
+
 		$result = $this->execute_duckdb_query( $sql, $context );
 
 		if ( null !== $sequence_name && ( $result->rowCount() > 0 || ! $insert_ignore_write ) ) {
@@ -22073,6 +22160,54 @@ class WP_DuckDB_Driver {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Execute an omitted AUTO_INCREMENT write with DuckDB RETURNING.
+	 *
+	 * @param string $sql         DuckDB INSERT/REPLACE SQL.
+	 * @param string $context     Failure context.
+	 * @param string $column_name AUTO_INCREMENT column name.
+	 * @return WP_DuckDB_Result_Statement
+	 */
+	private function execute_auto_increment_returning_write( string $sql, string $context, string $column_name ): WP_DuckDB_Result_Statement {
+		$result = $this->execute_duckdb_query(
+			$sql . ' RETURNING ' . $this->connection->quote_identifier( $column_name ),
+			$context
+		);
+		$ids    = $result->fetchAll( PDO::FETCH_COLUMN );
+
+		if ( count( $ids ) > 0 ) {
+			$this->last_insert_id = max( array_map( 'intval', $ids ) );
+		}
+
+		return new WP_DuckDB_Result_Statement( array(), array(), count( $ids ) );
+	}
+
+	/**
+	 * Check whether an INSERT write uses ON DUPLICATE KEY UPDATE.
+	 *
+	 * @param WP_Parser_Token[] $tokens      MySQL token stream.
+	 * @param int               $table_index Index of the table token.
+	 * @return bool Whether the statement is INSERT ... ON DUPLICATE KEY UPDATE.
+	 */
+	private function is_insert_on_duplicate_key_update_write( array $tokens, int $table_index ): bool {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::INSERT_SYMBOL !== $tokens[0]->id ) {
+			return false;
+		}
+
+		for ( $index = $table_index + 1; $index < count( $tokens ) - 3; ++$index ) {
+			if (
+				WP_MySQL_Lexer::ON_SYMBOL === $tokens[ $index ]->id
+				&& WP_MySQL_Lexer::DUPLICATE_SYMBOL === $tokens[ $index + 1 ]->id
+				&& WP_MySQL_Lexer::KEY_SYMBOL === $tokens[ $index + 2 ]->id
+				&& WP_MySQL_Lexer::UPDATE_SYMBOL === $tokens[ $index + 3 ]->id
+			) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -22615,11 +22750,18 @@ class WP_DuckDB_Driver {
 	 */
 	private function execute_duckdb_query( string $sql, string $context ): WP_DuckDB_Result_Statement {
 		$this->last_duckdb_queries[] = $sql;
+		$profile_enabled             = self::query_profile_enabled();
+		$profile_started_at          = $profile_enabled ? microtime( true ) : 0.0;
 
 		try {
 			return $this->connection->query( $sql );
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
 			throw new WP_DuckDB_Driver_Exception( $context . ': ' . $e->getMessage(), 0, $e );
+		} finally {
+			if ( $profile_enabled ) {
+				$this->profile_current_native_seconds += microtime( true ) - $profile_started_at;
+				++$this->profile_current_native_queries;
+			}
 		}
 	}
 
@@ -22763,6 +22905,187 @@ class WP_DuckDB_Driver {
 		);
 
 		$this->ensured_metadata_tables[ $ensure_key ] = true;
+	}
+
+	/**
+	 * Check whether optional DuckDB query profiling is enabled.
+	 *
+	 * @return bool Whether profiling is enabled.
+	 */
+	private static function query_profile_enabled(): bool {
+		if ( null === self::$query_profile_enabled ) {
+			$value                       = getenv( 'WP_DUCKDB_QUERY_PROFILE' );
+			self::$query_profile_enabled = is_string( $value )
+				&& '' !== $value
+				&& '0' !== $value
+				&& 'false' !== strtolower( $value )
+				&& 'off' !== strtolower( $value )
+				&& 'no' !== strtolower( $value );
+		}
+
+		if ( self::$query_profile_enabled && ! self::$query_profile_shutdown_registered ) {
+			register_shutdown_function( array( __CLASS__, 'emit_query_profile_shutdown_summary' ) );
+			self::$query_profile_shutdown_registered = true;
+		}
+
+		return self::$query_profile_enabled;
+	}
+
+	/**
+	 * Record one MySQL-facing query in the optional profile.
+	 *
+	 * @param string $query         MySQL query.
+	 * @param float  $total_seconds Query wall time.
+	 * @param bool   $error         Whether the query ended in an error.
+	 */
+	private function record_query_profile( string $query, float $total_seconds, bool $error ): void {
+		$shape = $this->normalize_query_profile_shape( $query );
+		if ( ! isset( self::$query_profile['shapes'][ $shape ] ) ) {
+			self::$query_profile['shapes'][ $shape ] = array(
+				'count'          => 0,
+				'errors'         => 0,
+				'total_seconds'  => 0.0,
+				'parse_seconds'  => 0.0,
+				'native_seconds' => 0.0,
+				'native_queries' => 0,
+			);
+		}
+
+		++self::$query_profile['queries'];
+		self::$query_profile['total_seconds']  += $total_seconds;
+		self::$query_profile['parse_seconds']  += $this->profile_current_parse_seconds;
+		self::$query_profile['native_seconds'] += $this->profile_current_native_seconds;
+		self::$query_profile['native_queries'] += $this->profile_current_native_queries;
+		if ( $error ) {
+			++self::$query_profile['errors'];
+		}
+
+		++self::$query_profile['shapes'][ $shape ]['count'];
+		self::$query_profile['shapes'][ $shape ]['total_seconds']  += $total_seconds;
+		self::$query_profile['shapes'][ $shape ]['parse_seconds']  += $this->profile_current_parse_seconds;
+		self::$query_profile['shapes'][ $shape ]['native_seconds'] += $this->profile_current_native_seconds;
+		self::$query_profile['shapes'][ $shape ]['native_queries'] += $this->profile_current_native_queries;
+		if ( $error ) {
+			++self::$query_profile['shapes'][ $shape ]['errors'];
+		}
+
+		if ( count( self::$query_profile['shapes'] ) > 1000 && 0 === self::$query_profile['queries'] % 1000 ) {
+			self::prune_query_profile_shapes();
+		}
+
+		$interval = self::query_profile_log_interval();
+		if ( $interval > 0 && 0 === self::$query_profile['queries'] % $interval ) {
+			self::emit_query_profile_summary( 'interval' );
+		}
+	}
+
+	/**
+	 * Normalize a query into a bounded, literal-free profile shape.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string Normalized shape.
+	 */
+	private function normalize_query_profile_shape( string $query ): string {
+		$shape = preg_replace( "/'(?:''|\\\\.|[^'\\\\])*'/s", "'?'", $query );
+		$shape = preg_replace( '/"(?:\\\\"|\\\\.|[^"\\\\])*"/s', '"?"', (string) $shape );
+		$shape = preg_replace( '/\b0x[0-9a-f]+\b/i', '?', (string) $shape );
+		$shape = preg_replace( '/\b\d+(?:\.\d+)?\b/', '?', (string) $shape );
+		$shape = preg_replace( '/\s+/', ' ', (string) $shape );
+		$shape = trim( (string) $shape );
+
+		if ( strlen( $shape ) > 300 ) {
+			$shape = substr( $shape, 0, 297 ) . '...';
+		}
+
+		return '' === $shape ? '<empty>' : $shape;
+	}
+
+	/**
+	 * Read the optional profile logging interval.
+	 *
+	 * @return int Query interval. Zero disables interval logging.
+	 */
+	private static function query_profile_log_interval(): int {
+		$value = getenv( 'WP_DUCKDB_QUERY_PROFILE_INTERVAL' );
+		if ( ! is_string( $value ) || '' === $value ) {
+			return 5000;
+		}
+
+		return max( 0, (int) $value );
+	}
+
+	/**
+	 * Keep only the highest-cost query shapes when the profiler map grows large.
+	 */
+	private static function prune_query_profile_shapes(): void {
+		$shapes = self::$query_profile['shapes'];
+		uasort(
+			$shapes,
+			function ( array $left, array $right ): int {
+				return $right['total_seconds'] <=> $left['total_seconds'];
+			}
+		);
+
+		self::$query_profile['shapes'] = array_slice( $shapes, 0, 500, true );
+	}
+
+	/**
+	 * Emit the optional profile at PHP shutdown.
+	 */
+	public static function emit_query_profile_shutdown_summary(): void {
+		self::emit_query_profile_summary( 'shutdown' );
+	}
+
+	/**
+	 * Emit an optional profiler summary to the PHP error log.
+	 *
+	 * @param string $reason Why the summary is being emitted.
+	 */
+	private static function emit_query_profile_summary( string $reason ): void {
+		if ( ! self::query_profile_enabled() || 0 === self::$query_profile['queries'] ) {
+			return;
+		}
+
+		error_log(
+			sprintf(
+				'WP_DUCKDB_QUERY_PROFILE_SUMMARY reason=%s queries=%d errors=%d total_seconds=%.3f parse_seconds=%.3f native_seconds=%.3f native_queries=%d shapes=%d',
+				$reason,
+				self::$query_profile['queries'],
+				self::$query_profile['errors'],
+				self::$query_profile['total_seconds'],
+				self::$query_profile['parse_seconds'],
+				self::$query_profile['native_seconds'],
+				self::$query_profile['native_queries'],
+				count( self::$query_profile['shapes'] )
+			)
+		);
+
+		$shapes = self::$query_profile['shapes'];
+		uasort(
+			$shapes,
+			function ( array $left, array $right ): int {
+				return $right['total_seconds'] <=> $left['total_seconds'];
+			}
+		);
+
+		$rank = 0;
+		foreach ( array_slice( $shapes, 0, 15, true ) as $shape => $profile ) {
+			++$rank;
+			error_log(
+				sprintf(
+					'WP_DUCKDB_QUERY_PROFILE_TOP rank=%d count=%d errors=%d total_seconds=%.3f avg_ms=%.3f parse_seconds=%.3f native_seconds=%.3f native_queries=%d shape=%s',
+					$rank,
+					$profile['count'],
+					$profile['errors'],
+					$profile['total_seconds'],
+					1000 * $profile['total_seconds'] / max( 1, $profile['count'] ),
+					$profile['parse_seconds'],
+					$profile['native_seconds'],
+					$profile['native_queries'],
+					str_replace( array( "\r", "\n" ), ' ', $shape )
+				)
+			);
+		}
 	}
 
 	/**
