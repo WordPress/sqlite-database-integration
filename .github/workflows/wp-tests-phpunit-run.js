@@ -115,7 +115,6 @@ const sqliteExpectedFailures = [
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #6',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #7',
 	'Tests_Menu_wpNavMenu::test_wp_nav_menu_should_not_have_has_children_class_with_custom_depth',
-	'WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query',
 ];
 
 const duckdbExpectedFailuresToPrune = new Set( [
