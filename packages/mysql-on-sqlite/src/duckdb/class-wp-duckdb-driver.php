@@ -618,6 +618,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_posts_id_lookup_result;
 		}
 
+		$wordpress_usermeta_cache_load_result = $this->execute_wordpress_usermeta_cache_load_fast_path_statement( $normalized );
+		if ( null !== $wordpress_usermeta_cache_load_result ) {
+			return $wordpress_usermeta_cache_load_result;
+		}
+
 		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
 			$this->found_rows                             = 0;
 			$this->session_system_variables['autocommit'] = (int) $matches[1];
@@ -835,6 +840,66 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute WordPress' usermeta cache-load SELECT without parser/metadata fanout.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_usermeta_cache_load_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		if (
+			! preg_match(
+				'/^SELECT\s+(?:`user_id`|user_id)\s*,\s*(?:`meta_key`|meta_key)\s*,\s*(?:`meta_value`|meta_value)\s+FROM\s+(?<table>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+(?:`user_id`|user_id)\s+IN\s*\(\s*(?<ids>[0-9]+(?:\s*,\s*[0-9]+)*)\s*\)\s+ORDER\s+BY\s+(?:`umeta_id`|umeta_id)\s+ASC$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		if ( ! $this->is_wordpress_usermeta_table_name( $table_name ) ) {
+			return null;
+		}
+
+		$user_ids = array();
+		foreach ( preg_split( '/\s*,\s*/', trim( $matches['ids'] ) ) as $id_literal ) {
+			$user_id = $this->fast_path_mysql_unsigned_integer_literal_value( $id_literal );
+			if ( null === $user_id ) {
+				return null;
+			}
+			$user_ids[] = $user_id;
+		}
+
+		if ( count( $user_ids ) === 0 ) {
+			return null;
+		}
+
+		$sql = 'SELECT '
+			. $this->connection->quote_identifier( 'user_id' )
+			. ', '
+			. $this->connection->quote_identifier( 'meta_key' )
+			. ', '
+			. $this->connection->quote_identifier( 'meta_value' )
+			. ' FROM '
+			. $this->connection->quote_identifier( $table_name )
+			. ' WHERE '
+			. $this->connection->quote_identifier( 'user_id' )
+			. ' IN ('
+			. implode( ', ', array_map( 'strval', $user_ids ) )
+			. ') ORDER BY '
+			. $this->connection->quote_identifier( 'umeta_id' )
+			. ' ASC';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata(
+			$result,
+			$this->wordpress_usermeta_cache_load_result_column_metadata( $table_name )
+		);
+	}
+
+	/**
 	 * Decode a simple MySQL identifier accepted by the fast-path regex.
 	 *
 	 * @param string $identifier MySQL identifier.
@@ -912,6 +977,16 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a table name is the WordPress usermeta table shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table name is usermeta or a prefixed usermeta table.
+	 */
+	private function is_wordpress_usermeta_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/^(?:usermeta|[A-Za-z0-9_]+_usermeta)$/i', $table_name );
+	}
+
+	/**
 	 * Build minimal MySQL-shaped metadata for WordPress' alloptions SELECT.
 	 *
 	 * @param string $table_name Options table name.
@@ -953,6 +1028,27 @@ class WP_DuckDB_Driver {
 				'mysqli:db'       => $this->database,
 			),
 		);
+	}
+
+	/**
+	 * Build minimal MySQL-shaped metadata for WordPress' usermeta cache-load SELECT.
+	 *
+	 * @param string $table_name Usermeta table name.
+	 * @return array<int,array<string,mixed>> Column metadata.
+	 */
+	private function wordpress_usermeta_cache_load_result_column_metadata( string $table_name ): array {
+		$column_meta = array();
+		foreach ( array( 'user_id', 'meta_key', 'meta_value' ) as $column_name ) {
+			$column_meta[] = array(
+				'table'           => $table_name,
+				'name'            => $column_name,
+				'mysqli:orgname'  => $column_name,
+				'mysqli:orgtable' => $table_name,
+				'mysqli:db'       => $this->database,
+			);
+		}
+
+		return $column_meta;
 	}
 
 	/**
