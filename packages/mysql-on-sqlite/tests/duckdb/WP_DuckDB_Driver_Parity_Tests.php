@@ -231,6 +231,22 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_attachment_mime_distinct_no_order_matches_sqlite_first_seen_order(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_posts (ID BIGINT PRIMARY KEY, post_type VARCHAR(20), post_mime_type VARCHAR(100))',
+				"INSERT INTO wp_posts (ID, post_type, post_mime_type) VALUES
+					(10, 'attachment', 'image/jpeg'),
+					(11, 'attachment', 'image/jpeg'),
+					(12, 'attachment', 'application/pdf'),
+					(13, 'post', 'text/plain')",
+			)
+		);
+
+		$this->assertParityRows( "SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'attachment'" );
+		$this->assertParityRows( "SELECT DISTINCT `post_mime_type` FROM `wp_posts` WHERE `post_type` = 'attachment'" );
+	}
+
 	public function test_non_temporal_text_and_blob_write_coercions_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

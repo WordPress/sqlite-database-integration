@@ -1089,7 +1089,7 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_check_constraints
 		);
 
-		$sql = $this->translate_tokens_to_duckdb_sql(
+		$sql                          = $this->translate_tokens_to_duckdb_sql(
 			$sql_tokens,
 			$rewrite_information_schema_tables,
 			$rewrite_information_schema_columns,
@@ -1103,6 +1103,10 @@ class WP_DuckDB_Driver {
 			$group_by_expansion,
 			$order_by_item_rewrites
 		);
+		$attachment_mime_distinct_sql = $this->attachment_mime_distinct_first_seen_order_sql( $sql_tokens );
+		if ( null !== $attachment_mime_distinct_sql ) {
+			$sql = $attachment_mime_distinct_sql;
+		}
 
 		if ( $has_sql_calc_found_rows ) {
 			try {
@@ -1153,6 +1157,223 @@ class WP_DuckDB_Driver {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Rewrite WordPress' attachment MIME DISTINCT query to deterministic first-seen order.
+	 *
+	 * WordPress' get_available_post_mime_types() relies on the no-order
+	 * SELECT DISTINCT post_mime_type query returning MIME types in first
+	 * encountered row order. SQLite/MySQL expose that order for this query,
+	 * while DuckDB returns hash/sorted DISTINCT output.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT tokens.
+	 * @return string|null DuckDB SQL, or null when the query is outside this narrow WordPress shape.
+	 */
+	private function attachment_mime_distinct_first_seen_order_sql( array $tokens ): ?string {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+
+		$has_distinct = false;
+		$select_start = 1;
+		while ( isset( $tokens[ $select_start ] ) && $this->is_select_option_token( $tokens[ $select_start ] ) ) {
+			if (
+				WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $select_start ]->id
+				|| WP_MySQL_Lexer::DISTINCTROW_SYMBOL === $tokens[ $select_start ]->id
+			) {
+				$has_distinct = true;
+				++$select_start;
+				continue;
+			}
+
+			return null;
+		}
+		if ( ! $has_distinct ) {
+			return null;
+		}
+
+		foreach (
+			array(
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::WINDOW_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::PROCEDURE_SYMBOL,
+				WP_MySQL_Lexer::INTO_SYMBOL,
+				WP_MySQL_Lexer::FOR_SYMBOL,
+				WP_MySQL_Lexer::LOCK_SYMBOL,
+				WP_MySQL_Lexer::UNION_SYMBOL,
+			) as $clause_token
+		) {
+			if ( null !== $this->find_top_level_token_index( $tokens, 1, $clause_token ) ) {
+				return null;
+			}
+		}
+
+		$from_index = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::FROM_SYMBOL );
+		if ( null === $from_index || $from_index !== $this->top_level_select_list_end( $tokens ) ) {
+			return null;
+		}
+
+		$select_items = $this->split_top_level_comma_items( array_slice( $tokens, $select_start, $from_index - $select_start ) );
+		if ( 1 !== count( $select_items ) ) {
+			return null;
+		}
+
+		$select_column = $this->parse_simple_select_column_reference( $select_items[0] );
+		if (
+			null === $select_column
+			|| $select_column['wildcard']
+			|| 0 !== strcasecmp( $select_column['column_name'], 'post_mime_type' )
+		) {
+			return null;
+		}
+
+		$where_index = $this->find_top_level_token_index( $tokens, $from_index + 1, WP_MySQL_Lexer::WHERE_SYMBOL );
+		if ( null === $where_index ) {
+			return null;
+		}
+
+		$table = $this->parse_attachment_mime_distinct_table_reference( array_slice( $tokens, $from_index + 1, $where_index - $from_index - 1 ) );
+		if (
+			null === $table
+			|| ! $this->is_wordpress_posts_table_name( $table['table_name'] )
+			|| ! $this->simple_select_column_qualifier_matches_table( $select_column['qualifier'], $table )
+		) {
+			return null;
+		}
+
+		$where_column = $this->parse_attachment_mime_distinct_where_column( array_slice( $tokens, $where_index + 1 ), $table );
+		if ( null === $where_column || 0 !== strcasecmp( $where_column, 'post_type' ) ) {
+			return null;
+		}
+
+		$mime_sql   = $this->connection->quote_identifier( 'post_mime_type' );
+		$select_sql = $mime_sql;
+		if ( 0 !== strcasecmp( $select_column['name'], 'post_mime_type' ) ) {
+			$select_sql .= ' AS ' . $this->connection->quote_identifier( $select_column['name'] );
+		}
+
+		return 'SELECT '
+			. $select_sql
+			. ' FROM '
+			. $this->connection->quote_identifier( $table['table_name'] )
+			. ' WHERE '
+			. $this->connection->quote_identifier( 'post_type' )
+			. ' = '
+			. $this->connection->quote( 'attachment' )
+			. ' GROUP BY '
+			. $mime_sql
+			. ' ORDER BY MIN(rowid)';
+	}
+
+	/**
+	 * Parse the single-table FROM clause supported by the attachment MIME rewrite.
+	 *
+	 * @param WP_Parser_Token[] $tokens Table reference tokens.
+	 * @return array{table_name:string,alias:string,temporary:bool}|null Parsed table, or null when unsupported.
+	 */
+	private function parse_attachment_mime_distinct_table_reference( array $tokens ): ?array {
+		if (
+			count( $tokens ) === 0
+			|| $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::COMMA_SYMBOL )
+			|| $this->contains_top_level_join_token( $tokens )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id
+		) {
+			return null;
+		}
+
+		$index      = 0;
+		$table_name = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+		if ( null === $table_name ) {
+			return null;
+		}
+		++$index;
+
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index ]->id ) {
+			$database = $table_name;
+			if ( 0 === strcasecmp( $database, 'information_schema' ) || 0 !== strcasecmp( $database, $this->database ) ) {
+				return null;
+			}
+
+			++$index;
+			$table_name = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+			if ( null === $table_name ) {
+				return null;
+			}
+			++$index;
+		}
+
+		$alias = $table_name;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) ) {
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			return null;
+		}
+
+		return array(
+			'table_name' => $table_name,
+			'alias'      => $alias,
+			'temporary'  => false,
+		);
+	}
+
+	/**
+	 * Check whether a table name matches WordPress' posts-table naming convention.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table is the WordPress posts table.
+	 */
+	private function is_wordpress_posts_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/(?:^|_)posts$/i', $table_name );
+	}
+
+	/**
+	 * Parse the exact WHERE post_type = 'attachment' predicate for the MIME rewrite.
+	 *
+	 * @param WP_Parser_Token[]                                $tokens WHERE expression tokens.
+	 * @param array{table_name:string,alias:string,temporary:bool} $table  Parsed table reference.
+	 * @return string|null Predicate column name, or null when unsupported.
+	 */
+	private function parse_attachment_mime_distinct_where_column( array $tokens, array $table ): ?string {
+		$equals_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+		if (
+			null === $equals_index
+			|| ! isset( $tokens[ $equals_index + 1 ] )
+			|| count( $tokens ) !== $equals_index + 2
+			|| ! $this->is_string_literal_token( $tokens[ $equals_index + 1 ] )
+			|| 'attachment' !== $this->token_value( $tokens[ $equals_index + 1 ] )
+		) {
+			return null;
+		}
+
+		$column = $this->parse_simple_select_column_reference( array_slice( $tokens, 0, $equals_index ) );
+		if (
+			null === $column
+			|| $column['wildcard']
+			|| ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+		) {
+			return null;
+		}
+
+		return $column['column_name'];
 	}
 
 	/**

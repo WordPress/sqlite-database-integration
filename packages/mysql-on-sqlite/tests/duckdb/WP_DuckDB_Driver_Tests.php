@@ -183,6 +183,45 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( bin2hex( "'{$invalid_byte}'" ), bin2hex( $display->invoke( $driver, $value_tokens, "'{$invalid_byte}'" ) ) );
 	}
 
+	public function test_attachment_mime_distinct_no_order_rewrites_to_first_seen_order(): void {
+		$driver = $this->new_byte_safe_duckdb_driver();
+
+		$tokenize = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$rewrite  = new ReflectionMethod( WP_DuckDB_Driver::class, 'attachment_mime_distinct_first_seen_order_sql' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$rewrite->setAccessible( true );
+		}
+
+		$tokens = $tokenize->invoke( $driver, "SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'attachment'" );
+		$this->assertSame(
+			'SELECT "post_mime_type" FROM "wp_posts" WHERE "post_type" = \'attachment\' GROUP BY "post_mime_type" ORDER BY MIN(rowid)',
+			$rewrite->invoke( $driver, $tokens )
+		);
+		$this->assertSame(
+			'SELECT "post_mime_type" AS "mime" FROM "wp_posts" WHERE "post_type" = \'attachment\' GROUP BY "post_mime_type" ORDER BY MIN(rowid)',
+			$rewrite->invoke( $driver, $tokenize->invoke( $driver, "SELECT DISTINCT p.post_mime_type AS mime FROM wp_posts AS p WHERE p.post_type = 'attachment'" ) )
+		);
+		$this->assertSame(
+			'SELECT "post_mime_type" FROM "wp_posts" WHERE "post_type" = \'attachment\' GROUP BY "post_mime_type" ORDER BY MIN(rowid)',
+			$rewrite->invoke( $driver, $tokenize->invoke( $driver, "SELECT DISTINCT wp_posts.post_mime_type FROM wp.wp_posts WHERE wp_posts.post_type = 'attachment'" ) )
+		);
+
+		foreach (
+			array(
+				"SELECT DISTINCT post_mime_type FROM media_items WHERE post_type = 'attachment'",
+				"SELECT DISTINCT other_mime_type FROM wp_posts WHERE post_type = 'attachment'",
+				"SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'attachment' ORDER BY post_mime_type",
+				"SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'attachment' LIMIT 1",
+				"SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'attachment' GROUP BY post_mime_type",
+				"SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'attachment' AND post_status = 'inherit'",
+				"SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'post'",
+			) as $sql
+		) {
+			$this->assertNull( $rewrite->invoke( $driver, $tokenize->invoke( $driver, $sql ) ), $sql );
+		}
+	}
+
 	private function new_byte_safe_duckdb_driver(): WP_DuckDB_Driver {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public function __construct() {}
