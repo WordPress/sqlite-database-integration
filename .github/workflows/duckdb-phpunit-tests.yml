@@ -183,10 +183,11 @@ jobs:
           WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND: 'true'
           WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
           WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-fast-fail
-          WP_SQLITE_PHPUNIT_MAX_SECONDS: '240'
+          WP_SQLITE_PHPUNIT_MAX_SECONDS: '180'
+          WP_SQLITE_PHPUNIT_MIN_TESTS: '9'
           WP_SQLITE_PHPUNIT_COMMAND: >-
             composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-fast-fail-results.xml --verbose --stop-on-error --stop-on-failure
-            --filter 'Tests_Admin_ExportWp::test_should_include_attachments|Tests_Filesystem_WpFilesystemDirect_Chmod::test_should_handle_set_mode_when_not_passed|Tests_Admin_wpPostsListTable::test_search_hierarchical_pages_first_page|Tests_Post_GetAvailablePostMimeTypes::test_should_return_expected_post_mime_types|WP_Test_REST_Posts_Controller::test_get_items_valid_date|WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query|WP_Test_REST_Posts_Controller::test_get_items_tags_exclude_query|WP_Test_REST_Users_Controller::test_update_item_existing_email_case|Tests_DB::test_mysqli_flush_sync'
+            --filter 'Tests_Admin_ExportWp::test_should_include_attachments\|Tests_Filesystem_WpFilesystemDirect_Chmod::test_should_handle_set_mode_when_not_passed\|Tests_Admin_wpPostsListTable::test_search_hierarchical_pages_first_page\|Tests_Post_GetAvailablePostMimeTypes::test_should_return_expected_post_mime_types\|WP_Test_REST_Posts_Controller::test_get_items_valid_date\|WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query\|WP_Test_REST_Posts_Controller::test_get_items_tags_exclude_query\|WP_Test_REST_Users_Controller::test_update_item_existing_email_case\|Tests_DB::test_mysqli_flush_sync'
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-fast-fail-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
 

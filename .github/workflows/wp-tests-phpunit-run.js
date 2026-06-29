@@ -17,6 +17,7 @@ const isDuckDBPhpunitRun = phpunitCommand.includes( 'wp-test-php-duckdb' );
 const phpunitEnsureEnvironmentCommand = process.env.WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND || getDefaultEnsureEnvironmentCommand();
 const phpunitMaxSeconds = getPositiveNumberEnv( 'WP_SQLITE_PHPUNIT_MAX_SECONDS' );
 const phpunitBaselineSeconds = getPositiveNumberEnv( 'WP_SQLITE_PHPUNIT_BASELINE_SECONDS' );
+const phpunitMinTests = getPositiveNumberEnv( 'WP_SQLITE_PHPUNIT_MIN_TESTS' );
 const phpunitTimingLabel = process.env.WP_SQLITE_PHPUNIT_TIMING_LABEL || ( isDuckDBPhpunitRun ? 'duckdb' : 'sqlite' );
 const ensurePhpunitCompatibility = process.env.WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY === '1';
 const phpunitCompatibilityConstraint = process.env.WP_SQLITE_PHPUNIT_COMPATIBILITY_CONSTRAINT || '^9.6';
@@ -213,6 +214,7 @@ console.log( 'Expected-result mode:', isDuckDBPhpunitRun ? 'duckdb' : 'sqlite' )
 console.log( 'PHPUnit timing label:', phpunitTimingLabel );
 console.log( 'PHPUnit baseline seconds:', phpunitBaselineSeconds || 'none' );
 console.log( 'PHPUnit max seconds:', phpunitMaxSeconds || 'none' );
+console.log( 'PHPUnit min tests:', phpunitMinTests || 'none' );
 if ( disableExpectedResults ) {
 	console.log( 'Expected-result allowlist disabled.' );
 }
@@ -2130,6 +2132,7 @@ try {
 		failures: actualFailures.length,
 		baseline_seconds: phpunitBaselineSeconds || '',
 		max_seconds: phpunitMaxSeconds || '',
+		min_tests: phpunitMinTests || '',
 	};
 	console.log(
 		'WP_SQLITE_PHPUNIT_TIMING ' +
@@ -2143,6 +2146,13 @@ try {
 	if ( phpunitBaselineSeconds && phpunitCommandSeconds > phpunitBaselineSeconds ) {
 		console.error(
 			`\n❌ PHPUnit command took ${ phpunitCommandSeconds.toFixed( 3 ) }s, above ${ phpunitBaselineSeconds }s baseline.`
+		);
+		isSuccess = false;
+	}
+
+	if ( phpunitMinTests && actualTests.length < phpunitMinTests ) {
+		console.error(
+			`\n❌ PHPUnit command ran ${ actualTests.length } tests, below required minimum ${ phpunitMinTests }.`
 		);
 		isSuccess = false;
 	}
