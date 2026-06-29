@@ -239,12 +239,15 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 					(10, 'attachment', 'image/jpeg'),
 					(11, 'attachment', 'image/jpeg'),
 					(12, 'attachment', 'application/pdf'),
-					(13, 'post', 'text/plain')",
+					(13, 'post', 'text/plain'),
+					(14, 'attachment', '')",
 			)
 		);
 
 		$this->assertParityRows( "SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'attachment'" );
 		$this->assertParityRows( "SELECT DISTINCT `post_mime_type` FROM `wp_posts` WHERE `post_type` = 'attachment'" );
+		$this->assertParityRows( "SELECT DISTINCT post_mime_type FROM wp_posts WHERE post_type = 'attachment' AND post_mime_type != ''" );
+		$this->assertParityRows( "SELECT DISTINCT `post_mime_type` FROM `wp_posts` WHERE `post_mime_type` <> '' AND `post_type` = 'attachment'" );
 	}
 
 	public function test_posts_date_order_ties_match_sqlite_index_order(): void {

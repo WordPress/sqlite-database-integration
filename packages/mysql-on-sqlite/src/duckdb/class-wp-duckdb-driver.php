@@ -1246,12 +1246,12 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$where_column = $this->parse_attachment_mime_distinct_where_column( array_slice( $tokens, $where_index + 1 ), $table );
-		if ( null === $where_column || 0 !== strcasecmp( $where_column, 'post_type' ) ) {
+		$mime_sql  = $this->connection->quote_identifier( 'post_mime_type' );
+		$where_sql = $this->attachment_mime_distinct_where_sql( array_slice( $tokens, $where_index + 1 ), $table, $mime_sql );
+		if ( null === $where_sql ) {
 			return null;
 		}
 
-		$mime_sql   = $this->connection->quote_identifier( 'post_mime_type' );
 		$select_sql = $mime_sql;
 		if ( 0 !== strcasecmp( $select_column['name'], 'post_mime_type' ) ) {
 			$select_sql .= ' AS ' . $this->connection->quote_identifier( $select_column['name'] );
@@ -1262,9 +1262,7 @@ class WP_DuckDB_Driver {
 			. ' FROM '
 			. $this->connection->quote_identifier( $table['table_name'] )
 			. ' WHERE '
-			. $this->connection->quote_identifier( 'post_type' )
-			. ' = '
-			. $this->connection->quote( 'attachment' )
+			. $where_sql
 			. ' GROUP BY '
 			. $mime_sql
 			. ' ORDER BY MIN(rowid)';
@@ -1510,25 +1508,100 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Parse the exact WHERE post_type = 'attachment' predicate for the MIME rewrite.
+	 * Build the bounded WHERE predicate for WordPress' attachment MIME DISTINCT query.
 	 *
-	 * @param WP_Parser_Token[]                                $tokens WHERE expression tokens.
-	 * @param array{table_name:string,alias:string,temporary:bool} $table  Parsed table reference.
-	 * @return string|null Predicate column name, or null when unsupported.
+	 * @param WP_Parser_Token[]                                    $tokens   WHERE expression tokens.
+	 * @param array{table_name:string,alias:string,temporary:bool} $table    Parsed table reference.
+	 * @param string                                               $mime_sql Quoted MIME column SQL.
+	 * @return string|null Predicate SQL, or null when unsupported.
 	 */
-	private function parse_attachment_mime_distinct_where_column( array $tokens, array $table ): ?string {
-		$equals_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+	private function attachment_mime_distinct_where_sql( array $tokens, array $table, string $mime_sql ): ?string {
+		$predicates = $this->split_top_level_and_predicates( $tokens );
+		if ( count( $predicates ) < 1 || count( $predicates ) > 2 ) {
+			return null;
+		}
+
+		$matched = array();
+		foreach ( $predicates as $predicate ) {
+			$parsed = $this->parse_attachment_mime_distinct_where_predicate( $predicate, $table, $mime_sql );
+			if ( null === $parsed || isset( $matched[ $parsed['type'] ] ) ) {
+				return null;
+			}
+
+			$matched[ $parsed['type'] ] = $parsed['sql'];
+		}
+
+		if ( ! isset( $matched['post_type'] ) ) {
+			return null;
+		}
+
+		$where_parts = array( $matched['post_type'] );
+		if ( isset( $matched['mime_not_empty'] ) ) {
+			$where_parts[] = $matched['mime_not_empty'];
+		}
+
+		return implode( ' AND ', $where_parts );
+	}
+
+	/**
+	 * Split a WHERE expression into top-level AND predicates.
+	 *
+	 * @param WP_Parser_Token[] $tokens WHERE expression tokens.
+	 * @return array<int,WP_Parser_Token[]> Predicate token lists.
+	 */
+	private function split_top_level_and_predicates( array $tokens ): array {
+		$predicates = array();
+		$depth      = 0;
+		$start      = 0;
+		foreach ( $tokens as $index => $token ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $token->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $token->id ) {
+				--$depth;
+				continue;
+			}
+			if (
+				0 === $depth
+				&& in_array( $token->id, array( WP_MySQL_Lexer::AND_SYMBOL, WP_MySQL_Lexer::LOGICAL_AND_OPERATOR ), true )
+			) {
+				$predicates[] = array_slice( $tokens, $start, $index - $start );
+				$start        = $index + 1;
+			}
+		}
+		$predicates[] = array_slice( $tokens, $start );
+
+		return $predicates;
+	}
+
+	/**
+	 * Parse one supported attachment MIME DISTINCT WHERE predicate.
+	 *
+	 * @param WP_Parser_Token[]                                    $tokens   Predicate tokens.
+	 * @param array{table_name:string,alias:string,temporary:bool} $table    Parsed table reference.
+	 * @param string                                               $mime_sql Quoted MIME column SQL.
+	 * @return array{type:string,sql:string}|null Parsed predicate.
+	 */
+	private function parse_attachment_mime_distinct_where_predicate( array $tokens, array $table, string $mime_sql ): ?array {
+		$operator_index = null;
+		foreach ( array( WP_MySQL_Lexer::EQUAL_OPERATOR, WP_MySQL_Lexer::NOT_EQUAL_OPERATOR ) as $operator ) {
+			$found = $this->find_top_level_token_index( $tokens, 0, $operator );
+			if ( null !== $found ) {
+				$operator_index = $found;
+				break;
+			}
+		}
 		if (
-			null === $equals_index
-			|| ! isset( $tokens[ $equals_index + 1 ] )
-			|| count( $tokens ) !== $equals_index + 2
-			|| ! $this->is_string_literal_token( $tokens[ $equals_index + 1 ] )
-			|| 'attachment' !== $this->token_value( $tokens[ $equals_index + 1 ] )
+			null === $operator_index
+			|| ! isset( $tokens[ $operator_index + 1 ] )
+			|| count( $tokens ) !== $operator_index + 2
+			|| ! $this->is_string_literal_token( $tokens[ $operator_index + 1 ] )
 		) {
 			return null;
 		}
 
-		$column = $this->parse_simple_select_column_reference( array_slice( $tokens, 0, $equals_index ) );
+		$column = $this->parse_simple_select_column_reference( array_slice( $tokens, 0, $operator_index ) );
 		if (
 			null === $column
 			|| $column['wildcard']
@@ -1537,7 +1610,29 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		return $column['column_name'];
+		if (
+			0 === strcasecmp( $column['column_name'], 'post_type' )
+			&& WP_MySQL_Lexer::EQUAL_OPERATOR === $tokens[ $operator_index ]->id
+			&& 'attachment' === $this->token_value( $tokens[ $operator_index + 1 ] )
+		) {
+			return array(
+				'type' => 'post_type',
+				'sql'  => $this->connection->quote_identifier( 'post_type' ) . ' = ' . $this->connection->quote( 'attachment' ),
+			);
+		}
+
+		if (
+			0 === strcasecmp( $column['column_name'], 'post_mime_type' )
+			&& WP_MySQL_Lexer::NOT_EQUAL_OPERATOR === $tokens[ $operator_index ]->id
+			&& '' === $this->token_value( $tokens[ $operator_index + 1 ] )
+		) {
+			return array(
+				'type' => 'mime_not_empty',
+				'sql'  => $mime_sql . ' != ' . $this->connection->quote( '' ),
+			);
+		}
+
+		return null;
 	}
 
 	/**
