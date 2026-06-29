@@ -256,6 +256,8 @@ print_command() {
 run_phpunit_fast_fail() {
 	local phpunit_count phpunit_filter phpunit_script
 	local phpunit_command_string native_parser_required outer_timeout_seconds timing_label
+	local duckdb_php_autoload phpunit_ensure_env_command phpunit_junit_basename
+	local phpunit_junit_path phpunit_timing_label
 	local phpunit_result
 	local -a phpunit_wrapper_command
 
@@ -265,8 +267,10 @@ run_phpunit_fast_fail() {
 
 	if [ "$PREPARED" = '1' ]; then
 		phpunit_script='wp-test-php-duckdb-prepared'
+		phpunit_ensure_env_command="${WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND:-true}"
 	else
 		phpunit_script='wp-test-php-duckdb'
+		phpunit_ensure_env_command="${WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND:-composer run wp-test-ensure-env-duckdb}"
 	fi
 
 	case "$phpunit_filter" in
@@ -288,17 +292,46 @@ run_phpunit_fast_fail() {
 			;;
 	esac
 
-	phpunit_command_string="composer run ${phpunit_script} -- --log-junit=phpunit-duckdb-fast-fail-local-results.xml --verbose --stop-on-error --stop-on-failure --filter '${phpunit_filter}'"
+	duckdb_php_autoload="${DUCKDB_PHP_AUTOLOAD:-$ROOT_DIR/packages/mysql-on-sqlite/vendor/autoload.php}"
+	phpunit_junit_path="${WP_SQLITE_PHPUNIT_JUNIT_PATH:-${WP_DUCKDB_FAST_FAIL_PHPUNIT_JUNIT_PATH:-wordpress/phpunit-duckdb-fast-fail-local-results.xml}}"
+	phpunit_junit_basename="${WP_DUCKDB_FAST_FAIL_PHPUNIT_JUNIT_BASENAME:-$(basename "$phpunit_junit_path")}"
+	phpunit_timing_label="${WP_SQLITE_PHPUNIT_TIMING_LABEL:-$timing_label}"
+	case "$phpunit_junit_basename" in
+		''|*/*|*\\*|*[!A-Za-z0-9._-]*)
+			fail 'PHPUnit JUnit basename must be a simple filename containing only letters, numbers, dots, underscores, and dashes.'
+			;;
+	esac
+	case "$phpunit_junit_basename" in
+		*.xml)
+			;;
+		*)
+			fail 'PHPUnit JUnit basename must end in .xml.'
+			;;
+	esac
+	phpunit_command_string="composer run ${phpunit_script} -- --log-junit=${phpunit_junit_basename} --verbose --stop-on-error --stop-on-failure --filter '${phpunit_filter}'"
 	outer_timeout_seconds=$(( PHPUNIT_TIMEOUT_SECONDS + 30 ))
 	phpunit_wrapper_command=(
 		env
+		"DUCKDB_PHP_AUTOLOAD=$duckdb_php_autoload"
+		"WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS=${WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS:-0}"
+		"WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_VERBOSE=${WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_VERBOSE:-0}"
+		"WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_STDERR=${WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_STDERR:-0}"
+		"WP_SQLITE_DUCKDB_CHILD_DB_COPY=${WP_SQLITE_DUCKDB_CHILD_DB_COPY:-1}"
+		"WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS=${WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS:-0}"
+		"WP_DUCKDB_QUERY_PROFILE=${WP_DUCKDB_QUERY_PROFILE:-0}"
+		"WP_DUCKDB_QUERY_PROFILE_INTERVAL=${WP_DUCKDB_QUERY_PROFILE_INTERVAL:-0}"
+		"WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY=${WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY:-1}"
+		"WP_SQLITE_DISABLE_EXPECTED_RESULTS=${WP_SQLITE_DISABLE_EXPECTED_RESULTS:-0}"
+		"WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND=$phpunit_ensure_env_command"
+		"WP_SQLITE_NATIVE_PARSER_VERIFY_TIMEOUT_SECONDS=${WP_SQLITE_NATIVE_PARSER_VERIFY_TIMEOUT_SECONDS:-60}"
+		"WP_SQLITE_PHPUNIT_REQUIRED_FILTERS_FILE=${WP_SQLITE_PHPUNIT_REQUIRED_FILTERS_FILE:-$PHPUNIT_LIST_FILE}"
 		"WP_SQLITE_PHPUNIT_COMMAND=$phpunit_command_string"
 		"WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION=$native_parser_required"
-		"WP_SQLITE_PHPUNIT_TIMING_LABEL=$timing_label"
+		"WP_SQLITE_PHPUNIT_TIMING_LABEL=$phpunit_timing_label"
 		"WP_SQLITE_PHPUNIT_MAX_SECONDS=$PHPUNIT_TIMEOUT_SECONDS"
 		"WP_SQLITE_PHPUNIT_MIN_TESTS=$PHPUNIT_MIN_TESTS"
 		"WP_SQLITE_IGNORE_MISSING_EXPECTED_RESULTS=1"
-		"WP_SQLITE_PHPUNIT_JUNIT_PATH=wordpress/phpunit-duckdb-fast-fail-local-results.xml"
+		"WP_SQLITE_PHPUNIT_JUNIT_PATH=$phpunit_junit_path"
 		node .github/workflows/wp-tests-phpunit-run.js
 	)
 
@@ -307,6 +340,8 @@ run_phpunit_fast_fail() {
 	echo "DuckDB PHPUnit fast-fail timeout: ${PHPUNIT_TIMEOUT_SECONDS}s"
 	echo "DuckDB PHPUnit fast-fail min tests: $PHPUNIT_MIN_TESTS"
 	echo "DuckDB PHPUnit native parser required: $native_parser_required"
+	echo "DuckDB PHPUnit timing label: $phpunit_timing_label"
+	echo "DuckDB PHPUnit JUnit path: $phpunit_junit_path"
 	echo "DuckDB PHPUnit command: $phpunit_command_string"
 	print_command "${phpunit_wrapper_command[@]}"
 

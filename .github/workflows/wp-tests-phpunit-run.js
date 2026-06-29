@@ -18,6 +18,7 @@ const phpunitEnsureEnvironmentCommand = process.env.WP_SQLITE_PHPUNIT_ENSURE_ENV
 const phpunitMaxSeconds = getPositiveNumberEnv( 'WP_SQLITE_PHPUNIT_MAX_SECONDS' );
 const phpunitBaselineSeconds = getPositiveNumberEnv( 'WP_SQLITE_PHPUNIT_BASELINE_SECONDS' );
 const phpunitMinTests = getPositiveNumberEnv( 'WP_SQLITE_PHPUNIT_MIN_TESTS' );
+const nativeParserVerifyTimeoutSeconds = getPositiveNumberEnv( 'WP_SQLITE_NATIVE_PARSER_VERIFY_TIMEOUT_SECONDS' );
 const phpunitTimingLabel = process.env.WP_SQLITE_PHPUNIT_TIMING_LABEL || ( isDuckDBPhpunitRun ? 'duckdb' : 'sqlite' );
 const ensurePhpunitCompatibility = process.env.WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY === '1';
 const phpunitCompatibilityConstraint = process.env.WP_SQLITE_PHPUNIT_COMPATIBILITY_CONSTRAINT || '^9.6';
@@ -28,6 +29,14 @@ const junitOutputPath = process.env.WP_SQLITE_PHPUNIT_JUNIT_PATH || 'wordpress/p
 const junitOutputFile = path.isAbsolute( junitOutputPath )
 	? junitOutputPath
 	: path.join( repoRoot, junitOutputPath );
+const phpunitRequiredFiltersPath = process.env.WP_SQLITE_PHPUNIT_REQUIRED_FILTERS_FILE || '';
+const phpunitRequiredFiltersFile = phpunitRequiredFiltersPath
+	? (
+		path.isAbsolute( phpunitRequiredFiltersPath )
+			? phpunitRequiredFiltersPath
+			: path.join( repoRoot, phpunitRequiredFiltersPath )
+	)
+	: '';
 const phpunitCompatibilityPrependPath = path.join( repoRoot, 'wordpress', 'phpunit-runner-compat-prepend.php' );
 const duckdbAutoloadCompatibilityWrapperPath = path.join( repoRoot, 'wordpress', 'phpunit-duckdb-autoload-wrapper.php' );
 const duckdbChildDiagnosticsPath = path.join( repoRoot, 'wordpress', 'duckdb-child-process-diagnostics.php' );
@@ -215,6 +224,7 @@ console.log( 'PHPUnit timing label:', phpunitTimingLabel );
 console.log( 'PHPUnit baseline seconds:', phpunitBaselineSeconds || 'none' );
 console.log( 'PHPUnit max seconds:', phpunitMaxSeconds || 'none' );
 console.log( 'PHPUnit min tests:', phpunitMinTests || 'none' );
+console.log( 'PHPUnit required filters file:', phpunitRequiredFiltersFile || 'none' );
 if ( disableExpectedResults ) {
 	console.log( 'Expected-result allowlist disabled.' );
 }
@@ -234,6 +244,48 @@ function getDefaultEnsureEnvironmentCommand() {
 function getPositiveNumberEnv( name ) {
 	const value = Number( process.env[ name ] || 0 );
 	return Number.isFinite( value ) && value > 0 ? value : 0;
+}
+
+function readRequiredPhpunitFilters() {
+	if ( ! phpunitRequiredFiltersFile ) {
+		return [];
+	}
+
+	if ( ! fs.existsSync( phpunitRequiredFiltersFile ) ) {
+		console.error( `Error: PHPUnit required filters file not found at ${ phpunitRequiredFiltersFile }.` );
+		process.exit( 1 );
+	}
+
+	const filters = [];
+	const seen = new Set();
+	const invalidFilters = [];
+	for ( const rawLine of fs.readFileSync( phpunitRequiredFiltersFile, 'utf8' ).split( /\r?\n/ ) ) {
+		const line = rawLine.trim();
+		if ( ! line || line.startsWith( '#' ) ) {
+			continue;
+		}
+		if ( ! /^[A-Za-z_][A-Za-z0-9_]*(\\[A-Za-z_][A-Za-z0-9_]*)*::[A-Za-z_][A-Za-z0-9_]*$/.test( line ) ) {
+			invalidFilters.push( line );
+			continue;
+		}
+		if ( ! seen.has( line ) ) {
+			seen.add( line );
+			filters.push( line );
+		}
+	}
+
+	if ( invalidFilters.length ) {
+		console.error( '\n❌ PHPUnit required filters file contains invalid entries:' );
+		invalidFilters.forEach( filter => console.error( `  - ${ filter }` ) );
+		process.exit( 1 );
+	}
+
+	if ( ! filters.length ) {
+		console.error( `Error: PHPUnit required filters file has no method entries: ${ phpunitRequiredFiltersFile }.` );
+		process.exit( 1 );
+	}
+
+	return filters;
 }
 
 function markProgress( phase, extra = {} ) {
@@ -1945,11 +1997,21 @@ function verifyNativeParserExtension() {
 		process.exit( 1 );
 	}
 
-	execSync( 'composer run wp-test-ensure-env', { stdio: 'inherit' } );
-	execSync(
-		'cd wordpress && node tools/local-env/scripts/docker.js run --rm php php /var/www/native-verify-extension.php',
-		{ stdio: 'inherit' }
+	markProgress( 'native_parser_verify_start', { max_seconds: nativeParserVerifyTimeoutSeconds || 'none' } );
+	execSyncWithOptionalTimeout(
+		phpunitEnsureEnvironmentCommand,
+		{ stdio: 'inherit' },
+		nativeParserVerifyTimeoutSeconds,
+		'native parser environment verification'
 	);
+	markProgress( 'native_parser_verify_env_done' );
+	execSyncWithOptionalTimeout(
+		'cd wordpress && node tools/local-env/scripts/docker.js run --rm php php /var/www/native-verify-extension.php',
+		{ stdio: 'inherit' },
+		nativeParserVerifyTimeoutSeconds,
+		'native parser runtime verification'
+	);
+	markProgress( 'native_parser_verify_done' );
 }
 
 function ensureCompatiblePhpunitRunner() {
@@ -2037,6 +2099,32 @@ function runWordPressDockerCompose( args, options ) {
 	execSync( command, options );
 }
 
+function execSyncWithOptionalTimeout( command, options, timeoutSeconds, label ) {
+	const effectiveOptions = { ...options };
+	if ( timeoutSeconds ) {
+		effectiveOptions.timeout = timeoutSeconds * 1000;
+		effectiveOptions.killSignal = 'SIGTERM';
+	}
+
+	try {
+		execSync( command, effectiveOptions );
+	} catch ( error ) {
+		const timedOut = Boolean(
+			timeoutSeconds &&
+			(
+				error.signal === 'SIGTERM' ||
+				String( error.message || '' ).includes( 'ETIMEDOUT' )
+			)
+		);
+
+		if ( timedOut ) {
+			console.error( `Error: ${ label } exceeded ${ timeoutSeconds }s.` );
+		}
+
+		throw error;
+	}
+}
+
 function getWordPressComposeArgs() {
 	const composeArgs = [ '-f', 'docker-compose.yml' ];
 
@@ -2056,6 +2144,11 @@ function phpSingleQuote( value ) {
 }
 
 try {
+	const requiredPhpunitFilters = readRequiredPhpunitFilters();
+	if ( requiredPhpunitFilters.length ) {
+		console.log( 'PHPUnit required filter entries:', requiredPhpunitFilters.length );
+	}
+
 	if ( requiresNativeParserExtension ) {
 		verifyNativeParserExtension();
 	}
@@ -2181,6 +2274,20 @@ try {
 			`\n❌ PHPUnit command ran ${ actualTests.length } tests, below required minimum ${ phpunitMinTests }.`
 		);
 		isSuccess = false;
+	}
+
+	if ( requiredPhpunitFilters.length ) {
+		const missingRequiredFilters = requiredPhpunitFilters.filter(
+			filter => ! actualTests.some(
+				test => test === filter || test.startsWith( `${ filter } ` )
+			)
+		);
+
+		if ( missingRequiredFilters.length ) {
+			console.error( '\n❌ PHPUnit command did not run every required filter entry:' );
+			missingRequiredFilters.forEach( filter => console.error( `  - ${ filter }` ) );
+			isSuccess = false;
+		}
 	}
 
 	// Check if all expected errors actually errored
