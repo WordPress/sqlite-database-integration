@@ -314,6 +314,57 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_posts_page_menu_title_order_ties_match_sqlite_index_order(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_parent BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+					post_title VARCHAR(200) NOT NULL DEFAULT '',
+					post_excerpt TEXT NOT NULL,
+					post_content TEXT NOT NULL,
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					menu_order INT(11) NOT NULL DEFAULT '0',
+					PRIMARY KEY (ID),
+					KEY post_parent (post_parent)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wptests_posts (ID, post_parent, post_title, post_excerpt, post_content, post_type, menu_order) VALUES
+					(145, 0, 'Top Level Page 1', '', '', 'page', 0),
+					(146, 0, 'Top Level Page 2', '', '', 'page', 0),
+					(147, 0, 'Top Level Page 3', '', '', 'page', 0),
+					(148, 0, 'Top Level Page 4', '', '', 'page', 0),
+					(149, 0, 'Top Level Page 5', '', '', 'page', 0),
+					(150, 145, 'Child 1', '', '', 'page', 0),
+					(151, 145, 'Child 2', '', '', 'page', 0),
+					(152, 145, 'Child 3', '', '', 'page', 0),
+					(153, 146, 'Child 1', '', '', 'page', 0),
+					(154, 146, 'Child 2', '', '', 'page', 0),
+					(155, 146, 'Child 3', '', '', 'page', 0),
+					(156, 147, 'Child 1', '', '', 'page', 0),
+					(157, 147, 'Child 2', '', '', 'page', 0),
+					(158, 147, 'Child 3', '', '', 'page', 0),
+					(159, 148, 'Child 1', '', '', 'page', 0),
+					(160, 148, 'Child 2', '', '', 'page', 0),
+					(161, 148, 'Child 3', '', '', 'page', 0),
+					(162, 149, 'Child 1', '', '', 'page', 0),
+					(163, 149, 'Child 2', '', '', 'page', 0),
+					(164, 149, 'Child 3', '', '', 'page', 0),
+					(165, 156, 'Child Grand 1', '', '', 'page', 0),
+					(166, 157, 'Child Grand 2', '', '', 'page', 0),
+					(167, 158, 'Child Grand 3', '', '', 'page', 0),
+					(168, 161, 'Child Grand 4', '', '', 'page', 0)",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT ID, post_parent, post_title
+			FROM wptests_posts
+			WHERE post_type = 'page'
+				AND (post_title LIKE '%Child%' OR post_excerpt LIKE '%Child%' OR post_content LIKE '%Child%')
+			ORDER BY menu_order ASC, post_title ASC"
+		);
+	}
+
 	public function test_rest_posts_tags_exclude_grouped_order_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

@@ -1090,6 +1090,7 @@ class WP_DuckDB_Driver {
 		);
 		$order_by_item_rewrites     += $this->grouped_posts_date_order_by_tiebreak_rewrites( $sql_tokens, $group_by_expansion, $order_by_item_rewrites );
 		$order_by_item_rewrites     += $this->posts_date_order_by_tiebreak_rewrites( $sql_tokens, $order_by_item_rewrites );
+		$order_by_item_rewrites     += $this->posts_page_hierarchy_order_by_tiebreak_rewrites( $sql_tokens, $order_by_item_rewrites );
 
 		$sql                          = $this->translate_tokens_to_duckdb_sql(
 			$sql_tokens,
@@ -1434,6 +1435,172 @@ class WP_DuckDB_Driver {
 					. $tiebreak_direction,
 			),
 		);
+	}
+
+	/**
+	 * Append a deterministic ID tie-breaker for WordPress hierarchical page ordering.
+	 *
+	 * WordPress' admin page list orders pages by menu_order and title before
+	 * building the hierarchical display. SQLite/MySQL expose primary-key order
+	 * for equal menu/title groups, while DuckDB may return equal groups in a
+	 * different order and make the hierarchy start from the wrong parent.
+	 *
+	 * @param WP_Parser_Token[]                    $tokens            MySQL tokens.
+	 * @param array<int,array{end:int,sql:string}> $existing_rewrites Existing ORDER BY rewrites keyed by item start offset.
+	 * @return array<int,array{end:int,sql:string}> Rewrites keyed by ORDER BY item start offset.
+	 */
+	private function posts_page_hierarchy_order_by_tiebreak_rewrites( array $tokens, array $existing_rewrites = array() ): array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return array();
+		}
+		if (
+			null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::GROUP_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::HAVING_SYMBOL )
+			|| null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL )
+		) {
+			return array();
+		}
+
+		$select_start = 1;
+		while ( isset( $tokens[ $select_start ] ) && $this->is_select_option_token( $tokens[ $select_start ] ) ) {
+			if (
+				WP_MySQL_Lexer::DISTINCT_SYMBOL === $tokens[ $select_start ]->id
+				|| WP_MySQL_Lexer::DISTINCTROW_SYMBOL === $tokens[ $select_start ]->id
+			) {
+				return array();
+			}
+			++$select_start;
+		}
+
+		$from_index  = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::FROM_SYMBOL );
+		$where_index = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::WHERE_SYMBOL );
+		$order_index = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::ORDER_SYMBOL );
+		if (
+			null === $from_index
+			|| null === $where_index
+			|| null === $order_index
+			|| $from_index >= $where_index
+			|| $where_index >= $order_index
+			|| ! isset( $tokens[ $order_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_index + 1 ]->id
+		) {
+			return array();
+		}
+
+		$table = $this->parse_unresolved_simple_select_table_reference(
+			array_slice(
+				$tokens,
+				$from_index + 1,
+				$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
+			)
+		);
+		if ( null === $table || ! $this->is_wordpress_posts_table_name( $table['table_name'] ) ) {
+			return array();
+		}
+
+		if (
+			! $this->posts_page_hierarchy_where_has_post_type_page(
+				array_slice( $tokens, $where_index + 1, $order_index - $where_index - 1 ),
+				$table
+			)
+		) {
+			return array();
+		}
+
+		$order_end   = $this->primary_key_order_by_clause_end( $tokens, $order_index + 2 );
+		$order_items = $this->split_top_level_select_item_ranges( $tokens, $order_index + 2, $order_end );
+		if ( count( $order_items ) === 0 ) {
+			return array();
+		}
+
+		$has_menu_order = false;
+		$has_post_title = false;
+		foreach ( $order_items as $item ) {
+			$column = $this->parse_order_by_column_reference_with_direction( $item['tokens'] );
+			if ( null === $column || ! $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table ) ) {
+				continue;
+			}
+
+			if ( 0 === strcasecmp( $column['column_name'], 'ID' ) ) {
+				return array();
+			}
+
+			if ( 'ASC' !== $column['direction'] ) {
+				continue;
+			}
+
+			if ( 0 === strcasecmp( $column['column_name'], 'menu_order' ) ) {
+				$has_menu_order = true;
+			} elseif ( 0 === strcasecmp( $column['column_name'], 'post_title' ) ) {
+				$has_post_title = true;
+			}
+		}
+
+		if ( ! $has_menu_order || ! $has_post_title ) {
+			return array();
+		}
+
+		$last_item = $order_items[ count( $order_items ) - 1 ];
+		if ( isset( $existing_rewrites[ $last_item['start'] ] ) ) {
+			return array();
+		}
+
+		return array(
+			$last_item['start'] => array(
+				'end' => $last_item['end'],
+				'sql' => $this->translate_tokens_to_duckdb_sql( $last_item['tokens'] )
+					. ', '
+					. $this->posts_order_by_tiebreak_id_sql( $table )
+					. ' ASC',
+			),
+		);
+	}
+
+	/**
+	 * Check whether a WHERE clause contains the page post_type predicate.
+	 *
+	 * @param WP_Parser_Token[]                                    $tokens WHERE clause tokens before ORDER BY.
+	 * @param array{table_name:string,alias:string,temporary:bool} $table  Parsed table reference.
+	 * @return bool Whether the WHERE clause constrains the posts table to pages.
+	 */
+	private function posts_page_hierarchy_where_has_post_type_page( array $tokens, array $table ): bool {
+		foreach ( $tokens as $index => $token ) {
+			if (
+				WP_MySQL_Lexer::EQUAL_OPERATOR !== $token->id
+				|| ! isset( $tokens[ $index + 1 ] )
+				|| ! $this->is_string_literal_token( $tokens[ $index + 1 ] )
+				|| 'page' !== $this->token_value( $tokens[ $index + 1 ] )
+			) {
+				continue;
+			}
+
+			$start = $index;
+			while ( $start > 0 && $this->is_identifier_or_dot_token( $tokens[ $start - 1 ] ) ) {
+				--$start;
+			}
+
+			$column = $this->parse_simple_select_column_reference( array_slice( $tokens, $start, $index - $start ) );
+			if (
+				null !== $column
+				&& ! $column['wildcard']
+				&& 0 === strcasecmp( $column['column_name'], 'post_type' )
+				&& $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a token can be part of a simple identifier reference.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token is an identifier or dot.
+	 */
+	private function is_identifier_or_dot_token( WP_Parser_Token $token ): bool {
+		return WP_MySQL_Lexer::DOT_SYMBOL === $token->id || null !== $this->metadata_identifier_value( $token );
 	}
 
 	/**

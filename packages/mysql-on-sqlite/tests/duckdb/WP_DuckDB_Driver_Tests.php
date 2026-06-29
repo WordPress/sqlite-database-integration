@@ -274,6 +274,45 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_posts_page_hierarchy_order_by_appends_id_tiebreaker(): void {
+		$driver = $this->new_byte_safe_duckdb_driver();
+
+		$tokenize = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$rewrite  = new ReflectionMethod( WP_DuckDB_Driver::class, 'posts_page_hierarchy_order_by_tiebreak_rewrites' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$rewrite->setAccessible( true );
+		}
+
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, "SELECT ID FROM wptests_posts WHERE post_type = 'page' ORDER BY menu_order ASC, post_title ASC" ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'post_title ASC, "ID" ASC', $rewrites[0]['sql'] );
+
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, "SELECT p.ID FROM wp.wp_posts AS p WHERE p.post_type = 'page' ORDER BY p.menu_order, p.post_title" ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'p.post_title, "p"."ID" ASC', $rewrites[0]['sql'] );
+
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, "SELECT SQL_CALC_FOUND_ROWS wp_posts.ID FROM wp_posts WHERE (wp_posts.post_type = 'page') AND (wp_posts.post_title LIKE '%Child%') ORDER BY wp_posts.menu_order ASC, wp_posts.post_title ASC LIMIT 0, 20" ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'wp_posts.post_title ASC, "ID" ASC', $rewrites[0]['sql'] );
+
+		foreach (
+			array(
+				"SELECT DISTINCT ID FROM wp_posts WHERE post_type = 'page' ORDER BY menu_order ASC, post_title ASC",
+				"SELECT ID FROM wp_posts WHERE post_type = 'post' ORDER BY menu_order ASC, post_title ASC",
+				"SELECT ID FROM wp_posts ORDER BY menu_order ASC, post_title ASC",
+				"SELECT ID FROM wp_posts WHERE post_type = 'page' ORDER BY post_title ASC",
+				"SELECT ID FROM wp_posts WHERE post_type = 'page' ORDER BY menu_order ASC, post_title DESC",
+				"SELECT ID FROM wp_posts WHERE post_type = 'page' ORDER BY menu_order ASC, post_title ASC, ID ASC",
+				"SELECT ID FROM wp_posts GROUP BY ID ORDER BY menu_order ASC, post_title ASC",
+				"SELECT ID FROM media_items WHERE post_type = 'page' ORDER BY menu_order ASC, post_title ASC",
+				"SELECT p.ID FROM wp_posts p INNER JOIN wp_postmeta pm ON pm.post_id = p.ID WHERE p.post_type = 'page' ORDER BY p.menu_order ASC, p.post_title ASC",
+			) as $sql
+		) {
+			$this->assertSame( array(), $rewrite->invoke( $driver, $tokenize->invoke( $driver, $sql ) ), $sql );
+		}
+	}
+
 	private function new_byte_safe_duckdb_driver(): WP_DuckDB_Driver {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public function __construct() {}
