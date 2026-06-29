@@ -472,6 +472,37 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		);
 	}
 
+	public function test_duckdb_wpdb_prepare_object_diagnostics_are_env_gated(): void {
+		$disabled = $this->run_prepare_object_diagnostic_state_script( false );
+
+		$this->assertSame(
+			'INSERT INTO wp_posts (post_author, post_title) VALUES (%d, %s)',
+			$disabled['prepared']
+		);
+		$this->assertSame( array(), $disabled['diagnostics'] );
+
+		$enabled = $this->run_prepare_object_diagnostic_state_script( true );
+
+		$this->assertSame(
+			'INSERT INTO wp_posts (post_author, post_title) VALUES (%d, %s)',
+			$enabled['prepared']
+		);
+		$this->assertCount( 1, $enabled['diagnostics'] );
+
+		$diagnostic = $enabled['diagnostics'][0];
+
+		$this->assertSame( 'prepare_object_argument', $diagnostic['event'] );
+		$this->assertSame( 'array', $diagnostic['argument_style'] );
+		$this->assertSame( 'post_author', $diagnostic['argument_key'] );
+		$this->assertSame( 'WP_Error', $diagnostic['object_class'] );
+		$this->assertStringContainsString( 'INSERT INTO wp_posts', $diagnostic['query_shape'] );
+		$this->assertSame( 'duckdb_user_insert_failed', $diagnostic['wp_error']['code'] );
+		$this->assertSame( 'Synthetic user insert failure.', $diagnostic['wp_error']['message'] );
+		$this->assertSame( 'previous error', $diagnostic['wpdb_state']['last_error'] );
+		$this->assertSame( 'SELECT previous', $diagnostic['wpdb_state']['last_query'] );
+		$this->assertIsArray( $diagnostic['backtrace'] );
+	}
+
 	public function test_duckdb_wpdb_failure_diagnostics_clear_metadata_and_preserve_non_insert_id(): void {
 		$result = $this->run_query_surface_state_script();
 		$cases  = $result['cases'];
@@ -818,6 +849,68 @@ echo json_encode(
 		'last_error'          => $db->last_error,
 		'last_query'          => $db->last_query,
 		'ezsql_error'         => $EZSQL_ERROR,
+	)
+);
+PHP;
+
+		return $this->run_isolated_php( $code );
+	}
+
+	private function run_prepare_object_diagnostic_state_script( bool $enabled ): array {
+		$plugin_dir = $this->get_plugin_dir();
+		$code       = $this->get_wordpress_stub_code();
+		$code      .= 'require_once ' . var_export( $plugin_dir . '/wp-includes/duckdb/class-wp-duckdb-db.php', true ) . ";\n";
+		$code      .= '$enabled = ' . ( $enabled ? 'true' : 'false' ) . ";\n";
+		$code      .= <<<'PHP'
+
+$diagnostic_log = tempnam( sys_get_temp_dir(), 'wp_duckdb_prepare_diag_' );
+ini_set( 'error_log', $diagnostic_log );
+putenv( 'WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS=' . ( $enabled ? '1' : '0' ) );
+
+$db                = new WP_DuckDB_DB( 'wordpress_test' );
+$db->last_error    = 'previous error';
+$db->last_query    = 'SELECT previous';
+$db->insert_id     = 17;
+$db->rows_affected = 3;
+$db->num_queries   = 29;
+
+$prepared = $db->prepare(
+	'INSERT INTO wp_posts (post_author, post_title) VALUES (%d, %s)',
+	array(
+		'post_author' => new WP_Error(
+			'duckdb_user_insert_failed',
+			'Synthetic user insert failure.',
+			array( 'user_login' => 'editor' )
+		),
+		'post_title'  => 'Attachment',
+	)
+);
+
+$lines = is_file( $diagnostic_log )
+	? file( $diagnostic_log, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES )
+	: array();
+if ( false === $lines ) {
+	$lines = array();
+}
+if ( is_file( $diagnostic_log ) ) {
+	unlink( $diagnostic_log );
+}
+
+$diagnostics = array();
+$prefix      = 'WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTIC ';
+foreach ( $lines as $line ) {
+	$offset = strpos( $line, $prefix );
+	if ( false === $offset ) {
+		continue;
+	}
+
+	$diagnostics[] = json_decode( substr( $line, $offset + strlen( $prefix ) ), true );
+}
+
+echo json_encode(
+	array(
+		'prepared'    => $prepared,
+		'diagnostics' => $diagnostics,
 	)
 );
 PHP;
@@ -2121,15 +2214,21 @@ PHP;
 
 class WP_Error {
 	private $code;
+	private $data;
 	private $message;
 
-	public function __construct( $code = '', $message = '' ) {
+	public function __construct( $code = '', $message = '', $data = null ) {
 		$this->code    = $code;
+		$this->data    = $data;
 		$this->message = $message;
 	}
 
 	public function get_error_code() {
 		return $this->code;
+	}
+
+	public function get_error_data( $code = '' ) {
+		return $this->data;
 	}
 
 	public function get_error_message() {
@@ -2156,9 +2255,18 @@ class wpdb {
 	public $show_errors = false;
 	public $suppress_errors = false;
 	public $time_start = 0;
+	private $allow_unsafe_unquoted_parameters = true;
 
 	public function __construct( $dbuser = '', $dbpassword = '', $dbname = '', $dbhost = '' ) {
 		$this->dbname = $dbname;
+	}
+
+	public function __get( $name ) {
+		if ( 'allow_unsafe_unquoted_parameters' === $name ) {
+			return $this->allow_unsafe_unquoted_parameters;
+		}
+
+		return null;
 	}
 
 	public function add_placeholder_escape( $query ) {

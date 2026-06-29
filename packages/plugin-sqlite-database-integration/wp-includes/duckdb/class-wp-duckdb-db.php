@@ -369,6 +369,8 @@ class WP_DuckDB_DB extends wpdb {
 	 * @return string|void Sanitized query string, if there is a query to prepare.
 	 */
 	public function prepare( $query, ...$args ) {
+		$this->maybe_log_prepare_object_diagnostics( $query, $args );
+
 		/*
 		 * Sync "$allow_unsafe_unquoted_parameters" with the WPDB parent property.
 		 * This is only needed because some WPDB tests access the private property
@@ -383,6 +385,256 @@ class WP_DuckDB_DB extends wpdb {
 		}
 
 		return parent::prepare( $query, ...$args );
+	}
+
+	/**
+	 * Log object prepare arguments when explicitly requested for CI diagnostics.
+	 *
+	 * @param string      $query Query statement with `sprintf()`-like placeholders.
+	 * @param array|mixed $args  Prepared query arguments.
+	 */
+	private function maybe_log_prepare_object_diagnostics( $query, array $args ) {
+		if ( ! $this->prepare_object_diagnostics_enabled() ) {
+			return;
+		}
+
+		foreach ( $this->get_prepare_object_arguments( $args ) as $object_arg ) {
+			$payload = array(
+				'event'          => 'prepare_object_argument',
+				'pid'            => function_exists( 'getmypid' ) ? getmypid() : null,
+				'query_hash'     => is_string( $query ) ? sha1( $query ) : null,
+				'query_shape'    => $this->prepare_diagnostic_query_shape( $query ),
+				'argument_style' => $object_arg['argument_style'],
+				'argument_key'   => $object_arg['argument_key'],
+				'object_class'   => get_class( $object_arg['value'] ),
+				'wpdb_state'     => array(
+					'last_error'    => $this->prepare_diagnostic_value( $this->last_error ),
+					'last_query'    => $this->prepare_diagnostic_value( $this->last_query ),
+					'insert_id'     => $this->insert_id,
+					'rows_affected' => $this->rows_affected,
+					'num_queries'   => $this->num_queries,
+				),
+				'backtrace'      => $this->prepare_object_diagnostic_backtrace(),
+			);
+
+			$wp_error = $this->prepare_diagnostic_wp_error_payload( $object_arg['value'] );
+			if ( null !== $wp_error ) {
+				$payload['wp_error'] = $wp_error;
+			}
+
+			error_log(
+				'WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTIC ' .
+				$this->json_encode_diagnostic_payload( $payload )
+			);
+		}
+	}
+
+	/**
+	 * Determine whether prepare object diagnostics are enabled.
+	 *
+	 * @return bool Whether diagnostics should be emitted.
+	 */
+	private function prepare_object_diagnostics_enabled() {
+		if ( defined( 'WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS' ) ) {
+			return $this->prepare_diagnostic_truthy(
+				constant( 'WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS' )
+			);
+		}
+
+		$value = getenv( 'WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS' );
+		return false !== $value && $this->prepare_diagnostic_truthy( $value );
+	}
+
+	/**
+	 * Return object arguments from a wpdb::prepare() argument list.
+	 *
+	 * @param array $args Prepared query arguments.
+	 * @return array<int,array{argument_style:string,argument_key:int|string,value:object}>
+	 */
+	private function get_prepare_object_arguments( array $args ) {
+		$object_args = array();
+
+		if ( 1 === count( $args ) && is_array( $args[0] ) ) {
+			foreach ( $args[0] as $key => $value ) {
+				if ( is_object( $value ) ) {
+					$object_args[] = array(
+						'argument_style' => 'array',
+						'argument_key'   => $key,
+						'value'          => $value,
+					);
+				}
+			}
+
+			return $object_args;
+		}
+
+		foreach ( $args as $key => $value ) {
+			if ( is_object( $value ) ) {
+				$object_args[] = array(
+					'argument_style' => 'variadic',
+					'argument_key'   => $key,
+					'value'          => $value,
+				);
+			}
+		}
+
+		return $object_args;
+	}
+
+	/**
+	 * Build a compact query shape safe enough for CI logs.
+	 *
+	 * @param mixed $query Query value passed to wpdb::prepare().
+	 * @return string Query shape.
+	 */
+	private function prepare_diagnostic_query_shape( $query ) {
+		if ( ! is_string( $query ) ) {
+			return gettype( $query );
+		}
+
+		$shape = preg_replace( "/'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"/s", '?', $query );
+		$shape = preg_replace( '/\b\d+(?:\.\d+)?\b/', '?', $shape );
+		$shape = preg_replace( '/\s+/', ' ', trim( $shape ) );
+
+		return $this->prepare_diagnostic_truncate( $shape );
+	}
+
+	/**
+	 * Return WP_Error details when the object is a WP_Error instance.
+	 *
+	 * @param object $value Prepare argument object.
+	 * @return array<string,mixed>|null WP_Error details, or null.
+	 */
+	private function prepare_diagnostic_wp_error_payload( $value ) {
+		if ( ! class_exists( 'WP_Error', false ) || ! ( $value instanceof WP_Error ) ) {
+			return null;
+		}
+
+		$code = method_exists( $value, 'get_error_code' ) ? $value->get_error_code() : null;
+		$data = method_exists( $value, 'get_error_data' )
+			? $value->get_error_data( is_string( $code ) ? $code : '' )
+			: null;
+
+		return array(
+			'code'    => $this->prepare_diagnostic_value( $code ),
+			'message' => method_exists( $value, 'get_error_message' )
+				? $this->prepare_diagnostic_value( $value->get_error_message( $code ) )
+				: null,
+			'data'    => $this->prepare_diagnostic_value( $data ),
+		);
+	}
+
+	/**
+	 * Build a compact backtrace without argument values.
+	 *
+	 * @return array<int,array<string,mixed>> Backtrace payload.
+	 */
+	private function prepare_object_diagnostic_backtrace() {
+		$frames  = debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS, 12 );
+		$payload = array();
+
+		foreach ( $frames as $frame ) {
+			$payload[] = array(
+				'function' => isset( $frame['function'] ) ? $frame['function'] : null,
+				'class'    => isset( $frame['class'] ) ? $frame['class'] : null,
+				'file'     => isset( $frame['file'] ) ? $frame['file'] : null,
+				'line'     => isset( $frame['line'] ) ? $frame['line'] : null,
+			);
+		}
+
+		return $payload;
+	}
+
+	/**
+	 * Normalize diagnostic values so JSON encoding cannot expose giant payloads.
+	 *
+	 * @param mixed $value Value to normalize.
+	 * @return mixed Normalized value.
+	 */
+	private function prepare_diagnostic_value( $value ) {
+		if ( is_string( $value ) ) {
+			return $this->prepare_diagnostic_truncate( $value );
+		}
+
+		if ( is_int( $value ) || is_float( $value ) || is_bool( $value ) || null === $value ) {
+			return $value;
+		}
+
+		if ( is_object( $value ) ) {
+			return array(
+				'type'  => 'object',
+				'class' => get_class( $value ),
+			);
+		}
+
+		if ( is_array( $value ) ) {
+			$normalized = array();
+			$count      = 0;
+			foreach ( $value as $key => $item ) {
+				if ( $count >= 10 ) {
+					$normalized['__truncated__'] = count( $value ) - $count;
+					break;
+				}
+				$normalized[ is_int( $key ) ? $key : (string) $key ] = $this->prepare_diagnostic_value( $item );
+				++$count;
+			}
+			return $normalized;
+		}
+
+		return gettype( $value );
+	}
+
+	/**
+	 * Truncate a diagnostic string.
+	 *
+	 * @param string $value String value.
+	 * @param int    $limit Maximum length.
+	 * @return string Truncated value.
+	 */
+	private function prepare_diagnostic_truncate( $value, $limit = 500 ) {
+		if ( strlen( $value ) <= $limit ) {
+			return $value;
+		}
+
+		return substr( $value, 0, $limit ) . '...';
+	}
+
+	/**
+	 * Determine whether an env/constant value is truthy.
+	 *
+	 * @param mixed $value Value to inspect.
+	 * @return bool Whether the value is truthy.
+	 */
+	private function prepare_diagnostic_truthy( $value ) {
+		if ( is_bool( $value ) ) {
+			return $value;
+		}
+
+		if ( is_int( $value ) ) {
+			return 0 !== $value;
+		}
+
+		if ( ! is_string( $value ) ) {
+			return ! empty( $value );
+		}
+
+		return in_array( strtolower( trim( $value ) ), array( '1', 'true', 'yes', 'on' ), true );
+	}
+
+	/**
+	 * JSON-encode a diagnostic payload.
+	 *
+	 * @param array $payload Diagnostic payload.
+	 * @return string Encoded payload.
+	 */
+	private function json_encode_diagnostic_payload( array $payload ) {
+		$json = json_encode( $payload );
+
+		if ( false === $json ) {
+			return '{"event":"prepare_object_argument","json_error":"encode_failed"}';
+		}
+
+		return $json;
 	}
 
 	/**
