@@ -5114,7 +5114,7 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 
 		$this->assertParityRows(
 			"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ENGINE, VERSION,
-				ROW_FORMAT, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, MAX_DATA_LENGTH,
+				ROW_FORMAT, AVG_ROW_LENGTH, DATA_LENGTH, MAX_DATA_LENGTH,
 				INDEX_LENGTH, DATA_FREE, `AUTO_INCREMENT`, UPDATE_TIME, CHECK_TIME,
 				TABLE_COLLATION, CHECKSUM, CREATE_OPTIONS, TABLE_COMMENT
 			FROM information_schema.tables
@@ -5225,7 +5225,6 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			'Engine',
 			'Version',
 			'Row_format',
-			'Rows',
 			'Avg_row_length',
 			'Data_length',
 			'Max_data_length',

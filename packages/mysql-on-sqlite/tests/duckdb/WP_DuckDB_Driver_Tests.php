@@ -11916,6 +11916,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			"INSERT INTO metadata (option_name, option_value)
 			VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')"
 		);
+		$driver->query(
+			"INSERT INTO plain (id, name)
+			VALUES (1, 'one'), (2, 'two'), (3, 'three')"
+		);
 
 		$rows = $driver->query(
 			"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ENGINE, VERSION,
@@ -11956,21 +11960,24 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array( 'metadata', 'plain' ), array_column( $rows, 'TABLE_NAME' ) );
 		$this->assertSame( 'MyISAM', $rows[0]['ENGINE'] );
 		$this->assertSame( 'Fixed', $rows[0]['ROW_FORMAT'] );
+		$this->assertSame( 2, $rows[0]['TABLE_ROWS'] );
 		$this->assertSame( 'utf8mb4_unicode_ci', $rows[0]['TABLE_COLLATION'] );
 		$this->assertSame( 'Options table', $rows[0]['TABLE_COMMENT'] );
 		$this->assertSame( 3, $rows[0]['AUTO_INCREMENT'] );
 		$this->assertRegExp( '/^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d$/', $rows[0]['CREATE_TIME'] );
 		$this->assertSame( 'InnoDB', $rows[1]['ENGINE'] );
 		$this->assertSame( 'Dynamic', $rows[1]['ROW_FORMAT'] );
+		$this->assertSame( 3, $rows[1]['TABLE_ROWS'] );
 		$this->assertSame( null, $rows[1]['AUTO_INCREMENT'] );
 
 		$aliased = $driver->query(
-			"SELECT t.TABLE_NAME, t.ENGINE, t.`AUTO_INCREMENT`
+			"SELECT t.TABLE_NAME, t.ENGINE, t.TABLE_ROWS, t.`AUTO_INCREMENT`
 			FROM information_schema.tables t
 			WHERE t.TABLE_SCHEMA = 'wp'
 			ORDER BY t.TABLE_NAME"
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( 'metadata', 'plain' ), array_column( $aliased, 'TABLE_NAME' ) );
+		$this->assertSame( array( 2, 3 ), array_column( $aliased, 'TABLE_ROWS' ) );
 		$this->assertSame( 3, $aliased[0]['AUTO_INCREMENT'] );
 
 		$internal = $driver->query(
@@ -11979,6 +11986,93 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			WHERE table_name LIKE '__wp_duckdb_%'"
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array(), $internal );
+	}
+
+	public function test_information_schema_tables_reports_current_row_counts_for_site_health(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wordpress_develop_tests',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE wptests_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL
+				)"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_terms (
+					term_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+					name VARCHAR(200) NOT NULL DEFAULT ''
+				)"
+		);
+		$driver->query(
+			"INSERT INTO wptests_options (option_name, option_value)
+				VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test'), ('blogname', 'Test')"
+		);
+		$driver->query( "INSERT INTO wptests_terms (name) VALUES ('one'), ('two')" );
+
+		$rows = $driver->query(
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows',
+					SUM(data_length + index_length) as 'bytes'
+				FROM information_schema.TABLES
+				WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+					AND TABLE_NAME IN ('wptests_options','wptests_terms')
+				GROUP BY TABLE_NAME
+				ORDER BY TABLE_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'table' => 'wptests_options',
+					'rows'  => 3,
+					'bytes' => 0,
+				),
+				array(
+					'table' => 'wptests_terms',
+					'rows'  => 2,
+					'bytes' => 0,
+				),
+			),
+			$rows
+		);
+
+		$driver->query( "INSERT INTO wptests_terms (name) VALUES ('three')" );
+		$this->assertSame(
+			array( array( 'TABLE_ROWS' => 3 ) ),
+			$driver->query(
+				"SELECT TABLE_ROWS
+					FROM information_schema.tables
+					WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+						AND TABLE_NAME = 'wptests_terms'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'CREATE TABLE row_shadow (id INT)' );
+		$driver->query( 'INSERT INTO row_shadow VALUES (1)' );
+		$driver->query( 'CREATE TEMPORARY TABLE row_shadow (id INT)' );
+		$driver->query( 'INSERT INTO row_shadow VALUES (1), (2)' );
+		$this->assertSame(
+			array( array( 'TABLE_ROWS' => 1 ) ),
+			$driver->query(
+				"SELECT TABLE_ROWS
+					FROM information_schema.tables
+					WHERE TABLE_SCHEMA = 'wordpress_develop_tests'
+						AND TABLE_NAME = 'row_shadow'"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$status = $driver->query( "SHOW TABLE STATUS LIKE 'row_shadow'" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $status );
+		$this->assertSame( 1, $status[0]['Rows'] );
+		$this->assertSame(
+			array( array( 'count' => 2 ) ),
+			$driver->query( 'SELECT COUNT(*) AS count FROM row_shadow' )->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_show_table_status_exposes_mysql_shaped_table_metadata(): void {
@@ -12001,6 +12095,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query(
 			"INSERT INTO metadata (option_name, option_value)
 			VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test')"
+		);
+		$driver->query(
+			"INSERT INTO plain (id, name)
+			VALUES (1, 'one'), (2, 'two'), (3, 'three')"
 		);
 
 		$status = $driver->query( 'SHOW TABLE STATUS FROM wp' );
@@ -12038,7 +12136,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'MyISAM', $rows[0]['Engine'] );
 		$this->assertSame( 10, $rows[0]['Version'] );
 		$this->assertSame( 'Fixed', $rows[0]['Row_format'] );
-		$this->assertSame( 0, $rows[0]['Rows'] );
+		$this->assertSame( 2, $rows[0]['Rows'] );
 		$this->assertSame( 0, $rows[0]['Avg_row_length'] );
 		$this->assertSame( 0, $rows[0]['Data_length'] );
 		$this->assertSame( 0, $rows[0]['Max_data_length'] );
@@ -12054,10 +12152,12 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 'Options table', $rows[0]['Comment'] );
 		$this->assertSame( 'InnoDB', $rows[1]['Engine'] );
 		$this->assertSame( 'Dynamic', $rows[1]['Row_format'] );
+		$this->assertSame( 3, $rows[1]['Rows'] );
 		$this->assertSame( null, $rows[1]['Auto_increment'] );
 
 		$like = $driver->query( "SHOW TABLE STATUS IN wp LIKE 'plain'" )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( 'plain' ), array_column( $like, 'Name' ) );
+		$this->assertSame( 3, $like[0]['Rows'] );
 
 		$auto_increment = $driver->query( 'SHOW TABLE STATUS WHERE `Auto_increment` > 2' )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( 'metadata' ), array_column( $auto_increment, 'Name' ) );

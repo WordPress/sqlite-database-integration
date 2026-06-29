@@ -25900,11 +25900,13 @@ class WP_DuckDB_Driver {
 	 */
 	private function information_schema_table_rows(): array {
 		$metadata_by_table = $this->table_metadata_by_table();
+		$table_names       = $this->user_table_names();
+		$table_row_counts  = $this->table_row_counts( $table_names );
 		$rows              = array();
 
-		foreach ( $this->user_table_names() as $table_name ) {
+		foreach ( $table_names as $table_name ) {
 			$metadata = $metadata_by_table[ $table_name ] ?? $this->fallback_table_metadata( $table_name );
-			$rows[]   = $this->information_schema_table_row( $table_name, $metadata );
+			$rows[]   = $this->information_schema_table_row( $table_name, $metadata, false, $table_row_counts[ $table_name ] ?? 0 );
 		}
 
 		return $rows;
@@ -25915,9 +25917,11 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string              $table_name Table name.
 	 * @param array<string,mixed> $metadata   Table metadata.
+	 * @param bool                $temporary  Whether the target is a temporary table.
+	 * @param int                 $table_rows Current row count.
 	 * @return array<string,mixed>
 	 */
-	private function information_schema_table_row( string $table_name, array $metadata, bool $temporary = false ): array {
+	private function information_schema_table_row( string $table_name, array $metadata, bool $temporary = false, int $table_rows = 0 ): array {
 		return array(
 			'TABLE_CATALOG'   => 'def',
 			'TABLE_SCHEMA'    => $this->database,
@@ -25926,7 +25930,7 @@ class WP_DuckDB_Driver {
 			'ENGINE'          => $metadata['engine'],
 			'VERSION'         => 10,
 			'ROW_FORMAT'      => $metadata['row_format'],
-			'TABLE_ROWS'      => 0,
+			'TABLE_ROWS'      => $table_rows,
 			'AVG_ROW_LENGTH'  => 0,
 			'DATA_LENGTH'     => 0,
 			'MAX_DATA_LENGTH' => 0,
@@ -25940,6 +25944,68 @@ class WP_DuckDB_Driver {
 			'CHECKSUM'        => null,
 			'CREATE_OPTIONS'  => $metadata['create_options'],
 			'TABLE_COMMENT'   => $metadata['table_comment'],
+		);
+	}
+
+	/**
+	 * Count persistent DuckDB user table rows.
+	 *
+	 * @param string[] $table_names Table names.
+	 * @return array<string,int> Row counts keyed by table name.
+	 */
+	private function table_row_counts( array $table_names ): array {
+		if ( count( $table_names ) === 0 ) {
+			return array();
+		}
+
+		$catalog_schema = $this->duckdb_current_catalog_schema();
+		$branches       = array();
+		foreach ( $table_names as $table_name ) {
+			$branches[] = 'SELECT '
+				. $this->connection->quote( $table_name )
+				. ' AS table_name, COUNT(*) AS table_rows FROM '
+				. $this->connection->quote_identifier( $catalog_schema['catalog'] )
+				. '.'
+				. $this->connection->quote_identifier( $catalog_schema['schema'] )
+				. '.'
+				. $this->connection->quote_identifier( $table_name );
+		}
+
+		$stmt = $this->execute_duckdb_query(
+			implode( ' UNION ALL ', $branches ),
+			'Failed to inspect DuckDB table row counts'
+		);
+
+		$counts = array();
+		foreach ( $stmt->fetchAll( PDO::FETCH_ASSOC ) as $row ) {
+			$counts[ (string) $row['table_name'] ] = (int) $row['table_rows'];
+		}
+
+		return $counts;
+	}
+
+	/**
+	 * Read the current DuckDB catalog and schema names.
+	 *
+	 * @return array{catalog:string,schema:string}
+	 */
+	private function duckdb_current_catalog_schema(): array {
+		$stmt = $this->execute_duckdb_query(
+			'SELECT current_database() AS catalog, current_schema() AS schema',
+			'Failed to inspect DuckDB catalog and schema'
+		);
+
+		$row = $stmt->fetch( PDO::FETCH_ASSOC );
+		if ( false === $row ) {
+			return array(
+				'catalog' => 'memory',
+				'schema'  => 'main',
+			);
+		}
+
+		return array(
+			'catalog' => (string) $row['catalog'],
+			'schema'  => (string) $row['schema'],
 		);
 	}
 
