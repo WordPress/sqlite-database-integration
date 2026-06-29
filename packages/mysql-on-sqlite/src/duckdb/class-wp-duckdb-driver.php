@@ -1255,11 +1255,15 @@ class WP_DuckDB_Driver {
 		$rewrite_information_schema_check_constraints       = $this->uses_information_schema_check_constraints( $sql_tokens );
 		$information_schema_tables_refresh_names            = null;
 		$information_schema_columns_refresh_names           = null;
+		$information_schema_statistics_refresh_names        = null;
 		if ( $rewrite_information_schema_tables ) {
 			$information_schema_tables_refresh_names = $this->bounded_information_schema_tables_select_table_names( $sql_tokens );
 		}
 		if ( $rewrite_information_schema_columns ) {
 			$information_schema_columns_refresh_names = $this->bounded_information_schema_columns_select_table_names( $sql_tokens );
+		}
+		if ( $rewrite_information_schema_statistics ) {
+			$information_schema_statistics_refresh_names = $this->bounded_information_schema_statistics_select_table_names( $sql_tokens );
 		}
 		if ( null === $group_by_expansion && $rewrite_information_schema_tables ) {
 			$group_by_expansion = $this->information_schema_tables_group_by_expansion( $sql_tokens );
@@ -1282,7 +1286,7 @@ class WP_DuckDB_Driver {
 			$this->refresh_information_schema_columns_table( $information_schema_columns_refresh_names );
 		}
 		if ( $rewrite_information_schema_statistics ) {
-			$this->refresh_information_schema_statistics_table();
+			$this->refresh_information_schema_statistics_table( $information_schema_statistics_refresh_names );
 		}
 		if ( $rewrite_information_schema_table_constraints ) {
 			$this->refresh_information_schema_table_constraints_table();
@@ -4131,6 +4135,266 @@ class WP_DuckDB_Driver {
 			|| 0 === strcasecmp( $qualifier, $table['alias'] )
 			|| 0 === strcasecmp( $qualifier, 'columns' )
 			|| 0 === strcasecmp( $qualifier, self::INFO_SCHEMA_COLUMNS_TABLE );
+	}
+
+	/**
+	 * Return a bounded information_schema.statistics refresh set when a SELECT proves it.
+	 *
+	 * @param WP_Parser_Token[] $tokens SELECT token stream.
+	 * @return string[]|null Requested TABLE_NAME literals, empty for proven no rows, or null for full refresh.
+	 */
+	private function bounded_information_schema_statistics_select_table_names( array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+		if ( null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL ) ) {
+			return null;
+		}
+		if ( 1 !== $this->information_schema_statistics_reference_count( $tokens ) ) {
+			return null;
+		}
+
+		$from_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::FROM_SYMBOL );
+		if ( null === $from_index ) {
+			return null;
+		}
+
+		$table_tokens = array_slice(
+			$tokens,
+			$from_index + 1,
+			$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
+		);
+		$table        = $this->parse_information_schema_statistics_from_clause( $table_tokens );
+		if ( null === $table ) {
+			return null;
+		}
+
+		$where_index = $this->find_top_level_token_index( $tokens, $from_index + 1, WP_MySQL_Lexer::WHERE_SYMBOL );
+		if ( null === $where_index ) {
+			return null;
+		}
+
+		$where_end    = $this->simple_select_where_clause_end( $tokens, $where_index + 1 );
+		$where_tokens = array_slice( $tokens, $where_index + 1, $where_end - $where_index - 1 );
+		$predicates   = $this->split_top_level_and_predicates_without_or( $where_tokens );
+		if ( null === $predicates ) {
+			return null;
+		}
+
+		$table_names = array();
+		$seen        = array();
+		foreach ( $predicates as $predicate ) {
+			$filter = $this->parse_information_schema_statistics_filter_predicate( $predicate, $table );
+			if ( null === $filter ) {
+				continue;
+			}
+
+			if ( 'TABLE_SCHEMA' === $filter['column'] ) {
+				$matches_current = false;
+				foreach ( $filter['values'] as $schema ) {
+					if ( 0 === strcasecmp( $schema, $this->database ) ) {
+						$matches_current = true;
+						break;
+					}
+				}
+				if ( ! $matches_current ) {
+					return array();
+				}
+				continue;
+			}
+
+			foreach ( $filter['values'] as $table_name ) {
+				$key = strtolower( $table_name );
+				if ( isset( $seen[ $key ] ) ) {
+					continue;
+				}
+				$seen[ $key ]  = true;
+				$table_names[] = $table_name;
+			}
+		}
+
+		return count( $table_names ) > 0 ? $table_names : null;
+	}
+
+	/**
+	 * Count information_schema.statistics table references in a SELECT.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return int Reference count.
+	 */
+	private function information_schema_statistics_reference_count( array $tokens ): int {
+		$count = 0;
+		for ( $index = 0; $index < count( $tokens ); ++$index ) {
+			$reference_length = $this->information_schema_statistics_reference_length( $tokens, $index );
+			if ( null === $reference_length ) {
+				continue;
+			}
+
+			++$count;
+			$index += $reference_length - 1;
+		}
+
+		return $count;
+	}
+
+	/**
+	 * Parse the FROM clause supported by bounded information_schema.statistics refresh.
+	 *
+	 * @param WP_Parser_Token[] $tokens FROM clause tokens.
+	 * @return array{alias:string}|null Parsed table reference, or null when unsupported.
+	 */
+	private function parse_information_schema_statistics_from_clause( array $tokens ): ?array {
+		if (
+			count( $tokens ) === 0
+			|| $this->contains_top_level_token_id( $tokens, WP_MySQL_Lexer::COMMA_SYMBOL )
+			|| $this->contains_top_level_join_token( $tokens )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[0]->id
+		) {
+			return null;
+		}
+
+		$reference_length = $this->information_schema_statistics_reference_length( $tokens, 0 );
+		if ( null === $reference_length ) {
+			return null;
+		}
+
+		$index = $reference_length;
+		$alias = self::INFO_SCHEMA_STATISTICS_TABLE;
+		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::AS_SYMBOL === $tokens[ $index ]->id ) {
+			++$index;
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] ?? null );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		} elseif ( isset( $tokens[ $index ] ) ) {
+			$parsed_alias = $this->metadata_identifier_value( $tokens[ $index ] );
+			if ( null === $parsed_alias ) {
+				return null;
+			}
+			$alias = $parsed_alias;
+			++$index;
+		}
+
+		if ( count( $tokens ) !== $index ) {
+			return null;
+		}
+
+		return array(
+			'alias' => $alias,
+		);
+	}
+
+	/**
+	 * Parse one safe information_schema.statistics TABLE_NAME/TABLE_SCHEMA predicate.
+	 *
+	 * @param WP_Parser_Token[]   $tokens Predicate tokens.
+	 * @param array{alias:string} $table  Parsed information_schema.statistics source.
+	 * @return array{column:string,values:string[]}|null Parsed filter, or null when unsupported.
+	 */
+	private function parse_information_schema_statistics_filter_predicate( array $tokens, array $table ): ?array {
+		$equals_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+		if ( null !== $equals_index ) {
+			$left_tokens  = array_slice( $tokens, 0, $equals_index );
+			$right_tokens = array_slice( $tokens, $equals_index + 1 );
+			$column       = $this->parse_information_schema_statistics_filter_column( $left_tokens, $table );
+			$value        = $this->information_schema_tables_filter_string_literal( $right_tokens );
+			if ( null !== $column && null !== $value ) {
+				return array(
+					'column' => $column,
+					'values' => array( $value ),
+				);
+			}
+
+			$column = $this->parse_information_schema_statistics_filter_column( $right_tokens, $table );
+			$value  = $this->information_schema_tables_filter_string_literal( $left_tokens );
+			if ( null !== $column && null !== $value ) {
+				return array(
+					'column' => $column,
+					'values' => array( $value ),
+				);
+			}
+
+			return null;
+		}
+
+		$in_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::IN_SYMBOL );
+		if (
+			null === $in_index
+			|| ! isset( $tokens[ $in_index + 2 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $in_index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$column = $this->parse_information_schema_statistics_filter_column( array_slice( $tokens, 0, $in_index ), $table );
+		if ( null === $column ) {
+			return null;
+		}
+
+		$close_index = $this->matching_parenthesis_index( $tokens, $in_index + 1 );
+		if ( null === $close_index || count( $tokens ) !== $close_index + 1 ) {
+			return null;
+		}
+
+		$values = array();
+		foreach ( $this->split_top_level_comma_items( array_slice( $tokens, $in_index + 2, $close_index - $in_index - 2 ) ) as $item ) {
+			$value = $this->information_schema_tables_filter_string_literal( $item );
+			if ( null === $value ) {
+				return null;
+			}
+
+			$values[] = $value;
+		}
+
+		return count( $values ) > 0
+			? array(
+				'column' => $column,
+				'values' => $values,
+			)
+			: null;
+	}
+
+	/**
+	 * Parse a supported information_schema.statistics filter column.
+	 *
+	 * @param WP_Parser_Token[]   $tokens Column tokens.
+	 * @param array{alias:string} $table  Parsed information_schema.statistics source.
+	 * @return string|null Canonical column name, or null when unsupported.
+	 */
+	private function parse_information_schema_statistics_filter_column( array $tokens, array $table ): ?string {
+		$column = $this->parse_simple_select_column_reference( $tokens );
+		if (
+			null === $column
+			|| $column['wildcard']
+			|| ! $this->information_schema_statistics_column_qualifier_matches_table( $column['qualifier'], $table )
+		) {
+			return null;
+		}
+
+		if ( 0 === strcasecmp( $column['column_name'], 'TABLE_NAME' ) ) {
+			return 'TABLE_NAME';
+		}
+		if ( 0 === strcasecmp( $column['column_name'], 'TABLE_SCHEMA' ) ) {
+			return 'TABLE_SCHEMA';
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a bounded-refresh column belongs to information_schema.statistics.
+	 *
+	 * @param string|null         $qualifier Optional column qualifier.
+	 * @param array{alias:string} $table     Parsed information_schema table reference.
+	 * @return bool Whether the qualifier matches the table reference.
+	 */
+	private function information_schema_statistics_column_qualifier_matches_table( ?string $qualifier, array $table ): bool {
+		return null === $qualifier
+			|| 0 === strcasecmp( $qualifier, $table['alias'] )
+			|| 0 === strcasecmp( $qualifier, 'statistics' )
+			|| 0 === strcasecmp( $qualifier, self::INFO_SCHEMA_STATISTICS_TABLE );
 	}
 
 	/**
@@ -27479,8 +27743,8 @@ class WP_DuckDB_Driver {
 	/**
 	 * Refresh a temporary MySQL-shaped information_schema.statistics table.
 	 */
-	private function refresh_information_schema_statistics_table(): void {
-		$rows        = $this->information_schema_statistics_rows();
+	private function refresh_information_schema_statistics_table( ?array $table_names = null ): void {
+		$rows        = $this->information_schema_statistics_rows( $table_names );
 		$definitions = $this->information_schema_statistics_definitions();
 		$columns     = array_keys( $definitions );
 
@@ -27551,11 +27815,15 @@ class WP_DuckDB_Driver {
 	/**
 	 * Build MySQL-shaped information_schema.statistics rows.
 	 *
+	 * @param string[]|null $requested_table_names Optional requested table names.
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function information_schema_statistics_rows(): array {
-		$rows = array();
-		foreach ( $this->user_table_names() as $table_name ) {
+	private function information_schema_statistics_rows( ?array $requested_table_names = null ): array {
+		$table_names = null === $requested_table_names
+			? $this->user_table_names()
+			: $this->resolve_persistent_user_table_names( $requested_table_names );
+		$rows        = array();
+		foreach ( $table_names as $table_name ) {
 			$nullable_by_column = $this->statistics_nullable_by_column( $table_name );
 			foreach ( $this->index_rows_for_table( $table_name ) as $index_row ) {
 				$rows[] = $this->information_schema_statistics_row( $index_row, $nullable_by_column );

@@ -10957,10 +10957,185 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$internal = $driver->query(
 			"SELECT table_name
-			FROM information_schema.statistics
-			WHERE table_name LIKE '__wp_duckdb_%'"
+				FROM information_schema.statistics
+				WHERE table_name LIKE '__wp_duckdb_%'"
 		)->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array(), $internal );
+	}
+
+	public function test_information_schema_statistics_exact_name_materializes_only_matching_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE infostatsexactplain (id INT NOT NULL, name VARCHAR(20), KEY name_key (name))' );
+		$driver->query( 'CREATE TABLE infostatsexactnoise (noise_id INT NOT NULL, marker VARCHAR(20), KEY marker_key (marker))' );
+		$driver->query( 'CREATE TABLE infostatsexactother (other_id INT NOT NULL, KEY other_key (other_id))' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT INDEX_NAME, COLUMN_NAME
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'infostatsexactplain'
+				ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'name_key' ), array_column( $rows, 'INDEX_NAME' ) );
+		$this->assertSame( array( 'name' ), array_column( $rows, 'COLUMN_NAME' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactplain' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactnoise' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactother' ) );
+
+		$queries = array();
+		$missing = $driver->query(
+			"SELECT INDEX_NAME
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'infostatsexactmissing'
+				ORDER BY INDEX_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $missing );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactplain' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactnoise' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactother' ) );
+
+		$queries      = array();
+		$wrong_schema = $driver->query(
+			"SELECT INDEX_NAME
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'not_wp'
+					AND TABLE_NAME = 'infostatsexactplain'
+				ORDER BY INDEX_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $wrong_schema );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactplain' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactnoise' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsexactother' ) );
+
+		$driver->query( 'CREATE TABLE infostatsin_options (option_id INT, option_name VARCHAR(191), KEY option_name_key (option_name))' );
+		$driver->query( 'CREATE TABLE infostatsin_terms (term_id INT, name VARCHAR(200), KEY name_key (name))' );
+		$driver->query( 'CREATE TABLE infostatsin_noise (noise_id INT, KEY noise_key (noise_id))' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME
+				FROM information_schema.statistics AS s
+				WHERE s.TABLE_SCHEMA = 'wp'
+					AND s.TABLE_NAME IN ('infostatsin_options','infostatsin_terms')
+				ORDER BY s.TABLE_NAME, s.INDEX_NAME, s.SEQ_IN_INDEX"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'infostatsin_options',
+				'infostatsin_terms',
+			),
+			array_column( $rows, 'TABLE_NAME' )
+		);
+		$this->assertSame( array( 'option_name_key', 'name_key' ), array_column( $rows, 'INDEX_NAME' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsin_options' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsin_terms' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsin_noise' ) );
+	}
+
+	public function test_information_schema_statistics_wildcard_and_complex_predicates_fall_back_to_full_refresh(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE infostatswildplain (id INT, name VARCHAR(20), KEY name_key (name))' );
+		$driver->query( 'CREATE TABLE infostatswildnoise (noise_id INT, marker VARCHAR(20), KEY marker_key (marker))' );
+		$driver->query( 'CREATE TABLE infostatswildother (other_id INT, KEY other_key (other_id))' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, INDEX_NAME
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME LIKE 'infostatswild%'
+				ORDER BY TABLE_NAME, INDEX_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'infostatswildnoise',
+				'infostatswildother',
+				'infostatswildplain',
+			),
+			array_column( $rows, 'TABLE_NAME' )
+		);
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatswildplain' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatswildnoise' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatswildother' ) );
+
+		$driver->query( 'CREATE TABLE infostatsfuncplain (id INT, name VARCHAR(20), KEY name_key (name))' );
+		$driver->query( 'CREATE TABLE infostatsfuncnoise (noise_id INT, marker VARCHAR(20), KEY marker_key (marker))' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, INDEX_NAME
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND LOWER(TABLE_NAME) = 'infostatsfuncplain'
+				ORDER BY TABLE_NAME, INDEX_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'infostatsfuncplain' ), array_column( $rows, 'TABLE_NAME' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsfuncplain' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsfuncnoise' ) );
+
+		$driver->query( 'CREATE TABLE infostatsorplain (id INT, name VARCHAR(20), KEY name_key (name))' );
+		$driver->query( 'CREATE TABLE infostatsornoise (noise_id INT, marker VARCHAR(20), KEY marker_key (marker))' );
+		$driver->query( 'CREATE TABLE infostatsorother (other_id INT, KEY other_key (other_id))' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, INDEX_NAME
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND (TABLE_NAME = 'infostatsorplain' OR TABLE_NAME = 'infostatsornoise')
+				ORDER BY TABLE_NAME, INDEX_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'infostatsornoise',
+				'infostatsorplain',
+			),
+			array_column( $rows, 'TABLE_NAME' )
+		);
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsorplain' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsornoise' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsorother' ) );
 	}
 
 	public function test_information_schema_refresh_inserts_are_batched(): void {
