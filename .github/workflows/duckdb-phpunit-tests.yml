@@ -42,6 +42,12 @@ on:
       - 'packages/plugin-sqlite-database-integration/wp-includes/db.php'
       - 'packages/plugin-sqlite-database-integration/wp-includes/duckdb/**'
   workflow_dispatch:
+    inputs:
+      run_full_wp_phpunit:
+        description: 'Run the full WordPress PHPUnit suite with DuckDB after the fast-fail gate'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -197,6 +203,7 @@ jobs:
         run: node .github/workflows/wp-tests-phpunit-run.js
 
       - name: Run full WordPress PHPUnit tests with DuckDB
+        if: ${{ success() && (github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && inputs.run_full_wp_phpunit == true)) }}
         timeout-minutes: 25
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
@@ -217,6 +224,12 @@ jobs:
           WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-results.xml --verbose
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
+
+      - name: Skip full WordPress PHPUnit tests with DuckDB
+        if: ${{ success() && github.ref != 'refs/heads/trunk' && (github.event_name != 'workflow_dispatch' || inputs.run_full_wp_phpunit != true) }}
+        run: |
+          echo "::notice title=DuckDB full WordPress PHPUnit skipped::Full WordPress PHPUnit / DuckDB is skipped for this bounded CI run."
+          echo "Run this workflow manually with run_full_wp_phpunit=true, or push to trunk, to execute the full suite."
 
       - name: Dump WordPress DuckDB failure diagnostics
         if: failure() || cancelled()
