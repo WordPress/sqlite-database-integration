@@ -1074,6 +1074,31 @@ function getDuckDBChildDatabaseCopyPhp() {
 \t\tif ( defined( 'DB_ENGINE' ) && 'duckdb' !== strtolower( (string) DB_ENGINE ) ) {
 \t\t\treturn;
 \t\t}
+\t\t$existing_copy = isset( $GLOBALS['wp_sqlite_duckdb_child_database_copy'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_database_copy'] )
+\t\t\t? $GLOBALS['wp_sqlite_duckdb_child_database_copy']
+\t\t\t: array();
+\t\t$existing_duckdb_file = isset( $existing_copy['duckdb_file'] ) && is_string( $existing_copy['duckdb_file'] )
+\t\t\t? $existing_copy['duckdb_file']
+\t\t\t: null;
+\t\t$existing_target_path = isset( $existing_copy['target_path'] ) && is_string( $existing_copy['target_path'] )
+\t\t\t? $existing_copy['target_path']
+\t\t\t: null;
+\t\tif (
+\t\t\tisset( $existing_copy['copy_success'] ) &&
+\t\t\ttrue === $existing_copy['copy_success'] &&
+\t\t\tdefined( 'DUCKDB_FILE' ) &&
+\t\t\tis_string( $existing_duckdb_file ) &&
+\t\t\tis_string( $existing_target_path ) &&
+\t\t\tis_file( $existing_target_path ) &&
+\t\t\tDUCKDB_FILE === $existing_duckdb_file
+\t\t) {
+\t\t\twp_sqlite_duckdb_child_database_copy_record(
+\t\t\t\tarray(
+\t\t\t\t\t'reused_existing_copy' => true,
+\t\t\t\t)
+\t\t\t);
+\t\t\treturn;
+\t\t}
 \t\tif ( defined( 'FQDUCKDB' ) ) {
 \t\t\twp_sqlite_duckdb_child_database_copy_record(
 \t\t\t\tarray(
