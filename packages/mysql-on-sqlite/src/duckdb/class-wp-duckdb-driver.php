@@ -1500,6 +1500,16 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a table name matches WordPress' comments-table naming convention.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table is the WordPress comments table.
+	 */
+	private function is_wordpress_comments_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/(?:^|_)comments$/i', $table_name );
+	}
+
+	/**
 	 * Parse the exact WHERE post_type = 'attachment' predicate for the MIME rewrite.
 	 *
 	 * @param WP_Parser_Token[]                                $tokens WHERE expression tokens.
@@ -17204,6 +17214,12 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$datetime_iso_comparison = $this->translate_wordpress_datetime_iso_literal_comparison( $tokens, $index );
+			if ( null !== $datetime_iso_comparison ) {
+				$pieces[] = $datetime_iso_comparison;
+				continue;
+			}
+
 			if ( $rewrite_text_value_numeric_literal_comparisons ) {
 				$text_value_comparison = $this->translate_text_value_numeric_literal_comparison( $tokens, $index );
 				if ( null !== $text_value_comparison ) {
@@ -22307,6 +22323,268 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Translate WordPress REST ISO datetime literal comparisons.
+	 *
+	 * DuckDB does not compare WordPress DATETIME text columns directly against
+	 * ISO-8601 `T...Z` literals the same way SQLite/MySQL do. Cast only known
+	 * WordPress posts/comments datetime columns and ISO literals for this REST
+	 * filter shape.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated comparison, or null when the pattern does not match.
+	 */
+	private function translate_wordpress_datetime_iso_literal_comparison( array $tokens, int &$index ): ?string {
+		if ( ! $this->is_top_level_token_offset( $tokens, $index ) ) {
+			return null;
+		}
+
+		$table_context = $this->wordpress_datetime_comparison_table_context( $tokens );
+		if ( null === $table_context ) {
+			return null;
+		}
+
+		$left_operand = $this->wordpress_datetime_comparison_operand_sql( $tokens, $index, $table_context );
+		if (
+			null !== $left_operand
+			&& isset( $tokens[ $left_operand['next_index'] + 1 ] )
+			&& $this->is_numeric_comparison_operator_token( $tokens[ $left_operand['next_index'] ] )
+			&& $this->is_iso_datetime_string_literal_token( $tokens[ $left_operand['next_index'] + 1 ] )
+			&& (
+				! isset( $tokens[ $left_operand['next_index'] + 2 ] )
+				|| $this->is_wordpress_datetime_comparison_boundary_token( $tokens[ $left_operand['next_index'] + 2 ] )
+			)
+		) {
+			$operator_index = $left_operand['next_index'];
+			$literal_index  = $operator_index + 1;
+			$index          = $literal_index;
+			return $this->wordpress_datetime_iso_literal_comparison_sql(
+				$left_operand['sql'],
+				$tokens[ $operator_index ],
+				$tokens[ $literal_index ],
+				true
+			);
+		}
+
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& $this->is_iso_datetime_string_literal_token( $tokens[ $index ] )
+			&& $this->is_numeric_comparison_operator_token( $tokens[ $index + 1 ] )
+		) {
+			$right_operand = $this->wordpress_datetime_comparison_operand_sql( $tokens, $index + 2, $table_context );
+			if ( null !== $right_operand ) {
+				if (
+					isset( $tokens[ $right_operand['next_index'] ] )
+					&& ! $this->is_wordpress_datetime_comparison_boundary_token( $tokens[ $right_operand['next_index'] ] )
+				) {
+					return null;
+				}
+
+				$operator_token = $tokens[ $index + 1 ];
+				$literal_token  = $tokens[ $index ];
+				$index          = $right_operand['next_index'] - 1;
+				return $this->wordpress_datetime_iso_literal_comparison_sql(
+					$right_operand['sql'],
+					$operator_token,
+					$literal_token,
+					false
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token can end a WordPress datetime ISO literal predicate.
+	 *
+	 * @param WP_Parser_Token $token Token.
+	 * @return bool Whether the token is a predicate boundary.
+	 */
+	private function is_wordpress_datetime_comparison_boundary_token( WP_Parser_Token $token ): bool {
+		return in_array(
+			$token->id,
+			array(
+				WP_MySQL_Lexer::AND_SYMBOL,
+				WP_MySQL_Lexer::XOR_SYMBOL,
+				WP_MySQL_Lexer::OR_SYMBOL,
+				WP_MySQL_Lexer::CLOSE_PAR_SYMBOL,
+				WP_MySQL_Lexer::GROUP_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::LIMIT_SYMBOL,
+				WP_MySQL_Lexer::ORDER_SYMBOL,
+			),
+			true
+		);
+	}
+
+	/**
+	 * Resolve the simple WordPress posts/comments table context for REST datetime filters.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return array{table:array{table_name:string,alias:string,temporary:bool},kind:string}|null Table context, or null when unsupported.
+	 */
+	private function wordpress_datetime_comparison_table_context( array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+		if ( null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL ) ) {
+			return null;
+		}
+
+		$from_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::FROM_SYMBOL );
+		if ( null === $from_index ) {
+			return null;
+		}
+
+		$table = $this->parse_unresolved_simple_select_table_reference(
+			array_slice(
+				$tokens,
+				$from_index + 1,
+				$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
+			)
+		);
+		if ( null === $table ) {
+			return null;
+		}
+
+		if ( $this->is_wordpress_posts_table_name( $table['table_name'] ) ) {
+			return array(
+				'table' => $table,
+				'kind'  => 'posts',
+			);
+		}
+
+		if ( $this->is_wordpress_comments_table_name( $table['table_name'] ) ) {
+			return array(
+				'table' => $table,
+				'kind'  => 'comments',
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check whether a token offset is at top-level parenthesis depth.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $target Target token offset.
+	 * @return bool Whether the token is at top-level depth.
+	 */
+	private function is_top_level_token_offset( array $tokens, int $target ): bool {
+		$depth = 0;
+		for ( $index = 0; $index < $target; ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+				continue;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				--$depth;
+			}
+		}
+
+		return 0 === $depth;
+	}
+
+	/**
+	 * Build a WordPress datetime operand SQL fragment.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index.
+	 * @param array{table:array{table_name:string,alias:string,temporary:bool},kind:string} $table_context Simple table context.
+	 * @return array{sql:string,next_index:int}|null Operand SQL and next token index, or null when not matched.
+	 */
+	private function wordpress_datetime_comparison_operand_sql( array $tokens, int $index, array $table_context ): ?array {
+		if ( ! isset( $tokens[ $index ] ) || $this->is_non_identifier_token( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		if (
+			isset( $tokens[ $index + 2 ] )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
+			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
+		) {
+			$column_name = $this->identifier_value( $tokens[ $index + 2 ] );
+			if (
+				! $this->is_wordpress_datetime_comparison_column_for_table( $column_name, $table_context['kind'] )
+				|| ! $this->simple_select_column_qualifier_matches_table( $this->identifier_value( $tokens[ $index ] ), $table_context['table'] )
+			) {
+				return null;
+			}
+
+			return array(
+				'sql'        => $this->connection->quote_identifier( $this->identifier_value( $tokens[ $index ] ) )
+					. '.'
+					. $this->connection->quote_identifier( $column_name ),
+				'next_index' => $index + 3,
+			);
+		}
+
+		$column_name = $this->identifier_value( $tokens[ $index ] );
+		if ( ! $this->is_wordpress_datetime_comparison_column_for_table( $column_name, $table_context['kind'] ) ) {
+			return null;
+		}
+
+		return array(
+			'sql'        => $this->connection->quote_identifier( $column_name ),
+			'next_index' => $index + 1,
+		);
+	}
+
+	/**
+	 * Build a TRY_CAST comparison for a WordPress datetime column and ISO literal.
+	 *
+	 * @param string          $column_sql  Datetime column SQL.
+	 * @param WP_Parser_Token $operator    Comparison operator token.
+	 * @param WP_Parser_Token $literal     ISO datetime literal token.
+	 * @param bool            $column_left Whether the column operand is on the left.
+	 * @return string Translated comparison SQL.
+	 */
+	private function wordpress_datetime_iso_literal_comparison_sql( string $column_sql, WP_Parser_Token $operator, WP_Parser_Token $literal, bool $column_left ): string {
+		$literal_sql = $this->connection->quote( $this->token_value( $literal ) );
+		$column_sql  = 'TRY_CAST(' . $column_sql . ' AS TIMESTAMP)';
+		$literal_sql = 'TRY_CAST(' . $literal_sql . ' AS TIMESTAMP)';
+
+		return ( $column_left ? $column_sql : $literal_sql )
+			. ' '
+			. $operator->get_bytes()
+			. ' '
+			. ( $column_left ? $literal_sql : $column_sql );
+	}
+
+	/**
+	 * Check whether a column is a WordPress posts/comments datetime column.
+	 *
+	 * @param string $column_name Column name.
+	 * @param string $table_kind  WordPress table kind.
+	 * @return bool Whether the column should use ISO datetime comparison parity.
+	 */
+	private function is_wordpress_datetime_comparison_column_for_table( string $column_name, string $table_kind ): bool {
+		if ( 'comments' === $table_kind ) {
+			return in_array(
+				strtolower( $column_name ),
+				array(
+					'comment_date',
+					'comment_date_gmt',
+				),
+				true
+			);
+		}
+
+		return in_array(
+			strtolower( $column_name ),
+			array(
+				'post_date',
+				'post_date_gmt',
+				'post_modified',
+				'post_modified_gmt',
+			),
+			true
+		);
+	}
+
+	/**
 	 * Translate WordPress text-value string comparisons against integer literals.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
@@ -22704,6 +22982,17 @@ class WP_DuckDB_Driver {
 	private function is_string_literal_token( $token ): bool {
 		return $token instanceof WP_Parser_Token
 			&& ( WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id || WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id );
+	}
+
+	/**
+	 * Check whether a token is an ISO-8601 datetime quoted string literal.
+	 *
+	 * @param WP_Parser_Token|null $token Token.
+	 * @return bool Whether the token is a supported ISO datetime literal.
+	 */
+	private function is_iso_datetime_string_literal_token( $token ): bool {
+		return $this->is_string_literal_token( $token )
+			&& 1 === preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?$/', $this->token_value( $token ) );
 	}
 
 	/**

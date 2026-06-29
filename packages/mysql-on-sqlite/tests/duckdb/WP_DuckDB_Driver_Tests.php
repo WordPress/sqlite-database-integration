@@ -2228,6 +2228,68 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringContainsString( "CAST(strftime(TRY_CAST((post_date) AS TIMESTAMP), '%H.%M') AS DOUBLE) AS hm", $sql );
 	}
 
+	public function test_rest_iso_datetime_literal_comparisons_cast_known_datetime_columns(): void {
+		$driver    = $this->new_byte_safe_duckdb_driver();
+		$tokenize  = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$translate = new ReflectionMethod( WP_DuckDB_Driver::class, 'translate_tokens_to_duckdb_sql' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$translate->setAccessible( true );
+		}
+
+		$sql = $translate->invoke(
+			$driver,
+			$tokenize->invoke(
+				$driver,
+				"SELECT ID FROM wp_posts
+				WHERE post_date_gmt >= '2020-01-02T00:00:00Z'
+					AND post_date_gmt <= '2020-01-02T23:59:59Z'"
+			)
+		);
+		$this->assertStringContainsString( 'TRY_CAST("post_date_gmt" AS TIMESTAMP) >= TRY_CAST(\'2020-01-02T00:00:00Z\' AS TIMESTAMP)', $sql );
+		$this->assertStringContainsString( 'TRY_CAST("post_date_gmt" AS TIMESTAMP) <= TRY_CAST(\'2020-01-02T23:59:59Z\' AS TIMESTAMP)', $sql );
+
+		$sql = $translate->invoke(
+			$driver,
+			$tokenize->invoke(
+				$driver,
+				"SELECT p.ID FROM wp_posts AS p
+				WHERE p.post_modified_gmt <= '2020-01-02T23:59:59Z'"
+			)
+		);
+		$this->assertStringContainsString( 'TRY_CAST("p"."post_modified_gmt" AS TIMESTAMP) <= TRY_CAST(\'2020-01-02T23:59:59Z\' AS TIMESTAMP)', $sql );
+
+		$sql = $translate->invoke(
+			$driver,
+			$tokenize->invoke(
+				$driver,
+				"SELECT comment_ID FROM wp_comments
+				WHERE '2020-01-02T00:00:00Z' <= comment_date_gmt"
+			)
+		);
+		$this->assertStringContainsString( 'TRY_CAST(\'2020-01-02T00:00:00Z\' AS TIMESTAMP) <= TRY_CAST("comment_date_gmt" AS TIMESTAMP)', $sql );
+
+		foreach (
+			array(
+				"SELECT ID FROM wp_posts WHERE post_date_gmt >= '2020-01-02 00:00:00'",
+				"SELECT ID FROM wp_posts WHERE post_title >= '2020-01-02T00:00:00Z'",
+				"SELECT ID FROM plugin_events WHERE created_at >= '2020-01-02T00:00:00Z'",
+				"SELECT id FROM plugin_events WHERE post_date_gmt >= '2020-01-02T00:00:00Z'",
+				"SELECT ID FROM wp_posts WHERE post_type = '2020-01-02T00:00:00Z'",
+				"SELECT ID FROM wp_posts WHERE post_date_gmt != '2020-01-02T00:00:00Z'",
+				"SELECT ID FROM wp_posts WHERE post_date_gmt >= 'not-a-dateT00:00:00Z'",
+				"SELECT ID FROM wp_posts WHERE post_date_gmt LIKE '2020-01-02T%'",
+				"SELECT ID FROM wp_posts WHERE DATE(post_date_gmt) >= '2020-01-02T00:00:00Z'",
+				"SELECT ID FROM wp_posts WHERE post_date_gmt >= '2020-01-02T00:00:00Z' + INTERVAL 1 DAY",
+				"SELECT ID FROM wp_posts WHERE ID IN (SELECT id FROM plugin_events WHERE post_date_gmt >= '2020-01-02T00:00:00Z')",
+				"SELECT ID FROM wp_posts WHERE post_date_gmt >= '2020-01-02T00:00:00Z' UNION SELECT id FROM plugin_events WHERE post_date_gmt >= '2020-01-02T00:00:00Z'",
+			) as $fallthrough_sql
+		) {
+			$translated = $translate->invoke( $driver, $tokenize->invoke( $driver, $fallthrough_sql ) );
+			$this->assertStringNotContainsString( "TRY_CAST('2020-01-02T00:00:00Z' AS TIMESTAMP)", $translated, $fallthrough_sql );
+		}
+	}
+
 	public function test_date_part_functions_try_cast_wordpress_datetime_strings(): void {
 		$this->requireDuckDBRuntime();
 

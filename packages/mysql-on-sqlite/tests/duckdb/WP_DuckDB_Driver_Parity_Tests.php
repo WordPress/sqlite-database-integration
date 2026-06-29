@@ -291,6 +291,94 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_rest_iso_datetime_comparisons_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					post_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_modified_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_posts (ID, post_date_gmt, post_modified_gmt, post_type, post_status) VALUES
+					(1, '2020-01-01 00:00:00', '2020-02-01 00:00:00', 'post', 'publish'),
+					(2, '2020-01-02 12:00:00', '2020-02-02 12:00:00', 'post', 'publish'),
+					(3, '2020-01-03 00:00:00', '2020-02-03 00:00:00', 'post', 'publish'),
+					(4, '2020-01-02 12:00:00', '2020-02-02 12:00:00', 'page', 'publish'),
+					(5, '2020-01-02 12:00:00', '2020-02-02 12:00:00', 'attachment', 'inherit'),
+					(6, '2020-01-03 00:00:00', '2020-02-03 00:00:00', 'page', 'publish')",
+				"CREATE TABLE wp_comments (
+					comment_ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					comment_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					comment_approved VARCHAR(20) NOT NULL DEFAULT '1',
+					PRIMARY KEY (comment_ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_comments (comment_ID, comment_date_gmt, comment_approved) VALUES
+					(11, '2020-01-01 00:00:00', '1'),
+					(12, '2020-01-02 12:00:00', '1'),
+					(13, '2020-01-03 00:00:00', '1')",
+				'CREATE TABLE wp_rest_strings (
+					id INT NOT NULL,
+					value VARCHAR(100) NOT NULL,
+					PRIMARY KEY (id)
+				)',
+				"INSERT INTO wp_rest_strings (id, value) VALUES
+					(1, '2020-01-02T00:00:00Z'),
+					(2, 'not-a-date')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT ID FROM wp_posts
+			WHERE post_date_gmt >= '2020-01-02T00:00:00Z'
+				AND post_date_gmt <= '2020-01-02T23:59:59Z'
+				AND post_type = 'post'
+			ORDER BY ID"
+		);
+		$this->assertParityRows(
+			"SELECT ID FROM wp_posts
+			WHERE post_date_gmt >= '2020-01-02T00:00:00Z'
+				AND post_date_gmt <= '2020-01-02T23:59:59Z'
+				AND post_type = 'page'
+			ORDER BY ID"
+		);
+		$this->assertParityRows(
+			"SELECT ID FROM wp_posts
+			WHERE post_date_gmt >= '2020-01-02T00:00:00Z'
+				AND post_date_gmt <= '2020-01-02T23:59:59Z'
+				AND post_type = 'attachment'
+			ORDER BY ID"
+		);
+		$this->assertParityRows(
+			"SELECT ID FROM wp_posts
+			WHERE post_modified_gmt >= '2020-02-02T00:00:00Z'
+				AND post_modified_gmt <= '2020-02-02T23:59:59Z'
+			ORDER BY ID"
+		);
+		$this->assertParityRows(
+			"SELECT comment_ID FROM wp_comments
+			WHERE comment_date_gmt >= '2020-01-02T00:00:00Z'
+				AND comment_date_gmt <= '2020-01-02T23:59:59Z'
+			ORDER BY comment_ID"
+		);
+		$this->assertParityRows(
+			"SELECT comment_ID FROM wp_comments
+			WHERE '2020-01-02T00:00:00Z' <= comment_date_gmt
+				AND '2020-01-02T23:59:59Z' >= comment_date_gmt
+			ORDER BY comment_ID"
+		);
+		$this->assertParityRows(
+			"SELECT ID FROM wp_posts
+			WHERE post_date_gmt >= '2020-01-02 00:00:00'
+				AND post_date_gmt <= '2020-01-02 23:59:59'
+			ORDER BY ID"
+		);
+		$this->assertParityRows( "SELECT id FROM wp_rest_strings WHERE value = '2020-01-02T00:00:00Z' ORDER BY id" );
+		$this->assertParityRows( "SELECT ID FROM wp_posts WHERE post_type = '2020-01-02T00:00:00Z' ORDER BY ID" );
+	}
+
 	public function test_non_temporal_text_and_blob_write_coercions_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
