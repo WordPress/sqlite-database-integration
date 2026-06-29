@@ -267,6 +267,7 @@ function preparePhpunitCommand() {
 	}
 
 	writePhpunitCompatibilityFiles();
+	patchPhpunitParentProcessIsolationHooks();
 	if ( enableDuckDBChildDiagnostics ) {
 		writeDuckDBChildDiagnosticsFile();
 		patchWordPressPhpunitBootstrapForChildDiagnostics();
@@ -326,6 +327,8 @@ if ( ! defined( 'DUCKDB_PHP_AUTOLOAD' ) ) {
 }
 
 ${ getPhpunitForwardedEnvironmentPhp() }
+
+${ getDuckDBParentProcessIsolationPhp() }
 
 ${ getDuckDBChildDiagnosticsPrependPhp() }
 
@@ -1071,6 +1074,55 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 	runWordPressDockerCompose( [ 'run', '--rm', 'php', 'php', '-r', patchScript ], { stdio: 'inherit' } );
 }
 
+function patchPhpunitParentProcessIsolationHooks() {
+	const file = '/var/www/vendor/phpunit/phpunit/src/Framework/TestCase.php';
+	const needle = [
+		'            $php = AbstractPhpProcess::factory();',
+		'            $php->runTestJob($template->render(), $this, $result, $processResultFile);',
+	].join( '\n' );
+	const replacement = [
+		'            $php = AbstractPhpProcess::factory();',
+		"            if (function_exists('wp_sqlite_duckdb_release_parent_connection_for_isolated_child')) {",
+		'                wp_sqlite_duckdb_release_parent_connection_for_isolated_child();',
+		'            }',
+		'            try {',
+		'                $php->runTestJob($template->render(), $this, $result, $processResultFile);',
+		'            } finally {',
+		"                if (function_exists('wp_sqlite_duckdb_restore_parent_connection_after_isolated_child')) {",
+		'                    wp_sqlite_duckdb_restore_parent_connection_after_isolated_child();',
+		'                }',
+		'            }',
+	].join( '\n' );
+	const patchScript = [
+		`$file = ${ phpSingleQuote( file ) };`,
+		`$needle = ${ phpSingleQuote( needle ) };`,
+		`$replacement = ${ phpSingleQuote( replacement ) };`,
+		'if ( ! is_readable( $file ) ) {',
+		'\tfwrite( STDERR, "Error: PHPUnit TestCase.php is not readable at {$file}." . PHP_EOL );',
+		'\texit( 1 );',
+		'}',
+		'$contents = file_get_contents( $file );',
+		'if ( false === $contents ) {',
+		'\tfwrite( STDERR, "Error: Unable to read PHPUnit TestCase.php at {$file}." . PHP_EOL );',
+		'\texit( 1 );',
+		'}',
+		"if ( false === strpos( $contents, 'wp_sqlite_duckdb_release_parent_connection_for_isolated_child' ) ) {",
+		'\t$count = 0;',
+		'\t$contents = str_replace( $needle, $replacement, $contents, $count );',
+		'\tif ( 1 !== $count ) {',
+		'\t\tfwrite( STDERR, "Error: Unable to patch PHPUnit parent process-isolation hook in {$file}." . PHP_EOL );',
+		'\t\texit( 1 );',
+		'\t}',
+		'\tif ( false === file_put_contents( $file, $contents ) ) {',
+		'\t\tfwrite( STDERR, "Error: Unable to write patched PHPUnit TestCase.php at {$file}." . PHP_EOL );',
+		'\t\texit( 1 );',
+		'\t}',
+		'}',
+	].join( '\n' );
+
+	runWordPressDockerCompose( [ 'run', '--rm', 'php', 'php', '-r', patchScript ], { stdio: 'inherit' } );
+}
+
 function getPhpunitForwardedEnvironmentPhp() {
 	const environmentNames = [
 		'WP_DUCKDB_QUERY_PROFILE',
@@ -1091,6 +1143,81 @@ function getPhpunitForwardedEnvironmentPhp() {
 			].join( '\n' );
 		} )
 		.join( '\n' );
+}
+
+function getDuckDBParentProcessIsolationPhp() {
+	return `if ( ! function_exists( 'wp_sqlite_duckdb_is_active_parent_process' ) ) {
+\tfunction wp_sqlite_duckdb_is_active_parent_process() {
+\t\tif ( ! defined( 'DB_ENGINE' ) || 'duckdb' !== strtolower( (string) DB_ENGINE ) ) {
+\t\t\treturn false;
+\t\t}
+
+\t\treturn isset( $GLOBALS['wpdb'] ) && is_object( $GLOBALS['wpdb'] );
+\t}
+
+\tfunction wp_sqlite_duckdb_release_parent_connection_for_isolated_child() {
+\t\tif ( ! wp_sqlite_duckdb_is_active_parent_process() ) {
+\t\t\treturn;
+\t\t}
+
+\t\t$wpdb = $GLOBALS['wpdb'];
+
+\t\ttry {
+\t\t\tif ( isset( $wpdb->dbh ) && is_object( $wpdb->dbh ) && method_exists( $wpdb->dbh, 'get_connection' ) ) {
+\t\t\t\t$connection = $wpdb->dbh->get_connection();
+\t\t\t\tif ( is_object( $connection ) && method_exists( $connection, 'query' ) ) {
+\t\t\t\t\t$connection->query( 'CHECKPOINT' );
+\t\t\t\t}
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t// The child may still be able to open the database if no checkpoint is needed.
+\t\t}
+
+\t\tif ( method_exists( $wpdb, 'close' ) ) {
+\t\t\t$wpdb->close();
+\t\t}
+
+\t\ttry {
+\t\t\t$wpdb->dbh = null;
+\t\t} catch ( Throwable $e ) {
+\t\t}
+
+\t\ttry {
+\t\t\t$wpdb->last_error = '';
+\t\t} catch ( Throwable $e ) {
+\t\t}
+
+\t\tunset( $GLOBALS['@duckdb_driver'], $GLOBALS['@duckdb'] );
+
+\t\tif ( function_exists( 'gc_collect_cycles' ) ) {
+\t\t\tgc_collect_cycles();
+\t\t}
+\t}
+
+\tfunction wp_sqlite_duckdb_restore_parent_connection_after_isolated_child() {
+\t\tif ( ! wp_sqlite_duckdb_is_active_parent_process() ) {
+\t\t\treturn;
+\t\t}
+
+\t\t$wpdb = $GLOBALS['wpdb'];
+\t\tif ( ! method_exists( $wpdb, 'db_connect' ) ) {
+\t\t\treturn;
+\t\t}
+
+\t\ttry {
+\t\t\t$wpdb->last_error = '';
+\t\t} catch ( Throwable $e ) {
+\t\t}
+
+\t\tif ( false === $wpdb->db_connect( false ) ) {
+\t\t\t$message = isset( $wpdb->last_error ) && is_string( $wpdb->last_error )
+\t\t\t\t? $wpdb->last_error
+\t\t\t\t: 'unknown DuckDB reconnect error';
+\t\t\tfwrite( STDERR, 'Error: Unable to reconnect DuckDB after isolated PHPUnit child: ' . $message . PHP_EOL );
+\t\t\texit( 1 );
+\t\t}
+\t}
+}`;
 }
 
 function verifyPhpunitCompatibilityFiles() {
