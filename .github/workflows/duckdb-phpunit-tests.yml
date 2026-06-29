@@ -159,11 +159,16 @@ jobs:
         run: composer run wp-test-ensure-env-duckdb
 
       - name: Smoke test WordPress DuckDB wpdb
-        timeout-minutes: 5
+        timeout-minutes: 2
+        env:
+          WP_DUCKDB_SMOKE_TIMEOUT: '90'
         run: ./bin/wp-test-duckdb-smoke.sh
 
       - name: Build and load parser extension in WordPress DuckDB PHP containers
         timeout-minutes: 8
+        env:
+          WP_DUCKDB_NATIVE_EXTENSION_BUILD_TIMEOUT_SECONDS: '300'
+          WP_DUCKDB_NATIVE_EXTENSION_VERIFY_TIMEOUT_SECONDS: '60'
         run: bash .github/workflows/wp-tests-phpunit-native-extension-setup.sh
 
       - name: Run recent DuckDB WordPress PHPUnit failures first
@@ -200,8 +205,8 @@ jobs:
           WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_STDERR: '0'
           WP_SQLITE_DUCKDB_CHILD_DB_COPY: '1'
           WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS: '0'
-          WP_DUCKDB_QUERY_PROFILE: '0'
-          WP_DUCKDB_QUERY_PROFILE_INTERVAL: '0'
+          WP_DUCKDB_QUERY_PROFILE: '1'
+          WP_DUCKDB_QUERY_PROFILE_INTERVAL: '2500'
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
           WP_SQLITE_DISABLE_EXPECTED_RESULTS: '0'
           WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND: 'true'
@@ -357,7 +362,9 @@ jobs:
         run: composer run wp-test-ensure-env-duckdb
 
       - name: Smoke test WordPress DuckDB wpdb
-        timeout-minutes: 5
+        timeout-minutes: 2
+        env:
+          WP_DUCKDB_SMOKE_TIMEOUT: '90'
         run: ./bin/wp-test-duckdb-smoke.sh
 
       - name: Install Playwright browsers

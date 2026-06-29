@@ -77,23 +77,53 @@ run_with_timeout() {
 	return "$status"
 }
 
+setup_phase_id() {
+	printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_-'
+}
+
+emit_setup_progress() {
+	local phase="$1"
+	local status="$2"
+	local elapsed_seconds="$3"
+	local timeout_seconds="$4"
+	local message
+
+	message="WP_DUCKDB_SETUP_PROGRESS phase=$phase status=$status elapsed_seconds=$elapsed_seconds timeout_seconds=$timeout_seconds"
+	printf '%s\n' "$message"
+
+	if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+		printf '::notice title=WordPress DuckDB setup::%s\n' "$message"
+	fi
+}
+
 run_phase() {
 	local label="$1"
 	local seconds="$2"
-	local status
+	local status started_at ended_at elapsed_seconds phase_id phase_status
 	shift 2
+
+	phase_id="$(setup_phase_id "$label")"
+	started_at="$(date +%s)"
 
 	start_group "$label"
 	printf 'Timeout: %s seconds\n' "$seconds"
+	emit_setup_progress "$phase_id" start 0 "$seconds"
 
 	set +e
 	run_with_timeout "$seconds" "$@"
 	status=$?
 	set -e
 
+	ended_at="$(date +%s)"
+	elapsed_seconds=$(( ended_at - started_at ))
+	phase_status="success"
 	if [ "$status" -eq 124 ]; then
+		phase_status="timeout"
 		echo "Error: $label timed out after $seconds seconds." >&2
+	elif [ "$status" -ne 0 ]; then
+		phase_status="failure"
 	fi
+	emit_setup_progress "$phase_id" "$phase_status" "$elapsed_seconds" "$seconds"
 
 	end_group
 	return "$status"

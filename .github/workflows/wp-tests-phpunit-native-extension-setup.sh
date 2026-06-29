@@ -8,11 +8,73 @@ RUNTIME_DIR="$ROOT_DIR/tmp-native-extension"
 EXTENSION_SOURCE_VOLUME="      - ../packages/php-ext-wp-mysql-parser:/var/native-parser-extension-src"
 EXTENSION_RUNTIME_VOLUME="      - ../tmp-native-extension:/var/native-parser-extension:ro"
 EXTENSION_INI_VOLUME="      - ../tmp-native-extension/wp-mysql-parser.ini:/usr/local/etc/php/conf.d/wp-mysql-parser.ini:ro"
+WP_DUCKDB_NATIVE_EXTENSION_BUILD_TIMEOUT_SECONDS="${WP_DUCKDB_NATIVE_EXTENSION_BUILD_TIMEOUT_SECONDS:-300}"
+WP_DUCKDB_NATIVE_EXTENSION_VERIFY_TIMEOUT_SECONDS="${WP_DUCKDB_NATIVE_EXTENSION_VERIFY_TIMEOUT_SECONDS:-60}"
 
 if [ ! -f "$COMPOSE_OVERRIDE" ]; then
 	echo "Missing $COMPOSE_OVERRIDE. Run composer run wp-setup first." >&2
 	exit 1
 fi
+
+native_phase_id() {
+	printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd '[:alnum:]_-'
+}
+
+emit_native_progress() {
+	local phase="$1"
+	local status="$2"
+	local elapsed_seconds="$3"
+	local timeout_seconds="$4"
+	local message
+
+	message="WP_DUCKDB_NATIVE_EXTENSION_PROGRESS phase=$phase status=$status elapsed_seconds=$elapsed_seconds timeout_seconds=$timeout_seconds"
+	printf '%s\n' "$message"
+
+	if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+		printf '::notice title=WordPress native parser setup::%s\n' "$message"
+	fi
+}
+
+run_with_timeout() {
+	local seconds="$1"
+	shift
+
+	if command -v timeout > /dev/null; then
+		timeout "${seconds}s" "$@"
+		return $?
+	fi
+
+	"$@"
+}
+
+run_phase() {
+	local label="$1"
+	local seconds="$2"
+	local status started_at ended_at elapsed_seconds phase_id phase_status
+	shift 2
+
+	phase_id="$(native_phase_id "$label")"
+	started_at="$(date +%s)"
+	emit_native_progress "$phase_id" start 0 "$seconds"
+
+	set +e
+	run_with_timeout "$seconds" "$@"
+	status=$?
+	set -e
+
+	ended_at="$(date +%s)"
+	elapsed_seconds=$(( ended_at - started_at ))
+	phase_status="success"
+	if [ "$status" -eq 124 ]; then
+		phase_status="timeout"
+		echo "Error: $label timed out after $seconds seconds." >&2
+	elif [ "$status" -ne 0 ]; then
+		phase_status="failure"
+	fi
+	emit_native_progress "$phase_id" "$phase_status" "$elapsed_seconds" "$seconds"
+
+	return "$status"
+}
 
 add_volume_to_service() {
 	local service="$1"
@@ -99,8 +161,10 @@ EOF
 
 chmod +x "$WP_DIR/native-build-extension.sh"
 
-cd "$WP_DIR"
-node tools/local-env/scripts/docker.js run --rm php sh /var/www/native-build-extension.sh
+run_phase \
+	'Build native parser extension in WordPress PHP container' \
+	"$WP_DUCKDB_NATIVE_EXTENSION_BUILD_TIMEOUT_SECONDS" \
+	bash -c 'cd "$1" && node tools/local-env/scripts/docker.js run --rm php sh /var/www/native-build-extension.sh' bash "$WP_DIR"
 
 mkdir -p "$RUNTIME_DIR"
 cp "$ROOT_DIR/packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so" "$RUNTIME_DIR/libwp_mysql_parser.so"
@@ -207,5 +271,11 @@ contents = contents.replace( marker, `${ marker }\n\n${ guard }` );
 fs.writeFileSync( file, contents );
 NODE
 
-node tools/local-env/scripts/docker.js run --rm php php -m | grep -qx 'wp_mysql_parser'
-node tools/local-env/scripts/docker.js run --rm php php /var/www/native-verify-extension.php
+run_phase \
+	'Verify native parser extension module is loaded' \
+	"$WP_DUCKDB_NATIVE_EXTENSION_VERIFY_TIMEOUT_SECONDS" \
+	bash -c 'cd "$1" && node tools/local-env/scripts/docker.js run --rm php php -m | grep -qx wp_mysql_parser' bash "$WP_DIR"
+run_phase \
+	'Verify native parser extension runtime behavior' \
+	"$WP_DUCKDB_NATIVE_EXTENSION_VERIFY_TIMEOUT_SECONDS" \
+	bash -c 'cd "$1" && node tools/local-env/scripts/docker.js run --rm php php /var/www/native-verify-extension.php' bash "$WP_DIR"
