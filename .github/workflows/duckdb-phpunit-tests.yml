@@ -166,6 +166,28 @@ jobs:
         timeout-minutes: 8
         run: bash .github/workflows/wp-tests-phpunit-native-extension-setup.sh
 
+      - name: Run recent DuckDB WordPress PHPUnit failures first
+        timeout-minutes: 8
+        env:
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS: '0'
+          WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_VERBOSE: '0'
+          WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_STDERR: '0'
+          WP_SQLITE_DUCKDB_CHILD_DB_COPY: '1'
+          WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS: '0'
+          WP_DUCKDB_QUERY_PROFILE: '0'
+          WP_DUCKDB_QUERY_PROFILE_INTERVAL: '0'
+          WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
+          WP_SQLITE_DISABLE_EXPECTED_RESULTS: '0'
+          WP_SQLITE_IGNORE_MISSING_EXPECTED_RESULTS: '1'
+          WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND: 'true'
+          WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
+          WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-fast-fail
+          WP_SQLITE_PHPUNIT_MAX_SECONDS: '240'
+          WP_SQLITE_PHPUNIT_COMMAND: "composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-fast-fail-results.xml --verbose --filter 'Tests_DB::test_mysqli_flush_sync|WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query'"
+          WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-fast-fail-results.xml
+        run: node .github/workflows/wp-tests-phpunit-run.js
+
       - name: Run full WordPress PHPUnit tests with DuckDB
         timeout-minutes: 25
         env:
@@ -183,7 +205,7 @@ jobs:
           WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
           WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-full
           WP_SQLITE_PHPUNIT_BASELINE_SECONDS: '380'
-          WP_SQLITE_PHPUNIT_MAX_SECONDS: '1200'
+          WP_SQLITE_PHPUNIT_MAX_SECONDS: '420'
           WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-results.xml --verbose
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
