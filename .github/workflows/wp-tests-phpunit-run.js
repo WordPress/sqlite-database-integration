@@ -644,6 +644,36 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 	].join( '\n' );
 	const lifecycleReplacements = [
 		[
+			"ini_set('display_errors', 'stderr');",
+			[
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'before_display_errors_setup', true );",
+				'}',
+				"ini_set('display_errors', 'stderr');",
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'after_display_errors_setup', true );",
+				'}',
+			].join( '\n' ),
+		],
+		[
+			"if ($composerAutoload) {",
+			[
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'before_composer_autoload', true );",
+				'}',
+				"if ($composerAutoload) {",
+			].join( '\n' ),
+		],
+		[
+			'function __phpunit_run_isolated_test()',
+			[
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'after_composer_autoload', true );",
+				'}',
+				'function __phpunit_run_isolated_test()',
+			].join( '\n' ),
+		],
+		[
 			'    $test->run($result);',
 			[
 				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
@@ -662,6 +692,51 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 				"        wp_sqlite_duckdb_child_diagnostics_report( 'before_process_result_write', true );",
 				'    }',
 				'    file_put_contents(',
+			].join( '\n' ),
+		],
+		[
+			'{included_files}',
+			[
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'before_included_files_restore', true );",
+				'}',
+				'{included_files}',
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'after_included_files_restore', true );",
+				'}',
+			].join( '\n' ),
+		],
+		[
+			'{globals}',
+			[
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'before_globals_restore', true );",
+				'}',
+				'{globals}',
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'after_globals_restore', true );",
+				'}',
+			].join( '\n' ),
+		],
+		[
+			"if (isset($GLOBALS['__PHPUNIT_BOOTSTRAP'])) {",
+			[
+				"if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"    wp_sqlite_duckdb_child_diagnostics_report( 'before_bootstrap_check', true );",
+				'}',
+				"if (isset($GLOBALS['__PHPUNIT_BOOTSTRAP'])) {",
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"        wp_sqlite_duckdb_child_diagnostics_report( 'before_bootstrap_require', true );",
+				'    }',
+			].join( '\n' ),
+		],
+		[
+			"    unset($GLOBALS['__PHPUNIT_BOOTSTRAP']);",
+			[
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"        wp_sqlite_duckdb_child_diagnostics_report( 'after_bootstrap_require', true );",
+				'    }',
+				"    unset($GLOBALS['__PHPUNIT_BOOTSTRAP']);",
 			].join( '\n' ),
 		],
 		[
