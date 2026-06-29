@@ -595,6 +595,9 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t$result_write = isset( $GLOBALS['wp_sqlite_duckdb_child_result_write'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_result_write'] )
 \t\t\t? $GLOBALS['wp_sqlite_duckdb_child_result_write']
 \t\t\t: null;
+\t\t$factory_sequence_alignment = isset( $GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment'] )
+\t\t\t? $GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment']
+\t\t\t: null;
 
 \t\tif ( class_exists( 'WP_DuckDB_Runtime', false ) && method_exists( 'WP_DuckDB_Runtime', 'get_unavailable_reason' ) ) {
 \t\t\ttry {
@@ -667,6 +670,7 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\t'included_files_tail'      => $included_files_tail,
 \t\t\t'test_identity'            => $test_identity,
 \t\t\t'result_write'             => $result_write,
+\t\t\t'factory_sequence_alignment' => $factory_sequence_alignment,
 \t\t\t'output_buffer_level'      => ob_get_level(),
 \t\t\t'output_buffer_size'       => $output_buffer_size,
 \t\t\t'output_buffer_sha1'       => $output_buffer_sha1,
@@ -948,6 +952,73 @@ function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 	}
 }
 
+function getDuckDBChildFactorySequenceAlignmentPhp() {
+	return `if ( ! function_exists( 'wp_sqlite_duckdb_align_child_factory_sequence_with_database' ) ) {
+\tfunction wp_sqlite_duckdb_align_child_factory_sequence_with_database() {
+\t\tif ( '1' !== getenv( 'WP_TESTS_SKIP_INSTALL' ) ) {
+\t\t\treturn;
+\t\t}
+\t\tif ( ! class_exists( 'WP_UnitTest_Generator_Sequence', false ) ) {
+\t\t\treturn;
+\t\t}
+\t\tif ( ! isset( $GLOBALS['wpdb'] ) || ! is_object( $GLOBALS['wpdb'] ) ) {
+\t\t\treturn;
+\t\t}
+
+\t\t$wpdb = $GLOBALS['wpdb'];
+\t\tif ( empty( $wpdb->users ) || ! method_exists( $wpdb, 'get_col' ) ) {
+\t\t\treturn;
+\t\t}
+
+\t\ttry {
+\t\t\t$existing_values = $wpdb->get_col(
+\t\t\t\t"SELECT user_login FROM {$wpdb->users} WHERE user_login LIKE 'User %'
+\t\t\t\tUNION ALL
+\t\t\t\tSELECT user_email FROM {$wpdb->users} WHERE user_email LIKE 'user_%@example.org'"
+\t\t\t);
+\t\t} catch ( Throwable $e ) {
+\t\t\t$GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment'] = array(
+\t\t\t\t'error' => get_class( $e ) . ': ' . $e->getMessage(),
+\t\t\t);
+\t\t\treturn;
+\t\t}
+
+\t\t$max_suffix = null;
+\t\tforeach ( (array) $existing_values as $value ) {
+\t\t\tif ( preg_match( '/(?:^User |^user_)([0-9]+)(?:@example\\.org)?$/', (string) $value, $matches ) ) {
+\t\t\t\t$suffix     = (int) $matches[1];
+\t\t\t\t$max_suffix = null === $max_suffix ? $suffix : max( $max_suffix, $suffix );
+\t\t\t}
+\t\t}
+
+\t\tif ( null === $max_suffix ) {
+\t\t\t$GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment'] = array(
+\t\t\t\t'values_inspected'    => count( (array) $existing_values ),
+\t\t\t\t'max_existing_suffix' => null,
+\t\t\t);
+\t\t\treturn;
+\t\t}
+
+\t\t$current_incr = is_numeric( WP_UnitTest_Generator_Sequence::$incr )
+\t\t\t? (int) WP_UnitTest_Generator_Sequence::$incr
+\t\t\t: -1;
+\t\t$new_incr = max( $current_incr, $max_suffix );
+\t\tWP_UnitTest_Generator_Sequence::$incr = $new_incr;
+
+\t\t$GLOBALS['wp_sqlite_duckdb_child_factory_sequence_alignment'] = array(
+\t\t\t'values_inspected'    => count( (array) $existing_values ),
+\t\t\t'previous_incr'       => $current_incr,
+\t\t\t'max_existing_suffix' => $max_suffix,
+\t\t\t'new_incr'           => $new_incr,
+\t\t);
+
+\t\tif ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
+\t\t\twp_sqlite_duckdb_child_diagnostics_report( 'after_factory_sequence_alignment', true );
+\t\t}
+\t}
+}`;
+}
+
 function patchPhpunitChildProcessTemplatesForDiagnostics() {
 	const templateDir = '/var/www/vendor/phpunit/phpunit/src/Util/PHP/Template';
 	const templateNames = [ 'TestCaseClass.tpl', 'TestCaseMethod.tpl' ];
@@ -984,6 +1055,7 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 		`\trequire_once ${ phpSingleQuote( duckdbChildDiagnosticsContainerPath ) };`,
 		"\twp_sqlite_duckdb_child_diagnostics_report( 'phpunit_child_template_start', true );",
 		'}',
+		getDuckDBChildFactorySequenceAlignmentPhp(),
 		'',
 	].join( '\n' );
 	const lifecycleReplacements = [
@@ -1112,6 +1184,9 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 			[
 				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
 				"        wp_sqlite_duckdb_child_diagnostics_report( 'after_bootstrap_require', true );",
+				'    }',
+				"    if ( function_exists( 'wp_sqlite_duckdb_align_child_factory_sequence_with_database' ) ) {",
+				'        wp_sqlite_duckdb_align_child_factory_sequence_with_database();',
 				'    }',
 				"    unset($GLOBALS['__PHPUNIT_BOOTSTRAP']);",
 			].join( '\n' ),
