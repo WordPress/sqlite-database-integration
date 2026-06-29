@@ -6030,13 +6030,21 @@ class WP_DuckDB_Driver {
 			return $manual_replace;
 		}
 
-		return $this->execute_auto_increment_write(
+		$replace_shape        = $this->parse_insert_values_write_shape( $tokens, $index );
+		$deleted_before_write = $this->replace_values_existing_conflict_count( $replace_shape );
+		$result               = $this->execute_auto_increment_write(
 			$this->identifier_value( $tokens[ $index ] ?? null ),
 			$this->translate_replace_tokens_to_duckdb_sql( $tokens ),
 			'Failed to execute DuckDB REPLACE',
 			$tokens,
 			$index
 		);
+
+		if ( 0 === $deleted_before_write ) {
+			return $result;
+		}
+
+		return new WP_DuckDB_Result_Statement( array(), array(), $result->rowCount() + $deleted_before_write );
 	}
 
 	/**
@@ -6085,6 +6093,9 @@ class WP_DuckDB_Driver {
 			. ' SET '
 			. $this->translate_update_assignment_tokens_to_duckdb_sql( $update_tokens, $reference );
 
+		$changed_condition_sql = null === $clauses['order'] && null === $clauses['limit']
+			? $this->simple_literal_update_changed_condition_sql( $reference, $update_tokens )
+			: null;
 		if ( null !== $clauses['order'] || null !== $clauses['limit'] ) {
 			$this->assert_dml_rowid_rewrite_supported( $reference['table_name'], 'UPDATE', $reference['temporary'] );
 			$sql .= ' WHERE rowid IN ( '
@@ -6092,12 +6103,112 @@ class WP_DuckDB_Driver {
 				. ' )';
 		} elseif ( null !== $clauses['where'] ) {
 			$where_end = $clauses['order'] ?? $clauses['limit'] ?? count( $tokens );
-			$sql      .= ' WHERE ' . $this->translate_tokens_to_duckdb_sql(
+			$where_sql = $this->translate_tokens_to_duckdb_sql(
 				array_slice( $tokens, $clauses['where'] + 1, $where_end - $clauses['where'] - 1 )
 			);
+			$sql      .= ' WHERE (' . $where_sql . ')'
+				. ( null === $changed_condition_sql ? '' : ' AND (' . $changed_condition_sql . ')' );
+		} elseif ( null !== $changed_condition_sql ) {
+			$sql .= ' WHERE ' . $changed_condition_sql;
 		}
 
 		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB UPDATE' );
+	}
+
+	/**
+	 * Build a changed-row condition for simple direct literal UPDATE assignments.
+	 *
+	 * @param array{table_name:string,requested_table_name:string,alias:string|null,next_index:int,temporary:bool} $reference Parsed table reference.
+	 * @param WP_Parser_Token[]                                                                                  $tokens    Update-list tokens.
+	 * @return string|null SQL condition, or null when unsupported.
+	 */
+	private function simple_literal_update_changed_condition_sql( array $reference, array $tokens ): ?string {
+		$qualifiers = array_filter(
+			array(
+				$reference['alias'],
+				$reference['requested_table_name'],
+				$reference['table_name'],
+			),
+			'is_string'
+		);
+
+		$metadata_map = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] ?? false );
+		$conditions   = array();
+		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
+			$qualifier = isset( $item[0] ) ? $this->identifier_value( $item[0] ) : null;
+			if (
+				isset( $item[0], $item[1] )
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $item[1]->id
+				&& null !== $qualifier
+				&& in_array( strtolower( $qualifier ), array_map( 'strtolower', $qualifiers ), true )
+			) {
+				$item = array_slice( $item, 2 );
+			}
+
+			$equals_index = $this->find_top_level_token_index( $item, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+			if ( null === $equals_index ) {
+				return null;
+			}
+
+			$left_tokens  = array_slice( $item, 0, $equals_index );
+			$right_tokens = array_slice( $item, $equals_index + 1 );
+			if ( 1 !== count( $left_tokens ) || count( $right_tokens ) === 0 || ! $this->is_simple_update_changed_row_literal_tokens( $right_tokens ) ) {
+				return null;
+			}
+
+			$column_name = $this->identifier_value( $left_tokens[0] );
+			if ( null === $column_name ) {
+				return null;
+			}
+
+			$seeded_rand_state = array();
+			$value_sql         = $this->translate_update_assignment_value_tokens_to_duckdb_sql(
+				$right_tokens,
+				false,
+				$seeded_rand_state
+			);
+			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
+				$value_sql = $this->coerce_write_value_for_column_sql(
+					$metadata_map[ strtolower( $column_name ) ],
+					$right_tokens,
+					$value_sql,
+					true
+				);
+			}
+
+			$conditions[] = $this->translate_tokens_to_duckdb_sql( $left_tokens ) . ' IS DISTINCT FROM (' . $value_sql . ')';
+		}
+
+		if ( count( $conditions ) === 0 ) {
+			return null;
+		}
+
+		return implode( ' OR ', $conditions );
+	}
+
+	/**
+	 * Check whether UPDATE changed-row pre-counting can safely evaluate tokens once.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return bool Whether tokens are a stable literal shape.
+	 */
+	private function is_simple_update_changed_row_literal_tokens( array $tokens ): bool {
+		return $this->is_string_literal_tokens( $tokens )
+			|| $this->is_signed_or_unsigned_number_literal_tokens( $tokens )
+			|| $this->is_boolean_literal_tokens( $tokens )
+			|| $this->is_null_literal_tokens( $tokens )
+			|| null !== $this->binary_literal_write_hex_sql( $tokens );
+	}
+
+	/**
+	 * Check whether tokens are NULL.
+	 *
+	 * @param WP_Parser_Token[] $tokens Value tokens.
+	 * @return bool Whether tokens are a NULL literal.
+	 */
+	private function is_null_literal_tokens( array $tokens ): bool {
+		return 1 === count( $tokens )
+			&& ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[0]->id || WP_MySQL_Lexer::NULL2_SYMBOL === $tokens[0]->id );
 	}
 
 	/**
@@ -18605,6 +18716,7 @@ class WP_DuckDB_Driver {
 		}
 
 		try {
+			$deleted_rows     = 0;
 			$delete_predicate = $this->replace_select_manual_delete_predicate(
 				$shape['table_name'],
 				$write_stage_table,
@@ -18613,13 +18725,14 @@ class WP_DuckDB_Driver {
 			);
 
 			if ( '' !== $delete_predicate ) {
-				$this->execute_duckdb_query(
+				$delete_result = $this->execute_duckdb_query(
 					'DELETE FROM '
 						. $this->connection->quote_identifier( $shape['table_name'] )
 						. ' WHERE '
 						. $delete_predicate,
 					'Failed to delete DuckDB REPLACE SELECT conflicts'
 				);
+				$deleted_rows  = $delete_result->rowCount();
 			}
 
 			$result = $this->execute_auto_increment_write(
@@ -18643,7 +18756,11 @@ class WP_DuckDB_Driver {
 				$this->connection->commit();
 			}
 
-			return $result;
+			if ( 0 === $deleted_rows ) {
+				return $result;
+			}
+
+			return new WP_DuckDB_Result_Statement( array(), array(), $result->rowCount() + $deleted_rows );
 		} catch ( Throwable $e ) {
 			if ( $started_transaction && $this->connection->inTransaction() ) {
 				$this->connection->rollback();
@@ -20763,6 +20880,49 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Count existing target rows that a REPLACE ... VALUES statement will delete.
+	 *
+	 * @param array{table_name:string,temporary:bool,rows:array<int,array<string,string>>} $replace_shape Parsed VALUES shape.
+	 * @return int Existing target rows matched by supplied unique keys.
+	 */
+	private function replace_values_existing_conflict_count( array $replace_shape ): int {
+		if ( count( $replace_shape['rows'] ) === 0 ) {
+			return 0;
+		}
+
+		$unique_sets = $this->unique_key_column_sets( $replace_shape['table_name'], $replace_shape['temporary'] );
+		if ( count( $unique_sets ) === 0 ) {
+			return 0;
+		}
+
+		$case_insensitive_columns = $this->case_insensitive_column_names( $replace_shape['table_name'], $replace_shape['temporary'] );
+		$delete_predicates        = array();
+		foreach ( $replace_shape['rows'] as $values_by_column ) {
+			foreach ( $unique_sets as $column_set ) {
+				$predicate = $this->unique_key_conflict_predicate( $column_set, $values_by_column, $case_insensitive_columns );
+				if ( null !== $predicate ) {
+					$delete_predicates[] = '(' . $predicate . ')';
+				}
+			}
+		}
+
+		if ( count( $delete_predicates ) === 0 ) {
+			return 0;
+		}
+
+		$stmt = $this->execute_duckdb_query(
+			'SELECT COUNT(DISTINCT rowid) AS deleted_rows FROM '
+				. $this->connection->quote_identifier( $replace_shape['table_name'] )
+				. ' WHERE '
+				. implode( ' OR ', $delete_predicates ),
+			'Failed to inspect DuckDB REPLACE conflicts'
+		);
+		$row  = $stmt->fetch( PDO::FETCH_ASSOC );
+
+		return false === $row ? 0 : (int) $row['deleted_rows'];
+	}
+
+	/**
 	 * Execute REPLACE ... VALUES when DuckDB's native INSERT OR REPLACE is insufficient.
 	 *
 	 * DuckDB requires a conflict target for INSERT OR REPLACE when multiple unique
@@ -20796,6 +20956,7 @@ class WP_DuckDB_Driver {
 		}
 
 		try {
+			$deleted_rows = 0;
 			foreach ( $replace_shape['rows'] as $values_by_column ) {
 				$delete_predicates = array();
 				foreach ( $unique_sets as $column_set ) {
@@ -20806,13 +20967,14 @@ class WP_DuckDB_Driver {
 				}
 
 				if ( count( $delete_predicates ) > 0 ) {
-					$this->execute_duckdb_query(
+					$delete_result = $this->execute_duckdb_query(
 						'DELETE FROM '
 							. $this->connection->quote_identifier( $replace_shape['table_name'] )
 							. ' WHERE '
 							. implode( ' OR ', $delete_predicates ),
 						'Failed to delete DuckDB REPLACE conflicts'
 					);
+					$deleted_rows += $delete_result->rowCount();
 				}
 			}
 
@@ -20828,7 +20990,11 @@ class WP_DuckDB_Driver {
 				$this->connection->commit();
 			}
 
-			return $result;
+			if ( 0 === $deleted_rows ) {
+				return $result;
+			}
+
+			return new WP_DuckDB_Result_Statement( array(), array(), $result->rowCount() + $deleted_rows );
 		} catch ( Throwable $e ) {
 			if ( $started_transaction && $this->connection->inTransaction() ) {
 				$this->connection->rollback();

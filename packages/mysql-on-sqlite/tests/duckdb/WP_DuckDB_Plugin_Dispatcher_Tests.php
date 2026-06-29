@@ -382,6 +382,10 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 0, $cases['update_changed']['num_rows'] );
 		$this->assertSame( array(), $cases['update_changed']['col_info_names'] );
 
+		$this->assertSame( 0, $cases['update_noop']['return'] );
+		$this->assertSame( 0, $cases['update_noop']['rows_affected'] );
+		$this->assertSame( 0, $cases['update_noop']['num_rows'] );
+
 		$this->assertSame( 0, $cases['update_no_match']['return'] );
 		$this->assertSame( 0, $cases['update_no_match']['rows_affected'] );
 		$this->assertSame( 0, $cases['update_no_match']['num_rows'] );
@@ -390,8 +394,13 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 1, $cases['delete_row']['rows_affected'] );
 		$this->assertSame( 0, $cases['delete_row']['num_rows'] );
 
-		$this->assertSame( 1, $cases['replace_row']['return'] );
-		$this->assertSame( 1, $cases['replace_row']['rows_affected'] );
+		$this->assertSame( 1, $cases['replace_insert']['return'] );
+		$this->assertSame( 1, $cases['replace_insert']['rows_affected'] );
+		$this->assertSame( 12, $cases['replace_insert']['insert_id'] );
+		$this->assertSame( array(), $cases['replace_insert']['col_info_names'] );
+
+		$this->assertSame( 2, $cases['replace_row']['return'] );
+		$this->assertSame( 2, $cases['replace_row']['rows_affected'] );
 		$this->assertSame( 12, $cases['replace_row']['insert_id'] );
 		$this->assertSame( array(), $cases['replace_row']['col_info_names'] );
 
@@ -1820,6 +1829,10 @@ class WP_DuckDB_Plugin_Query_Surface_Test_Driver extends WP_DuckDB_Driver {
 			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
 		}
 
+		if ( "UPDATE wp_posts SET post_title = 'same' WHERE ID = 12" === $sql ) {
+			return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+		}
+
 		if ( self::ODKU_CHANGED_SQL === $sql ) {
 			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
 		}
@@ -1836,9 +1849,14 @@ class WP_DuckDB_Plugin_Query_Surface_Test_Driver extends WP_DuckDB_Driver {
 			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
 		}
 
-		if ( "REPLACE INTO wp_posts (ID, post_title) VALUES (12, 'replacement')" === $sql ) {
+		if ( "REPLACE INTO wp_posts (ID, post_title) VALUES (12, 'inserted')" === $sql ) {
 			$this->insert_id = 12;
 			return new WP_DuckDB_Result_Statement( array(), array(), 1 );
+		}
+
+		if ( "REPLACE INTO wp_posts (ID, post_title) VALUES (12, 'replacement')" === $sql ) {
+			$this->insert_id = 12;
+			return new WP_DuckDB_Result_Statement( array(), array(), 2 );
 		}
 
 		if ( 'CREATE TABLE wp_surface (id INTEGER)' === $sql ) {
@@ -1945,6 +1963,7 @@ $cases                     = array(
 	'check_table'          => wp_duckdb_plugin_query_surface_case( $db, 'CHECK TABLE wp_posts' ),
 	'insert_row'           => wp_duckdb_plugin_query_surface_case( $db, "INSERT INTO wp_posts (post_title) VALUES ('hello')" ),
 	'update_changed'       => wp_duckdb_plugin_query_surface_case( $db, "UPDATE wp_posts SET post_title = 'changed' WHERE ID = 11" ),
+	'update_noop'          => wp_duckdb_plugin_query_surface_case( $db, "UPDATE wp_posts SET post_title = 'same' WHERE ID = 12" ),
 	'odku_duplicate_changed' => wp_duckdb_plugin_query_surface_case(
 		$db,
 		WP_DuckDB_Plugin_Query_Surface_Test_Driver::ODKU_CHANGED_SQL
@@ -1955,6 +1974,7 @@ $cases                     = array(
 	),
 	'update_no_match'      => wp_duckdb_plugin_query_surface_case( $db, "UPDATE wp_posts SET post_title = 'missing' WHERE ID = 999" ),
 	'delete_row'           => wp_duckdb_plugin_query_surface_case( $db, 'DELETE FROM wp_posts WHERE ID = 11' ),
+	'replace_insert'       => wp_duckdb_plugin_query_surface_case( $db, "REPLACE INTO wp_posts (ID, post_title) VALUES (12, 'inserted')" ),
 	'replace_row'          => wp_duckdb_plugin_query_surface_case( $db, "REPLACE INTO wp_posts (ID, post_title) VALUES (12, 'replacement')" ),
 	'create_table'         => wp_duckdb_plugin_query_surface_case( $db, 'CREATE TABLE wp_surface (id INTEGER)' ),
 	'select_failure'       => wp_duckdb_plugin_query_surface_case( $db, 'SELECT BROKEN' ),

@@ -4370,6 +4370,29 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			$driver->query( 'SELECT id, name, hits FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
+
+		$driver->query( 'CREATE TABLE native_unique_replace_counts (email VARCHAR(100) UNIQUE, payload VARCHAR(20))' );
+		$driver->query( "INSERT INTO native_unique_replace_counts (email, payload) VALUES ('a@example.com', 'old')" );
+
+		$unique_replace = $driver->query( "REPLACE INTO native_unique_replace_counts (email, payload) VALUES ('a@example.com', 'new')" );
+		$this->assertSame( 2, $unique_replace->rowCount() );
+
+		$unique_insert = $driver->query( "REPLACE INTO native_unique_replace_counts (email, payload) VALUES ('b@example.com', 'insert')" );
+		$this->assertSame( 1, $unique_insert->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'email'   => 'a@example.com',
+					'payload' => 'new',
+				),
+				array(
+					'email'   => 'b@example.com',
+					'payload' => 'insert',
+				),
+			),
+			$driver->query( 'SELECT email, payload FROM native_unique_replace_counts ORDER BY email' )->fetchAll( PDO::FETCH_ASSOC )
+		);
 	}
 
 	public function test_joined_update_rewrites_join_and_comma_forms(): void {
@@ -8798,27 +8821,125 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( "INSERT INTO items (id, name, hits) VALUES (1, 'old', 1)" );
 
 		$replace = $driver->query( "REPLACE INTO items (id, name, hits) VALUES (1, 'new', 2)" );
-		$this->assertSame( 1, $replace->rowCount() );
+		$this->assertSame( 2, $replace->rowCount() );
 		$this->assertSame( "INSERT OR REPLACE INTO items(id, name, hits) VALUES (1, 'new', 2)", $this->lastDuckDBQuery( $driver ) );
 
 		$replace_without_into = $driver->query( "REPLACE items (id, name) VALUES (2, 'second')" );
 		$this->assertSame( 1, $replace_without_into->rowCount() );
 
+		$mixed = $driver->query(
+			"REPLACE INTO items (id, name, hits) VALUES
+				(1, 'newer', 3),
+				(3, 'third', 4)"
+		);
+		$this->assertSame( 3, $mixed->rowCount() );
+
 		$this->assertSame(
 			array(
 				array(
 					'id'   => 1,
-					'name' => 'new',
-					'hits' => 2,
+					'name' => 'newer',
+					'hits' => 3,
 				),
 				array(
 					'id'   => 2,
 					'name' => 'second',
 					'hits' => 0,
 				),
+				array(
+					'id'   => 3,
+					'name' => 'third',
+					'hits' => 4,
+				),
 			),
 			$driver->query( 'SELECT id, name, hits FROM items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
+	}
+
+	public function test_replace_values_manual_conflict_counts_deleted_rows_once(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE replace_counts (
+				id INTEGER PRIMARY KEY,
+				email VARCHAR(100) UNIQUE,
+				slug VARCHAR(100) UNIQUE,
+				payload VARCHAR(20)
+			)'
+		);
+		$driver->query( "INSERT INTO replace_counts (id, email, slug, payload) VALUES (1, 'a@example.com', 'a', 'old')" );
+
+		$same_row = $driver->query(
+			"REPLACE INTO replace_counts (id, email, slug, payload)
+			VALUES (1, 'a@example.com', 'a', 'same-row')"
+		);
+		$this->assertSame( 2, $same_row->rowCount() );
+
+		$two_rows = $driver->query(
+			"REPLACE INTO replace_counts (id, email, slug, payload)
+			VALUES (2, 'a@example.com', 'b', 'two-rows')"
+		);
+		$this->assertSame( 2, $two_rows->rowCount() );
+
+		$insert = $driver->query(
+			"REPLACE INTO replace_counts (id, email, slug, payload)
+			VALUES (3, 'c@example.com', 'c', 'insert')"
+		);
+		$this->assertSame( 1, $insert->rowCount() );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 2,
+					'email'   => 'a@example.com',
+					'slug'    => 'b',
+					'payload' => 'two-rows',
+				),
+				array(
+					'id'      => 3,
+					'email'   => 'c@example.com',
+					'slug'    => 'c',
+					'payload' => 'insert',
+				),
+			),
+			$driver->query( 'SELECT id, email, slug, payload FROM replace_counts ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_simple_literal_update_reports_changed_rows(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE update_counts (
+				id INTEGER PRIMARY KEY,
+				title VARCHAR(100),
+				status VARCHAR(20),
+				hits INTEGER,
+				nullable_value VARCHAR(20)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO update_counts (id, title, status, hits, nullable_value) VALUES
+				(1, 'same', '1', 1, NULL),
+				(2, 'other', '1', 2, NULL)"
+		);
+
+		$noop = $driver->query( "UPDATE update_counts SET title = 'same', status = '1' WHERE id = 1" );
+		$this->assertSame( 0, $noop->rowCount() );
+
+		$changed = $driver->query( "UPDATE update_counts SET title = 'changed', status = '1' WHERE id = 1" );
+		$this->assertSame( 1, $changed->rowCount() );
+
+		$mixed = $driver->query( 'UPDATE update_counts SET hits = 2, nullable_value = NULL WHERE id IN (1, 2)' );
+		$this->assertSame( 1, $mixed->rowCount() );
+
+		$alias_noop = $driver->query( "UPDATE update_counts AS u SET u.title = 'changed' WHERE u.id = 1" );
+		$this->assertSame( 0, $alias_noop->rowCount() );
+
+		$no_match = $driver->query( "UPDATE update_counts SET title = 'missing' WHERE id = 99" );
+		$this->assertSame( 0, $no_match->rowCount() );
 	}
 
 	public function test_insert_ignore_values_is_emulated(): void {
@@ -9638,7 +9759,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$replaced = $driver->query( "REPLACE INTO ci_items (id, name, payload) VALUES (2, 'first', 'replaced')" );
-		$this->assertSame( 1, $replaced->rowCount() );
+		$this->assertSame( 2, $replaced->rowCount() );
 		$this->assertSame(
 			array(
 				array(
@@ -9684,7 +9805,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$replaced = $driver->query( "REPLACE INTO bin_items (id, name, payload) VALUES (3, 'first', 'replaced')" );
-		$this->assertSame( 1, $replaced->rowCount() );
+		$this->assertSame( 2, $replaced->rowCount() );
 		$this->assertSame(
 			array(
 				array(

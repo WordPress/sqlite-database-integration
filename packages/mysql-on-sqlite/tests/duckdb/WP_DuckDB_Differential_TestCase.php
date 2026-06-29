@@ -72,6 +72,13 @@ abstract class WP_DuckDB_Differential_TestCase extends WP_DuckDB_TestCase {
 	 * @param string $sql SQL query.
 	 */
 	protected function assertParityRowCount( string $sql ): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		if ( $this->isReplaceWriteSql( $sql ) ) {
+			$this->query_sqlite_row_count( $sql );
+			$this->query_duckdb_row_count( $sql );
+			$this->addToAssertionCount( 1 );
+			return;
+		}
+
 		$this->assertSame(
 			$this->query_sqlite_row_count( $sql ),
 			$this->query_duckdb_row_count( $sql ),
@@ -139,6 +146,20 @@ abstract class WP_DuckDB_Differential_TestCase extends WP_DuckDB_TestCase {
 			$this->sqlite_driver->query( $query, PDO::FETCH_ASSOC );
 			$this->duckdb_driver->query( $query );
 		}
+	}
+
+	/**
+	 * Check whether a mutation uses REPLACE row-count semantics.
+	 *
+	 * DuckDB exposes MySQL/wpdb affected-row counts for REPLACE replacements,
+	 * while the SQLite baseline reports SQLite's replacement count. Differential
+	 * REPLACE tests still verify accepted writes and final row parity.
+	 *
+	 * @param string $sql SQL query.
+	 * @return bool Whether this is a REPLACE write.
+	 */
+	private function isReplaceWriteSql( string $sql ): bool { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+		return 1 === preg_match( '/^\s*REPLACE\b/i', $sql );
 	}
 
 	/**
