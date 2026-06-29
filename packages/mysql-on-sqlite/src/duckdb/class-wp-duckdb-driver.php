@@ -6339,8 +6339,9 @@ class WP_DuckDB_Driver {
 			'is_string'
 		);
 
-		$metadata_map = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] ?? false );
-		$conditions   = array();
+		$metadata_map             = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] ?? false );
+		$case_insensitive_columns = $this->case_insensitive_column_names( $reference['table_name'], $reference['temporary'] ?? false );
+		$conditions               = array();
 		foreach ( $this->split_top_level_comma_items( $tokens ) as $item ) {
 			$qualifier = isset( $item[0] ) ? $this->identifier_value( $item[0] ) : null;
 			if (
@@ -6368,22 +6369,30 @@ class WP_DuckDB_Driver {
 				return null;
 			}
 
+			$column_key        = strtolower( $column_name );
+			$metadata          = $metadata_map[ $column_key ] ?? null;
 			$seeded_rand_state = array();
 			$value_sql         = $this->translate_update_assignment_value_tokens_to_duckdb_sql(
 				$right_tokens,
 				false,
 				$seeded_rand_state
 			);
-			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
+			if ( is_array( $metadata ) ) {
 				$value_sql = $this->coerce_write_value_for_column_sql(
-					$metadata_map[ strtolower( $column_name ) ],
+					$metadata,
 					$right_tokens,
 					$value_sql,
 					true
 				);
 			}
 
-			$conditions[] = $this->translate_tokens_to_duckdb_sql( $left_tokens ) . ' IS DISTINCT FROM (' . $value_sql . ')';
+			$left_sql                 = $this->translate_tokens_to_duckdb_sql( $left_tokens );
+			$use_byte_sensitive_guard = isset( $case_insensitive_columns[ $column_key ] )
+				&& is_array( $metadata )
+				&& $this->is_character_write_data_type( $this->mysql_column_data_type( $metadata ) );
+			$conditions[]             = $use_byte_sensitive_guard
+				? $this->byte_sensitive_update_value_sql( $left_sql ) . ' IS DISTINCT FROM ' . $this->byte_sensitive_update_value_sql( $value_sql )
+				: $left_sql . ' IS DISTINCT FROM (' . $value_sql . ')';
 		}
 
 		if ( count( $conditions ) === 0 ) {
@@ -6391,6 +6400,18 @@ class WP_DuckDB_Driver {
 		}
 
 		return implode( ' OR ', $conditions );
+	}
+
+	/**
+	 * Build a NULL-preserving, byte-sensitive text expression for changed-row guards.
+	 *
+	 * @param string $sql DuckDB SQL expression.
+	 * @return string DuckDB SQL expression.
+	 */
+	private function byte_sensitive_update_value_sql( string $sql ): string {
+		return 'CASE WHEN (' . $sql . ') IS NULL THEN NULL ELSE hex(encode(CAST(('
+			. $sql
+			. ') AS VARCHAR))) END';
 	}
 
 	/**

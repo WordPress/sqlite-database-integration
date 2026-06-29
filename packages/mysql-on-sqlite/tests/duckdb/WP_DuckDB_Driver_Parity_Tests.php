@@ -231,6 +231,26 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_case_only_update_on_case_insensitive_column_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_users (
+					ID bigint(20) unsigned NOT NULL auto_increment,
+					user_login varchar(60) NOT NULL default '',
+					user_email varchar(100) NOT NULL default '',
+					PRIMARY KEY (ID),
+					KEY user_email (user_email)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_users (ID, user_login, user_email) VALUES (1, 'editor', 'editor@example.com')",
+			)
+		);
+
+		$this->assertParityRowCount( "UPDATE wp_users SET user_email = 'Editor@example.com' WHERE ID = 1" );
+		$this->assertParityRows( 'SELECT ID, user_email FROM wp_users ORDER BY ID' );
+		$this->runParitySetup( array( "UPDATE wp_users SET user_email = 'Editor@example.com' WHERE ID = 1" ) );
+		$this->assertParityRows( 'SELECT ID, user_email FROM wp_users ORDER BY ID' );
+	}
+
 	public function test_attachment_mime_distinct_no_order_matches_sqlite_first_seen_order(): void {
 		$this->runParitySetup(
 			array(

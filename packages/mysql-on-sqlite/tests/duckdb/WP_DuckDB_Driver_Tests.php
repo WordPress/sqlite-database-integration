@@ -9015,6 +9015,39 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 0, $no_match->rowCount() );
 	}
 
+	public function test_case_only_update_on_case_insensitive_column_reports_changed_row(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wp_users (
+				ID bigint(20) unsigned NOT NULL auto_increment,
+				user_login varchar(60) NOT NULL default '',
+				user_email varchar(100) NOT NULL default '',
+				PRIMARY KEY (ID),
+				KEY user_email (user_email)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( "INSERT INTO wp_users (ID, user_login, user_email) VALUES (1, 'editor', 'editor@example.com')" );
+
+		$updated = $driver->query( "UPDATE wp_users SET user_email = 'Editor@example.com' WHERE ID = 1" );
+		$this->assertSame( 1, $updated->rowCount() );
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$this->assertStringContainsString( 'hex(encode(CAST', end( $duckdb_queries ) );
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'user_email' => 'Editor@example.com',
+				),
+			),
+			$driver->query( 'SELECT ID, user_email FROM wp_users WHERE ID = 1' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$noop = $driver->query( "UPDATE wp_users SET user_email = 'Editor@example.com' WHERE ID = 1" );
+		$this->assertSame( 0, $noop->rowCount() );
+	}
+
 	public function test_insert_ignore_values_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 
