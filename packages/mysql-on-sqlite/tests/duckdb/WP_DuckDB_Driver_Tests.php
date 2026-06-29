@@ -1867,6 +1867,92 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_sql_calc_found_rows_numeric_string_and_text_value_arithmetic_coercions(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE wptests_users (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				user_login VARCHAR(60) NOT NULL,
+				PRIMARY KEY (ID)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE wptests_usermeta (
+				umeta_id BIGINT(20) UNSIGNED NOT NULL,
+				user_id BIGINT(20) UNSIGNED NOT NULL,
+				meta_key VARCHAR(255),
+				meta_value LONGTEXT,
+				PRIMARY KEY (umeta_id)
+			)'
+		);
+		$driver->query( "INSERT INTO wptests_users (ID, user_login) VALUES (0, 'zero'), (1, 'one'), (2, 'two')" );
+		$driver->query(
+			"INSERT INTO wptests_usermeta (umeta_id, user_id, meta_key, meta_value) VALUES
+				(10, 0, 'user_age', 'abc'),
+				(11, 1, 'user_age', '10'),
+				(12, 2, 'user_age', '2')"
+		);
+
+		$string_search         = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS ID
+			FROM wptests_users
+			WHERE ID = 'yololololo' OR user_login LIKE '%yololololo%'
+			ORDER BY ID
+			LIMIT 0, 10"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$string_search_queries = $driver->get_last_duckdb_queries();
+
+		$this->assertSame( array(), $string_search );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString(
+			"CASE WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END",
+			implode( "\n", $string_search_queries )
+		);
+
+		$numeric_string_search = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS ID
+			FROM wptests_users
+			WHERE ID = '02'
+			ORDER BY ID"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( array( 'ID' => 2 ) ), $numeric_string_search );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$meta_sort         = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_users.ID
+			FROM wptests_users INNER JOIN wptests_usermeta ON ( wptests_users.ID = wptests_usermeta.user_id )
+			WHERE wptests_usermeta.meta_key = 'user_age'
+			ORDER BY wptests_usermeta.meta_value+0 ASC
+			LIMIT 0, 2"
+		)->fetchAll( PDO::FETCH_ASSOC );
+		$meta_sort_queries = $driver->get_last_duckdb_queries();
+
+		$this->assertSame(
+			array(
+				array( 'ID' => 0 ),
+				array( 'ID' => 2 ),
+			),
+			$meta_sort
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString(
+			'COALESCE(TRY_CAST("wptests_usermeta"."meta_value" AS DOUBLE), 0) + 0',
+			implode( "\n", $meta_sort_queries )
+		);
+	}
+
 	public function test_date_format_function_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -5072,6 +5158,18 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				'mysql'  => 'SELECT b.id FROM options b WHERE b.option_value < 1782556962 ORDER BY b.id',
 				'duckdb' => 'SELECT b.id FROM options b WHERE TRY_CAST("b"."option_value" AS BIGINT) < 1782556962 ORDER BY b.id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0',
+				'duckdb' => 'SELECT id FROM postmeta ORDER BY COALESCE(TRY_CAST("meta_value" AS DOUBLE), 0) + 0',
+			),
+			array(
+				'mysql'  => 'SELECT ID FROM users WHERE ID = \'yololololo\'',
+				'duckdb' => "SELECT ID FROM users WHERE CASE WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END",
+			),
+			array(
+				'mysql'  => 'SELECT ID FROM users WHERE \'12abc\' = users.ID',
+				'duckdb' => "SELECT ID FROM users WHERE CASE WHEN TRY_CAST('12abc' AS DOUBLE) IS NULL THEN FALSE ELSE TRY_CAST('12abc' AS DOUBLE) = \"users\".\"ID\" END",
 			),
 		);
 

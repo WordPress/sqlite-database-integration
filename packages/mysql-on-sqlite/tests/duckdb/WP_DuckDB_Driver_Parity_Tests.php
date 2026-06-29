@@ -1193,6 +1193,61 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
 	}
 
+	public function test_sql_calc_found_rows_scalar_coercions_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_found_rows_coercion_users (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					user_login VARCHAR(60) NOT NULL DEFAULT '',
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				'CREATE TABLE wp_found_rows_coercion_usermeta (
+					umeta_id BIGINT(20) UNSIGNED NOT NULL,
+					user_id BIGINT(20) UNSIGNED NOT NULL,
+					meta_key VARCHAR(255),
+					meta_value LONGTEXT,
+					PRIMARY KEY (umeta_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_found_rows_coercion_users (ID, user_login) VALUES
+					(0, 'zero'),
+					(1, 'one'),
+					(2, 'two')",
+				"INSERT INTO wp_found_rows_coercion_usermeta (umeta_id, user_id, meta_key, meta_value) VALUES
+					(10, 0, 'user_age', 'abc'),
+					(11, 1, 'user_age', '10'),
+					(12, 2, 'user_age', '2')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS ID
+			FROM wp_found_rows_coercion_users
+			WHERE ID = 'yololololo' OR user_login LIKE '%yololololo%'
+			ORDER BY ID
+			LIMIT 0, 10"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS ID
+			FROM wp_found_rows_coercion_users
+			WHERE ID = '02'
+			ORDER BY ID"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS wp_found_rows_coercion_users.ID
+			FROM wp_found_rows_coercion_users
+				INNER JOIN wp_found_rows_coercion_usermeta
+					ON ( wp_found_rows_coercion_users.ID = wp_found_rows_coercion_usermeta.user_id )
+			WHERE wp_found_rows_coercion_usermeta.meta_key = 'user_age'
+			ORDER BY wp_found_rows_coercion_usermeta.meta_value+0 ASC
+			LIMIT 0, 2"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
 	public function test_found_rows_state_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
