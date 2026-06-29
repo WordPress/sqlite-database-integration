@@ -29,8 +29,11 @@ const junitOutputFile = path.isAbsolute( junitOutputPath )
 	: path.join( repoRoot, junitOutputPath );
 const phpunitCompatibilityPrependPath = path.join( repoRoot, 'wordpress', 'phpunit-runner-compat-prepend.php' );
 const duckdbAutoloadCompatibilityWrapperPath = path.join( repoRoot, 'wordpress', 'phpunit-duckdb-autoload-wrapper.php' );
+const duckdbChildDiagnosticsPath = path.join( repoRoot, 'wordpress', 'duckdb-child-process-diagnostics.php' );
 const phpunitCompatibilityPrependContainerPath = '/var/www/phpunit-runner-compat-prepend.php';
 const duckdbAutoloadCompatibilityWrapperContainerPath = '/var/www/phpunit-duckdb-autoload-wrapper.php';
+const duckdbChildDiagnosticsContainerPath = '/var/www/duckdb-child-process-diagnostics.php';
+const enableDuckDBChildDiagnostics = isDuckDBPhpunitRun && process.env.WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS === '1';
 
 const sqliteExpectedErrors = [
 	'Tests_DB_Charset::test_invalid_characters_in_query',
@@ -232,6 +235,10 @@ function preparePhpunitCommand() {
 	}
 
 	writePhpunitCompatibilityFiles();
+	if ( enableDuckDBChildDiagnostics ) {
+		writeDuckDBChildDiagnosticsFile();
+		patchWordPressPhpunitBootstrapForChildDiagnostics();
+	}
 	verifyPhpunitCompatibilityFiles();
 
 	const effectivePhpunitCommand = addPhpunitPrependArgument(
@@ -284,6 +291,8 @@ if ( ! defined( 'DUCKDB_PHP_AUTOLOAD' ) ) {
 
 ${ getPhpunitForwardedEnvironmentPhp() }
 
+${ getDuckDBChildDiagnosticsPrependPhp() }
+
 if ( ! method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ) {
 \tfwrite( STDERR, "Error: WordPress PHPUnit runner does not provide PHPUnit\\\\TextUI\\\\TestRunner::run().\\n" );
 \texit( 1 );
@@ -322,10 +331,154 @@ if ( ! method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ) {
 	);
 }
 
+function writeDuckDBChildDiagnosticsFile() {
+	fs.writeFileSync(
+		duckdbChildDiagnosticsPath,
+		`<?php
+if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
+\tfunction wp_sqlite_duckdb_child_diagnostics_enabled() {
+\t\t$value = getenv( 'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS' );
+\t\treturn is_string( $value ) && '' !== $value && '0' !== $value && 'false' !== strtolower( $value );
+\t}
+
+\tfunction wp_sqlite_duckdb_child_diagnostics_verbose() {
+\t\t$value = getenv( 'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_VERBOSE' );
+\t\treturn is_string( $value ) && '' !== $value && '0' !== $value && 'false' !== strtolower( $value );
+\t}
+
+\tfunction wp_sqlite_duckdb_child_diagnostics_fatal_error( $error ) {
+\t\tif ( ! is_array( $error ) || ! isset( $error['type'] ) ) {
+\t\t\treturn false;
+\t\t}
+
+\t\treturn in_array(
+\t\t\t$error['type'],
+\t\t\tarray( E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR ),
+\t\t\ttrue
+\t\t);
+\t}
+
+\tfunction wp_sqlite_duckdb_child_diagnostics_report( $stage, $force = false ) {
+\t\tif ( ! wp_sqlite_duckdb_child_diagnostics_enabled() ) {
+\t\t\treturn;
+\t\t}
+
+\t\t$error     = error_get_last();
+\t\t$is_fatal  = wp_sqlite_duckdb_child_diagnostics_fatal_error( $error );
+\t\t$db_engine = defined( 'DB_ENGINE' ) ? DB_ENGINE : null;
+\t\t$autoload  = defined( 'DUCKDB_PHP_AUTOLOAD' ) ? DUCKDB_PHP_AUTOLOAD : null;
+\t\t$wpdb      = isset( $GLOBALS['wpdb'] ) && is_object( $GLOBALS['wpdb'] ) ? get_class( $GLOBALS['wpdb'] ) : null;
+\t\t$reason    = null;
+
+\t\tif ( class_exists( 'WP_DuckDB_Runtime', false ) && method_exists( 'WP_DuckDB_Runtime', 'get_unavailable_reason' ) ) {
+\t\t\ttry {
+\t\t\t\t$reason = WP_DuckDB_Runtime::get_unavailable_reason( false );
+\t\t\t} catch ( Throwable $e ) {
+\t\t\t\t$reason = get_class( $e ) . ': ' . $e->getMessage();
+\t\t\t}
+\t\t}
+
+\t\t$bootstrap_failed = 'wp_bootstrap' === $stage && (
+\t\t\t'duckdb' !== $db_engine
+\t\t\t|| ! is_string( $autoload )
+\t\t\t|| ! is_readable( $autoload )
+\t\t\t|| ! class_exists( 'WP_DuckDB_Runtime', false )
+\t\t\t|| null !== $reason
+\t\t\t|| 'WP_DuckDB_DB' !== $wpdb
+\t\t);
+
+\t\tif ( ! $force && ! wp_sqlite_duckdb_child_diagnostics_verbose() && ! $bootstrap_failed && ! ( 'shutdown' === $stage && $is_fatal ) ) {
+\t\t\treturn;
+\t\t}
+
+\t\t$payload = array(
+\t\t\t'stage'                    => $stage,
+\t\t\t'pid'                      => getmypid(),
+\t\t\t'ppid'                     => function_exists( 'posix_getppid' ) ? posix_getppid() : null,
+\t\t\t'php_sapi'                 => PHP_SAPI,
+\t\t\t'php_version'              => PHP_VERSION,
+\t\t\t'php_binary'               => PHP_BINARY,
+\t\t\t'cwd'                      => getcwd(),
+\t\t\t'argv'                     => isset( $_SERVER['argv'] ) ? $_SERVER['argv'] : null,
+\t\t\t'db_engine_defined'        => defined( 'DB_ENGINE' ),
+\t\t\t'db_engine'                => $db_engine,
+\t\t\t'duckdb_autoload_defined'  => defined( 'DUCKDB_PHP_AUTOLOAD' ),
+\t\t\t'duckdb_autoload'          => $autoload,
+\t\t\t'duckdb_autoload_readable' => is_string( $autoload ) && is_readable( $autoload ),
+\t\t\t'ffi_loaded'               => extension_loaded( 'ffi' ),
+\t\t\t'ffi_enable'               => ini_get( 'ffi.enable' ),
+\t\t\t'runtime_class_loaded'     => class_exists( 'WP_DuckDB_Runtime', false ),
+\t\t\t'runtime_unavailable'      => $reason,
+\t\t\t'duckdb_class_loaded'      => class_exists( 'Saturio\\\\DuckDB\\\\DuckDB', false ),
+\t\t\t'wpdb_class'               => $wpdb,
+\t\t\t'fatal'                    => $is_fatal ? $error : null,
+\t\t);
+
+\t\tfwrite( STDERR, 'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTIC ' . json_encode( $payload ) . PHP_EOL );
+\t}
+
+\tregister_shutdown_function(
+\t\tfunction () {
+\t\t\twp_sqlite_duckdb_child_diagnostics_report( 'shutdown' );
+\t\t}
+\t);
+}
+`
+	);
+}
+
+function getDuckDBChildDiagnosticsPrependPhp() {
+	if ( ! enableDuckDBChildDiagnostics ) {
+		return '';
+	}
+
+	return [
+		`if ( is_readable( ${ phpSingleQuote( duckdbChildDiagnosticsContainerPath ) } ) ) {`,
+		`\trequire_once ${ phpSingleQuote( duckdbChildDiagnosticsContainerPath ) };`,
+		"\twp_sqlite_duckdb_child_diagnostics_report( 'prepend' );",
+		'}',
+	].join( '\n' );
+}
+
+function patchWordPressPhpunitBootstrapForChildDiagnostics() {
+	const file = path.join( repoRoot, 'wordpress', 'tests', 'phpunit', 'includes', 'bootstrap.php' );
+	const marker = "require_once ABSPATH . 'wp-settings.php';";
+	const guard = [
+		'/*',
+		' * DuckDB child-process diagnostics. This block is generated by the SQLite integration workflow.',
+		' */',
+		"$wp_sqlite_duckdb_child_diagnostics = dirname( __DIR__, 3 ) . '/duckdb-child-process-diagnostics.php';",
+		"if ( is_readable( $wp_sqlite_duckdb_child_diagnostics ) ) {",
+		"\trequire_once $wp_sqlite_duckdb_child_diagnostics;",
+		"\twp_sqlite_duckdb_child_diagnostics_report( 'wp_bootstrap' );",
+		'}',
+	].join( '\n' );
+
+	if ( ! fs.existsSync( file ) ) {
+		console.error( `Error: WordPress PHPUnit bootstrap file not found at ${ file }.` );
+		process.exit( 1 );
+	}
+
+	let contents = fs.readFileSync( file, 'utf8' );
+	if ( contents.includes( guard ) ) {
+		return;
+	}
+
+	if ( ! contents.includes( marker ) ) {
+		console.error( `Error: Unable to find WordPress bootstrap marker in ${ file }.` );
+		process.exit( 1 );
+	}
+
+	contents = contents.replace( marker, `${ marker }\n\n${ guard }` );
+	fs.writeFileSync( file, contents );
+}
+
 function getPhpunitForwardedEnvironmentPhp() {
 	const environmentNames = [
 		'WP_DUCKDB_QUERY_PROFILE',
 		'WP_DUCKDB_QUERY_PROFILE_INTERVAL',
+		'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS',
+		'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_VERBOSE',
 	];
 
 	return environmentNames

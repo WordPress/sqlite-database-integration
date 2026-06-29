@@ -170,6 +170,7 @@ jobs:
         timeout-minutes: 20
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS: '1'
           WP_DUCKDB_QUERY_PROFILE: '1'
           WP_DUCKDB_QUERY_PROFILE_INTERVAL: '2500'
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
