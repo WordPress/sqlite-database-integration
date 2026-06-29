@@ -9079,6 +9079,92 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_insert_on_duplicate_key_update_multirow_term_relationships_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_term_relationships (
+				object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				term_order INT(11) NOT NULL DEFAULT '0',
+				PRIMARY KEY (object_id, term_taxonomy_id),
+				KEY term_taxonomy_id (term_taxonomy_id)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order)
+			VALUES (1, 11, 0), (2, 11, 0)'
+		);
+
+		$result = $driver->query(
+			'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order)
+			VALUES (1, 11, 7), (1, 12, 0), (3, 11, 0)
+			ON DUPLICATE KEY UPDATE term_order = VALUES(term_order)'
+		);
+
+		$this->assertSame( 3, $result->rowCount() );
+		$this->assertStringContainsString(
+			'ON CONFLICT ("object_id", "term_taxonomy_id") DO UPDATE SET term_order = excluded."term_order"',
+			$this->lastDuckDBQuery( $driver )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'object_id'        => 1,
+					'term_taxonomy_id' => 11,
+					'term_order'       => 7,
+				),
+				array(
+					'object_id'        => 1,
+					'term_taxonomy_id' => 12,
+					'term_order'       => 0,
+				),
+				array(
+					'object_id'        => 2,
+					'term_taxonomy_id' => 11,
+					'term_order'       => 0,
+				),
+				array(
+					'object_id'        => 3,
+					'term_taxonomy_id' => 11,
+					'term_order'       => 0,
+				),
+			),
+			$driver->query( 'SELECT object_id, term_taxonomy_id, term_order FROM wptests_term_relationships ORDER BY object_id, term_taxonomy_id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_insert_on_duplicate_key_update_multirow_rejects_mixed_conflict_targets(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE multi_unique (
+				id INTEGER PRIMARY KEY,
+				slug VARCHAR(100) UNIQUE,
+				hits INTEGER NOT NULL DEFAULT 0
+			)'
+		);
+		$driver->query( "INSERT INTO multi_unique (id, slug, hits) VALUES (1, 'one', 1), (2, 'two', 2)" );
+
+		try {
+			$driver->query(
+				"INSERT INTO multi_unique (id, slug, hits)
+				VALUES (1, 'new-one', 7), (3, 'two', 9)
+				ON DUPLICATE KEY UPDATE hits = VALUES(hits)"
+			);
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertSame(
+				'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values match multiple unique key targets.',
+				$e->getMessage()
+			);
+			return;
+		}
+
+		$this->fail( 'Expected mixed-target multi-row ODKU to be rejected.' );
+	}
+
 	public function test_insert_on_duplicate_key_update_preserves_serialized_nul_payloads(): void {
 		$this->requireDuckDBRuntime();
 

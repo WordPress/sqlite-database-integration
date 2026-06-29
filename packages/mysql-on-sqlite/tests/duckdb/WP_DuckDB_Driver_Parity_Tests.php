@@ -2268,6 +2268,29 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT id, name, hits FROM items ORDER BY id' );
 	}
 
+	public function test_on_duplicate_key_update_multirow_term_relationships_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_term_relationships (
+					object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+					term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+					term_order INT(11) NOT NULL DEFAULT '0',
+					PRIMARY KEY (object_id, term_taxonomy_id),
+					KEY term_taxonomy_id (term_taxonomy_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order)
+				VALUES (1, 11, 0), (2, 11, 0)',
+			)
+		);
+
+		$this->assertParityRowCount(
+			'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order)
+			VALUES (1, 11, 7), (1, 12, 0), (3, 11, 0)
+			ON DUPLICATE KEY UPDATE term_order = VALUES(term_order)'
+		);
+		$this->assertParityRows( 'SELECT object_id, term_taxonomy_id, term_order FROM wptests_term_relationships ORDER BY object_id, term_taxonomy_id' );
+	}
+
 	public function test_on_duplicate_key_update_serialized_nul_payload_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

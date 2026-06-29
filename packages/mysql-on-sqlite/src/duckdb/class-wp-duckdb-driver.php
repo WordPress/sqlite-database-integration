@@ -18613,7 +18613,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function translate_insert_on_duplicate_key_update_tokens_to_duckdb_sql( array $tokens, int $table_index, int $on_duplicate_index ): array {
 		$insert_shape = $this->parse_on_duplicate_insert_shape( $tokens, $table_index, $on_duplicate_index );
-		$target       = $this->select_on_duplicate_conflict_target( $insert_shape['table_name'], $insert_shape['temporary'], $insert_shape['values_by_column'] );
+		$target       = $this->select_on_duplicate_conflict_target_for_rows( $insert_shape['table_name'], $insert_shape['temporary'], $insert_shape['rows'] );
 		$update_sql   = $this->translate_on_duplicate_update_tokens_to_duckdb_sql(
 			array_slice( $tokens, $on_duplicate_index + 4 ),
 			$this->write_column_metadata_map( $insert_shape['table_name'], $insert_shape['temporary'] ),
@@ -18651,69 +18651,24 @@ class WP_DuckDB_Driver {
 	 * @param WP_Parser_Token[] $tokens             MySQL tokens.
 	 * @param int               $table_index        Index of the table token.
 	 * @param int               $on_duplicate_index Index of the ON token.
-	 * @return array{table_name:string,requested_table_name:string,temporary:bool,values_by_column:array<string,string>}
+	 * @return array{table_name:string,requested_table_name:string,temporary:bool,rows:array<int,array<string,string>>}
 	 */
 	private function parse_on_duplicate_insert_shape( array $tokens, int $table_index, int $on_duplicate_index ): array {
 		$requested_table_name = $this->identifier_value( $tokens[ $table_index ] ?? null );
-		$reference            = $this->resolve_write_table_reference( $requested_table_name );
-		$metadata_map         = $this->write_column_metadata_map( $reference['table_name'], $reference['temporary'] );
 		$index                = $table_index + 1;
 
 		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Explicit column list is required.' );
-		++$index;
 
-		$columns = array();
-		while ( $index < count( $tokens ) ) {
-			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
-				++$index;
-				break;
-			}
-			$columns[] = $this->identifier_value( $tokens[ $index ] );
-			++$index;
-			if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::COMMA_SYMBOL === $tokens[ $index ]->id ) {
-				++$index;
-				continue;
-			}
-			if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $index ]->id ) {
-				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Explicit column list is required.' );
-			}
-		}
-
-		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::VALUES_SYMBOL, 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only INSERT ... VALUES is supported.' );
-		++$index;
-		$this->expect_token( $tokens, $index, WP_MySQL_Lexer::OPEN_PAR_SYMBOL, 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. A single VALUES row is required.' );
-		++$index;
-
-		list( $value_items, $index ) = $this->collect_parenthesized_items( $tokens, $index );
-		if ( $index !== $on_duplicate_index ) {
-			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only a single VALUES row is supported.' );
-		}
-		if ( count( $columns ) !== count( $value_items ) ) {
-			throw new WP_DuckDB_Driver_Exception( 'INSERT ... ON DUPLICATE KEY UPDATE column count does not match value count in DuckDB driver.' );
-		}
-
-		$values_by_column = array();
-		foreach ( $columns as $offset => $column_name ) {
-			$value_sql = $this->translate_tokens_to_duckdb_sql( $value_items[ $offset ] );
-			if ( isset( $metadata_map[ strtolower( $column_name ) ] ) ) {
-				$value_sql = $this->coerce_write_value_for_column_sql(
-					$metadata_map[ strtolower( $column_name ) ],
-					$value_items[ $offset ],
-					$value_sql,
-					false
-				);
-			}
-			$values_by_column[ strtolower( $column_name ) ] = $value_sql;
-		}
-		foreach ( $this->omitted_non_strict_implicit_default_writes( $reference['table_name'], $reference['temporary'], $columns ) as $default_write ) {
-			$values_by_column[ strtolower( $default_write['column_name'] ) ] = $default_write['value_sql'];
+		$shape = $this->parse_insert_values_write_shape( $tokens, $table_index, $on_duplicate_index, true );
+		if ( count( $shape['columns'] ) === 0 || count( $shape['rows'] ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Only INSERT ... VALUES is supported.' );
 		}
 
 		return array(
-			'table_name'           => $reference['table_name'],
+			'table_name'           => $shape['table_name'],
 			'requested_table_name' => $requested_table_name,
-			'temporary'            => $reference['temporary'],
-			'values_by_column'     => $values_by_column,
+			'temporary'            => $shape['temporary'],
+			'rows'                 => $shape['rows'],
 		);
 	}
 
@@ -20305,23 +20260,28 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Select the conflict target that MySQL would hit for a single inserted row.
+	 * Select the conflict target that can emulate all inserted rows.
 	 *
-	 * @param string               $table_name       Table name.
-	 * @param bool                 $temporary        Whether the target is a temporary table.
-	 * @param array<string,string> $values_by_column Inserted values keyed by lowercase column name.
+	 * DuckDB needs one ON CONFLICT target for the whole statement. MySQL can
+	 * resolve different rows against different unique keys, so this only accepts
+	 * multi-row ODKU statements that fit one eligible unique target.
+	 *
+	 * @param string                           $table_name Table name.
+	 * @param bool                             $temporary  Whether the target is a temporary table.
+	 * @param array<int,array<string,string>>  $rows       Inserted rows keyed by lowercase column name.
 	 * @return array{columns:string[],matched:bool} Conflict target columns and whether an existing row matched.
 	 */
-	private function select_on_duplicate_conflict_target( string $table_name, bool $temporary, array $values_by_column ): array {
+	private function select_on_duplicate_conflict_target_for_rows( string $table_name, bool $temporary, array $rows ): array {
 		$eligible_targets = array();
-		$matched_targets  = array();
 
 		foreach ( $this->unique_key_column_sets( $table_name, $temporary ) as $column_set ) {
 			$has_all_values = true;
-			foreach ( $column_set as $column_name ) {
-				if ( ! array_key_exists( strtolower( $column_name ), $values_by_column ) ) {
-					$has_all_values = false;
-					break;
+			foreach ( $rows as $values_by_column ) {
+				foreach ( $column_set as $column_name ) {
+					if ( ! array_key_exists( strtolower( $column_name ), $values_by_column ) ) {
+						$has_all_values = false;
+						break 2;
+					}
 				}
 			}
 
@@ -20330,12 +20290,32 @@ class WP_DuckDB_Driver {
 			}
 
 			$eligible_targets[] = $column_set;
-			if ( $this->insert_values_conflict_with_target( $table_name, $temporary, $column_set, $values_by_column ) ) {
-				$matched_targets[] = $column_set;
+		}
+
+		if ( count( $eligible_targets ) === 0 ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values do not include a unique key target.' );
+		}
+
+		$matched_targets = array();
+		foreach ( $rows as $values_by_column ) {
+			$row_matched_targets = array();
+			foreach ( $eligible_targets as $column_set ) {
+				if ( $this->insert_values_conflict_with_target( $table_name, $temporary, $column_set, $values_by_column ) ) {
+					$row_matched_targets[] = $column_set;
+				}
+			}
+
+			if ( count( $row_matched_targets ) > 1 ) {
+				throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values match multiple unique key targets.' );
+			}
+
+			if ( 1 === count( $row_matched_targets ) ) {
+				$matched_targets[ $this->unique_key_column_set_key( $row_matched_targets[0] ) ] = $row_matched_targets[0];
 			}
 		}
 
 		if ( 1 === count( $matched_targets ) ) {
+			$matched_targets = array_values( $matched_targets );
 			return array(
 				'columns' => $matched_targets[0],
 				'matched' => true,
@@ -20345,14 +20325,20 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values match multiple unique key targets.' );
 		}
 
-		if ( count( $eligible_targets ) > 0 ) {
-			return array(
-				'columns' => $eligible_targets[0],
-				'matched' => false,
-			);
-		}
+		return array(
+			'columns' => $eligible_targets[0],
+			'matched' => false,
+		);
+	}
 
-		throw new WP_DuckDB_Driver_Exception( 'Unsupported INSERT ... ON DUPLICATE KEY UPDATE statement in DuckDB driver. Insert values do not include a unique key target.' );
+	/**
+	 * Build a stable key for a unique key column set.
+	 *
+	 * @param string[] $column_set Unique key column set.
+	 * @return string Stable key.
+	 */
+	private function unique_key_column_set_key( array $column_set ): string {
+		return implode( "\0", array_map( 'strtolower', $column_set ) );
 	}
 
 	/**
