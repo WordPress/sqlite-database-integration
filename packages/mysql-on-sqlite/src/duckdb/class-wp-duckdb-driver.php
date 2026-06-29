@@ -1088,6 +1088,7 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_referential_constraints,
 			$rewrite_information_schema_check_constraints
 		);
+		$order_by_item_rewrites     += $this->grouped_posts_date_order_by_tiebreak_rewrites( $sql_tokens, $group_by_expansion, $order_by_item_rewrites );
 		$order_by_item_rewrites     += $this->posts_date_order_by_tiebreak_rewrites( $sql_tokens, $order_by_item_rewrites );
 
 		$sql                          = $this->translate_tokens_to_duckdb_sql(
@@ -1433,6 +1434,117 @@ class WP_DuckDB_Driver {
 					. $tiebreak_direction,
 			),
 		);
+	}
+
+	/**
+	 * Append a deterministic ID tie-breaker for grouped WordPress posts date ordering.
+	 *
+	 * WordPress taxonomy/meta queries commonly group by the posts primary key
+	 * while ordering by a posts datetime column. Once DuckDB expands the GROUP
+	 * BY to satisfy strict SQL, equal datetime values need the same posts ID
+	 * secondary order as the non-grouped WordPress query shape.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param array{group_index:int,group_end:int,table_alias:string,table_name:string,joined:bool,columns:string[],grouped_columns:array<string,bool>,metadata_columns:array<string,bool>,selected_aliases:array<string,bool>}|null $group_by_expansion Primary-key grouping metadata.
+	 * @param array<int,array{end:int,sql:string}> $existing_rewrites Existing ORDER BY rewrites keyed by item start offset.
+	 * @return array<int,array{end:int,sql:string}> Rewrites keyed by ORDER BY item start offset.
+	 */
+	private function grouped_posts_date_order_by_tiebreak_rewrites( array $tokens, ?array $group_by_expansion, array $existing_rewrites = array() ): array {
+		if (
+			null === $group_by_expansion
+			|| ! isset( $group_by_expansion['table_name'] )
+			|| ! $this->is_wordpress_posts_table_name( $group_by_expansion['table_name'] )
+		) {
+			return array();
+		}
+
+		$group_end = $group_by_expansion['group_end'];
+		if (
+			! isset( $tokens[ $group_end ] )
+			|| WP_MySQL_Lexer::ORDER_SYMBOL !== $tokens[ $group_end ]->id
+			|| ! isset( $tokens[ $group_end + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $group_end + 1 ]->id
+		) {
+			return array();
+		}
+
+		$order_end   = $this->primary_key_order_by_clause_end( $tokens, $group_end + 2 );
+		$order_items = $this->split_top_level_select_item_ranges( $tokens, $group_end + 2, $order_end );
+		if ( count( $order_items ) === 0 ) {
+			return array();
+		}
+
+		$tiebreak_direction = null;
+		foreach ( $order_items as $item ) {
+			$column = $this->parse_order_by_column_reference_with_direction( $item['tokens'] );
+			if (
+				null === $column
+				|| ! $this->grouped_posts_order_column_matches_primary_table( $column, $group_by_expansion )
+			) {
+				continue;
+			}
+
+			if ( 0 === strcasecmp( $column['column_name'], 'ID' ) ) {
+				return array();
+			}
+
+			if ( null === $tiebreak_direction && $this->is_wordpress_posts_date_order_column( $column['column_name'] ) ) {
+				$tiebreak_direction = $this->posts_date_order_by_tiebreak_direction( $column['column_name'], $column['direction'] );
+			}
+		}
+
+		if ( null === $tiebreak_direction ) {
+			return array();
+		}
+
+		$last_item = $order_items[ count( $order_items ) - 1 ];
+		if ( isset( $existing_rewrites[ $last_item['start'] ] ) ) {
+			return array();
+		}
+
+		return array(
+			$last_item['start'] => array(
+				'end' => $last_item['end'],
+				'sql' => $this->translate_tokens_to_duckdb_sql( $last_item['tokens'] )
+					. ', '
+					. $this->grouped_posts_order_by_tiebreak_id_sql( $group_by_expansion )
+					. ' '
+					. $tiebreak_direction,
+			),
+		);
+	}
+
+	/**
+	 * Check whether a grouped posts ORDER BY column belongs to the primary posts table.
+	 *
+	 * @param array{column_name:string,qualifier:string|null} $column ORDER BY column.
+	 * @param array{table_alias:string,table_name:string,joined:bool,metadata_columns:array<string,bool>} $group_by_expansion Primary-key grouping metadata.
+	 * @return bool Whether the column is from the grouped posts table.
+	 */
+	private function grouped_posts_order_column_matches_primary_table( array $column, array $group_by_expansion ): bool {
+		$column_key = strtolower( $column['column_name'] );
+		if ( ! isset( $group_by_expansion['metadata_columns'][ $column_key ] ) ) {
+			return false;
+		}
+
+		$qualifier = $column['qualifier'];
+		if ( $group_by_expansion['joined'] ) {
+			return null !== $qualifier && 0 === strcasecmp( $qualifier, $group_by_expansion['table_alias'] );
+		}
+
+		return null === $qualifier
+			|| 0 === strcasecmp( $qualifier, $group_by_expansion['table_alias'] )
+			|| 0 === strcasecmp( $qualifier, $group_by_expansion['table_name'] );
+	}
+
+	/**
+	 * Build the grouped posts ID tie-breaker expression.
+	 *
+	 * @param array{table_alias:string} $group_by_expansion Primary-key grouping metadata.
+	 * @return string Quoted ID expression.
+	 */
+	private function grouped_posts_order_by_tiebreak_id_sql( array $group_by_expansion ): string {
+		return $this->connection->quote_identifier( $group_by_expansion['table_alias'] ) . '.' . $this->connection->quote_identifier( 'ID' );
 	}
 
 	/**

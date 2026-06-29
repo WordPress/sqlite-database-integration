@@ -1079,6 +1079,55 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_select_posts_group_by_primary_key_date_order_appends_id_tiebreaker(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID),
+				KEY type_status_date (post_type, post_status, post_date, ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_type, post_status) VALUES
+				(1, '2026-06-29 09:00:00', 'post', 'publish'),
+				(2, '2026-06-29 09:00:00', 'post', 'publish'),
+				(3, '2026-06-29 09:00:00', 'post', 'publish')"
+		);
+
+		$rows = $driver->query(
+			"SELECT wptests_posts.ID
+			FROM wptests_posts
+			WHERE wptests_posts.post_type = 'post'
+				AND wptests_posts.post_status = 'publish'
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array( 'ID' => 3 ),
+				array( 'ID' => 2 ),
+				array( 'ID' => 1 ),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString(
+			'ORDER BY wptests_posts.post_date DESC, "wptests_posts"."ID" DESC',
+			$select_sql
+		);
+	}
+
 	public function test_select_posts_wildcard_joined_group_by_primary_key_expands_group_by(): void {
 		$this->requireDuckDBRuntime();
 

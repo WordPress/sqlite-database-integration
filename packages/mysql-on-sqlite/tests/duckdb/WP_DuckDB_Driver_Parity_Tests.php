@@ -294,6 +294,51 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_rest_posts_tags_exclude_grouped_order_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					PRIMARY KEY (ID),
+					KEY type_status_date (post_type, post_status, post_date, ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"CREATE TABLE wptests_term_relationships (
+					object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+					term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+					term_order INT(11) NOT NULL DEFAULT '0',
+					PRIMARY KEY (object_id, term_taxonomy_id),
+					KEY term_taxonomy_id (term_taxonomy_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wptests_posts (ID, post_date, post_status, post_type) VALUES
+					(4071, '2026-06-29 09:00:00', 'publish', 'post'),
+					(4072, '2026-06-29 09:00:00', 'publish', 'post'),
+					(4073, '2026-06-29 09:00:00', 'publish', 'post'),
+					(4074, '2026-06-29 09:00:00', 'publish', 'post')",
+				'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order) VALUES
+					(4071, 99, 0)',
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE 1=1
+				AND ( wptests_posts.ID NOT IN (
+					SELECT object_id
+					FROM wptests_term_relationships
+					WHERE term_taxonomy_id IN (99)
+				) )
+				AND ((wptests_posts.post_type = 'post' AND (wptests_posts.post_status = 'publish')))
+			GROUP BY wptests_posts.ID
+			ORDER BY wptests_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
 	public function test_rest_iso_datetime_comparisons_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
