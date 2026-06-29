@@ -11596,6 +11596,219 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infostatsin_noise' ) );
 	}
 
+	public function test_information_schema_statistics_exact_projection_fast_path_skips_stage_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_statistics_projection_fixture( $driver );
+
+		$queries   = array();
+		$statement = $driver->query(
+			"SELECT INDEX_NAME, COLUMN_NAME
+				FROM information_schema.statistics
+				WHERE table_schema = 'wp'
+					AND table_name IN ('wptests_postmeta','wptests_termmeta','wptests_commentmeta')
+				ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
+		);
+		$rows      = $statement->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array( 'comment_id', 'meta_key', 'PRIMARY', 'meta_key', 'post_id', 'PRIMARY', 'meta_key', 'PRIMARY', 'term_id' ),
+			array_column( $rows, 'INDEX_NAME' )
+		);
+		$this->assertSame(
+			array( 'comment_id', 'meta_key', 'meta_id', 'meta_key', 'post_id', 'meta_id', 'meta_key', 'meta_id', 'term_id' ),
+			array_column( $rows, 'COLUMN_NAME' )
+		);
+		$this->assertSame( 2, $statement->columnCount() );
+		$this->assertSame( 'INDEX_NAME', $statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 0, $this->count_duckdb_information_schema_statistics_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 9 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME IN ('wptests_postmeta','wptests_termmeta','wptests_commentmeta')
+				ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'wptests_commentmeta',
+				'wptests_commentmeta',
+				'wptests_commentmeta',
+				'wptests_postmeta',
+				'wptests_postmeta',
+				'wptests_postmeta',
+				'wptests_termmeta',
+				'wptests_termmeta',
+				'wptests_termmeta',
+			),
+			array_column( $rows, 'TABLE_NAME' )
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_statistics_stage_queries( $queries ) );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT `INDEX_NAME`, `COLUMN_NAME`, `NON_UNIQUE`, `SEQ_IN_INDEX`
+				FROM `information_schema`.`statistics`
+				WHERE `TABLE_SCHEMA` = 'wp'
+					AND `TABLE_NAME` = 'wptests_postmeta'
+				ORDER BY `INDEX_NAME`, `SEQ_IN_INDEX`"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'INDEX_NAME'   => 'meta_key',
+					'COLUMN_NAME'  => 'meta_key',
+					'NON_UNIQUE'   => 1,
+					'SEQ_IN_INDEX' => 1,
+				),
+				array(
+					'INDEX_NAME'   => 'post_id',
+					'COLUMN_NAME'  => 'post_id',
+					'NON_UNIQUE'   => 1,
+					'SEQ_IN_INDEX' => 1,
+				),
+				array(
+					'INDEX_NAME'   => 'PRIMARY',
+					'COLUMN_NAME'  => 'meta_id',
+					'NON_UNIQUE'   => 0,
+					'SEQ_IN_INDEX' => 1,
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_statistics_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SEQ_IN_INDEX
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'not_wp'
+					AND TABLE_NAME = 'wptests_postmeta'
+				ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( 0, $this->count_duckdb_information_schema_statistics_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query(
+			'CREATE TABLE wptests_stat_shadow (
+				id INT,
+				persisted VARCHAR(20),
+				KEY persistent_key (persisted)
+			)'
+		);
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_stat_shadow (
+				id INT,
+				temp_col VARCHAR(20),
+				KEY temp_key (temp_col)
+			)'
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT INDEX_NAME, COLUMN_NAME
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'wptests_stat_shadow'
+				ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'INDEX_NAME'  => 'persistent_key',
+					'COLUMN_NAME' => 'persisted',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_statistics_stage_queries( $queries ) );
+
+		$show_index = $driver->query( 'SHOW INDEX FROM wptests_stat_shadow' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'temp_key' ), array_column( $show_index, 'Key_name' ) );
+	}
+
+	public function test_information_schema_statistics_projection_fast_path_rejects_aliases(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_statistics_projection_fixture( $driver );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT s.INDEX_NAME, s.COLUMN_NAME
+				FROM information_schema.statistics AS s
+				WHERE s.TABLE_SCHEMA = 'wp'
+					AND s.TABLE_NAME IN ('wptests_postmeta','wptests_termmeta')
+				ORDER BY s.TABLE_NAME, s.INDEX_NAME, s.SEQ_IN_INDEX"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( 6, count( $rows ) );
+		$this->assertGreaterThan( 0, $this->count_duckdb_information_schema_statistics_stage_queries( $queries ) );
+	}
+
+	public function test_information_schema_statistics_projection_fast_path_rejects_unqualified_user_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE statistics (
+				INDEX_NAME VARCHAR(20),
+				COLUMN_NAME VARCHAR(20),
+				TABLE_SCHEMA VARCHAR(20),
+				TABLE_NAME VARCHAR(20),
+				SEQ_IN_INDEX INT
+			)'
+		);
+		$driver->query(
+			"INSERT INTO statistics (INDEX_NAME, COLUMN_NAME, TABLE_SCHEMA, TABLE_NAME, SEQ_IN_INDEX)
+				VALUES ('user_idx', 'user_col', 'wp', 'user_stats', 1)"
+		);
+
+		$rows = $driver->query(
+			"SELECT INDEX_NAME, COLUMN_NAME
+				FROM statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME IN ('user_stats')
+				ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'INDEX_NAME'  => 'user_idx',
+					'COLUMN_NAME' => 'user_col',
+				),
+			),
+			$rows
+		);
+	}
+
 	public function test_information_schema_statistics_wildcard_and_complex_predicates_fall_back_to_full_refresh(): void {
 		$this->requireDuckDBRuntime();
 
@@ -21046,6 +21259,42 @@ SQL
 		);
 	}
 
+	private function create_wordpress_statistics_projection_fixture( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_postmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY post_id (post_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_termmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				term_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY term_id (term_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_commentmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				comment_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY comment_id (comment_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+	}
+
 	private function create_wordpress_posts_auto_increment_insert_fixture( WP_DuckDB_Driver $driver ): void {
 		$driver->query(
 			"CREATE TABLE wptests_posts (
@@ -21394,6 +21643,19 @@ SQL
 					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_columns"' )
 						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_columns"' )
 						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_columns"' );
+				}
+			)
+		);
+	}
+
+	private function count_duckdb_information_schema_statistics_stage_queries( array $queries ): int {
+		return count(
+			array_filter(
+				$queries,
+				function ( string $query ): bool {
+					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_statistics"' )
+						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_statistics"' )
+						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_statistics"' );
 				}
 			)
 		);

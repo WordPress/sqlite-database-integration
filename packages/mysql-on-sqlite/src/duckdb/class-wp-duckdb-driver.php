@@ -613,6 +613,11 @@ class WP_DuckDB_Driver {
 			return $information_schema_columns_name_collation_result;
 		}
 
+		$information_schema_statistics_projection_result = $this->execute_information_schema_statistics_projection_fast_path_statement( $normalized );
+		if ( null !== $information_schema_statistics_projection_result ) {
+			return $information_schema_statistics_projection_result;
+		}
+
 		$wordpress_options_autoload_result = $this->execute_wordpress_options_autoload_fast_path_statement( $normalized );
 		if ( null !== $wordpress_options_autoload_result ) {
 			return $wordpress_options_autoload_result;
@@ -781,6 +786,153 @@ class WP_DuckDB_Driver {
 		return $this->record_found_rows_from_result(
 			new WP_DuckDB_Result_Statement(
 				array( 'COLUMN_NAME', 'COLLATION_NAME' ),
+				$result_rows
+			)
+		);
+	}
+
+	/**
+	 * Execute high-frequency exact information_schema.statistics projections.
+	 *
+	 * The generic information_schema.statistics path still owns aliases, broad
+	 * projections, wildcard predicates, and complex filters. This path only avoids
+	 * rebuilding the temporary compatibility table for exact index metadata probes.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_information_schema_statistics_projection_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$literal_pattern = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		$source_pattern  = '`?information_schema`?\s*\.\s*`?statistics`?';
+
+		if (
+			preg_match(
+				'/^SELECT\s+(?:(?<table_projection>`?TABLE_NAME`?)\s*,\s*)?`?INDEX_NAME`?\s*,\s*`?COLUMN_NAME`?\s+FROM\s+'
+				. $source_pattern
+				. '\s+WHERE\s+(?<schema_column>`?TABLE_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
+				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s+IN\s*\((?<table_names>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\)'
+				. '\s+ORDER\s+BY\s+`?TABLE_NAME`?\s*,\s*`?INDEX_NAME`?\s*,\s*`?SEQ_IN_INDEX`?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			if (
+				! $this->fast_path_identifier_matches( 'TABLE_SCHEMA', $matches['schema_column'] )
+				|| ! $this->fast_path_identifier_matches( 'TABLE_NAME', $matches['table_column'] )
+				|| (
+					isset( $matches['table_projection'] )
+					&& '' !== $matches['table_projection']
+					&& ! $this->fast_path_identifier_matches( 'TABLE_NAME', $matches['table_projection'] )
+				)
+			) {
+				return null;
+			}
+
+			$table_names = array();
+			if ( false !== preg_match_all( '/' . $literal_pattern . '/', $matches['table_names'], $table_matches ) ) {
+				foreach ( $table_matches[0] as $table_literal ) {
+					$table_names[] = $this->fast_path_mysql_single_quoted_literal_value( $table_literal );
+				}
+			}
+
+			if ( count( $table_names ) === 0 ) {
+				return null;
+			}
+
+			return $this->information_schema_statistics_projection_result(
+				$this->fast_path_mysql_single_quoted_literal_value( $matches['schema_value'] ),
+				$table_names,
+				isset( $matches['table_projection'] ) && '' !== $matches['table_projection']
+					? array( 'TABLE_NAME', 'INDEX_NAME', 'COLUMN_NAME' )
+					: array( 'INDEX_NAME', 'COLUMN_NAME' ),
+				true
+			);
+		}
+
+		if (
+			preg_match(
+				'/^SELECT\s+`?INDEX_NAME`?\s*,\s*`?COLUMN_NAME`?(?<extra_projection>\s*,\s*`?NON_UNIQUE`?\s*,\s*`?SEQ_IN_INDEX`?)?\s+FROM\s+'
+				. $source_pattern
+				. '\s+WHERE\s+(?<schema_column>`?TABLE_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
+				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s*=\s*(?<table_name>' . $literal_pattern . ')'
+				. '\s+ORDER\s+BY\s+`?INDEX_NAME`?\s*,\s*`?SEQ_IN_INDEX`?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			if (
+				! $this->fast_path_identifier_matches( 'TABLE_SCHEMA', $matches['schema_column'] )
+				|| ! $this->fast_path_identifier_matches( 'TABLE_NAME', $matches['table_column'] )
+			) {
+				return null;
+			}
+
+			return $this->information_schema_statistics_projection_result(
+				$this->fast_path_mysql_single_quoted_literal_value( $matches['schema_value'] ),
+				array( $this->fast_path_mysql_single_quoted_literal_value( $matches['table_name'] ) ),
+				isset( $matches['extra_projection'] ) && '' !== $matches['extra_projection']
+					? array( 'INDEX_NAME', 'COLUMN_NAME', 'NON_UNIQUE', 'SEQ_IN_INDEX' )
+					: array( 'INDEX_NAME', 'COLUMN_NAME' ),
+				false
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Build an exact information_schema.statistics projection result.
+	 *
+	 * @param string   $schema_name    Requested schema.
+	 * @param string[] $table_names    Requested table names.
+	 * @param string[] $columns        Projected statistics columns.
+	 * @param bool     $order_by_table Whether TABLE_NAME participates in sorting.
+	 * @return WP_DuckDB_Result_Statement Result statement.
+	 */
+	private function information_schema_statistics_projection_result( string $schema_name, array $table_names, array $columns, bool $order_by_table ): WP_DuckDB_Result_Statement {
+		$rows = 0 === strcasecmp( $schema_name, $this->database )
+			? $this->information_schema_statistics_rows( $table_names )
+			: array();
+
+		usort(
+			$rows,
+			function ( array $left, array $right ) use ( $order_by_table ): int {
+				if ( $order_by_table ) {
+					$table_compare = strcasecmp( (string) $left['TABLE_NAME'], (string) $right['TABLE_NAME'] );
+					if ( 0 !== $table_compare ) {
+						return $table_compare;
+					}
+				}
+
+				$index_compare = strcasecmp( (string) $left['INDEX_NAME'], (string) $right['INDEX_NAME'] );
+				if ( 0 !== $index_compare ) {
+					return $index_compare;
+				}
+
+				$seq_compare = (int) $left['SEQ_IN_INDEX'] <=> (int) $right['SEQ_IN_INDEX'];
+				if ( 0 !== $seq_compare ) {
+					return $seq_compare;
+				}
+
+				return strcmp( (string) $left['INDEX_NAME'], (string) $right['INDEX_NAME'] );
+			}
+		);
+
+		$result_rows = array_map(
+			function ( array $row ) use ( $columns ): array {
+				return array_map(
+					function ( string $column ) use ( $row ) {
+						return $row[ $column ];
+					},
+					$columns
+				);
+			},
+			$rows
+		);
+
+		return $this->record_found_rows_from_result(
+			new WP_DuckDB_Result_Statement(
+				$columns,
 				$result_rows
 			)
 		);
