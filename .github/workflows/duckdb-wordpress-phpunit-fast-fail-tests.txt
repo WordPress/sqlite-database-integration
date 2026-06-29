@@ -1,0 +1,11 @@
+# Recent DuckDB WordPress PHPUnit failures that should run before any full suite.
+# Keep this list method-level and small; a green run is not full parity.
+Tests_Admin_ExportWp::test_should_include_attachments
+Tests_Filesystem_WpFilesystemDirect_Chmod::test_should_handle_set_mode_when_not_passed
+Tests_Admin_wpPostsListTable::test_search_hierarchical_pages_first_page
+Tests_Post_GetAvailablePostMimeTypes::test_should_return_expected_post_mime_types
+WP_Test_REST_Posts_Controller::test_get_items_valid_date
+WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query
+WP_Test_REST_Posts_Controller::test_get_items_tags_exclude_query
+WP_Test_REST_Users_Controller::test_update_item_existing_email_case
+Tests_DB::test_mysqli_flush_sync
