@@ -14768,6 +14768,192 @@ SQL
 		$this->assertStringContainsString( 'post_lookup_items', implode( "\n", $queries ) );
 	}
 
+	public function test_wordpress_posts_slug_status_lookup_fast_path_uses_one_native_query_after_metadata_warmup(): void {
+		$this->requireDuckDBRuntime();
+
+		$path = tempnam( sys_get_temp_dir(), 'wp-duckdb-post-slug-fastpath-' );
+		if ( false === $path ) {
+			$this->fail( 'Failed to allocate a temporary DuckDB path.' );
+		}
+		unlink( $path );
+
+		try {
+			$setup_driver = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$this->create_wordpress_posts_slug_status_lookup_fixture( $setup_driver );
+			unset( $setup_driver );
+			gc_collect_cycles();
+
+			$queries = array();
+			$driver  = $this->query_logged_duckdb_driver( $queries, $path );
+
+			$queries = array();
+			$result  = $driver->query( $this->wordpress_posts_slug_status_lookup_select_sql() );
+			$this->assertSame(
+				array(
+					array(
+						'ID' => 5,
+					),
+					array(
+						'ID' => 6,
+					),
+					array(
+						'ID' => 3,
+					),
+					array(
+						'ID' => 1,
+					),
+				),
+				array_map(
+					function ( array $row ): array {
+						return array( 'ID' => (int) $row['ID'] );
+					},
+					$result->fetchAll( PDO::FETCH_ASSOC )
+				)
+			);
+			$this->assert_wordpress_posts_slug_status_lookup_metadata(
+				$result,
+				'wptests_posts',
+				array( 'ID', 'post_author', 'post_date', 'post_title', 'post_name', 'post_type', 'post_status' )
+			);
+
+			$queries = array();
+			$result  = $driver->query( $this->wordpress_posts_slug_status_lookup_select_sql() );
+			$this->assertSame(
+				array( 5, 6, 3, 1 ),
+				array_map(
+					'intval',
+					array_column( $result->fetchAll( PDO::FETCH_ASSOC ), 'ID' )
+				)
+			);
+			$this->assert_wordpress_posts_slug_status_lookup_select_used_one_native_query( $queries );
+
+			$this->assertSame(
+				array(
+					array(
+						'found_rows' => 4,
+					),
+				),
+				$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		} finally {
+			unset( $driver );
+			@unlink( $path );
+			@unlink( $path . '.wal' );
+		}
+	}
+
+	public function test_wordpress_posts_slug_status_lookup_fast_path_respects_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_posts_slug_status_lookup_fixture( $driver );
+
+		$driver->query(
+			"CREATE TEMPORARY TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_name VARCHAR(200) NOT NULL DEFAULT '',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				temp_title VARCHAR(191) NOT NULL DEFAULT '',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_date, post_name, post_type, post_status, temp_title) VALUES
+				(1, '2026-06-01 00:00:00', 'target-slug', 'post', 'publish', 'temporary old'),
+				(2, '2026-06-02 00:00:00', 'target-slug', 'post', 'publish', 'temporary excluded'),
+				(3, '2026-06-03 00:00:00', 'target-slug', 'page', 'publish', 'temporary new')"
+		);
+
+		$queries = array();
+		$result  = $driver->query( $this->wordpress_posts_slug_status_lookup_select_sql() );
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 3,
+					'temp_title' => 'temporary new',
+				),
+				array(
+					'ID'         => 1,
+					'temp_title' => 'temporary old',
+				),
+			),
+			array_map(
+				function ( array $row ): array {
+					return array(
+						'ID'         => (int) $row['ID'],
+						'temp_title' => $row['temp_title'],
+					);
+				},
+				$result->fetchAll( PDO::FETCH_ASSOC )
+			)
+		);
+		$this->assert_wordpress_posts_slug_status_lookup_select_used_one_native_query( $queries );
+		$this->assert_wordpress_posts_slug_status_lookup_metadata(
+			$result,
+			'wptests_posts',
+			array( 'ID', 'post_date', 'post_name', 'post_type', 'post_status', 'temp_title' )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_posts' );
+		$result = $driver->query( $this->wordpress_posts_slug_status_lookup_select_sql() );
+		$this->assertSame( 5, (int) $result->fetchAll( PDO::FETCH_ASSOC )[0]['ID'] );
+	}
+
+	public function test_wordpress_posts_slug_status_lookup_fast_path_does_not_capture_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_posts_slug_status_lookup_fixture( $driver );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.* FROM wptests_posts
+			WHERE 1=1
+				AND wptests_posts.post_name = 'target-slug'
+				AND wptests_posts.ID NOT IN (2)
+				AND wptests_posts.post_type IN ('post', 'page', 'attachment')
+				AND ((wptests_posts.post_status = 'publish'))
+			ORDER BY wptests_posts.post_date DESC"
+		);
+		$this->assertSame( 5, (int) $result->fetchAll( PDO::FETCH_ASSOC )[0]['ID'] );
+		$this->assertStringContainsString( '__wp_duckdb_found_rows', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT p.* FROM wptests_posts AS p
+			WHERE 1=1
+				AND p.post_name = 'target-slug'
+				AND p.ID NOT IN (2)
+				AND p.post_type IN ('post', 'page', 'attachment')
+				AND ((p.post_status = 'publish'))
+			ORDER BY p.post_date DESC"
+		);
+		$this->assertSame( 5, (int) $result->fetchAll( PDO::FETCH_ASSOC )[0]['ID'] );
+		$this->assertSame( 'p', $result->getColumnMeta( 0 )['table'] );
+		$this->assertStringNotContainsString( 'SELECT "wptests_posts".* FROM "wptests_posts"', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT wptests_posts.* FROM wptests_posts
+			WHERE 1=1
+				AND wptests_posts.post_name = 'target-slug'
+				AND wptests_posts.post_type IN ('post', 'page', 'attachment')
+				AND ((wptests_posts.post_status = 'publish'))
+			ORDER BY wptests_posts.post_date DESC"
+		);
+		$this->assertSame( 2, (int) $result->fetchAll( PDO::FETCH_ASSOC )[0]['ID'] );
+		$this->assertStringNotContainsString( 'SELECT "wptests_posts".* FROM "wptests_posts"', implode( "\n", $queries ) );
+	}
+
 	public function test_wordpress_usermeta_cache_load_fast_path_uses_one_native_query_on_fresh_driver(): void {
 		$this->requireDuckDBRuntime();
 
@@ -20190,6 +20376,34 @@ SQL
 		);
 	}
 
+	private function create_wordpress_posts_slug_status_lookup_fixture( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_title TEXT NOT NULL,
+				post_name VARCHAR(200) NOT NULL DEFAULT '',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID),
+				KEY post_name (post_name(191)),
+				KEY type_status_date (post_type, post_status, post_date, ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_author, post_date, post_title, post_name, post_type, post_status) VALUES
+				(1, 10, '2026-01-01 00:00:00', 'Old page', 'target-slug', 'page', 'publish'),
+				(2, 20, '2026-05-01 00:00:00', 'Excluded page', 'target-slug', 'page', 'publish'),
+				(3, 30, '2026-02-01 00:00:00', 'Older post tie', 'target-slug', 'post', 'publish'),
+				(4, 40, '2026-04-01 00:00:00', 'Draft post', 'target-slug', 'post', 'draft'),
+				(5, 50, '2026-03-01 00:00:00', 'Attachment', 'target-slug', 'attachment', 'publish'),
+				(6, 60, '2026-02-01 00:00:00', 'Newer post tie', 'target-slug', 'post', 'publish'),
+				(7, 70, '2026-06-01 00:00:00', 'Wrong type', 'target-slug', 'product', 'publish'),
+				(8, 80, '2026-07-01 00:00:00', 'Wrong slug', 'other-slug', 'post', 'publish')"
+		);
+	}
+
 	private function create_wordpress_usermeta_cache_load_fixture( WP_DuckDB_Driver $driver ): void {
 		$driver->query(
 			"CREATE TABLE wptests_usermeta (
@@ -20232,6 +20446,16 @@ SQL
 
 	private function wordpress_usermeta_cache_load_select_sql( string $id_list = '1', string $table_name = 'wptests_usermeta' ): string {
 		return 'SELECT user_id, meta_key, meta_value FROM ' . $table_name . ' WHERE user_id IN (' . $id_list . ') ORDER BY umeta_id ASC';
+	}
+
+	private function wordpress_posts_slug_status_lookup_select_sql(): string {
+		return "SELECT wptests_posts.* FROM wptests_posts
+			WHERE 1=1
+				AND wptests_posts.post_name = 'target-slug'
+				AND wptests_posts.ID NOT IN (2)
+				AND wptests_posts.post_type IN ('post', 'page', 'attachment')
+				AND ((wptests_posts.post_status = 'publish'))
+			ORDER BY wptests_posts.post_date DESC";
 	}
 
 	private function assert_wordpress_options_autoload_rows( WP_DuckDB_Driver $driver ): void {
@@ -20351,6 +20575,18 @@ SQL
 		$this->assertStringContainsString( 'SELECT * FROM "wptests_posts" WHERE "ID" = ' . $id . ' LIMIT 1', $queries[0] );
 	}
 
+	private function assert_wordpress_posts_slug_status_lookup_select_used_one_native_query( array $queries ): void {
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_posts' ) );
+		$this->assertStringContainsString( 'SELECT "wptests_posts".* FROM "wptests_posts"', $queries[0] );
+		$this->assertStringContainsString( '"wptests_posts"."post_name" = \'target-slug\'', $queries[0] );
+		$this->assertStringContainsString( '"wptests_posts"."ID" NOT IN (2)', $queries[0] );
+		$this->assertStringContainsString( '"wptests_posts"."post_type" IN (\'post\', \'page\', \'attachment\')', $queries[0] );
+		$this->assertStringContainsString( '"wptests_posts"."post_status" = \'publish\'', $queries[0] );
+		$this->assertStringContainsString( 'ORDER BY "wptests_posts"."post_date" DESC, "wptests_posts"."ID" DESC', $queries[0] );
+	}
+
 	private function assert_wordpress_posts_id_lookup_metadata( WP_DuckDB_Result_Statement $result, string $table_name ): void {
 		$this->assertSame( 5, $result->columnCount() );
 
@@ -20369,6 +20605,19 @@ SQL
 		$this->assertSame( 'post_title', $title_meta['mysqli:orgname'] );
 		$this->assertSame( $table_name, $title_meta['mysqli:orgtable'] );
 		$this->assertSame( 252, $title_meta['mysqli:type'] );
+	}
+
+	private function assert_wordpress_posts_slug_status_lookup_metadata( WP_DuckDB_Result_Statement $result, string $table_name, array $columns ): void {
+		$this->assertSame( count( $columns ), $result->columnCount() );
+
+		foreach ( $columns as $index => $column_name ) {
+			$column_meta = $result->getColumnMeta( $index );
+			$this->assertSame( $column_name, $column_meta['name'] );
+			$this->assertSame( $table_name, $column_meta['table'] );
+			$this->assertSame( $column_name, $column_meta['mysqli:orgname'] );
+			$this->assertSame( $table_name, $column_meta['mysqli:orgtable'] );
+			$this->assertSame( 'wp', $column_meta['mysqli:db'] );
+		}
 	}
 
 	private function assert_wordpress_posts_omitted_auto_increment_insert_used_returning( array $queries, string $column_name ): void {

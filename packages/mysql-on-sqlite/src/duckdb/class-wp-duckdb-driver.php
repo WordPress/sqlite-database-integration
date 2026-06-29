@@ -623,6 +623,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_posts_id_lookup_result;
 		}
 
+		$wordpress_posts_slug_status_lookup_result = $this->execute_wordpress_posts_slug_status_lookup_fast_path_statement( $normalized );
+		if ( null !== $wordpress_posts_slug_status_lookup_result ) {
+			return $wordpress_posts_slug_status_lookup_result;
+		}
+
 		$wordpress_usermeta_cache_load_result = $this->execute_wordpress_usermeta_cache_load_fast_path_statement( $normalized );
 		if ( null !== $wordpress_usermeta_cache_load_result ) {
 			return $wordpress_usermeta_cache_load_result;
@@ -900,6 +905,130 @@ class WP_DuckDB_Driver {
 			. ' = '
 			. (string) $id
 			. ' LIMIT 1';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
+	 * Execute WordPress' slug/status/date posts lookup without full parser fanout.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_posts_slug_status_lookup_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\\s])*\'';
+		if (
+			! preg_match(
+				'/^SELECT\s+(?<select_table>' . $identifier_pattern . ')\s*\.\s*\*\s+FROM\s+(?<from_table>' . $identifier_pattern . ')\s+WHERE\s+1\s*=\s*1\s+AND\s+(?<name_table>' . $identifier_pattern . ')\s*\.\s*(?<name_column>`post_name`|post_name)\s*=\s*(?<post_name>' . $literal_pattern . ')\s+AND\s+(?<id_table>' . $identifier_pattern . ')\s*\.\s*(?<id_column>`ID`|ID)\s+NOT\s+IN\s*\(\s*(?<excluded_ids>[0-9]+(?:\s*,\s*[0-9]+)*)\s*\)\s+AND\s+(?<type_table>' . $identifier_pattern . ')\s*\.\s*(?<type_column>`post_type`|post_type)\s+IN\s*\(\s*(?<post_types>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\s*\)\s+AND\s*\(\s*\(\s*(?<status_table>' . $identifier_pattern . ')\s*\.\s*(?<status_column>`post_status`|post_status)\s*=\s*(?<post_status>' . $literal_pattern . ')\s*\)\s*\)\s+ORDER\s+BY\s+(?<order_table>' . $identifier_pattern . ')\s*\.\s*(?<order_column>`post_date`|post_date)\s+DESC$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$requested_table_name = $this->fast_path_mysql_identifier_value( $matches['from_table'] );
+		if ( ! $this->is_wordpress_posts_table_name( $requested_table_name ) ) {
+			return null;
+		}
+
+		foreach ( array( 'select_table', 'name_table', 'id_table', 'type_table', 'status_table', 'order_table' ) as $table_match ) {
+			if ( 0 !== strcasecmp( $requested_table_name, $this->fast_path_mysql_identifier_value( $matches[ $table_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		$expected_columns = array(
+			'name_column'   => 'post_name',
+			'id_column'     => 'ID',
+			'type_column'   => 'post_type',
+			'status_column' => 'post_status',
+			'order_column'  => 'post_date',
+		);
+		foreach ( $expected_columns as $match_name => $column_name ) {
+			if ( 0 !== strcasecmp( $column_name, $this->fast_path_mysql_identifier_value( $matches[ $match_name ] ) ) ) {
+				return null;
+			}
+		}
+
+		$table_reference = $this->resolve_visible_user_table_reference( $requested_table_name );
+		if ( null === $table_reference ) {
+			return null;
+		}
+
+		$column_meta = $this->wordpress_posts_wildcard_result_column_metadata(
+			$table_reference['table_name'],
+			$table_reference['temporary']
+		);
+		if ( null === $column_meta ) {
+			return null;
+		}
+
+		$excluded_ids = array();
+		foreach ( preg_split( '/\s*,\s*/', trim( $matches['excluded_ids'] ) ) as $id_literal ) {
+			$excluded_id = $this->fast_path_mysql_unsigned_integer_literal_value( $id_literal );
+			if ( null === $excluded_id ) {
+				return null;
+			}
+			$excluded_ids[] = $excluded_id;
+		}
+		if ( count( $excluded_ids ) === 0 ) {
+			return null;
+		}
+
+		$post_types = array();
+		if ( ! preg_match_all( '/' . $literal_pattern . '/', $matches['post_types'], $post_type_matches ) ) {
+			return null;
+		}
+		foreach ( $post_type_matches[0] as $post_type_literal ) {
+			$post_types[] = $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $post_type_literal ) );
+		}
+		if ( count( $post_types ) === 0 ) {
+			return null;
+		}
+
+		$table_sql = $this->connection->quote_identifier( $table_reference['table_name'] );
+		$sql       = 'SELECT '
+			. $table_sql
+			. '.* FROM '
+			. $table_sql
+			. ' WHERE 1 = 1 AND '
+			. $table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'post_name' )
+			. ' = '
+			. $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['post_name'] ) )
+			. ' AND '
+			. $table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'ID' )
+			. ' NOT IN ('
+			. implode( ', ', array_map( 'strval', $excluded_ids ) )
+			. ') AND '
+			. $table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'post_type' )
+			. ' IN ('
+			. implode( ', ', $post_types )
+			. ') AND (('
+			. $table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'post_status' )
+			. ' = '
+			. $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['post_status'] ) )
+			. ')) ORDER BY '
+			. $table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'post_date' )
+			. ' DESC, '
+			. $table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'ID' )
+			. ' DESC';
 
 		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 		$this->found_rows = $sql;
