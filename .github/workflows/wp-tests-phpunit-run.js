@@ -544,7 +544,7 @@ function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 }
 
 function patchPhpunitChildProcessTemplatesForDiagnostics() {
-	const templateDir = path.join( repoRoot, 'wordpress', 'vendor', 'phpunit', 'phpunit', 'src', 'Util', 'PHP', 'Template' );
+	const templateDir = '/var/www/vendor/phpunit/phpunit/src/Util/PHP/Template';
 	const templateNames = [ 'TestCaseClass.tpl', 'TestCaseMethod.tpl' ];
 	const insertionPoint = "if (!defined('STDOUT')) {";
 	const snippet = [
@@ -558,39 +558,58 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 		'}',
 		'',
 	].join( '\n' );
-	let patchedTemplates = 0;
+	const patchScript = [
+		`$template_dir = ${ phpSingleQuote( templateDir ) };`,
+		`$template_names = array( ${ templateNames.map( phpSingleQuote ).join( ', ' ) } );`,
+		`$insertion_point = ${ phpSingleQuote( insertionPoint ) };`,
+		`$snippet = ${ phpSingleQuote( snippet ) };`,
+		'$patched_templates = 0;',
+		'if ( ! is_dir( $template_dir ) ) {',
+		'\tfwrite( STDERR, "Error: PHPUnit child process template directory not found at {$template_dir}." . PHP_EOL );',
+		'\texit( 1 );',
+		'}',
+		'foreach ( $template_names as $template_name ) {',
+		'\t$file = $template_dir . DIRECTORY_SEPARATOR . $template_name;',
+		'\tif ( ! is_file( $file ) ) {',
+		'\t\tcontinue;',
+		'\t}',
+		'\t$contents = file_get_contents( $file );',
+		'\tif ( ! is_string( $contents ) ) {',
+		'\t\tfwrite( STDERR, "Error: Unable to read PHPUnit child process template {$file}." . PHP_EOL );',
+		'\t\texit( 1 );',
+		'\t}',
+		"\tif ( false !== strpos( $contents, 'phpunit_child_template_start' ) ) {",
+		'\t\t++$patched_templates;',
+		'\t\tcontinue;',
+		'\t}',
+		'\t$replace_count = 0;',
+		'\tif ( false !== strpos( $contents, $insertion_point ) ) {',
+		'\t\t$contents = str_replace( $insertion_point, $snippet . $insertion_point, $contents, $replace_count );',
+		'\t} else {',
+		"\t\tif ( 0 !== strpos( $contents, '<?php' ) ) {",
+		'\t\t\tfwrite( STDERR, "Error: Unable to find PHP open tag in PHPUnit child process template {$file}." . PHP_EOL );',
+		'\t\t\texit( 1 );',
+		'\t\t}',
+		"\t\t$contents = '<?php' . PHP_EOL . $snippet . substr( $contents, 5 );",
+		'\t\t$replace_count = 1;',
+		'\t}',
+		'\tif ( 1 > $replace_count ) {',
+		'\t\tfwrite( STDERR, "Error: Unable to patch PHPUnit child process template {$file}." . PHP_EOL );',
+		'\t\texit( 1 );',
+		'\t}',
+		'\tif ( false === file_put_contents( $file, $contents ) ) {',
+		'\t\tfwrite( STDERR, "Error: Unable to write PHPUnit child process template {$file}." . PHP_EOL );',
+		'\t\texit( 1 );',
+		'\t}',
+		'\t++$patched_templates;',
+		'}',
+		'if ( 0 === $patched_templates ) {',
+		'\tfwrite( STDERR, "Error: No PHPUnit child process templates were patched under {$template_dir}." . PHP_EOL );',
+		'\texit( 1 );',
+		'}',
+	].join( '\n' );
 
-	if ( ! fs.existsSync( templateDir ) ) {
-		console.error( `Error: PHPUnit child process template directory not found at ${ templateDir }.` );
-		process.exit( 1 );
-	}
-
-	for ( const templateName of templateNames ) {
-		const file = path.join( templateDir, templateName );
-		if ( ! fs.existsSync( file ) ) {
-			continue;
-		}
-
-		let contents = fs.readFileSync( file, 'utf8' );
-		if ( contents.includes( 'phpunit_child_template_start' ) ) {
-			++patchedTemplates;
-			continue;
-		}
-
-		if ( contents.includes( insertionPoint ) ) {
-			contents = contents.replace( insertionPoint, `${ snippet }${ insertionPoint }` );
-		} else {
-			contents = contents.replace( '<?php', `<?php\n${ snippet }` );
-		}
-
-		fs.writeFileSync( file, contents );
-		++patchedTemplates;
-	}
-
-	if ( 0 === patchedTemplates ) {
-		console.error( `Error: No PHPUnit child process templates were patched under ${ templateDir }.` );
-		process.exit( 1 );
-	}
+	runWordPressDockerCompose( [ 'run', '--rm', 'php', 'php', '-r', patchScript ], { stdio: 'inherit' } );
 }
 
 function getPhpunitForwardedEnvironmentPhp() {
