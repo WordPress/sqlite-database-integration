@@ -10640,6 +10640,146 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal );
 	}
 
+	public function test_information_schema_columns_exact_name_materializes_only_matching_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE infocolumnsexactplain (id INT, name VARCHAR(20), notes TEXT)' );
+		$driver->query( 'CREATE TABLE infocolumnsexactnoise (noise_id INT, marker VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE infocolumnsexactother (other_id INT)' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT COLUMN_NAME, DATA_TYPE
+				FROM information_schema.columns
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'infocolumnsexactplain'
+				ORDER BY ORDINAL_POSITION"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'id', 'name', 'notes' ), array_column( $rows, 'COLUMN_NAME' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsexactplain' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsexactnoise' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsexactother' ) );
+
+		$queries = array();
+		$missing = $driver->query(
+			"SELECT COLUMN_NAME
+				FROM information_schema.columns
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'infocolumnsexactmissing'
+				ORDER BY ORDINAL_POSITION"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $missing );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsexactplain' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsexactnoise' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsexactother' ) );
+
+		$driver->query( 'CREATE TABLE infocolumnsin_options (option_id INT, option_name VARCHAR(191), option_value LONGTEXT)' );
+		$driver->query( 'CREATE TABLE infocolumnsin_terms (term_id INT, name VARCHAR(200))' );
+		$driver->query( 'CREATE TABLE infocolumnsin_noise (noise_id INT)' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, COLUMN_NAME
+				FROM information_schema.columns AS c
+				WHERE c.TABLE_SCHEMA = 'wp'
+					AND c.TABLE_NAME IN ('infocolumnsin_options','infocolumnsin_terms')
+				ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'infocolumnsin_options',
+				'infocolumnsin_options',
+				'infocolumnsin_options',
+				'infocolumnsin_terms',
+				'infocolumnsin_terms',
+			),
+			array_column( $rows, 'TABLE_NAME' )
+		);
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsin_options' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsin_terms' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsin_noise' ) );
+	}
+
+	public function test_information_schema_columns_wildcard_and_complex_predicates_fall_back_to_full_refresh(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE infocolumnswildplain (id INT, name VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE infocolumnswildnoise (noise_id INT, marker VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE infocolumnswildother (other_id INT)' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, COLUMN_NAME
+				FROM information_schema.columns
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME LIKE 'infocolumnswild%'
+				ORDER BY TABLE_NAME, ORDINAL_POSITION"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				'infocolumnswildnoise',
+				'infocolumnswildnoise',
+				'infocolumnswildother',
+				'infocolumnswildplain',
+				'infocolumnswildplain',
+			),
+			array_column( $rows, 'TABLE_NAME' )
+		);
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnswildplain' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnswildnoise' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnswildother' ) );
+
+		$driver->query( 'CREATE TABLE infocolumnsfuncplain (id INT, name VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE infocolumnsfuncnoise (noise_id INT, marker VARCHAR(20))' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, COLUMN_NAME
+				FROM information_schema.columns
+				WHERE TABLE_SCHEMA = 'wp'
+					AND LOWER(TABLE_NAME) = 'infocolumnsfuncplain'
+				ORDER BY TABLE_NAME, ORDINAL_POSITION"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'infocolumnsfuncplain', 'infocolumnsfuncplain' ), array_column( $rows, 'TABLE_NAME' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsfuncplain' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsfuncnoise' ) );
+	}
+
 	public function test_create_table_charset_metadata_tracks_table_and_column_declarations(): void {
 		$this->requireDuckDBRuntime();
 
