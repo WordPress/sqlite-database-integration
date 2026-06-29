@@ -118,6 +118,10 @@ const sqliteExpectedFailures = [
 ];
 
 const duckdbExpectedFailuresToPrune = new Set( [
+	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #2',
+	'Tests_Admin_wpSiteHealth::test_object_cache_thresholds with data set #3',
+	'Tests_Comment::test_wp_new_comment_respects_comment_field_lengths',
+	'Tests_Comment::test_wp_update_comment',
 	'Tests_DB_Charset::test_get_column_charset with data set #0',
 	'Tests_DB_Charset::test_get_column_charset with data set #1',
 	'Tests_DB_Charset::test_get_column_charset with data set #2',
@@ -143,6 +147,22 @@ const duckdbExpectedFailuresToPrune = new Set( [
 	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #6',
 	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #7',
 	'Tests_DB_Charset::test_process_field_charsets_on_nonexistent_table',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #21',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #22',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #23',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #24',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #25',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #26',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #27',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #28',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #30',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #31',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #32',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #33',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #34',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #39',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #40',
+	'Tests_DB_Charset::test_strip_invalid_text with data set #41',
 	'Tests_DB_Charset::test_strip_invalid_text_for_column_bails_if_ascii_input_too_long',
 	'Tests_DB_dbDelta::test_spatial_indices',
 	'Tests_DB::test_charset_switched_to_utf8mb4',
@@ -156,8 +176,17 @@ const duckdbExpectedFailuresToPrune = new Set( [
 	'Tests_DB::test_process_fields_value_too_long_for_field with data set &quot;too long&quot;',
 	'Tests_DB::test_query_value_contains_invalid_chars',
 	'Tests_DB::test_replace_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_replace',
 	'Tests_DB::test_supports_collation',
 	'Tests_DB::test_update_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #1',
+	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #2',
+	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #3',
+	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #4',
+	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #5',
+	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #6',
+	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #7',
+	'Tests_Menu_wpNavMenu::test_wp_nav_menu_should_not_have_has_children_class_with_custom_depth',
 ] );
 
 const expectedErrors = disableExpectedResults
@@ -436,6 +465,20 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t$bootstrap_global = isset( $GLOBALS['__PHPUNIT_BOOTSTRAP'] ) && is_string( $GLOBALS['__PHPUNIT_BOOTSTRAP'] )
 \t\t\t? $GLOBALS['__PHPUNIT_BOOTSTRAP']
 \t\t\t: null;
+\t\t$bootstrap_realpath = is_string( $bootstrap_global ) ? realpath( $bootstrap_global ) : null;
+\t\tif ( ! is_string( $bootstrap_realpath ) ) {
+\t\t\t$bootstrap_realpath = null;
+\t\t}
+\t\t$bootstrap_included = false;
+\t\tif ( is_string( $bootstrap_realpath ) ) {
+\t\t\tforeach ( get_included_files() as $included_file ) {
+\t\t\t\t$included_realpath = realpath( $included_file );
+\t\t\t\tif ( is_string( $included_realpath ) && $included_realpath === $bootstrap_realpath ) {
+\t\t\t\t\t$bootstrap_included = true;
+\t\t\t\t\tbreak;
+\t\t\t\t}
+\t\t\t}
+\t\t}
 
 \t\tif ( class_exists( 'WP_DuckDB_Runtime', false ) && method_exists( 'WP_DuckDB_Runtime', 'get_unavailable_reason' ) ) {
 \t\t\ttry {
@@ -481,6 +524,9 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\t'wpdb_class'               => $wpdb,
 \t\t\t'bootstrap_global'         => $bootstrap_global,
 \t\t\t'bootstrap_global_readable' => is_string( $bootstrap_global ) && is_readable( $bootstrap_global ),
+\t\t\t'bootstrap_realpath'       => $bootstrap_realpath,
+\t\t\t'bootstrap_included'       => $bootstrap_included,
+\t\t\t'output_buffer_level'      => ob_get_level(),
 \t\t\t'result_file'              => $result_file,
 \t\t\t'result_file_exists'       => $result_file_exists,
 \t\t\t'result_file_readable'     => $result_file_readable,
@@ -570,6 +616,19 @@ function getDuckDBChildDiagnosticsPrependPhp() {
 function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 	const file = path.join( repoRoot, 'wordpress', 'tests', 'phpunit', 'includes', 'bootstrap.php' );
 	const marker = "require_once ABSPATH . 'wp-settings.php';";
+	const entryGuard = [
+		'<?php',
+		'',
+		'/*',
+		' * DuckDB child-process diagnostics at WordPress PHPUnit bootstrap entry.',
+		' * This block is generated by the SQLite integration workflow.',
+		' */',
+		"$wp_sqlite_duckdb_child_diagnostics = dirname( __DIR__, 3 ) . '/duckdb-child-process-diagnostics.php';",
+		"if ( is_readable( $wp_sqlite_duckdb_child_diagnostics ) ) {",
+		"\trequire_once $wp_sqlite_duckdb_child_diagnostics;",
+		"\twp_sqlite_duckdb_child_diagnostics_report( 'bootstrap_file_entry', true );",
+		'}',
+	].join( '\n' );
 	const guard = [
 		'/*',
 		' * DuckDB child-process diagnostics before WordPress bootstrap.',
@@ -594,17 +653,31 @@ function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 	}
 
 	let contents = fs.readFileSync( file, 'utf8' );
-	if ( contents.includes( guard ) ) {
-		return;
+	let changed = false;
+
+	if ( ! contents.includes( 'bootstrap_file_entry' ) ) {
+		if ( ! contents.startsWith( '<?php' ) ) {
+			console.error( `Error: Unable to find opening PHP tag in ${ file }.` );
+			process.exit( 1 );
+		}
+
+		contents = contents.replace( '<?php', entryGuard );
+		changed = true;
 	}
 
-	if ( ! contents.includes( marker ) ) {
-		console.error( `Error: Unable to find WordPress bootstrap marker in ${ file }.` );
-		process.exit( 1 );
+	if ( ! contents.includes( guard ) ) {
+		if ( ! contents.includes( marker ) ) {
+			console.error( `Error: Unable to find WordPress bootstrap marker in ${ file }.` );
+			process.exit( 1 );
+		}
+
+		contents = contents.replace( marker, guard );
+		changed = true;
 	}
 
-	contents = contents.replace( marker, guard );
-	fs.writeFileSync( file, contents );
+	if ( changed ) {
+		fs.writeFileSync( file, contents );
+	}
 }
 
 function patchPhpunitChildProcessTemplatesForDiagnostics() {
