@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
       - '.github/workflows/duckdb-wordpress-phpunit-fast-fail-tests.txt'
+      - '.github/workflows/duckdb-wordpress-e2e-fast-fail-specs.txt'
       - '.github/workflows/wp-tests-phpunit-run.js'
       - '.github/workflows/wp-tests-phpunit-native-extension-setup.sh'
       - 'bin/wp-test-duckdb-smoke.sh'
@@ -27,6 +28,7 @@ on:
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
       - '.github/workflows/duckdb-wordpress-phpunit-fast-fail-tests.txt'
+      - '.github/workflows/duckdb-wordpress-e2e-fast-fail-specs.txt'
       - '.github/workflows/wp-tests-phpunit-run.js'
       - '.github/workflows/wp-tests-phpunit-native-extension-setup.sh'
       - 'bin/wp-test-duckdb-smoke.sh'
@@ -47,6 +49,11 @@ on:
     inputs:
       run_full_wp_phpunit:
         description: 'Run the full WordPress PHPUnit suite with DuckDB after the fast-fail gate'
+        required: false
+        default: false
+        type: boolean
+      run_full_wp_e2e:
+        description: 'Run the full WordPress E2E suite with DuckDB after the fast-fail gate'
         required: false
         default: false
         type: boolean
@@ -680,11 +687,85 @@ jobs:
           }
           ' wordpress/src/wp-content/db.php
 
-      - name: Run WordPress end-to-end tests with DuckDB
+      - name: Run recent DuckDB WordPress E2E failures first
+        timeout-minutes: 6
+        shell: bash
+        env:
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS: '4'
+        run: |
+          set -euo pipefail
+
+          fast_fail_specs_file=".github/workflows/duckdb-wordpress-e2e-fast-fail-specs.txt"
+          min_fast_fail_specs="${WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS:-1}"
+
+          case "$min_fast_fail_specs" in
+            ''|*[!0-9]*)
+              echo "::error title=DuckDB E2E fast-fail spec floor invalid::WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS must be a positive integer."
+              exit 1
+              ;;
+          esac
+
+          if [ "$min_fast_fail_specs" -lt 1 ]; then
+            echo "::error title=DuckDB E2E fast-fail spec floor invalid::WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS must be greater than zero."
+            exit 1
+          fi
+
+          mapfile -t fast_fail_specs < <(
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                sub(/^[[:space:]]+/, "")
+                sub(/[[:space:]]+$/, "")
+                if (seen[$0]++) {
+                  next
+                }
+                print
+              }
+            ' "$fast_fail_specs_file"
+          )
+
+          if [ "${#fast_fail_specs[@]}" -lt 1 ]; then
+            echo "::error title=DuckDB E2E fast-fail specs empty::${fast_fail_specs_file} does not list any specs."
+            exit 1
+          fi
+
+          if [ "${#fast_fail_specs[@]}" -lt "$min_fast_fail_specs" ]; then
+            echo "::error title=DuckDB E2E fast-fail specs too small::${fast_fail_specs_file} lists ${#fast_fail_specs[@]} unique specs; expected at least ${min_fast_fail_specs}."
+            exit 1
+          fi
+
+          for spec in "${fast_fail_specs[@]}"; do
+            if [[ ! "$spec" =~ ^tests/e2e/specs/[A-Za-z0-9._-]+\.test\.js$ ]]; then
+              echo "::error title=DuckDB E2E fast-fail spec invalid::${fast_fail_specs_file} must contain literal tests/e2e/specs/*.test.js paths only."
+              printf '%s\n' "$spec"
+              exit 1
+            fi
+
+            if [ ! -f "wordpress/${spec}" ]; then
+              echo "::error title=DuckDB E2E fast-fail spec missing::wordpress/${spec} does not exist."
+              exit 1
+            fi
+          done
+
+          echo "DuckDB E2E fast-fail specs file: ${fast_fail_specs_file}"
+          echo "DuckDB E2E fast-fail spec entries: ${#fast_fail_specs[@]}"
+          echo "DuckDB E2E fast-fail min entries: ${min_fast_fail_specs}"
+          printf 'DuckDB E2E fast-fail spec: %s\n' "${fast_fail_specs[@]}"
+          npm --prefix wordpress run test:e2e -- "${fast_fail_specs[@]}"
+
+      - name: Run full WordPress end-to-end tests with DuckDB
+        if: ${{ success() && (github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && inputs.run_full_wp_e2e == true)) }}
         timeout-minutes: 12
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
         run: npm --prefix wordpress run test:e2e --
+
+      - name: Skip full WordPress end-to-end tests with DuckDB
+        if: ${{ success() && github.ref != 'refs/heads/trunk' && (github.event_name != 'workflow_dispatch' || inputs.run_full_wp_e2e != true) }}
+        run: |
+          echo "::notice title=DuckDB full WordPress E2E skipped::Full WordPress E2E / DuckDB is skipped for this bounded CI run."
+          echo "Run this workflow manually with run_full_wp_e2e=true, or push to trunk, to execute the full E2E suite."
 
       - name: Dump WordPress DuckDB failure diagnostics
         if: failure() || cancelled()

@@ -1,0 +1,6 @@
+# Recent DuckDB WordPress E2E failures and high-value setup probes that should run before any full suite.
+# Keep this list small; a green run is not full browser parity.
+tests/e2e/specs/hello.test.js
+tests/e2e/specs/dashboard.test.js
+tests/e2e/specs/edit-posts.test.js
+tests/e2e/specs/empty-trash-restore-trashed-posts.test.js
