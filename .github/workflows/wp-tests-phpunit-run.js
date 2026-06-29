@@ -451,6 +451,70 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t);
 \t}
 
+\tfunction wp_sqlite_duckdb_child_diagnostics_truncate_string( $value, $max_length = 500 ) {
+\t\tif ( ! is_string( $value ) ) {
+\t\t\treturn $value;
+\t\t}
+
+\t\tif ( strlen( $value ) <= $max_length ) {
+\t\t\treturn $value;
+\t\t}
+
+\t\treturn substr( $value, 0, $max_length ) . '...';
+\t}
+
+\tfunction wp_sqlite_duckdb_child_diagnostics_test_identity( $test ) {
+\t\t$identity = array(
+\t\t\t'class'            => is_object( $test ) ? get_class( $test ) : null,
+\t\t\t'name'             => null,
+\t\t\t'to_string'        => null,
+\t\t\t'data_name'        => null,
+\t\t\t'data_description' => null,
+\t\t);
+
+\t\tif ( ! is_object( $test ) ) {
+\t\t\treturn $identity;
+\t\t}
+
+\t\ttry {
+\t\t\tif ( method_exists( $test, 'getName' ) ) {
+\t\t\t\t$identity['name'] = $test->getName( false );
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t$identity['name'] = get_class( $e ) . ': ' . $e->getMessage();
+\t\t}
+
+\t\ttry {
+\t\t\tif ( method_exists( $test, 'toString' ) ) {
+\t\t\t\t$identity['to_string'] = $test->toString();
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t$identity['to_string'] = get_class( $e ) . ': ' . $e->getMessage();
+\t\t}
+
+\t\ttry {
+\t\t\tif ( method_exists( $test, 'dataName' ) ) {
+\t\t\t\t$identity['data_name'] = $test->dataName();
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t$identity['data_name'] = get_class( $e ) . ': ' . $e->getMessage();
+\t\t}
+
+\t\ttry {
+\t\t\tif ( method_exists( $test, 'dataDescription' ) ) {
+\t\t\t\t$identity['data_description'] = $test->dataDescription();
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t$identity['data_description'] = get_class( $e ) . ': ' . $e->getMessage();
+\t\t}
+
+\t\tforeach ( $identity as $key => $value ) {
+\t\t\t$identity[ $key ] = wp_sqlite_duckdb_child_diagnostics_truncate_string( $value );
+\t\t}
+
+\t\treturn $identity;
+\t}
+
 \tfunction wp_sqlite_duckdb_child_diagnostics_report( $stage, $force = false ) {
 \t\tif ( ! wp_sqlite_duckdb_child_diagnostics_enabled() ) {
 \t\t\treturn;
@@ -511,6 +575,27 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\t}
 \t\t}
 
+\t\t$wpdb_object = isset( $GLOBALS['wpdb'] ) && is_object( $GLOBALS['wpdb'] )
+\t\t\t? $GLOBALS['wpdb']
+\t\t\t: null;
+\t\t$wpdb_last_error = is_object( $wpdb_object ) && isset( $wpdb_object->last_error )
+\t\t\t? wp_sqlite_duckdb_child_diagnostics_truncate_string( $wpdb_object->last_error )
+\t\t\t: null;
+\t\t$wpdb_last_query = is_object( $wpdb_object ) && isset( $wpdb_object->last_query )
+\t\t\t? wp_sqlite_duckdb_child_diagnostics_truncate_string( $wpdb_object->last_query )
+\t\t\t: null;
+\t\t$included_files = get_included_files();
+\t\t$included_files_tail = array_map(
+\t\t\t'basename',
+\t\t\tarray_slice( $included_files, -5 )
+\t\t);
+\t\t$test_identity = isset( $GLOBALS['wp_sqlite_duckdb_child_test_identity'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_test_identity'] )
+\t\t\t? $GLOBALS['wp_sqlite_duckdb_child_test_identity']
+\t\t\t: null;
+\t\t$result_write = isset( $GLOBALS['wp_sqlite_duckdb_child_result_write'] ) && is_array( $GLOBALS['wp_sqlite_duckdb_child_result_write'] )
+\t\t\t? $GLOBALS['wp_sqlite_duckdb_child_result_write']
+\t\t\t: null;
+
 \t\tif ( class_exists( 'WP_DuckDB_Runtime', false ) && method_exists( 'WP_DuckDB_Runtime', 'get_unavailable_reason' ) ) {
 \t\t\ttry {
 \t\t\t\t$reason = WP_DuckDB_Runtime::get_unavailable_reason( false );
@@ -570,10 +655,18 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\t'runtime_unavailable'      => $reason,
 \t\t\t'duckdb_class_loaded'      => class_exists( 'Saturio\\\\DuckDB\\\\DuckDB', false ),
 \t\t\t'wpdb_class'               => $wpdb,
+\t\t\t'wpdb_last_error'          => $wpdb_last_error,
+\t\t\t'wpdb_last_query'          => $wpdb_last_query,
+\t\t\t'wpdb_has_dbh_property'    => is_object( $wpdb_object ) && property_exists( $wpdb_object, 'dbh' ),
 \t\t\t'bootstrap_global'         => $bootstrap_global,
 \t\t\t'bootstrap_global_readable' => is_string( $bootstrap_global ) && is_readable( $bootstrap_global ),
 \t\t\t'bootstrap_realpath'       => $bootstrap_realpath,
 \t\t\t'bootstrap_included'       => $bootstrap_included,
+\t\t\t'wp_did_wp_settings'       => defined( 'WPINC' ) && function_exists( 'wp' ),
+\t\t\t'included_files_count'     => count( $included_files ),
+\t\t\t'included_files_tail'      => $included_files_tail,
+\t\t\t'test_identity'            => $test_identity,
+\t\t\t'result_write'             => $result_write,
 \t\t\t'output_buffer_level'      => ob_get_level(),
 \t\t\t'output_buffer_size'       => $output_buffer_size,
 \t\t\t'output_buffer_sha1'       => $output_buffer_sha1,
@@ -937,12 +1030,45 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 			].join( '\n' ),
 		],
 		[
-			'    file_put_contents(',
+			[
+				'    file_put_contents(',
+				"        '{processResultFile}',",
+				'        serialize(',
+				'            [',
+				"                'testResult'    => $test->getResult(),",
+				"                'numAssertions' => $test->getNumAssertions(),",
+				"                'result'        => $result,",
+				"                'output'        => $output",
+				'            ]',
+				'        )',
+				'    );',
+			].join( '\n' ),
 			[
 				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
 				"        wp_sqlite_duckdb_child_diagnostics_report( 'before_process_result_write', true );",
 				'    }',
-				'    file_put_contents(',
+				'    $__wp_sqlite_duckdb_child_result_payload = serialize(',
+				'        [',
+				"            'testResult'    => $test->getResult(),",
+				"            'numAssertions' => $test->getNumAssertions(),",
+				"            'result'        => $result,",
+				"            'output'        => $output",
+				'        ]',
+				'    );',
+				'    $__wp_sqlite_duckdb_child_result_bytes = file_put_contents(',
+				"        '{processResultFile}',",
+				'        $__wp_sqlite_duckdb_child_result_payload',
+				'    );',
+				"    $GLOBALS['wp_sqlite_duckdb_child_result_write'] = [",
+				"        'payload_length' => strlen( $__wp_sqlite_duckdb_child_result_payload ),",
+				"        'bytes'          => $__wp_sqlite_duckdb_child_result_bytes,",
+				"        'success'        => false !== $__wp_sqlite_duckdb_child_result_bytes,",
+				"        'file_size'      => is_file( '{processResultFile}' ) ? filesize( '{processResultFile}' ) : null,",
+				"        'file_sha1'      => is_file( '{processResultFile}' ) ? sha1_file( '{processResultFile}' ) : null,",
+				'    ];',
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"        wp_sqlite_duckdb_child_diagnostics_report( 'after_process_result_write', true );",
+				'    }',
 			].join( '\n' ),
 		],
 		[
@@ -1003,6 +1129,38 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 			].join( '\n' ),
 		],
 	];
+	const optionalLifecycleReplacements = [
+		[
+			"    $test = new {className}('{name}', unserialize('{data}'), '{dataName}');",
+			[
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"        wp_sqlite_duckdb_child_diagnostics_report( 'before_test_construct', true );",
+				'    }',
+				"    $test = new {className}('{name}', unserialize('{data}'), '{dataName}');",
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_test_identity' ) ) {",
+				"        $GLOBALS['wp_sqlite_duckdb_child_test_identity'] = wp_sqlite_duckdb_child_diagnostics_test_identity( $test );",
+				'    }',
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"        wp_sqlite_duckdb_child_diagnostics_report( 'after_test_construct', true );",
+				'    }',
+			].join( '\n' ),
+		],
+		[
+			"    $test = new {className}('{methodName}', unserialize('{data}'), '{dataName}');",
+			[
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"        wp_sqlite_duckdb_child_diagnostics_report( 'before_test_construct', true );",
+				'    }',
+				"    $test = new {className}('{methodName}', unserialize('{data}'), '{dataName}');",
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_test_identity' ) ) {",
+				"        $GLOBALS['wp_sqlite_duckdb_child_test_identity'] = wp_sqlite_duckdb_child_diagnostics_test_identity( $test );",
+				'    }',
+				"    if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {",
+				"        wp_sqlite_duckdb_child_diagnostics_report( 'after_test_construct', true );",
+				'    }',
+			].join( '\n' ),
+		],
+	];
 	const patchScript = [
 		`$template_dir = ${ phpSingleQuote( templateDir ) };`,
 		`$template_names = array( ${ templateNames.map( phpSingleQuote ).join( ', ' ) } );`,
@@ -1010,6 +1168,11 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 		`$snippet = ${ phpSingleQuote( snippet ) };`,
 		'$lifecycle_replacements = array(',
 		...lifecycleReplacements.map( ( [ needle, replacement ] ) => (
+			`\t${ phpSingleQuote( needle ) } => ${ phpSingleQuote( replacement ) },`
+		) ),
+		');',
+		'$optional_lifecycle_replacements = array(',
+		...optionalLifecycleReplacements.map( ( [ needle, replacement ] ) => (
 			`\t${ phpSingleQuote( needle ) } => ${ phpSingleQuote( replacement ) },`
 		) ),
 		');',
@@ -1057,6 +1220,16 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 		'\t\t\t\tfwrite( STDERR, "Error: Unable to patch lifecycle marker in PHPUnit child process template {$file}." . PHP_EOL );',
 		'\t\t\t\texit( 1 );',
 		'\t\t\t}',
+		'\t\t}',
+		'\t\t$optional_lifecycle_replace_count = 0;',
+		'\t\tforeach ( $optional_lifecycle_replacements as $needle => $replacement ) {',
+		'\t\t\t$lifecycle_replace_count = 0;',
+		'\t\t\t$contents = str_replace( $needle, $replacement, $contents, $lifecycle_replace_count );',
+		'\t\t\t$optional_lifecycle_replace_count += $lifecycle_replace_count;',
+		'\t\t}',
+		'\t\tif ( 1 > $optional_lifecycle_replace_count ) {',
+		'\t\t\tfwrite( STDERR, "Error: Unable to patch test identity lifecycle marker in PHPUnit child process template {$file}." . PHP_EOL );',
+		'\t\t\texit( 1 );',
 		'\t\t}',
 		'\t}',
 		'\tif ( false === file_put_contents( $file, $contents ) ) {',
