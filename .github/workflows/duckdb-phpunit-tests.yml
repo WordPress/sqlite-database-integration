@@ -272,6 +272,116 @@ jobs:
           WP_DUCKDB_SMOKE_TIMEOUT: '90'
         run: ./bin/wp-test-duckdb-smoke.sh
 
+      - name: Run recent DuckDB WordPress PHPUnit failures before native parser build
+        timeout-minutes: 3
+        env:
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS: '0'
+          WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_VERBOSE: '0'
+          WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_STDERR: '0'
+          WP_SQLITE_DUCKDB_CHILD_DB_COPY: '1'
+          WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS: '0'
+          WP_DUCKDB_QUERY_PROFILE: '0'
+          WP_DUCKDB_QUERY_PROFILE_INTERVAL: '0'
+          WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
+          WP_SQLITE_DISABLE_EXPECTED_RESULTS: '0'
+          WP_SQLITE_IGNORE_MISSING_EXPECTED_RESULTS: '1'
+          WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND: 'true'
+          WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '0'
+          WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-fast-fail-pre-native
+          WP_SQLITE_PHPUNIT_MAX_SECONDS: '60'
+          WP_SQLITE_PHPUNIT_MIN_TESTS: '15'
+          WP_SQLITE_PHPUNIT_MIN_FILTER_PATTERNS: '9'
+          WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-fast-fail-pre-native-results.xml
+        run: |
+          set -euo pipefail
+
+          fast_fail_filter_file=".github/workflows/duckdb-wordpress-phpunit-fast-fail-tests.txt"
+          min_fast_fail_patterns="${WP_SQLITE_PHPUNIT_MIN_FILTER_PATTERNS:-1}"
+
+          case "$min_fast_fail_patterns" in
+            ''|*[!0-9]*)
+              echo "::error title=DuckDB fast-fail pattern floor invalid::WP_SQLITE_PHPUNIT_MIN_FILTER_PATTERNS must be a positive integer."
+              exit 1
+              ;;
+          esac
+
+          if [ "$min_fast_fail_patterns" -lt 1 ]; then
+            echo "::error title=DuckDB fast-fail pattern floor invalid::WP_SQLITE_PHPUNIT_MIN_FILTER_PATTERNS must be greater than zero."
+            exit 1
+          fi
+
+          invalid_fast_fail_entries="$(
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                sub(/^[[:space:]]+/, "")
+                sub(/[[:space:]]+$/, "")
+                if ($0 !~ /^[A-Za-z_][A-Za-z0-9_]*(\\[A-Za-z_][A-Za-z0-9_]*)*::[A-Za-z_][A-Za-z0-9_]*$/) {
+                  print
+                }
+              }
+            ' "$fast_fail_filter_file"
+          )"
+
+          if [ -n "$invalid_fast_fail_entries" ]; then
+            echo "::error title=DuckDB fast-fail filter invalid::${fast_fail_filter_file} must contain literal PHPUnit Class::method names only."
+            printf '%s\n' "$invalid_fast_fail_entries"
+            exit 1
+          fi
+
+          fast_fail_filter="$(
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                sub(/^[[:space:]]+/, "")
+                sub(/[[:space:]]+$/, "")
+                if (seen[$0]++) {
+                  next
+                }
+                printf "%s%s", separator, $0
+                separator="\\|"
+              }
+            ' "$fast_fail_filter_file"
+          )"
+          fast_fail_count="$(
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                sub(/^[[:space:]]+/, "")
+                sub(/[[:space:]]+$/, "")
+                if (seen[$0]++) {
+                  next
+                }
+                count++
+              }
+              END {
+                print count + 0
+              }
+            ' "$fast_fail_filter_file"
+          )"
+
+          if [ "$fast_fail_count" -lt 1 ] || [ -z "$fast_fail_filter" ]; then
+            echo "::error title=DuckDB fast-fail filter empty::${fast_fail_filter_file} does not list any tests."
+            exit 1
+          fi
+
+          if [ "$fast_fail_count" -lt "$min_fast_fail_patterns" ]; then
+            echo "::error title=DuckDB fast-fail filter too small::${fast_fail_filter_file} lists ${fast_fail_count} unique tests; expected at least ${min_fast_fail_patterns}."
+            exit 1
+          fi
+
+          if printf '%s\n' "$fast_fail_filter" | grep -q "'"; then
+            echo "::error title=DuckDB fast-fail filter unsafe::${fast_fail_filter_file} contains a single quote, which is not supported in the generated shell command."
+            exit 1
+          fi
+
+          echo "DuckDB fast-fail filter file: ${fast_fail_filter_file}"
+          echo "DuckDB fast-fail filter entries: ${fast_fail_count}"
+          echo "DuckDB fast-fail filter min entries: ${min_fast_fail_patterns}"
+          export WP_SQLITE_PHPUNIT_COMMAND="composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-fast-fail-pre-native-results.xml --verbose --stop-on-error --stop-on-failure --filter '${fast_fail_filter}'"
+          node .github/workflows/wp-tests-phpunit-run.js
+
       - name: Build and load parser extension in WordPress DuckDB PHP containers
         timeout-minutes: 8
         env:
