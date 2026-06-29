@@ -1331,13 +1331,13 @@ function patchPhpunitParentProcessIsolationHooks() {
 	const replacement = [
 		'            $php = AbstractPhpProcess::factory();',
 		"            if (function_exists('wp_sqlite_duckdb_release_parent_connection_for_isolated_child')) {",
-		'                wp_sqlite_duckdb_release_parent_connection_for_isolated_child();',
+		'                wp_sqlite_duckdb_release_parent_connection_for_isolated_child($processResultFile, $this);',
 		'            }',
 		'            try {',
 		'                $php->runTestJob($template->render(), $this, $result, $processResultFile);',
 		'            } finally {',
 		"                if (function_exists('wp_sqlite_duckdb_restore_parent_connection_after_isolated_child')) {",
-		'                    wp_sqlite_duckdb_restore_parent_connection_after_isolated_child();',
+		'                    wp_sqlite_duckdb_restore_parent_connection_after_isolated_child($processResultFile, $this);',
 		'                }',
 		'            }',
 	].join( '\n' );
@@ -1404,26 +1404,114 @@ function getDuckDBParentProcessIsolationPhp() {
 \t\treturn isset( $GLOBALS['wpdb'] ) && is_object( $GLOBALS['wpdb'] );
 \t}
 
-\tfunction wp_sqlite_duckdb_release_parent_connection_for_isolated_child() {
+\tfunction wp_sqlite_duckdb_parent_process_isolation_diagnostics_enabled() {
+\t\t$value = getenv( 'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS' );
+\t\treturn is_string( $value ) && '' !== $value && '0' !== $value && 'false' !== strtolower( $value );
+\t}
+
+\tfunction wp_sqlite_duckdb_parent_process_isolation_test_identity( $test ) {
+\t\tif ( ! is_object( $test ) ) {
+\t\t\treturn null;
+\t\t}
+
+\t\t$identity = array(
+\t\t\t'class'     => get_class( $test ),
+\t\t\t'name'      => null,
+\t\t\t'to_string' => null,
+\t\t);
+
+\t\ttry {
+\t\t\tif ( method_exists( $test, 'getName' ) ) {
+\t\t\t\t$identity['name'] = $test->getName( false );
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t$identity['name'] = get_class( $e ) . ': ' . $e->getMessage();
+\t\t}
+
+\t\ttry {
+\t\t\tif ( method_exists( $test, 'toString' ) ) {
+\t\t\t\t$identity['to_string'] = $test->toString();
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t$identity['to_string'] = get_class( $e ) . ': ' . $e->getMessage();
+\t\t}
+
+\t\treturn $identity;
+\t}
+
+\tfunction wp_sqlite_duckdb_parent_process_isolation_report( $stage, $process_result_file = null, $test = null, $extra = array() ) {
+\t\tif ( ! wp_sqlite_duckdb_parent_process_isolation_diagnostics_enabled() ) {
+\t\t\treturn;
+\t\t}
+
+\t\t$wpdb = isset( $GLOBALS['wpdb'] ) && is_object( $GLOBALS['wpdb'] )
+\t\t\t? $GLOBALS['wpdb']
+\t\t\t: null;
+\t\t$result_file_size = is_string( $process_result_file ) && file_exists( $process_result_file )
+\t\t\t? filesize( $process_result_file )
+\t\t\t: null;
+\t\tif ( false === $result_file_size ) {
+\t\t\t$result_file_size = null;
+\t\t}
+
+\t\t$payload = array(
+\t\t\t'stage'            => $stage,
+\t\t\t'pid'              => getmypid(),
+\t\t\t'process_result_file' => is_string( $process_result_file ) ? $process_result_file : null,
+\t\t\t'process_result_file_size' => $result_file_size,
+\t\t\t'test_identity'    => wp_sqlite_duckdb_parent_process_isolation_test_identity( $test ),
+\t\t\t'wpdb_class'       => is_object( $wpdb ) ? get_class( $wpdb ) : null,
+\t\t\t'wpdb_last_error'  => is_object( $wpdb ) && isset( $wpdb->last_error ) ? $wpdb->last_error : null,
+\t\t\t'wpdb_has_dbh'     => is_object( $wpdb ) && isset( $wpdb->dbh ) && is_object( $wpdb->dbh ),
+\t\t\t'extra'            => $extra,
+\t\t);
+\t\t$encoded = json_encode( $payload );
+\t\tif ( is_string( $encoded ) ) {
+\t\t\t@file_put_contents( ${ phpSingleQuote( duckdbChildDiagnosticsLogContainerPath ) }, 'WP_SQLITE_DUCKDB_PARENT_DIAGNOSTIC ' . $encoded . PHP_EOL, FILE_APPEND | LOCK_EX );
+\t\t}
+\t}
+
+\tfunction wp_sqlite_duckdb_release_parent_connection_for_isolated_child( $process_result_file = null, $test = null ) {
 \t\tif ( ! wp_sqlite_duckdb_is_active_parent_process() ) {
 \t\t\treturn;
 \t\t}
 
 \t\t$wpdb = $GLOBALS['wpdb'];
+\t\t$extra = array(
+\t\t\t'flush_called'     => false,
+\t\t\t'checkpoint_called' => false,
+\t\t\t'close_called'     => false,
+\t\t\t'gc_cycles'        => array(),
+\t\t\t'release_sleep_us' => 250000,
+\t\t);
+
+\t\twp_sqlite_duckdb_parent_process_isolation_report( 'parent_before_release_for_child', $process_result_file, $test );
+
+\t\ttry {
+\t\t\tif ( method_exists( $wpdb, 'flush' ) ) {
+\t\t\t\t$wpdb->flush();
+\t\t\t\t$extra['flush_called'] = true;
+\t\t\t}
+\t\t} catch ( Throwable $e ) {
+\t\t\t$extra['flush_error'] = get_class( $e ) . ': ' . $e->getMessage();
+\t\t}
 
 \t\ttry {
 \t\t\tif ( isset( $wpdb->dbh ) && is_object( $wpdb->dbh ) && method_exists( $wpdb->dbh, 'get_connection' ) ) {
 \t\t\t\t$connection = $wpdb->dbh->get_connection();
 \t\t\t\tif ( is_object( $connection ) && method_exists( $connection, 'query' ) ) {
 \t\t\t\t\t$connection->query( 'CHECKPOINT' );
+\t\t\t\t\t$extra['checkpoint_called'] = true;
 \t\t\t\t}
 \t\t\t}
 \t\t} catch ( Throwable $e ) {
 \t\t\t// The child may still be able to open the database if no checkpoint is needed.
+\t\t\t$extra['checkpoint_error'] = get_class( $e ) . ': ' . $e->getMessage();
 \t\t}
 
 \t\tif ( method_exists( $wpdb, 'close' ) ) {
 \t\t\t$wpdb->close();
+\t\t\t$extra['close_called'] = true;
 \t\t}
 
 \t\ttry {
@@ -1439,11 +1527,18 @@ function getDuckDBParentProcessIsolationPhp() {
 \t\tunset( $GLOBALS['@duckdb_driver'], $GLOBALS['@duckdb'] );
 
 \t\tif ( function_exists( 'gc_collect_cycles' ) ) {
-\t\t\tgc_collect_cycles();
+\t\t\t$extra['gc_cycles'][] = gc_collect_cycles();
+\t\t\t$extra['gc_cycles'][] = gc_collect_cycles();
 \t\t}
+
+\t\tif ( function_exists( 'usleep' ) ) {
+\t\t\tusleep( $extra['release_sleep_us'] );
+\t\t}
+
+\t\twp_sqlite_duckdb_parent_process_isolation_report( 'parent_after_release_for_child', $process_result_file, $test, $extra );
 \t}
 
-\tfunction wp_sqlite_duckdb_restore_parent_connection_after_isolated_child() {
+\tfunction wp_sqlite_duckdb_restore_parent_connection_after_isolated_child( $process_result_file = null, $test = null ) {
 \t\tif ( ! wp_sqlite_duckdb_is_active_parent_process() ) {
 \t\t\treturn;
 \t\t}
@@ -1453,18 +1548,53 @@ function getDuckDBParentProcessIsolationPhp() {
 \t\t\treturn;
 \t\t}
 
-\t\ttry {
-\t\t\t$wpdb->last_error = '';
-\t\t} catch ( Throwable $e ) {
+\t\twp_sqlite_duckdb_parent_process_isolation_report( 'parent_before_restore_after_child', $process_result_file, $test );
+
+\t\t$last_message = 'unknown DuckDB reconnect error';
+\t\tfor ( $attempt = 1; $attempt <= 5; ++$attempt ) {
+\t\t\ttry {
+\t\t\t\t$wpdb->last_error = '';
+\t\t\t} catch ( Throwable $e ) {
+\t\t\t}
+
+\t\t\ttry {
+\t\t\t\tif ( false !== $wpdb->db_connect( false ) ) {
+\t\t\t\t\twp_sqlite_duckdb_parent_process_isolation_report(
+\t\t\t\t\t\t'parent_after_restore_after_child',
+\t\t\t\t\t\t$process_result_file,
+\t\t\t\t\t\t$test,
+\t\t\t\t\t\tarray(
+\t\t\t\t\t\t\t'attempt' => $attempt,
+\t\t\t\t\t\t\t'success' => true,
+\t\t\t\t\t\t)
+\t\t\t\t\t);
+\t\t\t\t\treturn;
+\t\t\t\t}
+\t\t\t} catch ( Throwable $e ) {
+\t\t\t\t$last_message = get_class( $e ) . ': ' . $e->getMessage();
+\t\t\t}
+
+\t\t\tif ( isset( $wpdb->last_error ) && is_string( $wpdb->last_error ) && '' !== $wpdb->last_error ) {
+\t\t\t\t$last_message = $wpdb->last_error;
+\t\t\t}
+
+\t\t\twp_sqlite_duckdb_parent_process_isolation_report(
+\t\t\t\t'parent_restore_retry_after_child',
+\t\t\t\t$process_result_file,
+\t\t\t\t$test,
+\t\t\t\tarray(
+\t\t\t\t\t'attempt' => $attempt,
+\t\t\t\t\t'error'   => $last_message,
+\t\t\t\t)
+\t\t\t);
+
+\t\t\tif ( function_exists( 'usleep' ) ) {
+\t\t\t\tusleep( 100000 * $attempt );
+\t\t\t}
 \t\t}
 
-\t\tif ( false === $wpdb->db_connect( false ) ) {
-\t\t\t$message = isset( $wpdb->last_error ) && is_string( $wpdb->last_error )
-\t\t\t\t? $wpdb->last_error
-\t\t\t\t: 'unknown DuckDB reconnect error';
-\t\t\tfwrite( STDERR, 'Error: Unable to reconnect DuckDB after isolated PHPUnit child: ' . $message . PHP_EOL );
-\t\t\texit( 1 );
-\t\t}
+\t\tfwrite( STDERR, 'Error: Unable to reconnect DuckDB after isolated PHPUnit child: ' . $last_message . PHP_EOL );
+\t\texit( 1 );
 \t}
 }`;
 }
