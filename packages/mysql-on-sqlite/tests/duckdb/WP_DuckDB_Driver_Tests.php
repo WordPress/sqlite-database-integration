@@ -14013,26 +14013,26 @@ SQL
 			)
 		);
 		$driver->query(
-			'CREATE TABLE table_resolution_cache_options (
+			'CREATE TABLE table_resolution_cache_items (
 				option_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-				option_name VARCHAR(191) NOT NULL,
-				option_value LONGTEXT NOT NULL,
+				item_name VARCHAR(191) NOT NULL,
+				item_value LONGTEXT NOT NULL,
 				PRIMARY KEY (option_id),
-				UNIQUE KEY option_name (option_name)
+				UNIQUE KEY item_name (item_name)
 			)'
 		);
 
 		$queries = array();
 		$this->assertSame(
 			array(),
-			$driver->query( "SELECT option_value FROM table_resolution_cache_options WHERE option_name = 'missing' LIMIT 1" )->fetchAll( PDO::FETCH_ASSOC )
+			$driver->query( "SELECT item_value FROM table_resolution_cache_items WHERE item_name = 'missing' LIMIT 1" )->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame( 2, $this->count_duckdb_table_resolution_queries( $queries ) );
 
 		$queries = array();
 		$this->assertSame(
 			array(),
-			$driver->query( "SELECT option_value FROM table_resolution_cache_options WHERE option_name = 'missing' LIMIT 1" )->fetchAll( PDO::FETCH_ASSOC )
+			$driver->query( "SELECT item_value FROM table_resolution_cache_items WHERE item_name = 'missing' LIMIT 1" )->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
 	}
