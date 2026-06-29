@@ -9733,6 +9733,131 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->fail( 'Expected duplicate ODKU update to violate the alias unique key.' );
 	}
 
+	public function test_wordpress_options_on_duplicate_key_update_insert_branch_uses_returning(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name)
+			)"
+		);
+
+		$inserted = $driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('_transient_runtime_probe', 'created', 'off')
+			ON DUPLICATE KEY UPDATE option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$this->assertSame( 1, $inserted->rowCount() );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$insert_queries = $driver->get_last_duckdb_queries();
+		$insert_log     = implode( "\n", $insert_queries );
+		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $insert_log );
+		$this->assertStringContainsString( ' RETURNING "option_id"', end( $insert_queries ) );
+		foreach ( $insert_queries as $duckdb_sql ) {
+			$this->assertStringNotContainsString( 'SELECT MAX("option_id")', $duckdb_sql );
+			$this->assertStringNotContainsString( 'SELECT currval(', $duckdb_sql );
+		}
+
+		$updated = $driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('_transient_runtime_probe', 'updated', 'yes')
+			ON DUPLICATE KEY UPDATE option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$this->assertSame( 1, $updated->rowCount() );
+		$this->assertSame( 0, $driver->get_insert_id() );
+		$update_queries = $driver->get_last_duckdb_queries();
+		$update_log     = implode( "\n", $update_queries );
+		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $update_log );
+		$this->assertStringNotContainsString( ' RETURNING "option_id"', $update_log );
+		foreach ( $update_queries as $duckdb_sql ) {
+			$this->assertStringNotContainsString( 'SELECT MAX("option_id")', $duckdb_sql );
+			$this->assertStringNotContainsString( 'SELECT currval(', $duckdb_sql );
+		}
+
+		$this->assertSame(
+			array(
+				array(
+					'option_id'    => 1,
+					'option_name'  => '_transient_runtime_probe',
+					'option_value' => 'updated',
+					'autoload'     => 'yes',
+				),
+			),
+			$driver->query( 'SELECT option_id, option_name, option_value, autoload FROM wptests_options' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_wordpress_options_on_duplicate_key_update_insert_branch_respects_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name)
+			)"
+		);
+		$driver->query(
+			"CREATE TEMPORARY TABLE wptests_options (
+				option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				PRIMARY KEY (option_id),
+				UNIQUE KEY option_name (option_name)
+			)"
+		);
+
+		$inserted = $driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('_transient_temp_probe', 'temporary', 'yes')
+			ON DUPLICATE KEY UPDATE option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$this->assertSame( 1, $inserted->rowCount() );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$insert_queries = $driver->get_last_duckdb_queries();
+		$insert_log     = implode( "\n", $insert_queries );
+		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $insert_log );
+		$this->assertStringContainsString( ' RETURNING "option_id"', end( $insert_queries ) );
+		foreach ( $insert_queries as $duckdb_sql ) {
+			$this->assertStringNotContainsString( 'SELECT MAX("option_id")', $duckdb_sql );
+			$this->assertStringNotContainsString( 'SELECT currval(', $duckdb_sql );
+		}
+		$this->assertSame(
+			array(
+				array(
+					'option_id'    => 1,
+					'option_name'  => '_transient_temp_probe',
+					'option_value' => 'temporary',
+					'autoload'     => 'yes',
+				),
+			),
+			$driver->query( 'SELECT option_id, option_name, option_value, autoload FROM wptests_options' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_options' );
+		$this->assertSame(
+			array(),
+			$driver->query( 'SELECT option_id, option_name, option_value, autoload FROM wptests_options' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_insert_on_duplicate_key_update_values_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 

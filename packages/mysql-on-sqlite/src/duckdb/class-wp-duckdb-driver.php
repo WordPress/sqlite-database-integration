@@ -7532,7 +7532,8 @@ class WP_DuckDB_Driver {
 			$translation['sql'],
 			'Failed to execute DuckDB INSERT',
 			$tokens,
-			$table_index
+			$table_index,
+			true
 		);
 	}
 
@@ -25002,9 +25003,10 @@ class WP_DuckDB_Driver {
 	 * @param string $context    Failure context.
 	 * @param array  $tokens     MySQL token stream.
 	 * @param int    $table_index Index of the table token in $tokens.
+	 * @param bool   $allow_on_duplicate_returning_insert_id Whether proven ODKU insert branches may use RETURNING.
 	 * @return WP_DuckDB_Result_Statement
 	 */
-	private function execute_auto_increment_write( string $table_name, string $sql, string $context, array $tokens = array(), ?int $table_index = null ): WP_DuckDB_Result_Statement {
+	private function execute_auto_increment_write( string $table_name, string $sql, string $context, array $tokens = array(), ?int $table_index = null, bool $allow_on_duplicate_returning_insert_id = false ): WP_DuckDB_Result_Statement {
 		$table_reference     = $this->resolve_visible_user_table_reference( $table_name );
 		$metadata            = null === $table_reference ? null : $this->auto_increment_metadata_for_table( $table_reference['table_name'], $table_reference['temporary'] );
 		$sequence_name       = null === $metadata ? null : $metadata['sequence_name'];
@@ -25044,7 +25046,10 @@ class WP_DuckDB_Driver {
 			&& null !== $table_index
 			&& $column_was_omitted
 			&& WP_DuckDB_Connection::class === get_class( $this->connection )
-			&& ! $this->is_insert_on_duplicate_key_update_write( $tokens, $table_index );
+			&& (
+				$allow_on_duplicate_returning_insert_id
+				|| ! $this->is_insert_on_duplicate_key_update_write( $tokens, $table_index )
+			);
 
 		$before_max = null;
 		if ( ! $use_returning_insert_id && $column_was_omitted && null !== $table_reference ) {
