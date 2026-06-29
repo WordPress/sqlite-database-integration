@@ -184,7 +184,7 @@ jobs:
           WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
           WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-fast-fail
           WP_SQLITE_PHPUNIT_MAX_SECONDS: '240'
-          WP_SQLITE_PHPUNIT_COMMAND: "composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-fast-fail-results.xml --verbose --filter 'Tests_DB::test_mysqli_flush_sync|WP_Test_REST_Posts_Controller::test_get_items_orderby_modified_query'"
+          WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-fast-fail-results.xml --verbose --filter Tests_DB::test_mysqli_flush_sync
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-fast-fail-results.xml
         run: node .github/workflows/wp-tests-phpunit-run.js
 

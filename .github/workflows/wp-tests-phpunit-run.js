@@ -172,6 +172,7 @@ const duckdbExpectedFailuresToPrune = new Set( [
 	'Tests_DB::test_delete_value_too_long_for_field with data set &quot;too long&quot;',
 	'Tests_DB::test_has_cap',
 	'Tests_DB::test_insert_value_too_long_for_field with data set &quot;too long&quot;',
+	'Tests_DB::test_mysqli_flush_sync',
 	'Tests_DB::test_non_unicode_collations',
 	'Tests_DB::test_pre_get_col_charset_filter',
 	'Tests_DB::test_process_fields_on_nonexistent_table',

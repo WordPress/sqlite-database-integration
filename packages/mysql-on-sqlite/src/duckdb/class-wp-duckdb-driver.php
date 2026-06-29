@@ -275,6 +275,13 @@ class WP_DuckDB_Driver {
 	private $user_variables = array();
 
 	/**
+	 * Connection-local stored procedures for the WordPress mysqli flush sync test.
+	 *
+	 * @var array<string,array{database:string,name:string,create_sql:string,select_sql:string}>
+	 */
+	private $stored_procedures = array();
+
+	/**
 	 * Internal metadata tables already initialized for this connection.
 	 *
 	 * @var array<string,bool>
@@ -549,6 +556,11 @@ class WP_DuckDB_Driver {
 	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
 	 */
 	private function execute_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		$stored_procedure_result = $this->execute_stored_procedure_fast_path_statement( $query );
+		if ( null !== $stored_procedure_result ) {
+			return $stored_procedure_result;
+		}
+
 		$normalized = $this->normalize_fast_path_statement( $query );
 		if ( null === $normalized ) {
 			return null;
@@ -594,6 +606,218 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Execute the narrow stored-procedure subset needed by WordPress core tests.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_stored_procedure_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		if ( ! preg_match( '/^\s*(CREATE|DROP|SHOW|CALL)\b/i', $query, $statement_match ) ) {
+			return null;
+		}
+
+		switch ( strtoupper( $statement_match[1] ) ) {
+			case 'CREATE':
+				return $this->execute_create_procedure_fast_path_statement( $query );
+			case 'DROP':
+				return $this->execute_drop_procedure_fast_path_statement( $query );
+			case 'SHOW':
+				return $this->execute_show_create_procedure_fast_path_statement( $query );
+			case 'CALL':
+				return $this->execute_call_procedure_fast_path_statement( $query );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Store a single-SELECT MySQL procedure body for later CALL execution.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_create_procedure_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		if ( ! preg_match( '/^\s*CREATE\s+PROCEDURE\b/i', $query ) ) {
+			return null;
+		}
+
+		if (
+			! preg_match(
+				'/^\s*CREATE\s+PROCEDURE\s+(.+?)\s*\(\s*\)\s+BEGIN\s+(SELECT\b[\s\S]*?)\s*;\s*END\s*;?\s*$/i',
+				$query,
+				$matches
+			)
+		) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE PROCEDURE statement in DuckDB driver. Only no-argument single-SELECT procedures are supported.' );
+		}
+
+		$reference = $this->parse_stored_procedure_reference( $matches[1] );
+		if ( isset( $this->stored_procedures[ $reference['key'] ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( "Procedure '{$reference['database']}.{$reference['name']}' already exists in DuckDB driver." );
+		}
+
+		$select_sql    = trim( $matches[2] );
+		$select_tokens = $this->tokenize_and_validate( $select_sql );
+		if ( count( $select_tokens ) === 0 || WP_MySQL_Lexer::SELECT_SYMBOL !== $select_tokens[0]->id ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CREATE PROCEDURE statement in DuckDB driver. Procedure body must be a SELECT statement.' );
+		}
+
+		$this->found_rows                             = 0;
+		$this->stored_procedures[ $reference['key'] ] = array(
+			'database'   => $reference['database'],
+			'name'       => $reference['name'],
+			'create_sql' => $this->trim_statement_semicolon( $query ),
+			'select_sql' => $select_sql,
+		);
+
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Drop a stored procedure from the connection-local registry.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_drop_procedure_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		if ( ! preg_match( '/^\s*DROP\s+PROCEDURE\b/i', $query ) ) {
+			return null;
+		}
+
+		if ( ! preg_match( '/^\s*DROP\s+PROCEDURE\s+(IF\s+EXISTS\s+)?(.+?)\s*;?\s*$/i', $query, $matches ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported DROP PROCEDURE statement in DuckDB driver.' );
+		}
+
+		$if_exists = '' !== trim( $matches[1] ?? '' );
+		$reference = $this->parse_stored_procedure_reference( $matches[2] );
+		if ( ! isset( $this->stored_procedures[ $reference['key'] ] ) && ! $if_exists ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown procedure '{$reference['database']}.{$reference['name']}' in DuckDB driver." );
+		}
+
+		unset( $this->stored_procedures[ $reference['key'] ] );
+		$this->found_rows = 0;
+
+		return $this->empty_ddl_result();
+	}
+
+	/**
+	 * Return MySQL-shaped SHOW CREATE PROCEDURE rows.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_show_create_procedure_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		if ( ! preg_match( '/^\s*SHOW\s+CREATE\s+PROCEDURE\b/i', $query ) ) {
+			return null;
+		}
+
+		if ( ! preg_match( '/^\s*SHOW\s+CREATE\s+PROCEDURE\s+(.+?)\s*;?\s*$/i', $query, $matches ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW CREATE PROCEDURE statement in DuckDB driver.' );
+		}
+
+		$procedure = $this->stored_procedure( $this->parse_stored_procedure_reference( $matches[1] ) );
+		$columns   = array( 'Procedure', 'sql_mode', 'Create Procedure', 'character_set_client', 'collation_connection', 'Database Collation' );
+		$rows      = array(
+			array(
+				$procedure['name'],
+				implode( ',', $this->active_sql_modes ),
+				$procedure['create_sql'],
+				'utf8mb4',
+				'utf8mb4_unicode_ci',
+				'utf8mb4_unicode_ci',
+			),
+		);
+
+		return $this->record_found_rows_from_result( new WP_DuckDB_Result_Statement( $columns, $rows, 0 ) );
+	}
+
+	/**
+	 * Execute a stored no-argument SELECT procedure.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_call_procedure_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		if ( ! preg_match( '/^\s*CALL\b/i', $query ) ) {
+			return null;
+		}
+
+		if ( ! preg_match( '/^\s*CALL\s+(.+?)(?:\s*\(\s*\))?\s*;?\s*$/i', $query, $matches ) ) {
+			throw new WP_DuckDB_Driver_Exception( 'Unsupported CALL statement in DuckDB driver. Only no-argument stored procedures are supported.' );
+		}
+
+		$procedure = $this->stored_procedure( $this->parse_stored_procedure_reference( $matches[1] ) );
+		return $this->execute_select( $this->tokenize_and_validate( $procedure['select_sql'] ) );
+	}
+
+	/**
+	 * Parse a stored-procedure reference.
+	 *
+	 * @param string $reference_sql MySQL procedure reference.
+	 * @return array{database:string,name:string,key:string}
+	 */
+	private function parse_stored_procedure_reference( string $reference_sql ): array {
+		$tokens = $this->tokenize_fragment( trim( $reference_sql ) );
+		if ( 1 === count( $tokens ) ) {
+			$database = $this->current_database;
+			$name     = $this->identifier_value( $tokens[0] );
+		} elseif (
+			3 === count( $tokens )
+			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[1]->id
+		) {
+			$database = $this->identifier_value( $tokens[0] );
+			$name     = $this->identifier_value( $tokens[2] );
+		} else {
+			throw new WP_DuckDB_Driver_Exception( 'Expected a stored procedure name in DuckDB driver statement.' );
+		}
+
+		return array(
+			'database' => $database,
+			'name'     => $name,
+			'key'      => $this->stored_procedure_key( $database, $name ),
+		);
+	}
+
+	/**
+	 * Read a stored procedure from the registry.
+	 *
+	 * @param array{database:string,name:string,key:string} $reference Procedure reference.
+	 * @return array{database:string,name:string,create_sql:string,select_sql:string}
+	 */
+	private function stored_procedure( array $reference ): array {
+		if ( ! isset( $this->stored_procedures[ $reference['key'] ] ) ) {
+			throw new WP_DuckDB_Driver_Exception( "Unknown procedure '{$reference['database']}.{$reference['name']}' in DuckDB driver." );
+		}
+
+		return $this->stored_procedures[ $reference['key'] ];
+	}
+
+	/**
+	 * Build a case-insensitive stored procedure key.
+	 *
+	 * @param string $database Database name.
+	 * @param string $name     Procedure name.
+	 * @return string Procedure registry key.
+	 */
+	private function stored_procedure_key( string $database, string $name ): string {
+		return strtolower( $database ) . "\0" . strtolower( $name );
+	}
+
+	/**
+	 * Trim one optional statement terminator.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string Trimmed query.
+	 */
+	private function trim_statement_semicolon( string $query ): string {
+		$query = trim( $query );
+		if ( ';' === substr( $query, -1 ) ) {
+			return trim( substr( $query, 0, -1 ) );
+		}
+		return $query;
 	}
 
 	/**

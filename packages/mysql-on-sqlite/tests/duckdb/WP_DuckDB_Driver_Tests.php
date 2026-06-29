@@ -1022,6 +1022,88 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertLessThan( time() + 60, $row['unix_time'] );
 	}
 
+	public function test_no_argument_select_stored_procedure_is_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp_tests',
+			)
+		);
+		$driver->query(
+			'CREATE TABLE wp_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_title VARCHAR(100),
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+
+		$driver->query( 'DROP PROCEDURE IF EXISTS `test_mysqli_flush_sync_procedure`' );
+		$driver->query(
+			'CREATE PROCEDURE `test_mysqli_flush_sync_procedure`() BEGIN
+				SELECT ID, post_title FROM `wp_posts` ORDER BY ID LIMIT 1;
+			END'
+		);
+
+		$show_rows = $driver->query( 'SHOW CREATE PROCEDURE `test_mysqli_flush_sync_procedure`' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertCount( 1, $show_rows );
+		$this->assertSame( 'test_mysqli_flush_sync_procedure', $show_rows[0]['Procedure'] );
+		$this->assertStringContainsString( 'CREATE PROCEDURE `test_mysqli_flush_sync_procedure`()', $show_rows[0]['Create Procedure'] );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query(
+			"INSERT INTO wp_posts (ID, post_title) VALUES
+				(2, 'second'),
+				(1, 'first')"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'post_title' => 'first',
+				),
+			),
+			$driver->query( 'CALL `test_mysqli_flush_sync_procedure`' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'post_title' => 'first',
+				),
+			),
+			$driver->query( 'CALL `wp_tests`.`test_mysqli_flush_sync_procedure`()' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP PROCEDURE IF EXISTS `test_mysqli_flush_sync_procedure`' );
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( "Unknown procedure 'wp_tests.test_mysqli_flush_sync_procedure' in DuckDB driver." );
+		$driver->query( 'CALL `test_mysqli_flush_sync_procedure`' );
+	}
+
+	public function test_stored_procedure_emulation_rejects_unsupported_bodies(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+
+		$this->expectException( WP_DuckDB_Driver_Exception::class );
+		$this->expectExceptionMessage( 'Only no-argument single-SELECT procedures are supported.' );
+		$driver->query(
+			'CREATE PROCEDURE unsupported_body() BEGIN
+				SET @value = 1;
+			END'
+		);
+	}
+
 	public function test_select_posts_wildcard_group_by_primary_key_expands_group_by(): void {
 		$this->requireDuckDBRuntime();
 
