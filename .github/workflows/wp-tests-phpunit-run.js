@@ -282,6 +282,8 @@ if ( ! defined( 'DUCKDB_PHP_AUTOLOAD' ) ) {
 \tdefine( 'DUCKDB_PHP_AUTOLOAD', ${ phpSingleQuote( duckdbAutoloadCompatibilityWrapperContainerPath ) } );
 }
 
+${ getPhpunitForwardedEnvironmentPhp() }
+
 if ( ! method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ) {
 \tfwrite( STDERR, "Error: WordPress PHPUnit runner does not provide PHPUnit\\\\TextUI\\\\TestRunner::run().\\n" );
 \texit( 1 );
@@ -318,6 +320,25 @@ if ( ! method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ) {
 }
 `
 	);
+}
+
+function getPhpunitForwardedEnvironmentPhp() {
+	const environmentNames = [
+		'WP_DUCKDB_QUERY_PROFILE',
+		'WP_DUCKDB_QUERY_PROFILE_INTERVAL',
+	];
+
+	return environmentNames
+		.filter( name => Object.prototype.hasOwnProperty.call( process.env, name ) )
+		.map( name => {
+			const value = process.env[ name ];
+			return [
+				`putenv( ${ phpSingleQuote( `${ name }=${ value }` ) } );`,
+				`$_ENV[ ${ phpSingleQuote( name ) } ] = ${ phpSingleQuote( value ) };`,
+				`$_SERVER[ ${ phpSingleQuote( name ) } ] = ${ phpSingleQuote( value ) };`,
+			].join( '\n' );
+		} )
+		.join( '\n' );
 }
 
 function verifyPhpunitCompatibilityFiles() {
