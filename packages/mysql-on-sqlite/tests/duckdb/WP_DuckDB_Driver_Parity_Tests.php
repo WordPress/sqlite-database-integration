@@ -658,6 +658,70 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
 	}
 
+	public function test_rest_modified_order_after_single_digit_hour_update_uses_canonical_datetime(): void {
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( "SET SESSION sql_mode = ''" );
+		$driver->query(
+			"CREATE TABLE wp_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_modified DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_modified_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wp_posts (ID, post_modified, post_modified_gmt, post_type, post_status) VALUES
+				(1, '2020-01-01 00:00:00', '2020-01-01 00:00:00', 'post', 'publish'),
+				(2, '2020-01-01 00:00:00', '2020-01-01 00:00:00', 'post', 'publish'),
+				(3, '2020-01-01 00:00:00', '2020-01-01 00:00:00', 'post', 'publish')"
+		);
+		$driver->query(
+			"UPDATE wp_posts
+			SET post_modified = '2016-04-20 4:26:20', post_modified_gmt = '2016-04-20 4:26:20'
+			WHERE ID = 1"
+		);
+		$driver->query(
+			"UPDATE wp_posts
+			SET post_modified = '2016-02-01 20:24:02', post_modified_gmt = '2016-02-01 20:24:02'
+			WHERE ID = 2"
+		);
+		$driver->query(
+			"UPDATE wp_posts
+			SET post_modified = '2016-02-21 12:24:02', post_modified_gmt = '2016-02-21 12:24:02'
+			WHERE ID = 3"
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'ID'            => 1,
+					'post_modified' => '2016-04-20 04:26:20',
+				),
+				array(
+					'ID'            => 3,
+					'post_modified' => '2016-02-21 12:24:02',
+				),
+				array(
+					'ID'            => 2,
+					'post_modified' => '2016-02-01 20:24:02',
+				),
+			),
+			$driver->query(
+				'SELECT ID, post_modified FROM wp_posts
+				WHERE ID IN (1, 2, 3)
+				ORDER BY post_modified DESC'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_non_temporal_text_and_blob_write_coercions_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
