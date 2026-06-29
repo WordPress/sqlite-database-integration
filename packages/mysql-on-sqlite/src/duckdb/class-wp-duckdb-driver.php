@@ -14616,7 +14616,8 @@ class WP_DuckDB_Driver {
 			++$index;
 		}
 
-		$condition = '';
+		$condition                       = '';
+		$bounded_like_table_status_names = null;
 		if ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $index ]->id ) {
 			if (
 				! isset( $tokens[ $index + 1 ] )
@@ -14627,12 +14628,16 @@ class WP_DuckDB_Driver {
 			) {
 				throw new WP_DuckDB_Driver_Exception( 'SHOW TABLE STATUS LIKE requires a string pattern in the DuckDB driver.' );
 			}
-			$condition = ' AND ' . $this->connection->quote_identifier( 'Name' )
+			$like_pattern = $tokens[ $index + 1 ]->get_value();
+			$condition    = ' AND ' . $this->connection->quote_identifier( 'Name' )
 				. ' LIKE '
-				. $this->connection->quote( $tokens[ $index + 1 ]->get_value() )
+				. $this->connection->quote( $like_pattern )
 				. ' ESCAPE '
 				. $this->connection->quote( '\\' );
-			$index    += 2;
+			if ( 0 === strcasecmp( $database, $this->database ) ) {
+				$bounded_like_table_status_names = $this->bounded_show_table_status_like_table_names( $like_pattern );
+			}
+			$index += 2;
 		} elseif ( isset( $tokens[ $index ] ) && WP_MySQL_Lexer::WHERE_SYMBOL === $tokens[ $index ]->id ) {
 			++$index;
 			if ( ! isset( $tokens[ $index ] ) ) {
@@ -14646,7 +14651,9 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported SHOW TABLE STATUS statement in DuckDB driver. Only optional FROM/IN, LIKE, and WHERE are supported.' );
 		}
 
-		$this->refresh_information_schema_tables_table();
+		$this->refresh_information_schema_tables_table(
+			$bounded_like_table_status_names
+		);
 
 		$schema_condition = 0 === strcasecmp( $database, $this->database )
 			? $this->connection->quote_identifier( 'TABLE_SCHEMA' ) . ' = ' . $this->connection->quote( $this->database )
@@ -15406,6 +15413,30 @@ class WP_DuckDB_Driver {
 		}
 
 		return 1 === preg_match( '/\A' . $regex . '\z/s', $value );
+	}
+
+	/**
+	 * Return a bounded SHOW TABLE STATUS LIKE table-name set when safe.
+	 *
+	 * @param string $pattern LIKE pattern.
+	 * @return string[]|null Zero or one persistent table names, or null when ambiguous.
+	 */
+	private function bounded_show_table_status_like_table_names( string $pattern ): ?array {
+		if ( false !== strpbrk( $pattern, '%\\' ) ) {
+			return null;
+		}
+
+		$table_names = array();
+		foreach ( $this->user_table_names() as $table_name ) {
+			if ( $this->mysql_like_matches( $table_name, $pattern ) ) {
+				$table_names[] = $table_name;
+				if ( count( $table_names ) > 1 ) {
+					return null;
+				}
+			}
+		}
+
+		return $table_names;
 	}
 
 	/**
@@ -26225,8 +26256,8 @@ class WP_DuckDB_Driver {
 	/**
 	 * Refresh a temporary MySQL-shaped information_schema.tables table.
 	 */
-	private function refresh_information_schema_tables_table(): void {
-		$rows        = $this->information_schema_table_rows();
+	private function refresh_information_schema_tables_table( ?array $table_names = null ): void {
+		$rows        = $this->information_schema_table_rows( $table_names );
 		$definitions = $this->information_schema_table_definitions();
 		$columns     = array_keys( $definitions );
 
@@ -26302,9 +26333,11 @@ class WP_DuckDB_Driver {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function information_schema_table_rows(): array {
+	private function information_schema_table_rows( ?array $requested_table_names = null ): array {
 		$metadata_by_table = $this->table_metadata_by_table();
-		$table_names       = $this->user_table_names();
+		$table_names       = null === $requested_table_names
+			? $this->user_table_names()
+			: $this->resolve_persistent_user_table_names( $requested_table_names );
 		$table_row_counts  = $this->table_row_counts( $table_names );
 		$rows              = array();
 
@@ -26314,6 +26347,24 @@ class WP_DuckDB_Driver {
 		}
 
 		return $rows;
+	}
+
+	/**
+	 * Resolve requested table names to persistent user tables.
+	 *
+	 * @param string[] $requested_table_names Requested table names.
+	 * @return string[] Actual persistent table names.
+	 */
+	private function resolve_persistent_user_table_names( array $requested_table_names ): array {
+		$table_names = array();
+		foreach ( $requested_table_names as $requested_table_name ) {
+			$table_name = $this->resolve_persistent_user_table_name( $requested_table_name );
+			if ( null !== $table_name && ! in_array( $table_name, $table_names, true ) ) {
+				$table_names[] = $table_name;
+			}
+		}
+
+		return $table_names;
 	}
 
 	/**

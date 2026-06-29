@@ -12326,6 +12326,74 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_show_table_status_exact_like_materializes_only_matching_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE statusexactplain (id INT, name TEXT)' );
+		$driver->query( 'CREATE TABLE statusexactnoise (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$driver->query( 'CREATE TABLE statusexactother (id INT)' );
+		$driver->query( "INSERT INTO statusexactplain VALUES (1, 'one'), (2, 'two')" );
+		$driver->query( "INSERT INTO statusexactnoise (name) VALUES ('noise')" );
+		$driver->query( 'INSERT INTO statusexactother VALUES (1)' );
+
+		$queries = array();
+		$rows    = $driver->query( "SHOW TABLE STATUS LIKE 'statusexactplain'" )->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'statusexactplain' ), array_column( $rows, 'Name' ) );
+		$this->assertSame( 2, $rows[0]['Rows'] );
+		$this->assertSame( 1, $this->count_duckdb_table_row_count_queries( $queries ) );
+
+		$count_sql = implode( "\n", $this->duckdb_table_row_count_queries( $queries ) );
+		$this->assertStringContainsString( '"statusexactplain"', $count_sql );
+		$this->assertStringNotContainsString( '"statusexactnoise"', $count_sql );
+		$this->assertStringNotContainsString( '"statusexactother"', $count_sql );
+		$this->assertSame( 0, $this->count_duckdb_currval_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$missing = $driver->query( "SHOW TABLE STATUS LIKE 'statusexactmissing'" );
+		$this->assertSame( 0, $missing->rowCount() );
+		$this->assertSame( array( 'name' => 'Name' ), $missing->getColumnMeta( 0 ) );
+		$this->assertSame( array(), $missing->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( 0, $this->count_duckdb_table_row_count_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_currval_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query( "SHOW TABLE STATUS LIKE 'statusexact%'" )->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array( 'statusexactnoise', 'statusexactother', 'statusexactplain' ),
+			array_column( $rows, 'Name' )
+		);
+		$count_sql = implode( "\n", $this->duckdb_table_row_count_queries( $queries ) );
+		$this->assertStringContainsString( '"statusexactplain"', $count_sql );
+		$this->assertStringContainsString( '"statusexactnoise"', $count_sql );
+		$this->assertStringContainsString( '"statusexactother"', $count_sql );
+		$this->assertGreaterThanOrEqual( 1, $this->count_duckdb_currval_queries( $queries ) );
+	}
+
 	public function test_check_table_returns_mysql_shaped_status_rows(): void {
 		$this->requireDuckDBRuntime();
 
@@ -18133,6 +18201,32 @@ SQL
 		}
 
 		return $count;
+	}
+
+	private function duckdb_table_row_count_queries( array $queries ): array {
+		return array_values(
+			array_filter(
+				$queries,
+				function ( string $query ): bool {
+					return false !== strpos( $query, 'COUNT(*) AS table_rows' );
+				}
+			)
+		);
+	}
+
+	private function count_duckdb_table_row_count_queries( array $queries ): int {
+		return count( $this->duckdb_table_row_count_queries( $queries ) );
+	}
+
+	private function count_duckdb_currval_queries( array $queries ): int {
+		return count(
+			array_filter(
+				$queries,
+				function ( string $query ): bool {
+					return false !== strpos( $query, 'SELECT currval(' );
+				}
+			)
+		);
 	}
 
 	private function lifecycleTableSql( string $table_name ): string { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
