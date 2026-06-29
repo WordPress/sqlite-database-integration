@@ -50,6 +50,26 @@ on:
         required: false
         default: false
         type: boolean
+      duckdb_query_profile:
+        description: 'Enable DuckDB query profile output during the full WordPress PHPUnit step'
+        required: false
+        default: true
+        type: boolean
+      duckdb_query_profile_interval:
+        description: 'DuckDB query profile interval for manual full WordPress PHPUnit runs'
+        required: false
+        default: '2500'
+        type: string
+      full_wp_phpunit_baseline_seconds:
+        description: 'Runtime baseline seconds for manual full WordPress PHPUnit runs; use 0 for diagnostics'
+        required: false
+        default: '380'
+        type: string
+      full_wp_phpunit_max_seconds:
+        description: 'Maximum command seconds for manual full WordPress PHPUnit runs'
+        required: false
+        default: '420'
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -299,18 +319,36 @@ jobs:
           WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_STDERR: '0'
           WP_SQLITE_DUCKDB_CHILD_DB_COPY: '1'
           WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS: '0'
-          WP_DUCKDB_QUERY_PROFILE: '1'
-          WP_DUCKDB_QUERY_PROFILE_INTERVAL: '2500'
+          WP_DUCKDB_QUERY_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.duckdb_query_profile == false && '0' || '1' }}
+          WP_DUCKDB_QUERY_PROFILE_INTERVAL: ${{ github.event_name == 'workflow_dispatch' && inputs.duckdb_query_profile_interval || '2500' }}
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
           WP_SQLITE_DISABLE_EXPECTED_RESULTS: '0'
           WP_SQLITE_PHPUNIT_ENSURE_ENV_COMMAND: 'true'
           WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
           WP_SQLITE_PHPUNIT_TIMING_LABEL: duckdb-full
-          WP_SQLITE_PHPUNIT_BASELINE_SECONDS: '380'
-          WP_SQLITE_PHPUNIT_MAX_SECONDS: '420'
+          WP_SQLITE_PHPUNIT_BASELINE_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.full_wp_phpunit_baseline_seconds || '380' }}
+          WP_SQLITE_PHPUNIT_MAX_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.full_wp_phpunit_max_seconds || '420' }}
           WP_SQLITE_PHPUNIT_COMMAND: composer run wp-test-php-duckdb-prepared -- --log-junit=phpunit-duckdb-results.xml --verbose
           WP_SQLITE_PHPUNIT_JUNIT_PATH: wordpress/phpunit-duckdb-results.xml
-        run: node .github/workflows/wp-tests-phpunit-run.js
+        run: |
+          set -euo pipefail
+
+          for numeric_env_name in WP_DUCKDB_QUERY_PROFILE_INTERVAL WP_SQLITE_PHPUNIT_BASELINE_SECONDS WP_SQLITE_PHPUNIT_MAX_SECONDS; do
+            numeric_env_value="${!numeric_env_name}"
+            case "$numeric_env_value" in
+              ''|*[!0-9]*)
+                echo "::error title=DuckDB full PHPUnit input invalid::${numeric_env_name} must be a non-negative integer."
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "DuckDB full query profile: ${WP_DUCKDB_QUERY_PROFILE}"
+          echo "DuckDB full query profile interval: ${WP_DUCKDB_QUERY_PROFILE_INTERVAL}"
+          echo "DuckDB full PHPUnit baseline seconds: ${WP_SQLITE_PHPUNIT_BASELINE_SECONDS}"
+          echo "DuckDB full PHPUnit max seconds: ${WP_SQLITE_PHPUNIT_MAX_SECONDS}"
+
+          node .github/workflows/wp-tests-phpunit-run.js
 
       - name: Skip full WordPress PHPUnit tests with DuckDB
         if: ${{ success() && github.ref != 'refs/heads/trunk' && (github.event_name != 'workflow_dispatch' || inputs.run_full_wp_phpunit != true) }}
