@@ -313,6 +313,78 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_runtime_counters_emit_native_context_and_shape_when_enabled(): void {
+		$previous_env        = getenv( 'WP_DUCKDB_RUNTIME_COUNTERS' );
+		$previous_log_errors = ini_get( 'log_errors' );
+		$previous_error_log  = ini_get( 'error_log' );
+		$log_file            = tempnam( sys_get_temp_dir(), 'duckdb-runtime-counters-' );
+
+		$this->reset_duckdb_runtime_counters_for_test();
+
+		try {
+			putenv( 'WP_DUCKDB_RUNTIME_COUNTERS=1' );
+			ini_set( 'log_errors', '1' );
+			ini_set( 'error_log', $log_file );
+
+			$connection = new class() extends WP_DuckDB_Connection {
+				public $queries = array();
+
+				public function __construct() {}
+
+				public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+					$this->queries[] = $sql;
+					return new WP_DuckDB_Result_Statement( array( 'value' ), array( array( 'value' => 1 ) ), 1 );
+				}
+			};
+			$driver     = ( new ReflectionClass( WP_DuckDB_Driver::class ) )->newInstanceWithoutConstructor();
+
+			foreach (
+				array(
+					'connection'          => $connection,
+					'last_duckdb_queries' => array(),
+				) as $property => $value
+			) {
+				$reflection_property = new ReflectionProperty( WP_DuckDB_Driver::class, $property );
+				if ( PHP_VERSION_ID < 80100 ) {
+					$reflection_property->setAccessible( true );
+				}
+				$reflection_property->setValue( $driver, $value );
+			}
+
+			$execute = new ReflectionMethod( WP_DuckDB_Driver::class, 'execute_duckdb_query' );
+			$emit    = new ReflectionMethod( WP_DuckDB_Driver::class, 'emit_runtime_counters_summary' );
+			if ( PHP_VERSION_ID < 80100 ) {
+				$execute->setAccessible( true );
+				$emit->setAccessible( true );
+			}
+
+			$execute->invoke( $driver, 'SELECT 123 AS value', 'Runtime counter test context' );
+			$emit->invoke( null, 'test' );
+
+			$log = file_get_contents( $log_file );
+			$this->assertStringContainsString( 'WP_DUCKDB_RUNTIME_COUNTERS_SUMMARY reason=test', $log );
+			$this->assertStringContainsString( 'native_queries=1', $log );
+			$this->assertStringContainsString( 'WP_DUCKDB_RUNTIME_COUNTER rank=', $log );
+			$this->assertStringContainsString( 'name=native_query', $log );
+			$this->assertStringContainsString( 'WP_DUCKDB_RUNTIME_CONTEXT_TOP rank=', $log );
+			$this->assertStringContainsString( 'context=Runtime counter test context', $log );
+			$this->assertStringContainsString( 'WP_DUCKDB_RUNTIME_NATIVE_TOP rank=', $log );
+			$this->assertStringContainsString( 'shape=SELECT ? AS value', $log );
+		} finally {
+			if ( false === $previous_env ) {
+				putenv( 'WP_DUCKDB_RUNTIME_COUNTERS' );
+			} else {
+				putenv( 'WP_DUCKDB_RUNTIME_COUNTERS=' . $previous_env );
+			}
+			ini_set( 'log_errors', false === $previous_log_errors ? '' : $previous_log_errors );
+			ini_set( 'error_log', false === $previous_error_log ? '' : $previous_error_log );
+			$this->reset_duckdb_runtime_counters_for_test();
+			if ( is_string( $log_file ) && file_exists( $log_file ) ) {
+				unlink( $log_file );
+			}
+		}
+	}
+
 	private function new_byte_safe_duckdb_driver(): WP_DuckDB_Driver {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public function __construct() {}
@@ -345,6 +417,26 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$grammar->setValue( null, new WP_Parser_Grammar( require WP_DuckDB_Driver::MYSQL_GRAMMAR_PATH ) );
 
 		return $driver;
+	}
+
+	private function reset_duckdb_runtime_counters_for_test(): void {
+		foreach (
+			array(
+				'runtime_counters_enabled'             => null,
+				'runtime_counters_shutdown_registered' => false,
+				'runtime_counters'                     => array(
+					'counters'        => array(),
+					'native_contexts' => array(),
+					'native_shapes'   => array(),
+				),
+			) as $property => $value
+		) {
+			$reflection_property = new ReflectionProperty( WP_DuckDB_Driver::class, $property );
+			if ( PHP_VERSION_ID < 80100 ) {
+				$reflection_property->setAccessible( true );
+			}
+			$reflection_property->setValue( null, $value );
+		}
 	}
 
 	public function test_auto_increment_insert_id_falls_back_to_max_when_currval_is_unavailable(): void {

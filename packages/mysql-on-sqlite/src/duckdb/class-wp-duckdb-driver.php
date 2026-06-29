@@ -374,6 +374,31 @@ class WP_DuckDB_Driver {
 	);
 
 	/**
+	 * Whether optional runtime counters are enabled.
+	 *
+	 * @var bool|null
+	 */
+	private static $runtime_counters_enabled;
+
+	/**
+	 * Whether the optional runtime counter shutdown hook has been registered.
+	 *
+	 * @var bool
+	 */
+	private static $runtime_counters_shutdown_registered = false;
+
+	/**
+	 * Aggregate optional runtime counters.
+	 *
+	 * @var array<string,mixed>
+	 */
+	private static $runtime_counters = array(
+		'counters'        => array(),
+		'native_contexts' => array(),
+		'native_shapes'   => array(),
+	);
+
+	/**
 	 * Native DuckDB time accumulated while handling the current MySQL query.
 	 *
 	 * @var float
@@ -457,6 +482,8 @@ class WP_DuckDB_Driver {
 		$profile_enabled                      = self::query_profile_enabled();
 		$profile_started_at                   = $profile_enabled ? microtime( true ) : 0.0;
 		$profile_error                        = false;
+		$runtime_counters_enabled             = self::runtime_counters_enabled();
+		$runtime_counter_started_at           = $runtime_counters_enabled ? microtime( true ) : 0.0;
 		$this->profile_current_native_seconds = 0.0;
 		$this->profile_current_native_queries = 0;
 		$this->profile_current_parse_seconds  = 0.0;
@@ -549,6 +576,9 @@ class WP_DuckDB_Driver {
 					microtime( true ) - $profile_started_at,
 					$profile_error
 				);
+			}
+			if ( $runtime_counters_enabled ) {
+				self::record_runtime_counter( 'mysql_query', microtime( true ) - $runtime_counter_started_at );
 			}
 		}
 	}
@@ -1178,6 +1208,8 @@ class WP_DuckDB_Driver {
 	private function tokenize_and_validate( string $query ): array {
 		$profile_enabled    = self::query_profile_enabled();
 		$profile_started_at = $profile_enabled ? microtime( true ) : 0.0;
+		$runtime_enabled    = self::runtime_counters_enabled();
+		$runtime_started_at = $runtime_enabled ? microtime( true ) : 0.0;
 
 		try {
 			$lexer  = new WP_MySQL_Lexer( $query, $this->mysql_version );
@@ -1195,6 +1227,9 @@ class WP_DuckDB_Driver {
 		} finally {
 			if ( $profile_enabled ) {
 				$this->profile_current_parse_seconds += microtime( true ) - $profile_started_at;
+			}
+			if ( $runtime_enabled ) {
+				self::record_runtime_counter( 'tokenize_and_validate', microtime( true ) - $runtime_started_at );
 			}
 		}
 	}
@@ -25720,15 +25755,29 @@ class WP_DuckDB_Driver {
 		$this->last_duckdb_queries[] = $sql;
 		$profile_enabled             = self::query_profile_enabled();
 		$profile_started_at          = $profile_enabled ? microtime( true ) : 0.0;
+		$runtime_enabled             = self::runtime_counters_enabled();
+		$runtime_started_at          = $runtime_enabled ? microtime( true ) : 0.0;
+		$runtime_error               = false;
 
 		try {
 			return $this->connection->query( $sql );
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$runtime_error = true;
 			throw new WP_DuckDB_Driver_Exception( $context . ': ' . $e->getMessage(), 0, $e );
 		} finally {
 			if ( $profile_enabled ) {
 				$this->profile_current_native_seconds += microtime( true ) - $profile_started_at;
 				++$this->profile_current_native_queries;
+			}
+			if ( $runtime_enabled ) {
+				$runtime_seconds = microtime( true ) - $runtime_started_at;
+				self::record_runtime_counter( 'native_query', $runtime_seconds );
+				self::record_runtime_native_context( $context, $runtime_seconds, $runtime_error );
+				self::record_runtime_native_shape(
+					$this->normalize_query_profile_shape( $sql ),
+					$runtime_seconds,
+					$runtime_error
+				);
 			}
 		}
 	}
@@ -25900,6 +25949,135 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether optional runtime counters are enabled.
+	 *
+	 * @return bool Whether runtime counters are enabled.
+	 */
+	private static function runtime_counters_enabled(): bool {
+		if ( null === self::$runtime_counters_enabled ) {
+			$value                          = getenv( 'WP_DUCKDB_RUNTIME_COUNTERS' );
+			self::$runtime_counters_enabled = is_string( $value )
+				&& '' !== $value
+				&& '0' !== $value
+				&& 'false' !== strtolower( $value )
+				&& 'off' !== strtolower( $value )
+				&& 'no' !== strtolower( $value );
+		}
+
+		if ( self::$runtime_counters_enabled && ! self::$runtime_counters_shutdown_registered ) {
+			register_shutdown_function( array( __CLASS__, 'emit_runtime_counters_shutdown_summary' ) );
+			self::$runtime_counters_shutdown_registered = true;
+		}
+
+		return self::$runtime_counters_enabled;
+	}
+
+	/**
+	 * Record an optional runtime counter sample.
+	 *
+	 * @param string $name    Counter name.
+	 * @param float  $seconds Runtime seconds.
+	 */
+	private static function record_runtime_counter( string $name, float $seconds ): void {
+		if ( ! isset( self::$runtime_counters['counters'][ $name ] ) ) {
+			self::$runtime_counters['counters'][ $name ] = array(
+				'count'         => 0,
+				'total_seconds' => 0.0,
+			);
+		}
+
+		++self::$runtime_counters['counters'][ $name ]['count'];
+		self::$runtime_counters['counters'][ $name ]['total_seconds'] += $seconds;
+	}
+
+	/**
+	 * Record optional runtime attribution by native query context.
+	 *
+	 * @param string $context Native query context.
+	 * @param float  $seconds Runtime seconds.
+	 * @param bool   $error   Whether the native query failed.
+	 */
+	private static function record_runtime_native_context( string $context, float $seconds, bool $error ): void {
+		$context = self::sanitize_runtime_counter_label( $context );
+		if ( ! isset( self::$runtime_counters['native_contexts'][ $context ] ) ) {
+			self::$runtime_counters['native_contexts'][ $context ] = array(
+				'count'         => 0,
+				'errors'        => 0,
+				'total_seconds' => 0.0,
+			);
+		}
+
+		++self::$runtime_counters['native_contexts'][ $context ]['count'];
+		self::$runtime_counters['native_contexts'][ $context ]['total_seconds'] += $seconds;
+		if ( $error ) {
+			++self::$runtime_counters['native_contexts'][ $context ]['errors'];
+		}
+		if ( count( self::$runtime_counters['native_contexts'] ) > 1000 ) {
+			self::prune_runtime_counter_rows( 'native_contexts' );
+		}
+	}
+
+	/**
+	 * Record optional runtime attribution by normalized native SQL shape.
+	 *
+	 * @param string $shape   Native SQL shape.
+	 * @param float  $seconds Runtime seconds.
+	 * @param bool   $error   Whether the native query failed.
+	 */
+	private static function record_runtime_native_shape( string $shape, float $seconds, bool $error ): void {
+		$shape = self::sanitize_runtime_counter_label( $shape );
+		if ( ! isset( self::$runtime_counters['native_shapes'][ $shape ] ) ) {
+			self::$runtime_counters['native_shapes'][ $shape ] = array(
+				'count'         => 0,
+				'errors'        => 0,
+				'total_seconds' => 0.0,
+			);
+		}
+
+		++self::$runtime_counters['native_shapes'][ $shape ]['count'];
+		self::$runtime_counters['native_shapes'][ $shape ]['total_seconds'] += $seconds;
+		if ( $error ) {
+			++self::$runtime_counters['native_shapes'][ $shape ]['errors'];
+		}
+		if ( count( self::$runtime_counters['native_shapes'] ) > 1000 ) {
+			self::prune_runtime_counter_rows( 'native_shapes' );
+		}
+	}
+
+	/**
+	 * Normalize one runtime counter label for single-line log output.
+	 *
+	 * @param string $label Label.
+	 * @return string Sanitized label.
+	 */
+	private static function sanitize_runtime_counter_label( string $label ): string {
+		$label = preg_replace( '/\s+/', ' ', str_replace( array( "\r", "\n" ), ' ', $label ) );
+		$label = trim( (string) $label );
+		if ( strlen( $label ) > 300 ) {
+			$label = substr( $label, 0, 297 ) . '...';
+		}
+
+		return '' === $label ? '<empty>' : $label;
+	}
+
+	/**
+	 * Keep only the highest-cost runtime attribution rows.
+	 *
+	 * @param string $bucket Runtime counter bucket.
+	 */
+	private static function prune_runtime_counter_rows( string $bucket ): void {
+		$rows = self::$runtime_counters[ $bucket ];
+		uasort(
+			$rows,
+			function ( array $left, array $right ): int {
+				return $right['total_seconds'] <=> $left['total_seconds'];
+			}
+		);
+
+		self::$runtime_counters[ $bucket ] = array_slice( $rows, 0, 500, true );
+	}
+
+	/**
 	 * Record one MySQL-facing query in the optional profile.
 	 *
 	 * @param string $query         MySQL query.
@@ -26005,6 +26183,13 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Emit the optional runtime counters at PHP shutdown.
+	 */
+	public static function emit_runtime_counters_shutdown_summary(): void {
+		self::emit_runtime_counters_summary( 'shutdown' );
+	}
+
+	/**
 	 * Emit an optional profiler summary to the PHP error log.
 	 *
 	 * @param string $reason Why the summary is being emitted.
@@ -26051,6 +26236,80 @@ class WP_DuckDB_Driver {
 					$profile['native_seconds'],
 					$profile['native_queries'],
 					str_replace( array( "\r", "\n" ), ' ', $shape )
+				)
+			);
+		}
+	}
+
+	/**
+	 * Emit optional runtime counter summaries to the PHP error log.
+	 *
+	 * @param string $reason Why the summary is being emitted.
+	 */
+	private static function emit_runtime_counters_summary( string $reason ): void {
+		if ( ! self::runtime_counters_enabled() ) {
+			return;
+		}
+
+		$counters        = self::$runtime_counters['counters'];
+		$native_contexts = self::$runtime_counters['native_contexts'];
+		$native_shapes   = self::$runtime_counters['native_shapes'];
+		if ( count( $counters ) === 0 && count( $native_contexts ) === 0 && count( $native_shapes ) === 0 ) {
+			return;
+		}
+
+		$mysql_queries  = isset( $counters['mysql_query'] ) ? (int) $counters['mysql_query']['count'] : 0;
+		$native_queries = isset( $counters['native_query'] ) ? (int) $counters['native_query']['count'] : 0;
+		$native_seconds = isset( $counters['native_query'] ) ? (float) $counters['native_query']['total_seconds'] : 0.0;
+
+		error_log(
+			sprintf(
+				'WP_DUCKDB_RUNTIME_COUNTERS_SUMMARY reason=%s mysql_queries=%d native_queries=%d native_seconds=%.3f counters=%d native_contexts=%d native_shapes=%d',
+				$reason,
+				$mysql_queries,
+				$native_queries,
+				$native_seconds,
+				count( $counters ),
+				count( $native_contexts ),
+				count( $native_shapes )
+			)
+		);
+
+		self::emit_runtime_counter_table( 'WP_DUCKDB_RUNTIME_COUNTER', $counters, 'name' );
+		self::emit_runtime_counter_table( 'WP_DUCKDB_RUNTIME_CONTEXT_TOP', $native_contexts, 'context' );
+		self::emit_runtime_counter_table( 'WP_DUCKDB_RUNTIME_NATIVE_TOP', $native_shapes, 'shape' );
+	}
+
+	/**
+	 * Emit one sorted runtime counter table.
+	 *
+	 * @param string              $prefix Log prefix.
+	 * @param array<string,array> $rows   Counter rows.
+	 * @param string              $label  Label field name.
+	 */
+	private static function emit_runtime_counter_table( string $prefix, array $rows, string $label ): void {
+		uasort(
+			$rows,
+			function ( array $left, array $right ): int {
+				return $right['total_seconds'] <=> $left['total_seconds'];
+			}
+		);
+
+		$rank = 0;
+		foreach ( array_slice( $rows, 0, 15, true ) as $name => $row ) {
+			++$rank;
+			$errors = isset( $row['errors'] ) ? sprintf( ' errors=%d', (int) $row['errors'] ) : '';
+			error_log(
+				sprintf(
+					'%s rank=%d count=%d%s total_seconds=%.3f avg_ms=%.3f %s=%s',
+					$prefix,
+					$rank,
+					(int) $row['count'],
+					$errors,
+					(float) $row['total_seconds'],
+					1000 * (float) $row['total_seconds'] / max( 1, (int) $row['count'] ),
+					$label,
+					self::sanitize_runtime_counter_label( (string) $name )
 				)
 			);
 		}

@@ -55,6 +55,11 @@ on:
         required: false
         default: true
         type: boolean
+      duckdb_runtime_counters:
+        description: 'Enable DuckDB helper/native runtime counter output during the full WordPress PHPUnit step'
+        required: false
+        default: false
+        type: boolean
       duckdb_query_profile_interval:
         description: 'DuckDB query profile interval for manual full WordPress PHPUnit runs'
         required: false
@@ -320,6 +325,7 @@ jobs:
           WP_SQLITE_DUCKDB_CHILD_DB_COPY: '1'
           WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS: '0'
           WP_DUCKDB_QUERY_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.duckdb_query_profile == false && '0' || '1' }}
+          WP_DUCKDB_RUNTIME_COUNTERS: ${{ github.event_name == 'workflow_dispatch' && inputs.duckdb_runtime_counters == true && '1' || '0' }}
           WP_DUCKDB_QUERY_PROFILE_INTERVAL: ${{ github.event_name == 'workflow_dispatch' && inputs.duckdb_query_profile_interval || '2500' }}
           WP_SQLITE_ENSURE_PHPUNIT_COMPATIBILITY: '1'
           WP_SQLITE_DISABLE_EXPECTED_RESULTS: '0'
@@ -344,6 +350,7 @@ jobs:
           done
 
           echo "DuckDB full query profile: ${WP_DUCKDB_QUERY_PROFILE}"
+          echo "DuckDB full runtime counters: ${WP_DUCKDB_RUNTIME_COUNTERS}"
           echo "DuckDB full query profile interval: ${WP_DUCKDB_QUERY_PROFILE_INTERVAL}"
           echo "DuckDB full PHPUnit baseline seconds: ${WP_SQLITE_PHPUNIT_BASELINE_SECONDS}"
           echo "DuckDB full PHPUnit max seconds: ${WP_SQLITE_PHPUNIT_MAX_SECONDS}"
