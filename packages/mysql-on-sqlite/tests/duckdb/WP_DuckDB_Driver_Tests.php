@@ -12171,6 +12171,171 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $internal_usage );
 	}
 
+	public function test_information_schema_constraint_projection_fast_path_skips_stage_tables(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_constraint_projection_fixture( $driver );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED
+				FROM information_schema.table_constraints
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'wptests_constraints_target'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'PRIMARY',
+					'CONSTRAINT_TYPE' => 'PRIMARY KEY',
+					'ENFORCED'        => 'YES',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'unique_site_option',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+					'ENFORCED'        => 'YES',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_table_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION, REFERENCED_TABLE_NAME
+				FROM information_schema.key_column_usage
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'wptests_constraints_target'
+				ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'       => 'PRIMARY',
+					'COLUMN_NAME'           => 'site_id',
+					'ORDINAL_POSITION'      => 1,
+					'REFERENCED_TABLE_NAME' => null,
+				),
+				array(
+					'CONSTRAINT_NAME'       => 'PRIMARY',
+					'COLUMN_NAME'           => 'option_id',
+					'ORDINAL_POSITION'      => 2,
+					'REFERENCED_TABLE_NAME' => null,
+				),
+				array(
+					'CONSTRAINT_NAME'       => 'unique_site_option',
+					'COLUMN_NAME'           => 'site_id',
+					'ORDINAL_POSITION'      => 1,
+					'REFERENCED_TABLE_NAME' => null,
+				),
+				array(
+					'CONSTRAINT_NAME'       => 'unique_site_option',
+					'COLUMN_NAME'           => 'option_name',
+					'ORDINAL_POSITION'      => 2,
+					'REFERENCED_TABLE_NAME' => null,
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_key_column_usage_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 4 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME
+				FROM information_schema.table_constraints
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'wptests_constraints_missing'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( 0, $this->count_duckdb_information_schema_table_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION
+				FROM information_schema.key_column_usage
+				WHERE TABLE_SCHEMA = 'not_wp'
+					AND TABLE_NAME = 'wptests_constraints_target'
+				ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( 0, $this->count_duckdb_information_schema_key_column_usage_stage_queries( $queries ) );
+
+		$driver->query(
+			'CREATE TABLE wptests_constraint_shadow (
+				id INT,
+				persisted VARCHAR(20),
+				UNIQUE KEY persistent_key (persisted)
+			)'
+		);
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_constraint_shadow (
+				id INT,
+				temp_col VARCHAR(20),
+				UNIQUE KEY temp_key (temp_col)
+			)'
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+				FROM information_schema.table_constraints
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'wptests_constraint_shadow'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'persistent_key',
+					'CONSTRAINT_TYPE' => 'UNIQUE',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_table_constraints_stage_queries( $queries ) );
+	}
+
+	public function test_information_schema_constraint_projection_fast_path_rejects_aliases(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_constraint_projection_fixture( $driver );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE
+				FROM information_schema.table_constraints AS tc
+				WHERE tc.TABLE_SCHEMA = 'wp'
+					AND tc.TABLE_NAME = 'wptests_constraints_target'
+				ORDER BY tc.CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'PRIMARY', 'unique_site_option' ), array_column( $rows, 'CONSTRAINT_NAME' ) );
+		$this->assertGreaterThan( 0, $this->count_duckdb_information_schema_table_constraints_stage_queries( $queries ) );
+	}
+
 	public function test_create_table_check_constraints_use_native_enforcement_and_mysql_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -21295,6 +21460,31 @@ SQL
 		);
 	}
 
+	private function create_wordpress_constraint_projection_fixture( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_constraints_target (
+				site_id BIGINT(20) UNSIGNED NOT NULL,
+				option_id BIGINT(20) UNSIGNED NOT NULL,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				payload LONGTEXT,
+				PRIMARY KEY (site_id, option_id),
+				UNIQUE KEY unique_site_option (site_id, option_name),
+				KEY payload_prefix (payload(12))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_constraints_noise (
+				noise_id BIGINT(20) UNSIGNED NOT NULL,
+				slug VARCHAR(191) NOT NULL DEFAULT '',
+				marker VARCHAR(20),
+				PRIMARY KEY (noise_id),
+				UNIQUE KEY slug_unique (slug),
+				KEY marker_key (marker)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( 'CREATE TABLE wptests_constraints_empty (id INT, note TEXT)' );
+	}
+
 	private function create_wordpress_posts_auto_increment_insert_fixture( WP_DuckDB_Driver $driver ): void {
 		$driver->query(
 			"CREATE TABLE wptests_posts (
@@ -21656,6 +21846,32 @@ SQL
 					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_statistics"' )
 						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_statistics"' )
 						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_statistics"' );
+				}
+			)
+		);
+	}
+
+	private function count_duckdb_information_schema_table_constraints_stage_queries( array $queries ): int {
+		return count(
+			array_filter(
+				$queries,
+				function ( string $query ): bool {
+					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_table_constraints"' )
+						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_table_constraints"' )
+						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_table_constraints"' );
+				}
+			)
+		);
+	}
+
+	private function count_duckdb_information_schema_key_column_usage_stage_queries( array $queries ): int {
+		return count(
+			array_filter(
+				$queries,
+				function ( string $query ): bool {
+					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_key_column_usage"' )
+						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_key_column_usage"' )
+						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_key_column_usage"' );
 				}
 			)
 		);
