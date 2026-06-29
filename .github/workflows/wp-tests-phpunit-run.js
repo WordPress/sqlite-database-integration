@@ -424,6 +424,30 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t);
 \t}
 
+\tfunction wp_sqlite_duckdb_child_diagnostics_output_buffer_snapshot( $max_length = 2048 ) {
+\t\tif ( 1 > ob_get_level() ) {
+\t\t\treturn null;
+\t\t}
+
+\t\t$contents = ob_get_contents();
+\t\tif ( ! is_string( $contents ) ) {
+\t\t\treturn null;
+\t\t}
+
+\t\t$length = strlen( $contents );
+\t\t$tail   = $contents;
+\t\tif ( $length > $max_length ) {
+\t\t\t$tail = substr( $contents, -$max_length );
+\t\t}
+
+\t\treturn array(
+\t\t\t'length'         => $length,
+\t\t\t'sha1'           => sha1( $contents ),
+\t\t\t'tail_truncated' => $length > $max_length,
+\t\t\t'tail_base64'    => base64_encode( $tail ),
+\t\t);
+\t}
+
 \tfunction wp_sqlite_duckdb_child_diagnostics_report( $stage, $force = false ) {
 \t\tif ( ! wp_sqlite_duckdb_child_diagnostics_enabled() ) {
 \t\t\treturn;
@@ -501,6 +525,22 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\treturn;
 \t\t}
 
+\t\t$output_buffer_snapshot = 'shutdown' === $stage || $is_fatal
+\t\t\t? wp_sqlite_duckdb_child_diagnostics_output_buffer_snapshot()
+\t\t\t: null;
+\t\t$output_buffer_size = is_array( $output_buffer_snapshot ) && isset( $output_buffer_snapshot['length'] )
+\t\t\t? $output_buffer_snapshot['length']
+\t\t\t: null;
+\t\t$output_buffer_sha1 = is_array( $output_buffer_snapshot ) && isset( $output_buffer_snapshot['sha1'] )
+\t\t\t? $output_buffer_snapshot['sha1']
+\t\t\t: null;
+\t\t$output_buffer_tail_truncated = is_array( $output_buffer_snapshot ) && isset( $output_buffer_snapshot['tail_truncated'] )
+\t\t\t? $output_buffer_snapshot['tail_truncated']
+\t\t\t: null;
+\t\t$output_buffer_tail_base64 = is_array( $output_buffer_snapshot ) && isset( $output_buffer_snapshot['tail_base64'] )
+\t\t\t? $output_buffer_snapshot['tail_base64']
+\t\t\t: null;
+
 \t\t$payload = array(
 \t\t\t'stage'                    => $stage,
 \t\t\t'last_stage'               => $last_stage,
@@ -527,6 +567,10 @@ if ( ! function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {
 \t\t\t'bootstrap_realpath'       => $bootstrap_realpath,
 \t\t\t'bootstrap_included'       => $bootstrap_included,
 \t\t\t'output_buffer_level'      => ob_get_level(),
+\t\t\t'output_buffer_size'       => $output_buffer_size,
+\t\t\t'output_buffer_sha1'       => $output_buffer_sha1,
+\t\t\t'output_buffer_tail_truncated' => $output_buffer_tail_truncated,
+\t\t\t'output_buffer_tail_base64'    => $output_buffer_tail_base64,
 \t\t\t'result_file'              => $result_file,
 \t\t\t'result_file_exists'       => $result_file_exists,
 \t\t\t'result_file_readable'     => $result_file_readable,
@@ -589,7 +633,7 @@ function printDuckDBChildDiagnosticsLog() {
 	}
 
 	const lines = contents.split( /\r?\n/ );
-	const maxLines = 500;
+	const maxLines = 1200;
 	const tail = lines.slice( -maxLines );
 	console.log( `WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_LOG path=${ duckdbChildDiagnosticsLogPath} lines=${ lines.length } emitted_lines=${ tail.length }` );
 	console.log( 'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_LOG_BEGIN' );
@@ -646,6 +690,102 @@ function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 		"\twp_sqlite_duckdb_child_diagnostics_report( 'wp_bootstrap', true );",
 		'}',
 	].join( '\n' );
+	const bootstrapReport = ( stage, indent = '' ) => [
+		`${ indent }if ( function_exists( 'wp_sqlite_duckdb_child_diagnostics_report' ) ) {`,
+		`${ indent }\twp_sqlite_duckdb_child_diagnostics_report( '${ stage }', true );`,
+		`${ indent }}`,
+	].join( '\n' );
+	const beforeBootstrapReport = ( stage, needle, indent = '' ) => [
+		bootstrapReport( stage, indent ),
+		needle,
+	].join( '\n' );
+	const aroundBootstrapReport = ( beforeStage, afterStage, needle, indent = '' ) => [
+		bootstrapReport( beforeStage, indent ),
+		needle,
+		bootstrapReport( afterStage, indent ),
+	].join( '\n' );
+	const earlyBootstrapReplacements = [
+		{
+			stage: 'bootstrap_before_config_readable_check',
+			needle: 'if ( ! is_readable( $config_file_path ) ) {',
+			replacement: beforeBootstrapReport( 'bootstrap_before_config_readable_check', 'if ( ! is_readable( $config_file_path ) ) {' ),
+		},
+		{
+			stage: 'bootstrap_config_missing_exit',
+			needle: "\techo 'Error: wp-tests-config.php is missing! Please use wp-tests-config-sample.php to create a config file.' . PHP_EOL;",
+			replacement: beforeBootstrapReport( 'bootstrap_config_missing_exit', "\techo 'Error: wp-tests-config.php is missing! Please use wp-tests-config-sample.php to create a config file.' . PHP_EOL;", '\t' ),
+		},
+		{
+			stage: 'bootstrap_after_config_require',
+			needle: 'require_once $config_file_path;',
+			replacement: aroundBootstrapReport( 'bootstrap_before_config_require', 'bootstrap_after_config_require', 'require_once $config_file_path;' ),
+		},
+		{
+			stage: 'bootstrap_after_functions_require',
+			needle: "require_once __DIR__ . '/functions.php';",
+			replacement: aroundBootstrapReport( 'bootstrap_before_functions_require', 'bootstrap_after_functions_require', "require_once __DIR__ . '/functions.php';" ),
+		},
+		{
+			stage: 'bootstrap_before_core_path_check',
+			needle: "if ( defined( 'WP_RUN_CORE_TESTS' ) && WP_RUN_CORE_TESTS && ! is_dir( ABSPATH ) ) {",
+			replacement: beforeBootstrapReport( 'bootstrap_before_core_path_check', "if ( defined( 'WP_RUN_CORE_TESTS' ) && WP_RUN_CORE_TESTS && ! is_dir( ABSPATH ) ) {" ),
+		},
+		{
+			stage: 'bootstrap_before_phpunit_version',
+			needle: '$phpunit_version = tests_get_phpunit_version();',
+			replacement: beforeBootstrapReport( 'bootstrap_before_phpunit_version', '$phpunit_version = tests_get_phpunit_version();' ),
+		},
+		{
+			stage: 'bootstrap_before_polyfills_check',
+			needle: "if ( ! class_exists( 'Yoast\\PHPUnitPolyfills\\Autoload' ) ) {",
+			replacement: beforeBootstrapReport( 'bootstrap_before_polyfills_check', "if ( ! class_exists( 'Yoast\\PHPUnitPolyfills\\Autoload' ) ) {" ),
+		},
+		{
+			stage: 'bootstrap_polyfills_missing_exit',
+			needle: "\tif ( $phpunit_polyfills_error || ! file_exists( $phpunit_polyfills_autoloader ) ) {",
+			replacement: beforeBootstrapReport( 'bootstrap_polyfills_missing_exit', "\tif ( $phpunit_polyfills_error || ! file_exists( $phpunit_polyfills_autoloader ) ) {", '\t' ),
+		},
+		{
+			stage: 'bootstrap_before_required_constants_check',
+			needle: '$required_constants = array(',
+			replacement: beforeBootstrapReport( 'bootstrap_before_required_constants_check', '$required_constants = array(' ),
+		},
+		{
+			stage: 'bootstrap_before_tests_reset_server',
+			needle: 'tests_reset__SERVER();',
+			replacement: beforeBootstrapReport( 'bootstrap_before_tests_reset_server', 'tests_reset__SERVER();' ),
+		},
+		{
+			stage: 'bootstrap_before_install_php_branch',
+			needle: "if ( '1' !== getenv( 'WP_TESTS_SKIP_INSTALL' ) ) {",
+			replacement: beforeBootstrapReport( 'bootstrap_before_install_php_branch', "if ( '1' !== getenv( 'WP_TESTS_SKIP_INSTALL' ) ) {" ),
+		},
+		{
+			stage: 'bootstrap_after_install_php_process',
+			needle: "\tsystem( WP_PHP_BINARY . ' ' . escapeshellarg( __DIR__ . '/install.php' ) . ' ' . escapeshellarg( $config_file_path ) . ' ' . $ms_tests . ' ' . $core_tests, $retval );",
+			replacement: aroundBootstrapReport(
+				'bootstrap_before_install_php_process',
+				'bootstrap_after_install_php_process',
+				"\tsystem( WP_PHP_BINARY . ' ' . escapeshellarg( __DIR__ . '/install.php' ) . ' ' . escapeshellarg( $config_file_path ) . ' ' . $ms_tests . ' ' . $core_tests, $retval );",
+				'\t'
+			),
+		},
+		{
+			stage: 'bootstrap_install_php_failed_exit',
+			needle: "\tif ( 0 !== $retval ) {",
+			replacement: beforeBootstrapReport( 'bootstrap_install_php_failed_exit', "\tif ( 0 !== $retval ) {", '\t' ),
+		},
+		{
+			stage: 'bootstrap_before_multisite_branch',
+			needle: 'if ( $multisite ) {',
+			replacement: beforeBootstrapReport( 'bootstrap_before_multisite_branch', 'if ( $multisite ) {' ),
+		},
+		{
+			stage: 'bootstrap_before_wp_settings_filters',
+			needle: "$GLOBALS['_wp_die_disabled'] = false;",
+			replacement: beforeBootstrapReport( 'bootstrap_before_wp_settings_filters', "$GLOBALS['_wp_die_disabled'] = false;" ),
+		},
+	];
 
 	if ( ! fs.existsSync( file ) ) {
 		console.error( `Error: WordPress PHPUnit bootstrap file not found at ${ file }.` );
@@ -654,6 +794,8 @@ function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 
 	let contents = fs.readFileSync( file, 'utf8' );
 	let changed = false;
+	let patchedBootstrapTargets = 0;
+	const missingBootstrapTargets = [];
 
 	if ( ! contents.includes( 'bootstrap_file_entry' ) ) {
 		if ( ! contents.startsWith( '<?php' ) ) {
@@ -674,6 +816,31 @@ function patchWordPressPhpunitBootstrapForChildDiagnostics() {
 		contents = contents.replace( marker, guard );
 		changed = true;
 	}
+
+	for ( const { stage, needle, replacement } of earlyBootstrapReplacements ) {
+		if ( contents.includes( stage ) ) {
+			continue;
+		}
+
+		if ( ! contents.includes( needle ) ) {
+			console.warn( `Warning: Unable to find optional WordPress PHPUnit bootstrap diagnostic marker for ${ stage } in ${ file }.` );
+			missingBootstrapTargets.push( stage );
+			continue;
+		}
+
+		contents = contents.replace( needle, replacement );
+		patchedBootstrapTargets++;
+		changed = true;
+	}
+
+	console.log(
+		[
+			'WP_SQLITE_DUCKDB_BOOTSTRAP_DIAGNOSTIC_TARGETS',
+			`patched=${ patchedBootstrapTargets }`,
+			`missing=${ missingBootstrapTargets.length }`,
+			`missing_names=${ missingBootstrapTargets.length ? missingBootstrapTargets.join( ',' ) : 'none' }`,
+		].join( ' ' )
+	);
 
 	if ( changed ) {
 		fs.writeFileSync( file, contents );
