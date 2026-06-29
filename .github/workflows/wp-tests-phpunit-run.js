@@ -1649,6 +1649,7 @@ function patchPhpunitParentProcessIsolationHooks() {
 function getPhpunitForwardedEnvironmentPhp() {
 	const environmentNames = [
 		'WP_DUCKDB_QUERY_PROFILE',
+		'WP_DUCKDB_RUNTIME_COUNTERS',
 		'WP_DUCKDB_QUERY_PROFILE_INTERVAL',
 		'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS',
 		'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_VERBOSE',
