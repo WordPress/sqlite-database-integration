@@ -608,6 +608,11 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
+		$information_schema_columns_name_collation_result = $this->execute_information_schema_columns_name_collation_fast_path_statement( $normalized );
+		if ( null !== $information_schema_columns_name_collation_result ) {
+			return $information_schema_columns_name_collation_result;
+		}
+
 		$wordpress_options_autoload_result = $this->execute_wordpress_options_autoload_fast_path_statement( $normalized );
 		if ( null !== $wordpress_options_autoload_result ) {
 			return $wordpress_options_autoload_result;
@@ -678,6 +683,107 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Execute a high-frequency WordPress metadata information_schema.columns query.
+	 *
+	 * The generic information_schema.columns path remains responsible for broad
+	 * predicates and projections. This path only avoids rebuilding the temporary
+	 * compatibility table for the exact persistent-table metadata lookup used in
+	 * WordPress probes.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_information_schema_columns_name_collation_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$literal_pattern = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		$source_pattern  = '(?:(?:`?information_schema`?)\s*\.\s*)?`?columns`?';
+
+		if (
+			! preg_match(
+				'/^SELECT\s+`?COLUMN_NAME`?\s*,\s*`?COLLATION_NAME`?\s+FROM\s+'
+				. $source_pattern
+				. '\s+WHERE\s+(?:(?<schema_column>`?TABLE_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')|(?<schema_value_left>' . $literal_pattern . ')\s*=\s*(?<schema_column_right>`?TABLE_SCHEMA`?))'
+				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s+IN\s*\((?<table_names>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\)'
+				. '\s+ORDER\s+BY\s+`?TABLE_NAME`?\s*,\s*`?COLUMN_NAME`?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		if (
+			! $this->fast_path_identifier_matches( 'TABLE_NAME', $matches['table_column'] )
+			|| (
+				isset( $matches['schema_column'] )
+				&& '' !== $matches['schema_column']
+				&& ! $this->fast_path_identifier_matches( 'TABLE_SCHEMA', $matches['schema_column'] )
+			)
+			|| (
+				isset( $matches['schema_column_right'] )
+				&& '' !== $matches['schema_column_right']
+				&& ! $this->fast_path_identifier_matches( 'TABLE_SCHEMA', $matches['schema_column_right'] )
+			)
+		) {
+			return null;
+		}
+
+		$schema_literal = '' !== ( $matches['schema_value'] ?? '' )
+			? $matches['schema_value']
+			: $matches['schema_value_left'];
+		$schema_name    = $this->fast_path_mysql_single_quoted_literal_value( $schema_literal );
+
+		$table_names = array();
+		if ( false !== preg_match_all( '/' . $literal_pattern . '/', $matches['table_names'], $table_matches ) ) {
+			foreach ( $table_matches[0] as $table_literal ) {
+				$table_names[] = $this->fast_path_mysql_single_quoted_literal_value( $table_literal );
+			}
+		}
+
+		if ( count( $table_names ) === 0 ) {
+			return null;
+		}
+
+		$rows = array();
+		if ( 0 === strcasecmp( $schema_name, $this->database ) ) {
+			$rows = $this->information_schema_column_rows( $table_names );
+		}
+
+		usort(
+			$rows,
+			function ( array $left, array $right ): int {
+				$table_compare = strcasecmp( (string) $left['TABLE_NAME'], (string) $right['TABLE_NAME'] );
+				if ( 0 !== $table_compare ) {
+					return $table_compare;
+				}
+
+				$column_compare = strcasecmp( (string) $left['COLUMN_NAME'], (string) $right['COLUMN_NAME'] );
+				if ( 0 !== $column_compare ) {
+					return $column_compare;
+				}
+
+				return strcmp( (string) $left['COLUMN_NAME'], (string) $right['COLUMN_NAME'] );
+			}
+		);
+
+		$result_rows = array_map(
+			function ( array $row ): array {
+				return array(
+					$row['COLUMN_NAME'],
+					$row['COLLATION_NAME'],
+				);
+			},
+			$rows
+		);
+
+		return $this->record_found_rows_from_result(
+			new WP_DuckDB_Result_Statement(
+				array( 'COLUMN_NAME', 'COLLATION_NAME' ),
+				$result_rows
+			)
+		);
 	}
 
 	/**

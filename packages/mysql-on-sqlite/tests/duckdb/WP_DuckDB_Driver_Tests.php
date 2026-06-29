@@ -11052,6 +11052,199 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsin_noise' ) );
 	}
 
+	public function test_information_schema_columns_name_collation_fast_path_uses_metadata_without_stage_rebuild(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE wptests_postmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY post_id (post_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_termmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				term_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY term_id (term_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query( 'CREATE TABLE wptests_metadata_noise (noise_id INT, note VARCHAR(20))' );
+
+		$sql     = "SELECT COLUMN_NAME, COLLATION_NAME
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name IN ('wptests_postmeta', 'wptests_termmeta')
+			ORDER BY TABLE_NAME, COLUMN_NAME";
+		$queries = array();
+		$rows    = $driver->query( $sql )->fetchAll( PDO::FETCH_ASSOC );
+
+		$expected = array(
+			array(
+				'COLUMN_NAME'    => 'meta_id',
+				'COLLATION_NAME' => null,
+			),
+			array(
+				'COLUMN_NAME'    => 'meta_key',
+				'COLLATION_NAME' => 'utf8mb4_0900_ai_ci',
+			),
+			array(
+				'COLUMN_NAME'    => 'meta_value',
+				'COLLATION_NAME' => 'utf8mb4_0900_ai_ci',
+			),
+			array(
+				'COLUMN_NAME'    => 'post_id',
+				'COLLATION_NAME' => null,
+			),
+			array(
+				'COLUMN_NAME'    => 'meta_id',
+				'COLLATION_NAME' => null,
+			),
+			array(
+				'COLUMN_NAME'    => 'meta_key',
+				'COLLATION_NAME' => 'utf8mb4_0900_ai_ci',
+			),
+			array(
+				'COLUMN_NAME'    => 'meta_value',
+				'COLLATION_NAME' => 'utf8mb4_0900_ai_ci',
+			),
+			array(
+				'COLUMN_NAME'    => 'term_id',
+				'COLLATION_NAME' => null,
+			),
+		);
+
+		$this->assertSame( $expected, $rows );
+		$this->assertSame( 0, $this->count_duckdb_information_schema_columns_stage_queries( $queries ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_postmeta' ) );
+		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_termmeta' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_metadata_noise' ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 8 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$this->assertSame( $expected, $driver->query( $sql )->fetchAll( PDO::FETCH_ASSOC ) );
+		$this->assertSame( array(), $queries );
+	}
+
+	public function test_information_schema_columns_name_collation_fast_path_preserves_schema_missing_case_and_temp_shadow_semantics(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE wptests_shadowmeta (
+				persistent_id BIGINT(20) UNSIGNED NOT NULL,
+				persistent_name VARCHAR(50) NOT NULL DEFAULT ''
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+
+		$queries = array();
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT COLUMN_NAME, COLLATION_NAME
+				FROM information_schema.columns
+				WHERE table_schema = 'not_wp'
+					AND table_name IN ('wptests_shadowmeta')
+				ORDER BY TABLE_NAME, COLUMN_NAME"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $queries );
+
+		$queries = array();
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'    => 'persistent_id',
+					'COLLATION_NAME' => null,
+				),
+				array(
+					'COLUMN_NAME'    => 'persistent_name',
+					'COLLATION_NAME' => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$driver->query(
+				"SELECT `column_name`, `collation_name`
+				FROM `information_schema`.`columns`
+				WHERE 'wp' = `table_schema`
+					AND `table_name` IN ('wptests_shadowmeta', 'wptests_missingmeta')
+				ORDER BY `table_name`, `column_name`"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_columns_stage_queries( $queries ) );
+
+		$driver->query(
+			"CREATE TEMPORARY TABLE wptests_shadowmeta (
+				temp_id BIGINT(20) UNSIGNED NOT NULL,
+				temp_name VARCHAR(50) NOT NULL DEFAULT ''
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+
+		$queries = array();
+		$this->assertSame(
+			array(
+				array(
+					'COLUMN_NAME'    => 'persistent_id',
+					'COLLATION_NAME' => null,
+				),
+				array(
+					'COLUMN_NAME'    => 'persistent_name',
+					'COLLATION_NAME' => 'utf8mb4_0900_ai_ci',
+				),
+			),
+			$driver->query(
+				"SELECT COLUMN_NAME, COLLATION_NAME
+				FROM information_schema.columns
+				WHERE table_schema = 'wp'
+					AND table_name IN ('wptests_shadowmeta')
+				ORDER BY TABLE_NAME, COLUMN_NAME"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( array(), $queries );
+
+		$show_columns = $driver->query( 'SHOW FULL COLUMNS FROM wptests_shadowmeta' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( 'temp_id', 'temp_name' ), array_column( $show_columns, 'Field' ) );
+	}
+
 	public function test_information_schema_columns_wildcard_and_complex_predicates_fall_back_to_full_refresh(): void {
 		$this->requireDuckDBRuntime();
 
@@ -11112,6 +11305,21 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array( 'infocolumnsfuncplain', 'infocolumnsfuncplain' ), array_column( $rows, 'TABLE_NAME' ) );
 		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsfuncplain' ) );
 		$this->assertSame( 1, $this->count_duckdb_column_metadata_queries( $queries, 'infocolumnsfuncnoise' ) );
+
+		$driver->query( 'CREATE TABLE infocolumnsfastfallbackplain (id INT, name VARCHAR(20))' );
+		$driver->query( 'CREATE TABLE infocolumnsfastfallbacknoise (noise_id INT, marker VARCHAR(20))' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT COLUMN_NAME, COLLATION_NAME
+				FROM information_schema.columns
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME LIKE 'infocolumnsfastfallback%'
+				ORDER BY TABLE_NAME, COLUMN_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'marker', 'noise_id', 'id', 'name' ), array_column( $rows, 'COLUMN_NAME' ) );
+		$this->assertGreaterThan( 0, $this->count_duckdb_information_schema_columns_stage_queries( $queries ) );
 	}
 
 	public function test_create_table_charset_metadata_tracks_table_and_column_declarations(): void {
@@ -20840,6 +21048,19 @@ SQL
 		}
 
 		return $count;
+	}
+
+	private function count_duckdb_information_schema_columns_stage_queries( array $queries ): int {
+		return count(
+			array_filter(
+				$queries,
+				function ( string $query ): bool {
+					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_columns"' )
+						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_columns"' )
+						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_columns"' );
+				}
+			)
+		);
 	}
 
 	private function duckdb_table_row_count_queries( array $queries ): array {
