@@ -14447,6 +14447,154 @@ SQL
 		$this->assertStringNotContainsString( 'lower("option_name")', implode( "\n", $queries ) );
 	}
 
+	public function test_wordpress_options_update_fast_path_uses_one_native_query_on_fresh_driver(): void {
+		$this->requireDuckDBRuntime();
+
+		$path = tempnam( sys_get_temp_dir(), 'wp-duckdb-option-update-fastpath-' );
+		if ( false === $path ) {
+			$this->fail( 'Failed to allocate a temporary DuckDB path.' );
+		}
+		unlink( $path );
+
+		try {
+			$setup_driver = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$this->create_wordpress_options_autoload_fixture( $setup_driver );
+			unset( $setup_driver );
+			gc_collect_cycles();
+
+			$queries = array();
+			$driver  = $this->query_logged_duckdb_driver( $queries, $path );
+
+			$option_value = "changed value; with spaces and a quote ' marker";
+			$queries      = array();
+			$result       = $driver->query(
+				'UPDATE wptests_options SET option_value = '
+				. $this->mysql_single_quoted_literal( $option_value )
+				. " WHERE option_name = 'siteurl'"
+			);
+			$this->assertSame( 1, $result->rowCount() );
+			$this->assertSame( 0, $driver->get_insert_id() );
+			$this->assert_wordpress_options_update_used_one_native_query( $queries );
+			$this->assertSame(
+				array(
+					array(
+						'found_rows' => 0,
+					),
+				),
+				$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+			$this->assertSame(
+				array( array( 'option_value' => $option_value ) ),
+				$driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl'" )->fetchAll( PDO::FETCH_ASSOC )
+			);
+
+			$queries = array();
+			$result  = $driver->query(
+				'UPDATE wptests_options SET option_value = '
+				. $this->mysql_single_quoted_literal( $option_value )
+				. " WHERE option_name = 'siteurl'"
+			);
+			$this->assertSame( 0, $result->rowCount() );
+			$this->assert_wordpress_options_update_used_one_native_query( $queries );
+
+			$queries = array();
+			$result  = $driver->query( "UPDATE wptests_options SET option_value = 'case updated' WHERE option_name = 'SITEURL'" );
+			$this->assertSame( 1, $result->rowCount() );
+			$this->assert_wordpress_options_update_used_one_native_query( $queries );
+			$this->assertSame(
+				array( array( 'option_value' => 'case updated' ) ),
+				$driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl'" )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		} finally {
+			unset( $driver );
+			@unlink( $path );
+			@unlink( $path . '.wal' );
+		}
+	}
+
+	public function test_wordpress_options_update_fast_path_respects_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_options_autoload_fixture( $driver );
+
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_options (
+				option_name VARCHAR(191) NOT NULL,
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('siteurl', 'temporary_value', 'yes')"
+		);
+
+		$queries = array();
+		$result  = $driver->query( "UPDATE `wptests_options` SET `option_value` = 'temporary updated' WHERE `option_name` = 'siteurl'" );
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assert_wordpress_options_update_used_one_native_query( $queries );
+		$this->assertSame(
+			array( array( 'option_value' => 'temporary updated' ) ),
+			$driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_options' );
+		$this->assertSame(
+			array( array( 'option_value' => 'https://example.test' ) ),
+			$driver->query( "SELECT option_value FROM wptests_options WHERE option_name = 'siteurl'" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_wordpress_options_update_fast_path_does_not_capture_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_options_autoload_fixture( $driver );
+
+		$queries = array();
+		$result  = $driver->query(
+			"UPDATE wptests_options SET option_value = 'changed' WHERE option_name = 'siteurl' AND autoload = 'yes'"
+		);
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assertStringContainsString( "autoload = 'yes'", implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"UPDATE wptests_options SET option_value = 'changed again', autoload = 'no' WHERE option_name = 'siteurl'"
+		);
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assertStringContainsString( 'autoload', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"UPDATE wptests_options SET option_value = 'qualified' WHERE wptests_options.option_name = 'siteurl'"
+		);
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assertStringContainsString( 'wptests_options.option_name', implode( "\n", $queries ) );
+
+		$driver->query(
+			'CREATE TABLE option_items (
+				option_name VARCHAR(191) NOT NULL,
+				option_value LONGTEXT NOT NULL
+			)'
+		);
+		$driver->query( "INSERT INTO option_items (option_name, option_value) VALUES ('siteurl', 'value')" );
+
+		$queries = array();
+		$result  = $driver->query( "UPDATE option_items SET option_value = 'generic' WHERE option_name = 'siteurl'" );
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assertStringContainsString( 'option_items', implode( "\n", $queries ) );
+		$this->assertStringNotContainsString( 'UPDATE "wptests_options"', implode( "\n", $queries ) );
+	}
+
 	public function test_wordpress_posts_id_lookup_fast_path_uses_schema_metadata_on_fresh_driver(): void {
 		$this->requireDuckDBRuntime();
 
@@ -20150,6 +20298,16 @@ SQL
 		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_options' ) );
 		$this->assertStringContainsString( 'wptests_options', $queries[0] );
 		$this->assertStringContainsString( 'lower("option_name")', $queries[0] );
+	}
+
+	private function assert_wordpress_options_update_used_one_native_query( array $queries ): void {
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_options' ) );
+		$this->assertStringNotContainsString( '__wp_duckdb_table_metadata', $queries[0] );
+		$this->assertStringContainsString( 'UPDATE "wptests_options" SET "option_value" = ', $queries[0] );
+		$this->assertStringContainsString( 'lower("option_name")', $queries[0] );
+		$this->assertStringContainsString( 'IS DISTINCT FROM', $queries[0] );
 	}
 
 	private function assert_wordpress_usermeta_cache_load_select_used_one_native_query( array $queries, string $id_list ): void {

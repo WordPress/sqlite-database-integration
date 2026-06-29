@@ -598,6 +598,11 @@ class WP_DuckDB_Driver {
 			return $stored_procedure_result;
 		}
 
+		$wordpress_options_update_result = $this->execute_wordpress_options_update_fast_path_statement( $query );
+		if ( null !== $wordpress_options_update_result ) {
+			return $wordpress_options_update_result;
+		}
+
 		$normalized = $this->normalize_fast_path_statement( $query );
 		if ( null === $normalized ) {
 			return null;
@@ -773,6 +778,69 @@ class WP_DuckDB_Driver {
 			$result,
 			$this->wordpress_options_single_column_result_metadata( $table_name, $column_name )
 		);
+	}
+
+	/**
+	 * Execute WordPress' high-frequency single-option UPDATE without parser/metadata fanout.
+	 *
+	 * This parses the raw query instead of the normalized fast-path string so
+	 * option values containing whitespace are preserved exactly.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_options_update_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		$literal_pattern = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		if (
+			! preg_match(
+				'/^\s*UPDATE\s+(?<table>`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*)\s+SET\s+(?<value_column>`option_value`|option_value)\s*=\s*(?<option_value>' . $literal_pattern . ')\s+WHERE\s+(?<name_column>`option_name`|option_name)\s*=\s*(?<option_name>' . $literal_pattern . ')\s*;?\s*$/i',
+				$query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		if ( ! $this->is_wordpress_options_table_name( $table_name ) ) {
+			return null;
+		}
+
+		$value_column = strtolower( $this->fast_path_mysql_identifier_value( $matches['value_column'] ) );
+		if ( 'option_value' !== $value_column ) {
+			return null;
+		}
+
+		$name_column = strtolower( $this->fast_path_mysql_identifier_value( $matches['name_column'] ) );
+		if ( 'option_name' !== $name_column ) {
+			return null;
+		}
+
+		$option_value     = $this->fast_path_mysql_single_quoted_literal_value( $matches['option_value'] );
+		$option_name      = $this->fast_path_mysql_single_quoted_literal_value( $matches['option_name'] );
+		$option_value_sql = $this->connection->quote( $option_value );
+		$option_name_sql  = $this->connection->quote( $option_name );
+		$value_column_sql = $this->connection->quote_identifier( 'option_value' );
+
+		$sql = 'UPDATE '
+			. $this->connection->quote_identifier( $table_name )
+			. ' SET '
+			. $value_column_sql
+			. ' = '
+			. $option_value_sql
+			. ' WHERE lower('
+			. $this->connection->quote_identifier( 'option_name' )
+			. ') IS NOT DISTINCT FROM lower(CAST('
+			. $option_name_sql
+			. ' AS VARCHAR))'
+			. ' AND ('
+			. $this->byte_sensitive_update_value_sql( $value_column_sql )
+			. ' IS DISTINCT FROM '
+			. $this->byte_sensitive_update_value_sql( $option_value_sql )
+			. ')';
+
+		$this->found_rows = 0;
+		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB UPDATE' );
 	}
 
 	/**
