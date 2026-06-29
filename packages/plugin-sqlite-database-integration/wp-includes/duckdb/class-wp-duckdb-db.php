@@ -729,13 +729,13 @@ class WP_DuckDB_DB extends wpdb {
 	private function normalize_result_rows( array $rows ) {
 		foreach ( $rows as $row ) {
 			foreach ( get_object_vars( $row ) as $name => $value ) {
-				if ( 'Non_unique' === $name && is_int( $value ) && ( 0 === $value || 1 === $value ) ) {
-					$row->$name = (string) $value;
+				if ( null === $value ) {
 					continue;
 				}
-
 				if ( is_bool( $value ) ) {
 					$row->$name = $value ? '1' : '0';
+				} elseif ( is_scalar( $value ) ) {
+					$row->$name = (string) $value;
 				}
 			}
 		}

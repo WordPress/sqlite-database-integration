@@ -128,7 +128,7 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 1, $result['select_return'] );
 		$this->assertSame( 'SELECT 42 AS answer', $result['select_last_query'] );
 		$this->assertSame( 1, $result['select_num_rows'] );
-		$this->assertSame( 42, $result['select_answer'] );
+		$this->assertSame( '42', $result['select_answer'] );
 		$this->assertSame( 2, $result['insert_return'] );
 		$this->assertSame( 2, $result['insert_rows_affected'] );
 		$this->assertTrue( $result['create_return'] );
@@ -328,8 +328,23 @@ class WP_DuckDB_Plugin_Dispatcher_Tests extends PHPUnit\Framework\TestCase {
 		$this->assertSame( 0, $cases['select_one_row']['rows_affected'] );
 		$this->assertSame( 1, $cases['select_one_row']['num_rows'] );
 		$this->assertSame( 1, $cases['select_one_row']['last_result_count'] );
+		$this->assertSame( '42', $cases['select_one_row']['last_result'][0]['answer'] );
+		$this->assertSame( 'string', gettype( $cases['select_one_row']['last_result'][0]['answer'] ) );
 		$this->assertSame( array( 'answer' ), $cases['select_one_row']['col_info_names'] );
 		$this->assertSame( '', $cases['select_one_row']['last_error'] );
+
+		$this->assertSame( 1, $cases['select_mixed_scalars']['return'] );
+		$this->assertSame(
+			array(
+				'comment_ID'      => '1003',
+				'comment_post_ID' => '12',
+				'truth'           => '1',
+				'falsity'         => '0',
+				'none'            => null,
+				'note'            => 'Anonymous',
+			),
+			$cases['select_mixed_scalars']['last_result'][0]
+		);
 
 		$this->assertSame( 0, $cases['select_zero_rows']['return'] );
 		$this->assertSame( 0, $cases['select_zero_rows']['rows_affected'] );
@@ -1723,6 +1738,15 @@ class WP_DuckDB_Plugin_Query_Surface_Test_Driver extends WP_DuckDB_Driver {
 			);
 		}
 
+		if ( 'SELECT 1003 AS comment_ID, 12 AS comment_post_ID, TRUE AS truth, FALSE AS falsity, NULL AS none, \'Anonymous\' AS note' === $sql ) {
+			return new WP_DuckDB_Result_Statement(
+				array( 'comment_ID', 'comment_post_ID', 'truth', 'falsity', 'none', 'note' ),
+				array(
+					array( 1003, 12, true, false, null, 'Anonymous' ),
+				)
+			);
+		}
+
 		if ( 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' === $sql ) {
 			return new WP_DuckDB_Result_Statement(
 				array( 'ID', 'post_title' ),
@@ -1880,6 +1904,12 @@ class WP_DuckDB_Plugin_Query_Surface_Test_DB extends WP_DuckDB_DB {
 			'rows_affected'     => $this->rows_affected,
 			'num_rows'          => $this->num_rows,
 			'last_result_count' => count( $this->last_result ),
+			'last_result'       => array_map(
+				function ( $row ) {
+					return get_object_vars( $row );
+				},
+				$this->last_result
+			),
 			'last_error'        => $this->last_error,
 			'insert_id'         => $this->insert_id,
 			'col_info_names'    => is_array( $col_info )
@@ -1905,6 +1935,10 @@ $connected                 = $db->db_connect( false );
 $db->suppress_errors( true );
 $cases                     = array(
 	'select_one_row'       => wp_duckdb_plugin_query_surface_case( $db, 'SELECT 42 AS answer' ),
+	'select_mixed_scalars' => wp_duckdb_plugin_query_surface_case(
+		$db,
+		"SELECT 1003 AS comment_ID, 12 AS comment_post_ID, TRUE AS truth, FALSE AS falsity, NULL AS none, 'Anonymous' AS note"
+	),
 	'select_zero_rows'     => wp_duckdb_plugin_query_surface_case( $db, 'SELECT ID, post_title FROM wp_posts WHERE ID = 0' ),
 	'show_full_tables'     => wp_duckdb_plugin_query_surface_case( $db, 'SHOW FULL TABLES' ),
 	'show_columns'         => wp_duckdb_plugin_query_surface_case( $db, 'SHOW COLUMNS FROM wp_posts' ),
