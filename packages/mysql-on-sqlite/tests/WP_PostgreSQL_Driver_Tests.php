@@ -11668,11 +11668,21 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertTrue( $entry['translated'] );
 		$this->assertStringContainsString( 'p."ID"', $entry['sql'] );
 
+		$last_cache = $this->get_driver_private_property( $driver, 'mysql_select_translation_last_cache' );
+		$this->assertIsArray( $last_cache );
+		$this->assertSame( $query, $last_cache['query'] );
+		$this->assertSame( $entry['sql'], $last_cache['sql'] );
+		$this->assertTrue( $last_cache['translated'] );
+
 		$driver->query( $query );
 
 		$this->assertSame(
 			$cache,
 			$this->get_driver_private_property( $driver, 'mysql_select_translation_cache' )
+		);
+		$this->assertSame(
+			$last_cache,
+			$this->get_driver_private_property( $driver, 'mysql_select_translation_last_cache' )
 		);
 
 		$this->install_mysql_schema_metadata_fixture(
@@ -11688,6 +11698,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 			array(),
 			$this->get_driver_private_property( $driver, 'mysql_select_translation_cache' )
 		);
+		$this->assertNull( $this->get_driver_private_property( $driver, 'mysql_select_translation_last_cache' ) );
 	}
 
 	/**
@@ -11776,7 +11787,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 1, $driver->query( $insert ) );
 		$this->assertSame(
 			'INSERT INTO "wptests_query_context" ("id", "value") VALUES (1, \'first\')',
-			$this->get_last_single_postgresql_sql( $driver )
+			$this->remove_real_pgsql_test_schema_qualifiers( $this->get_last_single_postgresql_sql( $driver ) )
 		);
 
 		$select = "/* plugin preamble */\n-- runtime marker\nSELECT `id`, `value` FROM `wptests_query_context` WHERE (`id` IN (SELECT 1)) ORDER BY `id`";
@@ -11787,7 +11798,7 @@ class WP_PostgreSQL_Driver_Tests extends TestCase {
 		$this->assertSame( 'first', $rows[0]->value );
 		$this->assertSame(
 			'SELECT "id", "value" FROM "wptests_query_context" WHERE ("id" IN (SELECT 1)) ORDER BY "id"',
-			$this->get_last_single_postgresql_sql( $driver )
+			$this->remove_real_pgsql_test_schema_qualifiers( $this->get_last_single_postgresql_sql( $driver ) )
 		);
 	}
 
