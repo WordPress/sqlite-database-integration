@@ -12302,6 +12302,238 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_information_schema_tables_exact_name_materializes_only_matching_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE infotablesexactplain (id INT, name TEXT)' );
+		$driver->query( 'CREATE TABLE infotablesexactnoise (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$driver->query( 'CREATE TABLE infotablesexactother (id INT)' );
+		$driver->query( "INSERT INTO infotablesexactplain VALUES (1, 'one'), (2, 'two')" );
+		$driver->query( "INSERT INTO infotablesexactnoise (name) VALUES ('noise')" );
+		$driver->query( 'INSERT INTO infotablesexactother VALUES (1)' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, TABLE_ROWS
+				FROM information_schema.tables
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'infotablesexactplain'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'TABLE_NAME' => 'infotablesexactplain',
+					'TABLE_ROWS' => 2,
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 1, $this->count_duckdb_table_row_count_queries( $queries ) );
+
+		$count_sql = implode( "\n", $this->duckdb_table_row_count_queries( $queries ) );
+		$this->assertStringContainsString( '"infotablesexactplain"', $count_sql );
+		$this->assertStringNotContainsString( '"infotablesexactnoise"', $count_sql );
+		$this->assertStringNotContainsString( '"infotablesexactother"', $count_sql );
+		$this->assertSame( 0, $this->count_duckdb_currval_queries( $queries ) );
+
+		$driver->query( "INSERT INTO infotablesexactplain VALUES (3, 'three')" );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, TABLE_ROWS
+				FROM information_schema.tables
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'infotablesexactplain'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( 3, $rows[0]['TABLE_ROWS'] );
+		$this->assertSame( 1, $this->count_duckdb_table_row_count_queries( $queries ) );
+
+		$count_sql = implode( "\n", $this->duckdb_table_row_count_queries( $queries ) );
+		$this->assertStringContainsString( '"infotablesexactplain"', $count_sql );
+		$this->assertStringNotContainsString( '"infotablesexactnoise"', $count_sql );
+		$this->assertStringNotContainsString( '"infotablesexactother"', $count_sql );
+
+		$queries = array();
+		$missing = $driver->query(
+			"SELECT TABLE_NAME, TABLE_ROWS
+				FROM information_schema.tables
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME = 'infotablesexactmissing'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $missing );
+		$this->assertSame( 0, $this->count_duckdb_table_row_count_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_currval_queries( $queries ) );
+	}
+
+	public function test_information_schema_tables_in_list_materializes_only_requested_tables_for_site_health(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query(
+			"CREATE TABLE infotablesin_options (
+				option_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL
+			)"
+		);
+		$driver->query(
+			"CREATE TABLE infotablesin_terms (
+				term_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				name VARCHAR(200) NOT NULL DEFAULT ''
+			)"
+		);
+		$driver->query( 'CREATE TABLE infotablesin_noise (id INT)' );
+		$driver->query(
+			"INSERT INTO infotablesin_options (option_name, option_value)
+				VALUES ('siteurl', 'https://example.test'), ('home', 'https://example.test'), ('blogname', 'Test')"
+		);
+		$driver->query( "INSERT INTO infotablesin_terms (name) VALUES ('one'), ('two')" );
+		$driver->query( 'INSERT INTO infotablesin_noise VALUES (1)' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows',
+					SUM(data_length + index_length) AS 'bytes'
+				FROM information_schema.TABLES
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME IN ('infotablesin_options','infotablesin_terms')
+				GROUP BY TABLE_NAME
+				ORDER BY TABLE_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'table' => 'infotablesin_options',
+					'rows'  => 3,
+					'bytes' => 0,
+				),
+				array(
+					'table' => 'infotablesin_terms',
+					'rows'  => 2,
+					'bytes' => 0,
+				),
+			),
+			$rows
+		);
+
+		$count_sql = implode( "\n", $this->duckdb_table_row_count_queries( $queries ) );
+		$this->assertStringContainsString( '"infotablesin_options"', $count_sql );
+		$this->assertStringContainsString( '"infotablesin_terms"', $count_sql );
+		$this->assertStringNotContainsString( '"infotablesin_noise"', $count_sql );
+
+		$driver->query( "INSERT INTO infotablesin_terms (name) VALUES ('three')" );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME AS 'table', TABLE_ROWS AS 'rows',
+					SUM(data_length + index_length) AS 'bytes'
+				FROM information_schema.TABLES
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME IN ('infotablesin_options','infotablesin_terms')
+				GROUP BY TABLE_NAME
+				ORDER BY TABLE_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( 3, $rows[1]['rows'] );
+		$count_sql = implode( "\n", $this->duckdb_table_row_count_queries( $queries ) );
+		$this->assertStringContainsString( '"infotablesin_options"', $count_sql );
+		$this->assertStringContainsString( '"infotablesin_terms"', $count_sql );
+		$this->assertStringNotContainsString( '"infotablesin_noise"', $count_sql );
+	}
+
+	public function test_information_schema_tables_wildcard_and_complex_predicates_fall_back_to_full_refresh(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries    = array();
+		$connection = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$connection->set_query_logger(
+			function ( string $sql, array $params ) use ( &$queries ): void {
+				unset( $params );
+				$queries[] = $sql;
+			}
+		);
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'connection' => $connection,
+				'database'   => 'wp',
+			)
+		);
+		$driver->query( 'CREATE TABLE infotableswildplain (id INT, name TEXT)' );
+		$driver->query( 'CREATE TABLE infotableswildnoise (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name TEXT)' );
+		$driver->query( 'CREATE TABLE infotableswildother (id INT)' );
+		$driver->query( "INSERT INTO infotableswildplain VALUES (1, 'one'), (2, 'two')" );
+		$driver->query( "INSERT INTO infotableswildnoise (name) VALUES ('noise')" );
+		$driver->query( 'INSERT INTO infotableswildother VALUES (1)' );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, TABLE_ROWS
+				FROM information_schema.tables
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME LIKE 'infotableswild%'
+				ORDER BY TABLE_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array( 'infotableswildnoise', 'infotableswildother', 'infotableswildplain' ),
+			array_column( $rows, 'TABLE_NAME' )
+		);
+
+		$count_sql = implode( "\n", $this->duckdb_table_row_count_queries( $queries ) );
+		$this->assertStringContainsString( '"infotableswildplain"', $count_sql );
+		$this->assertStringContainsString( '"infotableswildnoise"', $count_sql );
+		$this->assertStringContainsString( '"infotableswildother"', $count_sql );
+		$this->assertGreaterThanOrEqual( 1, $this->count_duckdb_currval_queries( $queries ) );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT TABLE_NAME, TABLE_ROWS
+				FROM information_schema.tables
+				WHERE TABLE_SCHEMA = 'wp'
+					AND LOWER(TABLE_NAME) = 'infotableswildplain'"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'infotableswildplain' ), array_column( $rows, 'TABLE_NAME' ) );
+		$count_sql = implode( "\n", $this->duckdb_table_row_count_queries( $queries ) );
+		$this->assertStringContainsString( '"infotableswildplain"', $count_sql );
+		$this->assertStringContainsString( '"infotableswildnoise"', $count_sql );
+		$this->assertStringContainsString( '"infotableswildother"', $count_sql );
+	}
+
 	public function test_show_table_status_exposes_mysql_shaped_table_metadata(): void {
 		$this->requireDuckDBRuntime();
 
