@@ -310,10 +310,34 @@ if ( ! method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ) {
 	fs.writeFileSync(
 		duckdbAutoloadCompatibilityWrapperPath,
 		`<?php
+$wp_sqlite_phpunit_autoload = defined( 'PHPUNIT_COMPOSER_INSTALL' ) && is_string( PHPUNIT_COMPOSER_INSTALL )
+\t? PHPUNIT_COMPOSER_INSTALL
+\t: __DIR__ . '/vendor/autoload.php';
 $duckdb_autoload = ${ phpSingleQuote( process.env.DUCKDB_PHP_AUTOLOAD ) };
 
 if ( ! is_readable( $duckdb_autoload ) ) {
 \tfwrite( STDERR, "Error: DuckDB PHP autoload file is not readable: {$duckdb_autoload}\\n" );
+\texit( 1 );
+}
+
+$wp_sqlite_phpunit_autoloader = isset( $GLOBALS['wp_sqlite_phpunit_autoloader'] )
+\t? $GLOBALS['wp_sqlite_phpunit_autoloader']
+\t: null;
+
+if ( ! is_object( $wp_sqlite_phpunit_autoloader ) ) {
+\tif ( ! is_readable( $wp_sqlite_phpunit_autoload ) ) {
+\t\tfwrite( STDERR, "Error: WordPress PHPUnit autoload file is not readable before DuckDB autoload: {$wp_sqlite_phpunit_autoload}\\n" );
+\t\texit( 1 );
+\t}
+
+\t$wp_sqlite_phpunit_autoloader = require $wp_sqlite_phpunit_autoload;
+\tif ( is_object( $wp_sqlite_phpunit_autoloader ) ) {
+\t\t$GLOBALS['wp_sqlite_phpunit_autoloader'] = $wp_sqlite_phpunit_autoloader;
+\t}
+}
+
+if ( ! method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ) {
+\tfwrite( STDERR, "Error: WordPress-compatible PHPUnit runner is unavailable before DuckDB autoload.\\n" );
 \texit( 1 );
 }
 
@@ -752,8 +776,13 @@ function verifyPhpunitCompatibilityFiles() {
 		'require_once DUCKDB_PHP_AUTOLOAD;',
 		"exit( method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ? 0 : 1 );",
 	].join( ' ' );
+	const directWrapperCheck = [
+		`require ${ phpSingleQuote( duckdbAutoloadCompatibilityWrapperContainerPath ) };`,
+		"exit( method_exists( 'PHPUnit\\\\TextUI\\\\TestRunner', 'run' ) ? 0 : 1 );",
+	].join( ' ' );
 
 	runWordPressDockerCompose( [ 'run', '--rm', 'php', 'php', '-r', check ], { stdio: 'inherit' } );
+	runWordPressDockerCompose( [ 'run', '--rm', 'php', 'php', '-r', directWrapperCheck ], { stdio: 'inherit' } );
 }
 
 function addPhpunitPrependArgument( command, prependPath ) {
