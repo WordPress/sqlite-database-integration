@@ -152,6 +152,74 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate DuckDB PHPUnit fast-fail list
+        timeout-minutes: 1
+        shell: bash
+        env:
+          WP_SQLITE_PHPUNIT_MIN_FILTER_PATTERNS: '9'
+        run: |
+          set -euo pipefail
+
+          fast_fail_filter_file=".github/workflows/duckdb-wordpress-phpunit-fast-fail-tests.txt"
+          min_fast_fail_patterns="${WP_SQLITE_PHPUNIT_MIN_FILTER_PATTERNS:-1}"
+
+          case "$min_fast_fail_patterns" in
+            ''|*[!0-9]*)
+              echo "::error title=DuckDB fast-fail pattern floor invalid::WP_SQLITE_PHPUNIT_MIN_FILTER_PATTERNS must be a positive integer."
+              exit 1
+              ;;
+          esac
+
+          if [ "$min_fast_fail_patterns" -lt 1 ]; then
+            echo "::error title=DuckDB fast-fail pattern floor invalid::WP_SQLITE_PHPUNIT_MIN_FILTER_PATTERNS must be greater than zero."
+            exit 1
+          fi
+
+          invalid_fast_fail_entries="$(
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                sub(/^[[:space:]]+/, "")
+                sub(/[[:space:]]+$/, "")
+                if ($0 !~ /^[A-Za-z_][A-Za-z0-9_]*(\\[A-Za-z_][A-Za-z0-9_]*)*::[A-Za-z_][A-Za-z0-9_]*$/) {
+                  print
+                }
+              }
+            ' "$fast_fail_filter_file"
+          )"
+
+          if [ -n "$invalid_fast_fail_entries" ]; then
+            echo "::error title=DuckDB fast-fail filter invalid::${fast_fail_filter_file} must contain literal PHPUnit Class::method names only."
+            printf '%s\n' "$invalid_fast_fail_entries"
+            exit 1
+          fi
+
+          fast_fail_count="$(
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                sub(/^[[:space:]]+/, "")
+                sub(/[[:space:]]+$/, "")
+                if (seen[$0]++) {
+                  next
+                }
+                count++
+              }
+              END {
+                print count + 0
+              }
+            ' "$fast_fail_filter_file"
+          )"
+
+          if [ "$fast_fail_count" -lt "$min_fast_fail_patterns" ]; then
+            echo "::error title=DuckDB fast-fail filter too small::${fast_fail_filter_file} lists ${fast_fail_count} unique tests; expected at least ${min_fast_fail_patterns}."
+            exit 1
+          fi
+
+          echo "DuckDB fast-fail filter file: ${fast_fail_filter_file}"
+          echo "DuckDB fast-fail filter entries: ${fast_fail_count}"
+          echo "DuckDB fast-fail filter min entries: ${min_fast_fail_patterns}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -467,6 +535,60 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate DuckDB E2E fast-fail list
+        timeout-minutes: 1
+        shell: bash
+        env:
+          WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS: '4'
+        run: |
+          set -euo pipefail
+
+          fast_fail_specs_file=".github/workflows/duckdb-wordpress-e2e-fast-fail-specs.txt"
+          min_fast_fail_specs="${WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS:-1}"
+
+          case "$min_fast_fail_specs" in
+            ''|*[!0-9]*)
+              echo "::error title=DuckDB E2E fast-fail spec floor invalid::WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS must be a positive integer."
+              exit 1
+              ;;
+          esac
+
+          if [ "$min_fast_fail_specs" -lt 1 ]; then
+            echo "::error title=DuckDB E2E fast-fail spec floor invalid::WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS must be greater than zero."
+            exit 1
+          fi
+
+          mapfile -t fast_fail_specs < <(
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                sub(/^[[:space:]]+/, "")
+                sub(/[[:space:]]+$/, "")
+                if (seen[$0]++) {
+                  next
+                }
+                print
+              }
+            ' "$fast_fail_specs_file"
+          )
+
+          if [ "${#fast_fail_specs[@]}" -lt "$min_fast_fail_specs" ]; then
+            echo "::error title=DuckDB E2E fast-fail specs too small::${fast_fail_specs_file} lists ${#fast_fail_specs[@]} unique specs; expected at least ${min_fast_fail_specs}."
+            exit 1
+          fi
+
+          for spec in "${fast_fail_specs[@]}"; do
+            if [[ ! "$spec" =~ ^tests/e2e/specs/[A-Za-z0-9._-]+\.test\.js$ ]]; then
+              echo "::error title=DuckDB E2E fast-fail spec invalid::${fast_fail_specs_file} must contain literal tests/e2e/specs/*.test.js paths only."
+              printf '%s\n' "$spec"
+              exit 1
+            fi
+          done
+
+          echo "DuckDB E2E fast-fail specs file: ${fast_fail_specs_file}"
+          echo "DuckDB E2E fast-fail spec entries: ${#fast_fail_specs[@]}"
+          echo "DuckDB E2E fast-fail min entries: ${min_fast_fail_specs}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -518,6 +640,66 @@ jobs:
         env:
           WP_DUCKDB_SMOKE_TIMEOUT: '90'
         run: ./bin/wp-test-duckdb-smoke.sh
+
+      - name: Validate DuckDB E2E fast-fail spec paths
+        timeout-minutes: 1
+        shell: bash
+        env:
+          WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS: '4'
+        run: |
+          set -euo pipefail
+
+          fast_fail_specs_file=".github/workflows/duckdb-wordpress-e2e-fast-fail-specs.txt"
+          min_fast_fail_specs="${WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS:-1}"
+
+          case "$min_fast_fail_specs" in
+            ''|*[!0-9]*)
+              echo "::error title=DuckDB E2E fast-fail spec floor invalid::WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS must be a positive integer."
+              exit 1
+              ;;
+          esac
+
+          if [ "$min_fast_fail_specs" -lt 1 ]; then
+            echo "::error title=DuckDB E2E fast-fail spec floor invalid::WP_DUCKDB_E2E_FAST_FAIL_MIN_SPECS must be greater than zero."
+            exit 1
+          fi
+
+          mapfile -t fast_fail_specs < <(
+            awk '
+              /^[[:space:]]*($|#)/ { next }
+              {
+                sub(/^[[:space:]]+/, "")
+                sub(/[[:space:]]+$/, "")
+                if (seen[$0]++) {
+                  next
+                }
+                print
+              }
+            ' "$fast_fail_specs_file"
+          )
+
+          if [ "${#fast_fail_specs[@]}" -lt "$min_fast_fail_specs" ]; then
+            echo "::error title=DuckDB E2E fast-fail specs too small::${fast_fail_specs_file} lists ${#fast_fail_specs[@]} unique specs; expected at least ${min_fast_fail_specs}."
+            exit 1
+          fi
+
+          for spec in "${fast_fail_specs[@]}"; do
+            if [[ ! "$spec" =~ ^tests/e2e/specs/[A-Za-z0-9._-]+\.test\.js$ ]]; then
+              echo "::error title=DuckDB E2E fast-fail spec invalid::${fast_fail_specs_file} must contain literal tests/e2e/specs/*.test.js paths only."
+              printf '%s\n' "$spec"
+              exit 1
+            fi
+
+            if [ ! -f "wordpress/${spec}" ]; then
+              echo "::error title=DuckDB E2E fast-fail spec missing::wordpress/${spec} does not exist."
+              exit 1
+            fi
+          done
+
+          echo "DuckDB E2E fast-fail specs file: ${fast_fail_specs_file}"
+          echo "DuckDB E2E fast-fail spec entries: ${#fast_fail_specs[@]}"
+          echo "DuckDB E2E fast-fail min entries: ${min_fast_fail_specs}"
+          printf 'DuckDB E2E fast-fail spec: %s\n' "${fast_fail_specs[@]}"
 
       - name: Install Playwright browsers
         timeout-minutes: 10
