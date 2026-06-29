@@ -464,6 +464,81 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
 	}
 
+	public function test_rest_date_queries_after_rfc3339_z_writes_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					PRIMARY KEY (ID),
+					KEY type_status_date (post_type, post_status, post_date, ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"CREATE TABLE wp_comments (
+					comment_ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					comment_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					comment_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					comment_approved VARCHAR(20) NOT NULL DEFAULT '1',
+					PRIMARY KEY (comment_ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+			)
+		);
+
+		$this->assertParityRowCount(
+			"INSERT INTO wp_posts (ID, post_date, post_date_gmt, post_type, post_status) VALUES
+				(1, '2016-01-15T00:00:00Z', '2016-01-15T00:00:00Z', 'post', 'publish'),
+				(2, '2016-01-16T00:00:00Z', '2016-01-16T00:00:00Z', 'post', 'publish'),
+				(3, '2016-01-17T00:00:00Z', '2016-01-17T00:00:00Z', 'post', 'publish'),
+				(4, '2016-01-16T00:00:00Z', '2016-01-16T00:00:00Z', 'page', 'publish'),
+				(5, '2016-01-16T00:00:00Z', '2016-01-16T00:00:00Z', 'attachment', 'inherit')"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO wp_comments (comment_ID, comment_date, comment_date_gmt, comment_approved) VALUES
+				(11, '2016-01-15T00:00:00Z', '2016-01-15T00:00:00Z', '1'),
+				(12, '2016-01-16T00:00:00Z', '2016-01-16T00:00:00Z', '1'),
+				(13, '2016-01-17T00:00:00Z', '2016-01-17T00:00:00Z', '1'),
+				(14, '2016-01-16T00:00:00Z', '2016-01-16T00:00:00Z', 'spam')"
+		);
+
+		$this->assertParityRows( 'SELECT ID, post_date, post_date_gmt, post_type, post_status FROM wp_posts ORDER BY ID' );
+		$this->assertParityRows( 'SELECT comment_ID, comment_date, comment_date_gmt, comment_approved FROM wp_comments ORDER BY comment_ID' );
+
+		foreach (
+			array(
+				array( 'post', 'publish' ),
+				array( 'page', 'publish' ),
+				array( 'attachment', 'inherit' ),
+			) as $case
+		) {
+			$this->assertParityRows(
+				"SELECT SQL_CALC_FOUND_ROWS wp_posts.ID
+				FROM wp_posts
+				WHERE 1=1
+					AND ( wp_posts.post_date > '2016-01-15T00:00:00Z'
+						AND wp_posts.post_date < '2016-01-17T00:00:00Z' )
+					AND wp_posts.post_type = '{$case[0]}'
+					AND wp_posts.post_status = '{$case[1]}'
+				ORDER BY wp_posts.post_date DESC
+				LIMIT 0, 10"
+			);
+			$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+		}
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS wp_comments.comment_ID
+			FROM wp_comments
+			WHERE 1=1
+				AND ( wp_comments.comment_date_gmt > '2016-01-15T00:00:00Z'
+					AND wp_comments.comment_date_gmt < '2016-01-17T00:00:00Z' )
+				AND comment_approved = '1'
+			ORDER BY wp_comments.comment_date_gmt DESC
+			LIMIT 0, 10"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
 	public function test_non_temporal_text_and_blob_write_coercions_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -2811,6 +2886,33 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 
 		$this->assertParityRows( $this->temporal_select_sql( 'temporal_writes' ) );
+	}
+
+	public function test_temporal_rfc3339_z_writes_match_sqlite(): void {
+		$this->create_temporal_write_table( 'temporal_rfc3339_z' );
+
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_rfc3339_z (id, d, tm, dt, ts, payload) VALUES
+				(1, '2025-10-23T18:30:00Z', '18:30:00', '2025-10-23T18:30:00Z', '2025-10-23T18:30:00Z', 'insert-values')"
+		);
+		$this->assertParityRowCount(
+			"INSERT INTO temporal_rfc3339_z SET
+				id = 2,
+				d = '2025-11-01T01:02:03Z',
+				tm = '18:30:00',
+				dt = '2025-11-01T01:02:03Z',
+				ts = '2025-11-01T01:02:03Z',
+				payload = 'insert-set'"
+		);
+		$this->assertParityRowCount(
+			"UPDATE temporal_rfc3339_z
+			SET d = '2025-12-01T05:06:07Z',
+				dt = '2025-12-01T05:06:07Z',
+				ts = '2025-12-01T05:06:07Z'
+			WHERE id = 1"
+		);
+
+		$this->assertParityRows( $this->temporal_select_sql( 'temporal_rfc3339_z' ) );
 	}
 
 	public function test_temporal_insert_select_explicit_columns_match_sqlite(): void {
