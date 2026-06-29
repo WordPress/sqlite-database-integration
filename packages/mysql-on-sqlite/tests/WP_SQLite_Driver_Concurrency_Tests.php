@@ -97,6 +97,45 @@ class WP_SQLite_Driver_Concurrency_Tests extends TestCase {
 		$this->assertReadOnlyQuerySucceedsUnderWriteLock( 'DESCRIBE t' );
 	}
 
+	public function testSetQueryOpensReadOnlyTransaction(): void {
+		$driver = $this->create_in_memory_driver();
+		$driver->query( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
+
+		$driver->query( "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'" );
+
+		$this->assertSame( 'BEGIN', $driver->get_last_sqlite_queries()[0]['sql'] );
+	}
+
+	public function testSetQuerySucceedsWhileAnotherConnectionHoldsWriteLock(): void {
+		// Connection A: set up the database and hold a write transaction.
+		$conn_a   = new WP_SQLite_Connection( array( 'path' => $this->db_path ) );
+		$driver_a = new WP_SQLite_Driver( $conn_a, 'wp' );
+		$driver_a->query( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
+		$driver_a->query( "INSERT INTO t VALUES (1, 'Alice')" );
+
+		// Simulate another PHP process holding a write transaction.
+		$conn_a->get_pdo()->exec( 'BEGIN IMMEDIATE' );
+
+		try {
+			// Connection B with zero timeout — any lock conflict fails immediately.
+			$conn_b   = new WP_SQLite_Connection(
+				array(
+					'path'    => $this->db_path,
+					'timeout' => 0,
+				)
+			);
+			$driver_b = new WP_SQLite_Driver( $conn_b, 'wp' );
+			$conn_b->get_pdo()->setAttribute( PDO::ATTR_TIMEOUT, 0 );
+
+			// SET writes nothing, so it must not contend for the write lock.
+			$result = $driver_b->query( "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'" );
+
+			$this->assertSame( 0, $result );
+		} finally {
+			$conn_a->get_pdo()->exec( 'ROLLBACK' );
+		}
+	}
+
 	private function assertReadOnlyQuerySucceedsUnderWriteLock( string $query ): void {
 		// Connection A: set up the database.
 		$conn_a   = new WP_SQLite_Connection( array( 'path' => $this->db_path ) );

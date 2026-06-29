@@ -44,6 +44,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	const GLOBAL_VARIABLES_TABLE_NAME = self::RESERVED_PREFIX . 'global_variables';
 
 	/**
+	 * Name of the connection-private TEMP table used to build empty result sets
+	 * without acquiring a write lock on the database. See create_result_statement_from_data().
+	 */
+	const EMPTY_RESULT_TABLE_NAME = self::RESERVED_PREFIX . 'empty_result';
+
+	/**
 	 * The name of the SQLite driver version variable.
 	 *
 	 * This internal variable is used to store the latest version of the SQLite
@@ -528,6 +534,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $is_readonly;
 
 	/**
+	 * Whether the TEMP table backing empty result sets has been created on this
+	 * connection. See create_result_statement_from_data().
+	 *
+	 * @var bool
+	 */
+	private $empty_result_table_ready = false;
+
+	/**
 	 * Type of wrapper transaction that is active for the MySQL query emulation.
 	 *
 	 * Possible values:
@@ -920,6 +934,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				if (
 					'selectStatement' === $statement_node->rule_name
 					|| 'showStatement' === $statement_node->rule_name
+					// A SET statement only changes session state (sql_mode, etc.)
+					// and writes nothing to the database, so it must not take a
+					// write lock. Treat it as read-only -> deferred BEGIN instead
+					// of BEGIN IMMEDIATE. (Mirrors the SHOW/DESCRIBE handling.)
+					|| 'setStatement' === $statement_node->rule_name
 				) {
 					$this->is_readonly = true;
 				} elseif ( 'utilityStatement' === $statement_node->rule_name ) {
@@ -7003,10 +7022,29 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * This can be done using a noop INSERT statement that modifies no data.
 		 */
 		if ( 0 === count( $columns ) ) {
+			/*
+			 * Build a 0-column statement to represent an empty result set.
+			 *
+			 * A no-op "INSERT ... WHERE FALSE" into a regular table still acquires
+			 * SQLite's write lock, even though it writes nothing. That makes
+			 * no-write statements such as "SET sql_mode = ..." fatal with
+			 * "database is locked" whenever another connection holds the write
+			 * lock. Writing to a connection-private TEMP table uses the temp
+			 * database, which has no shared lock, so it never contends.
+			 */
+			if ( ! $this->empty_result_table_ready ) {
+				$pdo->exec(
+					sprintf(
+						'CREATE TEMP TABLE IF NOT EXISTS %s ( x )',
+						$this->quote_sqlite_identifier( self::EMPTY_RESULT_TABLE_NAME )
+					)
+				);
+				$this->empty_result_table_ready = true;
+			}
 			return $pdo->query(
 				sprintf(
-					'INSERT INTO %s (rowid) SELECT NULL WHERE FALSE',
-					$this->quote_sqlite_identifier( self::GLOBAL_VARIABLES_TABLE_NAME )
+					'INSERT INTO %s ( x ) SELECT NULL WHERE FALSE',
+					$this->quote_sqlite_identifier( self::EMPTY_RESULT_TABLE_NAME )
 				)
 			);
 		}
