@@ -379,6 +379,91 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SELECT ID FROM wp_posts WHERE post_type = '2020-01-02T00:00:00Z' ORDER BY ID" );
 	}
 
+	public function test_rest_date_query_sql_calc_found_rows_shapes_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wp_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					PRIMARY KEY (ID),
+					KEY type_status_date (post_type, post_status, post_date, ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_posts (ID, post_date, post_date_gmt, post_type, post_status) VALUES
+					(1, '2020-01-01 00:00:00', '2020-01-01 00:00:00', 'post', 'publish'),
+					(2, '2020-01-02 12:00:00', '2020-01-02 12:00:00', 'post', 'publish'),
+					(3, '2020-01-03 00:00:00', '2020-01-03 00:00:00', 'post', 'publish'),
+					(4, '2020-01-02 11:00:00', '2020-01-02 12:00:00', 'page', 'publish'),
+					(5, '2020-01-02 10:00:00', '2020-01-02 12:00:00', 'attachment', 'inherit'),
+					(6, '2020-01-02 09:00:00', '2020-01-02 12:00:00', 'post', 'draft')",
+				"CREATE TABLE wp_comments (
+					comment_ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					comment_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					comment_approved VARCHAR(20) NOT NULL DEFAULT '1',
+					PRIMARY KEY (comment_ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wp_comments (comment_ID, comment_date_gmt, comment_approved) VALUES
+					(11, '2020-01-01 00:00:00', '1'),
+					(12, '2020-01-02 12:00:00', '1'),
+					(13, '2020-01-03 00:00:00', '1'),
+					(14, '2020-01-02 12:00:00', 'spam')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS wp_posts.ID
+			FROM wp_posts
+			WHERE 1=1
+				AND ( wp_posts.post_date_gmt >= '2020-01-02T00:00:00Z'
+					AND wp_posts.post_date_gmt <= '2020-01-02T23:59:59Z' )
+				AND wp_posts.post_type = 'post'
+				AND wp_posts.post_status = 'publish'
+			ORDER BY wp_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS wp_posts.ID
+			FROM wp_posts
+			WHERE 1=1
+				AND ( wp_posts.post_date_gmt >= '2020-01-02T00:00:00Z'
+					AND wp_posts.post_date_gmt <= '2020-01-02T23:59:59Z' )
+				AND wp_posts.post_type = 'page'
+				AND wp_posts.post_status = 'publish'
+			ORDER BY wp_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS wp_posts.ID
+			FROM wp_posts
+			WHERE 1=1
+				AND ( wp_posts.post_date_gmt >= '2020-01-02T00:00:00Z'
+					AND wp_posts.post_date_gmt <= '2020-01-02T23:59:59Z' )
+				AND wp_posts.post_type = 'attachment'
+				AND wp_posts.post_status = 'inherit'
+			ORDER BY wp_posts.post_date DESC
+			LIMIT 0, 10"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS wp_comments.comment_ID
+			FROM wp_comments
+			WHERE 1=1
+				AND ( wp_comments.comment_date_gmt >= '2020-01-02T00:00:00Z'
+					AND wp_comments.comment_date_gmt <= '2020-01-02T23:59:59Z' )
+				AND comment_approved = '1'
+			ORDER BY wp_comments.comment_date_gmt DESC
+			LIMIT 0, 10"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
 	public function test_non_temporal_text_and_blob_write_coercions_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

@@ -2253,6 +2253,21 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$driver,
 			$tokenize->invoke(
 				$driver,
+				"SELECT SQL_CALC_FOUND_ROWS wp_posts.ID FROM wp_posts
+				WHERE 1=1
+					AND ( wp_posts.post_date_gmt >= '2020-01-02T00:00:00Z'
+						AND wp_posts.post_date_gmt <= '2020-01-02T23:59:59Z' )
+				ORDER BY wp_posts.post_date DESC
+				LIMIT 0, 10"
+			)
+		);
+		$this->assertStringContainsString( 'TRY_CAST("wp_posts"."post_date_gmt" AS TIMESTAMP) >= TRY_CAST(\'2020-01-02T00:00:00Z\' AS TIMESTAMP)', $sql );
+		$this->assertStringContainsString( 'TRY_CAST("wp_posts"."post_date_gmt" AS TIMESTAMP) <= TRY_CAST(\'2020-01-02T23:59:59Z\' AS TIMESTAMP)', $sql );
+
+		$sql = $translate->invoke(
+			$driver,
+			$tokenize->invoke(
+				$driver,
 				"SELECT p.ID FROM wp_posts AS p
 				WHERE p.post_modified_gmt <= '2020-01-02T23:59:59Z'"
 			)

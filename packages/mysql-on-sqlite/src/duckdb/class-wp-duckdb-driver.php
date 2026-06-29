@@ -22501,7 +22501,7 @@ class WP_DuckDB_Driver {
 	 * @return string|null Translated comparison, or null when the pattern does not match.
 	 */
 	private function translate_wordpress_datetime_iso_literal_comparison( array $tokens, int &$index ): ?string {
-		if ( ! $this->is_top_level_token_offset( $tokens, $index ) ) {
+		if ( ! $this->is_outer_query_token_offset( $tokens, $index ) ) {
 			return null;
 		}
 
@@ -22632,25 +22632,34 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Check whether a token offset is at top-level parenthesis depth.
+	 * Check whether a token offset belongs to the outer SELECT rather than a nested SELECT.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
 	 * @param int               $target Target token offset.
-	 * @return bool Whether the token is at top-level depth.
+	 * @return bool Whether the token belongs to the outer query.
 	 */
-	private function is_top_level_token_offset( array $tokens, int $target ): bool {
-		$depth = 0;
+	private function is_outer_query_token_offset( array $tokens, int $target ): bool {
+		$depth             = 0;
+		$subquery_by_depth = array();
 		for ( $index = 0; $index < $target; ++$index ) {
 			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
 				++$depth;
+				$subquery_by_depth[ $depth ] = false;
 				continue;
 			}
+
 			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				unset( $subquery_by_depth[ $depth ] );
 				--$depth;
+				continue;
+			}
+
+			if ( WP_MySQL_Lexer::SELECT_SYMBOL === $tokens[ $index ]->id && $depth > 0 ) {
+				$subquery_by_depth[ $depth ] = true;
 			}
 		}
 
-		return 0 === $depth;
+		return ! in_array( true, $subquery_by_depth, true );
 	}
 
 	/**
