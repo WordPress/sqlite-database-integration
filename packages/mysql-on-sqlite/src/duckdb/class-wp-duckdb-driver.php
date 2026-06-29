@@ -296,6 +296,13 @@ class WP_DuckDB_Driver {
 	private $table_name_cache = array();
 
 	/**
+	 * Cached visible user table references by requested table name.
+	 *
+	 * @var array<string,array{table_name:string,temporary:bool}>
+	 */
+	private $visible_table_reference_cache = array();
+
+	/**
 	 * Cached MySQL-facing table metadata by table set.
 	 *
 	 * @var array<string,array<string,array<string,mixed>>>
@@ -25999,6 +26006,7 @@ class WP_DuckDB_Driver {
 	private function clear_schema_metadata_cache( ?string $table_name = null, ?bool $temporary = null ): void {
 		if ( null === $table_name ) {
 			$this->table_name_cache              = array();
+			$this->visible_table_reference_cache = array();
 			$this->table_metadata_cache          = array();
 			$this->column_metadata_cache         = array();
 			$this->table_column_metadata_cache   = array();
@@ -26008,6 +26016,7 @@ class WP_DuckDB_Driver {
 			return;
 		}
 
+		unset( $this->visible_table_reference_cache[ strtolower( $table_name ) ] );
 		unset( $this->primary_key_index_rows_cache[ $this->metadata_table_cache_key( $table_name, false ) ] );
 
 		$sets = null === $temporary ? array( false, true ) : array( $temporary );
@@ -28628,20 +28637,27 @@ class WP_DuckDB_Driver {
 	 * @return array{table_name:string,temporary:bool}|null Resolved table reference, or null when no table matches.
 	 */
 	private function resolve_visible_user_table_reference( string $table_name ): ?array {
+		$cache_key = strtolower( $table_name );
+		if ( isset( $this->visible_table_reference_cache[ $cache_key ] ) ) {
+			return $this->visible_table_reference_cache[ $cache_key ];
+		}
+
 		$temporary_table_name = $this->resolve_temporary_user_table_name( $table_name );
 		if ( null !== $temporary_table_name ) {
-			return array(
+			$this->visible_table_reference_cache[ $cache_key ] = array(
 				'table_name' => $temporary_table_name,
 				'temporary'  => true,
 			);
+			return $this->visible_table_reference_cache[ $cache_key ];
 		}
 
 		$persistent_table_name = $this->resolve_persistent_user_table_name( $table_name );
 		if ( null !== $persistent_table_name ) {
-			return array(
+			$this->visible_table_reference_cache[ $cache_key ] = array(
 				'table_name' => $persistent_table_name,
 				'temporary'  => false,
 			);
+			return $this->visible_table_reference_cache[ $cache_key ];
 		}
 
 		return null;
