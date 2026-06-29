@@ -300,11 +300,11 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				"SELECT DISTINCT ID FROM wp_posts WHERE post_type = 'page' ORDER BY menu_order ASC, post_title ASC",
 				"SELECT ID FROM wp_posts WHERE post_type = 'post' ORDER BY menu_order ASC, post_title ASC",
-				"SELECT ID FROM wp_posts ORDER BY menu_order ASC, post_title ASC",
+				'SELECT ID FROM wp_posts ORDER BY menu_order ASC, post_title ASC',
 				"SELECT ID FROM wp_posts WHERE post_type = 'page' ORDER BY post_title ASC",
 				"SELECT ID FROM wp_posts WHERE post_type = 'page' ORDER BY menu_order ASC, post_title DESC",
 				"SELECT ID FROM wp_posts WHERE post_type = 'page' ORDER BY menu_order ASC, post_title ASC, ID ASC",
-				"SELECT ID FROM wp_posts GROUP BY ID ORDER BY menu_order ASC, post_title ASC",
+				'SELECT ID FROM wp_posts GROUP BY ID ORDER BY menu_order ASC, post_title ASC',
 				"SELECT ID FROM media_items WHERE post_type = 'page' ORDER BY menu_order ASC, post_title ASC",
 				"SELECT p.ID FROM wp_posts p INNER JOIN wp_postmeta pm ON pm.post_id = p.ID WHERE p.post_type = 'page' ORDER BY p.menu_order ASC, p.post_title ASC",
 			) as $sql
