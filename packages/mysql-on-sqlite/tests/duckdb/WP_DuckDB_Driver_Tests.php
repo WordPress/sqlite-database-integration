@@ -9554,6 +9554,123 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 0, $driver->get_insert_id() );
 	}
 
+	public function test_wordpress_posts_omitted_auto_increment_insert_uses_cached_metadata_and_returning(): void {
+		$this->requireDuckDBRuntime();
+
+		$path = tempnam( sys_get_temp_dir(), 'duckdb-post-insert-' );
+		unlink( $path );
+
+		try {
+			$setup_driver = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$this->create_wordpress_posts_auto_increment_insert_fixture( $setup_driver );
+			unset( $setup_driver );
+
+			$queries = array();
+			$driver  = $this->query_logged_duckdb_driver( $queries, $path );
+			$queries = array();
+
+			$insert = $driver->query(
+				"INSERT INTO wptests_posts (post_author, post_date, post_title, post_type, post_status)
+				VALUES (1, '2026-01-01 00:00:00', 'First', 'post', 'publish')"
+			);
+
+			$this->assertSame( 1, $insert->rowCount() );
+			$this->assertSame( 1, $driver->get_insert_id() );
+			$this->assertLessThan( 12, count( $queries ), implode( "\n", $queries ) );
+			$this->assertSame( 0, $this->count_duckdb_auto_increment_metadata_queries( $queries, 'wptests_posts' ) );
+			$this->assert_wordpress_posts_omitted_auto_increment_insert_used_returning( $queries, 'ID' );
+
+			$queries = array();
+			$insert  = $driver->query(
+				"INSERT INTO wptests_posts (post_author, post_date, post_title, post_type, post_status)
+				VALUES (2, '2026-01-02 00:00:00', 'Second', 'page', 'draft')"
+			);
+
+			$this->assertSame( 1, $insert->rowCount() );
+			$this->assertSame( 2, $driver->get_insert_id() );
+			$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+			$this->assert_wordpress_posts_omitted_auto_increment_insert_used_returning( $queries, 'ID' );
+			$this->assertSame(
+				array(
+					array(
+						'ID'          => 1,
+						'post_author' => 1,
+						'post_title'  => 'First',
+					),
+					array(
+						'ID'          => 2,
+						'post_author' => 2,
+						'post_title'  => 'Second',
+					),
+				),
+				$driver->query( 'SELECT ID, post_author, post_title FROM wptests_posts ORDER BY ID' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		} finally {
+			@unlink( $path );
+		}
+	}
+
+	public function test_wordpress_posts_omitted_auto_increment_insert_respects_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_posts_auto_increment_insert_fixture( $driver );
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				temp_title VARCHAR(100) NOT NULL,
+				PRIMARY KEY (ID)
+			)'
+		);
+
+		$queries = array();
+		$insert  = $driver->query( "INSERT INTO wptests_posts (temp_title) VALUES ('temporary')" );
+
+		$this->assertSame( 1, $insert->rowCount() );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$this->assert_wordpress_posts_omitted_auto_increment_insert_used_returning( $queries, 'ID' );
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'temp_title' => 'temporary',
+				),
+			),
+			$driver->query( 'SELECT ID, temp_title FROM wptests_posts' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_posts' );
+		$this->assertSame(
+			array(),
+			$driver->query( 'SELECT ID, post_title FROM wptests_posts' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$insert  = $driver->query(
+			"INSERT INTO wptests_posts (post_author, post_date, post_title, post_type, post_status)
+			VALUES (10, '2026-01-10 00:00:00', 'persistent', 'post', 'publish')"
+		);
+
+		$this->assertSame( 1, $insert->rowCount() );
+		$this->assertSame( 1, $driver->get_insert_id() );
+		$this->assert_wordpress_posts_omitted_auto_increment_insert_used_returning( $queries, 'ID' );
+		$this->assertSame(
+			array(
+				array(
+					'ID'         => 1,
+					'post_title' => 'persistent',
+				),
+			),
+			$driver->query( 'SELECT ID, post_title FROM wptests_posts' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_insert_ignore_explicit_auto_increment_insert_id_skips_ignored_rows(): void {
 		$this->requireDuckDBRuntime();
 
@@ -19664,6 +19781,21 @@ SQL
 		);
 	}
 
+	private function create_wordpress_posts_auto_increment_insert_fixture( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_title TEXT NOT NULL,
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID),
+				KEY type_status_date (post_type, post_status, post_date, ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+	}
+
 	private function wordpress_options_autoload_select_sql(): string {
 		return "SELECT option_name, option_value FROM wptests_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')";
 	}
@@ -19768,6 +19900,34 @@ SQL
 		$this->assertSame( 'post_title', $title_meta['mysqli:orgname'] );
 		$this->assertSame( $table_name, $title_meta['mysqli:orgtable'] );
 		$this->assertSame( 252, $title_meta['mysqli:type'] );
+	}
+
+	private function assert_wordpress_posts_omitted_auto_increment_insert_used_returning( array $queries, string $column_name ): void {
+		$this->assertNotEmpty( $queries );
+		$last_query = end( $queries );
+		$this->assertStringContainsString( 'INSERT INTO ', $last_query );
+		$this->assertStringContainsString( 'wptests_posts', $last_query );
+		$this->assertStringContainsString( ' RETURNING "' . $column_name . '"', $last_query );
+
+		foreach ( $queries as $query ) {
+			$this->assertStringNotContainsString( 'SELECT MAX("' . $column_name . '")', $query );
+			$this->assertStringNotContainsString( 'SELECT currval(', $query );
+		}
+	}
+
+	private function count_duckdb_auto_increment_metadata_queries( array $queries, string $table_name ): int {
+		$count = 0;
+		foreach ( $queries as $query ) {
+			if (
+				false !== strpos( $query, 'SELECT column_name FROM "__wp_duckdb_column_metadata"' )
+				&& false !== strpos( $query, "table_name = '" . $table_name . "'" )
+				&& false !== strpos( $query, "extra = 'auto_increment'" )
+			) {
+				++$count;
+			}
+		}
+
+		return $count;
 	}
 
 	private function count_duckdb_column_metadata_queries( array $queries, string $table_name ): int {

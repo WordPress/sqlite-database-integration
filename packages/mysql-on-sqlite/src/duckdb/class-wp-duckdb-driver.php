@@ -25639,6 +25639,24 @@ class WP_DuckDB_Driver {
 			return $this->auto_increment_metadata_cache[ $cache_key ];
 		}
 
+		if ( isset( $this->table_column_metadata_cache[ $cache_key ] ) ) {
+			foreach ( $this->table_column_metadata_cache[ $cache_key ] as $metadata ) {
+				if (
+					! isset( $metadata['column_name'] )
+					|| false === stripos( (string) ( $metadata['extra'] ?? '' ), 'auto_increment' )
+				) {
+					continue;
+				}
+
+				$column_name                                       = (string) $metadata['column_name'];
+				$this->auto_increment_metadata_cache[ $cache_key ] = array(
+					'column_name'   => $column_name,
+					'sequence_name' => $this->sequence_name( $table_name, $column_name, $temporary ),
+				);
+				return $this->auto_increment_metadata_cache[ $cache_key ];
+			}
+		}
+
 		try {
 			$stmt = $this->connection->query(
 				'SELECT column_name FROM '
