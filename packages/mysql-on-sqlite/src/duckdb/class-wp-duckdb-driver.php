@@ -628,6 +628,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_posts_slug_status_lookup_result;
 		}
 
+		$wordpress_term_relationships_distinct_terms_result = $this->execute_wordpress_term_relationships_distinct_terms_fast_path_statement( $normalized );
+		if ( null !== $wordpress_term_relationships_distinct_terms_result ) {
+			return $wordpress_term_relationships_distinct_terms_result;
+		}
+
 		$wordpress_usermeta_cache_load_result = $this->execute_wordpress_usermeta_cache_load_fast_path_statement( $normalized );
 		if ( null !== $wordpress_usermeta_cache_load_result ) {
 			return $wordpress_usermeta_cache_load_result;
@@ -1037,6 +1042,150 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute WordPress' hot term relationship DISTINCT lookup without full parser fanout.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_term_relationships_distinct_terms_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\\s])*\'';
+		if (
+			! preg_match(
+				'/^SELECT\s+DISTINCT\s+(?<terms_select_alias>' . $identifier_pattern . ')\s*\.\s*(?<term_id_column>`term_id`|term_id)\s+FROM\s+(?<terms_table>' . $identifier_pattern . ')\s+AS\s+(?<terms_alias>' . $identifier_pattern . ')\s+INNER\s+JOIN\s+(?<taxonomy_table>' . $identifier_pattern . ')\s+AS\s+(?<taxonomy_alias>' . $identifier_pattern . ')\s+ON\s+(?<terms_on_alias>' . $identifier_pattern . ')\s*\.\s*(?<terms_on_column>`term_id`|term_id)\s*=\s*(?<taxonomy_on_alias>' . $identifier_pattern . ')\s*\.\s*(?<taxonomy_on_column>`term_id`|term_id)\s+INNER\s+JOIN\s+(?<relationships_table>' . $identifier_pattern . ')\s+AS\s+(?<relationships_alias>' . $identifier_pattern . ')\s+ON\s+(?<relationships_on_alias>' . $identifier_pattern . ')\s*\.\s*(?<relationships_on_column>`term_taxonomy_id`|term_taxonomy_id)\s*=\s*(?<taxonomy_relationship_alias>' . $identifier_pattern . ')\s*\.\s*(?<taxonomy_relationship_column>`term_taxonomy_id`|term_taxonomy_id)\s+WHERE\s+(?<taxonomy_where_alias>' . $identifier_pattern . ')\s*\.\s*(?<taxonomy_where_column>`taxonomy`|taxonomy)\s+IN\s*\(\s*(?<taxonomies>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\s*\)\s+AND\s+(?<relationships_where_alias>' . $identifier_pattern . ')\s*\.\s*(?<relationships_where_column>`object_id`|object_id)\s+IN\s*\(\s*(?<object_ids>[0-9]+(?:\s*,\s*[0-9]+)*)\s*\)\s+ORDER\s+BY\s+(?<order_alias>' . $identifier_pattern . ')\s*\.\s*(?<order_column>`name`|name)\s+ASC$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$terms_table         = $this->fast_path_mysql_identifier_value( $matches['terms_table'] );
+		$taxonomy_table      = $this->fast_path_mysql_identifier_value( $matches['taxonomy_table'] );
+		$relationships_table = $this->fast_path_mysql_identifier_value( $matches['relationships_table'] );
+		if (
+			! $this->is_wordpress_terms_table_name( $terms_table )
+			|| ! $this->is_wordpress_term_taxonomy_table_name( $taxonomy_table )
+			|| ! $this->is_wordpress_term_relationships_table_name( $relationships_table )
+		) {
+			return null;
+		}
+
+		$terms_alias         = $this->fast_path_mysql_identifier_value( $matches['terms_alias'] );
+		$taxonomy_alias      = $this->fast_path_mysql_identifier_value( $matches['taxonomy_alias'] );
+		$relationships_alias = $this->fast_path_mysql_identifier_value( $matches['relationships_alias'] );
+		if (
+			! $this->fast_path_identifier_matches( $terms_alias, $matches['terms_select_alias'] )
+			|| ! $this->fast_path_identifier_matches( $terms_alias, $matches['terms_on_alias'] )
+			|| ! $this->fast_path_identifier_matches( $terms_alias, $matches['order_alias'] )
+			|| ! $this->fast_path_identifier_matches( $taxonomy_alias, $matches['taxonomy_on_alias'] )
+			|| ! $this->fast_path_identifier_matches( $taxonomy_alias, $matches['taxonomy_relationship_alias'] )
+			|| ! $this->fast_path_identifier_matches( $taxonomy_alias, $matches['taxonomy_where_alias'] )
+			|| ! $this->fast_path_identifier_matches( $relationships_alias, $matches['relationships_on_alias'] )
+			|| ! $this->fast_path_identifier_matches( $relationships_alias, $matches['relationships_where_alias'] )
+		) {
+			return null;
+		}
+
+		$expected_columns = array(
+			'term_id_column'               => 'term_id',
+			'terms_on_column'              => 'term_id',
+			'taxonomy_on_column'           => 'term_id',
+			'relationships_on_column'      => 'term_taxonomy_id',
+			'taxonomy_relationship_column' => 'term_taxonomy_id',
+			'taxonomy_where_column'        => 'taxonomy',
+			'relationships_where_column'   => 'object_id',
+			'order_column'                 => 'name',
+		);
+		foreach ( $expected_columns as $match_name => $column_name ) {
+			if ( 0 !== strcasecmp( $column_name, $this->fast_path_mysql_identifier_value( $matches[ $match_name ] ) ) ) {
+				return null;
+			}
+		}
+
+		if ( ! preg_match_all( '/' . $literal_pattern . '/', $matches['taxonomies'], $taxonomy_matches ) ) {
+			return null;
+		}
+		$taxonomy_values = array();
+		foreach ( $taxonomy_matches[0] as $taxonomy_literal ) {
+			$taxonomy_values[] = $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $taxonomy_literal ) );
+		}
+		if ( count( $taxonomy_values ) === 0 ) {
+			return null;
+		}
+
+		$object_ids = array();
+		foreach ( preg_split( '/\s*,\s*/', trim( $matches['object_ids'] ) ) as $id_literal ) {
+			$object_id = $this->fast_path_mysql_unsigned_integer_literal_value( $id_literal );
+			if ( null === $object_id ) {
+				return null;
+			}
+			$object_ids[] = $object_id;
+		}
+		if ( count( $object_ids ) === 0 ) {
+			return null;
+		}
+
+		$terms_alias_sql         = $this->connection->quote_identifier( $terms_alias );
+		$taxonomy_alias_sql      = $this->connection->quote_identifier( $taxonomy_alias );
+		$relationships_alias_sql = $this->connection->quote_identifier( $relationships_alias );
+		$sql                     = 'SELECT DISTINCT '
+			. $terms_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' FROM '
+			. $this->connection->quote_identifier( $terms_table )
+			. ' AS '
+			. $terms_alias_sql
+			. ' INNER JOIN '
+			. $this->connection->quote_identifier( $taxonomy_table )
+			. ' AS '
+			. $taxonomy_alias_sql
+			. ' ON '
+			. $terms_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' = '
+			. $taxonomy_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' INNER JOIN '
+			. $this->connection->quote_identifier( $relationships_table )
+			. ' AS '
+			. $relationships_alias_sql
+			. ' ON '
+			. $relationships_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_taxonomy_id' )
+			. ' = '
+			. $taxonomy_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_taxonomy_id' )
+			. ' WHERE '
+			. $taxonomy_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'taxonomy' )
+			. ' IN ('
+			. implode( ', ', $taxonomy_values )
+			. ') AND '
+			. $relationships_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'object_id' )
+			. ' IN ('
+			. implode( ', ', array_map( 'strval', $object_ids ) )
+			. ') ORDER BY '
+			. $terms_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'name' )
+			. ' ASC';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $result;
+	}
+
+	/**
 	 * Execute WordPress' usermeta cache-load SELECT without parser/metadata fanout.
 	 *
 	 * @param string $normalized_query Normalized MySQL query.
@@ -1111,6 +1260,17 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether a decoded identifier matches an accepted fast-path identifier token.
+	 *
+	 * @param string $expected   Expected identifier value.
+	 * @param string $identifier MySQL identifier token.
+	 * @return bool Whether identifiers match case-insensitively.
+	 */
+	private function fast_path_identifier_matches( string $expected, string $identifier ): bool {
+		return 0 === strcasecmp( $expected, $this->fast_path_mysql_identifier_value( $identifier ) );
+	}
+
+	/**
 	 * Decode an unsigned integer literal accepted by the fast-path regex.
 	 *
 	 * @param string $literal MySQL integer literal.
@@ -1181,6 +1341,36 @@ class WP_DuckDB_Driver {
 	 */
 	private function is_wordpress_usermeta_table_name( string $table_name ): bool {
 		return 1 === preg_match( '/^(?:usermeta|[A-Za-z0-9_]+_usermeta)$/i', $table_name );
+	}
+
+	/**
+	 * Check whether a table name is the WordPress terms table shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table name is terms or a prefixed terms table.
+	 */
+	private function is_wordpress_terms_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/^(?:terms|[A-Za-z0-9_]+_terms)$/i', $table_name );
+	}
+
+	/**
+	 * Check whether a table name is the WordPress term_taxonomy table shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table name is term_taxonomy or a prefixed term_taxonomy table.
+	 */
+	private function is_wordpress_term_taxonomy_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/^(?:term_taxonomy|[A-Za-z0-9_]+_term_taxonomy)$/i', $table_name );
+	}
+
+	/**
+	 * Check whether a table name is the WordPress term_relationships table shape.
+	 *
+	 * @param string $table_name Table name.
+	 * @return bool Whether the table name is term_relationships or a prefixed term_relationships table.
+	 */
+	private function is_wordpress_term_relationships_table_name( string $table_name ): bool {
+		return 1 === preg_match( '/^(?:term_relationships|[A-Za-z0-9_]+_term_relationships)$/i', $table_name );
 	}
 
 	/**

@@ -14954,6 +14954,152 @@ SQL
 		$this->assertStringNotContainsString( 'SELECT "wptests_posts".* FROM "wptests_posts"', implode( "\n", $queries ) );
 	}
 
+	public function test_wordpress_term_relationships_distinct_terms_fast_path_uses_one_native_query(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$queries = array();
+		$result  = $driver->query( $this->wordpress_term_relationships_distinct_terms_select_sql() );
+		$this->assertSame(
+			array(
+				array(
+					'term_id' => 1,
+				),
+				array(
+					'term_id' => 2,
+				),
+			),
+			array_map(
+				function ( array $row ): array {
+					return array( 'term_id' => (int) $row['term_id'] );
+				},
+				$result->fetchAll( PDO::FETCH_ASSOC )
+			)
+		);
+		$this->assertSame( 'term_id', $result->getColumnMeta( 0 )['name'] );
+		$this->assert_wordpress_term_relationships_distinct_terms_select_used_one_native_query( $queries );
+		$this->assertSame(
+			array(
+				array(
+					'found_rows' => 2,
+				),
+			),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( "UPDATE wptests_term_taxonomy SET taxonomy = 'WPTESTS_TAX' WHERE term_taxonomy_id IN (101, 102)" );
+		$queries = array();
+		$result  = $driver->query( $this->wordpress_term_relationships_distinct_terms_select_sql() );
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $result->fetchAll( PDO::FETCH_ASSOC ), 'term_id' ) ) );
+		$this->assert_wordpress_term_relationships_distinct_terms_select_used_one_native_query( $queries );
+	}
+
+	public function test_wordpress_term_relationships_distinct_terms_fast_path_respects_temporary_shadow_tables(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+		$this->create_wordpress_taxonomy_group_by_temporary_shadow_tables( $driver );
+
+		$queries = array();
+		$result  = $driver->query( $this->wordpress_term_relationships_distinct_terms_select_sql() );
+		$this->assertSame(
+			array(
+				array(
+					'term_id' => 10,
+				),
+				array(
+					'term_id' => 20,
+				),
+			),
+			array_map(
+				function ( array $row ): array {
+					return array( 'term_id' => (int) $row['term_id'] );
+				},
+				$result->fetchAll( PDO::FETCH_ASSOC )
+			)
+		);
+		$this->assert_wordpress_term_relationships_distinct_terms_select_used_one_native_query( $queries );
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_term_relationships' );
+		$driver->query( 'DROP TEMPORARY TABLE wptests_term_taxonomy' );
+		$driver->query( 'DROP TEMPORARY TABLE wptests_terms' );
+		$result = $driver->query( $this->wordpress_term_relationships_distinct_terms_select_sql() );
+		$this->assertSame( 1, (int) $result->fetchAll( PDO::FETCH_ASSOC )[0]['term_id'] );
+	}
+
+	public function test_wordpress_term_relationships_distinct_terms_fast_path_supports_backtick_identifiers(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT DISTINCT `t`.`term_id`
+			FROM `wptests_terms` AS `t`
+				INNER JOIN `wptests_term_taxonomy` AS `tt` ON `t`.`term_id` = `tt`.`term_id`
+				INNER JOIN `wptests_term_relationships` AS `tr` ON `tr`.`term_taxonomy_id` = `tt`.`term_taxonomy_id`
+			WHERE `tt`.`taxonomy` IN ('wptests_tax')
+				AND `tr`.`object_id` IN (201, 202)
+			ORDER BY `t`.`name` ASC"
+		);
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $result->fetchAll( PDO::FETCH_ASSOC ), 'term_id' ) ) );
+		$this->assert_wordpress_term_relationships_distinct_terms_select_used_one_native_query( $queries );
+	}
+
+	public function test_wordpress_term_relationships_distinct_terms_fast_path_does_not_capture_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS DISTINCT t.term_id
+			FROM wptests_terms AS t
+				INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+				INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			WHERE tt.taxonomy IN ('wptests_tax')
+				AND tr.object_id IN (201, 202)
+			ORDER BY t.name ASC"
+		);
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $result->fetchAll( PDO::FETCH_ASSOC ), 'term_id' ) ) );
+		$this->assertStringContainsString( '__wp_duckdb_found_rows', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT DISTINCT t.term_id
+			FROM wptests_terms AS t
+				INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+				INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			WHERE tt.taxonomy IN ('wptests_tax')
+				AND tr.object_id IN (201, 202)
+			ORDER BY t.term_id ASC"
+		);
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $result->fetchAll( PDO::FETCH_ASSOC ), 'term_id' ) ) );
+		$this->assertStringNotContainsString( 'SELECT DISTINCT "t"."term_id" FROM "wptests_terms" AS "t"', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT DISTINCT t.term_id
+			FROM wptests_terms AS t
+				LEFT JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+				INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			WHERE tt.taxonomy IN ('wptests_tax')
+				AND tr.object_id IN (201, 202)
+			ORDER BY t.name ASC"
+		);
+		$this->assertSame( array( 1, 2 ), array_map( 'intval', array_column( $result->fetchAll( PDO::FETCH_ASSOC ), 'term_id' ) ) );
+		$this->assertStringNotContainsString( 'SELECT DISTINCT "t"."term_id" FROM "wptests_terms" AS "t"', implode( "\n", $queries ) );
+	}
+
 	public function test_wordpress_usermeta_cache_load_fast_path_uses_one_native_query_on_fresh_driver(): void {
 		$this->requireDuckDBRuntime();
 
@@ -20458,6 +20604,16 @@ SQL
 			ORDER BY wptests_posts.post_date DESC";
 	}
 
+	private function wordpress_term_relationships_distinct_terms_select_sql(): string {
+		return "SELECT DISTINCT t.term_id
+			FROM wptests_terms AS t
+				INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+				INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			WHERE tt.taxonomy IN ('wptests_tax')
+				AND tr.object_id IN (201, 202)
+			ORDER BY t.name ASC";
+	}
+
 	private function assert_wordpress_options_autoload_rows( WP_DuckDB_Driver $driver ): void {
 		$result = $driver->query( $this->wordpress_options_autoload_select_sql() );
 		$this->assert_wordpress_options_autoload_result( $result );
@@ -20585,6 +20741,18 @@ SQL
 		$this->assertStringContainsString( '"wptests_posts"."post_type" IN (\'post\', \'page\', \'attachment\')', $queries[0] );
 		$this->assertStringContainsString( '"wptests_posts"."post_status" = \'publish\'', $queries[0] );
 		$this->assertStringContainsString( 'ORDER BY "wptests_posts"."post_date" DESC, "wptests_posts"."ID" DESC', $queries[0] );
+	}
+
+	private function assert_wordpress_term_relationships_distinct_terms_select_used_one_native_query( array $queries ): void {
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_terms' ) );
+		$this->assertStringContainsString( 'SELECT DISTINCT "t"."term_id" FROM "wptests_terms" AS "t"', $queries[0] );
+		$this->assertStringContainsString( 'INNER JOIN "wptests_term_taxonomy" AS "tt"', $queries[0] );
+		$this->assertStringContainsString( 'INNER JOIN "wptests_term_relationships" AS "tr"', $queries[0] );
+		$this->assertStringContainsString( '"tt"."taxonomy" IN (\'wptests_tax\')', $queries[0] );
+		$this->assertStringContainsString( '"tr"."object_id" IN (201, 202)', $queries[0] );
+		$this->assertStringContainsString( 'ORDER BY "t"."name" ASC', $queries[0] );
 	}
 
 	private function assert_wordpress_posts_id_lookup_metadata( WP_DuckDB_Result_Statement $result, string $table_name ): void {
@@ -20847,6 +21015,50 @@ SQL
 				(201, 101, 0),
 				(202, 102, 0),
 				(203, 101, 0)'
+		);
+	}
+
+	private function create_wordpress_taxonomy_group_by_temporary_shadow_tables( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TEMPORARY TABLE wptests_terms (
+				term_id BIGINT(20) UNSIGNED NOT NULL,
+				name VARCHAR(200) NOT NULL DEFAULT '',
+				PRIMARY KEY (term_id)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TEMPORARY TABLE wptests_term_taxonomy (
+				term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL,
+				term_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				taxonomy VARCHAR(32) NOT NULL DEFAULT '',
+				PRIMARY KEY (term_taxonomy_id),
+				UNIQUE KEY term_id_taxonomy (term_id, taxonomy)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_term_relationships (
+				object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				PRIMARY KEY (object_id, term_taxonomy_id)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+		$driver->query(
+			"INSERT INTO wptests_terms (term_id, name) VALUES
+				(10, 'Apricot'),
+				(20, 'Blueberry'),
+				(30, 'Cherry')"
+		);
+		$driver->query(
+			"INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES
+				(1001, 20, 'wptests_tax'),
+				(1002, 10, 'wptests_tax'),
+				(1003, 30, 'post_tag')"
+		);
+		$driver->query(
+			'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES
+				(201, 1001),
+				(201, 1002),
+				(202, 1003)'
 		);
 	}
 
