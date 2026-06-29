@@ -1215,7 +1215,23 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				"INSERT INTO wp_found_rows_coercion_usermeta (umeta_id, user_id, meta_key, meta_value) VALUES
 					(10, 0, 'user_age', 'abc'),
 					(11, 1, 'user_age', '10'),
-					(12, 2, 'user_age', '2')",
+					(12, 2, 'user_age', '2'),
+					(13, 1, 'empty_age', NULL)",
+				'CREATE TABLE wp_found_rows_nullable_ids (
+					ID BIGINT(20),
+					label VARCHAR(20)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_found_rows_nullable_ids (ID, label) VALUES
+					(NULL, 'null'),
+					(1, 'one')",
+				'CREATE TABLE wp_plugin_text_ids (
+					id VARCHAR(20),
+					count VARCHAR(20),
+					label VARCHAR(20)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_plugin_text_ids (id, count, label) VALUES
+					('2', '5', 'two'),
+					('abc', '9', 'abc')",
 			)
 		);
 
@@ -1246,6 +1262,33 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			LIMIT 0, 2"
 		);
 		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows(
+			'SELECT meta_value + 0 AS coerced
+			FROM wp_found_rows_coercion_usermeta
+			WHERE umeta_id = 13'
+		);
+
+		$this->assertParityRows(
+			"SELECT label
+			FROM wp_found_rows_nullable_ids
+			WHERE ID != 'abc'
+			ORDER BY label"
+		);
+
+		$this->assertParityRows(
+			"SELECT id
+			FROM wp_plugin_text_ids
+			WHERE id < '10'
+			ORDER BY id"
+		);
+
+		$this->assertParityRows(
+			"SELECT wp_plugin_text_ids.count
+			FROM wp_plugin_text_ids
+			WHERE wp_plugin_text_ids.count < '10'
+			ORDER BY wp_plugin_text_ids.count"
+		);
 	}
 
 	public function test_found_rows_state_matches_sqlite(): void {
@@ -1315,6 +1358,110 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 
 		$this->assertParityRows(
 			'SELECT wp_posts.* FROM wp_posts GROUP BY wp_posts.ID ORDER BY wp_posts.ID'
+		);
+	}
+
+	public function test_select_terms_aggregate_group_by_primary_key_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_terms (
+					term_id BIGINT(20) UNSIGNED NOT NULL,
+					name VARCHAR(200) NOT NULL DEFAULT '',
+					slug VARCHAR(200) NOT NULL DEFAULT '',
+					term_group BIGINT(10) NOT NULL DEFAULT 0,
+					PRIMARY KEY (term_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"CREATE TABLE wptests_term_taxonomy (
+					term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL,
+					term_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					taxonomy VARCHAR(32) NOT NULL DEFAULT '',
+					description LONGTEXT NOT NULL,
+					parent BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					count BIGINT(20) NOT NULL DEFAULT 0,
+					PRIMARY KEY (term_taxonomy_id),
+					UNIQUE KEY term_id_taxonomy (term_id, taxonomy)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				'CREATE TABLE wptests_term_relationships (
+					object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					term_order INT(11) NOT NULL DEFAULT 0,
+					PRIMARY KEY (object_id, term_taxonomy_id),
+					KEY term_taxonomy_id (term_taxonomy_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"CREATE TABLE wptests_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wptests_terms (term_id, name, slug, term_group) VALUES
+					(1, 'Alpha', 'alpha', 0),
+					(2, 'Beta', 'beta', 0)",
+				"INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent, count) VALUES
+					(101, 1, 'wptests_tax', 'First description', 0, 1),
+					(102, 2, 'wptests_tax', 'Second description', 0, 1)",
+				"INSERT INTO wptests_posts (ID, post_type, post_status) VALUES
+					(201, 'post', 'publish'),
+					(202, 'post', 'publish'),
+					(203, 'page', 'publish')",
+				'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order) VALUES
+					(201, 101, 0),
+					(202, 102, 0),
+					(203, 101, 0)',
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT DISTINCT t.term_id, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, COUNT(p.post_type) AS count
+			FROM wptests_terms AS t
+				INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+				LEFT JOIN wptests_term_relationships AS r ON r.term_taxonomy_id = tt.term_taxonomy_id
+				LEFT JOIN wptests_posts AS p ON p.ID = r.object_id
+			WHERE tt.taxonomy IN ('wptests_tax')
+				AND (p.post_type = 'post' OR p.post_type IS NULL)
+				AND (p.post_status = 'publish')
+			GROUP BY t.term_id
+			ORDER BY t.name ASC"
+		);
+	}
+
+	public function test_select_split_shared_term_probe_group_by_primary_key_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_terms (
+					term_id BIGINT(20) UNSIGNED NOT NULL,
+					name VARCHAR(200) NOT NULL DEFAULT '',
+					slug VARCHAR(200) NOT NULL DEFAULT '',
+					term_group BIGINT(10) NOT NULL DEFAULT 0,
+					PRIMARY KEY (term_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"CREATE TABLE wptests_term_taxonomy (
+					term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL,
+					term_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					taxonomy VARCHAR(32) NOT NULL DEFAULT '',
+					description LONGTEXT NOT NULL,
+					parent BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					count BIGINT(20) NOT NULL DEFAULT 0,
+					PRIMARY KEY (term_taxonomy_id),
+					UNIQUE KEY term_id_taxonomy (term_id, taxonomy)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wptests_terms (term_id, name, slug, term_group) VALUES
+					(1, 'Alpha', 'alpha', 0),
+					(3, 'Shared', 'shared', 0)",
+				"INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent, count) VALUES
+					(101, 1, 'category', 'Alpha category', 0, 0),
+					(301, 3, 'category', 'Shared category', 0, 0),
+					(302, 3, 'post_tag', 'Shared tag', 0, 0)",
+			)
+		);
+
+		$this->assertParityRows(
+			'SELECT tt.term_id, t.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tt
+			LEFT JOIN wptests_terms t ON t.term_id = tt.term_id
+			GROUP BY t.term_id
+			HAVING term_tt_count > 1
+			LIMIT 1'
 		);
 	}
 

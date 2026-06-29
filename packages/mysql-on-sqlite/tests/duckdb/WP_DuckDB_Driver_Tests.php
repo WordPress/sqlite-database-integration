@@ -1131,6 +1131,92 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_select_terms_aggregate_group_by_primary_key_wraps_joined_projections(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			"SELECT DISTINCT t.term_id, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, COUNT(p.post_type) AS count
+			FROM wptests_terms AS t
+				INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+				LEFT JOIN wptests_term_relationships AS r ON r.term_taxonomy_id = tt.term_taxonomy_id
+				LEFT JOIN wptests_posts AS p ON p.ID = r.object_id
+			WHERE tt.taxonomy IN ('wptests_tax')
+				AND (p.post_type = 'post' OR p.post_type IS NULL)
+				AND (p.post_status = 'publish')
+			GROUP BY t.term_id
+			ORDER BY t.name ASC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'term_id'          => 1,
+					'term_taxonomy_id' => 101,
+					'taxonomy'         => 'wptests_tax',
+					'description'      => 'First description',
+					'parent'           => 0,
+					'count'            => 1,
+				),
+				array(
+					'term_id'          => 2,
+					'term_taxonomy_id' => 102,
+					'taxonomy'         => 'wptests_tax',
+					'description'      => 'Second description',
+					'parent'           => 0,
+					'count'            => 1,
+				),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE(tt.term_taxonomy_id) AS "term_taxonomy_id"', $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE(tt.taxonomy) AS "taxonomy"', $select_sql );
+		$this->assertStringContainsString( 'GROUP BY t.term_id, "t"."name"', $select_sql );
+	}
+
+	public function test_select_split_shared_term_probe_group_by_primary_key_wraps_joined_projection(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			'SELECT tt.term_id, t.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tt
+			LEFT JOIN wptests_terms t ON t.term_id = tt.term_id
+			GROUP BY t.term_id
+			HAVING term_tt_count > 1
+			LIMIT 1'
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'term_id'       => 3,
+					'name'          => 'Shared',
+					'slug'          => 'shared',
+					'term_group'    => 0,
+					'term_tt_count' => 2,
+				),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE(tt.term_id) AS "term_id"', $select_sql );
+		$this->assertStringContainsString( 'GROUP BY t.term_id, "t"."name", "t"."slug", "t"."term_group"', $select_sql );
+	}
+
 	public function test_sql_calc_found_rows_meta_query_regexp_and_numeric_like_counts(): void {
 		$this->requireDuckDBRuntime();
 
@@ -1892,8 +1978,13 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			"INSERT INTO wptests_usermeta (umeta_id, user_id, meta_key, meta_value) VALUES
 				(10, 0, 'user_age', 'abc'),
 				(11, 1, 'user_age', '10'),
-				(12, 2, 'user_age', '2')"
+				(12, 2, 'user_age', '2'),
+				(13, 1, 'empty_age', NULL)"
 		);
+		$driver->query( 'CREATE TABLE wptests_nullable_ids (ID BIGINT(20), label VARCHAR(20))' );
+		$driver->query( "INSERT INTO wptests_nullable_ids (ID, label) VALUES (NULL, 'null'), (1, 'one')" );
+		$driver->query( 'CREATE TABLE plugin_items (id VARCHAR(20), parent VARCHAR(20), count VARCHAR(20))' );
+		$driver->query( "INSERT INTO plugin_items (id, parent, count) VALUES ('2', 'abc', '5'), ('abc', 'def', '9')" );
 
 		$string_search         = $driver->query(
 			"SELECT SQL_CALC_FOUND_ROWS ID
@@ -1910,7 +2001,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertStringContainsString(
-			"CASE WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END",
+			"CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END",
 			implode( "\n", $string_search_queries )
 		);
 
@@ -1948,9 +2039,35 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertStringContainsString(
-			'COALESCE(TRY_CAST("wptests_usermeta"."meta_value" AS DOUBLE), 0) + 0',
+			'CASE WHEN "wptests_usermeta"."meta_value" IS NULL THEN NULL ELSE COALESCE(TRY_CAST("wptests_usermeta"."meta_value" AS DOUBLE), 0) END + 0',
 			implode( "\n", $meta_sort_queries )
 		);
+
+		$this->assertSame(
+			array( array( 'coerced' => null ) ),
+			$driver->query(
+				'SELECT wptests_usermeta.meta_value + 0 AS coerced
+				FROM wptests_usermeta
+				WHERE umeta_id = 13'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array( array( 'label' => 'one' ) ),
+			$driver->query( "SELECT label FROM wptests_nullable_ids WHERE ID != 'abc' ORDER BY label" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(),
+			$driver->query( "SELECT id FROM plugin_items WHERE id < '10' ORDER BY id" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringNotContainsString( 'TRY_CAST', $this->lastDuckDBQuery( $driver ) );
+
+		$this->assertSame(
+			array(),
+			$driver->query( "SELECT plugin_items.count FROM plugin_items WHERE plugin_items.count < '10' ORDER BY plugin_items.count" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringNotContainsString( 'TRY_CAST', $this->lastDuckDBQuery( $driver ) );
 	}
 
 	public function test_date_format_function_is_emulated(): void {
@@ -5161,15 +5278,15 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0',
-				'duckdb' => 'SELECT id FROM postmeta ORDER BY COALESCE(TRY_CAST("meta_value" AS DOUBLE), 0) + 0',
+				'duckdb' => 'SELECT id FROM postmeta ORDER BY CASE WHEN "meta_value" IS NULL THEN NULL ELSE COALESCE(TRY_CAST("meta_value" AS DOUBLE), 0) END + 0',
 			),
 			array(
 				'mysql'  => 'SELECT ID FROM users WHERE ID = \'yololololo\'',
-				'duckdb' => "SELECT ID FROM users WHERE CASE WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END",
+				'duckdb' => "SELECT ID FROM users WHERE CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END",
 			),
 			array(
 				'mysql'  => 'SELECT ID FROM users WHERE \'12abc\' = users.ID',
-				'duckdb' => "SELECT ID FROM users WHERE CASE WHEN TRY_CAST('12abc' AS DOUBLE) IS NULL THEN FALSE ELSE TRY_CAST('12abc' AS DOUBLE) = \"users\".\"ID\" END",
+				'duckdb' => "SELECT ID FROM users WHERE CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('12abc' AS DOUBLE) IS NULL THEN FALSE ELSE TRY_CAST('12abc' AS DOUBLE) = \"users\".\"ID\" END",
 			),
 		);
 
@@ -5184,6 +5301,9 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'SELECT id FROM postmeta WHERE title < 1780093652 ORDER BY id',
 				"SELECT id FROM postmeta WHERE meta_value < '1780093652' ORDER BY id",
 				'SELECT id FROM postmeta WHERE meta_value < 1780093652.5 ORDER BY id',
+				"SELECT id FROM plugin_items WHERE id < '10' ORDER BY id",
+				"SELECT id FROM plugin_items WHERE parent != 'abc' ORDER BY id",
+				"SELECT plugin_items.count FROM plugin_items WHERE plugin_items.count < '10' ORDER BY plugin_items.count",
 			) as $sql
 		) {
 			$driver->query( $sql );
@@ -17586,6 +17706,72 @@ SQL
 					(1, 12, 0),
 					(2, 11, 0),
 					(4, 11, 0)'
+		);
+	}
+
+	private function create_wordpress_taxonomy_group_by_tables( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_terms (
+				term_id BIGINT(20) UNSIGNED NOT NULL,
+				name VARCHAR(200) NOT NULL DEFAULT '',
+				slug VARCHAR(200) NOT NULL DEFAULT '',
+				term_group BIGINT(10) NOT NULL DEFAULT 0,
+				PRIMARY KEY (term_id)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"CREATE TABLE wptests_term_taxonomy (
+				term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL,
+				term_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				taxonomy VARCHAR(32) NOT NULL DEFAULT '',
+				description LONGTEXT NOT NULL,
+				parent BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				count BIGINT(20) NOT NULL DEFAULT 0,
+				PRIMARY KEY (term_taxonomy_id),
+				UNIQUE KEY term_id_taxonomy (term_id, taxonomy)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			'CREATE TABLE wptests_term_relationships (
+				object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				term_order INT(11) NOT NULL DEFAULT 0,
+				PRIMARY KEY (object_id, term_taxonomy_id),
+				KEY term_taxonomy_id (term_taxonomy_id)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				PRIMARY KEY (ID)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_terms (term_id, name, slug, term_group) VALUES
+				(1, 'Alpha', 'alpha', 0),
+				(2, 'Beta', 'beta', 0),
+				(3, 'Shared', 'shared', 0)"
+		);
+		$driver->query(
+			"INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent, count) VALUES
+				(101, 1, 'wptests_tax', 'First description', 0, 1),
+				(102, 2, 'wptests_tax', 'Second description', 0, 1),
+				(301, 3, 'category', 'Shared category', 0, 0),
+				(302, 3, 'post_tag', 'Shared tag', 0, 0)"
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_type, post_status) VALUES
+				(201, 'post', 'publish'),
+				(202, 'post', 'publish'),
+				(203, 'page', 'publish')"
+		);
+		$driver->query(
+			'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order) VALUES
+				(201, 101, 0),
+				(202, 102, 0),
+				(203, 101, 0)'
 		);
 	}
 
