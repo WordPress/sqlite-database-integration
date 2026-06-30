@@ -10673,22 +10673,29 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		foreach (
 			array(
-				"SELECT ID FROM wp_posts WHERE post_title REGEXP '['"             => 'WHERE FALSE',
-				'SELECT ID FROM wp_posts WHERE post_title RLIKE "["'             => 'WHERE FALSE',
-				"SELECT ID FROM wp_posts WHERE post_title NOT REGEXP '['"         => 'WHERE TRUE',
-				'SELECT ID FROM wp_posts WHERE post_title NOT RLIKE "["'         => 'WHERE TRUE',
-				"SELECT ID FROM wp_posts WHERE post_title REGEXP BINARY '['"      => 'WHERE FALSE',
-				"SELECT ID FROM wp_posts WHERE post_title NOT REGEXP BINARY '['"  => 'WHERE TRUE',
-				"SELECT ID FROM wp_posts WHERE post_title RLIKE BINARY '['"       => 'WHERE FALSE',
-				"SELECT ID FROM wp_posts WHERE post_title NOT RLIKE BINARY '['"   => 'WHERE TRUE',
-				"SELECT ID FROM wp_posts WHERE BINARY post_title REGEXP '['"      => 'WHERE FALSE',
-				"SELECT ID FROM wp_posts WHERE BINARY post_title NOT RLIKE '['"   => 'WHERE TRUE',
+				"SELECT ID FROM wp_posts WHERE post_title REGEXP '['"             => 'FALSE',
+				'SELECT ID FROM wp_posts WHERE post_title RLIKE "["'             => 'FALSE',
+				"SELECT ID FROM wp_posts WHERE post_title NOT REGEXP '['"         => 'TRUE',
+				'SELECT ID FROM wp_posts WHERE post_title NOT RLIKE "["'         => 'TRUE',
+				"SELECT ID FROM wp_posts WHERE post_title REGEXP BINARY '['"      => 'FALSE',
+				"SELECT ID FROM wp_posts WHERE post_title NOT REGEXP BINARY '['"  => 'TRUE',
+				"SELECT ID FROM wp_posts WHERE post_title RLIKE BINARY '['"       => 'FALSE',
+				"SELECT ID FROM wp_posts WHERE post_title NOT RLIKE BINARY '['"   => 'TRUE',
+				"SELECT ID FROM wp_posts WHERE BINARY post_title REGEXP '['"      => 'FALSE',
+				"SELECT ID FROM wp_posts WHERE BINARY post_title NOT RLIKE '['"   => 'TRUE',
 			) as $mysql => $expected
 		) {
 			$sql = $translate->invoke( $driver, $tokenize->invoke( $driver, $mysql ) );
-			$this->assertStringContainsString( $expected, $sql, $mysql );
+			$this->assertStringContainsString( "COALESCE(CAST((post_title) AS VARCHAR), '') IS NULL THEN {$expected} ELSE {$expected} END", $sql, $mysql );
 			$this->assertStringNotContainsString( 'regexp_matches', $sql, $mysql );
 		}
+
+		$missing_column = $translate->invoke(
+			$driver,
+			$tokenize->invoke( $driver, "SELECT ID FROM wp_posts WHERE missing_col REGEXP '['" )
+		);
+		$this->assertStringContainsString( "COALESCE(CAST((missing_col) AS VARCHAR), '') IS NULL THEN FALSE ELSE FALSE END", $missing_column );
+		$this->assertStringNotContainsString( 'regexp_matches', $missing_column );
 
 		$valid_literal = $translate->invoke(
 			$driver,

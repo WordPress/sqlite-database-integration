@@ -24817,7 +24817,7 @@ class WP_DuckDB_Driver {
 
 		$left_expression = $this->pop_regexp_left_expression( $pieces );
 		if ( ! $this->regexp_literal_pattern_is_valid( $pattern, $binary ) ) {
-			return $negated ? 'TRUE' : 'FALSE';
+			return $this->sqlite_invalid_regexp_literal_predicate_sql( $left_expression, $negated );
 		}
 
 		$left        = 'COALESCE(CAST((' . $left_expression . ") AS VARCHAR), '')";
@@ -24827,6 +24827,22 @@ class WP_DuckDB_Driver {
 			: sprintf( "regexp_matches(%s, %s, 'i')", $left, $pattern_sql );
 
 		return $negated ? 'NOT ' . $predicate : $predicate;
+	}
+
+	/**
+	 * Build SQLite-compatible SQL for an invalid literal REGEXP pattern.
+	 *
+	 * @param string $left_expression Left-hand expression SQL.
+	 * @param bool   $negated         Whether this is NOT REGEXP.
+	 * @return string DuckDB SQL.
+	 */
+	private function sqlite_invalid_regexp_literal_predicate_sql( string $left_expression, bool $negated ): string {
+		$result = $negated ? 'TRUE' : 'FALSE';
+		return '(CASE WHEN COALESCE(CAST((' . $left_expression . ") AS VARCHAR), '') IS NULL THEN "
+			. $result
+			. ' ELSE '
+			. $result
+			. ' END)';
 	}
 
 	/**

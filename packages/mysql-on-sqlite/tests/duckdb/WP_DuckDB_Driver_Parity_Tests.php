@@ -4261,6 +4261,28 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 	}
 
+	public function test_invalid_literal_regexp_patterns_preserve_left_expression_errors(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_invalid_regexp_errors (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_title VARCHAR(255),
+					PRIMARY KEY (ID)
+				)',
+				"INSERT INTO wp_invalid_regexp_errors (ID, post_title) VALUES (1, 'Apple')",
+			)
+		);
+
+		foreach (
+			array(
+				"SELECT ID FROM wp_invalid_regexp_errors WHERE missing_col REGEXP '[' ORDER BY ID",
+				"SELECT ID FROM wp_invalid_regexp_errors WHERE missing_col NOT REGEXP '[' ORDER BY ID",
+			) as $sql
+		) {
+			$this->assertParityErrorContains( $sql, 'missing_col' );
+		}
+	}
+
 	public function test_replace_values_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
