@@ -240,6 +240,12 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			array(
 				"SELECT ID, COALESCE(DATE(post_date_gmt) = 20160116, 'x') AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
 				"SELECT ID, COALESCE(DATE_FORMAT(post_date_gmt, '%Y%m%d') != 20160116, 'x') AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+				'SELECT ID, IFNULL(DATE(post_date_gmt) = 20160116, 0) AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID',
+				"SELECT ID, IFNULL(DATE(post_date_gmt) = 20160116, 'x') AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+				"SELECT ID, IFNULL(DATE_FORMAT(post_date_gmt, '%Y%m%d') != 20160116, 'x') AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+				"SELECT ID, COALESCE(DATE(post_date_gmt) = 20160116, NULL, 'x') AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+				"SELECT ID, COALESCE(DATE_FORMAT(post_date_gmt, '%Y%m%d') != 20160116, NULL, 'x') AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+				'SELECT ID, COALESCE(DATE(post_date_gmt) = 20160116, NULL, 0) AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID',
 			) as $sql
 		) {
 			$this->assertParityRows( $sql );

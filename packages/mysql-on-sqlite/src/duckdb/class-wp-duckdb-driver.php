@@ -25111,7 +25111,7 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Translate COALESCE() wrapping a SQLite-compatible date text comparison.
+	 * Translate literal fallback wrappers around a SQLite-compatible date text comparison.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
 	 * @param int               $index  Current index, advanced on match.
@@ -25128,10 +25128,11 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_referential_constraints,
 		bool $rewrite_information_schema_check_constraints
 	): ?string {
+		$function_name = isset( $tokens[ $index ] ) ? strtoupper( $tokens[ $index ]->get_bytes() ) : '';
 		if (
 			! isset( $tokens[ $index + 1 ] )
 			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
-			|| 0 !== strcasecmp( $tokens[ $index ]->get_bytes(), 'COALESCE' )
+			|| ( 'COALESCE' !== $function_name && 'IFNULL' !== $function_name )
 		) {
 			return null;
 		}
@@ -25139,7 +25140,11 @@ class WP_DuckDB_Driver {
 		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
 		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
 		$items     = $this->split_top_level_comma_items( $body );
-		if ( 2 !== count( $items ) || count( $items[0] ) === 0 || count( $items[1] ) === 0 ) {
+		if (
+			count( $items ) < 2
+			|| count( $items[0] ) === 0
+			|| ( 'IFNULL' === $function_name && 2 !== count( $items ) )
+		) {
 			return null;
 		}
 
@@ -25160,17 +25165,38 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$fallback = $this->coalesce_date_text_numeric_literal_fallback_sql( $items[1] );
-		if ( null === $fallback ) {
-			return null;
+		$fallbacks          = array();
+		$has_string_literal = false;
+		foreach ( array_slice( $items, 1 ) as $item ) {
+			if ( 0 === count( $item ) ) {
+				return null;
+			}
+
+			$fallback = $this->coalesce_date_text_numeric_literal_fallback_sql( $item );
+			if ( null === $fallback ) {
+				return null;
+			}
+
+			$fallbacks[]        = $fallback;
+			$has_string_literal = $has_string_literal || $fallback['is_string_literal'];
 		}
 
 		$index = $end_index - 1;
-		if ( $fallback['is_string_literal'] ) {
+		if ( $has_string_literal ) {
 			$comparison_sql = 'CAST(' . $comparison_sql . ' AS VARCHAR)';
 		}
 
-		return 'COALESCE(' . $comparison_sql . ', ' . $fallback['sql'] . ')';
+		$fallback_sql = array();
+		foreach ( $fallbacks as $fallback ) {
+			if ( $has_string_literal && ! $fallback['is_string_literal'] && 'NULL' !== $fallback['sql'] ) {
+				$fallback_sql[] = 'CAST(' . $fallback['sql'] . ' AS VARCHAR)';
+				continue;
+			}
+
+			$fallback_sql[] = $fallback['sql'];
+		}
+
+		return 'COALESCE(' . $comparison_sql . ', ' . implode( ', ', $fallback_sql ) . ')';
 	}
 
 	/**
