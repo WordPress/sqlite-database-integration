@@ -90,6 +90,9 @@
 		"wp-test-duckdb-fast-fail-with-setup": [
 			"WP_DUCKDB_FAST_FAIL_PREPARED=0 ./bin/wp-test-duckdb-fast-fail.sh @additional_args"
 		],
+		"test-duckdb-last-failures": [
+			"./bin/wp-test-duckdb-last-failures.sh @additional_args"
+		],
 		"wp-smoke-duckdb-local": [
 			"./bin/wp-duckdb-local-smoke.sh"
 		],
