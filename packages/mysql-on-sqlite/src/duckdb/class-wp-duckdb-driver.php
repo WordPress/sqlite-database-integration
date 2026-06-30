@@ -670,6 +670,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_term_relationships_distinct_terms_result;
 		}
 
+		$wordpress_term_relationships_post_count_result = $this->execute_wordpress_term_relationships_post_count_fast_path_statement( $normalized );
+		if ( null !== $wordpress_term_relationships_post_count_result ) {
+			return $wordpress_term_relationships_post_count_result;
+		}
+
 		$wordpress_meta_cache_load_result = $this->execute_wordpress_meta_cache_load_fast_path_statement( $normalized );
 		if ( null !== $wordpress_meta_cache_load_result ) {
 			return $wordpress_meta_cache_load_result;
@@ -2247,6 +2252,131 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute WordPress' hot term relationship post-count query without parser overhead.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_term_relationships_post_count_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\\s])*\'';
+		if (
+			! preg_match(
+				'/^SELECT\s+COUNT\s*\(\s*\*\s*\)\s+FROM\s+(?<relationships_table>' . $identifier_pattern . ')\s*,\s*(?<posts_table>' . $identifier_pattern . ')\s+WHERE\s+(?<posts_join_table>' . $identifier_pattern . ')\s*\.\s*(?<posts_join_column>`ID`|ID)\s*=\s*(?<relationships_join_table>' . $identifier_pattern . ')\s*\.\s*(?<relationships_join_column>`object_id`|object_id)\s+AND\s+(?<status_column>`post_status`|post_status)\s+IN\s*\(\s*(?<statuses>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\s*\)\s+AND\s+(?<type_column>`post_type`|post_type)\s+IN\s*\(\s*(?<post_types>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\s*\)\s+AND\s+(?<taxonomy_column>`term_taxonomy_id`|term_taxonomy_id)\s*=\s*(?<taxonomy_id>[0-9]+)$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$relationships_table = $this->fast_path_mysql_identifier_value( $matches['relationships_table'] );
+		$posts_table         = $this->fast_path_mysql_identifier_value( $matches['posts_table'] );
+		if (
+			! $this->is_wordpress_term_relationships_table_name( $relationships_table )
+			|| ! $this->is_wordpress_posts_table_name( $posts_table )
+			|| ! $this->wordpress_posts_relationships_table_prefixes_match( $posts_table, $relationships_table )
+		) {
+			return null;
+		}
+
+		if (
+			! $this->fast_path_identifier_matches( $posts_table, $matches['posts_join_table'] )
+			|| ! $this->fast_path_identifier_matches( $relationships_table, $matches['relationships_join_table'] )
+		) {
+			return null;
+		}
+
+		$expected_columns = array(
+			'posts_join_column'         => 'ID',
+			'relationships_join_column' => 'object_id',
+			'status_column'             => 'post_status',
+			'type_column'               => 'post_type',
+			'taxonomy_column'           => 'term_taxonomy_id',
+		);
+		foreach ( $expected_columns as $match_name => $column_name ) {
+			if ( 0 !== strcasecmp( $column_name, $this->fast_path_mysql_identifier_value( $matches[ $match_name ] ) ) ) {
+				return null;
+			}
+		}
+
+		$relationships_reference = $this->resolve_visible_user_table_reference( $relationships_table );
+		if ( null === $relationships_reference ) {
+			return null;
+		}
+
+		$posts_reference = $this->resolve_visible_user_table_reference( $posts_table );
+		if ( null === $posts_reference ) {
+			return null;
+		}
+
+		if ( ! preg_match_all( '/' . $literal_pattern . '/', $matches['statuses'], $status_matches ) ) {
+			return null;
+		}
+		$statuses = array();
+		foreach ( $status_matches[0] as $status_literal ) {
+			$statuses[] = $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $status_literal ) );
+		}
+		if ( count( $statuses ) === 0 ) {
+			return null;
+		}
+
+		if ( ! preg_match_all( '/' . $literal_pattern . '/', $matches['post_types'], $post_type_matches ) ) {
+			return null;
+		}
+		$post_types = array();
+		foreach ( $post_type_matches[0] as $post_type_literal ) {
+			$post_types[] = $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $post_type_literal ) );
+		}
+		if ( count( $post_types ) === 0 ) {
+			return null;
+		}
+
+		$taxonomy_id = $this->fast_path_mysql_unsigned_integer_literal_value( $matches['taxonomy_id'] );
+		if ( null === $taxonomy_id ) {
+			return null;
+		}
+
+		$relationships_table_sql = $this->connection->quote_identifier( $relationships_reference['table_name'] );
+		$posts_table_sql         = $this->connection->quote_identifier( $posts_reference['table_name'] );
+		$sql                     = 'SELECT COUNT(*) AS "COUNT(*)" FROM '
+			. $relationships_table_sql
+			. ', '
+			. $posts_table_sql
+			. ' WHERE '
+			. $posts_table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'ID' )
+			. ' = '
+			. $relationships_table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'object_id' )
+			. ' AND '
+			. $posts_table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'post_status' )
+			. ' IN ('
+			. implode( ', ', $statuses )
+			. ') AND '
+			. $posts_table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'post_type' )
+			. ' IN ('
+			. implode( ', ', $post_types )
+			. ') AND '
+			. $relationships_table_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_taxonomy_id' )
+			. ' = '
+			. $taxonomy_id;
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $result;
+	}
+
+	/**
 	 * Execute WordPress' meta cache-load SELECT without parser/metadata fanout.
 	 *
 	 * @param string $normalized_query Normalized MySQL query.
@@ -2475,6 +2605,20 @@ class WP_DuckDB_Driver {
 		$taxonomy_prefix = $this->wordpress_fast_path_table_prefix( $taxonomy_table, 'term_taxonomy' );
 
 		return null !== $terms_prefix && null !== $taxonomy_prefix && 0 === strcasecmp( $terms_prefix, $taxonomy_prefix );
+	}
+
+	/**
+	 * Check whether WordPress posts and term_relationships tables use the same prefix.
+	 *
+	 * @param string $posts_table         Posts table name.
+	 * @param string $relationships_table Term relationships table name.
+	 * @return bool Whether both table names share the same WordPress prefix.
+	 */
+	private function wordpress_posts_relationships_table_prefixes_match( string $posts_table, string $relationships_table ): bool {
+		$posts_prefix         = $this->wordpress_fast_path_table_prefix( $posts_table, 'posts' );
+		$relationships_prefix = $this->wordpress_fast_path_table_prefix( $relationships_table, 'term_relationships' );
+
+		return null !== $posts_prefix && null !== $relationships_prefix && 0 === strcasecmp( $posts_prefix, $relationships_prefix );
 	}
 
 	/**

@@ -18410,6 +18410,151 @@ SQL
 		$this->assertStringNotContainsString( 'SELECT DISTINCT "t"."term_id" FROM "wptests_terms" AS "t"', implode( "\n", $queries ) );
 	}
 
+	public function test_wordpress_term_relationships_post_count_fast_path_uses_one_native_query(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$queries = array();
+		$result  = $driver->query( $this->wordpress_term_relationships_post_count_select_sql() );
+		$rows    = $result->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( 1, (int) $rows[0]['COUNT(*)'] );
+		$this->assertSame( 'COUNT(*)', $result->getColumnMeta( 0 )['name'] );
+		$this->assert_wordpress_term_relationships_post_count_select_used_one_native_query( $queries, 101 );
+		$this->assertSame(
+			array(
+				array(
+					'found_rows' => 1,
+				),
+			),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$result  = $driver->query( $this->wordpress_term_relationships_post_count_select_sql( 101, "'publish'", "'post', 'page'" ) );
+		$rows    = $result->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( 2, (int) $rows[0]['COUNT(*)'] );
+		$this->assert_wordpress_term_relationships_post_count_select_used_one_native_query( $queries, 101 );
+	}
+
+	public function test_wordpress_term_relationships_post_count_fast_path_respects_temporary_shadow_tables(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$driver->query(
+			"CREATE TEMPORARY TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish'
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_term_relationships (
+				object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_type, post_status) VALUES
+				(501, 'post', 'publish'),
+				(502, 'post', 'publish'),
+				(503, 'page', 'publish')"
+		);
+		$driver->query(
+			'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id) VALUES
+				(501, 901),
+				(502, 901),
+				(503, 901)'
+		);
+
+		$queries = array();
+		$result  = $driver->query( $this->wordpress_term_relationships_post_count_select_sql( 901 ) );
+		$rows    = $result->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( 2, (int) $rows[0]['COUNT(*)'] );
+		$this->assert_wordpress_term_relationships_post_count_select_used_one_native_query( $queries, 901 );
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_term_relationships' );
+		$driver->query( 'DROP TEMPORARY TABLE wptests_posts' );
+		$result = $driver->query( $this->wordpress_term_relationships_post_count_select_sql() );
+		$rows   = $result->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( 1, (int) $rows[0]['COUNT(*)'] );
+	}
+
+	public function test_wordpress_term_relationships_post_count_fast_path_supports_backtick_identifiers(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT COUNT(*)
+			FROM `wptests_term_relationships`, `wptests_posts`
+			WHERE `wptests_posts`.`ID` = `wptests_term_relationships`.`object_id`
+				AND `post_status` IN ('publish')
+				AND `post_type` IN ('post')
+				AND `term_taxonomy_id` = 101"
+		);
+		$rows    = $result->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( 1, (int) $rows[0]['COUNT(*)'] );
+		$this->assert_wordpress_term_relationships_post_count_select_used_one_native_query( $queries, 101 );
+	}
+
+	public function test_wordpress_term_relationships_post_count_fast_path_does_not_capture_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS COUNT(*)
+			FROM wptests_term_relationships, wptests_posts
+			WHERE wptests_posts.ID = wptests_term_relationships.object_id
+				AND post_status IN ('publish')
+				AND post_type IN ('post')
+				AND term_taxonomy_id = 101"
+		);
+		$this->assertSame( 1, (int) $result->fetchAll( PDO::FETCH_NUM )[0][0] );
+		$this->assertStringContainsString( '__wp_duckdb_found_rows', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT COUNT(*)
+			FROM wptests_term_relationships AS tr, wptests_posts AS p
+			WHERE p.ID = tr.object_id
+				AND post_status IN ('publish')
+				AND post_type IN ('post')
+				AND term_taxonomy_id = 101"
+		);
+		$this->assertSame( 1, (int) $result->fetchAll( PDO::FETCH_NUM )[0][0] );
+		$this->assertStringNotContainsString( 'SELECT COUNT(*) AS "COUNT(*)" FROM "wptests_term_relationships", "wptests_posts"', implode( "\n", $queries ) );
+
+		$queries = array();
+		$result  = $driver->query(
+			"SELECT COUNT(*)
+			FROM wptests_term_relationships, wptests_posts
+			WHERE wptests_posts.ID = wptests_term_relationships.object_id
+				AND post_status IN ('publish')
+				AND post_type IN ('post')
+				AND term_taxonomy_id = 101
+				AND term_order = 0"
+		);
+		$this->assertSame( 1, (int) $result->fetchAll( PDO::FETCH_NUM )[0][0] );
+		$this->assertStringNotContainsString( 'SELECT COUNT(*) AS "COUNT(*)" FROM "wptests_term_relationships", "wptests_posts"', implode( "\n", $queries ) );
+	}
+
 	public function test_wordpress_usermeta_cache_load_fast_path_uses_one_native_query_on_fresh_driver(): void {
 		$this->requireDuckDBRuntime();
 
@@ -24416,6 +24561,15 @@ SQL
 			ORDER BY t.name ASC";
 	}
 
+	private function wordpress_term_relationships_post_count_select_sql( int $term_taxonomy_id = 101, string $statuses = "'publish'", string $post_types = "'post'" ): string {
+		return "SELECT COUNT(*)
+			FROM wptests_term_relationships, wptests_posts
+			WHERE wptests_posts.ID = wptests_term_relationships.object_id
+				AND post_status IN ({$statuses})
+				AND post_type IN ({$post_types})
+				AND term_taxonomy_id = {$term_taxonomy_id}";
+	}
+
 	private function wordpress_term_taxonomy_lookup_select_sql( string $term_ids = '1, 2' ): string {
 		return "SELECT t.*, tt.*
 			FROM wptests_terms AS t
@@ -24587,6 +24741,18 @@ SQL
 		$this->assertStringContainsString( '"tt"."taxonomy" IN (\'wptests_tax\')', $queries[0] );
 		$this->assertStringContainsString( '"tr"."object_id" IN (201, 202)', $queries[0] );
 		$this->assertStringContainsString( 'ORDER BY "t"."name" ASC', $queries[0] );
+	}
+
+	private function assert_wordpress_term_relationships_post_count_select_used_one_native_query( array $queries, int $term_taxonomy_id ): void {
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_posts' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_term_relationships' ) );
+		$this->assertStringContainsString( 'SELECT COUNT(*) AS "COUNT(*)" FROM "wptests_term_relationships", "wptests_posts"', $queries[0] );
+		$this->assertStringContainsString( '"wptests_posts"."ID" = "wptests_term_relationships"."object_id"', $queries[0] );
+		$this->assertStringContainsString( '"wptests_posts"."post_status" IN (\'publish\')', $queries[0] );
+		$this->assertStringContainsString( '"wptests_posts"."post_type" IN (\'post\'', $queries[0] );
+		$this->assertStringContainsString( '"wptests_term_relationships"."term_taxonomy_id" = ' . $term_taxonomy_id, $queries[0] );
 	}
 
 	private function assert_wordpress_term_taxonomy_lookup_select_used_one_native_query( array $queries, string $id_list ): void {
