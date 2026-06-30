@@ -389,6 +389,73 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		}
 	}
 
+	public function test_query_profile_emits_redacted_sample_when_enabled(): void {
+		$previous_env          = getenv( 'WP_DUCKDB_QUERY_PROFILE' );
+		$previous_interval_env = getenv( 'WP_DUCKDB_QUERY_PROFILE_INTERVAL' );
+		$previous_log_errors   = ini_get( 'log_errors' );
+		$previous_error_log    = ini_get( 'error_log' );
+		$log_file              = tempnam( sys_get_temp_dir(), 'duckdb-query-profile-' );
+
+		$this->reset_duckdb_query_profile_for_test();
+
+		try {
+			putenv( 'WP_DUCKDB_QUERY_PROFILE=1' );
+			putenv( 'WP_DUCKDB_QUERY_PROFILE_INTERVAL=0' );
+			ini_set( 'log_errors', '1' );
+			ini_set( 'error_log', $log_file );
+
+			$driver = ( new ReflectionClass( WP_DuckDB_Driver::class ) )->newInstanceWithoutConstructor();
+
+			foreach (
+				array(
+					'profile_current_parse_seconds'  => 0.002,
+					'profile_current_native_seconds' => 0.003,
+					'profile_current_native_queries' => 2,
+				) as $property => $value
+			) {
+				$reflection_property = new ReflectionProperty( WP_DuckDB_Driver::class, $property );
+				if ( PHP_VERSION_ID < 80100 ) {
+					$reflection_property->setAccessible( true );
+				}
+				$reflection_property->setValue( $driver, $value );
+			}
+
+			$record = new ReflectionMethod( WP_DuckDB_Driver::class, 'record_query_profile' );
+			$emit   = new ReflectionMethod( WP_DuckDB_Driver::class, 'emit_query_profile_summary' );
+			if ( PHP_VERSION_ID < 80100 ) {
+				$record->setAccessible( true );
+				$emit->setAccessible( true );
+			}
+
+			$record->invoke( $driver, "SELECT *\nFROM wp_options WHERE option_name = 'siteurl' AND option_id = 123", 0.01, false );
+			$emit->invoke( null, 'test' );
+
+			$log = file_get_contents( $log_file );
+			$this->assertStringContainsString( 'WP_DUCKDB_QUERY_PROFILE_SUMMARY reason=test', $log );
+			$this->assertStringContainsString( 'WP_DUCKDB_QUERY_PROFILE_TOP rank=1', $log );
+			$this->assertStringContainsString( 'shape=SELECT * FROM wp_options WHERE option_name = \'?\' AND option_id = ?', $log );
+			$this->assertStringContainsString( 'WP_DUCKDB_QUERY_PROFILE_SAMPLE rank=1', $log );
+			$this->assertStringContainsString( 'sample=SELECT * FROM wp_options WHERE option_name = \'?\' AND option_id = ?', $log );
+		} finally {
+			if ( false === $previous_env ) {
+				putenv( 'WP_DUCKDB_QUERY_PROFILE' );
+			} else {
+				putenv( 'WP_DUCKDB_QUERY_PROFILE=' . $previous_env );
+			}
+			if ( false === $previous_interval_env ) {
+				putenv( 'WP_DUCKDB_QUERY_PROFILE_INTERVAL' );
+			} else {
+				putenv( 'WP_DUCKDB_QUERY_PROFILE_INTERVAL=' . $previous_interval_env );
+			}
+			ini_set( 'log_errors', false === $previous_log_errors ? '' : $previous_log_errors );
+			ini_set( 'error_log', false === $previous_error_log ? '' : $previous_error_log );
+			$this->reset_duckdb_query_profile_for_test();
+			if ( is_string( $log_file ) && file_exists( $log_file ) ) {
+				unlink( $log_file );
+			}
+		}
+	}
+
 	private function new_byte_safe_duckdb_driver(): WP_DuckDB_Driver {
 		$connection = new class() extends WP_DuckDB_Connection {
 			public function __construct() {}
@@ -432,6 +499,30 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					'counters'        => array(),
 					'native_contexts' => array(),
 					'native_shapes'   => array(),
+				),
+			) as $property => $value
+		) {
+			$reflection_property = new ReflectionProperty( WP_DuckDB_Driver::class, $property );
+			if ( PHP_VERSION_ID < 80100 ) {
+				$reflection_property->setAccessible( true );
+			}
+			$reflection_property->setValue( null, $value );
+		}
+	}
+
+	private function reset_duckdb_query_profile_for_test(): void {
+		foreach (
+			array(
+				'query_profile_enabled'             => null,
+				'query_profile_shutdown_registered' => false,
+				'query_profile'                     => array(
+					'queries'        => 0,
+					'errors'         => 0,
+					'total_seconds'  => 0.0,
+					'parse_seconds'  => 0.0,
+					'native_seconds' => 0.0,
+					'native_queries' => 0,
+					'shapes'         => array(),
 				),
 			) as $property => $value
 		) {

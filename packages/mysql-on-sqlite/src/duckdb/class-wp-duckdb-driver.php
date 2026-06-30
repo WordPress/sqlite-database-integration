@@ -31914,6 +31914,7 @@ class WP_DuckDB_Driver {
 				'parse_seconds'  => 0.0,
 				'native_seconds' => 0.0,
 				'native_queries' => 0,
+				'sample'         => $this->query_profile_sample_query( $query ),
 			);
 		}
 
@@ -31964,6 +31965,68 @@ class WP_DuckDB_Driver {
 		}
 
 		return '' === $shape ? '<empty>' : $shape;
+	}
+
+	/**
+	 * Return a bounded redacted sample query for one profile shape.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string Sample query.
+	 */
+	private function query_profile_sample_query( string $query ): string {
+		$sample = $this->redact_query_profile_string_literals( $query );
+		if ( null !== $sample ) {
+			$sample = preg_replace( '/\b0x[0-9a-f]+\b/i', '?', (string) $sample );
+		}
+		if ( null !== $sample ) {
+			$sample = preg_replace( '/\b\d+(?:\.\d+)?\b/', '?', (string) $sample );
+		}
+
+		if ( null === $sample ) {
+			$sample = '<redaction_failed>';
+		}
+
+		return self::sanitize_runtime_counter_label( (string) $sample );
+	}
+
+	/**
+	 * Redact quoted SQL string literals without relying on regular expression limits.
+	 *
+	 * @param string $query MySQL query.
+	 * @return string Query with quoted strings replaced.
+	 */
+	private function redact_query_profile_string_literals( string $query ): string {
+		$result = '';
+		$length = strlen( $query );
+
+		for ( $i = 0; $i < $length; ++$i ) {
+			$char = $query[ $i ];
+			if ( "'" !== $char && '"' !== $char ) {
+				$result .= $char;
+				continue;
+			}
+
+			$quote   = $char;
+			$result .= $quote . '?' . $quote;
+			++$i;
+
+			for ( ; $i < $length; ++$i ) {
+				if ( '\\' === $query[ $i ] ) {
+					++$i;
+					continue;
+				}
+				if ( $quote !== $query[ $i ] ) {
+					continue;
+				}
+				if ( isset( $query[ $i + 1 ] ) && $quote === $query[ $i + 1 ] ) {
+					++$i;
+					continue;
+				}
+				break;
+			}
+		}
+
+		return $result;
 	}
 
 	/**
@@ -32056,6 +32119,13 @@ class WP_DuckDB_Driver {
 					$profile['native_seconds'],
 					$profile['native_queries'],
 					str_replace( array( "\r", "\n" ), ' ', $shape )
+				)
+			);
+			error_log(
+				sprintf(
+					'WP_DUCKDB_QUERY_PROFILE_SAMPLE rank=%d sample=%s',
+					$rank,
+					isset( $profile['sample'] ) ? self::sanitize_runtime_counter_label( (string) $profile['sample'] ) : '<unknown>'
 				)
 			);
 		}
