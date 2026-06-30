@@ -645,6 +645,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_options_autoload_result;
 		}
 
+		$wordpress_options_multi_name_result = $this->execute_wordpress_options_multi_name_fast_path_statement( $normalized );
+		if ( null !== $wordpress_options_multi_name_result ) {
+			return $wordpress_options_multi_name_result;
+		}
+
 		$wordpress_options_single_option_result = $this->execute_wordpress_options_single_option_fast_path_statement( $normalized );
 		if ( null !== $wordpress_options_single_option_result ) {
 			return $wordpress_options_single_option_result;
@@ -1460,6 +1465,78 @@ class WP_DuckDB_Driver {
 				)
 			)
 			. ')';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata(
+			$result,
+			$this->wordpress_options_autoload_result_column_metadata( $table_name )
+		);
+	}
+
+	/**
+	 * Execute WordPress' high-frequency multi-option SELECT without parser/metadata fanout.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_options_multi_name_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		if (
+			! preg_match(
+				'/^SELECT\s+(?<name_column>' . $identifier_pattern . ')\s*,\s*(?<value_column>' . $identifier_pattern . ')\s+FROM\s+(?<table>' . $identifier_pattern . ')\s+WHERE\s+(?<where_column>' . $identifier_pattern . ')\s+IN\s*\(\s*(?<option_names>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\s*\)(?:\s+ORDER\s+BY\s+(?<order_column>' . $identifier_pattern . ')(?:\s+ASC)?)?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		if ( ! $this->is_wordpress_options_table_name( $table_name ) ) {
+			return null;
+		}
+
+		if (
+			! $this->fast_path_identifier_matches( 'option_name', $matches['name_column'] )
+			|| ! $this->fast_path_identifier_matches( 'option_value', $matches['value_column'] )
+			|| ! $this->fast_path_identifier_matches( 'option_name', $matches['where_column'] )
+			|| ( isset( $matches['order_column'] ) && '' !== $matches['order_column'] && ! $this->fast_path_identifier_matches( 'option_name', $matches['order_column'] ) )
+		) {
+			return null;
+		}
+
+		preg_match_all( '/' . $literal_pattern . '/', $matches['option_names'], $option_name_matches );
+		if ( empty( $option_name_matches[0] ) ) {
+			return null;
+		}
+
+		$option_name_sql = array();
+		foreach ( $option_name_matches[0] as $option_name_literal ) {
+			$option_name = $this->fast_path_mysql_single_quoted_literal_value( $option_name_literal );
+			if ( preg_match( '/\s/', $option_name ) ) {
+				return null;
+			}
+			$option_name_sql[] = $this->connection->quote( $option_name );
+		}
+
+		$sql = 'SELECT '
+			. $this->connection->quote_identifier( 'option_name' )
+			. ', '
+			. $this->connection->quote_identifier( 'option_value' )
+			. ' FROM '
+			. $this->connection->quote_identifier( $table_name )
+			. ' WHERE '
+			. $this->connection->quote_identifier( 'option_name' )
+			. ' COLLATE NOCASE IN ('
+			. implode( ', ', $option_name_sql )
+			. ')';
+
+		if ( isset( $matches['order_column'] ) && '' !== $matches['order_column'] ) {
+			$sql .= ' ORDER BY ' . $this->connection->quote_identifier( 'option_name' );
+		}
 
 		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 		$this->found_rows = $sql;
