@@ -6096,6 +6096,16 @@ class WP_DuckDB_Driver {
 			}
 			$table = $grouped_table;
 		}
+		$allowed_nonaggregate_joined_projection_columns = ! $has_aggregate
+			? $this->wordpress_taxonomy_group_by_nonaggregate_joined_projection_columns(
+				$tokens,
+				$table_tokens,
+				$group_tokens,
+				$table,
+				$select_items,
+				$group_end
+			)
+			: array();
 
 		$selected_columns    = array();
 		$selected_aliases    = array();
@@ -6111,6 +6121,7 @@ class WP_DuckDB_Driver {
 				|| (
 					! $this->primary_key_group_by_column_qualifier_matches_table( $column['qualifier'], $table )
 					&& ( ! $has_aggregate || ! isset( $table['joined'] ) || ! $table['joined'] || $column['wildcard'] )
+					&& ! $this->primary_key_group_by_joined_projection_column_is_allowed( $column, $allowed_nonaggregate_joined_projection_columns )
 				)
 			) {
 				return null;
@@ -6200,6 +6211,496 @@ class WP_DuckDB_Driver {
 			'metadata_columns' => $metadata_columns,
 			'selected_aliases' => $selected_aliases,
 		);
+	}
+
+	/**
+	 * Build a narrow allow-list for WordPress' non-aggregate taxonomy grouped projection.
+	 *
+	 * @param WP_Parser_Token[]                               $tokens       MySQL tokens.
+	 * @param WP_Parser_Token[]                               $table_tokens FROM-clause tokens.
+	 * @param WP_Parser_Token[]                               $group_tokens GROUP BY tokens.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $table        Grouped table reference.
+	 * @param array<int,WP_Parser_Token[]>                    $select_items SELECT-list items.
+	 * @param int                                             $group_end    End of the GROUP BY clause.
+	 * @return array<string,bool> Allowed joined projection columns keyed by lower-case qualifier.column.
+	 */
+	private function wordpress_taxonomy_group_by_nonaggregate_joined_projection_columns(
+		array $tokens,
+		array $table_tokens,
+		array $group_tokens,
+		array $table,
+		array $select_items,
+		int $group_end
+	): array {
+		if (
+			empty( $table['joined'] )
+			|| ! $this->is_wordpress_terms_table_name( $table['table_name'] )
+			|| isset( $tokens[ $group_end ] ) && WP_MySQL_Lexer::HAVING_SYMBOL === $tokens[ $group_end ]->id
+		) {
+			return array();
+		}
+
+		$table_references = $this->primary_key_group_by_table_references( $table_tokens );
+		if ( 3 !== count( $table_references ) ) {
+			return array();
+		}
+
+		$terms         = null;
+		$taxonomy      = null;
+		$relationships = null;
+		foreach ( $table_references as $reference ) {
+			if ( $this->is_wordpress_terms_table_name( $reference['table_name'] ) ) {
+				if ( null !== $terms ) {
+					return array();
+				}
+				$terms = $reference;
+			} elseif ( $this->is_wordpress_term_taxonomy_table_name( $reference['table_name'] ) ) {
+				if ( null !== $taxonomy ) {
+					return array();
+				}
+				$taxonomy = $reference;
+			} elseif ( $this->is_wordpress_term_relationships_table_name( $reference['table_name'] ) ) {
+				if ( null !== $relationships ) {
+					return array();
+				}
+				$relationships = $reference;
+			} else {
+				return array();
+			}
+		}
+
+		if (
+			null === $terms
+			|| null === $taxonomy
+			|| null === $relationships
+			|| 0 !== strcasecmp( $terms['alias'], $table['alias'] )
+			|| 0 !== strcasecmp( 't', $terms['alias'] )
+			|| 0 !== strcasecmp( 'tt', $taxonomy['alias'] )
+			|| 0 !== strcasecmp( 'tr', $relationships['alias'] )
+			|| ! $this->wordpress_terms_taxonomy_relationships_table_prefixes_match(
+				$terms['table_name'],
+				$taxonomy['table_name'],
+				$relationships['table_name']
+			)
+			|| ! $this->wordpress_taxonomy_group_by_nonaggregate_joins_match( $table_tokens, $terms, $taxonomy, $relationships )
+			|| ! $this->wordpress_taxonomy_group_by_nonaggregate_group_matches_terms( $group_tokens, $terms )
+			|| ! $this->wordpress_taxonomy_group_by_nonaggregate_where_matches( $tokens, $group_end, $taxonomy, $relationships )
+		) {
+			return array();
+		}
+
+		$seen_terms_id         = false;
+		$seen_term_taxonomy_id = false;
+		foreach ( $select_items as $item ) {
+			$column = $this->parse_simple_select_column_reference( $item );
+			if ( null === $column || $column['wildcard'] || null === $column['qualifier'] ) {
+				return array();
+			}
+
+			if (
+				0 === strcasecmp( $terms['alias'], $column['qualifier'] )
+				&& 0 === strcasecmp( 'term_id', $column['column_name'] )
+			) {
+				$seen_terms_id = true;
+				continue;
+			}
+
+			if (
+				0 === strcasecmp( $taxonomy['alias'], $column['qualifier'] )
+				&& 0 === strcasecmp( 'term_taxonomy_id', $column['column_name'] )
+			) {
+				$seen_term_taxonomy_id = true;
+				continue;
+			}
+
+			return array();
+		}
+
+		if ( ! $seen_terms_id || ! $seen_term_taxonomy_id ) {
+			return array();
+		}
+
+		return array(
+			strtolower( $taxonomy['alias'] ) . '.term_taxonomy_id' => true,
+		);
+	}
+
+	/**
+	 * Check whether WordPress terms, term_taxonomy, and term_relationships tables share a prefix.
+	 *
+	 * @param string $terms_table         Terms table name.
+	 * @param string $taxonomy_table      Term taxonomy table name.
+	 * @param string $relationships_table Term relationships table name.
+	 * @return bool Whether the tables share a WordPress prefix.
+	 */
+	private function wordpress_terms_taxonomy_relationships_table_prefixes_match(
+		string $terms_table,
+		string $taxonomy_table,
+		string $relationships_table
+	): bool {
+		$terms_prefix         = $this->wordpress_fast_path_table_prefix( $terms_table, 'terms' );
+		$taxonomy_prefix      = $this->wordpress_fast_path_table_prefix( $taxonomy_table, 'term_taxonomy' );
+		$relationships_prefix = $this->wordpress_fast_path_table_prefix( $relationships_table, 'term_relationships' );
+
+		return null !== $terms_prefix
+			&& null !== $taxonomy_prefix
+			&& null !== $relationships_prefix
+			&& 0 === strcasecmp( $terms_prefix, $taxonomy_prefix )
+			&& 0 === strcasecmp( $terms_prefix, $relationships_prefix );
+	}
+
+	/**
+	 * Check whether the taxonomy non-aggregate GROUP BY uses the canonical WordPress joins.
+	 *
+	 * @param WP_Parser_Token[]                                      $tokens        FROM-clause tokens.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $terms         Terms table reference.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $taxonomy      Term taxonomy table reference.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $relationships Term relationships table reference.
+	 * @return bool Whether the joins match the supported shape.
+	 */
+	private function wordpress_taxonomy_group_by_nonaggregate_joins_match(
+		array $tokens,
+		array $terms,
+		array $taxonomy,
+		array $relationships
+	): bool {
+		$join_index = $this->find_primary_key_group_by_join_index( $tokens, 0 );
+		if ( null === $join_index ) {
+			return false;
+		}
+
+		$first_table = $this->parse_simple_select_table_reference( array_slice( $tokens, 0, $join_index ) );
+		if (
+			null === $first_table
+			|| 0 !== strcasecmp( $terms['alias'], $first_table['alias'] )
+			|| 0 !== strcasecmp( $terms['table_name'], $first_table['table_name'] )
+		) {
+			return false;
+		}
+
+		$expected_joins = array(
+			array(
+				'reference'    => $taxonomy,
+				'left_alias'   => $terms['alias'],
+				'left_column'  => 'term_id',
+				'right_alias'  => $taxonomy['alias'],
+				'right_column' => 'term_id',
+			),
+			array(
+				'reference'    => $relationships,
+				'left_alias'   => $relationships['alias'],
+				'left_column'  => 'term_taxonomy_id',
+				'right_alias'  => $taxonomy['alias'],
+				'right_column' => 'term_taxonomy_id',
+			),
+		);
+
+		$index = $join_index;
+		foreach ( $expected_joins as $expected_join ) {
+			if ( ! isset( $tokens[ $index ] ) ) {
+				return false;
+			}
+
+			if ( WP_MySQL_Lexer::INNER_SYMBOL === $tokens[ $index ]->id ) {
+				++$index;
+			}
+			if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::JOIN_SYMBOL !== $tokens[ $index ]->id ) {
+				return false;
+			}
+
+			++$index;
+			$table_end = $this->primary_key_group_by_join_table_factor_end( $tokens, $index );
+			$table     = $this->parse_simple_select_table_reference( array_slice( $tokens, $index, $table_end - $index ) );
+			if (
+				null === $table
+				|| 0 !== strcasecmp( $expected_join['reference']['alias'], $table['alias'] )
+				|| 0 !== strcasecmp( $expected_join['reference']['table_name'], $table['table_name'] )
+			) {
+				return false;
+			}
+
+			$index = $table_end;
+			if ( ! isset( $tokens[ $index ] ) || WP_MySQL_Lexer::ON_SYMBOL !== $tokens[ $index ]->id ) {
+				return false;
+			}
+
+			++$index;
+			$predicate_end = $this->find_primary_key_group_by_join_index( $tokens, $index );
+			if ( null === $predicate_end ) {
+				$predicate_end = count( $tokens );
+			}
+			if (
+				$predicate_end === $index
+				|| ! $this->wordpress_taxonomy_group_by_join_predicate_matches(
+					array_slice( $tokens, $index, $predicate_end - $index ),
+					$expected_join['left_alias'],
+					$expected_join['left_column'],
+					$expected_join['right_alias'],
+					$expected_join['right_column']
+				)
+			) {
+				return false;
+			}
+
+			$index = $predicate_end;
+		}
+
+		return count( $tokens ) === $index;
+	}
+
+	/**
+	 * Check a simple equality join predicate, allowing either operand order.
+	 *
+	 * @param WP_Parser_Token[] $tokens       Predicate tokens.
+	 * @param string            $left_alias   First expected alias.
+	 * @param string            $left_column  First expected column.
+	 * @param string            $right_alias  Second expected alias.
+	 * @param string            $right_column Second expected column.
+	 * @return bool Whether the predicate matches.
+	 */
+	private function wordpress_taxonomy_group_by_join_predicate_matches(
+		array $tokens,
+		string $left_alias,
+		string $left_column,
+		string $right_alias,
+		string $right_column
+	): bool {
+		$equals_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+		if ( null === $equals_index ) {
+			return false;
+		}
+
+		$left  = $this->parse_group_by_column_reference( array_slice( $tokens, 0, $equals_index ) );
+		$right = $this->parse_group_by_column_reference( array_slice( $tokens, $equals_index + 1 ) );
+		return $this->wordpress_taxonomy_group_by_join_column_pair_matches( $left, $right, $left_alias, $left_column, $right_alias, $right_column )
+			|| $this->wordpress_taxonomy_group_by_join_column_pair_matches( $right, $left, $left_alias, $left_column, $right_alias, $right_column );
+	}
+
+	/**
+	 * Check one ordered join predicate column pair.
+	 *
+	 * @param array{column_name:string,qualifier:string|null}|null $left         First parsed column.
+	 * @param array{column_name:string,qualifier:string|null}|null $right        Second parsed column.
+	 * @param string                                               $left_alias   First expected alias.
+	 * @param string                                               $left_column  First expected column.
+	 * @param string                                               $right_alias  Second expected alias.
+	 * @param string                                               $right_column Second expected column.
+	 * @return bool Whether the ordered column pair matches.
+	 */
+	private function wordpress_taxonomy_group_by_join_column_pair_matches(
+		?array $left,
+		?array $right,
+		string $left_alias,
+		string $left_column,
+		string $right_alias,
+		string $right_column
+	): bool {
+		return null !== $left
+			&& null !== $right
+			&& null !== $left['qualifier']
+			&& null !== $right['qualifier']
+			&& 0 === strcasecmp( $left_alias, $left['qualifier'] )
+			&& 0 === strcasecmp( $left_column, $left['column_name'] )
+			&& 0 === strcasecmp( $right_alias, $right['qualifier'] )
+			&& 0 === strcasecmp( $right_column, $right['column_name'] );
+	}
+
+	/**
+	 * Check whether the non-aggregate taxonomy GROUP BY is exactly t.term_id.
+	 *
+	 * @param WP_Parser_Token[]                               $group_tokens GROUP BY tokens.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $terms        Terms table reference.
+	 * @return bool Whether the GROUP BY matches the supported shape.
+	 */
+	private function wordpress_taxonomy_group_by_nonaggregate_group_matches_terms( array $group_tokens, array $terms ): bool {
+		$group_items = $this->split_top_level_comma_items( $group_tokens );
+		if ( 1 !== count( $group_items ) ) {
+			return false;
+		}
+
+		$column = $this->parse_group_by_column_reference( $group_items[0] );
+		return null !== $column
+			&& null !== $column['qualifier']
+			&& 0 === strcasecmp( $terms['alias'], $column['qualifier'] )
+			&& 0 === strcasecmp( 'term_id', $column['column_name'] );
+	}
+
+	/**
+	 * Check whether taxonomy filters bound the non-aggregate grouped projection.
+	 *
+	 * @param WP_Parser_Token[]                                      $tokens        MySQL tokens.
+	 * @param int                                                    $group_end     End of the GROUP BY clause.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $taxonomy      Term taxonomy table reference.
+	 * @param array{table_name:string,alias:string,temporary:bool,joined?:bool} $relationships Term relationships table reference.
+	 * @return bool Whether the WHERE clause matches the supported WordPress shape.
+	 */
+	private function wordpress_taxonomy_group_by_nonaggregate_where_matches(
+		array $tokens,
+		int $group_end,
+		array $taxonomy,
+		array $relationships
+	): bool {
+		$where_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::WHERE_SYMBOL );
+		$group_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::GROUP_SYMBOL );
+		if ( null === $where_index || null === $group_index || $group_index <= $where_index || $group_end <= $group_index ) {
+			return false;
+		}
+
+		$where_end = $this->simple_select_where_clause_end( $tokens, $where_index + 1 );
+		if ( $where_end !== $group_index ) {
+			return false;
+		}
+
+		$where_tokens = array_slice( $tokens, $where_index + 1, $where_end - $where_index - 1 );
+		$predicates   = $this->split_top_level_and_predicates_without_or( $where_tokens );
+		if ( null === $predicates || 2 !== count( $predicates ) ) {
+			return false;
+		}
+
+		$seen_taxonomy_filter = false;
+		$seen_object_filter   = false;
+		foreach ( $predicates as $predicate ) {
+			if ( $this->wordpress_taxonomy_group_by_string_filter_predicate( $predicate, $taxonomy['alias'], 'taxonomy' ) ) {
+				$seen_taxonomy_filter = true;
+				continue;
+			}
+
+			if ( $this->wordpress_taxonomy_group_by_integer_filter_predicate( $predicate, $relationships['alias'], 'object_id' ) ) {
+				$seen_object_filter = true;
+				continue;
+			}
+
+			return false;
+		}
+
+		return $seen_taxonomy_filter && $seen_object_filter;
+	}
+
+	/**
+	 * Check a simple string equality or IN predicate against a qualified column.
+	 *
+	 * @param WP_Parser_Token[] $tokens      Predicate tokens.
+	 * @param string            $alias       Expected table alias.
+	 * @param string            $column_name Expected column name.
+	 * @return bool Whether the predicate matches.
+	 */
+	private function wordpress_taxonomy_group_by_string_filter_predicate( array $tokens, string $alias, string $column_name ): bool {
+		return $this->wordpress_taxonomy_group_by_literal_filter_predicate(
+			$tokens,
+			$alias,
+			$column_name,
+			function ( array $literal_tokens ): bool {
+				return 1 === count( $literal_tokens ) && $this->is_string_literal_token( $literal_tokens[0] );
+			}
+		);
+	}
+
+	/**
+	 * Check a simple integer equality or IN predicate against a qualified column.
+	 *
+	 * @param WP_Parser_Token[] $tokens      Predicate tokens.
+	 * @param string            $alias       Expected table alias.
+	 * @param string            $column_name Expected column name.
+	 * @return bool Whether the predicate matches.
+	 */
+	private function wordpress_taxonomy_group_by_integer_filter_predicate( array $tokens, string $alias, string $column_name ): bool {
+		return $this->wordpress_taxonomy_group_by_literal_filter_predicate(
+			$tokens,
+			$alias,
+			$column_name,
+			function ( array $literal_tokens ): bool {
+				return 1 === count( $literal_tokens )
+					&& null !== $this->fast_path_mysql_unsigned_integer_literal_value( $literal_tokens[0]->get_bytes() );
+			}
+		);
+	}
+
+	/**
+	 * Check a simple equality or IN predicate against a qualified column.
+	 *
+	 * @param WP_Parser_Token[] $tokens       Predicate tokens.
+	 * @param string            $alias        Expected table alias.
+	 * @param string            $column_name  Expected column name.
+	 * @param callable          $is_literal   Literal token validator.
+	 * @return bool Whether the predicate matches.
+	 */
+	private function wordpress_taxonomy_group_by_literal_filter_predicate(
+		array $tokens,
+		string $alias,
+		string $column_name,
+		callable $is_literal
+	): bool {
+		$equals_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::EQUAL_OPERATOR );
+		if ( null !== $equals_index ) {
+			return (
+				$this->wordpress_taxonomy_group_by_filter_column_matches( array_slice( $tokens, 0, $equals_index ), $alias, $column_name )
+				&& $is_literal( array_slice( $tokens, $equals_index + 1 ) )
+			) || (
+				$this->wordpress_taxonomy_group_by_filter_column_matches( array_slice( $tokens, $equals_index + 1 ), $alias, $column_name )
+				&& $is_literal( array_slice( $tokens, 0, $equals_index ) )
+			);
+		}
+
+		$in_index = $this->find_top_level_token_index( $tokens, 0, WP_MySQL_Lexer::IN_SYMBOL );
+		if (
+			null === $in_index
+			|| ! $this->wordpress_taxonomy_group_by_filter_column_matches( array_slice( $tokens, 0, $in_index ), $alias, $column_name )
+			|| ! isset( $tokens[ $in_index + 2 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $in_index + 1 ]->id
+		) {
+			return false;
+		}
+
+		$close_index = $this->matching_parenthesis_index( $tokens, $in_index + 1 );
+		if ( null === $close_index || count( $tokens ) !== $close_index + 1 ) {
+			return false;
+		}
+
+		$literal_items = $this->split_top_level_comma_items( array_slice( $tokens, $in_index + 2, $close_index - $in_index - 2 ) );
+		if ( count( $literal_items ) === 0 ) {
+			return false;
+		}
+
+		foreach ( $literal_items as $literal_tokens ) {
+			if ( ! $is_literal( $literal_tokens ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check a qualified filter column reference.
+	 *
+	 * @param WP_Parser_Token[] $tokens      Column tokens.
+	 * @param string            $alias       Expected table alias.
+	 * @param string            $column_name Expected column name.
+	 * @return bool Whether the column matches.
+	 */
+	private function wordpress_taxonomy_group_by_filter_column_matches( array $tokens, string $alias, string $column_name ): bool {
+		$column = $this->parse_simple_select_column_reference( $tokens );
+		return null !== $column
+			&& ! $column['wildcard']
+			&& null !== $column['qualifier']
+			&& 0 === strcasecmp( $alias, $column['qualifier'] )
+			&& 0 === strcasecmp( $column_name, $column['column_name'] );
+	}
+
+	/**
+	 * Check whether a joined projection column is on a pre-approved non-aggregate list.
+	 *
+	 * @param array{name:string,column_name:string,qualifier:string|null,wildcard:bool} $column          SELECT column.
+	 * @param array<string,bool>                                                      $allowed_columns Allowed lower-case qualifier.column keys.
+	 * @return bool Whether the joined projection is allowed.
+	 */
+	private function primary_key_group_by_joined_projection_column_is_allowed( array $column, array $allowed_columns ): bool {
+		if ( $column['wildcard'] || null === $column['qualifier'] ) {
+			return false;
+		}
+
+		$key = strtolower( $column['qualifier'] ) . '.' . strtolower( $column['column_name'] );
+		return isset( $allowed_columns[ $key ] );
 	}
 
 	/**

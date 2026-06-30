@@ -3381,6 +3381,61 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_select_terms_nonaggregate_group_by_primary_key_matches_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_terms (
+					term_id BIGINT(20) UNSIGNED NOT NULL,
+					name VARCHAR(200) NOT NULL DEFAULT '',
+					slug VARCHAR(200) NOT NULL DEFAULT '',
+					term_group BIGINT(10) NOT NULL DEFAULT 0,
+					PRIMARY KEY (term_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"CREATE TABLE wptests_term_taxonomy (
+					term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL,
+					term_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					taxonomy VARCHAR(32) NOT NULL DEFAULT '',
+					description LONGTEXT NOT NULL,
+					parent BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					count BIGINT(20) NOT NULL DEFAULT 0,
+					PRIMARY KEY (term_taxonomy_id),
+					UNIQUE KEY term_id_taxonomy (term_id, taxonomy)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				'CREATE TABLE wptests_term_relationships (
+					object_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					term_taxonomy_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					term_order INT(11) NOT NULL DEFAULT 0,
+					PRIMARY KEY (object_id, term_taxonomy_id),
+					KEY term_taxonomy_id (term_taxonomy_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wptests_terms (term_id, name, slug, term_group) VALUES
+					(1, 'Alpha', 'alpha', 0),
+					(2, 'Beta', 'beta', 0),
+					(3, 'Gamma', 'gamma', 0)",
+				"INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy, description, parent, count) VALUES
+					(101, 1, 'wptests_tax', 'Alpha description', 0, 1),
+					(102, 2, 'wptests_tax', 'Beta description', 0, 1),
+					(301, 3, 'category', 'Gamma category', 0, 1)",
+				'INSERT INTO wptests_term_relationships (object_id, term_taxonomy_id, term_order) VALUES
+					(201, 101, 0),
+					(202, 102, 0),
+					(203, 101, 0),
+					(204, 301, 0)',
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT t.term_id, tt.term_taxonomy_id
+			FROM wptests_terms AS t
+				INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+				INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			WHERE tt.taxonomy = 'wptests_tax'
+				AND tr.object_id IN (201, 202, 203)
+			GROUP BY t.term_id
+			ORDER BY t.name ASC"
+		);
+	}
+
 	public function test_select_split_shared_term_probe_group_by_primary_key_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

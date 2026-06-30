@@ -1538,6 +1538,74 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringContainsString( 'GROUP BY t.term_id, "t"."name"', $select_sql );
 	}
 
+	public function test_select_terms_nonaggregate_group_by_primary_key_wraps_joined_projection(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$rows = $driver->query(
+			"SELECT t.term_id, tt.term_taxonomy_id
+			FROM wptests_terms AS t
+				INNER JOIN wptests_term_taxonomy AS tt ON t.term_id = tt.term_id
+				INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+			WHERE tt.taxonomy = 'wptests_tax'
+				AND tr.object_id IN (201, 202, 203)
+			GROUP BY t.term_id
+			ORDER BY t.name ASC"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'term_id'          => 1,
+					'term_taxonomy_id' => 101,
+				),
+				array(
+					'term_id'          => 2,
+					'term_taxonomy_id' => 102,
+				),
+			),
+			$rows
+		);
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE(tt.term_taxonomy_id) AS "term_taxonomy_id"', $select_sql );
+		$this->assertStringContainsString( 'GROUP BY t.term_id, "t"."name"', $select_sql );
+	}
+
+	public function test_select_terms_nonaggregate_group_by_primary_key_rejects_noncanonical_join(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		try {
+			$driver->query(
+				"SELECT t.term_id, tt.term_taxonomy_id
+				FROM wptests_terms AS t
+					INNER JOIN wptests_term_taxonomy AS tt ON 1 = 1
+					INNER JOIN wptests_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+				WHERE tt.taxonomy = 'wptests_tax'
+					AND tr.object_id IN (201, 202, 203)
+				GROUP BY t.term_id
+				ORDER BY t.name ASC"
+			);
+			$this->fail( 'Expected noncanonical taxonomy join to fall through to DuckDB grouping rejection.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'Unsupported DuckDB MySQL-emulation SELECT statement', $e->getMessage() );
+		}
+
+		$duckdb_queries = $driver->get_last_duckdb_queries();
+		$select_sql     = end( $duckdb_queries );
+
+		$this->assertIsString( $select_sql );
+		$this->assertStringNotContainsString( 'ANY_VALUE(tt.term_taxonomy_id)', $select_sql );
+	}
+
 	public function test_select_split_shared_term_probe_group_by_primary_key_wraps_joined_projection(): void {
 		$this->requireDuckDBRuntime();
 
