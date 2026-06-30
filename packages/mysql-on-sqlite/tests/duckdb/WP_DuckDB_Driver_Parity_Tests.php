@@ -2906,15 +2906,18 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->runParitySetup(
 			array(
 				'CREATE TABLE options (option_name VARCHAR(100))',
-				"INSERT INTO options VALUES ('rss_123'), ('RSS_456'), ('transient')",
+				"INSERT INTO options VALUES ('rss_123'), ('RSS_456'), ('transient'), ('alpha'), ('ALPS')",
 			)
 		);
 
 		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name REGEXP '^rss_.+$' ORDER BY option_name" );
 		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name RLIKE '^rss_.+$' ORDER BY option_name" );
 		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name REGEXP BINARY '^rss_.+$' ORDER BY option_name" );
-		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name NOT REGEXP '^rss_.+$' ORDER BY option_name" );
-		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name NOT RLIKE BINARY '^RSS_.+$' ORDER BY option_name" );
+		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name NOT REGEXP '^rss_.+$' ORDER BY lower(option_name), option_name DESC" );
+		$this->assertParityRows( "SELECT option_name FROM options WHERE option_name NOT RLIKE BINARY '^RSS_.+$' ORDER BY lower(option_name), option_name DESC" );
+		$this->assertParityRows( "SELECT option_name FROM options WHERE BINARY option_name REGEXP '^a' ORDER BY lower(option_name), option_name DESC" );
+		$this->assertParityRows( "SELECT option_name FROM options WHERE BINARY option_name NOT REGEXP '^a' ORDER BY lower(option_name), option_name DESC" );
+		$this->assertParityRows( "SELECT o.option_name FROM options o WHERE BINARY o.option_name RLIKE '^a' ORDER BY lower(o.option_name), o.option_name DESC" );
 	}
 
 	public function test_replace_values_match_sqlite(): void {

@@ -9145,7 +9145,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 		$driver->query( 'CREATE TABLE options (option_name VARCHAR(100))' );
-		$driver->query( "INSERT INTO options VALUES ('rss_123'), ('RSS_456'), ('transient')" );
+		$driver->query( "INSERT INTO options VALUES ('rss_123'), ('RSS_456'), ('transient'), ('alpha'), ('ALPS')" );
 
 		$regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name REGEXP '^rss_.+$' ORDER BY lower(option_name), option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( array( 'option_name' => 'rss_123' ), array( 'option_name' => 'RSS_456' ) ), $regexp_rows );
@@ -9156,14 +9156,23 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$binary_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name REGEXP BINARY '^rss_.+$' ORDER BY option_name" )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( array( 'option_name' => 'rss_123' ) ), $binary_regexp_rows );
 
-		$not_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name NOT REGEXP '^rss_.+$' ORDER BY option_name" )->fetchAll( PDO::FETCH_ASSOC );
-		$this->assertSame( array( array( 'option_name' => 'transient' ) ), $not_regexp_rows );
+		$not_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE option_name NOT REGEXP '^rss_.+$' ORDER BY lower(option_name), option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'alpha' ), array( 'option_name' => 'ALPS' ), array( 'option_name' => 'transient' ) ), $not_regexp_rows );
 
-		$not_binary_rlike_rows = $driver->query( "SELECT option_name FROM options WHERE option_name NOT RLIKE BINARY '^RSS_.+$' ORDER BY option_name" )->fetchAll( PDO::FETCH_ASSOC );
-		$this->assertSame( array( array( 'option_name' => 'rss_123' ), array( 'option_name' => 'transient' ) ), $not_binary_rlike_rows );
+		$not_binary_rlike_rows = $driver->query( "SELECT option_name FROM options WHERE option_name NOT RLIKE BINARY '^RSS_.+$' ORDER BY lower(option_name), option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'alpha' ), array( 'option_name' => 'ALPS' ), array( 'option_name' => 'rss_123' ), array( 'option_name' => 'transient' ) ), $not_binary_rlike_rows );
 
 		$numeric_regexp = $driver->query( "SELECT 123 REGEXP '23$' AS matched" )->fetch( PDO::FETCH_ASSOC );
 		$this->assertSame( array( 'matched' => true ), $numeric_regexp );
+
+		$binary_left_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE BINARY option_name REGEXP '^a' ORDER BY lower(option_name), option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'alpha' ), array( 'option_name' => 'ALPS' ) ), $binary_left_regexp_rows );
+
+		$binary_left_not_regexp_rows = $driver->query( "SELECT option_name FROM options WHERE BINARY option_name NOT REGEXP '^a' ORDER BY lower(option_name), option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'rss_123' ), array( 'option_name' => 'RSS_456' ), array( 'option_name' => 'transient' ) ), $binary_left_not_regexp_rows );
+
+		$binary_left_qualified_rlike_rows = $driver->query( "SELECT o.option_name FROM options o WHERE BINARY o.option_name RLIKE '^a' ORDER BY lower(o.option_name), o.option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'option_name' => 'alpha' ), array( 'option_name' => 'ALPS' ) ), $binary_left_qualified_rlike_rows );
 	}
 
 	public function test_table_level_primary_key_is_supported(): void {

@@ -25326,7 +25326,32 @@ class WP_DuckDB_Driver {
 		);
 
 		$index = $next_index - 1;
+		if ( $this->binary_expression_is_regexp_left_operand( $tokens, $next_index ) ) {
+			return $operand_sql;
+		}
+
 		return 'hex(encode(CAST(' . $operand_sql . ' AS VARCHAR)))';
+	}
+
+	/**
+	 * Check whether unary BINARY is immediately followed by REGEXP/RLIKE.
+	 *
+	 * @param WP_Parser_Token[] $tokens     Token stream.
+	 * @param int               $next_index First token after the binary operand.
+	 * @return bool Whether the binary operand is the left side of a regexp predicate.
+	 */
+	private function binary_expression_is_regexp_left_operand( array $tokens, int $next_index ): bool {
+		if ( ! isset( $tokens[ $next_index ] ) ) {
+			return false;
+		}
+
+		if ( $this->is_regexp_operator( $tokens[ $next_index ] ) ) {
+			return true;
+		}
+
+		return isset( $tokens[ $next_index + 1 ] )
+			&& in_array( $tokens[ $next_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true )
+			&& $this->is_regexp_operator( $tokens[ $next_index + 1 ] );
 	}
 
 	/**
