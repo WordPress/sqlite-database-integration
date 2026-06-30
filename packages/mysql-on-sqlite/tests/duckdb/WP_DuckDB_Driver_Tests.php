@@ -2755,6 +2755,105 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringNotContainsString( 'TRY_CAST', $this->lastDuckDBQuery( $driver ) );
 	}
 
+	public function test_numeric_identifier_string_literal_in_predicates_match_sqlite(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_parent BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				post_title VARCHAR(200) NOT NULL DEFAULT \'\',
+				PRIMARY KEY (ID)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_parent, post_title) VALUES
+				(1, 0, 'one'),
+				(2, 1, 'two'),
+				(3, 1, 'three'),
+				(10, 2, 'ten')"
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL,
+				post_id BIGINT(20) UNSIGNED NOT NULL,
+				meta_key VARCHAR(255),
+				PRIMARY KEY (meta_id)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_postmeta (meta_id, post_id, meta_key) VALUES
+				(1, 1, 'a'),
+				(2, 3, 'b'),
+				(3, 10, 'c')"
+		);
+
+		$cases = array(
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID IN ('1', 'yololololo', '003') ORDER BY ID",
+				'expected' => array( 1, 3 ),
+				'fragment' => "TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE",
+			),
+			array(
+				'sql'      => "SELECT p.ID FROM wptests_posts AS p WHERE p.ID IN ('1', 'yololololo', '003') ORDER BY p.ID",
+				'expected' => array( 1, 3 ),
+				'fragment' => '"p"."ID" = TRY_CAST(\'003\' AS DOUBLE)',
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE post_parent IN ('1', 'yololololo') ORDER BY ID",
+				'expected' => array( 2, 3 ),
+				'fragment' => '"post_parent" = TRY_CAST(\'1\' AS DOUBLE)',
+			),
+			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE post_id IN ('1', 'yololololo', '003') ORDER BY meta_id",
+				'expected' => array( 1, 2 ),
+				'fragment' => '"post_id" = TRY_CAST(\'003\' AS DOUBLE)',
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID IN ('', '2') ORDER BY ID",
+				'expected' => array( 2 ),
+				'fragment' => "TRY_CAST('' AS DOUBLE) IS NULL THEN FALSE",
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT IN ('1', 'yololololo', '003') ORDER BY ID",
+				'expected' => array( 2, 10 ),
+				'fragment' => "TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN TRUE",
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$this->assertSame(
+				$case['expected'],
+				array_map(
+					'intval',
+					$driver->query( $case['sql'] )->fetchAll( PDO::FETCH_COLUMN )
+				),
+				$case['sql']
+			);
+			$this->assertStringContainsString( $case['fragment'], $this->lastDuckDBQuery( $driver ), $case['sql'] );
+		}
+
+		$result = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS ID
+			FROM wptests_posts
+			WHERE ID IN ('1', 'yololololo', '003')
+			ORDER BY ID
+			LIMIT 10"
+		);
+		$this->assertSame(
+			array(
+				array( 'ID' => 1 ),
+				array( 'ID' => 3 ),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_date_format_function_is_emulated(): void {
 		$this->requireDuckDBRuntime();
 
@@ -6124,6 +6223,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'mysql'  => 'SELECT ID FROM users WHERE \'12abc\' = users.ID',
 				'duckdb' => "SELECT ID FROM users WHERE CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('12abc' AS DOUBLE) IS NULL THEN FALSE ELSE TRY_CAST('12abc' AS DOUBLE) = \"users\".\"ID\" END",
 			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID IN ('1', 'yololololo', '003')",
+				'duckdb' => "SELECT ID FROM users WHERE (CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('1' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('1' AS DOUBLE) END OR CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END OR CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('003' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('003' AS DOUBLE) END)",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE users.ID NOT IN ('1', 'bad')",
+				'duckdb' => "SELECT ID FROM users WHERE (CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('1' AS DOUBLE) IS NULL THEN TRUE ELSE \"users\".\"ID\" <> TRY_CAST('1' AS DOUBLE) END AND CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN TRUE ELSE \"users\".\"ID\" <> TRY_CAST('bad' AS DOUBLE) END)",
+			),
 		);
 
 		foreach ( $rewrite_cases as $case ) {
@@ -6140,6 +6247,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				"SELECT id FROM plugin_items WHERE id < '10' ORDER BY id",
 				"SELECT id FROM plugin_items WHERE parent != 'abc' ORDER BY id",
 				"SELECT plugin_items.count FROM plugin_items WHERE plugin_items.count < '10' ORDER BY plugin_items.count",
+				"SELECT ID FROM users WHERE ID IN (1, 'bad')",
+				"SELECT ID FROM users WHERE user_login IN ('1', 'bad')",
 			) as $sql
 		) {
 			$driver->query( $sql );

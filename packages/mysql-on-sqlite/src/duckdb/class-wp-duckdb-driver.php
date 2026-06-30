@@ -20504,6 +20504,12 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$numeric_string_in_predicate = $this->translate_numeric_identifier_string_literal_in_predicate( $tokens, $index );
+			if ( null !== $numeric_string_in_predicate ) {
+				$pieces[] = $numeric_string_in_predicate;
+				continue;
+			}
+
 			$unix_timestamp_comparison = $this->translate_unix_timestamp_comparison( $tokens, $index );
 			if ( null !== $unix_timestamp_comparison ) {
 				$pieces[] = $unix_timestamp_comparison;
@@ -26400,6 +26406,83 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Translate numeric WordPress id IN lists containing quoted strings.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated predicate, or null when the pattern does not match.
+	 */
+	private function translate_numeric_identifier_string_literal_in_predicate( array $tokens, int &$index ): ?string {
+		$operand = $this->numeric_identifier_string_comparison_operand_sql( $tokens, $index );
+		if ( null === $operand || ! isset( $tokens[ $operand['next_index'] ] ) ) {
+			return null;
+		}
+
+		$not            = false;
+		$operator_index = $operand['next_index'];
+		$in_index       = $operator_index;
+		if (
+			in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true )
+			&& isset( $tokens[ $operator_index + 1 ] )
+		) {
+			$not      = true;
+			$in_index = $operator_index + 1;
+		}
+
+		if (
+			! isset( $tokens[ $in_index + 2 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $in_index ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $in_index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$literal_tokens = array();
+		$list_index     = $in_index + 2;
+		while ( isset( $tokens[ $list_index ] ) ) {
+			if ( ! $this->is_string_literal_token( $tokens[ $list_index ] ) ) {
+				return null;
+			}
+
+			$literal_tokens[] = $tokens[ $list_index ];
+			++$list_index;
+
+			if ( ! isset( $tokens[ $list_index ] ) ) {
+				return null;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $list_index ]->id ) {
+				break;
+			}
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $list_index ]->id ) {
+				return null;
+			}
+			++$list_index;
+		}
+
+		if (
+			array() === $literal_tokens
+			|| ! isset( $tokens[ $list_index ] )
+			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $list_index ]->id
+		) {
+			return null;
+		}
+
+		$comparison_sql = array();
+		foreach ( $literal_tokens as $literal ) {
+			$comparison_sql[] = $this->sqlite_numeric_string_literal_comparison_sql(
+				$operand['sql'],
+				$not ? WP_MySQL_Lexer::NOT_EQUAL_OPERATOR : WP_MySQL_Lexer::EQUAL_OPERATOR,
+				$not ? '<>' : '=',
+				$literal,
+				true
+			);
+		}
+
+		$index = $list_index;
+		return '(' . implode( $not ? ' AND ' : ' OR ', $comparison_sql ) . ')';
+	}
+
+	/**
 	 * Build a WordPress text-value operand SQL fragment for a bounded numeric comparison.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
@@ -26585,6 +26668,26 @@ class WP_DuckDB_Driver {
 	 * @return string Comparison SQL.
 	 */
 	private function sqlite_numeric_string_comparison_sql( string $operand_sql, WP_Parser_Token $operator, WP_Parser_Token $literal, bool $operand_left ): string {
+		return $this->sqlite_numeric_string_literal_comparison_sql(
+			$operand_sql,
+			$operator->id,
+			$operator->get_bytes(),
+			$literal,
+			$operand_left
+		);
+	}
+
+	/**
+	 * Build a SQLite-like numeric identifier comparison against a quoted string.
+	 *
+	 * @param string          $operand_sql  Numeric column SQL.
+	 * @param int             $operator_id  Comparison operator token ID.
+	 * @param string          $operator_sql Comparison operator SQL.
+	 * @param WP_Parser_Token $literal      Quoted string token.
+	 * @param bool            $operand_left Whether the numeric operand is on the left.
+	 * @return string Comparison SQL.
+	 */
+	private function sqlite_numeric_string_literal_comparison_sql( string $operand_sql, int $operator_id, string $operator_sql, WP_Parser_Token $literal, bool $operand_left ): string {
 		$literal_sql = $this->connection->quote( $this->token_value( $literal ) );
 		$numeric_sql = 'TRY_CAST(' . $literal_sql . ' AS DOUBLE)';
 		$left_sql    = $operand_left ? $operand_sql : $numeric_sql;
@@ -26595,11 +26698,11 @@ class WP_DuckDB_Driver {
 			. ' IS NULL THEN NULL WHEN '
 			. $numeric_sql
 			. ' IS NULL THEN '
-			. $this->sqlite_numeric_string_null_comparison_result_sql( $operator->id, $operand_left )
+			. $this->sqlite_numeric_string_null_comparison_result_sql( $operator_id, $operand_left )
 			. ' ELSE '
 			. $left_sql
 			. ' '
-			. $operator->get_bytes()
+			. $operator_sql
 			. ' '
 			. $right_sql
 			. ' END';
