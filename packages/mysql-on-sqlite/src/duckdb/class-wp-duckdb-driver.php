@@ -20445,7 +20445,7 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
-			$date_format_numeric_comparison = $this->translate_date_format_numeric_literal_comparison(
+			$date_text_numeric_comparison = $this->translate_date_text_numeric_literal_comparison(
 				$tokens,
 				$index,
 				$rewrite_information_schema_tables,
@@ -20456,8 +20456,8 @@ class WP_DuckDB_Driver {
 				$rewrite_information_schema_referential_constraints,
 				$rewrite_information_schema_check_constraints
 			);
-			if ( null !== $date_format_numeric_comparison ) {
-				$pieces[] = $date_format_numeric_comparison;
+			if ( null !== $date_text_numeric_comparison ) {
+				$pieces[] = $date_text_numeric_comparison;
 				continue;
 			}
 
@@ -25019,19 +25019,20 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Translate SQLite-compatible DATE_FORMAT() comparisons against numeric literals.
+	 * Translate SQLite-compatible date text comparisons against numeric literals.
 	 *
-	 * SQLite treats DATE_FORMAT() text results as text when compared with numeric
-	 * literals. DuckDB tries numeric coercion for some operators and errors for
-	 * others, so rewrite the bounded literal-format predicate before translating
-	 * DATE_FORMAT() as a scalar function. The %H.%i format intentionally keeps
-	 * the existing numeric translation used by WordPress time predicates.
+	 * SQLite treats DATE() and non-numeric DATE_FORMAT() text results as text when
+	 * compared with numeric literals. DuckDB tries numeric coercion for some
+	 * operators and errors for others, so rewrite the bounded predicates before
+	 * translating the scalar functions. The %H.%i DATE_FORMAT() format
+	 * intentionally keeps the existing numeric translation used by WordPress time
+	 * predicates.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
 	 * @param int               $index  Current index, advanced on match.
 	 * @return string|null Translated predicate, or null when the pattern does not match.
 	 */
-	private function translate_date_format_numeric_literal_comparison(
+	private function translate_date_text_numeric_literal_comparison(
 		array $tokens,
 		int &$index,
 		bool $rewrite_information_schema_tables,
@@ -25042,7 +25043,7 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_referential_constraints,
 		bool $rewrite_information_schema_check_constraints
 	): ?string {
-		$date_format = $this->date_format_text_expression_sql(
+		$date_text = $this->date_text_expression_sql(
 			$tokens,
 			$index,
 			$rewrite_information_schema_tables,
@@ -25054,18 +25055,18 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_check_constraints
 		);
 		if (
-			null !== $date_format
-			&& isset( $tokens[ $date_format['next_index'] + 1 ] )
-			&& $this->is_date_format_numeric_comparison_operator_token( $tokens[ $date_format['next_index'] ] )
+			null !== $date_text
+			&& isset( $tokens[ $date_text['next_index'] + 1 ] )
+			&& $this->is_date_text_numeric_comparison_operator_token( $tokens[ $date_text['next_index'] ] )
 		) {
-			$operator_index = $date_format['next_index'];
+			$operator_index = $date_text['next_index'];
 			$literal        = $this->text_value_numeric_literal_sequence_sql( $tokens, $operator_index + 1 );
 			if (
 				null !== $literal
 				&& $this->text_value_numeric_comparison_has_boundary( $tokens, $literal['end_index'] + 1 )
 			) {
 				$index = $literal['end_index'];
-				return $this->sqlite_date_format_numeric_comparison_sql( $date_format['sql'], $tokens[ $operator_index ], false );
+				return $this->sqlite_date_text_numeric_comparison_sql( $date_text['sql'], $tokens[ $operator_index ], false );
 			}
 		}
 
@@ -25075,11 +25076,11 @@ class WP_DuckDB_Driver {
 		}
 
 		$operator_index = $literal['end_index'] + 1;
-		if ( ! $this->is_date_format_numeric_comparison_operator_token( $tokens[ $operator_index ] ) ) {
+		if ( ! $this->is_date_text_numeric_comparison_operator_token( $tokens[ $operator_index ] ) ) {
 			return null;
 		}
 
-		$date_format = $this->date_format_text_expression_sql(
+		$date_text = $this->date_text_expression_sql(
 			$tokens,
 			$operator_index + 1,
 			$rewrite_information_schema_tables,
@@ -25091,14 +25092,110 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_check_constraints
 		);
 		if (
-			null === $date_format
-			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $date_format['next_index'] )
+			null === $date_text
+			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $date_text['next_index'] )
 		) {
 			return null;
 		}
 
-		$index = $date_format['next_index'] - 1;
-		return $this->sqlite_date_format_numeric_comparison_sql( $date_format['sql'], $tokens[ $operator_index ], true );
+		$index = $date_text['next_index'] - 1;
+		return $this->sqlite_date_text_numeric_comparison_sql( $date_text['sql'], $tokens[ $operator_index ], true );
+	}
+
+	/**
+	 * Translate a date text function call for comparison rewrites.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Function token index.
+	 * @return array{sql:string,next_index:int}|null Translated expression and next token index.
+	 */
+	private function date_text_expression_sql(
+		array $tokens,
+		int $index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?array {
+		$date_format = $this->date_format_text_expression_sql(
+			$tokens,
+			$index,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		if ( null !== $date_format ) {
+			return $date_format;
+		}
+
+		return $this->date_function_text_expression_sql(
+			$tokens,
+			$index,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+	}
+
+	/**
+	 * Translate a DATE() call for comparison rewrites.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  DATE token index.
+	 * @return array{sql:string,next_index:int}|null Translated expression and next token index.
+	 */
+	private function date_function_text_expression_sql(
+		array $tokens,
+		int $index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?array {
+		if (
+			! isset( $tokens[ $index ], $tokens[ $index + 1 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_bytes(), 'DATE' )
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$items     = $this->split_top_level_comma_items( $body );
+		if ( 1 !== count( $items ) || count( $items[0] ) === 0 ) {
+			return null;
+		}
+
+		$date_sql = $this->translate_tokens_to_duckdb_sql(
+			$items[0],
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+
+		return array(
+			'sql'        => 'strftime(TRY_CAST((' . $date_sql . ") AS TIMESTAMP), '%Y-%m-%d')",
+			'next_index' => $end_index,
+		);
 	}
 
 	/**
@@ -25162,28 +25259,28 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Build SQLite-compatible DATE_FORMAT() text-vs-number comparison SQL.
+	 * Build SQLite-compatible date text-vs-number comparison SQL.
 	 *
-	 * @param string          $date_format_sql    DATE_FORMAT() SQL expression.
+	 * @param string          $date_text_sql        Date text SQL expression.
 	 * @param WP_Parser_Token $operator           Comparison operator.
 	 * @param bool            $numeric_operand_left Whether the numeric literal is on the left.
 	 * @return string DuckDB SQL.
 	 */
-	private function sqlite_date_format_numeric_comparison_sql( string $date_format_sql, WP_Parser_Token $operator, bool $numeric_operand_left ): string {
+	private function sqlite_date_text_numeric_comparison_sql( string $date_text_sql, WP_Parser_Token $operator, bool $numeric_operand_left ): string {
 		return '(CASE WHEN '
-			. $date_format_sql
+			. $date_text_sql
 			. ' IS NULL THEN NULL ELSE '
 			. $this->sqlite_numeric_string_null_comparison_result_sql( $operator->id, $numeric_operand_left )
 			. ' END)';
 	}
 
 	/**
-	 * Check whether a token is a DATE_FORMAT() numeric comparison operator.
+	 * Check whether a token is a date text numeric comparison operator.
 	 *
 	 * @param WP_Parser_Token|null $token Token.
 	 * @return bool Whether the token is supported.
 	 */
-	private function is_date_format_numeric_comparison_operator_token( $token ): bool {
+	private function is_date_text_numeric_comparison_operator_token( $token ): bool {
 		return $this->is_numeric_comparison_operator_token( $token )
 			|| (
 				$token instanceof WP_Parser_Token

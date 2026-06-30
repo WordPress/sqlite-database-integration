@@ -87,6 +87,38 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 	}
 
+	public function test_date_function_numeric_literal_comparisons_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_date_function_posts (ID BIGINT, post_date_gmt DATETIME)',
+				"INSERT INTO wp_date_function_posts (ID, post_date_gmt) VALUES
+					(1, '2016-01-16 00:00:00'),
+					(2, '2016-01-17 00:00:00'),
+					(3, NULL)",
+			)
+		);
+
+		foreach (
+			array(
+				'SELECT ID FROM wp_date_function_posts WHERE DATE(post_date_gmt) = 20160116 ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE DATE(post_date_gmt) != 20160116 ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE DATE(post_date_gmt) > 20160116 ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE DATE(post_date_gmt) >= 20160116 ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE DATE(post_date_gmt) < 20160116 ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE DATE(post_date_gmt) <= 20160116 ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE 20160116 = DATE(post_date_gmt) ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE 20160116 != DATE(post_date_gmt) ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE 20160116 > DATE(post_date_gmt) ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE 20160116 >= DATE(post_date_gmt) ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE 20160116 < DATE(post_date_gmt) ORDER BY ID',
+				'SELECT ID FROM wp_date_function_posts WHERE 20160116 <= DATE(post_date_gmt) ORDER BY ID',
+				"SELECT ID FROM wp_date_function_posts WHERE DATE(post_date_gmt) = '2016-01-16' ORDER BY ID",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
 	public function test_select_unseeded_rand_range_matches_sqlite(): void {
 		$this->assertParityRows( 'SELECT CAST(RAND() >= 0 AND RAND() < 1 AS SIGNED) AS rand_in_range' );
 	}

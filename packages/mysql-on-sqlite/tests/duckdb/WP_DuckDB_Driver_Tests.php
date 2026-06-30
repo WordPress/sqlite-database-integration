@@ -3329,6 +3329,19 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$tokens = $tokenize->invoke(
 			$driver,
+			"SELECT ID FROM wp_posts
+			WHERE DATE(post_date_gmt) = 20160116
+				OR 20160116 < DATE(post_date_gmt)
+				OR DATE(post_date_gmt) = '2016-01-16'"
+		);
+		$sql    = $translate->invoke( $driver, $tokens );
+
+		$this->assertStringContainsString( "CASE WHEN strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d') IS NULL THEN NULL ELSE FALSE END", $sql );
+		$this->assertStringContainsString( "CASE WHEN strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d') IS NULL THEN NULL ELSE TRUE END", $sql );
+		$this->assertStringContainsString( "strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d') = '2016-01-16'", $sql );
+
+		$tokens = $tokenize->invoke(
+			$driver,
 			"SELECT HOUR(post_date) AS hour, MINUTE(post_date) AS minute, SECOND(post_date) AS second,
 				DAYOFWEEK(post_date) AS day_of_week, WEEKDAY(post_date) AS weekday,
 				WEEK(post_date, 1) AS week, DATE_FORMAT(post_date, '%Y-%m-%d %H:%i:%s') AS formatted,
