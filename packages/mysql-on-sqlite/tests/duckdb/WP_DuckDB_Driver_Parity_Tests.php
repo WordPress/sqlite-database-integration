@@ -56,6 +56,42 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 	}
 
+	public function test_datediff_numeric_literal_comparisons_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_datediff_posts (
+					ID BIGINT,
+					post_date_gmt DATETIME
+				)',
+				"INSERT INTO wp_datediff_posts (ID, post_date_gmt) VALUES
+					(1, '2016-01-16 00:00:00'),
+					(2, '2016-01-17 00:00:00'),
+					(3, '2016-01-18 00:00:00'),
+					(12, '2016-01-16 12:34:56')",
+			)
+		);
+
+		foreach (
+			array(
+				"SELECT ID FROM wp_datediff_posts WHERE DATEDIFF(post_date_gmt, '2016-01-15') = 1 ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE DATEDIFF(post_date_gmt, '2016-01-15') != 1 ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE DATEDIFF(post_date_gmt, '2016-01-15') < 2 ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE DATEDIFF(post_date_gmt, '2016-01-15') <= 1 ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE DATEDIFF(post_date_gmt, '2016-01-15') > 0 ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE DATEDIFF(post_date_gmt, '2016-01-15') >= 1 ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE 1 = DATEDIFF(post_date_gmt, '2016-01-15') ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE 1 != DATEDIFF(post_date_gmt, '2016-01-15') ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE 2 > DATEDIFF(post_date_gmt, '2016-01-15') ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE 1 >= DATEDIFF(post_date_gmt, '2016-01-15') ORDER BY ID",
+				"SELECT ID FROM wp_datediff_posts WHERE DATEDIFF(post_date_gmt, '2016-01-15') = '1' ORDER BY ID",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+
+		$this->assertParityRows( "SELECT DATEDIFF('2008-01-09 13:29:17', '2008-01-02 00:00:00') AS day_delta" );
+	}
+
 	public function test_date_format_numeric_literal_comparisons_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

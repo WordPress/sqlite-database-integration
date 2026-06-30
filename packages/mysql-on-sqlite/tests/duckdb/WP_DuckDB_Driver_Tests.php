@@ -3417,6 +3417,74 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringContainsString( 'year(TRY_CAST((post_date_gmt) AS TIMESTAMP)) = 2016', $sql );
 	}
 
+	public function test_datediff_numeric_literal_comparisons_are_translated_without_duckdb_runtime(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				if ( 0 === strpos( $sql, 'CREATE OR REPLACE MACRO ' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				throw new RuntimeException( 'Unexpected query: ' . $sql );
+			}
+		};
+		$driver     = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+		$tokenize   = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$translate  = new ReflectionMethod( WP_DuckDB_Driver::class, 'translate_tokens_to_duckdb_sql' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$translate->setAccessible( true );
+		}
+
+		$sql = $translate->invoke(
+			$driver,
+			$tokenize->invoke(
+				$driver,
+				"SELECT ID FROM wp_posts
+				WHERE DATEDIFF(post_date_gmt, '2016-01-15') = 1
+					OR 1 < DATEDIFF(post_date_gmt, '2016-01-15')"
+			)
+		);
+
+		$this->assertStringContainsString( 'CASE WHEN CAST((CASE WHEN (post_date_gmt) IS NULL THEN NULL', $sql );
+		$this->assertStringContainsString( 'AS BIGINT) IS NULL THEN NULL ELSE FALSE END', $sql );
+		$this->assertStringContainsString( 'AS BIGINT) IS NULL THEN NULL ELSE TRUE END', $sql );
+
+		$sql = $translate->invoke(
+			$driver,
+			$tokenize->invoke(
+				$driver,
+				"SELECT ID FROM wp_posts
+				WHERE DATEDIFF(post_date_gmt, '2016-01-15') = '1'"
+			)
+		);
+
+		$this->assertStringContainsString( "AS BIGINT) = '1'", $sql );
+		$this->assertStringNotContainsString( 'ELSE FALSE END', $sql );
+
+		$sql = $translate->invoke(
+			$driver,
+			$tokenize->invoke(
+				$driver,
+				"SELECT DATEDIFF('2008-01-09 13:29:17', '2008-01-02 00:00:00') AS day_delta"
+			)
+		);
+
+		$this->assertStringContainsString( 'AS BIGINT) AS day_delta', $sql );
+		$this->assertStringNotContainsString( 'ELSE FALSE END', $sql );
+
+		$sql = $translate->invoke(
+			$driver,
+			$tokenize->invoke(
+				$driver,
+				"SELECT DATEDIFF('not-a-date', '2016-01-15') AS day_delta"
+			)
+		);
+
+		$this->assertStringContainsString( "error('Failed to parse time string')", $sql );
+	}
+
 	public function test_rest_iso_datetime_literal_comparisons_cast_known_datetime_columns(): void {
 		$driver    = $this->new_byte_safe_duckdb_driver();
 		$tokenize  = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );

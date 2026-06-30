@@ -25151,6 +25151,21 @@ class WP_DuckDB_Driver {
 			return $date_add_sub;
 		}
 
+		$datediff = $this->datediff_text_expression_sql(
+			$tokens,
+			$index,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		if ( null !== $datediff ) {
+			return $datediff;
+		}
+
 		$date_format = $this->date_format_text_expression_sql(
 			$tokens,
 			$index,
@@ -25200,6 +25215,57 @@ class WP_DuckDB_Driver {
 		if (
 			! isset( $tokens[ $index ] )
 			|| ! in_array( strtoupper( $tokens[ $index ]->get_bytes() ), array( 'DATE_ADD', 'DATE_SUB' ), true )
+		) {
+			return null;
+		}
+
+		$function_index = $index;
+		$sql            = $this->translate_date_time_function_call(
+			$tokens,
+			$function_index,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		if ( null === $sql ) {
+			return null;
+		}
+
+		return array(
+			'sql'        => $sql,
+			'next_index' => $function_index + 1,
+		);
+	}
+
+	/**
+	 * Translate a DATEDIFF() call for comparison rewrites.
+	 *
+	 * SQLite's DATEDIFF() shim returns text, so numeric-literal comparisons use
+	 * SQLite's text-vs-number truth table. Raw DATEDIFF() projection still uses
+	 * the generic numeric translation.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  DATEDIFF token index.
+	 * @return array{sql:string,next_index:int}|null Translated expression and next token index.
+	 */
+	private function datediff_text_expression_sql(
+		array $tokens,
+		int $index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?array {
+		if (
+			! isset( $tokens[ $index ] )
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_bytes(), 'DATEDIFF' )
 		) {
 			return null;
 		}
