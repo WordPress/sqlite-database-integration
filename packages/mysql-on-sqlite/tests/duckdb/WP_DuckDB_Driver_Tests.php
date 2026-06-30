@@ -10651,6 +10651,58 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( array(), $pattern_binary_not_null_rows );
 	}
 
+	public function test_invalid_literal_regexp_patterns_are_translated_without_duckdb_runtime(): void {
+		$connection = new class() extends WP_DuckDB_Connection {
+			public function __construct() {}
+
+			public function query( string $sql, array $params = array() ): WP_DuckDB_Result_Statement {
+				if ( 0 === strpos( $sql, 'CREATE OR REPLACE MACRO ' ) ) {
+					return new WP_DuckDB_Result_Statement( array(), array(), 0 );
+				}
+
+				throw new RuntimeException( 'Unexpected query: ' . $sql );
+			}
+		};
+		$driver     = new WP_DuckDB_Driver( array( 'connection' => $connection ) );
+		$tokenize   = new ReflectionMethod( WP_DuckDB_Driver::class, 'tokenize_and_validate' );
+		$translate  = new ReflectionMethod( WP_DuckDB_Driver::class, 'translate_tokens_to_duckdb_sql' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$tokenize->setAccessible( true );
+			$translate->setAccessible( true );
+		}
+
+		foreach (
+			array(
+				"SELECT ID FROM wp_posts WHERE post_title REGEXP '['"             => 'WHERE FALSE',
+				'SELECT ID FROM wp_posts WHERE post_title RLIKE "["'             => 'WHERE FALSE',
+				"SELECT ID FROM wp_posts WHERE post_title NOT REGEXP '['"         => 'WHERE TRUE',
+				'SELECT ID FROM wp_posts WHERE post_title NOT RLIKE "["'         => 'WHERE TRUE',
+				"SELECT ID FROM wp_posts WHERE post_title REGEXP BINARY '['"      => 'WHERE FALSE',
+				"SELECT ID FROM wp_posts WHERE post_title NOT REGEXP BINARY '['"  => 'WHERE TRUE',
+				"SELECT ID FROM wp_posts WHERE post_title RLIKE BINARY '['"       => 'WHERE FALSE',
+				"SELECT ID FROM wp_posts WHERE post_title NOT RLIKE BINARY '['"   => 'WHERE TRUE',
+				"SELECT ID FROM wp_posts WHERE BINARY post_title REGEXP '['"      => 'WHERE FALSE',
+				"SELECT ID FROM wp_posts WHERE BINARY post_title NOT RLIKE '['"   => 'WHERE TRUE',
+			) as $mysql => $expected
+		) {
+			$sql = $translate->invoke( $driver, $tokenize->invoke( $driver, $mysql ) );
+			$this->assertStringContainsString( $expected, $sql, $mysql );
+			$this->assertStringNotContainsString( 'regexp_matches', $sql, $mysql );
+		}
+
+		$valid_literal = $translate->invoke(
+			$driver,
+			$tokenize->invoke( $driver, "SELECT ID FROM wp_posts WHERE post_title REGEXP '^A'" )
+		);
+		$this->assertStringContainsString( "regexp_matches(COALESCE(CAST((post_title) AS VARCHAR), ''), COALESCE(CAST(('^A') AS VARCHAR), ''), 'i')", $valid_literal );
+
+		$dynamic_pattern = $translate->invoke(
+			$driver,
+			$tokenize->invoke( $driver, 'SELECT ID FROM wp_posts WHERE post_title REGEXP pattern' )
+		);
+		$this->assertStringContainsString( "regexp_matches(COALESCE(CAST((post_title) AS VARCHAR), ''), COALESCE(CAST((pattern) AS VARCHAR), ''), 'i')", $dynamic_pattern );
+	}
+
 	public function test_table_level_primary_key_is_supported(): void {
 		$this->requireDuckDBRuntime();
 

@@ -24815,13 +24815,57 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'REGEXP requires a left-hand expression in the DuckDB driver.' );
 		}
 
-		$left        = 'COALESCE(CAST((' . $this->pop_regexp_left_expression( $pieces ) . ") AS VARCHAR), '')";
+		$left_expression = $this->pop_regexp_left_expression( $pieces );
+		if ( ! $this->regexp_literal_pattern_is_valid( $pattern, $binary ) ) {
+			return $negated ? 'TRUE' : 'FALSE';
+		}
+
+		$left        = 'COALESCE(CAST((' . $left_expression . ") AS VARCHAR), '')";
 		$pattern_sql = 'COALESCE(CAST((' . $this->translate_token_to_duckdb_sql( $pattern ) . ") AS VARCHAR), '')";
 		$predicate   = $binary
 			? sprintf( 'regexp_matches(%s, %s)', $left, $pattern_sql )
 			: sprintf( "regexp_matches(%s, %s, 'i')", $left, $pattern_sql );
 
 		return $negated ? 'NOT ' . $predicate : $predicate;
+	}
+
+	/**
+	 * Check whether a literal REGEXP pattern is valid for SQLite's PHP matcher.
+	 *
+	 * Dynamic patterns cannot be prevalidated at translation time and stay on the
+	 * normal DuckDB regexp_matches() path.
+	 *
+	 * @param WP_Parser_Token $pattern Pattern token.
+	 * @param bool            $binary  Whether this is REGEXP BINARY.
+	 * @return bool Whether the pattern is valid, or cannot be checked yet.
+	 */
+	private function regexp_literal_pattern_is_valid( WP_Parser_Token $pattern, bool $binary ): bool {
+		if (
+			WP_MySQL_Lexer::SINGLE_QUOTED_TEXT !== $pattern->id
+			&& WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT !== $pattern->id
+		) {
+			return true;
+		}
+
+		$literal = $this->token_value( $pattern );
+		if ( $binary ) {
+			$literal = "\x00" . $literal;
+		}
+
+		if ( '' !== $literal && "\x00" === $literal[0] ) {
+			$literal = substr( $literal, 1 );
+			$flags   = '';
+		} else {
+			$flags = 'i';
+		}
+
+		$php_pattern              = '/' . str_replace( '/', '\/', $literal ) . '/' . $flags;
+		$previous_error_reporting = error_reporting( error_reporting() & ~E_WARNING & ~E_DEPRECATED );
+		try {
+			return false !== preg_match( $php_pattern, '' );
+		} finally {
+			error_reporting( $previous_error_reporting );
+		}
 	}
 
 	/**

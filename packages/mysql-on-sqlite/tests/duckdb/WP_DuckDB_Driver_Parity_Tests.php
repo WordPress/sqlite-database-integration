@@ -4222,6 +4222,45 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 	}
 
+	public function test_invalid_literal_regexp_patterns_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_invalid_regexp_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_title VARCHAR(255),
+					PRIMARY KEY (ID)
+				)',
+				"INSERT INTO wp_invalid_regexp_posts (ID, post_title) VALUES
+					(1, 'Apple'),
+					(2, 'apple'),
+					(3, ''),
+					(4, NULL)",
+			)
+		);
+
+		$previous_error_reporting = error_reporting( error_reporting() & ~E_WARNING & ~E_DEPRECATED );
+		try {
+			foreach (
+				array(
+					"SELECT ID FROM wp_invalid_regexp_posts WHERE post_title REGEXP '[' ORDER BY ID",
+					'SELECT ID FROM wp_invalid_regexp_posts WHERE post_title RLIKE "[" ORDER BY ID',
+					"SELECT ID FROM wp_invalid_regexp_posts WHERE post_title NOT REGEXP '[' ORDER BY ID",
+					'SELECT ID FROM wp_invalid_regexp_posts WHERE post_title NOT RLIKE "[" ORDER BY ID',
+					"SELECT ID FROM wp_invalid_regexp_posts WHERE post_title REGEXP BINARY '[' ORDER BY ID",
+					"SELECT ID FROM wp_invalid_regexp_posts WHERE post_title NOT REGEXP BINARY '[' ORDER BY ID",
+					"SELECT ID FROM wp_invalid_regexp_posts WHERE post_title RLIKE BINARY '[' ORDER BY ID",
+					"SELECT ID FROM wp_invalid_regexp_posts WHERE post_title NOT RLIKE BINARY '[' ORDER BY ID",
+					"SELECT ID FROM wp_invalid_regexp_posts WHERE BINARY post_title REGEXP '[' ORDER BY ID",
+					"SELECT ID FROM wp_invalid_regexp_posts WHERE BINARY post_title NOT RLIKE '[' ORDER BY ID",
+				) as $sql
+			) {
+				$this->assertParityRows( $sql );
+			}
+		} finally {
+			error_reporting( $previous_error_reporting );
+		}
+	}
+
 	public function test_replace_values_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
