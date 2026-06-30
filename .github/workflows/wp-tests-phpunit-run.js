@@ -1376,6 +1376,24 @@ function getDuckDBChildTemplateDiagnosticsPhp() {
 	].join( '\n' );
 }
 
+function getDuckDBChildInstrumentationIsolationPhp() {
+	return [
+		"if ( '1' !== getenv( 'WP_SQLITE_DUCKDB_CHILD_QUERY_PROFILE' ) ) {",
+		"\tputenv( 'WP_DUCKDB_QUERY_PROFILE=0' );",
+		"\t$_ENV[ 'WP_DUCKDB_QUERY_PROFILE' ] = '0';",
+		"\t$_SERVER[ 'WP_DUCKDB_QUERY_PROFILE' ] = '0';",
+		"\tputenv( 'WP_DUCKDB_QUERY_PROFILE_INTERVAL=0' );",
+		"\t$_ENV[ 'WP_DUCKDB_QUERY_PROFILE_INTERVAL' ] = '0';",
+		"\t$_SERVER[ 'WP_DUCKDB_QUERY_PROFILE_INTERVAL' ] = '0';",
+		'}',
+		"if ( '1' !== getenv( 'WP_SQLITE_DUCKDB_CHILD_RUNTIME_COUNTERS' ) ) {",
+		"\tputenv( 'WP_DUCKDB_RUNTIME_COUNTERS=0' );",
+		"\t$_ENV[ 'WP_DUCKDB_RUNTIME_COUNTERS' ] = '0';",
+		"\t$_SERVER[ 'WP_DUCKDB_RUNTIME_COUNTERS' ] = '0';",
+		'}',
+	].join( '\n' );
+}
+
 function patchPhpunitChildProcessTemplatesForDiagnostics() {
 	const templateDir = '/var/www/vendor/phpunit/phpunit/src/Util/PHP/Template';
 	const templateNames = [ 'TestCaseClass.tpl', 'TestCaseMethod.tpl' ];
@@ -1398,6 +1416,7 @@ function patchPhpunitChildProcessTemplatesForDiagnostics() {
 		"$_ENV[ 'WP_TESTS_SKIP_INSTALL' ] = '1';",
 		"$_SERVER[ 'WP_TESTS_SKIP_INSTALL' ] = '1';",
 		getPhpunitForwardedEnvironmentPhp(),
+		getDuckDBChildInstrumentationIsolationPhp(),
 		"if ( defined( 'DUCKDB_PHP_AUTOLOAD' ) && is_readable( DUCKDB_PHP_AUTOLOAD ) ) {",
 		"\trequire_once DUCKDB_PHP_AUTOLOAD;",
 		'}',
@@ -1733,6 +1752,8 @@ function getPhpunitForwardedEnvironmentPhp() {
 		'WP_SQLITE_DUCKDB_CHILD_DIAGNOSTICS_STDERR',
 		'WP_SQLITE_DUCKDB_CHILD_DB_COPY',
 		'WP_SQLITE_DUCKDB_PREPARE_OBJECT_DIAGNOSTICS',
+		'WP_SQLITE_DUCKDB_CHILD_QUERY_PROFILE',
+		'WP_SQLITE_DUCKDB_CHILD_RUNTIME_COUNTERS',
 	];
 
 	return environmentNames
