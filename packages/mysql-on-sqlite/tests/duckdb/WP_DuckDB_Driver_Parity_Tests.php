@@ -3027,6 +3027,50 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 	}
 
+	public function test_post_text_numeric_identifier_predicates_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_post_text_numeric_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					post_parent BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					post_title TEXT NOT NULL,
+					post_name VARCHAR(200) NOT NULL DEFAULT \'\',
+					post_content LONGTEXT NOT NULL,
+					post_excerpt TEXT NOT NULL,
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_post_text_numeric_posts (ID, post_author, post_parent, post_title, post_name, post_content, post_excerpt) VALUES
+					(1, 1, 1, '11', '11', '11', '11'),
+					(2, 1, 2, 'abc', 'abc', 'abc', 'abc'),
+					(3, 2, 3, '13', '13', '13', '13'),
+					(4, 2, 4, '13abc', '13abc', '13abc', '13abc'),
+					(5, 3, 5, '15', '15', '15', '15'),
+					(6, 4, 6, 'zz', 'zz', 'zz', 'zz')",
+			)
+		);
+
+		foreach (
+			array(
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_title = ID + 10 ORDER BY ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE ID + 10 = post_title ORDER BY ID',
+				'SELECT p.ID FROM wp_post_text_numeric_posts p WHERE p.post_title = p.ID + 10 ORDER BY p.ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_name = ID + 10 ORDER BY ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_content = ID + 10 ORDER BY ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_excerpt = post_parent + 10 ORDER BY ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_title <> ID + 10 ORDER BY ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_title < ID + 10 ORDER BY ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE ID + 10 < post_title ORDER BY ID',
+				"SELECT ID FROM wp_post_text_numeric_posts WHERE post_title IN (ID + 10, 'abc') ORDER BY ID",
+				"SELECT ID FROM wp_post_text_numeric_posts WHERE post_title NOT IN (ID + 10, 'abc') ORDER BY ID",
+				"SELECT ID FROM wp_post_text_numeric_posts WHERE post_title BETWEEN ID + 10 AND 'zz' ORDER BY ID",
+				"SELECT ID FROM wp_post_text_numeric_posts WHERE post_title NOT BETWEEN ID + 10 AND 'zz' ORDER BY ID",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
 	public function test_chained_constant_expression_text_value_scalar_comparisons_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

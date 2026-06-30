@@ -27696,7 +27696,7 @@ class WP_DuckDB_Driver {
 	 * @return string|null Translated expression, or null when the pattern does not match.
 	 */
 	private function translate_text_value_numeric_arithmetic_expression( array $tokens, int &$index ): ?string {
-		$left_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index );
+		$left_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index, false );
 		if (
 			null !== $left_operand
 			&& isset( $tokens[ $left_operand['next_index'] + 1 ] )
@@ -27718,7 +27718,7 @@ class WP_DuckDB_Driver {
 			&& $this->is_number_token( $tokens[ $index ] )
 			&& $this->is_numeric_arithmetic_operator_token( $tokens[ $index + 1 ] )
 		) {
-			$right_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index + 2 );
+			$right_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index + 2, false );
 			if ( null !== $right_operand ) {
 				$literal_sql  = $tokens[ $index ]->get_bytes();
 				$operator_sql = $tokens[ $index + 1 ]->get_bytes();
@@ -28090,11 +28090,12 @@ class WP_DuckDB_Driver {
 	/**
 	 * Build a WordPress text-value operand SQL fragment for a bounded numeric comparison.
 	 *
-	 * @param WP_Parser_Token[] $tokens Token stream.
-	 * @param int               $index  Current index.
+	 * @param WP_Parser_Token[] $tokens                    Token stream.
+	 * @param int               $index                     Current index.
+	 * @param bool              $allow_posts_table_columns Whether to allow posts-table text columns.
 	 * @return array{sql:string,next_index:int}|null Operand SQL and next token index, or null when not matched.
 	 */
-	private function text_value_numeric_comparison_operand_sql( array $tokens, int $index ): ?array {
+	private function text_value_numeric_comparison_operand_sql( array $tokens, int $index, bool $allow_posts_table_columns = true ): ?array {
 		if ( ! isset( $tokens[ $index ] ) || $this->is_non_identifier_token( $tokens[ $index ] ) ) {
 			return null;
 		}
@@ -28104,13 +28105,14 @@ class WP_DuckDB_Driver {
 			&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index + 1 ]->id
 			&& ! $this->is_non_identifier_token( $tokens[ $index + 2 ] )
 		) {
+			$qualifier   = $this->identifier_value( $tokens[ $index ] );
 			$column_name = $this->identifier_value( $tokens[ $index + 2 ] );
-			if ( ! $this->is_text_value_numeric_comparison_column( $column_name ) ) {
+			if ( ! $this->is_text_value_numeric_comparison_operand_column( $tokens, $index, $column_name, $qualifier, $allow_posts_table_columns ) ) {
 				return null;
 			}
 
 			return array(
-				'sql'        => $this->connection->quote_identifier( $this->identifier_value( $tokens[ $index ] ) )
+				'sql'        => $this->connection->quote_identifier( $qualifier )
 					. '.'
 					. $this->connection->quote_identifier( $column_name ),
 				'next_index' => $index + 3,
@@ -28118,7 +28120,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$column_name = $this->identifier_value( $tokens[ $index ] );
-		if ( ! $this->is_text_value_numeric_comparison_column( $column_name ) ) {
+		if ( ! $this->is_text_value_numeric_comparison_operand_column( $tokens, $index, $column_name, null, $allow_posts_table_columns ) ) {
 			return null;
 		}
 
@@ -28129,7 +28131,67 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Check whether a column should receive text-to-number comparison parity.
+	 * Check whether a column operand should receive text-to-number comparison parity.
+	 *
+	 * @param WP_Parser_Token[] $tokens      Token stream.
+	 * @param int               $index       Operand start index.
+	 * @param string            $column_name Column name.
+	 * @param string|null       $qualifier   Optional column qualifier.
+	 * @param bool              $allow_posts_table_columns Whether to allow posts-table text columns.
+	 * @return bool Whether the column operand is supported.
+	 */
+	private function is_text_value_numeric_comparison_operand_column( array $tokens, int $index, string $column_name, ?string $qualifier, bool $allow_posts_table_columns ): bool {
+		if ( $this->is_text_value_numeric_comparison_column( $column_name ) ) {
+			return true;
+		}
+
+		if (
+			! $allow_posts_table_columns
+			|| ! $this->is_wordpress_posts_text_value_numeric_comparison_column( $column_name )
+			|| ! $this->is_outer_query_token_offset( $tokens, $index )
+		) {
+			return false;
+		}
+
+		$table = $this->text_value_numeric_posts_table_context( $tokens );
+		return null !== $table && $this->simple_select_column_qualifier_matches_table( $qualifier, $table );
+	}
+
+	/**
+	 * Resolve the simple WordPress posts table context for text-value comparisons.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @return array{table_name:string,alias:string,temporary:bool}|null Table context, or null when unsupported.
+	 */
+	private function text_value_numeric_posts_table_context( array $tokens ): ?array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return null;
+		}
+		if ( null !== $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::UNION_SYMBOL ) ) {
+			return null;
+		}
+
+		$from_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::FROM_SYMBOL );
+		if ( null === $from_index ) {
+			return null;
+		}
+
+		$table = $this->parse_unresolved_simple_select_table_reference(
+			array_slice(
+				$tokens,
+				$from_index + 1,
+				$this->simple_select_from_clause_end( $tokens, $from_index + 1 ) - $from_index - 1
+			)
+		);
+		if ( null === $table || ! $this->is_wordpress_posts_table_name( $table['table_name'] ) ) {
+			return null;
+		}
+
+		return $table;
+	}
+
+	/**
+	 * Check whether a globally safe column should receive text-to-number comparison parity.
 	 *
 	 * @param string $column_name Column name.
 	 * @return bool Whether the column is a supported WordPress text value column.
@@ -28138,8 +28200,27 @@ class WP_DuckDB_Driver {
 		return in_array(
 			strtolower( $column_name ),
 			array(
-				'option_value',
 				'meta_value',
+				'option_value',
+			),
+			true
+		);
+	}
+
+	/**
+	 * Check whether a posts-table column should receive text-to-number comparison parity.
+	 *
+	 * @param string $column_name Column name.
+	 * @return bool Whether the column is a supported WordPress posts text column.
+	 */
+	private function is_wordpress_posts_text_value_numeric_comparison_column( string $column_name ): bool {
+		return in_array(
+			strtolower( $column_name ),
+			array(
+				'post_content',
+				'post_excerpt',
+				'post_name',
+				'post_title',
 			),
 			true
 		);
