@@ -3349,9 +3349,9 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 		$sql    = $translate->invoke( $driver, $tokens );
 
-		$this->assertStringContainsString( "CASE WHEN strftime(CAST((post_date_gmt) AS TIMESTAMP) + CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') IS NULL THEN NULL ELSE FALSE END", $sql );
-		$this->assertStringContainsString( "CASE WHEN strftime(CAST((post_date_gmt) AS TIMESTAMP) - CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') IS NULL THEN NULL ELSE TRUE END", $sql );
-		$this->assertStringContainsString( "strftime(CAST((post_date_gmt) AS TIMESTAMP) + CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') = '2016-01-17 00:00:00'", $sql );
+		$this->assertStringContainsString( "CASE WHEN strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP) + CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') IS NULL THEN NULL ELSE FALSE END", $sql );
+		$this->assertStringContainsString( "CASE WHEN strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP) - CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') IS NULL THEN NULL ELSE TRUE END", $sql );
+		$this->assertStringContainsString( "strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP) + CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') = '2016-01-17 00:00:00'", $sql );
 
 		$tokens = $tokenize->invoke(
 			$driver,

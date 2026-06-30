@@ -25023,7 +25023,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$index = $end_index - 1;
-		return 'strftime(CAST(('
+		return 'strftime(TRY_CAST(('
 			. $date_sql
 			. ') AS TIMESTAMP) '
 			. $sign

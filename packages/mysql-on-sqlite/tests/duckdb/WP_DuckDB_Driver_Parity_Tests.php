@@ -34,6 +34,8 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				"SELECT DATE_ADD('2008-01-02 13:29:17', INTERVAL 1 SECOND) AS shifted",
 				"SELECT DATE_ADD('2008-01-02 13:29:17', INTERVAL 2 WEEK) AS shifted",
 				"SELECT DATE_SUB('2008-01-02 13:29:17', INTERVAL 1 MONTH) AS shifted",
+				"SELECT DATE_ADD('not-a-date', INTERVAL 1 DAY) AS shifted",
+				"SELECT DATE_SUB('not-a-date', INTERVAL 1 DAY) AS shifted",
 				"SELECT DATE(DATE_ADD('2008-01-02 13:29:17', INTERVAL 1 DAY)) AS nested_date",
 				"SELECT DATE_ADD('2008-01-02 13:29:17', INTERVAL 1 HOUR) AS shifted ORDER BY shifted",
 			) as $sql
