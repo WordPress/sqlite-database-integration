@@ -52,7 +52,8 @@ echo "Using timeout: ${SMOKE_TIMEOUT}s"
 	cd "$WP_DIR"
 
 	echo 'Verifying Docker compose services...'
-	docker compose "${COMPOSE_ARGS[@]}" config --services | grep -qx 'cli' \
+	compose_services="$(docker compose "${COMPOSE_ARGS[@]}" config --services)"
+	printf '%s\n' "$compose_services" | grep -qx 'cli' \
 		|| fail 'WordPress Docker compose does not define the cli service.'
 
 	echo 'Verifying PHP FFI in the WordPress CLI container...'
