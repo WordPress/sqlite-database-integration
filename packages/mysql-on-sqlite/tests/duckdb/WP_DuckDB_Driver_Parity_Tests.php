@@ -2560,6 +2560,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 
 		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_in_postmeta
+			WHERE meta_value IN (ABS(11), 'abc')
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_in_postmeta
+			WHERE meta_value NOT IN (ABS(11), 'abc')
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
 			"SELECT ID
 			FROM wp_expression_in_posts
 			WHERE post_parent IN (10 + 1, 'abc')
@@ -2570,6 +2584,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			"SELECT ID
 			FROM wp_expression_in_posts
 			WHERE post_parent NOT IN (10 + 1, 'abc')
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_in_posts
+			WHERE post_parent IN (ABS(11), 'abc')
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_in_posts
+			WHERE post_parent NOT IN (ABS(11), 'abc')
 			ORDER BY ID"
 		);
 	}
@@ -2695,6 +2723,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 
 		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_between_postmeta
+			WHERE meta_value BETWEEN ABS(11) AND 'abc'
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_between_postmeta
+			WHERE meta_value NOT BETWEEN ABS(11) AND 'abc'
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
 			'SELECT meta_id
 			FROM wp_expression_between_postmeta
 			WHERE meta_value BETWEEN 10.50 + 0 AND +3 * 4
@@ -2740,6 +2782,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			"SELECT ID
 			FROM wp_expression_between_posts
 			WHERE post_parent NOT BETWEEN 1 + 1 AND 'bad'
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_between_posts
+			WHERE post_parent BETWEEN ABS(1) AND 'bad'
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_between_posts
+			WHERE post_parent NOT BETWEEN ABS(1) AND 'bad'
 			ORDER BY ID"
 		);
 
@@ -2879,7 +2935,11 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE 10 + 1 > meta_value ORDER BY meta_id',
 				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE meta_value = 10.50 + 0 ORDER BY meta_id',
 				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE +3 * 1 = meta_value ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE meta_value = ABS(11) ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE ABS(11) = meta_value ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE meta_value <> ABS(11) ORDER BY meta_id',
 				'SELECT option_id FROM wp_expression_scalar_options WHERE option_value < 10 + 1 ORDER BY option_id',
+				'SELECT option_id FROM wp_expression_scalar_options WHERE option_value < ABS(11) ORDER BY option_id',
 				'SELECT option_id FROM wp_expression_scalar_options WHERE +3 * 1 < option_value ORDER BY option_id',
 			) as $sql
 		) {

@@ -27095,8 +27095,9 @@ class WP_DuckDB_Driver {
 	/**
 	 * Build SQL for a constant numeric arithmetic expression.
 	 *
-	 * This intentionally accepts only numeric literals, optional signs, and the
-	 * arithmetic operators already used for text-value numeric coercion.
+	 * This intentionally accepts only numeric literals, optional signs, ABS() of
+	 * signed numeric literals, and the arithmetic operators already used for
+	 * text-value numeric coercion.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
 	 * @param int               $index  Expression start index.
@@ -27113,12 +27114,20 @@ class WP_DuckDB_Driver {
 		$has_decimal    = $first['has_decimal'];
 		$operator_count = 0;
 
+		if (
+			! empty( $first['standalone'] )
+			&& isset( $tokens[ $end_index + 1 ] )
+			&& $this->is_numeric_arithmetic_operator_token( $tokens[ $end_index + 1 ] )
+		) {
+			return null;
+		}
+
 		while (
 			isset( $tokens[ $end_index + 2 ] )
 			&& $this->is_numeric_arithmetic_operator_token( $tokens[ $end_index + 1 ] )
 		) {
 			$right = $this->numeric_constant_arithmetic_operand_sql( $tokens, $end_index + 2 );
-			if ( null === $right ) {
+			if ( null === $right || ! empty( $right['standalone'] ) ) {
 				return null;
 			}
 
@@ -27129,7 +27138,7 @@ class WP_DuckDB_Driver {
 			++$operator_count;
 		}
 
-		if ( 0 === $operator_count ) {
+		if ( 0 === $operator_count && empty( $first['standalone'] ) ) {
 			return null;
 		}
 
@@ -27145,11 +27154,32 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
 	 * @param int               $index  Operand start index.
-	 * @return array{sql:string,end_index:int,has_decimal:bool}|null Operand SQL.
+	 * @return array{sql:string,end_index:int,has_decimal:bool,standalone?:bool}|null Operand SQL.
 	 */
 	private function numeric_constant_arithmetic_operand_sql( array $tokens, int $index ): ?array {
 		if ( ! isset( $tokens[ $index ] ) ) {
 			return null;
+		}
+
+		if (
+			isset( $tokens[ $index + 3 ] )
+			&& 0 === strcasecmp( $tokens[ $index ]->get_bytes(), 'ABS' )
+			&& WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index + 1 ]->id
+		) {
+			$argument = $this->numeric_constant_arithmetic_operand_sql( $tokens, $index + 2 );
+			if (
+				null !== $argument
+				&& isset( $tokens[ $argument['end_index'] + 1 ] )
+				&& WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $argument['end_index'] + 1 ]->id
+				&& empty( $argument['standalone'] )
+			) {
+				return array(
+					'sql'         => 'abs(' . $argument['sql'] . ')',
+					'end_index'   => $argument['end_index'] + 1,
+					'has_decimal' => $argument['has_decimal'],
+					'standalone'  => true,
+				);
+			}
 		}
 
 		$sign_sql = '';
