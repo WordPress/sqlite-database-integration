@@ -20445,6 +20445,22 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$coalesce_date_text_numeric_comparison = $this->translate_coalesce_date_text_numeric_literal_comparison(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $coalesce_date_text_numeric_comparison ) {
+				$pieces[] = $coalesce_date_text_numeric_comparison;
+				continue;
+			}
+
 			$date_text_numeric_comparison = $this->translate_date_text_numeric_literal_comparison(
 				$tokens,
 				$index,
@@ -25095,6 +25111,97 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Translate COALESCE() wrapping a SQLite-compatible date text comparison.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated expression, or null when the pattern does not match.
+	 */
+	private function translate_coalesce_date_text_numeric_literal_comparison(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if (
+			! isset( $tokens[ $index + 1 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_bytes(), 'COALESCE' )
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$items     = $this->split_top_level_comma_items( $body );
+		if ( 2 !== count( $items ) || count( $items[0] ) === 0 || count( $items[1] ) === 0 ) {
+			return null;
+		}
+
+		$comparison_index = 0;
+		$comparison_sql   = $this->translate_date_text_numeric_literal_comparison(
+			$items[0],
+			$comparison_index,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints,
+			true
+		);
+		if ( null === $comparison_sql || count( $items[0] ) - 1 !== $comparison_index ) {
+			return null;
+		}
+
+		$fallback_sql = $this->coalesce_date_text_numeric_literal_fallback_sql( $items[1] );
+		if ( null === $fallback_sql ) {
+			return null;
+		}
+
+		$index = $end_index - 1;
+		return 'COALESCE(' . $comparison_sql . ', ' . $fallback_sql . ')';
+	}
+
+	/**
+	 * Translate a simple COALESCE() fallback for a date text comparison.
+	 *
+	 * @param WP_Parser_Token[] $tokens Fallback tokens.
+	 * @return string|null Fallback SQL, or null when unsupported.
+	 */
+	private function coalesce_date_text_numeric_literal_fallback_sql( array $tokens ): ?string {
+		if ( 1 === count( $tokens ) ) {
+			if ( $this->is_number_token( $tokens[0] ) ) {
+				return $tokens[0]->get_bytes();
+			}
+
+			if ( $this->is_string_literal_token( $tokens[0] ) ) {
+				return $this->connection->quote( $this->token_value( $tokens[0] ) );
+			}
+
+			if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[0]->id || WP_MySQL_Lexer::NULL2_SYMBOL === $tokens[0]->id ) {
+				return 'NULL';
+			}
+		}
+
+		if (
+			2 === count( $tokens )
+			&& $this->is_sign_token( $tokens[0] )
+			&& $this->is_number_token( $tokens[1] )
+		) {
+			return $tokens[0]->get_bytes() . $tokens[1]->get_bytes();
+		}
+
+		return null;
+	}
+
+	/**
 	 * Translate SQLite-compatible date text comparisons against numeric literals.
 	 *
 	 * SQLite treats DATE() and non-numeric DATE_FORMAT() text results as text when
@@ -25117,7 +25224,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_table_constraints,
 		bool $rewrite_information_schema_key_column_usage,
 		bool $rewrite_information_schema_referential_constraints,
-		bool $rewrite_information_schema_check_constraints
+		bool $rewrite_information_schema_check_constraints,
+		bool $force_integer_result = false
 	): ?string {
 		$start_index = $index;
 		$date_text   = $this->date_text_expression_sql(
@@ -25148,7 +25256,7 @@ class WP_DuckDB_Driver {
 					$date_text['sql'],
 					$tokens[ $operator_index ],
 					false,
-					$this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $boundary_index )
+					$force_integer_result || $this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $boundary_index )
 				);
 			}
 		}
@@ -25187,7 +25295,7 @@ class WP_DuckDB_Driver {
 			$date_text['sql'],
 			$tokens[ $operator_index ],
 			true,
-			$this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $boundary_index )
+			$force_integer_result || $this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $boundary_index )
 		);
 	}
 

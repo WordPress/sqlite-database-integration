@@ -205,6 +205,33 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_coalesce_date_text_numeric_comparisons_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_coalesce_date_text_posts (
+					ID BIGINT,
+					post_date_gmt DATETIME
+				)',
+				"INSERT INTO wp_coalesce_date_text_posts (ID, post_date_gmt) VALUES
+					(1, '2016-01-16 00:00:00'),
+					(2, '2016-01-17 12:34:56'),
+					(4, '2015-12-31 23:59:59')",
+			)
+		);
+
+		foreach (
+			array(
+				'SELECT ID, COALESCE(DATE(post_date_gmt) = 20160116, 0) AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID',
+				"SELECT ID, COALESCE(DATE_FORMAT(post_date_gmt, '%Y%m%d') != 20160116, 0) AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+				'SELECT ID, COALESCE(DATE_ADD(post_date_gmt, INTERVAL 1 DAY) = 20160117, 0) AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID',
+				"SELECT ID, COALESCE(DATEDIFF(post_date_gmt, '2016-01-15') = 1, 0) AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+				'SELECT ID, COALESCE(20160116 < DATE(post_date_gmt), 0) AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID',
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
 	public function test_date_part_quoted_string_comparisons_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

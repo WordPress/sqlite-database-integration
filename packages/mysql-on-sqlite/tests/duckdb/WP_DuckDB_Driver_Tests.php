@@ -3436,13 +3436,29 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$tokens = $tokenize->invoke(
 			$driver,
 			"SELECT DATE_FORMAT(post_date_gmt, '%H.%i') >= 12.00 AS hm_cmp,
-				COALESCE(DATE(post_date_gmt) = 20160116, 0) AS coalesced_cmp
+				COALESCE(DATE(post_date_gmt) = 20160116, 0) AS coalesced_cmp,
+				COALESCE(DATE_FORMAT(post_date_gmt, '%Y%m%d') != 20160116, 0) AS coalesced_format_cmp,
+				COALESCE(DATE_ADD(post_date_gmt, INTERVAL 1 DAY) = 20160117, 0) AS coalesced_date_add_cmp,
+				COALESCE(DATEDIFF(post_date_gmt, '2016-01-15') = 1, 0) AS coalesced_datediff_cmp,
+				COALESCE(20160116 < DATE(post_date_gmt), 0) AS coalesced_reverse_cmp,
+				COALESCE(DATE(post_date_gmt) = 20160116, other_col) AS unsupported_fallback_cmp,
+				COALESCE(post_title = 1, 0) AS unsupported_text_cmp,
+				COALESCE((SELECT DATE(post_date_gmt)) = 20160116, 0) AS unsupported_subquery_cmp,
+				IFNULL(DATE(post_date_gmt) = 20160116, 0) AS unsupported_ifnull_cmp
 			FROM wp_posts"
 		);
 		$sql    = $translate->invoke( $driver, $tokens );
 
 		$this->assertStringContainsString( "CAST(strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%H.%M') AS DOUBLE) >= 12.00 AS hm_cmp", $sql );
-		$this->assertStringContainsString( "COALESCE(strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d') = 20160116, 0) AS coalesced_cmp", $sql );
+		$this->assertStringContainsString( "COALESCE((CASE WHEN strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d') IS NULL THEN NULL ELSE 0 END), 0) AS coalesced_cmp", $sql );
+		$this->assertStringContainsString( "COALESCE((CASE WHEN strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y%m%d') IS NULL THEN NULL ELSE 1 END), 0) AS coalesced_format_cmp", $sql );
+		$this->assertStringContainsString( "COALESCE((CASE WHEN strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP) + CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') IS NULL THEN NULL ELSE 0 END), 0) AS coalesced_date_add_cmp", $sql );
+		$this->assertStringContainsString( 'AS BIGINT) IS NULL THEN NULL ELSE 0 END), 0) AS coalesced_datediff_cmp', $sql );
+		$this->assertStringContainsString( "COALESCE((CASE WHEN strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d') IS NULL THEN NULL ELSE 1 END), 0) AS coalesced_reverse_cmp", $sql );
+		$this->assertStringContainsString( "COALESCE(strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d') = 20160116, other_col) AS unsupported_fallback_cmp", $sql );
+		$this->assertStringContainsString( 'COALESCE(post_title = 1, 0) AS unsupported_text_cmp', $sql );
+		$this->assertStringContainsString( "COALESCE((SELECT strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d')) = 20160116, 0) AS unsupported_subquery_cmp", $sql );
+		$this->assertStringContainsString( "IFNULL(strftime(TRY_CAST((post_date_gmt) AS TIMESTAMP), '%Y-%m-%d') = 20160116, 0) AS unsupported_ifnull_cmp", $sql );
 	}
 
 	public function test_datediff_numeric_literal_comparisons_are_translated_without_duckdb_runtime(): void {
