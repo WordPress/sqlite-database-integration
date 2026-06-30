@@ -6659,12 +6659,32 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) = '10.5' ORDER BY id",
 			),
 			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value = 10 + 1 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) = CAST(10 + 1 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value <> 10.50 + 0 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) <> CAST(CAST(10.50 + 0 AS DOUBLE) AS VARCHAR) ORDER BY id',
+			),
+			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE -6 < meta_value ORDER BY id',
 				'duckdb' => 'SELECT id FROM postmeta WHERE CAST(-6 AS VARCHAR) < CAST("meta_value" AS VARCHAR) ORDER BY id',
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE +7 = meta_value ORDER BY id',
 				'duckdb' => "SELECT id FROM postmeta WHERE '7' = CAST(\"meta_value\" AS VARCHAR) ORDER BY id",
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE 10 + 1 = meta_value ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST(10 + 1 AS VARCHAR) = CAST("meta_value" AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE 10 + 1 < meta_value ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST(10 + 1 AS VARCHAR) < CAST("meta_value" AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM options WHERE +3 * 1 < option_value ORDER BY id',
+				'duckdb' => 'SELECT id FROM options WHERE CAST(+3 * 1 AS VARCHAR) < CAST("option_value" AS VARCHAR) ORDER BY id',
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value <> 10 ORDER BY id',
@@ -6923,6 +6943,17 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN 10 + 1 + 2 AND 'abc' ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN ABS(10) AND 'abc' ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN (SELECT 11) AND 'abc' ORDER BY id",
+				'SELECT id FROM postmeta WHERE meta_value = 10 + title ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = 10 + 1 + 2 ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = ABS(10) ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = (SELECT 11) ORDER BY id',
+				'SELECT id FROM postmeta WHERE 10 + title = meta_value ORDER BY id',
+				'SELECT id FROM postmeta WHERE 10 + 1 + 2 = meta_value ORDER BY id',
+				'SELECT id FROM postmeta WHERE ABS(10) = meta_value ORDER BY id',
+				'SELECT id FROM postmeta WHERE (SELECT 11) = meta_value ORDER BY id',
+				'SELECT id FROM postmeta WHERE title = 10 + 1 ORDER BY id',
+				'SELECT id FROM plugin_items WHERE id = 10 + 1 ORDER BY id',
+				'SELECT ID FROM users WHERE ID = 1 + 1',
 				"SELECT ID FROM users WHERE ID BETWEEN '1' AND 'bad' + 1",
 				"SELECT ID FROM users WHERE users.ID NOT BETWEEN '1' AND 'bad' + 1",
 				"SELECT ID FROM users WHERE ID BETWEEN 1 + post_parent AND 'bad'",
@@ -6953,6 +6984,18 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$driver->query( "SELECT id FROM postmeta WHERE meta_value BETWEEN 10 + 1 + 2 AND 'abc' ORDER BY id" );
 		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) BETWEEN', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( 'SELECT id FROM postmeta WHERE meta_value = 10 + title ORDER BY id' );
+		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) =', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( 'SELECT id FROM postmeta WHERE meta_value = 10 + 1 + 2 ORDER BY id' );
+		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) =', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( 'SELECT id FROM postmeta WHERE meta_value = ABS(10) ORDER BY id' );
+		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) =', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( 'SELECT id FROM postmeta WHERE meta_value = (SELECT 11) ORDER BY id' );
+		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) =', $this->lastDuckDBQuery( $driver ) );
 
 		$driver->query( "SELECT id FROM plugin_items WHERE id LIKE '1%' ORDER BY id" );
 		$this->assertStringNotContainsString( 'CAST("id" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );

@@ -26670,7 +26670,7 @@ class WP_DuckDB_Driver {
 		$left_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index );
 		if ( null !== $left_operand ) {
 			$operator_index = $left_operand['next_index'];
-			$literal        = $this->text_value_numeric_literal_sequence_sql( $tokens, $operator_index + 1 );
+			$literal        = $this->text_value_numeric_comparison_value_sql( $tokens, $operator_index + 1 );
 			if (
 				null !== $literal
 				&& $this->is_text_value_numeric_comparison_operator_token( $tokens[ $operator_index ] ?? null )
@@ -26707,7 +26707,7 @@ class WP_DuckDB_Driver {
 		if (
 			isset( $tokens[ $index + 2 ] )
 		) {
-			$literal        = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
+			$literal        = $this->text_value_numeric_comparison_value_sql( $tokens, $index );
 			$operator_index = null === $literal ? null : $literal['end_index'] + 1;
 			$right_operand  = null === $operator_index ? null : $this->text_value_numeric_comparison_operand_sql( $tokens, $operator_index + 1 );
 			if (
@@ -26724,7 +26724,7 @@ class WP_DuckDB_Driver {
 				);
 			}
 
-			if ( null !== $literal && null !== $operator_index ) {
+			if ( null !== $literal && null !== $operator_index && ! $literal['expression'] ) {
 				$reverse_like = $this->translate_numeric_literal_text_value_like_predicate( $tokens, $literal, $operator_index );
 				if ( null !== $reverse_like ) {
 					$index = $reverse_like['end_index'];
@@ -27130,6 +27130,35 @@ class WP_DuckDB_Driver {
 			. $operator->get_bytes()
 			. ' '
 			. $right_sql;
+	}
+
+	/**
+	 * Build text SQL for a numeric scalar comparison value.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Value start index.
+	 * @return array{sql:string,end_index:int,expression:bool}|null Value SQL and consumed index.
+	 */
+	private function text_value_numeric_comparison_value_sql( array $tokens, int $index ): ?array {
+		$expression = $this->numeric_constant_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'        => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index'  => $expression['end_index'],
+				'expression' => true,
+			);
+		}
+
+		$literal = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
+		if ( null === $literal ) {
+			return null;
+		}
+
+		return array(
+			'sql'        => $literal['sql'],
+			'end_index'  => $literal['end_index'],
+			'expression' => false,
+		);
 	}
 
 	/**

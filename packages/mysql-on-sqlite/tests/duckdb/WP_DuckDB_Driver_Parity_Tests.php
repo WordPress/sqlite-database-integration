@@ -2649,6 +2649,66 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
 	}
 
+	public function test_constant_expression_text_value_scalar_comparisons_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_expression_scalar_postmeta (
+					meta_id BIGINT(20) UNSIGNED NOT NULL,
+					post_id BIGINT(20) UNSIGNED NOT NULL,
+					meta_value LONGTEXT,
+					PRIMARY KEY (meta_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_expression_scalar_postmeta (meta_id, post_id, meta_value) VALUES
+					(1, 1, '10'),
+					(2, 1, '11'),
+					(3, 2, '11.5'),
+					(4, 2, '3'),
+					(5, 3, 'abc'),
+					(6, 3, '10.5'),
+					(7, 4, NULL),
+					(8, 4, '-3')",
+				'CREATE TABLE wp_expression_scalar_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL,
+					option_value LONGTEXT,
+					PRIMARY KEY (option_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_expression_scalar_options (option_id, option_value) VALUES
+					(1, '10'),
+					(2, '11'),
+					(3, 'abc'),
+					(4, NULL)",
+			)
+		);
+
+		foreach (
+			array(
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE meta_value = 10 + 1 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE meta_value <> 10 + 1 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE meta_value < 10 + 1 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE meta_value > 10 + 1 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE 10 + 1 = meta_value ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE 10 + 1 <> meta_value ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE 10 + 1 < meta_value ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE 10 + 1 > meta_value ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE meta_value = 10.50 + 0 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_expression_scalar_postmeta WHERE +3 * 1 = meta_value ORDER BY meta_id',
+				'SELECT option_id FROM wp_expression_scalar_options WHERE option_value < 10 + 1 ORDER BY option_id',
+				'SELECT option_id FROM wp_expression_scalar_options WHERE +3 * 1 < option_value ORDER BY option_id',
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+
+		$this->assertParityRows(
+			'SELECT SQL_CALC_FOUND_ROWS meta_id
+			FROM wp_expression_scalar_postmeta
+			WHERE meta_value < 10 + 1
+			ORDER BY meta_id
+			LIMIT 10'
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
 	public function test_found_rows_state_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(
