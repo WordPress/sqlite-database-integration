@@ -25,20 +25,25 @@ function sqlite_make_db_sqlite() {
 	$table_schemas = wp_get_db_schema();
 	$queries       = explode( ';', $table_schemas );
 	try {
-		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class; // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
-		$pdo       = new $pdo_class( 'sqlite:' . FQDB, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
+		$pdo_class  = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class; // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+		$pdo        = new $pdo_class( 'sqlite:' . FQDB, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
+		$translator = new WP_SQLite_Driver(
+			new WP_SQLite_Connection(
+				array(
+					'pdo'          => $pdo,
+					'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+				)
+			),
+			$wpdb->dbname
+		);
 	} catch ( PDOException $err ) {
 		$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 		$message  = 'Database connection error!<br />';
-		$message .= sprintf( 'Error message is: %s', $err_data[2] );
+		$message .= sprintf( 'Error message is: %s', $err_data[2] ?? $err->getMessage() );
 		wp_die( $message, 'Database Error!' );
 	}
 
-	$translator = new WP_SQLite_Driver(
-		new WP_SQLite_Connection( array( 'pdo' => $pdo ) ),
-		$wpdb->dbname
-	);
-	$query      = null;
+	$query = null;
 
 	try {
 		$translator->begin_transaction();

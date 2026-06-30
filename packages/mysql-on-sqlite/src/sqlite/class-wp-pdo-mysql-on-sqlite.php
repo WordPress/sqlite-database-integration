@@ -669,11 +669,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		$db_name = $args['dbname'] ?? 'sqlite_database';
 
 		// Create a new SQLite connection.
+		$connection_options = array(
+			'journal_mode' => $options['journal_mode'] ?? null,
+			'synchronous'  => $options['synchronous'] ?? null,
+		);
 		if ( isset( $options['pdo'] ) ) {
-			$this->connection = new WP_SQLite_Connection( array( 'pdo' => $options['pdo'] ) );
+			$connection_options['pdo'] = $options['pdo'];
 		} else {
-			$this->connection = new WP_SQLite_Connection( array( 'path' => $path ) );
+			$connection_options['path'] = $path;
 		}
+		$this->connection = new WP_SQLite_Connection( $connection_options );
 
 		$this->mysql_version = $options['mysql_version'] ?? 80038;
 		$this->main_db_name  = $db_name;
@@ -5605,7 +5610,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			// Get the UPDATE value. It's either an expression or a DEFAULT keyword.
 			if ( null === $expr ) {
 				// Emulate "column = DEFAULT".
-				$value = null === $default ? 'NULL' : $this->quote_sqlite_value( $default );
+				$value = null === $default ? 'NULL' : $this->format_sqlite_column_default( $column_info );
 			} else {
 				$value = $this->translate( $expr );
 			}
@@ -6317,7 +6322,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					$default_clause = $this->translate( $expr );
 					$query         .= sprintf( ' DEFAULT (%s)', $default_clause );
 				} else {
-					$query .= ' DEFAULT ' . $this->quote_sqlite_value( $column['COLUMN_DEFAULT'] );
+					$query .= ' DEFAULT ' . $this->format_sqlite_column_default( $column );
 				}
 			}
 			$rows[] = $query;
@@ -6624,7 +6629,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				if ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {
 					$sql .= sprintf( ' DEFAULT (%s)', $column['COLUMN_DEFAULT'] );
 				} else {
-					$sql .= ' DEFAULT ' . $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
+					$sql .= ' DEFAULT ' . $this->format_mysql_column_default( $column );
 				}
 			} elseif ( 'YES' === $column['IS_NULLABLE'] ) {
 				$sql .= ' DEFAULT NULL';
@@ -6836,6 +6841,36 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$this->quote_sqlite_identifier( $table ),
 			$this->quote_sqlite_identifier( $column )
 		);
+	}
+
+	/**
+	 * Format a column default value as a literal for an SQLite CREATE TABLE statement.
+	 *
+	 * @param  array  $column The information schema column data.
+	 * @return string         The default value as an SQLite literal.
+	 */
+	private function format_sqlite_column_default( array $column ): string {
+		if ( 'bit' === $column['DATA_TYPE'] ) {
+			// BIT defaults are stored as b'...' literals; reformat as an integer.
+			return (string) bindec( substr( $column['COLUMN_DEFAULT'], 2, -1 ) );
+		}
+
+		return $this->quote_sqlite_value( $column['COLUMN_DEFAULT'] );
+	}
+
+	/**
+	 * Format a column default value as a literal for a MySQL SHOW CREATE TABLE statement.
+	 *
+	 * @param  array  $column The information schema column data.
+	 * @return string         The default value as a MySQL literal.
+	 */
+	private function format_mysql_column_default( array $column ): string {
+		// BIT defaults are already stored as b'...' literals.
+		if ( 'bit' === $column['DATA_TYPE'] ) {
+			return $column['COLUMN_DEFAULT'];
+		}
+
+		return $this->quote_mysql_utf8_string_literal( $column['COLUMN_DEFAULT'] );
 	}
 
 	/**

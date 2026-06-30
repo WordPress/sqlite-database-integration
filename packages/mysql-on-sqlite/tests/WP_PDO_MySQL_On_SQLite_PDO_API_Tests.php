@@ -68,6 +68,54 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( 'w', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 	}
 
+	public function test_journal_mode_defaults_to_wal(): void {
+		$path = tempnam( sys_get_temp_dir(), 'wp_sqlite_' );
+		unlink( $path );
+
+		try {
+			$driver     = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=' . $path . ';dbname=wp' );
+			$connection = $driver->get_connection();
+			$this->assertSame(
+				'wal',
+				strtolower( (string) $connection->query( 'PRAGMA journal_mode' )->fetchColumn() )
+			);
+			$this->assertSame(
+				'1',
+				(string) $connection->query( 'PRAGMA synchronous' )->fetchColumn()
+			);
+		} finally {
+			$this->remove_database_files( $path );
+		}
+	}
+
+	public function test_journal_mode_and_synchronous_driver_options(): void {
+		$path = tempnam( sys_get_temp_dir(), 'wp_sqlite_' );
+		unlink( $path );
+
+		try {
+			$driver     = new WP_PDO_MySQL_On_SQLite(
+				'mysql-on-sqlite:path=' . $path . ';dbname=wp',
+				null,
+				null,
+				array(
+					'journal_mode' => 'DELETE',
+					'synchronous'  => 'FULL',
+				)
+			);
+			$connection = $driver->get_connection();
+			$this->assertSame(
+				'delete',
+				strtolower( (string) $connection->query( 'PRAGMA journal_mode' )->fetchColumn() )
+			);
+			$this->assertSame(
+				'2',
+				(string) $connection->query( 'PRAGMA synchronous' )->fetchColumn()
+			);
+		} finally {
+			$this->remove_database_files( $path );
+		}
+	}
+
 	public function test_query(): void {
 		$result = $this->driver->query( "SELECT 1, 'abc'" );
 		$this->assertInstanceOf( PDOStatement::class, $result );
@@ -547,5 +595,13 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 				2     => 'two',
 			),
 		);
+	}
+
+	private function remove_database_files( string $path ): void {
+		foreach ( array( $path, $path . '-wal', $path . '-shm', $path . '-journal' ) as $file ) {
+			if ( file_exists( $file ) ) {
+				unlink( $file );
+			}
+		}
 	}
 }

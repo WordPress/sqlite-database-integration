@@ -1,0 +1,30 @@
+{
+	"name": "wordpress/mysql-parser",
+	"type": "library",
+	"description": "A fast and complete MySQL parser with zero dependencies.",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"php": ">=7.2"
+	},
+	"autoload": {
+		"classmap": [
+			"src/"
+		]
+	},
+	"require-dev": {
+		"phpunit/phpunit": "^8.5"
+	},
+	"scripts": {
+		"test": "phpunit",
+		"build-grammar": [
+			"./bin/build-grammar"
+		],
+		"build-corpus": [
+			"./bin/build-corpus"
+		],
+		"benchmark": [
+			"@php tests/benchmark.php",
+			"@php -d opcache.enable_cli=1 -d opcache.jit_buffer_size=64M -d opcache.jit=tracing tests/benchmark.php"
+		]
+	}
+}

@@ -658,6 +658,69 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		);
 	}
 
+	public function testShowCreateTableWithBitDefaultValues(): void {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_bit_defaults (
+				id INT DEFAULT 0,
+				quoted_zero BIT(1) DEFAULT '0',
+				integer_five BIT(4) DEFAULT 5,
+				bit_literal_five BIT(4) DEFAULT b'0101',
+				binary_number_five BIT(4) DEFAULT 0b0101,
+				hex_literal_five BIT(4) DEFAULT x'05',
+				hex_number_five BIT(4) DEFAULT 0x05,
+				true_literal BIT(4) DEFAULT TRUE,
+				false_literal BIT(4) DEFAULT FALSE
+			)"
+		);
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_bit_defaults;' );
+		$results      = $this->engine->get_query_results();
+		$create_table = $results[0]->{'Create Table'};
+		$this->assertStringContainsString( "`quoted_zero` bit(1) DEFAULT b'0'", $create_table );
+		$this->assertStringContainsString( "`integer_five` bit(4) DEFAULT b'101'", $create_table );
+		$this->assertStringContainsString( "`bit_literal_five` bit(4) DEFAULT b'101'", $create_table );
+		$this->assertStringContainsString( "`binary_number_five` bit(4) DEFAULT b'101'", $create_table );
+		$this->assertStringContainsString( "`hex_literal_five` bit(4) DEFAULT b'101'", $create_table );
+		$this->assertStringContainsString( "`hex_number_five` bit(4) DEFAULT b'101'", $create_table );
+		$this->assertStringContainsString( "`true_literal` bit(4) DEFAULT b'1'", $create_table );
+		$this->assertStringContainsString( "`false_literal` bit(4) DEFAULT b'0'", $create_table );
+
+		$this->assertQuery( 'INSERT INTO _tmp_bit_defaults (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT * FROM _tmp_bit_defaults' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'                 => '1',
+					'quoted_zero'        => '0',
+					'integer_five'       => '5',
+					'bit_literal_five'   => '5',
+					'binary_number_five' => '5',
+					'hex_literal_five'   => '5',
+					'hex_number_five'    => '5',
+					'true_literal'       => '1',
+					'false_literal'      => '0',
+				),
+			),
+			$results
+		);
+	}
+
+	public function testUpdateWithBitColumnDefaultValue(): void {
+		$this->assertQuery(
+			"CREATE TABLE _tmp_bit_defaults (
+				id INT,
+				maintenance BIT(4) DEFAULT b'0101'
+			)"
+		);
+
+		$this->assertQuery( 'INSERT INTO _tmp_bit_defaults (id, maintenance) VALUES (1, 0)' );
+		$this->assertQuery( 'UPDATE _tmp_bit_defaults SET maintenance = DEFAULT' );
+		$this->assertQuery( 'SELECT maintenance FROM _tmp_bit_defaults' );
+		$results = $this->engine->get_query_results();
+		$this->assertEquals( array( (object) array( 'maintenance' => '5' ) ), $results );
+	}
+
 	public function testSelectIndexHintForce() {
 		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('first');" );
 		$result = $this->assertQuery(

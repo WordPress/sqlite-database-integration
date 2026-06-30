@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# Build the MySQL server query corpus from the MySQL server test suite.
+#
+# Runs the full pipeline end to end:
+#   1. Fetch the mysql-test directory from the pinned mysql-server tag.
+#   2. Extract the SQL queries into data/mysql-server-query-corpus/.
+#
+# Requirements: bash, git, php. Override the MySQL version with MYSQL_TAG
+# (default: mysql-8.4.10).
+#
+set -euo pipefail
+
+package_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tools_dir="$package_dir/tools"
+
+bash "$tools_dir/fetch-mysql-tests.sh"
+
+echo "Generating the query corpus ..."
+php "$tools_dir/generate-query-corpus.php"
+
+echo "Done."

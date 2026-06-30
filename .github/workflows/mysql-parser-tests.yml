@@ -1,0 +1,53 @@
+name: MySQL Parser Tests
+
+on:
+  push:
+    branches:
+      - trunk
+    paths:
+      - '.github/workflows/mysql-parser-tests.yml'
+      - 'packages/mysql-parser/**'
+  pull_request:
+    paths:
+      - '.github/workflows/mysql-parser-tests.yml'
+      - 'packages/mysql-parser/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
+jobs:
+  test:
+    # The runtime supports PHP 7.2+; test the oldest and the latest.
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # Required to clone the repo.
+    strategy:
+      fail-fast: false
+      matrix:
+        php: [ '7.2', '8.5' ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Install dependencies
+        working-directory: packages/mysql-parser
+        run: composer install --no-interaction --no-progress
+
+      - name: Run tests
+        working-directory: packages/mysql-parser
+        run: composer run test
