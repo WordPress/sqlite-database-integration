@@ -11895,7 +11895,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 1, $driver->get_insert_id() );
 		$insert_queries = $driver->get_last_duckdb_queries();
 		$insert_log     = implode( "\n", $insert_queries );
-		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $insert_log );
+		$this->assertStringContainsString( 'SELECT 1 FROM "wptests_options"', $insert_log );
+		$this->assertStringContainsString( 'INSERT INTO "wptests_options"', $insert_log );
 		$this->assertStringContainsString( ' RETURNING "option_id"', end( $insert_queries ) );
 		foreach ( $insert_queries as $duckdb_sql ) {
 			$this->assertStringNotContainsString( 'SELECT MAX("option_id")', $duckdb_sql );
@@ -11913,7 +11914,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 0, $driver->get_insert_id() );
 		$update_queries = $driver->get_last_duckdb_queries();
 		$update_log     = implode( "\n", $update_queries );
-		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $update_log );
+		$this->assertStringContainsString( 'SELECT 1 FROM "wptests_options"', $update_log );
+		$this->assertStringContainsString( 'UPDATE "wptests_options" SET', $update_log );
 		$this->assertStringNotContainsString( ' RETURNING "option_id"', $update_log );
 		foreach ( $update_queries as $duckdb_sql ) {
 			$this->assertStringNotContainsString( 'SELECT MAX("option_id")', $duckdb_sql );
@@ -11930,6 +11932,59 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				),
 			),
 			$driver->query( 'SELECT option_id, option_name, option_value, autoload FROM wptests_options' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_wordpress_options_on_duplicate_key_update_fast_path_uses_two_native_queries(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_options_autoload_fixture( $driver );
+
+		$queries  = array();
+		$inserted = $driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('runtime_fast_path_probe', 'created', 'off')
+			ON DUPLICATE KEY UPDATE option_name = VALUES(option_name),
+				option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$this->assertSame( 1, $inserted->rowCount() );
+		$this->assertSame( 5, $driver->get_insert_id() );
+		$this->assertCount( 2, $queries, implode( "\n", $queries ) );
+		$this->assertStringContainsString( 'SELECT 1 FROM "wptests_options"', $queries[0] );
+		$this->assertStringContainsString( 'lower("option_name")', $queries[0] );
+		$this->assertStringContainsString( 'INSERT INTO "wptests_options"', $queries[1] );
+		$this->assertStringContainsString( ' RETURNING "option_id"', $queries[1] );
+		$this->assertStringNotContainsString( '__wp_duckdb_table_metadata', implode( "\n", $queries ) );
+		$this->assertStringNotContainsString( '__wp_duckdb_index_metadata', implode( "\n", $queries ) );
+
+		$queries = array();
+		$updated = $driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('runtime_fast_path_probe', 'updated', 'yes')
+			ON DUPLICATE KEY UPDATE option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$this->assertSame( 1, $updated->rowCount() );
+		$this->assertSame( 0, $driver->get_insert_id() );
+		$this->assertCount( 2, $queries, implode( "\n", $queries ) );
+		$this->assertStringContainsString( 'SELECT 1 FROM "wptests_options"', $queries[0] );
+		$this->assertStringContainsString( 'UPDATE "wptests_options" SET', $queries[1] );
+		$this->assertStringNotContainsString( ' RETURNING "option_id"', implode( "\n", $queries ) );
+		$this->assertStringNotContainsString( '__wp_duckdb_table_metadata', implode( "\n", $queries ) );
+		$this->assertStringNotContainsString( '__wp_duckdb_index_metadata', implode( "\n", $queries ) );
+		$this->assertSame(
+			array(
+				array(
+					'option_value' => 'updated',
+					'autoload'     => 'yes',
+				),
+			),
+			$driver->query( "SELECT option_value, autoload FROM wptests_options WHERE option_name = 'runtime_fast_path_probe'" )->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
@@ -11969,7 +12024,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 1, $driver->get_insert_id() );
 		$insert_queries = $driver->get_last_duckdb_queries();
 		$insert_log     = implode( "\n", $insert_queries );
-		$this->assertStringContainsString( 'ON CONFLICT ("option_name") DO UPDATE', $insert_log );
+		$this->assertStringContainsString( 'SELECT 1 FROM "wptests_options"', $insert_log );
+		$this->assertStringContainsString( 'INSERT INTO "wptests_options"', $insert_log );
 		$this->assertStringContainsString( ' RETURNING "option_id"', end( $insert_queries ) );
 		foreach ( $insert_queries as $duckdb_sql ) {
 			$this->assertStringNotContainsString( 'SELECT MAX("option_id")', $duckdb_sql );
@@ -11991,6 +12047,40 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame(
 			array(),
 			$driver->query( 'SELECT option_id, option_name, option_value, autoload FROM wptests_options' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_wordpress_options_on_duplicate_key_update_falls_back_without_option_id(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_options (
+				option_name VARCHAR(191) NOT NULL DEFAULT '',
+				option_value LONGTEXT NOT NULL,
+				autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+				UNIQUE KEY option_name (option_name)
+			)"
+		);
+
+		$inserted = $driver->query(
+			"INSERT INTO wptests_options (option_name, option_value, autoload)
+			VALUES ('no_option_id_probe', 'created', 'off')
+			ON DUPLICATE KEY UPDATE option_value = VALUES(option_value),
+				autoload = VALUES(autoload)"
+		);
+
+		$this->assertSame( 1, $inserted->rowCount() );
+		$this->assertSame( 0, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'option_name'  => 'no_option_id_probe',
+					'option_value' => 'created',
+					'autoload'     => 'off',
+				),
+			),
+			$driver->query( 'SELECT option_name, option_value, autoload FROM wptests_options' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 

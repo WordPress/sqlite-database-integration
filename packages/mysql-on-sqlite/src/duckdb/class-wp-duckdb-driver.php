@@ -603,6 +603,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_options_update_result;
 		}
 
+		$wordpress_options_odku_result = $this->execute_wordpress_options_on_duplicate_key_update_fast_path_statement( $query );
+		if ( null !== $wordpress_options_odku_result ) {
+			return $wordpress_options_odku_result;
+		}
+
 		$wordpress_usermeta_insert_result = $this->execute_wordpress_usermeta_insert_fast_path_statement( $query );
 		if ( null !== $wordpress_usermeta_insert_result ) {
 			return $wordpress_usermeta_insert_result;
@@ -1542,6 +1547,159 @@ class WP_DuckDB_Driver {
 
 		$this->found_rows = 0;
 		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB UPDATE' );
+	}
+
+	/**
+	 * Execute WordPress' hot options INSERT ... ON DUPLICATE KEY UPDATE shape.
+	 *
+	 * This keeps the generic ODKU implementation responsible for arbitrary
+	 * tables, expressions, and multi-row writes. The exact WordPress options
+	 * shape can avoid unique-key discovery and broad write metadata fanout.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_options_on_duplicate_key_update_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		if (
+			! preg_match(
+				'/^\s*INSERT\s+INTO\s+(?<table>' . $identifier_pattern . ')\s*\(\s*(?<name_column>' . $identifier_pattern . ')\s*,\s*(?<value_column>' . $identifier_pattern . ')\s*,\s*(?<autoload_column>' . $identifier_pattern . ')\s*\)\s+VALUES\s*\(\s*(?<option_name>' . $literal_pattern . ')\s*,\s*(?<option_value>' . $literal_pattern . ')\s*,\s*(?<autoload>' . $literal_pattern . ')\s*\)\s+ON\s+DUPLICATE\s+KEY\s+UPDATE\s+(?<updates>.+?)\s*;?\s*$/is',
+				$query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$requested_table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		if ( ! $this->is_wordpress_options_table_name( $requested_table_name ) ) {
+			return null;
+		}
+
+		if (
+			! $this->fast_path_identifier_matches( 'option_name', $matches['name_column'] )
+			|| ! $this->fast_path_identifier_matches( 'option_value', $matches['value_column'] )
+			|| ! $this->fast_path_identifier_matches( 'autoload', $matches['autoload_column'] )
+		) {
+			return null;
+		}
+
+		$option_name_sql  = $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['option_name'] ) );
+		$option_value_sql = $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['option_value'] ) );
+		$autoload_sql     = $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['autoload'] ) );
+		$assignments      = $this->wordpress_options_on_duplicate_key_update_assignments(
+			$matches['updates'],
+			$identifier_pattern,
+			array(
+				'option_name'  => $option_name_sql,
+				'option_value' => $option_value_sql,
+				'autoload'     => $autoload_sql,
+			)
+		);
+		if ( null === $assignments ) {
+			return null;
+		}
+
+		$table_reference = $this->resolve_write_table_reference( $requested_table_name );
+		$table_name      = $table_reference['table_name'];
+		$table_sql       = $this->connection->quote_identifier( $table_name );
+		$name_predicate  = 'lower('
+			. $this->connection->quote_identifier( 'option_name' )
+			. ') IS NOT DISTINCT FROM lower(CAST('
+			. $option_name_sql
+			. ' AS VARCHAR))';
+		$matched         = false !== $this->execute_duckdb_query(
+			'SELECT 1 FROM '
+				. $table_sql
+				. ' WHERE '
+				. $name_predicate
+				. ' LIMIT 1',
+			'Failed to inspect DuckDB duplicate key target'
+		)->fetch( PDO::FETCH_NUM );
+
+		$this->found_rows = 0;
+		if ( $matched ) {
+			return $this->execute_duckdb_query(
+				'UPDATE '
+					. $table_sql
+					. ' SET '
+					. implode( ', ', $assignments )
+					. ' WHERE '
+					. $name_predicate,
+				'Failed to execute DuckDB INSERT'
+			);
+		}
+
+		$sql = 'INSERT INTO '
+			. $table_sql
+			. ' ('
+			. $this->connection->quote_identifier( 'option_name' )
+			. ', '
+			. $this->connection->quote_identifier( 'option_value' )
+			. ', '
+			. $this->connection->quote_identifier( 'autoload' )
+			. ') VALUES ('
+			. $option_name_sql
+			. ', '
+			. $option_value_sql
+			. ', '
+			. $autoload_sql
+			. ')';
+
+		try {
+			return $this->execute_auto_increment_returning_write( $sql, 'Failed to execute DuckDB INSERT', 'option_id' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			if ( false !== stripos( $e->getMessage(), 'option_id' ) ) {
+				return null;
+			}
+
+			throw $e;
+		}
+	}
+
+	/**
+	 * Parse exact WordPress options ODKU assignment list.
+	 *
+	 * @param string               $updates            Raw update list.
+	 * @param string               $identifier_pattern Regex fragment for identifiers.
+	 * @param array<string,string> $values_by_column   Insert values keyed by lowercase column.
+	 * @return string[]|null DuckDB assignment SQL, or null for unsupported shapes.
+	 */
+	private function wordpress_options_on_duplicate_key_update_assignments( string $updates, string $identifier_pattern, array $values_by_column ): ?array {
+		$updates     = trim( rtrim( trim( $updates ), ';' ) );
+		$assignments = array();
+		$seen        = array();
+
+		foreach ( preg_split( '/\s*,\s*/', $updates ) as $assignment ) {
+			if (
+				! is_string( $assignment )
+				|| '' === $assignment
+				|| ! preg_match(
+					'/^(?<target>' . $identifier_pattern . ')\s*=\s*VALUES\s*\(\s*(?<source>' . $identifier_pattern . ')\s*\)$/i',
+					$assignment,
+					$matches
+				)
+			) {
+				return null;
+			}
+
+			$target = strtolower( $this->fast_path_mysql_identifier_value( $matches['target'] ) );
+			$source = strtolower( $this->fast_path_mysql_identifier_value( $matches['source'] ) );
+			if (
+				$target !== $source
+				|| isset( $seen[ $target ] )
+				|| ! in_array( $target, array( 'option_name', 'option_value', 'autoload' ), true )
+			) {
+				return null;
+			}
+
+			$seen[ $target ] = true;
+			$target_sql      = $this->connection->quote_identifier( $target );
+			$assignments[]   = $target_sql . ' = CAST((' . $values_by_column[ $target ] . ') AS VARCHAR)';
+		}
+
+		return count( $assignments ) > 0 ? $assignments : null;
 	}
 
 	/**
