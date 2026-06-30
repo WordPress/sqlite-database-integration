@@ -854,7 +854,7 @@ class WP_DuckDB_Driver {
 
 		if (
 			preg_match(
-				'/^SELECT\s+(?:(?<table_projection>`?TABLE_NAME`?)\s*,\s*)?`?INDEX_NAME`?\s*,\s*`?COLUMN_NAME`?(?<non_unique_projection>\s*,\s*`?NON_UNIQUE`?)?\s+FROM\s+'
+				'/^SELECT\s+(?:(?<table_projection>`?TABLE_NAME`?)\s*,\s*)?`?INDEX_NAME`?\s*,\s*`?COLUMN_NAME`?(?<non_unique_projection>\s*,\s*`?NON_UNIQUE`?(?<seq_in_index_projection>\s*,\s*`?SEQ_IN_INDEX`?)?)?\s+FROM\s+'
 				. $source_pattern
 				. '\s+WHERE\s+(?<schema_column>`?TABLE_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
 				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s+IN\s*\((?<table_names>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\)'
@@ -891,6 +891,9 @@ class WP_DuckDB_Driver {
 				: array( 'INDEX_NAME', 'COLUMN_NAME' );
 			if ( isset( $matches['non_unique_projection'] ) && '' !== $matches['non_unique_projection'] ) {
 				$columns[] = 'NON_UNIQUE';
+			}
+			if ( isset( $matches['seq_in_index_projection'] ) && '' !== $matches['seq_in_index_projection'] ) {
+				$columns[] = 'SEQ_IN_INDEX';
 			}
 
 			return $this->information_schema_statistics_projection_result(

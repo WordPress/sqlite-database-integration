@@ -13952,6 +13952,71 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 
+		$queries   = array();
+		$statement = $driver->query(
+			"SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SEQ_IN_INDEX
+				FROM information_schema.statistics
+				WHERE TABLE_SCHEMA = 'wp'
+					AND TABLE_NAME IN ('wptests_commentmeta','wptests_postmeta')
+				ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
+		);
+		$rows      = $statement->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'TABLE_NAME'   => 'wptests_commentmeta',
+					'INDEX_NAME'   => 'comment_id',
+					'COLUMN_NAME'  => 'comment_id',
+					'NON_UNIQUE'   => 1,
+					'SEQ_IN_INDEX' => 1,
+				),
+				array(
+					'TABLE_NAME'   => 'wptests_commentmeta',
+					'INDEX_NAME'   => 'meta_key',
+					'COLUMN_NAME'  => 'meta_key',
+					'NON_UNIQUE'   => 1,
+					'SEQ_IN_INDEX' => 1,
+				),
+				array(
+					'TABLE_NAME'   => 'wptests_commentmeta',
+					'INDEX_NAME'   => 'PRIMARY',
+					'COLUMN_NAME'  => 'meta_id',
+					'NON_UNIQUE'   => 0,
+					'SEQ_IN_INDEX' => 1,
+				),
+				array(
+					'TABLE_NAME'   => 'wptests_postmeta',
+					'INDEX_NAME'   => 'meta_key',
+					'COLUMN_NAME'  => 'meta_key',
+					'NON_UNIQUE'   => 1,
+					'SEQ_IN_INDEX' => 1,
+				),
+				array(
+					'TABLE_NAME'   => 'wptests_postmeta',
+					'INDEX_NAME'   => 'post_id',
+					'COLUMN_NAME'  => 'post_id',
+					'NON_UNIQUE'   => 1,
+					'SEQ_IN_INDEX' => 1,
+				),
+				array(
+					'TABLE_NAME'   => 'wptests_postmeta',
+					'INDEX_NAME'   => 'PRIMARY',
+					'COLUMN_NAME'  => 'meta_id',
+					'NON_UNIQUE'   => 0,
+					'SEQ_IN_INDEX' => 1,
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 5, $statement->columnCount() );
+		$this->assertSame( 'SEQ_IN_INDEX', $statement->getColumnMeta( 4 )['name'] );
+		$this->assertSame( 0, $this->count_duckdb_information_schema_statistics_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 6 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
 		$queries = array();
 		$rows    = $driver->query(
 			"SELECT `INDEX_NAME`, `COLUMN_NAME`, `NON_UNIQUE`, `SEQ_IN_INDEX`
