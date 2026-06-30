@@ -93,6 +93,10 @@
 		"test-duckdb-last-failures": [
 			"./bin/wp-test-duckdb-last-failures.sh @additional_args"
 		],
+		"test-duckdb-fail-fast": [
+			"./bin/wp-test-duckdb-last-failures.sh",
+			"./bin/wp-test-duckdb-fast-fail.sh validate"
+		],
 		"wp-smoke-duckdb-local": [
 			"./bin/wp-duckdb-local-smoke.sh"
 		],

@@ -17,7 +17,7 @@ REQUIRED="${WP_DUCKDB_LAST_FAILURE_REQUIRED:-0}"
 MIN_TESTS="${WP_DUCKDB_LAST_FAILURE_MIN_TESTS:-1}"
 MODE="${WP_DUCKDB_LAST_FAILURE_MODE:-run}"
 DRY_RUN="${WP_DUCKDB_LAST_FAILURE_DRY_RUN:-0}"
-MAX_TESTS="${WP_DUCKDB_LAST_FAILURE_MAX_TESTS:-12}"
+MAX_TESTS="${WP_DUCKDB_LAST_FAILURE_MAX_TESTS:-20}"
 TIMEOUT_SECONDS="${WP_DUCKDB_LAST_FAILURE_TIMEOUT:-60}"
 CLASS_PATTERN="${WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN:-/^WP_DuckDB_[A-Za-z0-9_]*$/}"
 
@@ -35,7 +35,7 @@ packages/mysql-on-sqlite/.phpunit.result.cache.
 
 Environment:
   WP_DUCKDB_LAST_FAILURE_DRY_RUN=1    Print the selected command only.
-  WP_DUCKDB_LAST_FAILURE_MAX_TESTS    Maximum cached defects to run. Default: 12.
+  WP_DUCKDB_LAST_FAILURE_MAX_TESTS    Maximum cached defects to run. Default: 20.
   WP_DUCKDB_LAST_FAILURE_TIMEOUT      Timeout in seconds. Default: 60.
   WP_DUCKDB_LAST_FAILURE_CACHE        Override the PHPUnit cache path.
   WP_DUCKDB_LAST_FAILURE_LIST         Fallback test list when the cache is absent.
