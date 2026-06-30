@@ -159,6 +159,7 @@ jobs:
 
   wp-duckdb-test:
     name: WordPress PHPUnit / DuckDB
+    needs: duckdb-test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -495,6 +496,7 @@ jobs:
 
   wp-duckdb-e2e-test:
     name: WordPress E2E / DuckDB
+    needs: duckdb-test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
