@@ -74,6 +74,24 @@ run_with_timeout() {
 	"$@"
 }
 
+read_phpunit_test_count() {
+	php -r '
+		$output = stream_get_contents( STDIN );
+
+		if ( preg_match( "/^Tests:\s*([0-9]+)/m", $output, $matches ) ) {
+			echo $matches[1], "\n";
+			exit( 0 );
+		}
+
+		if ( preg_match( "/\bOK(?:,[^(\\n]+)?\s*\(\s*([0-9]+)\s+tests?/m", $output, $matches ) ) {
+			echo $matches[1], "\n";
+			exit( 0 );
+		}
+
+		exit( 1 );
+	'
+}
+
 read_duckdb_failure_filter() {
 	if [ -f "$CACHE_FILE" ]; then
 		printf '%s\n' "$CACHE_FILE"
@@ -172,7 +190,7 @@ read_duckdb_failure_filter() {
 
 run_last_failures() {
 	local failure_result failure_source failure_count failure_filter duckdb_php_autoload wp_duckdb_autoload
-	local phpunit_output phpunit_status
+	local phpunit_output phpunit_status phpunit_test_count
 	local -a failure_lines phpunit_command selected_tests
 
 	failure_result="$(read_duckdb_failure_filter)"
@@ -246,6 +264,16 @@ run_last_failures() {
 
 	if printf '%s\n' "$phpunit_output" | grep -q 'No tests executed!'; then
 		fail 'Cached DuckDB failure filter matched zero PHPUnit tests.'
+	fi
+
+	if [ "$phpunit_status" -eq 0 ]; then
+		if ! phpunit_test_count="$(printf '%s\n' "$phpunit_output" | read_phpunit_test_count)"; then
+			fail 'Could not parse executed PHPUnit test count from cached DuckDB failure output.'
+		fi
+
+		if [ "$phpunit_test_count" -lt "$MIN_TESTS" ]; then
+			fail "Cached DuckDB failure filter executed $phpunit_test_count tests; expected at least $MIN_TESTS."
+		fi
 	fi
 
 	return "$phpunit_status"
