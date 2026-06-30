@@ -3121,13 +3121,24 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE post_id + 10 = meta_value ORDER BY meta_id',
 				'SELECT pm.meta_id FROM wp_numeric_identifier_text_postmeta pm WHERE pm.meta_value = pm.post_id + 10 ORDER BY pm.meta_id',
 				'SELECT option_id FROM wp_numeric_identifier_text_options WHERE option_value = option_id + 10 ORDER BY option_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value = ABS(post_id + 10) ORDER BY meta_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE ABS(post_id + 10) = meta_value ORDER BY meta_id',
+				'SELECT pm.meta_id FROM wp_numeric_identifier_text_postmeta pm WHERE pm.meta_value = ABS(pm.post_id + 10) ORDER BY pm.meta_id',
+				'SELECT option_id FROM wp_numeric_identifier_text_options WHERE option_value = ABS(option_id + 10) ORDER BY option_id',
 				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value <> post_id + 10 ORDER BY meta_id',
 				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value < post_id + 10 ORDER BY meta_id',
 				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE post_id + 10 < meta_value ORDER BY meta_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value <> ABS(post_id + 10) ORDER BY meta_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value < ABS(post_id + 10) ORDER BY meta_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE ABS(post_id + 10) < meta_value ORDER BY meta_id',
 				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value IN (post_id + 10, 'abc') ORDER BY meta_id",
 				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value NOT IN (post_id + 10, 'abc') ORDER BY meta_id",
 				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value BETWEEN post_id + 10 AND 'zz' ORDER BY meta_id",
 				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value NOT BETWEEN post_id + 10 AND 'zz' ORDER BY meta_id",
+				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value IN (ABS(post_id + 10), 'abc') ORDER BY meta_id",
+				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value NOT IN (ABS(post_id + 10), 'abc') ORDER BY meta_id",
+				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value BETWEEN ABS(post_id + 10) AND 'zz' ORDER BY meta_id",
+				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value NOT BETWEEN ABS(post_id + 10) AND 'zz' ORDER BY meta_id",
 			) as $sql
 		) {
 			$this->assertParityRows( $sql );
@@ -3161,6 +3172,8 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			array(
 				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_title = ID + 10 ORDER BY ID',
 				'SELECT ID FROM wp_post_text_numeric_posts WHERE ID + 10 = post_title ORDER BY ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_title = ABS(ID + 10) ORDER BY ID',
+				'SELECT ID FROM wp_post_text_numeric_posts WHERE ABS(ID + 10) = post_title ORDER BY ID',
 				'SELECT p.ID FROM wp_post_text_numeric_posts p WHERE p.post_title = p.ID + 10 ORDER BY p.ID',
 				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_name = ID + 10 ORDER BY ID',
 				'SELECT ID FROM wp_post_text_numeric_posts WHERE post_content = ID + 10 ORDER BY ID',

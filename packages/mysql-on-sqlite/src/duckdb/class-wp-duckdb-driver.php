@@ -28384,6 +28384,15 @@ class WP_DuckDB_Driver {
 			);
 		}
 
+		$expression = $this->numeric_identifier_abs_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'       => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index' => $expression['end_index'],
+				'numeric'   => true,
+			);
+		}
+
 		$numeric = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
 		if ( null !== $numeric ) {
 			return array(
@@ -28579,6 +28588,14 @@ class WP_DuckDB_Driver {
 		}
 
 		$expression = $this->numeric_identifier_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'       => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index' => $expression['end_index'],
+			);
+		}
+
+		$expression = $this->numeric_identifier_abs_arithmetic_expression_sql( $tokens, $index );
 		if ( null !== $expression ) {
 			return array(
 				'sql'       => $this->text_value_numeric_expression_text_sql( $expression ),
@@ -28792,6 +28809,38 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Build SQL for ABS() around WordPress numeric identifier arithmetic.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Expression start index.
+	 * @return array{sql:string,end_index:int,has_decimal:bool}|null Expression SQL.
+	 */
+	private function numeric_identifier_abs_arithmetic_expression_sql( array $tokens, int $index ): ?array {
+		if (
+			! isset( $tokens[ $index + 3 ] )
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_bytes(), 'ABS' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$argument = $this->numeric_identifier_arithmetic_expression_sql( $tokens, $index + 2 );
+		if (
+			null === $argument
+			|| ! isset( $tokens[ $argument['end_index'] + 1 ] )
+			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $argument['end_index'] + 1 ]->id
+		) {
+			return null;
+		}
+
+		return array(
+			'sql'         => 'abs(' . $argument['sql'] . ')',
+			'end_index'   => $argument['end_index'] + 1,
+			'has_decimal' => $argument['has_decimal'],
+		);
+	}
+
+	/**
 	 * Build one operand for numeric identifier arithmetic.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
@@ -28878,6 +28927,15 @@ class WP_DuckDB_Driver {
 		}
 
 		$expression = $this->numeric_identifier_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'        => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index'  => $expression['end_index'],
+				'expression' => true,
+			);
+		}
+
+		$expression = $this->numeric_identifier_abs_arithmetic_expression_sql( $tokens, $index );
 		if ( null !== $expression ) {
 			return array(
 				'sql'        => $this->text_value_numeric_expression_text_sql( $expression ),
