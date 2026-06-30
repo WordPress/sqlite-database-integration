@@ -2021,6 +2021,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows(
 			"SELECT umeta_id
 			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value BETWEEN 10 AND 'abc'
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value BETWEEN '10' AND 11
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
 			WHERE meta_key = 'numeric_prefix' AND meta_value BETWEEN -2.5 AND +3
 			ORDER BY umeta_id"
 		);
@@ -2036,6 +2050,13 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			"SELECT umeta_id
 			FROM wp_found_rows_coercion_usermeta
 			WHERE meta_key = 'numeric_prefix' AND meta_value NOT BETWEEN 10 AND 11
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value NOT BETWEEN 10 AND 'abc'
 			ORDER BY umeta_id"
 		);
 
@@ -2117,6 +2138,13 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 
 		$this->assertParityRows(
+			"SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE option_value BETWEEN 10 AND 'abc'
+			ORDER BY option_id"
+		);
+
+		$this->assertParityRows(
 			'SELECT option_id
 			FROM wp_found_rows_coercion_options
 			WHERE option_value <> 10
@@ -2128,6 +2156,13 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			FROM wp_found_rows_coercion_options
 			WHERE option_value NOT BETWEEN 10 AND 11
 			ORDER BY option_id'
+		);
+
+		$this->assertParityRows(
+			"SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE option_value NOT BETWEEN 10 AND 'abc'
+			ORDER BY option_id"
 		);
 
 		$this->assertParityRows(

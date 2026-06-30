@@ -2491,6 +2491,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'fragment' => 'CAST("meta_value" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND CAST(11 AS VARCHAR)',
 			),
 			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE meta_value BETWEEN 10 AND 'abc' ORDER BY meta_id",
+				'expected' => array( 1, 3, 5, 8 ),
+				'fragment' => "CAST(\"meta_value\" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND 'abc'",
+			),
+			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE meta_value BETWEEN '10' AND 11 ORDER BY meta_id",
+				'expected' => array( 1, 3, 8 ),
+				'fragment' => "CAST(\"meta_value\" AS VARCHAR) BETWEEN '10' AND CAST(11 AS VARCHAR)",
+			),
+			array(
 				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value BETWEEN 10.0 AND 10.9 ORDER BY meta_id',
 				'expected' => array( 8 ),
 				'fragment' => 'CAST("meta_value" AS VARCHAR) BETWEEN \'10.0\' AND \'10.9\'',
@@ -2504,6 +2514,11 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value NOT BETWEEN 10 AND 11 ORDER BY meta_id',
 				'expected' => array( 2, 4, 5, 6, 7 ),
 				'fragment' => 'CAST("meta_value" AS VARCHAR) NOT BETWEEN CAST(10 AS VARCHAR) AND CAST(11 AS VARCHAR)',
+			),
+			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE meta_value NOT BETWEEN 10 AND 'abc' ORDER BY meta_id",
+				'expected' => array( 2, 4, 6, 7 ),
+				'fragment' => "CAST(\"meta_value\" AS VARCHAR) NOT BETWEEN CAST(10 AS VARCHAR) AND 'abc'",
 			),
 			array(
 				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value IN (10, 11) ORDER BY meta_id',
@@ -2574,6 +2589,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'sql'      => 'SELECT option_id FROM wptests_options WHERE option_value NOT BETWEEN 10 AND 11 ORDER BY option_id',
 				'expected' => array( 2, 4, 5 ),
 				'fragment' => 'CAST("option_value" AS VARCHAR) NOT BETWEEN CAST(10 AS VARCHAR) AND CAST(11 AS VARCHAR)',
+			),
+			array(
+				'sql'      => "SELECT option_id FROM wptests_options WHERE option_value BETWEEN 10 AND 'abc' ORDER BY option_id",
+				'expected' => array( 1, 3, 5 ),
+				'fragment' => "CAST(\"option_value\" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND 'abc'",
+			),
+			array(
+				'sql'      => "SELECT option_id FROM wptests_options WHERE option_value NOT BETWEEN 10 AND 'abc' ORDER BY option_id",
+				'expected' => array( 2, 4 ),
+				'fragment' => "CAST(\"option_value\" AS VARCHAR) NOT BETWEEN CAST(10 AS VARCHAR) AND 'abc'",
 			),
 			array(
 				'sql'      => 'SELECT option_id FROM wptests_options WHERE option_value NOT IN (10, 11) ORDER BY option_id',
@@ -6548,12 +6573,28 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND CAST(11 AS VARCHAR) ORDER BY id',
 			),
 			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value BETWEEN 10 AND 'abc' ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND 'abc' ORDER BY id",
+			),
+			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value BETWEEN '10' AND 11 ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN '10' AND CAST(11 AS VARCHAR) ORDER BY id",
+			),
+			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value BETWEEN 10.00 AND 10.90 ORDER BY id',
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN '10.0' AND '10.9' ORDER BY id",
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value NOT BETWEEN 10 AND 11 ORDER BY id',
 				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) NOT BETWEEN CAST(10 AS VARCHAR) AND CAST(11 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value NOT BETWEEN 10 AND 'abc' ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT BETWEEN CAST(10 AS VARCHAR) AND 'abc' ORDER BY id",
+			),
+			array(
+				'mysql'  => "SELECT id FROM options WHERE option_value BETWEEN 10 AND 'abc' ORDER BY id",
+				'duckdb' => "SELECT id FROM options WHERE CAST(\"option_value\" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND 'abc' ORDER BY id",
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value IN (10, 11) ORDER BY id',
@@ -6696,6 +6737,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				"SELECT id FROM plugin_items WHERE parent != 'abc' ORDER BY id",
 				"SELECT plugin_items.count FROM plugin_items WHERE plugin_items.count < '10' ORDER BY plugin_items.count",
 				"SELECT id FROM postmeta WHERE meta_value IN (10 + 1, 'abc') ORDER BY id",
+				"SELECT id FROM postmeta WHERE meta_value BETWEEN 10 AND 'abc' + 1 ORDER BY id",
 				"SELECT ID FROM users WHERE ID BETWEEN 1 AND 'bad'",
 				"SELECT ID FROM users WHERE ID BETWEEN '1' AND 'bad' + 1",
 				"SELECT ID FROM users WHERE users.ID NOT BETWEEN '1' AND 'bad' + 1",

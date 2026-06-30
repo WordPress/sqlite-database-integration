@@ -26173,14 +26173,15 @@ class WP_DuckDB_Driver {
 			&& in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true );
 
 		$between_index = $not ? $operator_index + 1 : $operator_index;
-		$lower         = $this->text_value_numeric_literal_sequence_sql( $tokens, $between_index + 1 );
+		$lower         = $this->text_value_between_literal_sequence_sql( $tokens, $between_index + 1 );
 		$and_index     = null === $lower ? null : $lower['end_index'] + 1;
-		$upper         = null === $and_index ? null : $this->text_value_numeric_literal_sequence_sql( $tokens, $and_index + 1 );
+		$upper         = null === $and_index ? null : $this->text_value_between_literal_sequence_sql( $tokens, $and_index + 1 );
 		if (
 			null === $lower
 			|| null === $upper
 			|| WP_MySQL_Lexer::BETWEEN_SYMBOL !== $tokens[ $between_index ]->id
 			|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $and_index ]->id
+			|| ( ! $lower['numeric'] && ! $upper['numeric'] )
 			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $upper['end_index'] + 1 )
 		) {
 			return null;
@@ -26194,6 +26195,46 @@ class WP_DuckDB_Driver {
 				. $upper['sql'],
 			'end_index' => $upper['end_index'],
 		);
+	}
+
+	/**
+	 * Build text SQL for a text-value BETWEEN bound literal token sequence.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Literal start index.
+	 * @return array{sql:string,end_index:int,numeric:bool}|null Literal SQL and consumed index.
+	 */
+	private function text_value_between_literal_sequence_sql( array $tokens, int $index ): ?array {
+		$numeric = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
+		if ( null !== $numeric ) {
+			return array(
+				'sql'       => $numeric['sql'],
+				'end_index' => $numeric['end_index'],
+				'numeric'   => true,
+			);
+		}
+
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		if ( $this->is_string_literal_token( $tokens[ $index ] ) ) {
+			return array(
+				'sql'       => $this->connection->quote( $this->token_value( $tokens[ $index ] ) ),
+				'end_index' => $index,
+				'numeric'   => false,
+			);
+		}
+
+		if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::NULL2_SYMBOL === $tokens[ $index ]->id ) {
+			return array(
+				'sql'       => 'NULL',
+				'end_index' => $index,
+				'numeric'   => false,
+			);
+		}
+
+		return null;
 	}
 
 	/**
