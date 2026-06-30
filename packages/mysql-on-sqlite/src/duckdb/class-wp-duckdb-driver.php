@@ -25121,8 +25121,8 @@ class WP_DuckDB_Driver {
 	): ?array {
 		if (
 			! isset( $tokens[ $index ], $tokens[ $index + 1 ] )
-			|| 0 !== strcasecmp( $tokens[ $index ]->get_value(), 'DATE_FORMAT' )
 			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_bytes(), 'DATE_FORMAT' )
 		) {
 			return null;
 		}
