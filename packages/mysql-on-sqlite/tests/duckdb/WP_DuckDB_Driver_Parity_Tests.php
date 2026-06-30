@@ -1948,6 +1948,34 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 
 		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value LIKE 10
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value NOT LIKE 10
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			'SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE option_value LIKE 10
+			ORDER BY option_id'
+		);
+
+		$this->assertParityRows(
+			'SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE option_value NOT LIKE 10
+			ORDER BY option_id'
+		);
+
+		$this->assertParityRows(
 			"SELECT SQL_CALC_FOUND_ROWS umeta_id
 			FROM wp_found_rows_coercion_usermeta
 			WHERE meta_key = 'numeric_prefix' AND meta_value < 11

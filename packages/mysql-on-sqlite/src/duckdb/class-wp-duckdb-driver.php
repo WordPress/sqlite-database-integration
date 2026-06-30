@@ -26128,6 +26128,12 @@ class WP_DuckDB_Driver {
 				$index = $in['end_index'];
 				return $in['sql'];
 			}
+
+			$like = $this->translate_text_value_numeric_like_predicate( $tokens, $left_operand, $operator_index );
+			if ( null !== $like ) {
+				$index = $like['end_index'];
+				return $like['sql'];
+			}
 		}
 
 		if (
@@ -26248,6 +26254,53 @@ class WP_DuckDB_Driver {
 				. implode( ', ', $literal_sql )
 				. ')',
 			'end_index' => $list_index,
+		);
+	}
+
+	/**
+	 * Translate a text-value LIKE numeric-literal predicate.
+	 *
+	 * @param WP_Parser_Token[]               $tokens         Token stream.
+	 * @param array{sql:string,next_index:int} $operand        Text-value operand.
+	 * @param int                             $operator_index Operator index.
+	 * @return array{sql:string,end_index:int}|null Translation and consumed index.
+	 */
+	private function translate_text_value_numeric_like_predicate( array $tokens, array $operand, int $operator_index ): ?array {
+		$not        = isset( $tokens[ $operator_index ] )
+			&& in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true );
+		$like_index = $not ? $operator_index + 1 : $operator_index;
+		$pattern    = $this->text_value_numeric_literal_sequence_sql( $tokens, $like_index + 1 );
+		if (
+			null === $pattern
+			|| ! isset( $tokens[ $like_index ] )
+			|| WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $like_index ]->id
+		) {
+			return null;
+		}
+
+		$escape    = '';
+		$end_index = $pattern['end_index'];
+		if (
+			isset( $tokens[ $pattern['end_index'] + 2 ] )
+			&& WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $pattern['end_index'] + 1 ]->id
+			&& $this->is_string_literal_token( $tokens[ $pattern['end_index'] + 2 ] )
+		) {
+			$escape    = ' ESCAPE ' . $this->connection->quote( $this->token_value( $tokens[ $pattern['end_index'] + 2 ] ) );
+			$end_index = $pattern['end_index'] + 2;
+		} elseif ( isset( $tokens[ $pattern['end_index'] + 1 ] ) && WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $pattern['end_index'] + 1 ]->id ) {
+			return null;
+		}
+
+		if ( ! $this->text_value_numeric_comparison_has_boundary( $tokens, $end_index + 1 ) ) {
+			return null;
+		}
+
+		return array(
+			'sql'       => $this->text_value_sqlite_text_operand_sql( $operand['sql'] )
+				. ( $not ? ' NOT LIKE ' : ' LIKE ' )
+				. $pattern['sql']
+				. $escape,
+			'end_index' => $end_index,
 		);
 	}
 

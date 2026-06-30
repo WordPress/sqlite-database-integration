@@ -2546,6 +2546,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'fragment' => "CAST(\"meta_value\" AS VARCHAR) NOT IN (CAST(10 AS VARCHAR), NULL, 'abc')",
 			),
 			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value LIKE 10 ORDER BY meta_id',
+				'expected' => array( 1 ),
+				'fragment' => 'CAST("meta_value" AS VARCHAR) LIKE CAST(10 AS VARCHAR)',
+			),
+			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value NOT LIKE 10 ORDER BY meta_id',
+				'expected' => array( 2, 3, 4, 5, 6, 7, 8 ),
+				'fragment' => 'CAST("meta_value" AS VARCHAR) NOT LIKE CAST(10 AS VARCHAR)',
+			),
+			array(
 				'sql'      => 'SELECT option_id FROM wptests_options WHERE option_value < 11 ORDER BY option_id',
 				'expected' => array( 1, 2, 3, 4 ),
 				'fragment' => 'CAST("option_value" AS VARCHAR) < CAST(11 AS VARCHAR)',
@@ -2579,6 +2589,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'sql'      => "SELECT option_id FROM wptests_options WHERE option_value NOT IN (10, NULL, '10abc') ORDER BY option_id",
 				'expected' => array(),
 				'fragment' => "CAST(\"option_value\" AS VARCHAR) NOT IN (CAST(10 AS VARCHAR), NULL, '10abc')",
+			),
+			array(
+				'sql'      => 'SELECT option_id FROM wptests_options WHERE option_value LIKE 10 ORDER BY option_id',
+				'expected' => array( 1 ),
+				'fragment' => 'CAST("option_value" AS VARCHAR) LIKE CAST(10 AS VARCHAR)',
+			),
+			array(
+				'sql'      => 'SELECT option_id FROM wptests_options WHERE option_value NOT LIKE 10 ORDER BY option_id',
+				'expected' => array( 2, 3, 4, 5 ),
+				'fragment' => 'CAST("option_value" AS VARCHAR) NOT LIKE CAST(10 AS VARCHAR)',
 			),
 		);
 
@@ -6560,6 +6580,26 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT id FROM options WHERE CAST(\"option_value\" AS VARCHAR) IN (CAST(10 AS VARCHAR), NULL, '10abc') ORDER BY id",
 			),
 			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value LIKE 10 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) LIKE CAST(10 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value NOT LIKE 10 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) NOT LIKE CAST(10 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT pm.id FROM postmeta pm WHERE pm.meta_value LIKE 10 ORDER BY pm.id',
+				'duckdb' => 'SELECT pm.id FROM postmeta pm WHERE CAST("pm"."meta_value" AS VARCHAR) LIKE CAST(10 AS VARCHAR) ORDER BY pm.id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM options WHERE option_value LIKE 10 ORDER BY id',
+				'duckdb' => 'SELECT id FROM options WHERE CAST("option_value" AS VARCHAR) LIKE CAST(10 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value LIKE 10.50 ORDER BY id',
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) LIKE '10.5' ORDER BY id",
+			),
+			array(
 				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0',
 				'duckdb' => "SELECT id FROM postmeta ORDER BY CASE WHEN \"meta_value\" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST(\"meta_value\" AS VARCHAR), '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?', 0), '') AS DOUBLE), 0) END + 0 NULLS FIRST",
 			),
@@ -6676,8 +6716,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver->query( "SELECT id FROM plugin_items WHERE id LIKE '1%' ORDER BY id" );
 		$this->assertStringNotContainsString( 'CAST("id" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );
 
+		$driver->query( 'SELECT id FROM postmeta WHERE title LIKE 10 ORDER BY id' );
+		$this->assertStringNotContainsString( 'CAST("title" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );
+
 		$driver->query( 'SELECT id FROM postmeta ORDER BY title + 0' );
 		$this->assertStringNotContainsString( 'NULLS FIRST', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( 'SELECT id FROM postmeta WHERE meta_value LIKE 10 ESCAPE 1 ORDER BY id' );
+		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );
 
 		$driver->query( "SELECT ID FROM users WHERE ID LIKE '1%' ESCAPE 1" );
 		$this->assertStringNotContainsString( 'CAST("ID" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );
