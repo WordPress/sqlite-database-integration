@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##
-# Run the package-local DuckDB PHPUnit defects recorded in PHPUnit's cache.
+# Run the most recently cached package-local DuckDB PHPUnit defects.
 #
 # This is a local iteration gate. It does not prepare WordPress, start Docker,
 # run E2E, or expand to the package-wide DuckDB group after cached defects pass.
@@ -27,7 +27,7 @@ usage() {
 	cat <<'EOF'
 Usage: bin/wp-test-duckdb-last-failures.sh [run|validate]
 
-Runs only package-local DuckDB PHPUnit defects recorded in
+Runs only the most recently cached package-local DuckDB PHPUnit defects recorded in
 packages/mysql-on-sqlite/.phpunit.result.cache.
 
 Environment:
@@ -96,7 +96,7 @@ read_duckdb_failure_filter() {
 		}
 
 		$tests = array();
-		foreach ( array_keys( $cache["defects"] ) as $test_id ) {
+		foreach ( array_reverse( array_keys( $cache["defects"] ) ) as $test_id ) {
 			if ( ! is_string( $test_id ) || ! preg_match( "/^([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)$/", $test_id, $matches ) ) {
 				continue;
 			}

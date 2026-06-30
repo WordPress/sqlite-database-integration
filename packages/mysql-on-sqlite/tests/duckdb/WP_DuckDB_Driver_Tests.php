@@ -6460,16 +6460,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 		$delete_queries = $driver->get_last_duckdb_queries();
 
-		$uses_numeric_cast = false;
+		$uses_text_affinity_cast = false;
 		foreach ( $delete_queries as $query ) {
-			if ( false !== strpos( $query, 'TRY_CAST("b"."option_value" AS BIGINT) < 1782556962' ) ) {
-				$uses_numeric_cast = true;
+			if ( false !== strpos( $query, 'CAST("b"."option_value" AS VARCHAR) < CAST(1782556962 AS VARCHAR)' ) ) {
+				$uses_text_affinity_cast = true;
 				break;
 			}
 		}
 
 		$this->assertSame( 2, $delete->rowCount() );
-		$this->assertTrue( $uses_numeric_cast );
+		$this->assertTrue( $uses_text_affinity_cast );
 		$this->assertSame(
 			array(
 				array( 'option_name' => '_transient_tag5' ),
