@@ -1971,7 +1971,7 @@ class WP_DuckDB_Driver {
 			. $table_sql
 			. '.'
 			. $this->connection->quote_identifier( 'ID' )
-			. ' DESC';
+			. ' ASC';
 
 		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
 		$this->found_rows = $sql;
@@ -3818,6 +3818,7 @@ class WP_DuckDB_Driver {
 		}
 
 		$from_index  = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::FROM_SYMBOL );
+		$where_index = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::WHERE_SYMBOL );
 		$order_index = $this->find_top_level_token_index( $tokens, $select_start, WP_MySQL_Lexer::ORDER_SYMBOL );
 		if (
 			null === $from_index
@@ -3840,6 +3841,14 @@ class WP_DuckDB_Driver {
 			return array();
 		}
 
+		$has_post_name_lookup = null !== $where_index
+			&& $from_index < $where_index
+			&& $where_index < $order_index
+			&& $this->posts_where_has_post_name_equality(
+				array_slice( $tokens, $where_index + 1, $order_index - $where_index - 1 ),
+				$table
+			);
+
 		$order_end   = $this->primary_key_order_by_clause_end( $tokens, $order_index + 2 );
 		$order_items = $this->split_top_level_select_item_ranges( $tokens, $order_index + 2, $order_end );
 		if ( count( $order_items ) === 0 ) {
@@ -3859,6 +3868,9 @@ class WP_DuckDB_Driver {
 
 			if ( null === $tiebreak_direction && $this->is_wordpress_posts_date_order_column( $column['column_name'] ) ) {
 				$tiebreak_direction = $this->posts_date_order_by_tiebreak_direction( $column['column_name'], $column['direction'] );
+				if ( $has_post_name_lookup && 0 === strcasecmp( $column['column_name'], 'post_date' ) ) {
+					$tiebreak_direction = 'ASC';
+				}
 			}
 		}
 
@@ -4031,6 +4043,52 @@ class WP_DuckDB_Driver {
 				&& ! $column['wildcard']
 				&& 0 === strcasecmp( $column['column_name'], 'post_type' )
 				&& $this->simple_select_column_qualifier_matches_table( $column['qualifier'], $table )
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a WHERE clause contains a posts post_name equality predicate.
+	 *
+	 * SQLite uses the post_name index for the common slug lookup shape, so rows
+	 * with equal post_date values follow ascending primary-key order instead of
+	 * the type/status/date index's descending ID tie order.
+	 *
+	 * @param WP_Parser_Token[]                                    $tokens WHERE clause tokens before ORDER BY.
+	 * @param array{table_name:string,alias:string,temporary:bool} $table  Parsed table reference.
+	 * @return bool Whether the WHERE clause constrains post_name to a literal.
+	 */
+	private function posts_where_has_post_name_equality( array $tokens, array $table ): bool {
+		foreach ( $tokens as $index => $token ) {
+			if (
+				WP_MySQL_Lexer::EQUAL_OPERATOR !== $token->id
+				|| ! isset( $tokens[ $index + 1 ] )
+				|| ! $this->is_string_literal_token( $tokens[ $index + 1 ] )
+			) {
+				continue;
+			}
+
+			if ( ! isset( $tokens[ $index - 1 ] ) ) {
+				continue;
+			}
+
+			$column_name = $this->metadata_identifier_value( $tokens[ $index - 1 ] );
+			$qualifier   = null;
+			if (
+				$index >= 3
+				&& WP_MySQL_Lexer::DOT_SYMBOL === $tokens[ $index - 2 ]->id
+			) {
+				$qualifier = $this->metadata_identifier_value( $tokens[ $index - 3 ] );
+			}
+
+			if (
+				null !== $column_name
+				&& 0 === strcasecmp( $column_name, 'post_name' )
+				&& $this->simple_select_column_qualifier_matches_table( $qualifier, $table )
 			) {
 				return true;
 			}

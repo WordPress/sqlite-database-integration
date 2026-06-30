@@ -261,6 +261,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertCount( 1, $rewrites );
 		$this->assertSame( 'post_date DESC, "ID" DESC', $rewrites[0]['sql'] );
 
+		$rewrites = array_values( $rewrite->invoke( $driver, $tokenize->invoke( $driver, "SELECT p.ID FROM wp_posts AS p WHERE p.post_name = 'target-slug' ORDER BY p.post_date DESC" ) ) );
+		$this->assertCount( 1, $rewrites );
+		$this->assertSame( 'p.post_date DESC, "p"."ID" ASC', $rewrites[0]['sql'] );
+
 		foreach (
 			array(
 				'SELECT DISTINCT ID FROM wp_posts ORDER BY post_date DESC',
@@ -17941,10 +17945,10 @@ SQL
 						'ID' => 5,
 					),
 					array(
-						'ID' => 6,
+						'ID' => 3,
 					),
 					array(
-						'ID' => 3,
+						'ID' => 6,
 					),
 					array(
 						'ID' => 1,
@@ -17966,7 +17970,7 @@ SQL
 			$queries = array();
 			$result  = $driver->query( $this->wordpress_posts_slug_status_lookup_select_sql() );
 			$this->assertSame(
-				array( 5, 6, 3, 1 ),
+				array( 5, 3, 6, 1 ),
 				array_map(
 					'intval',
 					array_column( $result->fetchAll( PDO::FETCH_ASSOC ), 'ID' )
@@ -24728,7 +24732,7 @@ SQL
 		$this->assertStringContainsString( '"wptests_posts"."ID" NOT IN (2)', $queries[0] );
 		$this->assertStringContainsString( '"wptests_posts"."post_type" IN (\'post\', \'page\', \'attachment\')', $queries[0] );
 		$this->assertStringContainsString( '"wptests_posts"."post_status" = \'publish\'', $queries[0] );
-		$this->assertStringContainsString( 'ORDER BY "wptests_posts"."post_date" DESC, "wptests_posts"."ID" DESC', $queries[0] );
+		$this->assertStringContainsString( 'ORDER BY "wptests_posts"."post_date" DESC, "wptests_posts"."ID" ASC', $queries[0] );
 	}
 
 	private function assert_wordpress_term_relationships_distinct_terms_select_used_one_native_query( array $queries ): void {

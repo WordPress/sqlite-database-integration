@@ -627,6 +627,66 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_posts_slug_status_date_order_ties_match_sqlite_index_order(): void {
+		$this->runParitySetup(
+			array(
+				"CREATE TABLE wptests_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+					post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+					post_title TEXT NOT NULL,
+					post_name VARCHAR(200) NOT NULL DEFAULT '',
+					post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+					post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+					PRIMARY KEY (ID),
+					KEY post_name (post_name(191)),
+					KEY type_status_date (post_type, post_status, post_date, ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+				"INSERT INTO wptests_posts (ID, post_author, post_date, post_title, post_name, post_type, post_status) VALUES
+					(1, 10, '2026-01-01 00:00:00', 'Old page', 'target-slug', 'page', 'publish'),
+					(2, 20, '2026-05-01 00:00:00', 'Excluded page', 'target-slug', 'page', 'publish'),
+					(3, 30, '2026-02-01 00:00:00', 'Older post tie', 'target-slug', 'post', 'publish'),
+					(4, 40, '2026-04-01 00:00:00', 'Draft post', 'target-slug', 'post', 'draft'),
+					(5, 50, '2026-03-01 00:00:00', 'Attachment', 'target-slug', 'attachment', 'publish'),
+					(6, 60, '2026-02-01 00:00:00', 'Newer post tie', 'target-slug', 'post', 'publish'),
+					(7, 70, '2026-06-01 00:00:00', 'Wrong type', 'target-slug', 'product', 'publish'),
+					(8, 80, '2026-07-01 00:00:00', 'Wrong slug', 'other-slug', 'post', 'publish')",
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT wptests_posts.ID
+			FROM wptests_posts
+			WHERE 1=1
+				AND wptests_posts.post_name = 'target-slug'
+				AND wptests_posts.ID NOT IN (2)
+				AND wptests_posts.post_type IN ('post', 'page', 'attachment')
+				AND ((wptests_posts.post_status = 'publish'))
+			ORDER BY wptests_posts.post_date DESC"
+		);
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS wptests_posts.ID
+			FROM wptests_posts
+			WHERE 1=1
+				AND wptests_posts.post_name = 'target-slug'
+				AND wptests_posts.ID NOT IN (2)
+				AND wptests_posts.post_type IN ('post', 'page', 'attachment')
+				AND ((wptests_posts.post_status = 'publish'))
+			ORDER BY wptests_posts.post_date DESC"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+		$this->assertParityRows(
+			"SELECT p.ID
+			FROM wptests_posts AS p
+			WHERE 1=1
+				AND p.post_name = 'target-slug'
+				AND p.ID NOT IN (2)
+				AND p.post_type IN ('post', 'page', 'attachment')
+				AND ((p.post_status = 'publish'))
+			ORDER BY p.post_date DESC"
+		);
+	}
+
 	public function test_posts_page_menu_title_order_ties_match_sqlite_index_order(): void {
 		$this->runParitySetup(
 			array(
