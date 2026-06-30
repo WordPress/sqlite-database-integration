@@ -24996,6 +24996,10 @@ class WP_DuckDB_Driver {
 		if ( ! $this->cast_type_is_numeric( $type_tokens ) || ! isset( $tokens[ $end_index ] ) ) {
 			return null;
 		}
+		$expr_tokens = array_slice( $body, 0, $as_index );
+		if ( count( $expr_tokens ) === 0 ) {
+			return null;
+		}
 
 		$is_not_like   = false;
 		$pattern_index = $end_index + 1;
@@ -25022,8 +25026,8 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$cast_sql = $this->translate_tokens_to_duckdb_sql(
-			array_slice( $tokens, $index, $end_index - $index ),
+		$expr_sql = $this->translate_tokens_to_duckdb_sql(
+			$expr_tokens,
 			$rewrite_information_schema_tables,
 			$rewrite_information_schema_columns,
 			$rewrite_information_schema_statistics,
@@ -25032,6 +25036,7 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_referential_constraints,
 			$rewrite_information_schema_check_constraints
 		);
+		$cast_sql = $this->numeric_cast_like_display_sql( $expr_sql, $type_tokens );
 
 		$pattern = $this->token_value( $tokens[ $pattern_index ] );
 		$escape  = '';
@@ -25050,12 +25055,31 @@ class WP_DuckDB_Driver {
 			$escape = ' ESCAPE ' . $this->connection->quote( '\\' );
 		}
 
-		return 'CAST(('
-			. $cast_sql
-			. ') AS VARCHAR)'
+		return $cast_sql
 			. ( $is_not_like ? ' NOT LIKE ' : ' LIKE ' )
 			. $this->connection->quote( $pattern )
 			. $escape;
+	}
+
+	/**
+	 * Build SQLite/MySQL-like display SQL for numeric CAST(...) LIKE predicates.
+	 *
+	 * @param string            $expr_sql    DuckDB SQL expression.
+	 * @param WP_Parser_Token[] $type_tokens Cast type tokens.
+	 * @return string DuckDB SQL expression that yields the LIKE-facing cast string.
+	 */
+	private function numeric_cast_like_display_sql( string $expr_sql, array $type_tokens ): string {
+		$wrapped_expr_sql = '(' . $expr_sql . ')';
+
+		if ( $this->cast_type_is_integer_numeric( $type_tokens ) ) {
+			return 'CAST((CASE WHEN '
+				. $wrapped_expr_sql
+				. ' IS NULL THEN NULL ELSE CAST(trunc(COALESCE(TRY_CAST('
+				. $wrapped_expr_sql
+				. ' AS DOUBLE), 0)) AS BIGINT) END) AS VARCHAR)';
+		}
+
+		return 'CAST((' . $this->mysql_numeric_coercion_sql( $wrapped_expr_sql ) . ') AS VARCHAR)';
 	}
 
 	/**
@@ -25375,6 +25399,37 @@ class WP_DuckDB_Driver {
 						WP_MySQL_Lexer::SIGNED_SYMBOL,
 						WP_MySQL_Lexer::UNSIGNED_SYMBOL,
 						WP_MySQL_Lexer::NUMERIC_SYMBOL,
+						WP_MySQL_Lexer::INT_SYMBOL,
+						WP_MySQL_Lexer::INTEGER_SYMBOL,
+						WP_MySQL_Lexer::BIGINT_SYMBOL,
+						WP_MySQL_Lexer::TINYINT_SYMBOL,
+						WP_MySQL_Lexer::SMALLINT_SYMBOL,
+						WP_MySQL_Lexer::MEDIUMINT_SYMBOL,
+					),
+					true
+				)
+			) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check whether a cast type is integer-like numeric.
+	 *
+	 * @param WP_Parser_Token[] $type_tokens Cast type tokens.
+	 * @return bool Whether the cast type is an integer numeric type.
+	 */
+	private function cast_type_is_integer_numeric( array $type_tokens ): bool {
+		foreach ( $type_tokens as $token ) {
+			if (
+				in_array(
+					$token->id,
+					array(
+						WP_MySQL_Lexer::SIGNED_SYMBOL,
+						WP_MySQL_Lexer::UNSIGNED_SYMBOL,
 						WP_MySQL_Lexer::INT_SYMBOL,
 						WP_MySQL_Lexer::INTEGER_SYMBOL,
 						WP_MySQL_Lexer::BIGINT_SYMBOL,

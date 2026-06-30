@@ -1645,6 +1645,98 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_numeric_cast_like_predicates_tolerate_non_numeric_text(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_postmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL,
+				post_id BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (meta_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+		$driver->query(
+			"INSERT INTO wptests_postmeta (meta_id, post_id, meta_key, meta_value) VALUES
+				(1, 1, 'num', '10'),
+				(2, 1, 'num', '010'),
+				(3, 1, 'num', '1780093651'),
+				(4, 1, 'num', 'abc'),
+				(5, 1, 'num', '10.50'),
+				(6, 1, 'num', '-7'),
+				(7, 1, 'num', NULL)"
+		);
+
+		$this->assertSame(
+			array( array( 'meta_id' => 1 ), array( 'meta_id' => 2 ), array( 'meta_id' => 5 ) ),
+			$driver->query(
+				"SELECT meta_id
+				FROM wptests_postmeta
+				WHERE CAST(meta_value AS SIGNED) LIKE '10%'
+				ORDER BY meta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$backslash = chr( 92 );
+		$this->assertSame(
+			array(),
+			$driver->query(
+				"SELECT meta_id
+				FROM wptests_postmeta
+				WHERE CAST(meta_value AS UNSIGNED) LIKE '10{$backslash}%'
+				ORDER BY meta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array( array( 'meta_id' => 1 ), array( 'meta_id' => 2 ), array( 'meta_id' => 5 ) ),
+			$driver->query(
+				"SELECT meta_id
+				FROM wptests_postmeta
+				WHERE CAST(meta_value AS UNSIGNED) LIKE '10%'
+				ORDER BY meta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array( array( 'meta_id' => 5 ) ),
+			$driver->query(
+				"SELECT meta_id
+				FROM wptests_postmeta
+				WHERE CAST(meta_value AS DECIMAL(10,2)) LIKE '10.5%'
+				ORDER BY meta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array( array( 'meta_id' => 3 ), array( 'meta_id' => 4 ), array( 'meta_id' => 6 ) ),
+			$driver->query(
+				"SELECT meta_id
+				FROM wptests_postmeta
+				WHERE CAST(meta_value AS SIGNED) NOT LIKE '10%'
+				ORDER BY meta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array( array( 'meta_id' => 1 ), array( 'meta_id' => 2 ) ),
+			$driver->query(
+				"SELECT SQL_CALC_FOUND_ROWS meta_id
+				FROM wptests_postmeta
+				WHERE CAST(meta_value AS SIGNED) LIKE '10%'
+				ORDER BY meta_id
+				LIMIT 2"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_select_comments_group_by_primary_key_orders_by_joined_meta_value(): void {
 		$this->requireDuckDBRuntime();
 
@@ -5677,15 +5769,15 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$cases     = array(
 			array(
 				'mysql'  => "SELECT CAST(meta_value AS DECIMAL(10,2)) LIKE '10{$backslash}_%' AS matched FROM postmeta",
-				'duckdb' => "SELECT CAST((CAST(meta_value AS DOUBLE)) AS VARCHAR) LIKE '10{$backslash}_%' ESCAPE '{$backslash}' AS matched FROM postmeta",
+				'duckdb' => "SELECT CAST((CASE WHEN (meta_value) IS NULL THEN NULL ELSE COALESCE(TRY_CAST((meta_value) AS DOUBLE), 0) END) AS VARCHAR) LIKE '10{$backslash}_%' ESCAPE '{$backslash}' AS matched FROM postmeta",
 			),
 			array(
 				'mysql'  => "SELECT CAST(meta_id AS SIGNED) NOT LIKE '3' AS matched FROM postmeta",
-				'duckdb' => "SELECT CAST((CAST(meta_id AS BIGINT)) AS VARCHAR) NOT LIKE '3' AS matched FROM postmeta",
+				'duckdb' => 'SELECT CAST((CASE WHEN (meta_id) IS NULL THEN NULL ELSE CAST(trunc(COALESCE(TRY_CAST((meta_id) AS DOUBLE), 0)) AS BIGINT) END) AS VARCHAR) NOT LIKE \'3\' AS matched FROM postmeta',
 			),
 			array(
 				'mysql'  => "SELECT CAST(meta_id AS UNSIGNED) LIKE '4%' ESCAPE '!' AS matched FROM postmeta",
-				'duckdb' => "SELECT CAST((CAST(meta_id AS BIGINT)) AS VARCHAR) LIKE '4%' ESCAPE '!' AS matched FROM postmeta",
+				'duckdb' => "SELECT CAST((CASE WHEN (meta_id) IS NULL THEN NULL ELSE CAST(trunc(COALESCE(TRY_CAST((meta_id) AS DOUBLE), 0)) AS BIGINT) END) AS VARCHAR) LIKE '4%' ESCAPE '!' AS matched FROM postmeta",
 			),
 		);
 
