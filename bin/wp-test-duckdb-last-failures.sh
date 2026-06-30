@@ -12,6 +12,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 PACKAGE_DIR="$ROOT_DIR/packages/mysql-on-sqlite"
 CACHE_FILE="${WP_DUCKDB_LAST_FAILURE_CACHE:-$PACKAGE_DIR/.phpunit.result.cache}"
+LIST_FILE="${WP_DUCKDB_LAST_FAILURE_LIST:-$ROOT_DIR/.github/workflows/duckdb-package-fast-fail-tests.txt}"
+REQUIRED="${WP_DUCKDB_LAST_FAILURE_REQUIRED:-0}"
+MIN_TESTS="${WP_DUCKDB_LAST_FAILURE_MIN_TESTS:-1}"
 MODE="${WP_DUCKDB_LAST_FAILURE_MODE:-run}"
 DRY_RUN="${WP_DUCKDB_LAST_FAILURE_DRY_RUN:-0}"
 MAX_TESTS="${WP_DUCKDB_LAST_FAILURE_MAX_TESTS:-12}"
@@ -35,6 +38,9 @@ Environment:
   WP_DUCKDB_LAST_FAILURE_MAX_TESTS    Maximum cached defects to run. Default: 12.
   WP_DUCKDB_LAST_FAILURE_TIMEOUT      Timeout in seconds. Default: 60.
   WP_DUCKDB_LAST_FAILURE_CACHE        Override the PHPUnit cache path.
+  WP_DUCKDB_LAST_FAILURE_LIST         Fallback test list when the cache is absent.
+  WP_DUCKDB_LAST_FAILURE_REQUIRED     Fail if no cache/list entries are found. Default: 0.
+  WP_DUCKDB_LAST_FAILURE_MIN_TESTS    Minimum selected tests. Default: 1.
   WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN
                                       PHP regex for class names. Default: /^WP_DuckDB_[A-Za-z0-9_]*$/.
 EOF
@@ -69,67 +75,118 @@ run_with_timeout() {
 }
 
 read_duckdb_failure_filter() {
-	[ -f "$CACHE_FILE" ] || {
-			printf '0\n\n'
-			return
-		}
+	if [ -f "$CACHE_FILE" ]; then
+		printf '%s\n' "$CACHE_FILE"
 
-	WP_DUCKDB_LAST_FAILURE_CACHE_FILE="$CACHE_FILE" \
-	WP_DUCKDB_LAST_FAILURE_MAX_TESTS="$MAX_TESTS" \
-	WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN="$CLASS_PATTERN" \
-	php -r '
-		$cache_file = getenv( "WP_DUCKDB_LAST_FAILURE_CACHE_FILE" );
-		$max_tests = (int) getenv( "WP_DUCKDB_LAST_FAILURE_MAX_TESTS" );
-		$class_pattern = getenv( "WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN" );
-		$cache = json_decode( file_get_contents( $cache_file ), true );
-		if ( ! is_array( $cache ) || ! isset( $cache["defects"] ) || ! is_array( $cache["defects"] ) ) {
-			fwrite( STDERR, "Error: PHPUnit cache does not contain a defects map: {$cache_file}\n" );
-			exit( 2 );
-		}
-		if ( 1 !== ( $cache["version"] ?? null ) ) {
-			fwrite( STDERR, "Error: Unsupported PHPUnit cache version in {$cache_file}\n" );
-			exit( 2 );
-		}
-		if ( false === @preg_match( $class_pattern, "WP_DuckDB_Driver_Tests" ) ) {
-			fwrite( STDERR, "Error: WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN is not a valid PHP regex.\n" );
-			exit( 2 );
-		}
+		WP_DUCKDB_LAST_FAILURE_CACHE_FILE="$CACHE_FILE" \
+		WP_DUCKDB_LAST_FAILURE_MAX_TESTS="$MAX_TESTS" \
+		WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN="$CLASS_PATTERN" \
+		php -r '
+			$cache_file = getenv( "WP_DUCKDB_LAST_FAILURE_CACHE_FILE" );
+			$max_tests = (int) getenv( "WP_DUCKDB_LAST_FAILURE_MAX_TESTS" );
+			$class_pattern = getenv( "WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN" );
+			$cache = json_decode( file_get_contents( $cache_file ), true );
+			if ( ! is_array( $cache ) || ! isset( $cache["defects"] ) || ! is_array( $cache["defects"] ) ) {
+				fwrite( STDERR, "Error: PHPUnit cache does not contain a defects map: {$cache_file}\n" );
+				exit( 2 );
+			}
+			if ( 1 !== ( $cache["version"] ?? null ) ) {
+				fwrite( STDERR, "Error: Unsupported PHPUnit cache version in {$cache_file}\n" );
+				exit( 2 );
+			}
+			if ( false === @preg_match( $class_pattern, "WP_DuckDB_Driver_Tests" ) ) {
+				fwrite( STDERR, "Error: WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN is not a valid PHP regex.\n" );
+				exit( 2 );
+			}
 
-		$tests = array();
-		foreach ( array_reverse( array_keys( $cache["defects"] ) ) as $test_id ) {
-			if ( ! is_string( $test_id ) || ! preg_match( "/^([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)$/", $test_id, $matches ) ) {
-				continue;
+			$tests = array();
+			foreach ( array_reverse( array_keys( $cache["defects"] ) ) as $test_id ) {
+				if ( ! is_string( $test_id ) || ! preg_match( "/^([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)$/", $test_id, $matches ) ) {
+					continue;
+				}
+				if ( ! preg_match( $class_pattern, $matches[1] ) ) {
+					continue;
+				}
+				$tests[] = $test_id;
+				if ( count( $tests ) >= $max_tests ) {
+					break;
+				}
 			}
-			if ( ! preg_match( $class_pattern, $matches[1] ) ) {
-				continue;
-			}
-			$tests[] = $test_id;
-			if ( count( $tests ) >= $max_tests ) {
-				break;
-			}
-		}
 
-		echo count( $tests ), "\n";
-		echo implode( "|", array_map( static function ( $test_id ) {
-			return preg_quote( $test_id, "/" );
-		}, $tests ) ), "\n";
-		echo implode( "\n", $tests ), "\n";
-	'
+			echo count( $tests ), "\n";
+			echo implode( "|", array_map( static function ( $test_id ) {
+				return preg_quote( $test_id, "/" );
+			}, $tests ) ), "\n";
+			echo implode( "\n", $tests ), "\n";
+		'
+		return
+	fi
+
+	if [ -f "$LIST_FILE" ]; then
+		printf '%s\n' "$LIST_FILE"
+
+		WP_DUCKDB_LAST_FAILURE_LIST_FILE="$LIST_FILE" \
+		WP_DUCKDB_LAST_FAILURE_MAX_TESTS="$MAX_TESTS" \
+		WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN="$CLASS_PATTERN" \
+		php -r '
+			$list_file = getenv( "WP_DUCKDB_LAST_FAILURE_LIST_FILE" );
+			$max_tests = (int) getenv( "WP_DUCKDB_LAST_FAILURE_MAX_TESTS" );
+			$class_pattern = getenv( "WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN" );
+			if ( false === @preg_match( $class_pattern, "WP_DuckDB_Driver_Tests" ) ) {
+				fwrite( STDERR, "Error: WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN is not a valid PHP regex.\n" );
+				exit( 2 );
+			}
+
+			$tests = array();
+			$seen = array();
+			foreach ( file( $list_file, FILE_IGNORE_NEW_LINES ) as $line_number => $line ) {
+				$test_id = trim( $line );
+				if ( "" === $test_id || "#" === $test_id[0] ) {
+					continue;
+				}
+				if ( ! preg_match( "/^([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)$/", $test_id, $matches ) ) {
+					fwrite( STDERR, "Error: Invalid DuckDB last-failure test on line " . ( $line_number + 1 ) . " of {$list_file}: {$test_id}\n" );
+					exit( 2 );
+				}
+				if ( ! preg_match( $class_pattern, $matches[1] ) || isset( $seen[ $test_id ] ) ) {
+					continue;
+				}
+				$seen[ $test_id ] = true;
+				$tests[] = $test_id;
+				if ( count( $tests ) >= $max_tests ) {
+					break;
+				}
+			}
+
+			echo count( $tests ), "\n";
+			echo implode( "|", array_map( static function ( $test_id ) {
+				return preg_quote( $test_id, "/" );
+			}, $tests ) ), "\n";
+			echo implode( "\n", $tests ), "\n";
+		'
+		return
+	fi
+
+	printf '<none>\n0\n\n'
 }
 
 run_last_failures() {
-	local failure_result failure_count failure_filter duckdb_php_autoload wp_duckdb_autoload
+	local failure_result failure_source failure_count failure_filter duckdb_php_autoload wp_duckdb_autoload
 	local phpunit_output phpunit_status
 	local -a failure_lines phpunit_command selected_tests
 
 	failure_result="$(read_duckdb_failure_filter)"
 	mapfile -t failure_lines <<< "$failure_result"
-	failure_count="${failure_lines[0]:-0}"
-	failure_filter="${failure_lines[1]:-}"
-	selected_tests=( "${failure_lines[@]:2}" )
+	failure_source="${failure_lines[0]:-<none>}"
+	failure_count="${failure_lines[1]:-0}"
+	failure_filter="${failure_lines[2]:-}"
+	selected_tests=( "${failure_lines[@]:3}" )
 
 	if [ "$failure_count" -eq 0 ]; then
-		echo "No cached package-local DuckDB PHPUnit defects found in $CACHE_FILE."
+		if [ "$REQUIRED" = '1' ]; then
+			fail "No package-local DuckDB PHPUnit defects found in $CACHE_FILE or $LIST_FILE."
+		fi
+		echo "No package-local DuckDB PHPUnit defects found in $CACHE_FILE or $LIST_FILE."
 		return
 	fi
 
@@ -152,10 +209,18 @@ run_last_failures() {
 		--filter "$failure_filter"
 		--stop-on-error
 		--stop-on-failure
+		--do-not-cache-result
 	)
 
+	if [ "$failure_count" -lt "$MIN_TESTS" ]; then
+		fail "DuckDB last-failure source selected $failure_count tests; expected at least $MIN_TESTS."
+	fi
+
 	echo "DuckDB cached failure cache: $CACHE_FILE"
+	echo "DuckDB cached failure fallback list: $LIST_FILE"
+	echo "DuckDB cached failure source: $failure_source"
 	echo "DuckDB cached failure entries: $failure_count"
+	echo "DuckDB cached failure min entries: $MIN_TESTS"
 	echo "DuckDB cached failure max entries: $MAX_TESTS"
 	echo "DuckDB cached failure timeout: ${TIMEOUT_SECONDS}s"
 	echo "DuckDB cached failure filter: $failure_filter"
@@ -207,6 +272,14 @@ fi
 
 is_positive_integer "$MAX_TESTS" || fail 'WP_DUCKDB_LAST_FAILURE_MAX_TESTS must be a positive integer.'
 is_positive_integer "$TIMEOUT_SECONDS" || fail 'WP_DUCKDB_LAST_FAILURE_TIMEOUT must be a positive integer.'
+is_positive_integer "$MIN_TESTS" || fail 'WP_DUCKDB_LAST_FAILURE_MIN_TESTS must be a positive integer.'
+case "$REQUIRED" in
+	0|1)
+		;;
+	*)
+		fail 'WP_DUCKDB_LAST_FAILURE_REQUIRED must be 0 or 1.'
+		;;
+esac
 
 case "$MODE" in
 	run)

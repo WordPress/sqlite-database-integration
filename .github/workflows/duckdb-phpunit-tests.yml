@@ -6,10 +6,12 @@ on:
       - trunk
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
+      - '.github/workflows/duckdb-package-fast-fail-tests.txt'
       - '.github/workflows/duckdb-wordpress-phpunit-fast-fail-tests.txt'
       - '.github/workflows/duckdb-wordpress-e2e-fast-fail-specs.txt'
       - '.github/workflows/wp-tests-phpunit-run.js'
       - '.github/workflows/wp-tests-phpunit-native-extension-setup.sh'
+      - 'bin/wp-test-duckdb-last-failures.sh'
       - 'bin/wp-test-duckdb-smoke.sh'
       - 'bin/wp-test-ensure-env-duckdb.sh'
       - 'composer.json'
@@ -27,10 +29,12 @@ on:
   pull_request:
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
+      - '.github/workflows/duckdb-package-fast-fail-tests.txt'
       - '.github/workflows/duckdb-wordpress-phpunit-fast-fail-tests.txt'
       - '.github/workflows/duckdb-wordpress-e2e-fast-fail-specs.txt'
       - '.github/workflows/wp-tests-phpunit-run.js'
       - '.github/workflows/wp-tests-phpunit-native-extension-setup.sh'
+      - 'bin/wp-test-duckdb-last-failures.sh'
       - 'bin/wp-test-duckdb-smoke.sh'
       - 'bin/wp-test-ensure-env-duckdb.sh'
       - 'composer.json'
@@ -131,6 +135,18 @@ jobs:
         timeout-minutes: 2
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
+
+      - name: Run recent DuckDB package failures first
+        timeout-minutes: 2
+        env:
+          WP_DUCKDB_LAST_FAILURE_REQUIRED: '1'
+          WP_DUCKDB_LAST_FAILURE_MIN_TESTS: '12'
+          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '12'
+          WP_DUCKDB_LAST_FAILURE_TIMEOUT: '60'
+          WP_DUCKDB_LAST_FAILURE_LIST: ${{ github.workspace }}/.github/workflows/duckdb-package-fast-fail-tests.txt
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_DUCKDB_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+        run: composer run test-duckdb-last-failures
 
       - name: Run DuckDB PHPUnit suite
         timeout-minutes: 10
@@ -255,6 +271,18 @@ jobs:
         timeout-minutes: 2
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
+
+      - name: Run recent DuckDB package failures first
+        timeout-minutes: 2
+        env:
+          WP_DUCKDB_LAST_FAILURE_REQUIRED: '1'
+          WP_DUCKDB_LAST_FAILURE_MIN_TESTS: '12'
+          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '12'
+          WP_DUCKDB_LAST_FAILURE_TIMEOUT: '60'
+          WP_DUCKDB_LAST_FAILURE_LIST: ${{ github.workspace }}/.github/workflows/duckdb-package-fast-fail-tests.txt
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_DUCKDB_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+        run: composer run test-duckdb-last-failures
 
       - name: Prepare WordPress DuckDB PHPUnit environment
         timeout-minutes: 15
@@ -565,6 +593,18 @@ jobs:
         timeout-minutes: 2
         run: php -d ffi.enable=true -r "require 'vendor/autoload.php'; require 'src/load.php'; WP_DuckDB_Runtime::assert_available( true );"
         working-directory: packages/mysql-on-sqlite
+
+      - name: Run recent DuckDB package failures first
+        timeout-minutes: 2
+        env:
+          WP_DUCKDB_LAST_FAILURE_REQUIRED: '1'
+          WP_DUCKDB_LAST_FAILURE_MIN_TESTS: '12'
+          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '12'
+          WP_DUCKDB_LAST_FAILURE_TIMEOUT: '60'
+          WP_DUCKDB_LAST_FAILURE_LIST: ${{ github.workspace }}/.github/workflows/duckdb-package-fast-fail-tests.txt
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_DUCKDB_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+        run: composer run test-duckdb-last-failures
 
       - name: Prepare WordPress DuckDB end-to-end environment
         timeout-minutes: 15
