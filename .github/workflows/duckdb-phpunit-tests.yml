@@ -28,6 +28,12 @@ on:
       - 'packages/plugin-sqlite-database-integration/wp-includes/db.php'
       - 'packages/plugin-sqlite-database-integration/wp-includes/duckdb/**'
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
     paths:
       - '.github/workflows/duckdb-phpunit-tests.yml'
       - '.github/workflows/duckdb-package-fast-fail-tests.txt'
@@ -101,6 +107,10 @@ concurrency:
 # Disable permissions for all available scopes by default.
 # Any needed permissions should be configured at the job level.
 permissions: {}
+
+env:
+  WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true)) || (github.event_name == 'pull_request' && github.event.pull_request.number == 442 && contains(github.event.pull_request.labels.*.name, 'duckdb-setup-fast-fail')) }}
+  WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) || (github.event_name == 'pull_request' && github.event.pull_request.number == 442 && contains(github.event.pull_request.labels.*.name, 'duckdb-setup-fast-fail')) }}
 
 jobs:
   duckdb-test:
@@ -295,23 +305,23 @@ jobs:
         run: composer run test-duckdb-last-failures
 
       - name: Skip setup-backed WordPress PHPUnit gates
-        if: ${{ success() && github.ref != 'refs/heads/trunk' && (github.event_name != 'workflow_dispatch' || (inputs.run_wordpress_fast_fail != true && inputs.run_full_wp_phpunit != true)) }}
+        if: ${{ success() && env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL != 'true' }}
         run: |
           echo "::notice title=DuckDB WordPress PHPUnit gates skipped::Setup-backed WordPress PHPUnit / DuckDB gates are skipped for this last-failures-only run."
-          echo "Run this workflow manually with run_wordpress_fast_fail=true or run_full_wp_phpunit=true, or push to trunk, to prepare WordPress and run the setup-backed gates."
+          echo "Run this workflow manually with run_wordpress_fast_fail=true or run_full_wp_phpunit=true, push to trunk, or apply the duckdb-setup-fast-fail label to PR #442, to prepare WordPress and run the setup-backed gates."
 
       - name: Set up Docker Buildx
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Set UID and GID for PHP in WordPress images
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         run: |
           echo "PHP_FPM_UID=$(id -u)" >> $GITHUB_ENV
           echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
 
       - name: Prepare WordPress DuckDB PHPUnit environment
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 15
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
@@ -322,14 +332,14 @@ jobs:
         run: composer run wp-test-ensure-env-duckdb
 
       - name: Smoke test WordPress DuckDB wpdb
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 2
         env:
           WP_DUCKDB_SMOKE_TIMEOUT: '90'
         run: ./bin/wp-test-duckdb-smoke.sh
 
       - name: Run recent DuckDB WordPress PHPUnit failures before native parser build
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 3
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
@@ -355,7 +365,7 @@ jobs:
         run: composer run wp-test-duckdb-fast-fail -- phpunit
 
       - name: Build and load parser extension in WordPress DuckDB PHP containers
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 8
         env:
           WP_DUCKDB_NATIVE_EXTENSION_BUILD_TIMEOUT_SECONDS: '300'
@@ -363,7 +373,7 @@ jobs:
         run: bash .github/workflows/wp-tests-phpunit-native-extension-setup.sh
 
       - name: Run recent DuckDB WordPress PHPUnit failures first
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 4
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
@@ -439,7 +449,7 @@ jobs:
           echo "Run this workflow manually with run_full_wp_phpunit=true, or push to trunk, to execute the full suite."
 
       - name: Dump WordPress DuckDB failure diagnostics
-        if: failure() || cancelled()
+        if: ${{ (failure() || cancelled()) && env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 5
         shell: bash
         run: |
@@ -520,7 +530,7 @@ jobs:
           true
 
       - name: Stop Docker containers
-        if: ${{ always() && (github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_phpunit == true))) }}
+        if: ${{ always() && env.WP_SQLITE_DUCKDB_PHPUNIT_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 5
         run: composer run wp-test-clean
 
@@ -631,23 +641,23 @@ jobs:
         run: composer run test-duckdb-last-failures
 
       - name: Skip setup-backed WordPress E2E gates
-        if: ${{ success() && github.ref != 'refs/heads/trunk' && (github.event_name != 'workflow_dispatch' || (inputs.run_wordpress_fast_fail != true && inputs.run_full_wp_e2e != true)) }}
+        if: ${{ success() && env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL != 'true' }}
         run: |
           echo "::notice title=DuckDB WordPress E2E gates skipped::Setup-backed WordPress E2E / DuckDB gates are skipped for this last-failures-only run."
-          echo "Run this workflow manually with run_wordpress_fast_fail=true or run_full_wp_e2e=true, or push to trunk, to prepare WordPress and run the setup-backed gates."
+          echo "Run this workflow manually with run_wordpress_fast_fail=true or run_full_wp_e2e=true, push to trunk, or apply the duckdb-setup-fast-fail label to PR #442, to prepare WordPress and run the setup-backed gates."
 
       - name: Set up Docker Buildx
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Set UID and GID for PHP in WordPress images
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         run: |
           echo "PHP_FPM_UID=$(id -u)" >> $GITHUB_ENV
           echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
 
       - name: Prepare WordPress DuckDB end-to-end environment
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 15
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
@@ -658,14 +668,14 @@ jobs:
         run: composer run wp-test-ensure-env-duckdb
 
       - name: Smoke test WordPress DuckDB wpdb
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 2
         env:
           WP_DUCKDB_SMOKE_TIMEOUT: '90'
         run: ./bin/wp-test-duckdb-smoke.sh
 
       - name: Validate DuckDB E2E fast-fail spec paths
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 1
         shell: bash
         env:
@@ -726,12 +736,12 @@ jobs:
           printf 'DuckDB E2E fast-fail spec: %s\n' "${fast_fail_specs[@]}"
 
       - name: Install Playwright browsers
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 10
         run: npx playwright install --with-deps
 
       - name: Serialize WordPress PHP-FPM for DuckDB end-to-end tests
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 5
         shell: bash
         run: |
@@ -777,7 +787,7 @@ jobs:
           exit 1
 
       - name: Install WordPress 500 response diagnostics
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 5
         run: |
           cat > wordpress/src/wp-content/duckdb-e2e-500-diagnostics.php <<'PHP'
@@ -897,7 +907,7 @@ jobs:
           ' wordpress/src/wp-content/db.php
 
       - name: Run recent DuckDB WordPress E2E failures first
-        if: ${{ github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true)) }}
+        if: ${{ env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 6
         shell: bash
         env:
@@ -921,7 +931,7 @@ jobs:
           echo "Run this workflow manually with run_full_wp_e2e=true, or push to trunk, to execute the full E2E suite."
 
       - name: Dump WordPress DuckDB failure diagnostics
-        if: failure() || cancelled()
+        if: ${{ (failure() || cancelled()) && env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 5
         shell: bash
         run: |
@@ -1002,6 +1012,6 @@ jobs:
           true
 
       - name: Stop Docker containers
-        if: ${{ always() && (github.ref == 'refs/heads/trunk' || (github.event_name == 'workflow_dispatch' && (inputs.run_wordpress_fast_fail == true || inputs.run_full_wp_e2e == true))) }}
+        if: ${{ always() && env.WP_SQLITE_DUCKDB_E2E_SETUP_BACKED_FAST_FAIL == 'true' }}
         timeout-minutes: 5
         run: composer run wp-test-clean
