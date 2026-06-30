@@ -26159,7 +26159,7 @@ class WP_DuckDB_Driver {
 		$literal_sql = array();
 		$list_index  = $in_index + 2;
 		while ( isset( $tokens[ $list_index ] ) ) {
-			$literal = $this->text_value_numeric_literal_sequence_sql( $tokens, $list_index );
+			$literal = $this->text_value_in_list_literal_sequence_sql( $tokens, $list_index );
 			if ( null === $literal ) {
 				return null;
 			}
@@ -26194,6 +26194,40 @@ class WP_DuckDB_Driver {
 				. ')',
 			'end_index' => $list_index,
 		);
+	}
+
+	/**
+	 * Build text SQL for a text-value IN-list literal token sequence.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Literal start index.
+	 * @return array{sql:string,end_index:int}|null Literal SQL and consumed index.
+	 */
+	private function text_value_in_list_literal_sequence_sql( array $tokens, int $index ): ?array {
+		$numeric = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
+		if ( null !== $numeric ) {
+			return $numeric;
+		}
+
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		if ( $this->is_string_literal_token( $tokens[ $index ] ) ) {
+			return array(
+				'sql'       => $this->connection->quote( $this->token_value( $tokens[ $index ] ) ),
+				'end_index' => $index,
+			);
+		}
+
+		if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[ $index ]->id || WP_MySQL_Lexer::NULL2_SYMBOL === $tokens[ $index ]->id ) {
+			return array(
+				'sql'       => 'NULL',
+				'end_index' => $index,
+			);
+		}
+
+		return null;
 	}
 
 	/**

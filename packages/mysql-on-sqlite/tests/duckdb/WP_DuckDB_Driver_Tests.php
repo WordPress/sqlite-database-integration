@@ -2521,9 +2521,29 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'fragment' => 'CAST("meta_value" AS VARCHAR) IN (CAST(-7 AS VARCHAR), \'7\')',
 			),
 			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value IN (10, NULL) ORDER BY meta_id',
+				'expected' => array( 1 ),
+				'fragment' => 'CAST("meta_value" AS VARCHAR) IN (CAST(10 AS VARCHAR), NULL)',
+			),
+			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE meta_value IN (10, 'abc') ORDER BY meta_id",
+				'expected' => array( 1, 5 ),
+				'fragment' => "CAST(\"meta_value\" AS VARCHAR) IN (CAST(10 AS VARCHAR), 'abc')",
+			),
+			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE meta_value IN (10, NULL, 'abc', 10.5) ORDER BY meta_id",
+				'expected' => array( 1, 5 ),
+				'fragment' => "CAST(\"meta_value\" AS VARCHAR) IN (CAST(10 AS VARCHAR), NULL, 'abc', '10.5')",
+			),
+			array(
 				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value NOT IN (10, 11) ORDER BY meta_id',
 				'expected' => array( 2, 3, 4, 5, 6, 7, 8 ),
 				'fragment' => 'CAST("meta_value" AS VARCHAR) NOT IN (CAST(10 AS VARCHAR), CAST(11 AS VARCHAR))',
+			),
+			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE meta_value NOT IN (10, NULL, 'abc') ORDER BY meta_id",
+				'expected' => array(),
+				'fragment' => "CAST(\"meta_value\" AS VARCHAR) NOT IN (CAST(10 AS VARCHAR), NULL, 'abc')",
 			),
 			array(
 				'sql'      => 'SELECT option_id FROM wptests_options WHERE option_value < 11 ORDER BY option_id',
@@ -2549,6 +2569,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'sql'      => 'SELECT option_id FROM wptests_options WHERE option_value NOT IN (10, 11) ORDER BY option_id',
 				'expected' => array( 2, 3, 4, 5 ),
 				'fragment' => 'CAST("option_value" AS VARCHAR) NOT IN (CAST(10 AS VARCHAR), CAST(11 AS VARCHAR))',
+			),
+			array(
+				'sql'      => "SELECT option_id FROM wptests_options WHERE option_value IN (10, NULL, '10abc') ORDER BY option_id",
+				'expected' => array( 1, 3 ),
+				'fragment' => "CAST(\"option_value\" AS VARCHAR) IN (CAST(10 AS VARCHAR), NULL, '10abc')",
+			),
+			array(
+				'sql'      => "SELECT option_id FROM wptests_options WHERE option_value NOT IN (10, NULL, '10abc') ORDER BY option_id",
+				'expected' => array(),
+				'fragment' => "CAST(\"option_value\" AS VARCHAR) NOT IN (CAST(10 AS VARCHAR), NULL, '10abc')",
 			),
 		);
 
@@ -6354,8 +6384,20 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) IN (CAST(-7 AS VARCHAR), '7', '10.5') ORDER BY id",
 			),
 			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value IN (10, NULL, 'abc', 10.50) ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) IN (CAST(10 AS VARCHAR), NULL, 'abc', '10.5') ORDER BY id",
+			),
+			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value NOT IN (10, 11) ORDER BY id',
 				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) NOT IN (CAST(10 AS VARCHAR), CAST(11 AS VARCHAR)) ORDER BY id',
+			),
+			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value NOT IN (10, NULL, 'abc') ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT IN (CAST(10 AS VARCHAR), NULL, 'abc') ORDER BY id",
+			),
+			array(
+				'mysql'  => "SELECT id FROM options WHERE option_value IN (10, NULL, '10abc') ORDER BY id",
+				'duckdb' => "SELECT id FROM options WHERE CAST(\"option_value\" AS VARCHAR) IN (CAST(10 AS VARCHAR), NULL, '10abc') ORDER BY id",
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0',
@@ -6417,6 +6459,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				"SELECT id FROM plugin_items WHERE id < '10' ORDER BY id",
 				"SELECT id FROM plugin_items WHERE parent != 'abc' ORDER BY id",
 				"SELECT plugin_items.count FROM plugin_items WHERE plugin_items.count < '10' ORDER BY plugin_items.count",
+				"SELECT id FROM postmeta WHERE meta_value IN (10 + 1, 'abc') ORDER BY id",
 				"SELECT ID FROM users WHERE ID BETWEEN 1 AND 'bad'",
 				"SELECT ID FROM users WHERE ID BETWEEN '1' AND 'bad' + 1",
 				"SELECT ID FROM users WHERE users.ID NOT BETWEEN '1' AND 'bad' + 1",
@@ -6428,6 +6471,9 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 			$this->assertStringNotContainsString( 'TRY_CAST(', $this->lastDuckDBQuery( $driver ), $sql );
 		}
+
+		$driver->query( "SELECT id FROM postmeta WHERE meta_value IN (10 + 1, 'abc') ORDER BY id" );
+		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) IN', $this->lastDuckDBQuery( $driver ) );
 	}
 
 	public function test_escaped_like_literal_predicates_use_mysql_backslash_semantics(): void {
