@@ -9735,6 +9735,114 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 0, $driver->get_insert_id() );
 	}
 
+	public function test_wordpress_usermeta_omitted_auto_increment_insert_uses_fast_path_returning(): void {
+		$this->requireDuckDBRuntime();
+
+		$path = tempnam( sys_get_temp_dir(), 'duckdb-usermeta-insert-' );
+		unlink( $path );
+
+		try {
+			$setup_driver = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$this->create_wordpress_usermeta_auto_increment_insert_fixture( $setup_driver, 'wptests_usermeta' );
+			unset( $setup_driver );
+
+			$queries = array();
+			$driver  = $this->query_logged_duckdb_driver( $queries, $path );
+			$queries = array();
+
+			$insert = $driver->query(
+				"INSERT INTO `wptests_usermeta` (`user_id`, `meta_key`, `meta_value`)
+				VALUES (1, 'wp_persisted_preferences', 'a:1:{s:4:\"note\";s:11:\"hello world\";}')"
+			);
+
+			$this->assertSame( 1, $insert->rowCount() );
+			$this->assertSame( 1, $driver->get_insert_id() );
+			$this->assertLessThan( 4, count( $queries ), implode( "\n", $queries ) );
+			$this->assertSame( 1, $this->count_duckdb_table_resolution_queries( $queries ) );
+			$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_usermeta' ) );
+			$this->assertSame( 0, $this->count_duckdb_auto_increment_metadata_queries( $queries, 'wptests_usermeta' ) );
+			$this->assert_wordpress_usermeta_omitted_auto_increment_insert_used_returning( $queries, 'wptests_usermeta' );
+
+			$queries = array();
+			$insert  = $driver->query(
+				"INSERT INTO wptests_usermeta (user_id, meta_key, meta_value)
+				VALUES (2, 'session_tokens', NULL)"
+			);
+
+			$this->assertSame( 1, $insert->rowCount() );
+			$this->assertSame( 2, $driver->get_insert_id() );
+			$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+			$this->assert_wordpress_usermeta_omitted_auto_increment_insert_used_returning( $queries, 'wptests_usermeta' );
+			$this->assertSame(
+				array(
+					array(
+						'umeta_id'   => 1,
+						'user_id'    => 1,
+						'meta_key'   => 'wp_persisted_preferences',
+						'meta_value' => 'a:1:{s:4:"note";s:11:"hello world";}',
+					),
+					array(
+						'umeta_id'   => 2,
+						'user_id'    => 2,
+						'meta_key'   => 'session_tokens',
+						'meta_value' => null,
+					),
+				),
+				$driver->query( 'SELECT umeta_id, user_id, meta_key, meta_value FROM wptests_usermeta ORDER BY umeta_id' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		} finally {
+			@unlink( $path );
+		}
+	}
+
+	public function test_wordpress_usermeta_omitted_auto_increment_insert_fast_path_respects_temporary_shadow_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_usermeta_auto_increment_insert_fixture( $driver, 'wptests_usermeta' );
+		$driver->query(
+			'CREATE TEMPORARY TABLE wptests_usermeta (
+				user_id BIGINT,
+				meta_key VARCHAR(255),
+				meta_value LONGTEXT
+			)'
+		);
+
+		$queries = array();
+		$insert  = $driver->query(
+			"INSERT INTO wptests_usermeta (user_id, meta_key, meta_value)
+			VALUES (9, 'shadow', 'temporary')"
+		);
+
+		$this->assertSame( 1, $insert->rowCount() );
+		$this->assertSame( 0, $driver->get_insert_id() );
+		foreach ( $queries as $query ) {
+			$this->assertStringNotContainsString( ' RETURNING "umeta_id"', $query );
+		}
+		$this->assertSame(
+			array(
+				array(
+					'user_id'    => 9,
+					'meta_key'   => 'shadow',
+					'meta_value' => 'temporary',
+				),
+			),
+			$driver->query( 'SELECT user_id, meta_key, meta_value FROM wptests_usermeta' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_usermeta' );
+		$this->assertSame(
+			array(),
+			$driver->query( 'SELECT umeta_id, user_id, meta_key, meta_value FROM wptests_usermeta' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_wordpress_posts_omitted_auto_increment_insert_uses_cached_metadata_and_returning(): void {
 		$this->requireDuckDBRuntime();
 
@@ -22033,6 +22141,20 @@ SQL
 		);
 	}
 
+	private function create_wordpress_usermeta_auto_increment_insert_fixture( WP_DuckDB_Driver $driver, string $table_name ): void {
+		$driver->query(
+			'CREATE TABLE ' . $table_name . ' (
+				umeta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				user_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				meta_key VARCHAR(255) DEFAULT NULL,
+				meta_value LONGTEXT,
+				PRIMARY KEY (umeta_id),
+				KEY user_id (user_id),
+				KEY meta_key (meta_key(191))
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+		);
+	}
+
 	private function wordpress_options_autoload_select_sql(): string {
 		return "SELECT option_name, option_value FROM wptests_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')";
 	}
@@ -22313,6 +22435,19 @@ SQL
 
 		foreach ( $queries as $query ) {
 			$this->assertStringNotContainsString( 'SELECT MAX("' . $column_name . '")', $query );
+			$this->assertStringNotContainsString( 'SELECT currval(', $query );
+		}
+	}
+
+	private function assert_wordpress_usermeta_omitted_auto_increment_insert_used_returning( array $queries, string $table_name ): void {
+		$this->assertNotEmpty( $queries );
+		$last_query = end( $queries );
+		$this->assertStringContainsString( 'INSERT INTO ', $last_query );
+		$this->assertStringContainsString( $table_name, $last_query );
+		$this->assertStringContainsString( ' RETURNING "umeta_id"', $last_query );
+
+		foreach ( $queries as $query ) {
+			$this->assertStringNotContainsString( 'SELECT MAX("umeta_id")', $query );
 			$this->assertStringNotContainsString( 'SELECT currval(', $query );
 		}
 	}

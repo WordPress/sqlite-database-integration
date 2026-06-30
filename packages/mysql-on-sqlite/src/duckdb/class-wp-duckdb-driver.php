@@ -603,6 +603,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_options_update_result;
 		}
 
+		$wordpress_usermeta_insert_result = $this->execute_wordpress_usermeta_insert_fast_path_statement( $query );
+		if ( null !== $wordpress_usermeta_insert_result ) {
+			return $wordpress_usermeta_insert_result;
+		}
+
 		$normalized = $this->normalize_fast_path_statement( $query );
 		if ( null === $normalized ) {
 			return null;
@@ -1537,6 +1542,78 @@ class WP_DuckDB_Driver {
 
 		$this->found_rows = 0;
 		return $this->execute_duckdb_query( $sql, 'Failed to execute DuckDB UPDATE' );
+	}
+
+	/**
+	 * Execute WordPress' high-frequency usermeta INSERT without parser/metadata fanout.
+	 *
+	 * This handles the exact `wpdb::insert()` shape for persistent usermeta
+	 * tables. Temporary shadows deliberately fall back to the generic path.
+	 *
+	 * @param string $query MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_usermeta_insert_fast_path_statement( string $query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		if (
+			! preg_match(
+				'/^\s*INSERT\s+INTO\s+(?<table>' . $identifier_pattern . ')\s*\(\s*(?<user_id_column>' . $identifier_pattern . ')\s*,\s*(?<meta_key_column>' . $identifier_pattern . ')\s*,\s*(?<meta_value_column>' . $identifier_pattern . ')\s*\)\s+VALUES\s*\(\s*(?<user_id>[0-9]+|\'[0-9]+\')\s*,\s*(?<meta_key>' . $literal_pattern . ')\s*,\s*(?<meta_value>' . $literal_pattern . '|NULL)\s*\)\s*;?\s*$/i',
+				$query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$table_name = $this->fast_path_mysql_identifier_value( $matches['table'] );
+		if ( ! $this->is_wordpress_usermeta_table_name( $table_name ) ) {
+			return null;
+		}
+
+		if (
+			! $this->fast_path_identifier_matches( 'user_id', $matches['user_id_column'] )
+			|| ! $this->fast_path_identifier_matches( 'meta_key', $matches['meta_key_column'] )
+			|| ! $this->fast_path_identifier_matches( 'meta_value', $matches['meta_value_column'] )
+		) {
+			return null;
+		}
+
+		if ( WP_DuckDB_Connection::class !== get_class( $this->connection ) ) {
+			return null;
+		}
+
+		$user_id = $this->fast_path_mysql_unsigned_integer_literal_value( $matches['user_id'] );
+		if ( null === $user_id ) {
+			return null;
+		}
+
+		if ( null !== $this->resolve_temporary_user_table_reference( $table_name ) ) {
+			return null;
+		}
+
+		$meta_value_sql = 0 === strcasecmp( 'NULL', $matches['meta_value'] )
+			? 'NULL'
+			: $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['meta_value'] ) );
+
+		$sql = 'INSERT INTO '
+			. $this->connection->quote_identifier( $table_name )
+			. ' ('
+			. $this->connection->quote_identifier( 'user_id' )
+			. ', '
+			. $this->connection->quote_identifier( 'meta_key' )
+			. ', '
+			. $this->connection->quote_identifier( 'meta_value' )
+			. ') VALUES ('
+			. (string) $user_id
+			. ', '
+			. $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['meta_key'] ) )
+			. ', '
+			. $meta_value_sql
+			. ')';
+
+		$this->found_rows = 0;
+		return $this->execute_auto_increment_returning_write( $sql, 'Failed to execute DuckDB INSERT', 'umeta_id' );
 	}
 
 	/**
