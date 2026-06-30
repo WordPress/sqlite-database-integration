@@ -665,6 +665,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_term_taxonomy_lookup_result;
 		}
 
+		$wordpress_shared_term_group_result = $this->execute_wordpress_shared_term_group_fast_path_statement( $normalized );
+		if ( null !== $wordpress_shared_term_group_result ) {
+			return $wordpress_shared_term_group_result;
+		}
+
 		$wordpress_term_relationships_distinct_terms_result = $this->execute_wordpress_term_relationships_distinct_terms_fast_path_statement( $normalized );
 		if ( null !== $wordpress_term_relationships_distinct_terms_result ) {
 			return $wordpress_term_relationships_distinct_terms_result;
@@ -2128,6 +2133,183 @@ class WP_DuckDB_Driver {
 		$this->found_rows = $sql;
 
 		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
+	 * Execute WordPress' shared-term split probe without parser GROUP BY overhead.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_shared_term_group_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		if (
+			! preg_match(
+				'/^SELECT\s+(?<taxonomy_select_alias>' . $identifier_pattern . ')\s*\.\s*(?<select_term_column>`term_id`|term_id)\s*,\s*(?<terms_select_alias>' . $identifier_pattern . ')\s*\.\s*\*\s*,\s*COUNT\s*\(\s*\*\s*\)\s+(?:AS\s+)?(?<count_alias>`term_tt_count`|term_tt_count)\s+FROM\s+(?<taxonomy_table>' . $identifier_pattern . ')\s+(?:AS\s+)?(?<taxonomy_alias>' . $identifier_pattern . ')\s+LEFT\s+JOIN\s+(?<terms_table>' . $identifier_pattern . ')\s+(?:AS\s+)?(?<terms_alias>' . $identifier_pattern . ')\s+ON\s+(?<join_left_alias>' . $identifier_pattern . ')\s*\.\s*(?<join_left_column>`term_id`|term_id)\s*=\s*(?<join_right_alias>' . $identifier_pattern . ')\s*\.\s*(?<join_right_column>`term_id`|term_id)\s+GROUP\s+BY\s+(?<group_alias>' . $identifier_pattern . ')\s*\.\s*(?<group_column>`term_id`|term_id)\s+HAVING\s+(?<having_alias>`term_tt_count`|term_tt_count)\s*>\s*1\s+LIMIT\s+(?<limit>[0-9]+)$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$taxonomy_table = $this->fast_path_mysql_identifier_value( $matches['taxonomy_table'] );
+		$terms_table    = $this->fast_path_mysql_identifier_value( $matches['terms_table'] );
+		if (
+			! $this->is_wordpress_term_taxonomy_table_name( $taxonomy_table )
+			|| ! $this->is_wordpress_terms_table_name( $terms_table )
+			|| ! $this->wordpress_taxonomy_table_prefixes_match( $terms_table, $taxonomy_table )
+		) {
+			return null;
+		}
+
+		$taxonomy_alias = $this->fast_path_mysql_identifier_value( $matches['taxonomy_alias'] );
+		$terms_alias    = $this->fast_path_mysql_identifier_value( $matches['terms_alias'] );
+		if (
+			0 !== strcasecmp( 'tt', $taxonomy_alias )
+			|| 0 !== strcasecmp( 't', $terms_alias )
+			|| ! $this->fast_path_identifier_matches( $taxonomy_alias, $matches['taxonomy_select_alias'] )
+			|| ! $this->fast_path_identifier_matches( $terms_alias, $matches['terms_select_alias'] )
+			|| ! $this->fast_path_identifier_matches( $terms_alias, $matches['group_alias'] )
+			|| ! $this->fast_path_identifier_matches( $this->fast_path_mysql_identifier_value( $matches['count_alias'] ), $matches['having_alias'] )
+		) {
+			return null;
+		}
+
+		if (
+			0 !== strcasecmp( 'term_id', $this->fast_path_mysql_identifier_value( $matches['select_term_column'] ) )
+			|| 0 !== strcasecmp( 'term_id', $this->fast_path_mysql_identifier_value( $matches['join_left_column'] ) )
+			|| 0 !== strcasecmp( 'term_id', $this->fast_path_mysql_identifier_value( $matches['join_right_column'] ) )
+			|| 0 !== strcasecmp( 'term_id', $this->fast_path_mysql_identifier_value( $matches['group_column'] ) )
+			|| ! $this->wordpress_shared_term_group_join_matches( $matches, $terms_alias, $taxonomy_alias )
+		) {
+			return null;
+		}
+
+		$limit = $this->fast_path_mysql_unsigned_integer_literal_value( $matches['limit'] );
+		if ( null === $limit ) {
+			return null;
+		}
+
+		$terms_reference = $this->resolve_visible_user_table_reference( $terms_table );
+		if ( null === $terms_reference ) {
+			return null;
+		}
+
+		$taxonomy_reference = $this->resolve_visible_user_table_reference( $taxonomy_table );
+		if ( null === $taxonomy_reference ) {
+			return null;
+		}
+
+		$taxonomy_term_id_meta = $this->wordpress_single_column_result_metadata(
+			$taxonomy_reference['table_name'],
+			$taxonomy_reference['temporary'],
+			$taxonomy_alias,
+			'term_id'
+		);
+		$terms_column_meta     = $this->wordpress_table_wildcard_result_column_metadata(
+			$terms_reference['table_name'],
+			$terms_reference['temporary'],
+			$terms_alias
+		);
+		if ( null === $taxonomy_term_id_meta || null === $terms_column_meta ) {
+			return null;
+		}
+
+		$column_meta              = array_merge(
+			$taxonomy_term_id_meta,
+			$terms_column_meta,
+			array(
+				array(
+					'table'           => '',
+					'name'            => 'term_tt_count',
+					'mysqli:orgname'  => '',
+					'mysqli:orgtable' => '',
+					'mysqli:db'       => $this->database,
+				),
+			)
+		);
+		$terms_alias_sql          = $this->connection->quote_identifier( $terms_alias );
+		$terms_select_expressions = array();
+		$has_terms_term_id        = false;
+		foreach ( $terms_column_meta as $metadata ) {
+			if ( ! isset( $metadata['name'] ) || '' === (string) $metadata['name'] ) {
+				return null;
+			}
+			$column_name = (string) $metadata['name'];
+			if ( 0 === strcasecmp( 'term_id', $column_name ) ) {
+				$has_terms_term_id = true;
+			}
+			$terms_select_expressions[] = 'ANY_VALUE('
+				. $terms_alias_sql
+				. '.'
+				. $this->connection->quote_identifier( $column_name )
+				. ') AS '
+				. $this->connection->quote_identifier( $column_name );
+		}
+		if ( ! $has_terms_term_id ) {
+			return null;
+		}
+
+		$taxonomy_alias_sql = $this->connection->quote_identifier( $taxonomy_alias );
+		$sql                = 'SELECT ANY_VALUE('
+			. $taxonomy_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ') AS '
+			. $this->connection->quote_identifier( 'term_id' )
+			. ', '
+			. implode( ', ', $terms_select_expressions )
+			. ', COUNT(*) AS '
+			. $this->connection->quote_identifier( 'term_tt_count' )
+			. ' FROM '
+			. $this->connection->quote_identifier( $taxonomy_reference['table_name'] )
+			. ' AS '
+			. $taxonomy_alias_sql
+			. ' LEFT JOIN '
+			. $this->connection->quote_identifier( $terms_reference['table_name'] )
+			. ' AS '
+			. $terms_alias_sql
+			. ' ON '
+			. $terms_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' = '
+			. $taxonomy_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' GROUP BY '
+			. $terms_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' HAVING COUNT(*) > 1 LIMIT '
+			. $limit;
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
+	 * Check whether the shared-term split join uses WordPress' canonical operands.
+	 *
+	 * @param array<string,string> $matches        Regex matches.
+	 * @param string               $terms_alias    Terms table alias.
+	 * @param string               $taxonomy_alias Term taxonomy table alias.
+	 * @return bool Whether the join matches.
+	 */
+	private function wordpress_shared_term_group_join_matches( array $matches, string $terms_alias, string $taxonomy_alias ): bool {
+		$left_alias  = $this->fast_path_mysql_identifier_value( $matches['join_left_alias'] );
+		$right_alias = $this->fast_path_mysql_identifier_value( $matches['join_right_alias'] );
+
+		return (
+			0 === strcasecmp( $terms_alias, $left_alias )
+			&& 0 === strcasecmp( $taxonomy_alias, $right_alias )
+		) || (
+			0 === strcasecmp( $taxonomy_alias, $left_alias )
+			&& 0 === strcasecmp( $terms_alias, $right_alias )
+		);
 	}
 
 	/**

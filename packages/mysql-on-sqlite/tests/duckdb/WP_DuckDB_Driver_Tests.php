@@ -1638,8 +1638,145 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$select_sql     = end( $duckdb_queries );
 
 		$this->assertIsString( $select_sql );
-		$this->assertStringContainsString( 'ANY_VALUE(tt.term_id) AS "term_id"', $select_sql );
-		$this->assertStringContainsString( 'GROUP BY t.term_id, "t"."name", "t"."slug", "t"."term_group"', $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE("tt"."term_id") AS "term_id"', $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE("t"."term_id") AS "term_id"', $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE("t"."name") AS "name"', $select_sql );
+		$this->assertStringContainsString( 'GROUP BY "t"."term_id"', $select_sql );
+	}
+
+	public function test_wordpress_shared_term_split_group_by_fast_path_uses_bounded_native_query(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$queries = array();
+		$result  = $driver->query( $this->wordpress_shared_term_group_select_sql( 10 ) );
+
+		$this->assertSame( 6, $result->columnCount() );
+		$this->assertSame( 'term_id', $result->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'tt', $result->getColumnMeta( 0 )['table'] );
+		$this->assertSame( 'wptests_term_taxonomy', $result->getColumnMeta( 0 )['mysqli:orgtable'] );
+		$this->assertSame( 'term_id', $result->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 't', $result->getColumnMeta( 1 )['table'] );
+		$this->assertSame( 'wptests_terms', $result->getColumnMeta( 1 )['mysqli:orgtable'] );
+		$this->assertSame( 'term_tt_count', $result->getColumnMeta( 5 )['name'] );
+
+		$this->assertSame(
+			array(
+				array(
+					'term_id'       => 3,
+					'name'          => 'Shared',
+					'slug'          => 'shared',
+					'term_group'    => 0,
+					'term_tt_count' => 2,
+				),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assert_wordpress_shared_term_group_select_used_one_native_query( $queries, 10 );
+
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_wordpress_shared_term_split_group_by_fast_path_respects_temporary_shadow_tables(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+		$this->create_wordpress_taxonomy_group_by_temporary_shadow_tables( $driver );
+		$driver->query( "INSERT INTO wptests_term_taxonomy (term_taxonomy_id, term_id, taxonomy) VALUES (1004, 10, 'category')" );
+
+		$this->assertSame(
+			array(
+				array(
+					'term_id'       => 10,
+					'name'          => 'Apricot',
+					'term_tt_count' => 2,
+				),
+			),
+			$driver->query( $this->wordpress_shared_term_group_select_sql( 10 ) )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$driver->query( 'DROP TEMPORARY TABLE wptests_term_relationships' );
+		$driver->query( 'DROP TEMPORARY TABLE wptests_term_taxonomy' );
+		$driver->query( 'DROP TEMPORARY TABLE wptests_terms' );
+
+		$this->assertSame(
+			array(
+				array(
+					'term_id'       => 3,
+					'name'          => 'Shared',
+					'slug'          => 'shared',
+					'term_group'    => 0,
+					'term_tt_count' => 2,
+				),
+			),
+			$driver->query( $this->wordpress_shared_term_group_select_sql( 10 ) )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_wordpress_shared_term_split_group_by_fast_path_does_not_capture_unsupported_shapes(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$this->create_wordpress_taxonomy_group_by_tables( $driver );
+
+		$unsupported_queries = array(
+			'SQL_CALC_FOUND_ROWS SELECT tt.term_id, t.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tt
+			LEFT JOIN wptests_terms t ON t.term_id = tt.term_id
+			GROUP BY t.term_id
+			HAVING term_tt_count > 1
+			LIMIT 10',
+			'SELECT SQL_CALC_FOUND_ROWS tt.term_id, t.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tt
+			LEFT JOIN wptests_terms t ON t.term_id = tt.term_id
+			GROUP BY t.term_id
+			HAVING term_tt_count > 1
+			LIMIT 10',
+			'SELECT tt.term_id, t.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tt
+			INNER JOIN wptests_terms t ON t.term_id = tt.term_id
+			GROUP BY t.term_id
+			HAVING term_tt_count > 1
+			LIMIT 10',
+			'SELECT tt.term_id, t.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tt
+			LEFT JOIN wptests_terms t ON t.term_id = tt.term_id
+			GROUP BY t.term_id
+			HAVING count(*) > 1
+			LIMIT 10',
+			'SELECT tt.term_id, t.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tt
+			LEFT JOIN wptests_terms t ON t.term_id = tt.term_id
+			WHERE tt.taxonomy = \'category\'
+			GROUP BY t.term_id
+			HAVING term_tt_count > 1
+			LIMIT 10',
+			'SELECT tax.term_id, tm.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tax
+			LEFT JOIN wptests_terms tm ON tm.term_id = tax.term_id
+			GROUP BY tm.term_id
+			HAVING term_tt_count > 1
+			LIMIT 10',
+		);
+
+		foreach ( $unsupported_queries as $sql ) {
+			$queries = array();
+			try {
+				$driver->query( $sql )->fetchAll( PDO::FETCH_ASSOC );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertNotSame( '', $e->getMessage() );
+			}
+
+			$this->assert_wordpress_shared_term_group_fast_path_not_used( $queries );
+		}
 	}
 
 	public function test_sql_calc_found_rows_meta_query_regexp_and_numeric_like_counts(): void {
@@ -24882,6 +25019,15 @@ SQL
 			WHERE t.term_id IN ({$term_ids})";
 	}
 
+	private function wordpress_shared_term_group_select_sql( int $limit = 10 ): string {
+		return "SELECT tt.term_id, t.*, count(*) AS term_tt_count
+			FROM wptests_term_taxonomy tt
+			LEFT JOIN wptests_terms t ON t.term_id = tt.term_id
+			GROUP BY t.term_id
+			HAVING term_tt_count > 1
+			LIMIT {$limit}";
+	}
+
 	private function assert_wordpress_options_autoload_rows( WP_DuckDB_Driver $driver ): void {
 		$result = $driver->query( $this->wordpress_options_autoload_select_sql() );
 		$this->assert_wordpress_options_autoload_result( $result );
@@ -25069,6 +25215,33 @@ SQL
 		$this->assertStringContainsString( 'INNER JOIN "wptests_term_taxonomy" AS "tt"', $queries[0] );
 		$this->assertStringContainsString( '"t"."term_id" = "tt"."term_id"', $queries[0] );
 		$this->assertStringContainsString( '"t"."term_id" IN (' . $id_list . ')', $queries[0] );
+	}
+
+	private function assert_wordpress_shared_term_group_select_used_one_native_query( array $queries, int $limit ): void {
+		$this->assertCount( 1, $queries, implode( "\n", $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_table_resolution_queries( $queries ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_terms' ) );
+		$this->assertSame( 0, $this->count_duckdb_column_metadata_queries( $queries, 'wptests_term_taxonomy' ) );
+		$this->assertStringContainsString(
+			'SELECT ANY_VALUE("tt"."term_id") AS "term_id", ANY_VALUE("t"."term_id") AS "term_id", ANY_VALUE("t"."name") AS "name"',
+			$queries[0]
+		);
+		$this->assertStringContainsString( 'ANY_VALUE("t"."slug") AS "slug"', $queries[0] );
+		$this->assertStringContainsString( 'ANY_VALUE("t"."term_group") AS "term_group"', $queries[0] );
+		$this->assertStringContainsString( 'COUNT(*) AS "term_tt_count"', $queries[0] );
+		$this->assertStringContainsString( 'FROM "wptests_term_taxonomy" AS "tt" LEFT JOIN "wptests_terms" AS "t"', $queries[0] );
+		$this->assertStringContainsString( '"t"."term_id" = "tt"."term_id"', $queries[0] );
+		$this->assertStringContainsString( 'GROUP BY "t"."term_id"', $queries[0] );
+		$this->assertStringContainsString( 'HAVING COUNT(*) > 1 LIMIT ' . $limit, $queries[0] );
+	}
+
+	private function assert_wordpress_shared_term_group_fast_path_not_used( array $queries ): void {
+		foreach ( $queries as $query ) {
+			$this->assertStringNotContainsString(
+				'SELECT ANY_VALUE("tt"."term_id") AS "term_id", ANY_VALUE("t"."term_id") AS "term_id"',
+				$query
+			);
+		}
 	}
 
 	private function sorted_wordpress_term_taxonomy_lookup_rows( WP_DuckDB_Result_Statement $result, int $taxonomy_offset ): array {
