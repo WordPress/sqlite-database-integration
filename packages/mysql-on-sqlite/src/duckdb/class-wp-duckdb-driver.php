@@ -26032,35 +26032,203 @@ class WP_DuckDB_Driver {
 	 * @return string|null Translated comparison, or null when the pattern does not match.
 	 */
 	private function translate_text_value_numeric_literal_comparison( array $tokens, int &$index ): ?string {
-		$operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index );
-		if ( null === $operand ) {
-			return null;
+		$left_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index );
+		if ( null !== $left_operand ) {
+			$operator_index = $left_operand['next_index'];
+			$literal_index  = $operator_index + 1;
+			if (
+				isset( $tokens[ $literal_index ] )
+				&& $this->is_numeric_comparison_operator_token( $tokens[ $operator_index ] ?? null )
+				&& $this->is_integer_number_token( $tokens[ $literal_index ] )
+				&& $this->text_value_numeric_comparison_has_boundary( $tokens, $literal_index + 1 )
+			) {
+				$index = $literal_index;
+				return $this->text_value_numeric_literal_comparison_sql(
+					$left_operand['sql'],
+					$tokens[ $operator_index ],
+					$tokens[ $literal_index ],
+					true
+				);
+			}
+
+			$between = $this->translate_text_value_numeric_between_predicate( $tokens, $left_operand, $operator_index );
+			if ( null !== $between ) {
+				$index = $between['end_index'];
+				return $between['sql'];
+			}
+
+			$in = $this->translate_text_value_numeric_in_predicate( $tokens, $left_operand, $operator_index );
+			if ( null !== $in ) {
+				$index = $in['end_index'];
+				return $in['sql'];
+			}
 		}
 
-		$operator_index = $operand['next_index'];
-		$literal_index  = $operator_index + 1;
 		if (
-			! isset( $tokens[ $literal_index ] )
-			|| ! $this->is_numeric_comparison_operator_token( $tokens[ $operator_index ] ?? null )
-			|| ! $this->is_integer_number_token( $tokens[ $literal_index ] )
+			isset( $tokens[ $index + 2 ] )
+			&& $this->is_integer_number_token( $tokens[ $index ] )
+			&& $this->is_numeric_comparison_operator_token( $tokens[ $index + 1 ] )
+		) {
+			$right_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index + 2 );
+			if (
+				null !== $right_operand
+				&& $this->text_value_numeric_comparison_has_boundary( $tokens, $right_operand['next_index'] )
+			) {
+				$literal_token  = $tokens[ $index ];
+				$operator_token = $tokens[ $index + 1 ];
+				$index          = $right_operand['next_index'] - 1;
+				return $this->text_value_numeric_literal_comparison_sql(
+					$right_operand['sql'],
+					$operator_token,
+					$literal_token,
+					false
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Translate a text-value BETWEEN integer-literal predicate.
+	 *
+	 * @param WP_Parser_Token[]               $tokens         Token stream.
+	 * @param array{sql:string,next_index:int} $operand        Text-value operand.
+	 * @param int                             $operator_index Operator index.
+	 * @return array{sql:string,end_index:int}|null Translation and consumed index.
+	 */
+	private function translate_text_value_numeric_between_predicate( array $tokens, array $operand, int $operator_index ): ?array {
+		$lower_index = $operator_index + 1;
+		$and_index   = $operator_index + 2;
+		$upper_index = $operator_index + 3;
+		if (
+			! isset( $tokens[ $upper_index ] )
+			|| WP_MySQL_Lexer::BETWEEN_SYMBOL !== $tokens[ $operator_index ]->id
+			|| ! $this->is_integer_number_token( $tokens[ $lower_index ] )
+			|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $and_index ]->id
+			|| ! $this->is_integer_number_token( $tokens[ $upper_index ] )
+			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $upper_index + 1 )
 		) {
 			return null;
 		}
 
+		return array(
+			'sql'       => $this->text_value_sqlite_text_operand_sql( $operand['sql'] )
+				. ' BETWEEN '
+				. $this->text_value_numeric_literal_text_sql( $tokens[ $lower_index ] )
+				. ' AND '
+				. $this->text_value_numeric_literal_text_sql( $tokens[ $upper_index ] ),
+			'end_index' => $upper_index,
+		);
+	}
+
+	/**
+	 * Translate a text-value IN integer-literal predicate.
+	 *
+	 * @param WP_Parser_Token[]               $tokens         Token stream.
+	 * @param array{sql:string,next_index:int} $operand        Text-value operand.
+	 * @param int                             $operator_index Operator index.
+	 * @return array{sql:string,end_index:int}|null Translation and consumed index.
+	 */
+	private function translate_text_value_numeric_in_predicate( array $tokens, array $operand, int $operator_index ): ?array {
 		if (
-			isset( $tokens[ $literal_index + 1 ] )
-			&& ! $this->is_text_value_numeric_comparison_boundary_token( $tokens[ $literal_index + 1 ] )
+			! isset( $tokens[ $operator_index + 2 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $operator_index ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $operator_index + 1 ]->id
 		) {
 			return null;
 		}
 
-		$index = $literal_index;
-		return 'TRY_CAST('
-			. $operand['sql']
-			. ' AS BIGINT) '
-			. $tokens[ $operator_index ]->get_bytes()
+		$literal_sql = array();
+		$list_index  = $operator_index + 2;
+		while ( isset( $tokens[ $list_index ] ) ) {
+			if ( ! $this->is_integer_number_token( $tokens[ $list_index ] ) ) {
+				return null;
+			}
+			$literal_sql[] = $this->text_value_numeric_literal_text_sql( $tokens[ $list_index ] );
+			++$list_index;
+
+			if ( ! isset( $tokens[ $list_index ] ) ) {
+				return null;
+			}
+			if ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $list_index ]->id ) {
+				break;
+			}
+			if ( WP_MySQL_Lexer::COMMA_SYMBOL !== $tokens[ $list_index ]->id ) {
+				return null;
+			}
+			++$list_index;
+		}
+
+		if (
+			array() === $literal_sql
+			|| ! isset( $tokens[ $list_index ] )
+			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $list_index ]->id
+			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $list_index + 1 )
+		) {
+			return null;
+		}
+
+		return array(
+			'sql'       => $this->text_value_sqlite_text_operand_sql( $operand['sql'] )
+				. ' IN ('
+				. implode( ', ', $literal_sql )
+				. ')',
+			'end_index' => $list_index,
+		);
+	}
+
+	/**
+	 * Build a SQLite text-affinity comparison for text-value integer predicates.
+	 *
+	 * @param string          $operand_sql  Text column SQL.
+	 * @param WP_Parser_Token $operator     Comparison operator.
+	 * @param WP_Parser_Token $literal      Integer literal.
+	 * @param bool            $operand_left Whether the text operand is on the left.
+	 * @return string Comparison SQL.
+	 */
+	private function text_value_numeric_literal_comparison_sql( string $operand_sql, WP_Parser_Token $operator, WP_Parser_Token $literal, bool $operand_left ): string {
+		$text_operand_sql = $this->text_value_sqlite_text_operand_sql( $operand_sql );
+		$literal_sql      = $this->text_value_numeric_literal_text_sql( $literal );
+		$left_sql         = $operand_left ? $text_operand_sql : $literal_sql;
+		$right_sql        = $operand_left ? $literal_sql : $text_operand_sql;
+
+		return $left_sql
 			. ' '
-			. $tokens[ $literal_index ]->get_bytes();
+			. $operator->get_bytes()
+			. ' '
+			. $right_sql;
+	}
+
+	/**
+	 * Cast a text-value operand to DuckDB text for SQLite-affinity comparison.
+	 *
+	 * @param string $sql Text column SQL.
+	 * @return string DuckDB SQL.
+	 */
+	private function text_value_sqlite_text_operand_sql( string $sql ): string {
+		return 'CAST(' . $sql . ' AS VARCHAR)';
+	}
+
+	/**
+	 * Cast an integer literal to text using the SQL engine's numeric display.
+	 *
+	 * @param WP_Parser_Token $literal Integer literal token.
+	 * @return string DuckDB SQL.
+	 */
+	private function text_value_numeric_literal_text_sql( WP_Parser_Token $literal ): string {
+		return 'CAST(' . $literal->get_bytes() . ' AS VARCHAR)';
+	}
+
+	/**
+	 * Check whether a translated text-value numeric predicate reaches a boundary.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token index after the predicate.
+	 * @return bool Whether the next token is absent or a supported boundary.
+	 */
+	private function text_value_numeric_comparison_has_boundary( array $tokens, int $index ): bool {
+		return ! isset( $tokens[ $index ] ) || $this->is_text_value_numeric_comparison_boundary_token( $tokens[ $index ] );
 	}
 
 	/**

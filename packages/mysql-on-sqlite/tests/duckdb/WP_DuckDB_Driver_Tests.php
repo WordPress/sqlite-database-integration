@@ -2351,7 +2351,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 					WHERE meta_key = '_wp_trash_meta_time' AND meta_value < 1780093652
 					ORDER BY post_id",
 				'expected' => array( array( 'post_id' => 101 ) ),
-				'cast'     => 'TRY_CAST("meta_value" AS BIGINT) < 1780093652',
+				'cast'     => 'CAST("meta_value" AS VARCHAR) < CAST(1780093652 AS VARCHAR)',
 			),
 			array(
 				'sql'      => "SELECT wptests_postmeta.post_id FROM wptests_postmeta
@@ -2359,21 +2359,21 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 						AND wptests_postmeta.meta_value < 1780093652
 					ORDER BY wptests_postmeta.post_id",
 				'expected' => array( array( 'post_id' => 101 ) ),
-				'cast'     => 'TRY_CAST("wptests_postmeta"."meta_value" AS BIGINT) < 1780093652',
+				'cast'     => 'CAST("wptests_postmeta"."meta_value" AS VARCHAR) < CAST(1780093652 AS VARCHAR)',
 			),
 			array(
 				'sql'      => "SELECT pm.post_id FROM wptests_postmeta pm
 					WHERE pm.meta_key = '_wp_trash_meta_time' AND pm.meta_value < 1780093652
 					ORDER BY pm.post_id",
 				'expected' => array( array( 'post_id' => 101 ) ),
-				'cast'     => 'TRY_CAST("pm"."meta_value" AS BIGINT) < 1780093652',
+				'cast'     => 'CAST("pm"."meta_value" AS VARCHAR) < CAST(1780093652 AS VARCHAR)',
 			),
 			array(
 				'sql'      => "SELECT comment_id FROM wptests_commentmeta
 					WHERE meta_key = '_wp_trash_meta_time' AND meta_value < 1780093652
 					ORDER BY comment_id",
 				'expected' => array( array( 'comment_id' => 201 ) ),
-				'cast'     => 'TRY_CAST("meta_value" AS BIGINT) < 1780093652',
+				'cast'     => 'CAST("meta_value" AS VARCHAR) < CAST(1780093652 AS VARCHAR)',
 			),
 			array(
 				'sql'      => "SELECT wptests_commentmeta.comment_id FROM wptests_commentmeta
@@ -2381,14 +2381,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 						AND wptests_commentmeta.meta_value < 1780093652
 					ORDER BY wptests_commentmeta.comment_id",
 				'expected' => array( array( 'comment_id' => 201 ) ),
-				'cast'     => 'TRY_CAST("wptests_commentmeta"."meta_value" AS BIGINT) < 1780093652',
+				'cast'     => 'CAST("wptests_commentmeta"."meta_value" AS VARCHAR) < CAST(1780093652 AS VARCHAR)',
 			),
 			array(
 				'sql'      => "SELECT cm.comment_id FROM wptests_commentmeta cm
 					WHERE cm.meta_key = '_wp_trash_meta_time' AND cm.meta_value < 1780093652
 					ORDER BY cm.comment_id",
 				'expected' => array( array( 'comment_id' => 201 ) ),
-				'cast'     => 'TRY_CAST("cm"."meta_value" AS BIGINT) < 1780093652',
+				'cast'     => 'CAST("cm"."meta_value" AS VARCHAR) < CAST(1780093652 AS VARCHAR)',
 			),
 		);
 
@@ -2399,6 +2399,84 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				$case['sql']
 			);
 			$this->assertStringContainsString( $case['cast'], $this->lastDuckDBQuery( $driver ), $case['sql'] );
+		}
+	}
+
+	public function test_text_value_numeric_literal_predicates_use_sqlite_text_affinity(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query( 'CREATE TABLE wptests_postmeta (meta_id BIGINT(20), meta_value LONGTEXT)' );
+		$driver->query(
+			"INSERT INTO wptests_postmeta (meta_id, meta_value) VALUES
+				(1, '10'),
+				(2, '010'),
+				(3, '10abc'),
+				(4, ' 11x'),
+				(5, 'abc'),
+				(6, ''),
+				(7, '-7'),
+				(8, '10.50'),
+				(9, NULL)"
+		);
+		$driver->query( 'CREATE TABLE wptests_options (option_id BIGINT(20), option_value LONGTEXT)' );
+		$driver->query(
+			"INSERT INTO wptests_options (option_id, option_value) VALUES
+				(1, '10'),
+				(2, '010'),
+				(3, '10abc'),
+				(4, ' 11x'),
+				(5, 'abc')"
+		);
+
+		$cases = array(
+			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value = 10 ORDER BY meta_id',
+				'expected' => array( 1 ),
+				'fragment' => 'CAST("meta_value" AS VARCHAR) = CAST(10 AS VARCHAR)',
+			),
+			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE 10 = meta_value ORDER BY meta_id',
+				'expected' => array( 1 ),
+				'fragment' => 'CAST(10 AS VARCHAR) = CAST("meta_value" AS VARCHAR)',
+			),
+			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value < 11 ORDER BY meta_id',
+				'expected' => array( 1, 2, 3, 4, 6, 7, 8 ),
+				'fragment' => 'CAST("meta_value" AS VARCHAR) < CAST(11 AS VARCHAR)',
+			),
+			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE 11 > meta_value ORDER BY meta_id',
+				'expected' => array( 1, 2, 3, 4, 6, 7, 8 ),
+				'fragment' => 'CAST(11 AS VARCHAR) > CAST("meta_value" AS VARCHAR)',
+			),
+			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value BETWEEN 10 AND 11 ORDER BY meta_id',
+				'expected' => array( 1, 3, 8 ),
+				'fragment' => 'CAST("meta_value" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND CAST(11 AS VARCHAR)',
+			),
+			array(
+				'sql'      => 'SELECT meta_id FROM wptests_postmeta WHERE meta_value IN (10, 11) ORDER BY meta_id',
+				'expected' => array( 1 ),
+				'fragment' => 'CAST("meta_value" AS VARCHAR) IN (CAST(10 AS VARCHAR), CAST(11 AS VARCHAR))',
+			),
+			array(
+				'sql'      => 'SELECT option_id FROM wptests_options WHERE option_value < 11 ORDER BY option_id',
+				'expected' => array( 1, 2, 3, 4 ),
+				'fragment' => 'CAST("option_value" AS VARCHAR) < CAST(11 AS VARCHAR)',
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$this->assertSame(
+				$case['expected'],
+				array_map(
+					'intval',
+					$driver->query( $case['sql'] )->fetchAll( PDO::FETCH_COLUMN )
+				),
+				$case['sql']
+			);
+			$this->assertStringContainsString( $case['fragment'], $this->lastDuckDBQuery( $driver ), $case['sql'] );
 		}
 	}
 
@@ -5891,15 +5969,27 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$rewrite_cases = array(
 			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value < 1780093652 ORDER BY id',
-				'duckdb' => 'SELECT id FROM postmeta WHERE TRY_CAST("meta_value" AS BIGINT) < 1780093652 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) < CAST(1780093652 AS VARCHAR) ORDER BY id',
 			),
 			array(
 				'mysql'  => 'SELECT pm.id FROM postmeta pm WHERE pm.meta_value < 1780093652 ORDER BY pm.id',
-				'duckdb' => 'SELECT pm.id FROM postmeta pm WHERE TRY_CAST("pm"."meta_value" AS BIGINT) < 1780093652 ORDER BY pm.id',
+				'duckdb' => 'SELECT pm.id FROM postmeta pm WHERE CAST("pm"."meta_value" AS VARCHAR) < CAST(1780093652 AS VARCHAR) ORDER BY pm.id',
 			),
 			array(
 				'mysql'  => 'SELECT b.id FROM options b WHERE b.option_value < 1782556962 ORDER BY b.id',
-				'duckdb' => 'SELECT b.id FROM options b WHERE TRY_CAST("b"."option_value" AS BIGINT) < 1782556962 ORDER BY b.id',
+				'duckdb' => 'SELECT b.id FROM options b WHERE CAST("b"."option_value" AS VARCHAR) < CAST(1782556962 AS VARCHAR) ORDER BY b.id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE 1780093652 > meta_value ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST(1780093652 AS VARCHAR) > CAST("meta_value" AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value BETWEEN 10 AND 11 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND CAST(11 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value IN (10, 11) ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) IN (CAST(10 AS VARCHAR), CAST(11 AS VARCHAR)) ORDER BY id',
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0',

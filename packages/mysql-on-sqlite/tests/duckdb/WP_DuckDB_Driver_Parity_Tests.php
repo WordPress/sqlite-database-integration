@@ -1717,6 +1717,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 					(20, 1, 'numeric_prefix', ''),
 					(21, 1, 'numeric_prefix', '0x10'),
 					(22, 1, 'numeric_prefix', NULL)",
+				'CREATE TABLE wp_found_rows_coercion_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL,
+					option_name VARCHAR(191) NOT NULL DEFAULT \'\',
+					option_value LONGTEXT,
+					PRIMARY KEY (option_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_found_rows_coercion_options (option_id, option_name, option_value) VALUES
+					(1, 'a', '10'),
+					(2, 'b', '010'),
+					(3, 'c', '10abc'),
+					(4, 'd', ' 11x'),
+					(5, 'e', 'abc'),
+					(6, 'f', ''),
+					(7, 'g', NULL)",
 				'CREATE TABLE wp_found_rows_nullable_ids (
 					ID BIGINT(20),
 					label VARCHAR(20)
@@ -1795,6 +1809,56 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			FROM wp_found_rows_coercion_usermeta
 			WHERE meta_key = 'numeric_prefix' AND CAST(meta_value AS SIGNED) NOT LIKE '10%'
 			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value < 11
+			ORDER BY umeta_id"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND 11 > meta_value
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value BETWEEN 10 AND 11
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value IN (10, 11)
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			'SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE option_value < 11
+			ORDER BY option_id'
+		);
+
+		$this->assertParityRows(
+			'SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE 11 > option_value
+			ORDER BY option_id'
+		);
+
+		$this->assertParityRows(
+			'SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE option_value BETWEEN 10 AND 11
+			ORDER BY option_id'
 		);
 
 		$this->assertParityRows(
