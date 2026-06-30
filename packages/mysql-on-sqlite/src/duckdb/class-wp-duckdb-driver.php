@@ -24815,8 +24815,8 @@ class WP_DuckDB_Driver {
 			throw new WP_DuckDB_Driver_Exception( 'REGEXP requires a left-hand expression in the DuckDB driver.' );
 		}
 
-		$left        = 'CAST((' . $this->pop_regexp_left_expression( $pieces ) . ') AS VARCHAR)';
-		$pattern_sql = $this->translate_token_to_duckdb_sql( $pattern );
+		$left        = 'COALESCE(CAST((' . $this->pop_regexp_left_expression( $pieces ) . ") AS VARCHAR), '')";
+		$pattern_sql = 'COALESCE(CAST((' . $this->translate_token_to_duckdb_sql( $pattern ) . ") AS VARCHAR), '')";
 		$predicate   = $binary
 			? sprintf( 'regexp_matches(%s, %s)', $left, $pattern_sql )
 			: sprintf( "regexp_matches(%s, %s, 'i')", $left, $pattern_sql );

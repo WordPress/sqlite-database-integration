@@ -3847,6 +3847,57 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SELECT o.option_name FROM options o WHERE BINARY o.option_name RLIKE '^a' ORDER BY lower(o.option_name), o.option_name DESC" );
 	}
 
+	public function test_regexp_null_empty_pattern_and_null_haystack_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_regexp_null_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_title VARCHAR(255),
+					PRIMARY KEY (ID)
+				)',
+				"INSERT INTO wp_regexp_null_posts (ID, post_title) VALUES
+					(1, 'Apple'),
+					(2, 'apple'),
+					(3, ''),
+					(4, NULL),
+					(11, 'Banana'),
+					(12, 'Alpha')",
+			)
+		);
+
+		$previous_error_reporting = error_reporting( error_reporting() & ~E_WARNING & ~E_DEPRECATED );
+		try {
+			foreach (
+				array(
+					'SELECT ID FROM wp_regexp_null_posts WHERE post_title REGEXP NULL ORDER BY ID',
+					'SELECT ID FROM wp_regexp_null_posts WHERE post_title RLIKE NULL ORDER BY ID',
+					'SELECT ID FROM wp_regexp_null_posts WHERE post_title NOT REGEXP NULL ORDER BY ID',
+					'SELECT ID FROM wp_regexp_null_posts WHERE post_title NOT RLIKE NULL ORDER BY ID',
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title REGEXP '' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title RLIKE '' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title NOT REGEXP '' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title NOT RLIKE '' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title REGEXP '^A' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title NOT REGEXP '^A' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE BINARY post_title REGEXP '' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE BINARY post_title NOT REGEXP '^A' ORDER BY ID",
+					"SELECT p.ID FROM wp_regexp_null_posts p WHERE BINARY p.post_title RLIKE '^A' ORDER BY p.ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title REGEXP BINARY '^A' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title REGEXP BINARY '^a' ORDER BY ID",
+					"SELECT ID FROM wp_regexp_null_posts WHERE post_title REGEXP BINARY '' ORDER BY ID",
+					'SELECT ID FROM wp_regexp_null_posts WHERE post_title REGEXP BINARY NULL ORDER BY ID',
+					'SELECT ID FROM wp_regexp_null_posts WHERE post_title NOT REGEXP BINARY NULL ORDER BY ID',
+					'SELECT ID FROM wp_regexp_null_posts WHERE post_title RLIKE BINARY NULL ORDER BY ID',
+					'SELECT ID FROM wp_regexp_null_posts WHERE post_title NOT RLIKE BINARY NULL ORDER BY ID',
+				) as $sql
+			) {
+				$this->assertParityRows( $sql );
+			}
+		} finally {
+			error_reporting( $previous_error_reporting );
+		}
+	}
+
 	public function test_replace_values_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

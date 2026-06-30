@@ -10335,6 +10335,79 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$binary_left_qualified_rlike_rows = $driver->query( "SELECT o.option_name FROM options o WHERE BINARY o.option_name RLIKE '^a' ORDER BY lower(o.option_name), o.option_name DESC" )->fetchAll( PDO::FETCH_ASSOC );
 		$this->assertSame( array( array( 'option_name' => 'alpha' ), array( 'option_name' => 'ALPS' ) ), $binary_left_qualified_rlike_rows );
+
+		$driver->query( 'CREATE TABLE regexp_edges (id BIGINT, value VARCHAR(100))' );
+		$driver->query(
+			"INSERT INTO regexp_edges (id, value) VALUES
+				(1, 'Apple'),
+				(2, 'apple'),
+				(3, ''),
+				(4, NULL),
+				(11, 'Banana'),
+				(12, 'Alpha')"
+		);
+
+		$regexp_null_rows = $driver->query( 'SELECT id FROM regexp_edges WHERE value REGEXP NULL ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array( 'id' => 1 ),
+				array( 'id' => 2 ),
+				array( 'id' => 3 ),
+				array( 'id' => 4 ),
+				array( 'id' => 11 ),
+				array( 'id' => 12 ),
+			),
+			$regexp_null_rows
+		);
+		$this->assertStringContainsString( "COALESCE(CAST((value) AS VARCHAR), '')", $this->lastDuckDBQuery( $driver ) );
+		$this->assertStringContainsString( "COALESCE(CAST((NULL) AS VARCHAR), '')", $this->lastDuckDBQuery( $driver ) );
+
+		$rlike_null_rows = $driver->query( 'SELECT id FROM regexp_edges WHERE value RLIKE NULL ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $regexp_null_rows, $rlike_null_rows );
+
+		$not_regexp_null_rows = $driver->query( 'SELECT id FROM regexp_edges WHERE value NOT REGEXP NULL ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $not_regexp_null_rows );
+
+		$empty_pattern_rows = $driver->query( "SELECT id FROM regexp_edges WHERE value REGEXP '' ORDER BY id" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $regexp_null_rows, $empty_pattern_rows );
+
+		$binary_empty_pattern_rows = $driver->query( "SELECT id FROM regexp_edges WHERE BINARY value REGEXP '' ORDER BY id" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $regexp_null_rows, $binary_empty_pattern_rows );
+
+		$binary_not_regexp_rows = $driver->query( "SELECT id FROM regexp_edges WHERE BINARY value NOT REGEXP '^A' ORDER BY id" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array( 'id' => 3 ),
+				array( 'id' => 4 ),
+				array( 'id' => 11 ),
+			),
+			$binary_not_regexp_rows
+		);
+
+		$not_regexp_rows = $driver->query( "SELECT id FROM regexp_edges WHERE value NOT REGEXP '^A' ORDER BY id" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame(
+			array(
+				array( 'id' => 3 ),
+				array( 'id' => 4 ),
+				array( 'id' => 11 ),
+			),
+			$not_regexp_rows
+		);
+
+		$pattern_binary_upper_rows = $driver->query( "SELECT id FROM regexp_edges WHERE value REGEXP BINARY '^A' ORDER BY id" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'id' => 1 ), array( 'id' => 12 ) ), $pattern_binary_upper_rows );
+
+		$pattern_binary_lower_rows = $driver->query( "SELECT id FROM regexp_edges WHERE value REGEXP BINARY '^a' ORDER BY id" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array( array( 'id' => 2 ) ), $pattern_binary_lower_rows );
+
+		$pattern_binary_empty_rows = $driver->query( "SELECT id FROM regexp_edges WHERE value REGEXP BINARY '' ORDER BY id" )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $regexp_null_rows, $pattern_binary_empty_rows );
+
+		$pattern_binary_null_rows = $driver->query( 'SELECT id FROM regexp_edges WHERE value REGEXP BINARY NULL ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( $regexp_null_rows, $pattern_binary_null_rows );
+
+		$pattern_binary_not_null_rows = $driver->query( 'SELECT id FROM regexp_edges WHERE value NOT REGEXP BINARY NULL ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC );
+		$this->assertSame( array(), $pattern_binary_not_null_rows );
 	}
 
 	public function test_table_level_primary_key_is_supported(): void {
