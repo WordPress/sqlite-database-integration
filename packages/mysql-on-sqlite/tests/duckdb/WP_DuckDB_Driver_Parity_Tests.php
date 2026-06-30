@@ -2538,6 +2538,117 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_constant_expression_between_bounds_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_expression_between_postmeta (
+					meta_id BIGINT(20) UNSIGNED NOT NULL,
+					post_id BIGINT(20) UNSIGNED NOT NULL,
+					meta_value LONGTEXT,
+					PRIMARY KEY (meta_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_expression_between_postmeta (meta_id, post_id, meta_value) VALUES
+					(1, 1, '11'),
+					(2, 1, 'abc'),
+					(3, 2, '10'),
+					(4, 2, '10.5'),
+					(5, 3, '3'),
+					(6, 3, NULL),
+					(7, 4, '12')",
+				'CREATE TABLE wp_expression_between_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_parent BIGINT(20) UNSIGNED NOT NULL,
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'INSERT INTO wp_expression_between_posts (ID, post_parent) VALUES
+					(1, 0),
+					(2, 1),
+					(3, 2),
+					(4, 3),
+					(5, 11)',
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_between_postmeta
+			WHERE meta_value BETWEEN 10 + 1 AND 'abc'
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_between_postmeta
+			WHERE meta_value NOT BETWEEN 10 + 1 AND 'abc'
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			'SELECT meta_id
+			FROM wp_expression_between_postmeta
+			WHERE meta_value BETWEEN 10.50 + 0 AND +3 * 4
+			ORDER BY meta_id'
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_between_postmeta
+			WHERE meta_value BETWEEN '10' AND 10 + 1
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			'SELECT meta_id
+			FROM wp_expression_between_postmeta
+			WHERE meta_value BETWEEN 10 + 0 AND NULL
+			ORDER BY meta_id'
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_between_posts
+			WHERE post_parent BETWEEN 1 AND 'bad'
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_between_posts
+			WHERE post_parent NOT BETWEEN 1 AND 'bad'
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_between_posts
+			WHERE post_parent BETWEEN 1 + 1 AND 'bad'
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_between_posts
+			WHERE post_parent NOT BETWEEN 1 + 1 AND 'bad'
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_between_posts
+			WHERE post_parent BETWEEN 'bad' AND 3 + 0
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS ID
+			FROM wp_expression_between_posts
+			WHERE post_parent BETWEEN 1 + 1 AND 'bad'
+			ORDER BY ID
+			LIMIT 10"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
 	public function test_found_rows_state_matches_sqlite(): void {
 		$this->runParitySetup(
 			array(

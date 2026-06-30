@@ -2956,9 +2956,39 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'fragment' => "TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN TRUE",
 			),
 			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID BETWEEN 1 AND 'yololololo' ORDER BY ID",
+				'expected' => array( 1, 2, 3, 10 ),
+				'fragment' => '"ID" >= 1',
+			),
+			array(
 				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT BETWEEN '2' AND 'yololololo' ORDER BY ID",
 				'expected' => array( 1 ),
 				'fragment' => "TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE",
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT BETWEEN 2 AND 'yololololo' ORDER BY ID",
+				'expected' => array( 1 ),
+				'fragment' => '"ID" < 2',
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID BETWEEN 1 + 1 AND 'yololololo' ORDER BY ID",
+				'expected' => array( 2, 3, 10 ),
+				'fragment' => '"ID" >= 1 + 1',
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT BETWEEN 1 + 1 AND 'yololololo' ORDER BY ID",
+				'expected' => array( 1 ),
+				'fragment' => '"ID" < 1 + 1',
+			),
+			array(
+				'sql'      => 'SELECT ID FROM wptests_posts WHERE ID BETWEEN 1 AND NULL ORDER BY ID',
+				'expected' => array(),
+				'fragment' => '"ID" <= NULL',
+			),
+			array(
+				'sql'      => 'SELECT ID FROM wptests_posts WHERE ID NOT BETWEEN 2 AND NULL ORDER BY ID',
+				'expected' => array( 1 ),
+				'fragment' => '"ID" > NULL',
 			),
 			array(
 				'sql'      => "SELECT ID FROM wptests_posts WHERE ID BETWEEN 'yololololo' AND '3' ORDER BY ID",
@@ -6653,12 +6683,24 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND 'abc' ORDER BY id",
 			),
 			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value BETWEEN 10 + 0 AND 'abc' ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN CAST(10 + 0 AS VARCHAR) AND 'abc' ORDER BY id",
+			),
+			array(
 				'mysql'  => "SELECT id FROM postmeta WHERE meta_value BETWEEN '10' AND 11 ORDER BY id",
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN '10' AND CAST(11 AS VARCHAR) ORDER BY id",
 			),
 			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value BETWEEN '10' AND 10 + 1 ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN '10' AND CAST(10 + 1 AS VARCHAR) ORDER BY id",
+			),
+			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value BETWEEN 10.00 AND 10.90 ORDER BY id',
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN '10.0' AND '10.9' ORDER BY id",
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value BETWEEN 10.50 + 0 AND +3 * 4 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) BETWEEN CAST(CAST(10.50 + 0 AS DOUBLE) AS VARCHAR) AND CAST(+3 * 4 AS VARCHAR) ORDER BY id',
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value NOT BETWEEN 10 AND 11 ORDER BY id',
@@ -6669,8 +6711,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT BETWEEN CAST(10 AS VARCHAR) AND 'abc' ORDER BY id",
 			),
 			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value NOT BETWEEN 10 + 0 AND 'abc' ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT BETWEEN CAST(10 + 0 AS VARCHAR) AND 'abc' ORDER BY id",
+			),
+			array(
 				'mysql'  => "SELECT id FROM options WHERE option_value BETWEEN 10 AND 'abc' ORDER BY id",
 				'duckdb' => "SELECT id FROM options WHERE CAST(\"option_value\" AS VARCHAR) BETWEEN CAST(10 AS VARCHAR) AND 'abc' ORDER BY id",
+			),
+			array(
+				'mysql'  => "SELECT id FROM options WHERE option_value BETWEEN 10 + 0 AND 'abc' ORDER BY id",
+				'duckdb' => "SELECT id FROM options WHERE CAST(\"option_value\" AS VARCHAR) BETWEEN CAST(10 + 0 AS VARCHAR) AND 'abc' ORDER BY id",
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value IN (10, 11) ORDER BY id',
@@ -6777,8 +6827,24 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT ID FROM users WHERE (CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('1' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" >= TRY_CAST('1' AS DOUBLE) END AND CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN TRUE ELSE \"ID\" <= TRY_CAST('bad' AS DOUBLE) END)",
 			),
 			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID BETWEEN 1 AND 'bad'",
+				'duckdb' => "SELECT ID FROM users WHERE (\"ID\" >= 1 AND CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN TRUE ELSE \"ID\" <= TRY_CAST('bad' AS DOUBLE) END)",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID BETWEEN 1 + 1 AND 'bad'",
+				'duckdb' => "SELECT ID FROM users WHERE (\"ID\" >= 1 + 1 AND CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN TRUE ELSE \"ID\" <= TRY_CAST('bad' AS DOUBLE) END)",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID BETWEEN 'bad' AND 3 + 0",
+				'duckdb' => "SELECT ID FROM users WHERE (CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" >= TRY_CAST('bad' AS DOUBLE) END AND \"ID\" <= 3 + 0)",
+			),
+			array(
 				'mysql'  => "SELECT ID FROM users WHERE users.ID NOT BETWEEN '1' AND 'bad'",
 				'duckdb' => "SELECT ID FROM users WHERE (CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('1' AS DOUBLE) IS NULL THEN TRUE ELSE \"users\".\"ID\" < TRY_CAST('1' AS DOUBLE) END OR CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN FALSE ELSE \"users\".\"ID\" > TRY_CAST('bad' AS DOUBLE) END)",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE users.ID NOT BETWEEN 1 + 1 AND 'bad'",
+				'duckdb' => "SELECT ID FROM users WHERE (\"users\".\"ID\" < 1 + 1 OR CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN FALSE ELSE \"users\".\"ID\" > TRY_CAST('bad' AS DOUBLE) END)",
 			),
 			array(
 				'mysql'  => "SELECT ID FROM users WHERE ID IN ('1', 'yololololo', '003')",
@@ -6853,9 +6919,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				"SELECT id FROM postmeta WHERE meta_value IN (ABS(10), 'abc') ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value IN ((SELECT 11), 'abc') ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN 10 AND 'abc' + 1 ORDER BY id",
-				"SELECT ID FROM users WHERE ID BETWEEN 1 AND 'bad'",
+				"SELECT id FROM postmeta WHERE meta_value BETWEEN 10 + title AND 'abc' ORDER BY id",
+				"SELECT id FROM postmeta WHERE meta_value BETWEEN 10 + 1 + 2 AND 'abc' ORDER BY id",
+				"SELECT id FROM postmeta WHERE meta_value BETWEEN ABS(10) AND 'abc' ORDER BY id",
+				"SELECT id FROM postmeta WHERE meta_value BETWEEN (SELECT 11) AND 'abc' ORDER BY id",
 				"SELECT ID FROM users WHERE ID BETWEEN '1' AND 'bad' + 1",
 				"SELECT ID FROM users WHERE users.ID NOT BETWEEN '1' AND 'bad' + 1",
+				"SELECT ID FROM users WHERE ID BETWEEN 1 + post_parent AND 'bad'",
+				"SELECT ID FROM users WHERE ID BETWEEN 1 + 2 + 3 AND 'bad'",
+				"SELECT ID FROM users WHERE ID BETWEEN ABS(1) AND 'bad'",
+				"SELECT ID FROM users WHERE ID BETWEEN (SELECT 3) AND 'bad'",
 				"SELECT ID FROM users WHERE ID IN (1 + post_parent, 'bad')",
 				"SELECT ID FROM users WHERE ID IN (1 + 2 + 3, 'bad')",
 				"SELECT ID FROM users WHERE ID IN (ABS(1), 'bad')",
@@ -6874,6 +6947,12 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$driver->query( "SELECT id FROM postmeta WHERE meta_value IN (10 + title, 'abc') ORDER BY id" );
 		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) IN', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( "SELECT id FROM postmeta WHERE meta_value BETWEEN 10 + title AND 'abc' ORDER BY id" );
+		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) BETWEEN', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( "SELECT id FROM postmeta WHERE meta_value BETWEEN 10 + 1 + 2 AND 'abc' ORDER BY id" );
+		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) BETWEEN', $this->lastDuckDBQuery( $driver ) );
 
 		$driver->query( "SELECT id FROM plugin_items WHERE id LIKE '1%' ORDER BY id" );
 		$this->assertStringNotContainsString( 'CAST("id" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );

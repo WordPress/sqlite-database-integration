@@ -26781,6 +26781,15 @@ class WP_DuckDB_Driver {
 	 * @return array{sql:string,end_index:int,numeric:bool}|null Literal SQL and consumed index.
 	 */
 	private function text_value_between_literal_sequence_sql( array $tokens, int $index ): ?array {
+		$expression = $this->numeric_constant_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'       => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index' => $expression['end_index'],
+				'numeric'   => true,
+			);
+		}
+
 		$numeric = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
 		if ( null !== $numeric ) {
 			return array(
@@ -27341,58 +27350,111 @@ class WP_DuckDB_Driver {
 			$between_index = $operator_index + 1;
 		}
 
-		$lower_index = $between_index + 1;
-		$and_index   = $between_index + 2;
-		$upper_index = $between_index + 3;
+		if ( WP_MySQL_Lexer::BETWEEN_SYMBOL !== $tokens[ $between_index ]->id ) {
+			return null;
+		}
+
+		$lower = $this->numeric_identifier_between_bound_comparison_sql(
+			$tokens,
+			$between_index + 1,
+			$operand['sql'],
+			$not ? WP_MySQL_Lexer::LESS_THAN_OPERATOR : WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
+			$not ? '<' : '>='
+		);
+		if ( null === $lower ) {
+			return null;
+		}
+
+		$and_index = $lower['end_index'] + 1;
+		if ( ! isset( $tokens[ $and_index ] ) || WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $and_index ]->id ) {
+			return null;
+		}
+
+		$upper = $this->numeric_identifier_between_bound_comparison_sql(
+			$tokens,
+			$and_index + 1,
+			$operand['sql'],
+			$not ? WP_MySQL_Lexer::GREATER_THAN_OPERATOR : WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
+			$not ? '>' : '<='
+		);
 		if (
-			! isset( $tokens[ $upper_index ] )
-			|| WP_MySQL_Lexer::BETWEEN_SYMBOL !== $tokens[ $between_index ]->id
-			|| ! $this->is_string_literal_token( $tokens[ $lower_index ] )
-			|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $and_index ]->id
-			|| ! $this->is_string_literal_token( $tokens[ $upper_index ] )
-			|| ! $this->numeric_identifier_string_comparison_has_boundary( $tokens, $upper_index + 1 )
+			null === $upper
+			|| ! $this->numeric_identifier_string_comparison_has_boundary( $tokens, $upper['end_index'] + 1 )
 		) {
 			return null;
 		}
 
-		$index = $upper_index;
+		$index = $upper['end_index'];
 		if ( $not ) {
-			return '('
-				. $this->sqlite_numeric_string_literal_comparison_sql(
-					$operand['sql'],
-					WP_MySQL_Lexer::LESS_THAN_OPERATOR,
-					'<',
-					$tokens[ $lower_index ],
-					true
-				)
-				. ' OR '
-				. $this->sqlite_numeric_string_literal_comparison_sql(
-					$operand['sql'],
-					WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
-					'>',
-					$tokens[ $upper_index ],
-					true
-				)
-				. ')';
+			return '(' . $lower['sql'] . ' OR ' . $upper['sql'] . ')';
 		}
 
-		return '('
-			. $this->sqlite_numeric_string_literal_comparison_sql(
-				$operand['sql'],
-				WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
-				'>=',
-				$tokens[ $lower_index ],
-				true
-			)
-			. ' AND '
-			. $this->sqlite_numeric_string_literal_comparison_sql(
-				$operand['sql'],
-				WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
-				'<=',
-				$tokens[ $upper_index ],
-				true
-			)
-			. ')';
+		return '(' . $lower['sql'] . ' AND ' . $upper['sql'] . ')';
+	}
+
+	/**
+	 * Build one numeric identifier BETWEEN-bound comparison.
+	 *
+	 * @param WP_Parser_Token[] $tokens       Token stream.
+	 * @param int               $index        Bound start index.
+	 * @param string            $operand_sql  Numeric identifier SQL.
+	 * @param int               $operator_id  Comparison operator token ID.
+	 * @param string            $operator_sql Comparison operator SQL.
+	 * @return array{sql:string,end_index:int}|null Comparison SQL and consumed index.
+	 */
+	private function numeric_identifier_between_bound_comparison_sql( array $tokens, int $index, string $operand_sql, int $operator_id, string $operator_sql ): ?array {
+		$expression = $this->numeric_constant_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'       => $operand_sql . ' ' . $operator_sql . ' ' . $expression['sql'],
+				'end_index' => $expression['end_index'],
+			);
+		}
+
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		$token = $tokens[ $index ];
+		if ( $this->is_string_literal_token( $token ) ) {
+			return array(
+				'sql'       => $this->sqlite_numeric_string_literal_comparison_sql(
+					$operand_sql,
+					$operator_id,
+					$operator_sql,
+					$token,
+					true
+				),
+				'end_index' => $index,
+			);
+		}
+
+		if ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id || WP_MySQL_Lexer::NULL2_SYMBOL === $token->id ) {
+			return array(
+				'sql'       => $operand_sql . ' ' . $operator_sql . ' NULL',
+				'end_index' => $index,
+			);
+		}
+
+		$sign_sql = '';
+		if (
+			$this->is_sign_token( $token )
+			&& isset( $tokens[ $index + 1 ] )
+			&& $this->is_number_token( $tokens[ $index + 1 ] )
+		) {
+			$sign_sql  = $token->get_bytes();
+			$token     = $tokens[ $index + 1 ];
+			$end_index = $index + 1;
+		} elseif ( $this->is_number_token( $token ) ) {
+			$end_index = $index;
+		} else {
+			return null;
+		}
+
+		return array(
+			'sql'       => $operand_sql . ' ' . $operator_sql . ' ' . $sign_sql . $token->get_bytes(),
+			'end_index' => $end_index,
+		);
 	}
 
 	/**
