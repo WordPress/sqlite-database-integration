@@ -160,7 +160,8 @@ jobs:
         env:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
           WP_DUCKDB_LOCAL_SMOKE_RUNTIME_SAMPLE: '1'
-          WP_DUCKDB_LOCAL_SMOKE_RUNTIME_ITERATIONS: '50'
+          WP_DUCKDB_LOCAL_SMOKE_RUNTIME_ITERATIONS: '1000'
+          WP_DUCKDB_LOCAL_SMOKE_RUNTIME_WARMUPS: '20'
           WP_DUCKDB_LOCAL_SMOKE_RUNTIME_MAX_RATIO: '3'
         run: composer run wp-smoke-duckdb-local
 
