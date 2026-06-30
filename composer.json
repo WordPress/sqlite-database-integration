@@ -95,6 +95,7 @@
 		],
 		"test-duckdb-fail-fast": [
 			"WP_DUCKDB_LAST_FAILURE_REQUIRED=1 WP_DUCKDB_LAST_FAILURE_MIN_TESTS=20 WP_DUCKDB_LAST_FAILURE_MAX_TESTS=20 WP_DUCKDB_LAST_FAILURE_TIMEOUT=60 ./bin/wp-test-duckdb-last-failures.sh",
+			"WP_DUCKDB_LAST_FAILURE_IGNORE_CACHE=1 WP_DUCKDB_LAST_FAILURE_REQUIRED=1 WP_DUCKDB_LAST_FAILURE_MIN_TESTS=20 WP_DUCKDB_LAST_FAILURE_MAX_TESTS=26 WP_DUCKDB_LAST_FAILURE_TIMEOUT=60 ./bin/wp-test-duckdb-last-failures.sh",
 			"./bin/wp-test-duckdb-fast-fail.sh validate"
 		],
 		"wp-smoke-duckdb-local": [

@@ -20,6 +20,7 @@ DRY_RUN="${WP_DUCKDB_LAST_FAILURE_DRY_RUN:-0}"
 MAX_TESTS="${WP_DUCKDB_LAST_FAILURE_MAX_TESTS:-20}"
 TIMEOUT_SECONDS="${WP_DUCKDB_LAST_FAILURE_TIMEOUT:-60}"
 CLASS_PATTERN="${WP_DUCKDB_LAST_FAILURE_CLASS_PATTERN:-/^WP_DuckDB_[A-Za-z0-9_]*$/}"
+IGNORE_CACHE="${WP_DUCKDB_LAST_FAILURE_IGNORE_CACHE:-0}"
 
 fail() {
 	echo "Error: $*" >&2
@@ -38,6 +39,7 @@ Environment:
   WP_DUCKDB_LAST_FAILURE_MAX_TESTS    Maximum cached defects to run. Default: 20.
   WP_DUCKDB_LAST_FAILURE_TIMEOUT      Timeout in seconds. Default: 60.
   WP_DUCKDB_LAST_FAILURE_CACHE        Override the PHPUnit cache path.
+  WP_DUCKDB_LAST_FAILURE_IGNORE_CACHE Ignore the PHPUnit cache and use the fallback list. Default: 0.
   WP_DUCKDB_LAST_FAILURE_LIST         Fallback test list when the cache is absent.
   WP_DUCKDB_LAST_FAILURE_REQUIRED     Fail if no cache/list entries are found. Default: 0.
   WP_DUCKDB_LAST_FAILURE_MIN_TESTS    Minimum selected tests. Default: 1.
@@ -93,7 +95,7 @@ read_phpunit_test_count() {
 }
 
 read_duckdb_failure_filter() {
-	if [ -f "$CACHE_FILE" ]; then
+	if [ "$IGNORE_CACHE" != '1' ] && [ -f "$CACHE_FILE" ]; then
 		printf '%s\n' "$CACHE_FILE"
 
 		WP_DUCKDB_LAST_FAILURE_CACHE_FILE="$CACHE_FILE" \
@@ -306,6 +308,13 @@ case "$REQUIRED" in
 		;;
 	*)
 		fail 'WP_DUCKDB_LAST_FAILURE_REQUIRED must be 0 or 1.'
+		;;
+esac
+case "$IGNORE_CACHE" in
+	0|1)
+		;;
+	*)
+		fail 'WP_DUCKDB_LAST_FAILURE_IGNORE_CACHE must be 0 or 1.'
 		;;
 esac
 
