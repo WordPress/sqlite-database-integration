@@ -230,6 +230,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		) {
 			$this->assertParityRows( $sql );
 		}
+
+		$this->runParitySetup(
+			array(
+				'INSERT INTO wp_coalesce_date_text_posts (ID, post_date_gmt) VALUES (3, NULL)',
+			)
+		);
+		foreach (
+			array(
+				"SELECT ID, COALESCE(DATE(post_date_gmt) = 20160116, 'x') AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+				"SELECT ID, COALESCE(DATE_FORMAT(post_date_gmt, '%Y%m%d') != 20160116, 'x') AS cmp FROM wp_coalesce_date_text_posts ORDER BY ID",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
 	}
 
 	public function test_date_part_quoted_string_comparisons_match_sqlite(): void {

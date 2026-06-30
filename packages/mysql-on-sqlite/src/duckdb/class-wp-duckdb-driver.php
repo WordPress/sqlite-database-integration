@@ -25160,33 +25160,46 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$fallback_sql = $this->coalesce_date_text_numeric_literal_fallback_sql( $items[1] );
-		if ( null === $fallback_sql ) {
+		$fallback = $this->coalesce_date_text_numeric_literal_fallback_sql( $items[1] );
+		if ( null === $fallback ) {
 			return null;
 		}
 
 		$index = $end_index - 1;
-		return 'COALESCE(' . $comparison_sql . ', ' . $fallback_sql . ')';
+		if ( $fallback['is_string_literal'] ) {
+			$comparison_sql = 'CAST(' . $comparison_sql . ' AS VARCHAR)';
+		}
+
+		return 'COALESCE(' . $comparison_sql . ', ' . $fallback['sql'] . ')';
 	}
 
 	/**
 	 * Translate a simple COALESCE() fallback for a date text comparison.
 	 *
 	 * @param WP_Parser_Token[] $tokens Fallback tokens.
-	 * @return string|null Fallback SQL, or null when unsupported.
+	 * @return array{sql:string,is_string_literal:bool}|null Fallback metadata, or null when unsupported.
 	 */
-	private function coalesce_date_text_numeric_literal_fallback_sql( array $tokens ): ?string {
+	private function coalesce_date_text_numeric_literal_fallback_sql( array $tokens ): ?array {
 		if ( 1 === count( $tokens ) ) {
 			if ( $this->is_number_token( $tokens[0] ) ) {
-				return $tokens[0]->get_bytes();
+				return array(
+					'sql'               => $tokens[0]->get_bytes(),
+					'is_string_literal' => false,
+				);
 			}
 
 			if ( $this->is_string_literal_token( $tokens[0] ) ) {
-				return $this->connection->quote( $this->token_value( $tokens[0] ) );
+				return array(
+					'sql'               => $this->connection->quote( $this->token_value( $tokens[0] ) ),
+					'is_string_literal' => true,
+				);
 			}
 
 			if ( WP_MySQL_Lexer::NULL_SYMBOL === $tokens[0]->id || WP_MySQL_Lexer::NULL2_SYMBOL === $tokens[0]->id ) {
-				return 'NULL';
+				return array(
+					'sql'               => 'NULL',
+					'is_string_literal' => false,
+				);
 			}
 		}
 
@@ -25195,7 +25208,10 @@ class WP_DuckDB_Driver {
 			&& $this->is_sign_token( $tokens[0] )
 			&& $this->is_number_token( $tokens[1] )
 		) {
-			return $tokens[0]->get_bytes() . $tokens[1]->get_bytes();
+			return array(
+				'sql'               => $tokens[0]->get_bytes() . $tokens[1]->get_bytes(),
+				'is_string_literal' => false,
+			);
 		}
 
 		return null;
