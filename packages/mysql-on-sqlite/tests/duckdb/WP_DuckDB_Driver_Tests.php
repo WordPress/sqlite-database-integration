@@ -12336,6 +12336,358 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertGreaterThan( 0, $this->count_duckdb_information_schema_table_constraints_stage_queries( $queries ) );
 	}
 
+	public function test_information_schema_check_constraint_projection_fast_path_skips_stage_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$driver->query(
+			'CREATE TABLE checks (
+				id INT,
+				amount INT,
+				CONSTRAINT amount_positive CHECK (amount > 0),
+				CHECK (id IS NULL OR id >= 0)
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE checks_noise (
+				id INT,
+				qty INT,
+				CONSTRAINT qty_positive CHECK (qty > 0)
+			)'
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+				FROM information_schema.check_constraints
+				WHERE CONSTRAINT_SCHEMA = 'wp'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CHECK_CLAUSE'    => 'amount > 0',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'checks_chk_1',
+					'CHECK_CLAUSE'    => 'id IS NULL OR id >= 0',
+				),
+				array(
+					'CONSTRAINT_NAME' => 'qty_positive',
+					'CHECK_CLAUSE'    => 'qty > 0',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_check_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, CHECK_CLAUSE
+				FROM information_schema.check_constraints
+				WHERE CONSTRAINT_SCHEMA = 'wp'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'amount_positive',
+					'CHECK_CLAUSE'       => 'amount > 0',
+				),
+				array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'checks_chk_1',
+					'CHECK_CLAUSE'       => 'id IS NULL OR id >= 0',
+				),
+				array(
+					'CONSTRAINT_CATALOG' => 'def',
+					'CONSTRAINT_SCHEMA'  => 'wp',
+					'CONSTRAINT_NAME'    => 'qty_positive',
+					'CHECK_CLAUSE'       => 'qty > 0',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_check_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 3 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, CHECK_CLAUSE
+				FROM information_schema.check_constraints
+				WHERE CONSTRAINT_SCHEMA = 'wp'
+					AND CONSTRAINT_NAME = 'amount_positive'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME' => 'amount_positive',
+					'CHECK_CLAUSE'    => 'amount > 0',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_check_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME
+				FROM information_schema.check_constraints
+				WHERE CONSTRAINT_SCHEMA = 'not_wp'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( 0, $this->count_duckdb_information_schema_check_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_information_schema_referential_constraint_projection_fast_path_skips_stage_table(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY)' );
+		$driver->query(
+			'CREATE TABLE child_named (
+				id INT,
+				parent_id INT,
+				CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES parents (id) ON DELETE RESTRICT ON UPDATE NO ACTION
+			)'
+		);
+		$driver->query(
+			'CREATE TABLE child_generated (
+				id INT,
+				parent_id INT,
+				FOREIGN KEY (parent_id) REFERENCES parents (id)
+			)'
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, MATCH_OPTION,
+					UPDATE_RULE, DELETE_RULE, TABLE_NAME, REFERENCED_TABLE_NAME
+				FROM information_schema.referential_constraints
+				WHERE CONSTRAINT_SCHEMA = 'wp'
+					AND TABLE_NAME IN ('child_generated', 'child_named')
+				ORDER BY TABLE_NAME, CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'        => 'child_generated_ibfk_1',
+					'UNIQUE_CONSTRAINT_NAME' => 'PRIMARY',
+					'MATCH_OPTION'           => 'NONE',
+					'UPDATE_RULE'            => 'NO ACTION',
+					'DELETE_RULE'            => 'NO ACTION',
+					'TABLE_NAME'             => 'child_generated',
+					'REFERENCED_TABLE_NAME'  => 'parents',
+				),
+				array(
+					'CONSTRAINT_NAME'        => 'fk_parent',
+					'UNIQUE_CONSTRAINT_NAME' => 'PRIMARY',
+					'MATCH_OPTION'           => 'NONE',
+					'UPDATE_RULE'            => 'NO ACTION',
+					'DELETE_RULE'            => 'RESTRICT',
+					'TABLE_NAME'             => 'child_named',
+					'REFERENCED_TABLE_NAME'  => 'parents',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_referential_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME,
+					UNIQUE_CONSTRAINT_CATALOG, UNIQUE_CONSTRAINT_SCHEMA,
+					UNIQUE_CONSTRAINT_NAME, MATCH_OPTION, UPDATE_RULE, DELETE_RULE,
+					TABLE_NAME, REFERENCED_TABLE_NAME
+				FROM information_schema.referential_constraints
+				WHERE CONSTRAINT_SCHEMA = 'wp'
+					AND TABLE_NAME IN ('child_generated', 'child_named')
+				ORDER BY TABLE_NAME, CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'child_generated_ibfk_1',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'NO ACTION',
+					'TABLE_NAME'                => 'child_generated',
+					'REFERENCED_TABLE_NAME'     => 'parents',
+				),
+				array(
+					'CONSTRAINT_CATALOG'        => 'def',
+					'CONSTRAINT_SCHEMA'         => 'wp',
+					'CONSTRAINT_NAME'           => 'fk_parent',
+					'UNIQUE_CONSTRAINT_CATALOG' => 'def',
+					'UNIQUE_CONSTRAINT_SCHEMA'  => 'wp',
+					'UNIQUE_CONSTRAINT_NAME'    => 'PRIMARY',
+					'MATCH_OPTION'              => 'NONE',
+					'UPDATE_RULE'               => 'NO ACTION',
+					'DELETE_RULE'               => 'RESTRICT',
+					'TABLE_NAME'                => 'child_named',
+					'REFERENCED_TABLE_NAME'     => 'parents',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_referential_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME, UPDATE_RULE, DELETE_RULE
+				FROM information_schema.referential_constraints
+				WHERE CONSTRAINT_SCHEMA = 'wp'
+					AND TABLE_NAME = 'child_named'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'       => 'fk_parent',
+					'TABLE_NAME'            => 'child_named',
+					'REFERENCED_TABLE_NAME' => 'parents',
+					'UPDATE_RULE'           => 'NO ACTION',
+					'DELETE_RULE'           => 'RESTRICT',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_referential_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME
+				FROM information_schema.referential_constraints
+				WHERE CONSTRAINT_SCHEMA = 'wp'
+					AND TABLE_NAME = 'child_named'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array(
+					'CONSTRAINT_NAME'        => 'fk_parent',
+					'UNIQUE_CONSTRAINT_NAME' => 'PRIMARY',
+					'TABLE_NAME'             => 'child_named',
+					'REFERENCED_TABLE_NAME'  => 'parents',
+				),
+			),
+			$rows
+		);
+		$this->assertSame( 0, $this->count_duckdb_information_schema_referential_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 1 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT CONSTRAINT_NAME, TABLE_NAME
+				FROM information_schema.referential_constraints
+				WHERE CONSTRAINT_SCHEMA = 'wp'
+					AND TABLE_NAME = 'missing_child'
+				ORDER BY CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array(), $rows );
+		$this->assertSame( 0, $this->count_duckdb_information_schema_referential_constraints_stage_queries( $queries ) );
+		$this->assertSame(
+			array( array( 'found_rows' => 0 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_information_schema_check_and_referential_constraint_projection_fast_path_rejects_aliases(): void {
+		$this->requireDuckDBRuntime();
+
+		$queries = array();
+		$driver  = $this->query_logged_duckdb_driver( $queries );
+		$driver->query(
+			'CREATE TABLE checks (
+				id INT,
+				CONSTRAINT id_positive CHECK (id > 0)
+			)'
+		);
+		$driver->query( 'CREATE TABLE parents (id INT PRIMARY KEY)' );
+		$driver->query(
+			'CREATE TABLE child_named (
+				id INT,
+				parent_id INT,
+				CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES parents (id)
+			)'
+		);
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT cc.CONSTRAINT_NAME
+				FROM information_schema.check_constraints AS cc
+				WHERE cc.CONSTRAINT_SCHEMA = 'wp'
+				ORDER BY cc.CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'id_positive' ), array_column( $rows, 'CONSTRAINT_NAME' ) );
+		$this->assertGreaterThan( 0, $this->count_duckdb_information_schema_check_constraints_stage_queries( $queries ) );
+
+		$queries = array();
+		$rows    = $driver->query(
+			"SELECT rc.CONSTRAINT_NAME, rc.TABLE_NAME
+				FROM information_schema.referential_constraints AS rc
+				WHERE rc.CONSTRAINT_SCHEMA = 'wp'
+					AND rc.TABLE_NAME = 'child_named'
+				ORDER BY rc.CONSTRAINT_NAME"
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		$this->assertSame( array( 'fk_parent' ), array_column( $rows, 'CONSTRAINT_NAME' ) );
+		$this->assertGreaterThan( 0, $this->count_duckdb_information_schema_referential_constraints_stage_queries( $queries ) );
+	}
+
 	public function test_create_table_check_constraints_use_native_enforcement_and_mysql_metadata(): void {
 		$this->requireDuckDBRuntime();
 
@@ -21872,6 +22224,32 @@ SQL
 					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_key_column_usage"' )
 						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_key_column_usage"' )
 						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_key_column_usage"' );
+				}
+			)
+		);
+	}
+
+	private function count_duckdb_information_schema_referential_constraints_stage_queries( array $queries ): int {
+		return count(
+			array_filter(
+				$queries,
+				function ( string $query ): bool {
+					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_referential_constraints"' )
+						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_referential_constraints"' )
+						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_referential_constraints"' );
+				}
+			)
+		);
+	}
+
+	private function count_duckdb_information_schema_check_constraints_stage_queries( array $queries ): int {
+		return count(
+			array_filter(
+				$queries,
+				function ( string $query ): bool {
+					return false !== strpos( $query, 'CREATE OR REPLACE TEMP TABLE "__wp_duckdb_information_schema_check_constraints"' )
+						|| false !== strpos( $query, 'INSERT INTO "__wp_duckdb_information_schema_check_constraints"' )
+						|| false !== strpos( $query, 'FROM "__wp_duckdb_information_schema_check_constraints"' );
 				}
 			)
 		);

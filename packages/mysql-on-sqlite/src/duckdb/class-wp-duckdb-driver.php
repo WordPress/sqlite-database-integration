@@ -1017,6 +1017,186 @@ class WP_DuckDB_Driver {
 			);
 		}
 
+		$check_constraints_source = '`?information_schema`?\s*\.\s*`?check_constraints`?';
+		if (
+			preg_match(
+				'/^SELECT\s+(?<check_catalog_projection>`?CONSTRAINT_CATALOG`?\s*,\s*`?CONSTRAINT_SCHEMA`?\s*,\s*)?`?CONSTRAINT_NAME`?(?<check_clause_projection>\s*,\s*`?CHECK_CLAUSE`?)?\s+FROM\s+'
+				. $check_constraints_source
+				. '\s+WHERE\s+(?<schema_column>`?CONSTRAINT_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
+				. '(?:\s+AND\s+(?<constraint_column>`?CONSTRAINT_NAME`?)\s*=\s*(?<constraint_name>' . $literal_pattern . '))?'
+				. '\s+ORDER\s+BY\s+`?CONSTRAINT_NAME`?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			if (
+				! $this->fast_path_identifier_matches( 'CONSTRAINT_SCHEMA', $matches['schema_column'] )
+				|| (
+					isset( $matches['constraint_column'] )
+					&& '' !== $matches['constraint_column']
+					&& ! $this->fast_path_identifier_matches( 'CONSTRAINT_NAME', $matches['constraint_column'] )
+				)
+			) {
+				return null;
+			}
+
+			$columns = isset( $matches['check_catalog_projection'] ) && '' !== $matches['check_catalog_projection']
+				? array( 'CONSTRAINT_CATALOG', 'CONSTRAINT_SCHEMA', 'CONSTRAINT_NAME' )
+				: array( 'CONSTRAINT_NAME' );
+			if ( isset( $matches['check_clause_projection'] ) && '' !== $matches['check_clause_projection'] ) {
+				$columns[] = 'CHECK_CLAUSE';
+			}
+
+			return $this->information_schema_check_constraints_projection_result(
+				$this->fast_path_mysql_single_quoted_literal_value( $matches['schema_value'] ),
+				isset( $matches['constraint_name'] ) && '' !== $matches['constraint_name']
+					? array( $this->fast_path_mysql_single_quoted_literal_value( $matches['constraint_name'] ) )
+					: null,
+				$columns
+			);
+		}
+
+		$referential_constraints_source = '`?information_schema`?\s*\.\s*`?referential_constraints`?';
+		if (
+			preg_match(
+				'/^SELECT\s+`?CONSTRAINT_CATALOG`?\s*,\s*`?CONSTRAINT_SCHEMA`?\s*,\s*`?CONSTRAINT_NAME`?\s*,\s*`?UNIQUE_CONSTRAINT_CATALOG`?\s*,\s*`?UNIQUE_CONSTRAINT_SCHEMA`?\s*,\s*`?UNIQUE_CONSTRAINT_NAME`?\s*,\s*`?MATCH_OPTION`?\s*,\s*`?UPDATE_RULE`?\s*,\s*`?DELETE_RULE`?\s*,\s*`?TABLE_NAME`?\s*,\s*`?REFERENCED_TABLE_NAME`?\s+FROM\s+'
+				. $referential_constraints_source
+				. '\s+WHERE\s+(?<schema_column>`?CONSTRAINT_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
+				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s+IN\s*\((?<table_names>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\)'
+				. '\s+ORDER\s+BY\s+`?TABLE_NAME`?\s*,\s*`?CONSTRAINT_NAME`?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			if (
+				! $this->fast_path_identifier_matches( 'CONSTRAINT_SCHEMA', $matches['schema_column'] )
+				|| ! $this->fast_path_identifier_matches( 'TABLE_NAME', $matches['table_column'] )
+			) {
+				return null;
+			}
+
+			$table_names = array();
+			if ( false !== preg_match_all( '/' . $literal_pattern . '/', $matches['table_names'], $table_matches ) ) {
+				foreach ( $table_matches[0] as $table_literal ) {
+					$table_names[] = $this->fast_path_mysql_single_quoted_literal_value( $table_literal );
+				}
+			}
+
+			if ( count( $table_names ) === 0 ) {
+				return null;
+			}
+
+			return $this->information_schema_referential_constraints_projection_result(
+				$this->fast_path_mysql_single_quoted_literal_value( $matches['schema_value'] ),
+				$table_names,
+				array(
+					'CONSTRAINT_CATALOG',
+					'CONSTRAINT_SCHEMA',
+					'CONSTRAINT_NAME',
+					'UNIQUE_CONSTRAINT_CATALOG',
+					'UNIQUE_CONSTRAINT_SCHEMA',
+					'UNIQUE_CONSTRAINT_NAME',
+					'MATCH_OPTION',
+					'UPDATE_RULE',
+					'DELETE_RULE',
+					'TABLE_NAME',
+					'REFERENCED_TABLE_NAME',
+				),
+				true
+			);
+		}
+
+		if (
+			preg_match(
+				'/^SELECT\s+`?CONSTRAINT_NAME`?\s*,\s*`?UNIQUE_CONSTRAINT_NAME`?\s*,\s*`?MATCH_OPTION`?\s*,\s*`?UPDATE_RULE`?\s*,\s*`?DELETE_RULE`?\s*,\s*`?TABLE_NAME`?\s*,\s*`?REFERENCED_TABLE_NAME`?\s+FROM\s+'
+				. $referential_constraints_source
+				. '\s+WHERE\s+(?<schema_column>`?CONSTRAINT_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
+				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s+IN\s*\((?<table_names>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\)'
+				. '\s+ORDER\s+BY\s+`?TABLE_NAME`?\s*,\s*`?CONSTRAINT_NAME`?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			if (
+				! $this->fast_path_identifier_matches( 'CONSTRAINT_SCHEMA', $matches['schema_column'] )
+				|| ! $this->fast_path_identifier_matches( 'TABLE_NAME', $matches['table_column'] )
+			) {
+				return null;
+			}
+
+			$table_names = array();
+			if ( false !== preg_match_all( '/' . $literal_pattern . '/', $matches['table_names'], $table_matches ) ) {
+				foreach ( $table_matches[0] as $table_literal ) {
+					$table_names[] = $this->fast_path_mysql_single_quoted_literal_value( $table_literal );
+				}
+			}
+
+			if ( count( $table_names ) === 0 ) {
+				return null;
+			}
+
+			return $this->information_schema_referential_constraints_projection_result(
+				$this->fast_path_mysql_single_quoted_literal_value( $matches['schema_value'] ),
+				$table_names,
+				array( 'CONSTRAINT_NAME', 'UNIQUE_CONSTRAINT_NAME', 'MATCH_OPTION', 'UPDATE_RULE', 'DELETE_RULE', 'TABLE_NAME', 'REFERENCED_TABLE_NAME' ),
+				true
+			);
+		}
+
+		if (
+			preg_match(
+				'/^SELECT\s+`?CONSTRAINT_NAME`?\s*,\s*`?UNIQUE_CONSTRAINT_NAME`?\s*,\s*`?TABLE_NAME`?\s*,\s*`?REFERENCED_TABLE_NAME`?\s+FROM\s+'
+				. $referential_constraints_source
+				. '\s+WHERE\s+(?<schema_column>`?CONSTRAINT_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
+				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s*=\s*(?<table_name>' . $literal_pattern . ')'
+				. '\s+ORDER\s+BY\s+`?CONSTRAINT_NAME`?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			if (
+				! $this->fast_path_identifier_matches( 'CONSTRAINT_SCHEMA', $matches['schema_column'] )
+				|| ! $this->fast_path_identifier_matches( 'TABLE_NAME', $matches['table_column'] )
+			) {
+				return null;
+			}
+
+			return $this->information_schema_referential_constraints_projection_result(
+				$this->fast_path_mysql_single_quoted_literal_value( $matches['schema_value'] ),
+				array( $this->fast_path_mysql_single_quoted_literal_value( $matches['table_name'] ) ),
+				array( 'CONSTRAINT_NAME', 'UNIQUE_CONSTRAINT_NAME', 'TABLE_NAME', 'REFERENCED_TABLE_NAME' ),
+				false
+			);
+		}
+
+		if (
+			preg_match(
+				'/^SELECT\s+`?CONSTRAINT_NAME`?\s*,\s*`?TABLE_NAME`?(?<referential_single_extra>\s*,\s*`?REFERENCED_TABLE_NAME`?\s*,\s*`?UPDATE_RULE`?\s*,\s*`?DELETE_RULE`?)?\s+FROM\s+'
+				. $referential_constraints_source
+				. '\s+WHERE\s+(?<schema_column>`?CONSTRAINT_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
+				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s*=\s*(?<table_name>' . $literal_pattern . ')'
+				. '\s+ORDER\s+BY\s+`?CONSTRAINT_NAME`?$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			if (
+				! $this->fast_path_identifier_matches( 'CONSTRAINT_SCHEMA', $matches['schema_column'] )
+				|| ! $this->fast_path_identifier_matches( 'TABLE_NAME', $matches['table_column'] )
+			) {
+				return null;
+			}
+
+			return $this->information_schema_referential_constraints_projection_result(
+				$this->fast_path_mysql_single_quoted_literal_value( $matches['schema_value'] ),
+				array( $this->fast_path_mysql_single_quoted_literal_value( $matches['table_name'] ) ),
+				isset( $matches['referential_single_extra'] ) && '' !== $matches['referential_single_extra']
+					? array( 'CONSTRAINT_NAME', 'TABLE_NAME', 'REFERENCED_TABLE_NAME', 'UPDATE_RULE', 'DELETE_RULE' )
+					: array( 'CONSTRAINT_NAME', 'TABLE_NAME' ),
+				false
+			);
+		}
+
 		return null;
 	}
 
@@ -1080,6 +1260,80 @@ class WP_DuckDB_Driver {
 				}
 
 				return strcmp( (string) $left['COLUMN_NAME'], (string) $right['COLUMN_NAME'] );
+			}
+		);
+
+		return $this->record_found_rows_from_result(
+			new WP_DuckDB_Result_Statement(
+				$columns,
+				$this->project_information_schema_rows( $rows, $columns )
+			)
+		);
+	}
+
+	/**
+	 * Build an exact information_schema.check_constraints projection result.
+	 *
+	 * @param string        $schema_name      Requested schema.
+	 * @param string[]|null $constraint_names Optional requested constraint names.
+	 * @param string[]      $columns          Projected columns.
+	 * @return WP_DuckDB_Result_Statement Result statement.
+	 */
+	private function information_schema_check_constraints_projection_result( string $schema_name, ?array $constraint_names, array $columns ): WP_DuckDB_Result_Statement {
+		$rows = 0 === strcasecmp( $schema_name, $this->database )
+			? $this->information_schema_check_constraints_rows( $constraint_names )
+			: array();
+
+		usort(
+			$rows,
+			function ( array $left, array $right ): int {
+				$name_compare = strcasecmp( (string) $left['CONSTRAINT_NAME'], (string) $right['CONSTRAINT_NAME'] );
+				if ( 0 !== $name_compare ) {
+					return $name_compare;
+				}
+
+				return strcmp( (string) $left['CONSTRAINT_NAME'], (string) $right['CONSTRAINT_NAME'] );
+			}
+		);
+
+		return $this->record_found_rows_from_result(
+			new WP_DuckDB_Result_Statement(
+				$columns,
+				$this->project_information_schema_rows( $rows, $columns )
+			)
+		);
+	}
+
+	/**
+	 * Build an exact information_schema.referential_constraints projection result.
+	 *
+	 * @param string   $schema_name    Requested schema.
+	 * @param string[] $table_names    Requested table names.
+	 * @param string[] $columns        Projected columns.
+	 * @param bool     $order_by_table Whether TABLE_NAME participates in sorting.
+	 * @return WP_DuckDB_Result_Statement Result statement.
+	 */
+	private function information_schema_referential_constraints_projection_result( string $schema_name, array $table_names, array $columns, bool $order_by_table ): WP_DuckDB_Result_Statement {
+		$rows = 0 === strcasecmp( $schema_name, $this->database )
+			? $this->information_schema_referential_constraints_rows( $table_names )
+			: array();
+
+		usort(
+			$rows,
+			function ( array $left, array $right ) use ( $order_by_table ): int {
+				if ( $order_by_table ) {
+					$table_compare = strcasecmp( (string) $left['TABLE_NAME'], (string) $right['TABLE_NAME'] );
+					if ( 0 !== $table_compare ) {
+						return $table_compare;
+					}
+				}
+
+				$name_compare = strcasecmp( (string) $left['CONSTRAINT_NAME'], (string) $right['CONSTRAINT_NAME'] );
+				if ( 0 !== $name_compare ) {
+					return $name_compare;
+				}
+
+				return strcmp( (string) $left['CONSTRAINT_NAME'], (string) $right['CONSTRAINT_NAME'] );
 			}
 		);
 
@@ -29800,13 +30054,17 @@ class WP_DuckDB_Driver {
 	/**
 	 * Build MySQL-shaped information_schema.referential_constraints rows.
 	 *
+	 * @param string[]|null $requested_table_names Optional requested table names.
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function information_schema_referential_constraints_rows(): array {
-		$rows = array();
-		$seen = array();
+	private function information_schema_referential_constraints_rows( ?array $requested_table_names = null ): array {
+		$table_names = null === $requested_table_names
+			? $this->user_table_names()
+			: $this->resolve_persistent_user_table_names( $requested_table_names );
+		$rows        = array();
+		$seen        = array();
 
-		foreach ( $this->user_table_names() as $table_name ) {
+		foreach ( $table_names as $table_name ) {
 			foreach ( $this->foreign_key_metadata_rows( $table_name ) as $foreign_key ) {
 				$key = $table_name . "\0" . (string) $foreign_key['constraint_name'];
 				if ( isset( $seen[ $key ] ) ) {
@@ -29939,13 +30197,24 @@ class WP_DuckDB_Driver {
 	/**
 	 * Build MySQL-shaped information_schema.check_constraints rows.
 	 *
+	 * @param string[]|null $requested_constraint_names Optional requested constraint names.
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function information_schema_check_constraints_rows(): array {
-		$rows = array();
+	private function information_schema_check_constraints_rows( ?array $requested_constraint_names = null ): array {
+		$rows                       = array();
+		$requested_constraint_names = null === $requested_constraint_names
+			? null
+			: array_map( 'strtolower', $requested_constraint_names );
 
 		foreach ( $this->user_table_names() as $table_name ) {
 			foreach ( $this->check_constraint_metadata_rows( $table_name ) as $check_constraint ) {
+				if (
+					null !== $requested_constraint_names
+					&& ! in_array( strtolower( (string) $check_constraint['constraint_name'] ), $requested_constraint_names, true )
+				) {
+					continue;
+				}
+
 				$rows[] = $this->information_schema_check_constraints_row( $check_constraint );
 			}
 		}
