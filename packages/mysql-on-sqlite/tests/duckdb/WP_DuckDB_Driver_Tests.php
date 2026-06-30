@@ -11598,6 +11598,113 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_wordpress_posts_wide_insert_skips_case_insensitive_metadata_when_unique_keys_are_incomplete(): void {
+		$this->requireDuckDBRuntime();
+
+		$path = tempnam( sys_get_temp_dir(), 'duckdb-post-wide-insert-' );
+		unlink( $path );
+
+		try {
+			$setup_driver = new WP_DuckDB_Driver(
+				array(
+					'path'     => $path,
+					'database' => 'wp',
+				)
+			);
+			$this->create_wordpress_posts_full_insert_fixture( $setup_driver );
+			unset( $setup_driver );
+
+			$queries = array();
+			$driver  = $this->query_logged_duckdb_driver( $queries, $path );
+			$queries = array();
+			$insert  = $driver->query(
+				$this->wordpress_posts_wide_insert_sql(
+					array(
+						'post_author'  => 7,
+						'post_content' => "First body, with comma and a quote ' marker",
+						'post_title'   => 'First post',
+						'post_name'    => 'first-post',
+					)
+				)
+			);
+
+			$this->assertSame( 1, $insert->rowCount() );
+			$this->assertSame( 1, $driver->get_insert_id() );
+			$this->assert_wordpress_posts_omitted_auto_increment_insert_used_returning( $queries, 'ID' );
+			$this->assertSame( 0, $this->count_duckdb_table_metadata_queries( $queries ) );
+			$this->assertSame( 0, $this->count_duckdb_auto_increment_metadata_queries( $queries, 'wptests_posts' ) );
+			$this->assertLessThanOrEqual( 5, count( $queries ), implode( "\n", $queries ) );
+			$this->assertSame(
+				array(
+					array(
+						'ID'            => 1,
+						'post_author'   => 7,
+						'post_title'    => 'First post',
+						'post_name'     => 'first-post',
+						'post_type'     => 'post',
+						'comment_count' => 0,
+					),
+				),
+				$driver->query( 'SELECT ID, post_author, post_title, post_name, post_type, comment_count FROM wptests_posts ORDER BY ID' )->fetchAll( PDO::FETCH_ASSOC )
+			);
+		} finally {
+			@unlink( $path );
+		}
+	}
+
+	public function test_wordpress_posts_wide_insert_falls_back_without_id_returning_target(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_content LONGTEXT NOT NULL,
+				post_content_filtered LONGTEXT NOT NULL,
+				post_title TEXT NOT NULL,
+				post_excerpt TEXT NOT NULL,
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				comment_status VARCHAR(20) NOT NULL DEFAULT 'open',
+				ping_status VARCHAR(20) NOT NULL DEFAULT 'open',
+				post_password VARCHAR(255) NOT NULL DEFAULT '',
+				post_name VARCHAR(200) NOT NULL DEFAULT '',
+				to_ping TEXT NOT NULL,
+				pinged TEXT NOT NULL,
+				post_modified DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_modified_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_parent BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				menu_order INT(11) NOT NULL DEFAULT '0',
+				post_mime_type VARCHAR(100) NOT NULL DEFAULT '',
+				guid VARCHAR(255) NOT NULL DEFAULT '',
+				comment_count BIGINT(20) NOT NULL DEFAULT '0'
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+
+		$insert = $driver->query(
+			$this->wordpress_posts_wide_insert_sql(
+				array(
+					'post_title' => 'No ID post',
+					'post_name'  => 'no-id-post',
+				)
+			)
+		);
+
+		$this->assertSame( 1, $insert->rowCount() );
+		$this->assertSame( 0, $driver->get_insert_id() );
+		$this->assertSame(
+			array(
+				array(
+					'post_title' => 'No ID post',
+					'post_name'  => 'no-id-post',
+				),
+			),
+			$driver->query( 'SELECT post_title, post_name FROM wptests_posts' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_insert_ignore_explicit_auto_increment_insert_id_skips_ignored_rows(): void {
 		$this->requireDuckDBRuntime();
 
@@ -12196,6 +12303,42 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_insert_on_duplicate_key_update_preserves_composite_primary_key_order(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE reordered_primary (
+				a INTEGER NOT NULL,
+				b INTEGER NOT NULL,
+				payload VARCHAR(20),
+				PRIMARY KEY (b, a)
+			)'
+		);
+		$driver->query( "INSERT INTO reordered_primary (a, b, payload) VALUES (1, 2, 'old')" );
+
+		$result = $driver->query(
+			"INSERT INTO reordered_primary (a, b, payload) VALUES (1, 2, 'new')
+			ON DUPLICATE KEY UPDATE payload = VALUES(payload)"
+		);
+
+		$this->assertSame( 1, $result->rowCount() );
+		$this->assertStringContainsString(
+			'ON CONFLICT ("b", "a") DO UPDATE SET payload = CAST((excluded."payload") AS VARCHAR)',
+			$this->lastDuckDBQuery( $driver )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'a'       => 1,
+					'b'       => 2,
+					'payload' => 'new',
+				),
+			),
+			$driver->query( 'SELECT a, b, payload FROM reordered_primary' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_insert_on_duplicate_key_update_multirow_rejects_mixed_conflict_targets(): void {
 		$this->requireDuckDBRuntime();
 
@@ -12347,6 +12490,50 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				),
 			),
 			$driver->query( 'SELECT id, name, payload FROM ci_items ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_case_insensitive_composite_unique_conflicts_are_emulated(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			"CREATE TABLE ci_pairs (
+				id INTEGER PRIMARY KEY,
+				name VARCHAR(20) NOT NULL DEFAULT '',
+				locale VARCHAR(20) NOT NULL DEFAULT '',
+				payload VARCHAR(20),
+				UNIQUE KEY name_locale (name, locale)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+
+		$driver->query( "INSERT INTO ci_pairs (id, name, locale, payload) VALUES (1, 'first', 'en', 'a')" );
+
+		try {
+			$driver->query( "INSERT INTO ci_pairs (id, name, locale, payload) VALUES (2, 'FIRST', 'en', 'duplicate')" );
+			$this->fail( 'Expected composite case-insensitive duplicate INSERT to fail.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'UNIQUE constraint failed', $e->getMessage() );
+		}
+
+		$driver->query( "INSERT INTO ci_pairs (id, name, locale, payload) VALUES (3, 'FIRST', 'fr', 'different-locale')" );
+
+		$this->assertSame(
+			array(
+				array(
+					'id'      => 1,
+					'name'    => 'first',
+					'locale'  => 'en',
+					'payload' => 'a',
+				),
+				array(
+					'id'      => 3,
+					'name'    => 'FIRST',
+					'locale'  => 'fr',
+					'payload' => 'different-locale',
+				),
+			),
+			$driver->query( 'SELECT id, name, locale, payload FROM ci_pairs ORDER BY id' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
 
@@ -23869,6 +24056,42 @@ SQL
 		);
 	}
 
+	private function create_wordpress_posts_full_insert_fixture( WP_DuckDB_Driver $driver ): void {
+		$driver->query(
+			"CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+				post_author BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				post_date DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_date_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_content LONGTEXT NOT NULL,
+				post_title TEXT NOT NULL,
+				post_excerpt TEXT NOT NULL,
+				post_status VARCHAR(20) NOT NULL DEFAULT 'publish',
+				comment_status VARCHAR(20) NOT NULL DEFAULT 'open',
+				ping_status VARCHAR(20) NOT NULL DEFAULT 'open',
+				post_password VARCHAR(255) NOT NULL DEFAULT '',
+				post_name VARCHAR(200) NOT NULL DEFAULT '',
+				to_ping TEXT NOT NULL,
+				pinged TEXT NOT NULL,
+				post_modified DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_modified_gmt DATETIME NOT NULL DEFAULT '0000-00-00 00:00:00',
+				post_content_filtered LONGTEXT NOT NULL,
+				post_parent BIGINT(20) UNSIGNED NOT NULL DEFAULT '0',
+				guid VARCHAR(255) NOT NULL DEFAULT '',
+				menu_order INT(11) NOT NULL DEFAULT '0',
+				post_type VARCHAR(20) NOT NULL DEFAULT 'post',
+				post_mime_type VARCHAR(100) NOT NULL DEFAULT '',
+				comment_count BIGINT(20) NOT NULL DEFAULT '0',
+				PRIMARY KEY (ID),
+				KEY post_name (post_name(191)),
+				KEY type_status_date (post_type, post_status, post_date, ID),
+				KEY post_parent (post_parent),
+				KEY post_author (post_author),
+				KEY type_status_author (post_type, post_status, post_author)
+			) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+		);
+	}
+
 	private function create_wordpress_usermeta_auto_increment_insert_fixture( WP_DuckDB_Driver $driver, string $table_name ): void {
 		$driver->query(
 			'CREATE TABLE ' . $table_name . ' (
@@ -23885,6 +24108,76 @@ SQL
 
 	private function wordpress_options_autoload_select_sql(): string {
 		return "SELECT option_name, option_value FROM wptests_options WHERE autoload IN ('yes', 'on', 'auto-on', 'auto')";
+	}
+
+	private function wordpress_posts_wide_insert_sql( array $overrides = array() ): string {
+		$columns = array(
+			'post_author',
+			'post_date',
+			'post_date_gmt',
+			'post_content',
+			'post_content_filtered',
+			'post_title',
+			'post_excerpt',
+			'post_status',
+			'post_type',
+			'comment_status',
+			'ping_status',
+			'post_password',
+			'post_name',
+			'to_ping',
+			'pinged',
+			'post_modified',
+			'post_modified_gmt',
+			'post_parent',
+			'menu_order',
+			'post_mime_type',
+			'guid',
+		);
+		$values  = array_merge(
+			array(
+				'post_author'           => 1,
+				'post_date'             => '2026-01-01 00:00:00',
+				'post_date_gmt'         => '2026-01-01 00:00:00',
+				'post_content'          => 'Body',
+				'post_content_filtered' => '',
+				'post_title'            => 'Title',
+				'post_excerpt'          => '',
+				'post_status'           => 'publish',
+				'post_type'             => 'post',
+				'comment_status'        => 'open',
+				'ping_status'           => 'open',
+				'post_password'         => '',
+				'post_name'             => 'title',
+				'to_ping'               => '',
+				'pinged'                => '',
+				'post_modified'         => '2026-01-01 00:00:00',
+				'post_modified_gmt'     => '2026-01-01 00:00:00',
+				'post_parent'           => 0,
+				'menu_order'            => 0,
+				'post_mime_type'        => '',
+				'guid'                  => '',
+			),
+			$overrides
+		);
+		$numeric = array(
+			'post_author' => true,
+			'post_parent' => true,
+			'menu_order'  => true,
+		);
+
+		$value_sql = array();
+		foreach ( $columns as $column ) {
+			$value_sql[] = isset( $numeric[ $column ] )
+				? (string) $values[ $column ]
+				: $this->mysql_single_quoted_literal( (string) $values[ $column ] );
+		}
+
+		return 'INSERT INTO `wptests_posts` (`'
+			. implode( '`, `', $columns )
+			. '`) VALUES ('
+			. implode( ', ', $value_sql )
+			. ')';
 	}
 
 	private function wordpress_usermeta_cache_load_select_sql( string $id_list = '1', string $table_name = 'wptests_usermeta' ): string {
@@ -24214,6 +24507,17 @@ SQL
 		$count = 0;
 		foreach ( $queries as $query ) {
 			if ( false !== strpos( $query, 'information_schema.tables' ) ) {
+				++$count;
+			}
+		}
+
+		return $count;
+	}
+
+	private function count_duckdb_table_metadata_queries( array $queries ): int {
+		$count = 0;
+		foreach ( $queries as $query ) {
+			if ( false !== strpos( $query, 'FROM "__wp_duckdb_table_metadata"' ) ) {
 				++$count;
 			}
 		}

@@ -15464,6 +15464,27 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Return primary key columns from stored MySQL column metadata.
+	 *
+	 * @param array<int,array<string,mixed>> $metadata_rows Column metadata rows.
+	 * @return string[] Primary key columns in table order.
+	 */
+	private function primary_key_columns_from_column_metadata_rows( array $metadata_rows ): array {
+		$columns = array();
+		foreach ( $metadata_rows as $row ) {
+			if (
+				isset( $row['column_name'] )
+				&& isset( $row['column_key'] )
+				&& 'PRI' === strtoupper( (string) $row['column_key'] )
+			) {
+				$columns[] = (string) $row['column_name'];
+			}
+		}
+
+		return $columns;
+	}
+
+	/**
 	 * Execute ALTER TABLE ... AUTO_INCREMENT = N.
 	 *
 	 * @param string            $table_name Table name.
@@ -18088,6 +18109,12 @@ class WP_DuckDB_Driver {
 			return $this->primary_key_index_rows_cache[ $cache_key ];
 		}
 
+		$rows = $this->primary_key_index_rows_from_constraints( $table_name );
+		if ( null !== $rows ) {
+			$this->primary_key_index_rows_cache[ $cache_key ] = $rows;
+			return $rows;
+		}
+
 		$pragma = $this->execute_duckdb_query(
 			'SELECT name FROM pragma_table_info(' . $this->connection->quote( $table_name ) . ') WHERE pk > 0 ORDER BY pk, cid',
 			'Failed to inspect DuckDB primary key'
@@ -18106,6 +18133,49 @@ class WP_DuckDB_Driver {
 		}
 
 		$this->primary_key_index_rows_cache[ $cache_key ] = $rows;
+		return $rows;
+	}
+
+	/**
+	 * Build SHOW INDEX rows for the primary key from DuckDB constraints metadata.
+	 *
+	 * @param string $table_name Table name.
+	 * @return array<int,array<int,mixed>>|null Rows, or null when the catalog source is unavailable.
+	 */
+	private function primary_key_index_rows_from_constraints( string $table_name ): ?array {
+		try {
+			$stmt = $this->execute_duckdb_query(
+				'SELECT constraint_column_names FROM duckdb_constraints() WHERE table_name = '
+					. $this->connection->quote( $table_name )
+					. " AND constraint_type = 'PRIMARY KEY' ORDER BY constraint_index LIMIT 1",
+				'Failed to inspect DuckDB primary key constraints'
+			);
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			return null;
+		}
+
+		$row = $stmt->fetch( PDO::FETCH_ASSOC );
+		if ( false === $row ) {
+			return array();
+		}
+
+		$column_names = $row['constraint_column_names'] ?? null;
+		if ( ! is_array( $column_names ) ) {
+			return null;
+		}
+
+		$rows = array();
+		foreach ( $column_names as $offset => $column_name ) {
+			$rows[] = $this->show_index_row(
+				$table_name,
+				0,
+				'PRIMARY',
+				$offset + 1,
+				(string) $column_name,
+				null
+			);
+		}
+
 		return $rows;
 	}
 
@@ -22922,28 +22992,48 @@ class WP_DuckDB_Driver {
 	 * @param int               $table_index Index of the table token.
 	 */
 	private function assert_insert_values_do_not_conflict_with_case_insensitive_unique_keys( array $tokens, int $table_index ): void {
-		$insert_shape             = $this->parse_insert_values_shape( $tokens, $table_index, true, true );
+		$insert_shape       = $this->parse_insert_values_shape( $tokens, $table_index, true, true );
+		$unique_column_sets = $this->unique_key_column_sets( $insert_shape['table_name'], $insert_shape['temporary'] );
+		$candidate_row_sets = array();
+
+		foreach ( $insert_shape['rows'] as $row_index => $values_by_column ) {
+			foreach ( $unique_column_sets as $column_set ) {
+				$has_all_values = true;
+				foreach ( $column_set as $column_name ) {
+					if ( ! array_key_exists( strtolower( $column_name ), $values_by_column ) ) {
+						$has_all_values = false;
+						break;
+					}
+				}
+
+				if ( $has_all_values ) {
+					$candidate_row_sets[ $row_index ][] = $column_set;
+				}
+			}
+		}
+
+		if ( count( $candidate_row_sets ) === 0 ) {
+			return;
+		}
+
 		$case_insensitive_columns = $this->case_insensitive_column_names( $insert_shape['table_name'], $insert_shape['temporary'] );
 		if ( count( $case_insensitive_columns ) === 0 ) {
 			return;
 		}
 
-		foreach ( $insert_shape['rows'] as $values_by_column ) {
-			foreach ( $this->unique_key_column_sets( $insert_shape['table_name'], $insert_shape['temporary'] ) as $column_set ) {
-				$has_all_values           = true;
+		foreach ( $candidate_row_sets as $row_index => $column_sets ) {
+			$values_by_column = $insert_shape['rows'][ $row_index ];
+			foreach ( $column_sets as $column_set ) {
 				$has_case_insensitive_key = false;
 				foreach ( $column_set as $column_name ) {
 					$column_key = strtolower( $column_name );
-					if ( ! array_key_exists( $column_key, $values_by_column ) ) {
-						$has_all_values = false;
-						break;
-					}
 					if ( isset( $case_insensitive_columns[ $column_key ] ) ) {
 						$has_case_insensitive_key = true;
+						break;
 					}
 				}
 
-				if ( ! $has_all_values || ! $has_case_insensitive_key ) {
+				if ( ! $has_case_insensitive_key ) {
 					continue;
 				}
 
@@ -24643,11 +24733,31 @@ class WP_DuckDB_Driver {
 			return $this->unique_key_column_sets_cache[ $cache_key ];
 		}
 
-		$sets = array();
-
-		$primary = $this->primary_key_columns_for_table( $table_name );
+		$sets             = array();
+		$metadata_rows    = $this->table_column_metadata_rows( $table_name, $temporary );
+		$metadata_primary = $this->primary_key_columns_from_column_metadata_rows( $metadata_rows );
+		$primary          = 1 === count( $metadata_primary ) ? $metadata_primary : array();
+		if ( count( $primary ) === 0 && ( count( $metadata_rows ) === 0 || count( $metadata_primary ) > 1 ) ) {
+			$primary = $this->primary_key_columns_for_table( $table_name );
+		}
 		if ( count( $primary ) > 0 ) {
 			$sets[] = $primary;
+		}
+
+		$has_secondary_unique_key = false;
+		foreach ( $metadata_rows as $row ) {
+			if (
+				isset( $row['column_key'] )
+				&& 'UNI' === strtoupper( (string) $row['column_key'] )
+			) {
+				$has_secondary_unique_key = true;
+				break;
+			}
+		}
+
+		if ( ! $has_secondary_unique_key ) {
+			$this->unique_key_column_sets_cache[ $cache_key ] = $sets;
+			return $sets;
 		}
 
 		$this->ensure_index_metadata_table( $temporary );
