@@ -18,6 +18,41 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SELECT SUBSTR('abcdef', 2, 3) AS short_substr, SUBSTRING('abcdef', 2, 3) AS long_substring" );
 	}
 
+	public function test_sum_aggregate_results_match_sqlite_and_remain_fetchable(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE aggregate_sums (
+					bucket VARCHAR(20),
+					int_value INT,
+					double_value DOUBLE,
+					decimal_value DECIMAL(26,8)
+				)',
+				"INSERT INTO aggregate_sums (bucket, int_value, double_value, decimal_value) VALUES
+					('a', 1, 1.25, 1.25000000),
+					('a', 2, 2.50, 2.50000000),
+					('a', 2, 2.50, 2.50000000),
+					('b', 4, 4.75, 4.75000000)",
+			)
+		);
+
+		$this->assertParityRows(
+			'SELECT SUM(int_value) AS total_int,
+				SUM(DISTINCT int_value) AS distinct_int,
+				SUM(double_value) AS total_double,
+				SUM(decimal_value) AS total_decimal,
+				SUM(DISTINCT decimal_value) AS distinct_decimal
+			FROM aggregate_sums'
+		);
+		$this->assertParityRows(
+			'SELECT bucket,
+				SUM(int_value) AS total_int,
+				SUM(decimal_value) AS total_decimal
+			FROM aggregate_sums
+			GROUP BY bucket
+			ORDER BY total_int DESC, bucket ASC'
+		);
+	}
+
 	public function test_select_date_time_literal_functions_match_sqlite(): void {
 		foreach (
 			array(
@@ -6593,6 +6628,174 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_woocommerce_lookup_table_schema_metadata_matches_sqlite(): void {
+		$this->create_woocommerce_parity_schema();
+
+		foreach (
+			array(
+				'SHOW FULL COLUMNS FROM wp_wc_product_meta_lookup',
+				'SHOW FULL COLUMNS FROM wp_wc_order_stats',
+				'SHOW FULL COLUMNS FROM wp_woocommerce_downloadable_product_permissions',
+				'SHOW INDEX FROM wp_wc_product_meta_lookup WHERE key_name IN (\'PRIMARY\', \'sku\', \'min_max_price\')',
+				"SHOW INDEX FROM wp_woocommerce_downloadable_product_permissions WHERE column_name = 'order_id' AND key_name = 'order_id'",
+				"SHOW INDEX FROM wp_woocommerce_downloadable_product_permissions WHERE key_name = 'idx_user_email'",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+
+		$this->assertParityRows(
+			"SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, NUMERIC_PRECISION, NUMERIC_SCALE, COLUMN_DEFAULT, IS_NULLABLE
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+				AND table_name IN (
+					'wp_wc_product_meta_lookup',
+					'wp_wc_order_stats',
+					'wp_wc_order_product_lookup',
+					'wp_woocommerce_downloadable_product_permissions',
+					'wp_wc_rate_limits'
+				)
+			ORDER BY TABLE_NAME, ORDINAL_POSITION"
+		);
+		$this->assertParityRows(
+			"SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SEQ_IN_INDEX, CARDINALITY, SUB_PART, NULLABLE
+			FROM information_schema.statistics
+			WHERE table_schema = 'wp'
+				AND table_name IN (
+					'wp_wc_product_meta_lookup',
+					'wp_wc_order_stats',
+					'wp_wc_order_product_lookup',
+					'wp_woocommerce_downloadable_product_permissions',
+					'wp_wc_rate_limits'
+				)
+			ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
+		);
+	}
+
+	public function test_woocommerce_lookup_queries_match_sqlite(): void {
+		$this->create_woocommerce_parity_schema();
+		$this->runParitySetup(
+			array(
+				"INSERT INTO wp_posts (ID, post_type, post_status, post_modified_gmt, post_title) VALUES
+					(1, 'product', 'publish', '2024-02-01 10:00:00', 'Alpha product'),
+					(2, 'product', 'publish', '2024-02-02 10:00:00', 'Bravo product'),
+					(3, 'product_variation', 'draft', '2024-02-03 10:00:00', 'Draft variation'),
+					(100, 'shop_order', 'wc-completed', '2024-02-05 10:00:00', 'Order 100')",
+				"INSERT INTO wp_postmeta (meta_id, post_id, meta_key, meta_value) VALUES
+					(1, 1, '_low_stock_amount', '5'),
+					(2, 2, '_low_stock_amount', ''),
+					(3, 3, '_low_stock_amount', '1')",
+				"INSERT INTO wp_wc_product_meta_lookup
+					(product_id, sku, global_unique_id, `virtual`, `downloadable`, min_price, max_price,
+						onsale, stock_quantity, stock_status, rating_count, average_rating, total_sales,
+						tax_status, tax_class)
+				VALUES
+					(1, 'ABC-1', 'gid-1', 1, 0, 10.0000, 20.0000, 1, 4, 'instock', 2, 4.50, 12, 'taxable', ''),
+					(2, 'XYZ-2', 'gid-2', 0, 1, 12.5000, 18.0000, 0, 6, 'outofstock', 1, 3.75, 4, 'taxable', 'reduced-rate'),
+					(3, 'DRAFT-3', 'gid-3', 0, 0, NULL, NULL, 0, 1, 'instock', 0, 0.00, 0, 'taxable', '')",
+				"INSERT INTO wp_wc_order_stats
+					(order_id, parent_id, date_created, date_created_gmt, date_paid, date_completed,
+						num_items_sold, total_sales, tax_total, shipping_total, net_total,
+						returning_customer, status, customer_id)
+				VALUES
+					(100, 0, '2024-02-01 09:00:00', '2024-02-01 09:00:00', '2024-02-01 09:05:00', NULL, 3, 30.00000000, 0, 0, 25.00000000, 0, 'wc-completed', 7),
+					(101, 0, '2024-02-02 09:00:00', '2024-02-02 09:00:00', '2024-02-02 09:05:00', NULL, 1, 15.00000000, 0, 0, 15.00000000, 1, 'wc-processing', 8),
+					(102, 0, '2024-02-03 09:00:00', '2024-02-03 09:00:00', NULL, NULL, 1, 100.00000000, 0, 0, 100.00000000, 1, 'wc-cancelled', 7)",
+				"INSERT INTO wp_wc_order_product_lookup
+					(order_item_id, order_id, product_id, variation_id, customer_id, date_created,
+						product_qty, product_net_revenue, product_gross_revenue, coupon_amount,
+						tax_amount, shipping_amount, shipping_tax_amount)
+				VALUES
+					(1001, 100, 1, 0, 7, '2024-02-01 09:00:00', 2, 24.50000000, 30.00000000, 0, 0, 0, 0),
+					(1002, 100, 2, 0, 7, '2024-02-01 09:00:00', 1, 5.50000000, 8.00000000, 0, 0, 0, 0),
+					(1003, 101, 1, 0, 8, '2024-02-02 09:00:00', 1, 15.00000000, 15.00000000, 0, 0, 0, 0),
+					(1004, 102, 1, 0, 7, '2024-02-03 09:00:00', 1, 100.00000000, 100.00000000, 0, 0, 0, 0)",
+				"INSERT INTO wp_wc_orders (id, status, type, date_updated_gmt) VALUES
+					(100, 'wc-completed', 'shop_order', '2024-02-05 10:00:00'),
+					(101, 'wc-processing', 'shop_order', '2024-02-06 10:00:00'),
+					(102, 'auto-draft', 'shop_order', '2024-02-07 10:00:00')",
+				"INSERT INTO wp_wc_orders_meta (id, order_id, meta_key, meta_value) VALUES
+					(1, 100, '_deleted_from', 'orders'),
+					(2, 101, '_deleted_from', 'posts'),
+					(3, 101, '_keep', 'yes')",
+				"INSERT INTO wp_woocommerce_downloadable_product_permissions
+					(permission_id, download_id, product_id, order_id, order_key, user_email, user_id,
+						downloads_remaining, access_granted, access_expires, download_count)
+				VALUES
+					(1, 'download-alpha', 1, 100, 'order-key-100', 'ada@example.com', 7, '3', '2024-02-01 09:10:00', NULL, 0),
+					(2, 'download-bravo', 2, 100, 'order-key-100', 'ada@example.com', 7, '', '2024-02-01 09:10:00', '2026-01-01 00:00:00', 1),
+					(3, 'download-charlie', 1, 101, 'order-key-101', 'grace@example.com', 8, '1', '2024-02-02 09:10:00', NULL, 0)",
+			)
+		);
+
+		$this->assertParityRowCount(
+			'INSERT IGNORE INTO wp_wc_product_meta_lookup (product_id, sku)
+			SELECT ID, post_title FROM wp_posts WHERE ID = 1'
+		);
+		$this->assertParityRows(
+			"SELECT wp_posts.ID, meta.meta_value AS low_stock_amount, wc_product_meta_lookup.stock_quantity
+			FROM wp_wc_product_meta_lookup wc_product_meta_lookup
+			LEFT JOIN wp_posts ON wp_posts.ID = wc_product_meta_lookup.product_id
+			LEFT JOIN wp_postmeta AS meta
+				ON wp_posts.ID = meta.post_id
+				AND meta.meta_key = '_low_stock_amount'
+			WHERE wp_posts.post_type IN ('product', 'product_variation')
+				AND wp_posts.post_status = 'publish'
+				AND wc_product_meta_lookup.stock_quantity IS NOT NULL
+				AND wc_product_meta_lookup.stock_status IN('instock', 'outofstock')
+				AND (
+					(
+						meta.meta_value > ''
+						AND wc_product_meta_lookup.stock_quantity <= CAST(meta.meta_value AS SIGNED)
+					)
+					OR (
+						(meta.meta_value IS NULL OR meta.meta_value <= '')
+						AND wc_product_meta_lookup.stock_quantity <= 6
+					)
+				)
+			ORDER BY wc_product_meta_lookup.product_id DESC LIMIT 0, 20"
+		);
+		$this->assertParityRows(
+			"SELECT product_id,
+				SUM(product_qty) AS items_sold,
+				SUM(product_net_revenue) AS net_revenue,
+				COUNT(DISTINCT wp_wc_order_product_lookup.order_id) AS orders_count
+			FROM wp_wc_order_product_lookup
+			JOIN wp_wc_order_stats
+				ON wp_wc_order_product_lookup.order_id = wp_wc_order_stats.order_id
+			WHERE wp_wc_order_stats.status IN ('wc-completed', 'wc-processing')
+				AND wp_wc_order_product_lookup.date_created >= '2024-02-01 00:00:00'
+			GROUP BY product_id
+			ORDER BY net_revenue DESC, product_id ASC LIMIT 10"
+		);
+		$this->assertParityRows(
+			"SELECT orders.id
+			FROM wp_posts posts
+			RIGHT JOIN wp_wc_orders orders ON posts.ID = orders.id
+			WHERE (posts.post_type IS NULL OR posts.post_type = 'shop_order_placehold')
+				AND orders.status NOT IN ('auto-draft')
+				AND orders.type IN ('shop_order')
+			ORDER BY orders.id ASC"
+		);
+		$this->assertParityRows(
+			"SELECT permission_id, download_id
+			FROM wp_woocommerce_downloadable_product_permissions
+			WHERE user_email = 'ada@example.com'
+				AND order_id = 100
+				AND order_key = 'order-key-100'
+				AND product_id = 1
+			ORDER BY permission_id ASC LIMIT 20"
+		);
+
+		$this->assertParityRowCount(
+			"DELETE m FROM wp_wc_orders_meta m
+			INNER JOIN wp_wc_orders o ON m.order_id = o.id
+			WHERE o.status = 'wc-processing'
+				AND m.meta_key = '_deleted_from'"
+		);
+		$this->assertParityRows( 'SELECT id, order_id, meta_key, meta_value FROM wp_wc_orders_meta ORDER BY id' );
+	}
+
 	public function test_information_schema_constraint_metadata_matches_sqlite(): void {
 		$this->assertParityRows(
 			"SELECT COUNT(*) AS count
@@ -7752,6 +7955,144 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			array( 'Table', 'Non_unique', 'Key_name', 'Seq_in_index', 'Column_name', 'Sub_part' )
 		);
 		$this->assertParityRows( 'SHOW CREATE TABLE ddl_drop_pk_shadow' );
+	}
+
+	private function create_woocommerce_parity_schema(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_type VARCHAR(20) NOT NULL DEFAULT \'\',
+					post_status VARCHAR(20) NOT NULL DEFAULT \'\',
+					post_modified_gmt DATETIME NULL,
+					post_title TEXT NOT NULL,
+					PRIMARY KEY (ID),
+					KEY type_status (post_type, post_status)
+				)',
+				'CREATE TABLE wp_postmeta (
+					meta_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					post_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					meta_key VARCHAR(255) DEFAULT NULL,
+					meta_value LONGTEXT,
+					PRIMARY KEY (meta_id),
+					KEY post_id (post_id),
+					KEY meta_key (meta_key(191))
+				)',
+				'CREATE TABLE wp_wc_product_meta_lookup (
+					`product_id` BIGINT(20) NOT NULL,
+					`sku` VARCHAR(100) NULL DEFAULT \'\',
+					`global_unique_id` VARCHAR(100) NULL DEFAULT \'\',
+					`virtual` TINYINT(1) NULL DEFAULT 0,
+					`downloadable` TINYINT(1) NULL DEFAULT 0,
+					`min_price` DECIMAL(19,4) NULL DEFAULT NULL,
+					`max_price` DECIMAL(19,4) NULL DEFAULT NULL,
+					`onsale` TINYINT(1) NULL DEFAULT 0,
+					`stock_quantity` DOUBLE NULL DEFAULT NULL,
+					`stock_status` VARCHAR(100) NULL DEFAULT \'instock\',
+					`rating_count` BIGINT(20) NULL DEFAULT 0,
+					`average_rating` DECIMAL(3,2) NULL DEFAULT 0.00,
+					`total_sales` BIGINT(20) NULL DEFAULT 0,
+					`tax_status` VARCHAR(100) NULL DEFAULT \'taxable\',
+					`tax_class` VARCHAR(100) NULL DEFAULT \'\',
+					PRIMARY KEY (`product_id`),
+					KEY `virtual` (`virtual`),
+					KEY `downloadable` (`downloadable`),
+					KEY `stock_status` (`stock_status`),
+					KEY `stock_quantity` (`stock_quantity`),
+					KEY `onsale` (`onsale`),
+					KEY min_max_price (`min_price`, `max_price`),
+					KEY sku (sku(50))
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'CREATE TABLE wp_wc_order_stats (
+					order_id BIGINT(20) UNSIGNED NOT NULL,
+					parent_id BIGINT(20) UNSIGNED DEFAULT 0 NOT NULL,
+					date_created DATETIME DEFAULT \'0000-00-00 00:00:00\' NOT NULL,
+					date_created_gmt DATETIME DEFAULT \'0000-00-00 00:00:00\' NOT NULL,
+					date_paid DATETIME DEFAULT \'0000-00-00 00:00:00\',
+					date_completed DATETIME DEFAULT \'0000-00-00 00:00:00\',
+					num_items_sold INT(11) DEFAULT 0 NOT NULL,
+					total_sales DOUBLE DEFAULT 0 NOT NULL,
+					tax_total DOUBLE DEFAULT 0 NOT NULL,
+					shipping_total DOUBLE DEFAULT 0 NOT NULL,
+					net_total DOUBLE DEFAULT 0 NOT NULL,
+					returning_customer TINYINT(1) DEFAULT NULL,
+					status VARCHAR(20) NOT NULL,
+					customer_id BIGINT(20) UNSIGNED NOT NULL,
+					PRIMARY KEY (order_id),
+					KEY date_created (date_created),
+					KEY customer_id (customer_id),
+					KEY status (status),
+					KEY idx_date_paid_status_parent (date_paid, status, parent_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'CREATE TABLE wp_wc_order_product_lookup (
+					order_item_id BIGINT(20) UNSIGNED NOT NULL,
+					order_id BIGINT(20) UNSIGNED NOT NULL,
+					product_id BIGINT(20) UNSIGNED NOT NULL,
+					variation_id BIGINT(20) UNSIGNED NOT NULL,
+					customer_id BIGINT(20) UNSIGNED NULL,
+					date_created DATETIME DEFAULT \'0000-00-00 00:00:00\' NOT NULL,
+					product_qty INT(11) NOT NULL,
+					product_net_revenue DOUBLE DEFAULT 0 NOT NULL,
+					product_gross_revenue DOUBLE DEFAULT 0 NOT NULL,
+					coupon_amount DOUBLE DEFAULT 0 NOT NULL,
+					tax_amount DOUBLE DEFAULT 0 NOT NULL,
+					shipping_amount DOUBLE DEFAULT 0 NOT NULL,
+					shipping_tax_amount DOUBLE DEFAULT 0 NOT NULL,
+					PRIMARY KEY (order_item_id, order_id),
+					KEY order_id (order_id),
+					KEY product_id (product_id),
+					KEY customer_id (customer_id),
+					KEY date_created (date_created),
+					KEY customer_product_date (customer_id, product_id, date_created)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'CREATE TABLE wp_woocommerce_downloadable_product_permissions (
+					permission_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					download_id VARCHAR(36) NOT NULL,
+					product_id BIGINT(20) UNSIGNED NOT NULL,
+					order_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					order_key VARCHAR(200) NOT NULL,
+					user_email VARCHAR(200) NOT NULL,
+					user_id BIGINT(20) UNSIGNED NULL,
+					downloads_remaining VARCHAR(9) NULL,
+					access_granted DATETIME NOT NULL DEFAULT \'0000-00-00 00:00:00\',
+					access_expires DATETIME NULL DEFAULT NULL,
+					download_count BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+					PRIMARY KEY (permission_id),
+					KEY download_order_key_product (product_id, order_id, order_key(16), download_id),
+					KEY download_order_product (download_id, order_id, product_id),
+					KEY order_id (order_id),
+					KEY user_order_remaining_expires (user_id, order_id, downloads_remaining, access_expires),
+					KEY idx_user_email (user_email(100))
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'CREATE TABLE wp_wc_rate_limits (
+					rate_limit_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					rate_limit_key VARCHAR(200) NOT NULL,
+					rate_limit_expiry BIGINT(20) UNSIGNED NOT NULL,
+					rate_limit_remaining SMALLINT(10) NOT NULL DEFAULT \'0\',
+					PRIMARY KEY (rate_limit_id),
+					UNIQUE KEY rate_limit_key (rate_limit_key(191))
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'CREATE TABLE wp_wc_orders (
+					id BIGINT(20) UNSIGNED NOT NULL,
+					status VARCHAR(20) NULL,
+					type VARCHAR(20) NULL,
+					date_updated_gmt DATETIME NULL,
+					PRIMARY KEY (id),
+					KEY status (status),
+					KEY type_status_date (type, status, date_updated_gmt),
+					KEY date_updated (date_updated_gmt)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'CREATE TABLE wp_wc_orders_meta (
+					id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					order_id BIGINT(20) UNSIGNED NULL,
+					meta_key VARCHAR(255),
+					meta_value TEXT NULL,
+					PRIMARY KEY (id),
+					KEY meta_key_value (meta_key(50), meta_value(20)),
+					KEY order_id_meta_key_meta_value (order_id, meta_key(100), meta_value(20))
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+			)
+		);
 	}
 
 	private function create_temporal_write_table( string $table_name, string $nullability = 'NULL', array $extra_definitions = array() ): void {

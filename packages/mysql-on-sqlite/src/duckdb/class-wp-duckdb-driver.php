@@ -19594,13 +19594,45 @@ class WP_DuckDB_Driver {
 	 * Build SHOW INDEX-compatible rows for all indexes on a table.
 	 *
 	 * @param string $table_name Table name.
+	 * @param bool   $temporary  Whether to inspect the temporary metadata table.
 	 * @return array<int,array<int,mixed>>
 	 */
 	private function index_rows_for_table( string $table_name, bool $temporary = false ): array {
-		return array_merge(
+		$rows = array_merge(
 			$this->primary_key_index_rows( $table_name, $temporary ),
 			$this->secondary_index_rows( $table_name, $temporary )
 		);
+
+		return $this->show_index_rows_with_column_metadata( $table_name, $temporary, $rows );
+	}
+
+	/**
+	 * Fill SHOW INDEX fields that depend on column metadata.
+	 *
+	 * @param string                 $table_name Table name.
+	 * @param bool                   $temporary  Whether to inspect the temporary metadata table.
+	 * @param array<int,array<int,mixed>> $rows       SHOW INDEX rows.
+	 * @return array<int,array<int,mixed>>
+	 */
+	private function show_index_rows_with_column_metadata( string $table_name, bool $temporary, array $rows ): array {
+		if ( count( $rows ) === 0 ) {
+			return $rows;
+		}
+
+		$nullable_by_column = $this->statistics_nullable_by_column( $table_name, $temporary );
+		foreach ( $rows as &$row ) {
+			$key_name    = (string) $row[2];
+			$column_name = null === $row[4] ? null : (string) $row[4];
+
+			$row[6] = 0;
+			$row[9] = '';
+			if ( 'PRIMARY' !== $key_name && null !== $column_name ) {
+				$row[9] = $nullable_by_column[ strtolower( $column_name ) ] ?? '';
+			}
+		}
+		unset( $row );
+
+		return $rows;
 	}
 
 	/**
@@ -22257,6 +22289,22 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$sum_function = $this->translate_fetchable_sum_function_call(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $sum_function ) {
+				$pieces[] = $sum_function;
+				continue;
+			}
+
 			if (
 				WP_MySQL_Lexer::NOT_SYMBOL === $token->id
 				&& isset( $tokens[ $index + 1 ], $tokens[ $index + 2 ] )
@@ -23245,6 +23293,59 @@ class WP_DuckDB_Driver {
 				$rewrite_information_schema_check_constraints
 			)
 			. ') AS BIGINT)';
+	}
+
+	/**
+	 * Translate SUM() to a PHP-client-fetchable result type.
+	 *
+	 * DuckDB promotes some integer SUM() results to HUGEINT, which the PHP
+	 * client refuses without bcmath. MySQL/wpdb exposes ordinary plugin report
+	 * sums as fetchable scalars, so keep the SQL numeric while avoiding HUGEINT.
+	 *
+	 * @param WP_Parser_Token[] $tokens MySQL tokens.
+	 * @param int               $index  Current token index, advanced on match.
+	 * @return string|null DuckDB SQL, or null when the token does not start SUM().
+	 */
+	private function translate_fetchable_sum_function_call(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		if (
+			! isset( $tokens[ $index + 1 ] )
+			|| $this->is_non_identifier_token( $tokens[ $index ] )
+			|| 0 !== strcasecmp( $tokens[ $index ]->get_value(), 'SUM' )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$items     = $this->split_top_level_comma_items( $body );
+		if ( 1 !== count( $items ) ) {
+			return null;
+		}
+
+		$index = $end_index - 1;
+		return 'CAST(SUM('
+			. $this->translate_tokens_to_duckdb_sql(
+				$items[0],
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			)
+			. ') AS DOUBLE)';
 	}
 
 	/**
@@ -34226,8 +34327,8 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<string,string> Nullability keyed by lowercase column name.
 	 */
-	private function statistics_nullable_by_column( string $table_name ): array {
-		$metadata_rows = $this->column_metadata_rows( $table_name );
+	private function statistics_nullable_by_column( string $table_name, bool $temporary = false ): array {
+		$metadata_rows = $this->column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata_rows ) === 0 ) {
 			$metadata_rows = $this->pragma_column_metadata_rows( $table_name );
 		}
