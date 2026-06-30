@@ -26667,7 +26667,8 @@ class WP_DuckDB_Driver {
 	 * @return string|null Translated comparison, or null when the pattern does not match.
 	 */
 	private function translate_text_value_numeric_literal_comparison( array $tokens, int &$index ): ?string {
-		$left_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index );
+		$has_leading_boundary = $this->text_value_numeric_comparison_has_leading_boundary( $tokens, $index );
+		$left_operand         = $has_leading_boundary ? $this->text_value_numeric_comparison_operand_sql( $tokens, $index ) : null;
 		if ( null !== $left_operand ) {
 			$operator_index = $left_operand['next_index'];
 			$literal        = $this->text_value_numeric_comparison_value_sql( $tokens, $operator_index + 1 );
@@ -26705,7 +26706,8 @@ class WP_DuckDB_Driver {
 		}
 
 		if (
-			isset( $tokens[ $index + 2 ] )
+			$has_leading_boundary
+			&& isset( $tokens[ $index + 2 ] )
 		) {
 			$literal        = $this->text_value_numeric_comparison_value_sql( $tokens, $index );
 			$operator_index = null === $literal ? null : $literal['end_index'] + 1;
@@ -27049,10 +27051,6 @@ class WP_DuckDB_Driver {
 			isset( $tokens[ $end_index + 2 ] )
 			&& $this->is_numeric_arithmetic_operator_token( $tokens[ $end_index + 1 ] )
 		) {
-			if ( $operator_count > 0 ) {
-				return null;
-			}
-
 			$right = $this->numeric_constant_arithmetic_operand_sql( $tokens, $end_index + 2 );
 			if ( null === $right ) {
 				return null;
@@ -27259,6 +27257,37 @@ class WP_DuckDB_Driver {
 	 */
 	private function text_value_numeric_comparison_has_boundary( array $tokens, int $index ): bool {
 		return ! isset( $tokens[ $index ] ) || $this->is_text_value_numeric_comparison_boundary_token( $tokens[ $index ] );
+	}
+
+	/**
+	 * Check whether a text-value numeric predicate starts at an expression boundary.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Predicate start token index.
+	 * @return bool Whether the previous token can precede a standalone predicate.
+	 */
+	private function text_value_numeric_comparison_has_leading_boundary( array $tokens, int $index ): bool {
+		if ( ! isset( $tokens[ $index - 1 ] ) ) {
+			return true;
+		}
+
+		return in_array(
+			$tokens[ $index - 1 ]->id,
+			array(
+				WP_MySQL_Lexer::SELECT_SYMBOL,
+				WP_MySQL_Lexer::COMMA_SYMBOL,
+				WP_MySQL_Lexer::WHERE_SYMBOL,
+				WP_MySQL_Lexer::ON_SYMBOL,
+				WP_MySQL_Lexer::AND_SYMBOL,
+				WP_MySQL_Lexer::XOR_SYMBOL,
+				WP_MySQL_Lexer::OR_SYMBOL,
+				WP_MySQL_Lexer::OPEN_PAR_SYMBOL,
+				WP_MySQL_Lexer::HAVING_SYMBOL,
+				WP_MySQL_Lexer::WHEN_SYMBOL,
+				WP_MySQL_Lexer::THEN_SYMBOL,
+			),
+			true
+		);
 	}
 
 	/**

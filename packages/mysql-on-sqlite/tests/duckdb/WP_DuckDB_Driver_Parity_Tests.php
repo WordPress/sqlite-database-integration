@@ -2538,6 +2538,81 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_chained_constant_expression_in_list_items_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_chained_expression_in_postmeta (
+					meta_id BIGINT(20) UNSIGNED NOT NULL,
+					post_id BIGINT(20) UNSIGNED NOT NULL,
+					meta_value LONGTEXT,
+					PRIMARY KEY (meta_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_chained_expression_in_postmeta (meta_id, post_id, meta_value) VALUES
+					(1, 1, '10'),
+					(2, 1, '11'),
+					(3, 2, '13'),
+					(4, 2, 'abc'),
+					(5, 3, NULL),
+					(6, 3, '6')",
+				'CREATE TABLE wp_chained_expression_in_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL,
+					option_value LONGTEXT,
+					PRIMARY KEY (option_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_chained_expression_in_options (option_id, option_value) VALUES
+					(1, '13'),
+					(2, 'abc'),
+					(3, NULL),
+					(4, '10.5')",
+				'CREATE TABLE wp_chained_expression_in_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_parent BIGINT(20) UNSIGNED NOT NULL,
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'INSERT INTO wp_chained_expression_in_posts (ID, post_parent) VALUES
+					(1, 0),
+					(2, 11),
+					(3, 13),
+					(4, 6)',
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_chained_expression_in_postmeta
+			WHERE meta_value IN (10 + 1 + 2, 'abc')
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_chained_expression_in_postmeta
+			WHERE meta_value NOT IN (10 + 1 + 2, 'abc')
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT option_id
+			FROM wp_chained_expression_in_options
+			WHERE option_value IN (10 + 1 + 2, NULL, 'abc')
+			ORDER BY option_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_chained_expression_in_posts
+			WHERE post_parent IN (1 + 2 + 8, 'bad')
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_chained_expression_in_posts
+			WHERE post_parent NOT IN (1 + 2 + 8, 'bad')
+			ORDER BY ID"
+		);
+	}
+
 	public function test_constant_expression_between_bounds_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -2649,6 +2724,82 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
 	}
 
+	public function test_chained_constant_expression_between_bounds_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_chained_expression_between_postmeta (
+					meta_id BIGINT(20) UNSIGNED NOT NULL,
+					post_id BIGINT(20) UNSIGNED NOT NULL,
+					meta_value LONGTEXT,
+					PRIMARY KEY (meta_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_chained_expression_between_postmeta (meta_id, post_id, meta_value) VALUES
+					(1, 1, '10'),
+					(2, 1, '11'),
+					(3, 2, '13'),
+					(4, 2, 'abc'),
+					(5, 3, NULL),
+					(6, 3, '6')",
+				'CREATE TABLE wp_chained_expression_between_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL,
+					option_value LONGTEXT,
+					PRIMARY KEY (option_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_chained_expression_between_options (option_id, option_value) VALUES
+					(1, '10'),
+					(2, '11'),
+					(3, '13'),
+					(4, 'abc'),
+					(5, NULL)",
+				'CREATE TABLE wp_chained_expression_between_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_parent BIGINT(20) UNSIGNED NOT NULL,
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'INSERT INTO wp_chained_expression_between_posts (ID, post_parent) VALUES
+					(1, 0),
+					(2, 11),
+					(3, 13),
+					(4, 6)',
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_chained_expression_between_postmeta
+			WHERE meta_value BETWEEN 10 + 1 + 2 AND 'abc'
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_chained_expression_between_postmeta
+			WHERE meta_value NOT BETWEEN 10 + 1 + 2 AND 'abc'
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT option_id
+			FROM wp_chained_expression_between_options
+			WHERE option_value BETWEEN '10' AND 10 + 1 + 2
+			ORDER BY option_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_chained_expression_between_posts
+			WHERE post_parent BETWEEN 1 + 2 + 8 AND 'bad'
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_chained_expression_between_posts
+			WHERE post_parent NOT BETWEEN 1 + 2 + 8 AND 'bad'
+			ORDER BY ID"
+		);
+	}
+
 	public function test_constant_expression_text_value_scalar_comparisons_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
@@ -2703,6 +2854,62 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			'SELECT SQL_CALC_FOUND_ROWS meta_id
 			FROM wp_expression_scalar_postmeta
 			WHERE meta_value < 10 + 1
+			ORDER BY meta_id
+			LIMIT 10'
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+	}
+
+	public function test_chained_constant_expression_text_value_scalar_comparisons_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_chained_expression_scalar_postmeta (
+					meta_id BIGINT(20) UNSIGNED NOT NULL,
+					post_id BIGINT(20) UNSIGNED NOT NULL,
+					meta_value LONGTEXT,
+					PRIMARY KEY (meta_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_chained_expression_scalar_postmeta (meta_id, post_id, meta_value) VALUES
+					(1, 1, '10'),
+					(2, 1, '11'),
+					(3, 2, '13'),
+					(4, 2, 'abc'),
+					(5, 3, NULL),
+					(6, 3, '6'),
+					(7, 4, '10.5')",
+				'CREATE TABLE wp_chained_expression_scalar_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL,
+					option_value LONGTEXT,
+					PRIMARY KEY (option_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_chained_expression_scalar_options (option_id, option_value) VALUES
+					(1, '10'),
+					(2, '11'),
+					(3, '13'),
+					(4, 'abc'),
+					(5, NULL),
+					(6, '10.5')",
+			)
+		);
+
+		foreach (
+			array(
+				'SELECT meta_id FROM wp_chained_expression_scalar_postmeta WHERE meta_value = 10 + 1 + 2 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_chained_expression_scalar_postmeta WHERE meta_value <> 10 + 1 + 2 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_chained_expression_scalar_postmeta WHERE meta_value < 10 + 1 + 2 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_chained_expression_scalar_postmeta WHERE 10 + 1 + 2 = meta_value ORDER BY meta_id',
+				'SELECT meta_id FROM wp_chained_expression_scalar_postmeta WHERE 10 + 1 + 2 < meta_value ORDER BY meta_id',
+				'SELECT option_id FROM wp_chained_expression_scalar_options WHERE option_value < 10 + 1 + 2 ORDER BY option_id',
+				'SELECT option_id FROM wp_chained_expression_scalar_options WHERE option_value = 10.50 + 0 + 0 ORDER BY option_id',
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+
+		$this->assertParityRows(
+			'SELECT SQL_CALC_FOUND_ROWS meta_id
+			FROM wp_chained_expression_scalar_postmeta
+			WHERE 10 + 1 + 2 < meta_value
 			ORDER BY meta_id
 			LIMIT 10'
 		);
