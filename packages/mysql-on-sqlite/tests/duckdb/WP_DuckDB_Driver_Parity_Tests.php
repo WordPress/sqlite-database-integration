@@ -1707,7 +1707,16 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 					(10, 0, 'user_age', 'abc'),
 					(11, 1, 'user_age', '10'),
 					(12, 2, 'user_age', '2'),
-					(13, 1, 'empty_age', NULL)",
+					(13, 1, 'empty_age', NULL),
+					(14, 1, 'numeric_prefix', '10abc'),
+					(15, 1, 'numeric_prefix', ' 11x'),
+					(16, 1, 'numeric_prefix', '-2.5z'),
+					(17, 1, 'numeric_prefix', '+3e2tail'),
+					(18, 1, 'numeric_prefix', '.75q'),
+					(19, 1, 'numeric_prefix', 'abc'),
+					(20, 1, 'numeric_prefix', ''),
+					(21, 1, 'numeric_prefix', '0x10'),
+					(22, 1, 'numeric_prefix', NULL)",
 				'CREATE TABLE wp_found_rows_nullable_ids (
 					ID BIGINT(20),
 					label VARCHAR(20)
@@ -1758,6 +1767,34 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			'SELECT meta_value + 0 AS coerced
 			FROM wp_found_rows_coercion_usermeta
 			WHERE umeta_id = 13'
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id, meta_value + 0 AS coerced
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix'
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value IS NOT NULL
+			ORDER BY meta_value + 0 ASC, umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND CAST(meta_value AS SIGNED) LIKE '10%'
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND CAST(meta_value AS SIGNED) NOT LIKE '10%'
+			ORDER BY umeta_id"
 		);
 
 		$this->assertParityRows(

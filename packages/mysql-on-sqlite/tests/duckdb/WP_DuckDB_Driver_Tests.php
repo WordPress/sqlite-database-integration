@@ -1667,11 +1667,15 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				(4, 1, 'num', 'abc'),
 				(5, 1, 'num', '10.50'),
 				(6, 1, 'num', '-7'),
-				(7, 1, 'num', NULL)"
+				(7, 1, 'num', NULL),
+				(8, 1, 'num', '10abc'),
+				(9, 1, 'num', '10.50x'),
+				(10, 1, 'num', ' 11x'),
+				(11, 1, 'num', '')"
 		);
 
 		$this->assertSame(
-			array( array( 'meta_id' => 1 ), array( 'meta_id' => 2 ), array( 'meta_id' => 5 ) ),
+			array( array( 'meta_id' => 1 ), array( 'meta_id' => 2 ), array( 'meta_id' => 5 ), array( 'meta_id' => 8 ), array( 'meta_id' => 9 ) ),
 			$driver->query(
 				"SELECT meta_id
 				FROM wptests_postmeta
@@ -1692,7 +1696,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$this->assertSame(
-			array( array( 'meta_id' => 1 ), array( 'meta_id' => 2 ), array( 'meta_id' => 5 ) ),
+			array( array( 'meta_id' => 1 ), array( 'meta_id' => 2 ), array( 'meta_id' => 5 ), array( 'meta_id' => 8 ), array( 'meta_id' => 9 ) ),
 			$driver->query(
 				"SELECT meta_id
 				FROM wptests_postmeta
@@ -1702,7 +1706,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$this->assertSame(
-			array( array( 'meta_id' => 5 ) ),
+			array( array( 'meta_id' => 5 ), array( 'meta_id' => 9 ) ),
 			$driver->query(
 				"SELECT meta_id
 				FROM wptests_postmeta
@@ -1712,7 +1716,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$this->assertSame(
-			array( array( 'meta_id' => 3 ), array( 'meta_id' => 4 ), array( 'meta_id' => 6 ) ),
+			array( array( 'meta_id' => 3 ), array( 'meta_id' => 4 ), array( 'meta_id' => 6 ), array( 'meta_id' => 10 ), array( 'meta_id' => 11 ) ),
 			$driver->query(
 				"SELECT meta_id
 				FROM wptests_postmeta
@@ -1732,7 +1736,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			)->fetchAll( PDO::FETCH_ASSOC )
 		);
 		$this->assertSame(
-			array( array( 'found_rows' => 3 ) ),
+			array( array( 'found_rows' => 5 ) ),
 			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
 	}
@@ -2424,7 +2428,16 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				(10, 0, 'user_age', 'abc'),
 				(11, 1, 'user_age', '10'),
 				(12, 2, 'user_age', '2'),
-				(13, 1, 'empty_age', NULL)"
+				(13, 1, 'empty_age', NULL),
+				(14, 1, 'numeric_prefix', '10abc'),
+				(15, 1, 'numeric_prefix', ' 11x'),
+				(16, 1, 'numeric_prefix', '-2.5z'),
+				(17, 1, 'numeric_prefix', '+3e2tail'),
+				(18, 1, 'numeric_prefix', '.75q'),
+				(19, 1, 'numeric_prefix', 'abc'),
+				(20, 1, 'numeric_prefix', ''),
+				(21, 1, 'numeric_prefix', '0x10'),
+				(22, 1, 'numeric_prefix', NULL)"
 		);
 		$driver->query( 'CREATE TABLE wptests_nullable_ids (ID BIGINT(20), label VARCHAR(20))' );
 		$driver->query( "INSERT INTO wptests_nullable_ids (ID, label) VALUES (NULL, 'null'), (1, 'one')" );
@@ -2483,10 +2496,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array( array( 'found_rows' => 3 ) ),
 			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
-		$this->assertStringContainsString(
-			'CASE WHEN "wptests_usermeta"."meta_value" IS NULL THEN NULL ELSE COALESCE(TRY_CAST("wptests_usermeta"."meta_value" AS DOUBLE), 0) END + 0',
-			implode( "\n", $meta_sort_queries )
-		);
+		$meta_value_numeric_prefix_sql = 'CASE WHEN "wptests_usermeta"."meta_value" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST("wptests_usermeta"."meta_value" AS VARCHAR), \'^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?\', 0), \'\') AS DOUBLE), 0) END';
+		$this->assertStringContainsString( $meta_value_numeric_prefix_sql . ' + 0', implode( "\n", $meta_sort_queries ) );
 
 		$this->assertSame(
 			array( array( 'coerced' => null ) ),
@@ -2494,6 +2505,72 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'SELECT wptests_usermeta.meta_value + 0 AS coerced
 				FROM wptests_usermeta
 				WHERE umeta_id = 13'
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array(
+					'umeta_id' => 14,
+					'coerced'  => 10.0,
+				),
+				array(
+					'umeta_id' => 15,
+					'coerced'  => 11.0,
+				),
+				array(
+					'umeta_id' => 16,
+					'coerced'  => -2.5,
+				),
+				array(
+					'umeta_id' => 17,
+					'coerced'  => 300.0,
+				),
+				array(
+					'umeta_id' => 18,
+					'coerced'  => 0.75,
+				),
+				array(
+					'umeta_id' => 19,
+					'coerced'  => 0.0,
+				),
+				array(
+					'umeta_id' => 20,
+					'coerced'  => 0.0,
+				),
+				array(
+					'umeta_id' => 21,
+					'coerced'  => 0.0,
+				),
+				array(
+					'umeta_id' => 22,
+					'coerced'  => null,
+				),
+			),
+			$driver->query(
+				"SELECT umeta_id, meta_value + 0 AS coerced
+				FROM wptests_usermeta
+				WHERE meta_key = 'numeric_prefix'
+				ORDER BY umeta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			array(
+				array( 'umeta_id' => 16 ),
+				array( 'umeta_id' => 19 ),
+				array( 'umeta_id' => 20 ),
+				array( 'umeta_id' => 21 ),
+				array( 'umeta_id' => 18 ),
+				array( 'umeta_id' => 14 ),
+				array( 'umeta_id' => 15 ),
+				array( 'umeta_id' => 17 ),
+			),
+			$driver->query(
+				"SELECT umeta_id
+				FROM wptests_usermeta
+				WHERE meta_key = 'numeric_prefix' AND meta_value IS NOT NULL
+				ORDER BY meta_value + 0 ASC, umeta_id"
 			)->fetchAll( PDO::FETCH_ASSOC )
 		);
 
@@ -5765,19 +5842,22 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			)
 		);
 
-		$backslash = chr( 92 );
-		$cases     = array(
+		$backslash              = chr( 92 );
+		$numeric_prefix_pattern = "'^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?'";
+		$meta_value_numeric     = "CASE WHEN (meta_value) IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST((meta_value) AS VARCHAR), {$numeric_prefix_pattern}, 0), '') AS DOUBLE), 0) END";
+		$meta_id_integer        = "CASE WHEN (meta_id) IS NULL THEN NULL ELSE CAST(trunc(COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST((meta_id) AS VARCHAR), {$numeric_prefix_pattern}, 0), '') AS DOUBLE), 0)) AS BIGINT) END";
+		$cases                  = array(
 			array(
 				'mysql'  => "SELECT CAST(meta_value AS DECIMAL(10,2)) LIKE '10{$backslash}_%' AS matched FROM postmeta",
-				'duckdb' => "SELECT CAST((CASE WHEN (meta_value) IS NULL THEN NULL ELSE COALESCE(TRY_CAST((meta_value) AS DOUBLE), 0) END) AS VARCHAR) LIKE '10{$backslash}_%' ESCAPE '{$backslash}' AS matched FROM postmeta",
+				'duckdb' => "SELECT CAST(({$meta_value_numeric}) AS VARCHAR) LIKE '10{$backslash}_%' ESCAPE '{$backslash}' AS matched FROM postmeta",
 			),
 			array(
 				'mysql'  => "SELECT CAST(meta_id AS SIGNED) NOT LIKE '3' AS matched FROM postmeta",
-				'duckdb' => 'SELECT CAST((CASE WHEN (meta_id) IS NULL THEN NULL ELSE CAST(trunc(COALESCE(TRY_CAST((meta_id) AS DOUBLE), 0)) AS BIGINT) END) AS VARCHAR) NOT LIKE \'3\' AS matched FROM postmeta',
+				'duckdb' => "SELECT CAST(({$meta_id_integer}) AS VARCHAR) NOT LIKE '3' AS matched FROM postmeta",
 			),
 			array(
 				'mysql'  => "SELECT CAST(meta_id AS UNSIGNED) LIKE '4%' ESCAPE '!' AS matched FROM postmeta",
-				'duckdb' => "SELECT CAST((CASE WHEN (meta_id) IS NULL THEN NULL ELSE CAST(trunc(COALESCE(TRY_CAST((meta_id) AS DOUBLE), 0)) AS BIGINT) END) AS VARCHAR) LIKE '4%' ESCAPE '!' AS matched FROM postmeta",
+				'duckdb' => "SELECT CAST(({$meta_id_integer}) AS VARCHAR) LIKE '4%' ESCAPE '!' AS matched FROM postmeta",
 			),
 		);
 
@@ -5823,7 +5903,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0',
-				'duckdb' => 'SELECT id FROM postmeta ORDER BY CASE WHEN "meta_value" IS NULL THEN NULL ELSE COALESCE(TRY_CAST("meta_value" AS DOUBLE), 0) END + 0',
+				'duckdb' => "SELECT id FROM postmeta ORDER BY CASE WHEN \"meta_value\" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST(\"meta_value\" AS VARCHAR), '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?', 0), '') AS DOUBLE), 0) END + 0",
 			),
 			array(
 				'mysql'  => 'SELECT ID FROM users WHERE ID = \'yololololo\'',

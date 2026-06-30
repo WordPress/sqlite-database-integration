@@ -25074,9 +25074,9 @@ class WP_DuckDB_Driver {
 		if ( $this->cast_type_is_integer_numeric( $type_tokens ) ) {
 			return 'CAST((CASE WHEN '
 				. $wrapped_expr_sql
-				. ' IS NULL THEN NULL ELSE CAST(trunc(COALESCE(TRY_CAST('
-				. $wrapped_expr_sql
-				. ' AS DOUBLE), 0)) AS BIGINT) END) AS VARCHAR)';
+				. ' IS NULL THEN NULL ELSE CAST(trunc(COALESCE('
+				. $this->mysql_numeric_prefix_try_cast_sql( $wrapped_expr_sql )
+				. ', 0)) AS BIGINT) END) AS VARCHAR)';
 		}
 
 		return 'CAST((' . $this->mysql_numeric_coercion_sql( $wrapped_expr_sql ) . ') AS VARCHAR)';
@@ -26225,7 +26225,35 @@ class WP_DuckDB_Driver {
 	 * @return string Numeric SQL.
 	 */
 	private function mysql_numeric_coercion_sql( string $sql ): string {
-		return 'CASE WHEN ' . $sql . ' IS NULL THEN NULL ELSE COALESCE(TRY_CAST(' . $sql . ' AS DOUBLE), 0) END';
+		return 'CASE WHEN '
+			. $sql
+			. ' IS NULL THEN NULL ELSE COALESCE('
+			. $this->mysql_numeric_prefix_try_cast_sql( $sql )
+			. ', 0) END';
+	}
+
+	/**
+	 * Build a numeric conversion for the leading MySQL/SQLite numeric prefix.
+	 *
+	 * @param string $sql Text expression SQL.
+	 * @return string Numeric SQL that returns NULL when no numeric prefix is present.
+	 */
+	private function mysql_numeric_prefix_try_cast_sql( string $sql ): string {
+		return 'TRY_CAST(' . $this->mysql_numeric_prefix_match_sql( $sql ) . ' AS DOUBLE)';
+	}
+
+	/**
+	 * Extract the leading MySQL/SQLite numeric prefix from a text expression.
+	 *
+	 * @param string $sql Text expression SQL.
+	 * @return string Text SQL containing the numeric prefix, or NULL when absent.
+	 */
+	private function mysql_numeric_prefix_match_sql( string $sql ): string {
+		$pattern_sql = "'"
+			. '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?'
+			. "'";
+
+		return 'NULLIF(regexp_extract(CAST(' . $sql . ' AS VARCHAR), ' . $pattern_sql . ", 0), '')";
 	}
 
 	/**
