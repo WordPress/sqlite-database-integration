@@ -119,6 +119,54 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 	}
 
+	public function test_date_add_sub_numeric_literal_comparisons_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_date_add_sub_posts (ID BIGINT, post_date_gmt DATETIME)',
+				"INSERT INTO wp_date_add_sub_posts (ID, post_date_gmt) VALUES
+					(1, '2016-01-16 00:00:00'),
+					(2, '2016-01-17 12:30:00'),
+					(3, NULL),
+					(4, '2017-02-03 04:05:06')",
+			)
+		);
+
+		foreach (
+			array(
+				'SELECT ID FROM wp_date_add_sub_posts WHERE DATE_ADD(post_date_gmt, INTERVAL 1 DAY) = 20160117 ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE DATE_ADD(post_date_gmt, INTERVAL 1 DAY) != 20160117 ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE DATE_ADD(post_date_gmt, INTERVAL 1 DAY) > 20160117 ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE DATE_ADD(post_date_gmt, INTERVAL 1 DAY) >= 20160117 ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE DATE_ADD(post_date_gmt, INTERVAL 1 DAY) < 20160117 ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE DATE_ADD(post_date_gmt, INTERVAL 1 DAY) <= 20160117 ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE 20160117 = DATE_ADD(post_date_gmt, INTERVAL 1 DAY) ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE 20160117 != DATE_ADD(post_date_gmt, INTERVAL 1 DAY) ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE 20160117 < DATE_SUB(post_date_gmt, INTERVAL 1 DAY) ORDER BY ID',
+				'SELECT ID FROM wp_date_add_sub_posts WHERE DATE_ADD(post_date_gmt, INTERVAL 1 HOUR) <= 20160117133000 ORDER BY ID',
+				"SELECT ID FROM wp_date_add_sub_posts WHERE DATE_ADD(post_date_gmt, INTERVAL 1 DAY) = '2016-01-17 00:00:00' ORDER BY ID",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
+	public function test_date_add_sub_numeric_literal_comparisons_preserve_expression_errors(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_date_add_sub_error_posts (ID BIGINT)',
+			)
+		);
+
+		$this->assertParityErrorContains(
+			'SELECT ID FROM wp_date_add_sub_error_posts WHERE DATE_ADD(missing_col, INTERVAL 1 DAY) = 20160117 ORDER BY ID',
+			'missing_col'
+		);
+		$this->assertParityErrorContains(
+			'SELECT ID FROM wp_date_add_sub_error_posts WHERE 20160117 < DATE_SUB(missing_col, INTERVAL 1 DAY) ORDER BY ID',
+			'missing_col'
+		);
+	}
+
 	public function test_date_part_quoted_string_comparisons_match_sqlite(): void {
 		$this->runParitySetup(
 			array(

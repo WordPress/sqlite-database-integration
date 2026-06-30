@@ -3342,6 +3342,19 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$tokens = $tokenize->invoke(
 			$driver,
+			"SELECT ID FROM wp_posts
+			WHERE DATE_ADD(post_date_gmt, INTERVAL 1 DAY) = 20160117
+				OR 20160117 < DATE_SUB(post_date_gmt, INTERVAL 1 DAY)
+				OR DATE_ADD(post_date_gmt, INTERVAL 1 DAY) = '2016-01-17 00:00:00'"
+		);
+		$sql    = $translate->invoke( $driver, $tokens );
+
+		$this->assertStringContainsString( "CASE WHEN strftime(CAST((post_date_gmt) AS TIMESTAMP) + CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') IS NULL THEN NULL ELSE FALSE END", $sql );
+		$this->assertStringContainsString( "CASE WHEN strftime(CAST((post_date_gmt) AS TIMESTAMP) - CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') IS NULL THEN NULL ELSE TRUE END", $sql );
+		$this->assertStringContainsString( "strftime(CAST((post_date_gmt) AS TIMESTAMP) + CAST((1) AS BIGINT) * INTERVAL 1 DAY, '%Y-%m-%d %H:%M:%S') = '2016-01-17 00:00:00'", $sql );
+
+		$tokens = $tokenize->invoke(
+			$driver,
 			"SELECT HOUR(post_date) AS hour, MINUTE(post_date) AS minute, SECOND(post_date) AS second,
 				DAYOFWEEK(post_date) AS day_of_week, WEEKDAY(post_date) AS weekday,
 				WEEK(post_date, 1) AS week, DATE_FORMAT(post_date, '%Y-%m-%d %H:%i:%s') AS formatted,
