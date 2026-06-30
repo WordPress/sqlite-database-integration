@@ -324,6 +324,13 @@ class WP_DuckDB_Driver {
 	private $table_column_metadata_cache = array();
 
 	/**
+	 * Cached MySQL result metadata for wildcard table projections.
+	 *
+	 * @var array<string,array<int,array<string,mixed>>>
+	 */
+	private $wildcard_result_column_metadata_cache = array();
+
+	/**
 	 * Cached AUTO_INCREMENT metadata by table.
 	 *
 	 * @var array<string,array{column_name:string,sequence_name:string}|null>
@@ -651,6 +658,11 @@ class WP_DuckDB_Driver {
 		$wordpress_posts_slug_status_lookup_result = $this->execute_wordpress_posts_slug_status_lookup_fast_path_statement( $normalized );
 		if ( null !== $wordpress_posts_slug_status_lookup_result ) {
 			return $wordpress_posts_slug_status_lookup_result;
+		}
+
+		$wordpress_term_taxonomy_lookup_result = $this->execute_wordpress_term_taxonomy_lookup_fast_path_statement( $normalized );
+		if ( null !== $wordpress_term_taxonomy_lookup_result ) {
+			return $wordpress_term_taxonomy_lookup_result;
 		}
 
 		$wordpress_term_relationships_distinct_terms_result = $this->execute_wordpress_term_relationships_distinct_terms_fast_path_statement( $normalized );
@@ -1963,6 +1975,134 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute WordPress' hot term + term_taxonomy lookup without full parser fanout.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_term_taxonomy_lookup_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		if (
+			! preg_match(
+				'/^SELECT\s+(?<terms_select_alias>' . $identifier_pattern . ')\s*\.\s*\*\s*,\s*(?<taxonomy_select_alias>' . $identifier_pattern . ')\s*\.\s*\*\s+FROM\s+(?<terms_table>' . $identifier_pattern . ')\s+AS\s+(?<terms_alias>' . $identifier_pattern . ')\s+INNER\s+JOIN\s+(?<taxonomy_table>' . $identifier_pattern . ')\s+AS\s+(?<taxonomy_alias>' . $identifier_pattern . ')\s+ON\s+(?<terms_on_alias>' . $identifier_pattern . ')\s*\.\s*(?<terms_on_column>`term_id`|term_id)\s*=\s*(?<taxonomy_on_alias>' . $identifier_pattern . ')\s*\.\s*(?<taxonomy_on_column>`term_id`|term_id)\s+WHERE\s+(?<where_alias>' . $identifier_pattern . ')\s*\.\s*(?<where_column>`term_id`|term_id)\s+IN\s*\(\s*(?<term_ids>[0-9]+(?:\s*,\s*[0-9]+)*)\s*\)$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$requested_terms_table    = $this->fast_path_mysql_identifier_value( $matches['terms_table'] );
+		$requested_taxonomy_table = $this->fast_path_mysql_identifier_value( $matches['taxonomy_table'] );
+		if (
+			! $this->is_wordpress_terms_table_name( $requested_terms_table )
+			|| ! $this->is_wordpress_term_taxonomy_table_name( $requested_taxonomy_table )
+		) {
+			return null;
+		}
+		if ( ! $this->wordpress_taxonomy_table_prefixes_match( $requested_terms_table, $requested_taxonomy_table ) ) {
+			return null;
+		}
+
+		$terms_alias    = $this->fast_path_mysql_identifier_value( $matches['terms_alias'] );
+		$taxonomy_alias = $this->fast_path_mysql_identifier_value( $matches['taxonomy_alias'] );
+		if (
+			0 !== strcasecmp( 't', $terms_alias )
+			|| 0 !== strcasecmp( 'tt', $taxonomy_alias )
+			|| ! $this->fast_path_identifier_matches( $terms_alias, $matches['terms_select_alias'] )
+			|| ! $this->fast_path_identifier_matches( $terms_alias, $matches['terms_on_alias'] )
+			|| ! $this->fast_path_identifier_matches( $terms_alias, $matches['where_alias'] )
+			|| ! $this->fast_path_identifier_matches( $taxonomy_alias, $matches['taxonomy_select_alias'] )
+			|| ! $this->fast_path_identifier_matches( $taxonomy_alias, $matches['taxonomy_on_alias'] )
+		) {
+			return null;
+		}
+
+		foreach ( array( 'terms_on_column', 'taxonomy_on_column', 'where_column' ) as $column_match ) {
+			if ( 0 !== strcasecmp( 'term_id', $this->fast_path_mysql_identifier_value( $matches[ $column_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		$terms_reference = $this->resolve_visible_user_table_reference( $requested_terms_table );
+		if ( null === $terms_reference ) {
+			return null;
+		}
+
+		$taxonomy_reference = $this->resolve_visible_user_table_reference( $requested_taxonomy_table );
+		if ( null === $taxonomy_reference ) {
+			return null;
+		}
+
+		$terms_column_meta = $this->wordpress_table_wildcard_result_column_metadata(
+			$terms_reference['table_name'],
+			$terms_reference['temporary'],
+			$terms_alias
+		);
+		if ( null === $terms_column_meta ) {
+			return null;
+		}
+
+		$taxonomy_column_meta = $this->wordpress_table_wildcard_result_column_metadata(
+			$taxonomy_reference['table_name'],
+			$taxonomy_reference['temporary'],
+			$taxonomy_alias
+		);
+		if ( null === $taxonomy_column_meta ) {
+			return null;
+		}
+
+		$column_meta = array_merge( $terms_column_meta, $taxonomy_column_meta );
+
+		$term_ids = array();
+		foreach ( preg_split( '/\s*,\s*/', trim( $matches['term_ids'] ) ) as $id_literal ) {
+			$term_id = $this->fast_path_mysql_unsigned_integer_literal_value( $id_literal );
+			if ( null === $term_id ) {
+				return null;
+			}
+			$term_ids[] = $term_id;
+		}
+		if ( count( $term_ids ) === 0 ) {
+			return null;
+		}
+
+		$terms_alias_sql    = $this->connection->quote_identifier( $terms_alias );
+		$taxonomy_alias_sql = $this->connection->quote_identifier( $taxonomy_alias );
+		$sql                = 'SELECT '
+			. $terms_alias_sql
+			. '.*, '
+			. $taxonomy_alias_sql
+			. '.* FROM '
+			. $this->connection->quote_identifier( $terms_reference['table_name'] )
+			. ' AS '
+			. $terms_alias_sql
+			. ' INNER JOIN '
+			. $this->connection->quote_identifier( $taxonomy_reference['table_name'] )
+			. ' AS '
+			. $taxonomy_alias_sql
+			. ' ON '
+			. $terms_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' = '
+			. $taxonomy_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' WHERE '
+			. $terms_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'term_id' )
+			. ' IN ('
+			. implode( ', ', array_map( 'strval', $term_ids ) )
+			. ')';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
 	 * Execute WordPress' hot term relationship DISTINCT lookup without full parser fanout.
 	 *
 	 * @param string $normalized_query Normalized MySQL query.
@@ -2324,6 +2464,43 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether WordPress terms and term_taxonomy tables use the same prefix.
+	 *
+	 * @param string $terms_table    Terms table name.
+	 * @param string $taxonomy_table Term taxonomy table name.
+	 * @return bool Whether both table names share the same WordPress prefix.
+	 */
+	private function wordpress_taxonomy_table_prefixes_match( string $terms_table, string $taxonomy_table ): bool {
+		$terms_prefix    = $this->wordpress_fast_path_table_prefix( $terms_table, 'terms' );
+		$taxonomy_prefix = $this->wordpress_fast_path_table_prefix( $taxonomy_table, 'term_taxonomy' );
+
+		return null !== $terms_prefix && null !== $taxonomy_prefix && 0 === strcasecmp( $terms_prefix, $taxonomy_prefix );
+	}
+
+	/**
+	 * Return a WordPress table prefix from a table name and suffix.
+	 *
+	 * @param string $table_name Table name.
+	 * @param string $suffix     Unprefixed table suffix.
+	 * @return string|null Prefix, or null when the suffix does not match.
+	 */
+	private function wordpress_fast_path_table_prefix( string $table_name, string $suffix ): ?string {
+		if ( 0 === strcasecmp( $table_name, $suffix ) ) {
+			return '';
+		}
+
+		$prefixed_suffix = '_' . $suffix;
+		if ( strlen( $table_name ) <= strlen( $prefixed_suffix ) ) {
+			return null;
+		}
+		if ( 0 !== strcasecmp( substr( $table_name, -strlen( $prefixed_suffix ) ), $prefixed_suffix ) ) {
+			return null;
+		}
+
+		return substr( $table_name, 0, -strlen( $prefixed_suffix ) );
+	}
+
+	/**
 	 * Check whether a table name is the WordPress term_relationships table shape.
 	 *
 	 * @param string $table_name Table name.
@@ -2455,6 +2632,23 @@ class WP_DuckDB_Driver {
 	 * @return array<int,array<string,mixed>>|null Column metadata, or null when unavailable.
 	 */
 	private function wordpress_posts_wildcard_result_column_metadata( string $table_name, bool $temporary ): ?array {
+		return $this->wordpress_table_wildcard_result_column_metadata( $table_name, $temporary, $table_name );
+	}
+
+	/**
+	 * Build MySQL-shaped metadata for a wildcard table projection.
+	 *
+	 * @param string $table_name  Resolved table name.
+	 * @param bool   $temporary   Whether the resolved table is temporary.
+	 * @param string $table_alias Result table alias.
+	 * @return array<int,array<string,mixed>>|null Column metadata, or null when unavailable.
+	 */
+	private function wordpress_table_wildcard_result_column_metadata( string $table_name, bool $temporary, string $table_alias ): ?array {
+		$cache_key = $this->metadata_table_cache_key( $table_name, $temporary ) . ':alias:' . $table_alias;
+		if ( isset( $this->wildcard_result_column_metadata_cache[ $cache_key ] ) ) {
+			return $this->wildcard_result_column_metadata_cache[ $cache_key ];
+		}
+
 		$metadata_rows = $this->table_column_metadata_rows( $table_name, $temporary );
 		if ( count( $metadata_rows ) === 0 ) {
 			return null;
@@ -2464,12 +2658,13 @@ class WP_DuckDB_Driver {
 		foreach ( $metadata_rows as $metadata ) {
 			$column_meta[] = $this->mysql_result_column_metadata(
 				$table_name,
-				$table_name,
+				$table_alias,
 				$metadata,
 				(string) $metadata['column_name']
 			);
 		}
 
+		$this->wildcard_result_column_metadata_cache[ $cache_key ] = $column_meta;
 		return $column_meta;
 	}
 
@@ -13655,7 +13850,8 @@ class WP_DuckDB_Driver {
 		return $has_physical_changes && $this->alter_table_change_modify_column_targets_key(
 			$table_name,
 			$current_column_name,
-			$this->secondary_index_definitions_for_table( $table_name, $temporary )
+			$this->secondary_index_definitions_for_table( $table_name, $temporary ),
+			$temporary
 		);
 	}
 
@@ -14455,7 +14651,7 @@ class WP_DuckDB_Driver {
 		if ( count( $primary_key_columns ) === 0 ) {
 			throw new WP_DuckDB_Driver_Exception( 'Unsupported PRIMARY KEY constraint in DuckDB driver.' );
 		}
-		if ( count( $this->primary_key_index_rows( $table_name ) ) > 0 ) {
+		if ( count( $this->primary_key_index_rows( $table_name, $temporary ) ) > 0 ) {
 			throw new WP_DuckDB_Driver_Exception( "Duplicate primary key on table '{$this->database}.{$table_name}' in DuckDB driver." );
 		}
 		$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'ADD PRIMARY KEY', $temporary );
@@ -14941,7 +15137,7 @@ class WP_DuckDB_Driver {
 	private function constraint_types_for_name( string $table_name, string $constraint_name, bool $temporary = false ): array {
 		$types = array();
 
-		if ( 0 === strcasecmp( $constraint_name, 'PRIMARY' ) && count( $this->primary_key_index_rows( $table_name ) ) > 0 ) {
+		if ( 0 === strcasecmp( $constraint_name, 'PRIMARY' ) && count( $this->primary_key_index_rows( $table_name, $temporary ) ) > 0 ) {
 			$types['PRIMARY KEY'] = 'PRIMARY KEY';
 		}
 
@@ -14977,7 +15173,7 @@ class WP_DuckDB_Driver {
 		$this->rebuild_table_from_metadata_plan(
 			$table_name,
 			$this->table_column_metadata_rows( $table_name, $temporary ),
-			$this->primary_key_columns_for_table( $table_name ),
+			$this->primary_key_columns_for_table( $table_name, $temporary ),
 			$this->secondary_index_definitions_for_table( $table_name, $temporary ),
 			$check_constraints,
 			$this->show_create_table_foreign_key_groups( $table_name, $temporary ),
@@ -14998,7 +15194,7 @@ class WP_DuckDB_Driver {
 		$this->rebuild_table_from_metadata_plan(
 			$table_name,
 			$this->table_column_metadata_rows( $table_name, $temporary ),
-			$this->primary_key_columns_for_table( $table_name ),
+			$this->primary_key_columns_for_table( $table_name, $temporary ),
 			$this->secondary_index_definitions_for_table( $table_name, $temporary ),
 			$this->check_constraint_metadata_rows( $table_name, $temporary ),
 			$foreign_key_constraints,
@@ -15454,12 +15650,12 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return string[] Primary key columns.
 	 */
-	private function primary_key_columns_for_table( string $table_name ): array {
+	private function primary_key_columns_for_table( string $table_name, bool $temporary = false ): array {
 		return array_map(
 			function ( array $row ): string {
 				return (string) $row[4];
 			},
-			$this->primary_key_index_rows( $table_name )
+			$this->primary_key_index_rows( $table_name, $temporary )
 		);
 	}
 
@@ -15634,7 +15830,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function assert_alter_table_drop_primary_key_supported( string $table_name, bool $temporary = false ): void {
 		$this->assert_no_active_transaction_for_table_rebuild( 'DROP PRIMARY KEY' );
-		if ( count( $this->primary_key_index_rows( $table_name ) ) === 0 ) {
+		if ( count( $this->primary_key_index_rows( $table_name, $temporary ) ) === 0 ) {
 			throw new WP_DuckDB_Driver_Exception( "Unknown index 'PRIMARY' on table '{$this->database}.{$table_name}' in DuckDB driver." );
 		}
 		$this->assert_not_referenced_parent_for_table_rebuild( $table_name, 'DROP PRIMARY KEY', $temporary );
@@ -15821,7 +16017,7 @@ class WP_DuckDB_Driver {
 	 * @return bool Whether the column requires a table rebuild.
 	 */
 	private function alter_table_drop_column_requires_rebuild( string $table_name, string $column_name, bool $temporary = false ): bool {
-		foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
+		foreach ( $this->primary_key_index_rows( $table_name, $temporary ) as $index_row ) {
 			if ( 0 === strcasecmp( (string) $index_row[4], $column_name ) ) {
 				return true;
 			}
@@ -15904,7 +16100,7 @@ class WP_DuckDB_Driver {
 			$this->table_column_metadata_rows( $table_name, $temporary ),
 			$column_name
 		);
-		$primary_key_columns  = $this->primary_key_columns_after_column_drop( $table_name, $column_name );
+		$primary_key_columns  = $this->primary_key_columns_after_column_drop( $table_name, $column_name, $temporary );
 		$secondary_indexes    = $this->secondary_index_definitions_after_column_drop(
 			$table_name,
 			$column_name,
@@ -15953,10 +16149,10 @@ class WP_DuckDB_Driver {
 	 * @param string $column_name Dropped column name.
 	 * @return string[] Primary key columns.
 	 */
-	private function primary_key_columns_after_column_drop( string $table_name, string $column_name ): array {
+	private function primary_key_columns_after_column_drop( string $table_name, string $column_name, bool $temporary = false ): array {
 		return array_values(
 			array_filter(
-				$this->primary_key_columns_for_table( $table_name ),
+				$this->primary_key_columns_for_table( $table_name, $temporary ),
 				function ( string $primary_key_column ) use ( $column_name ): bool {
 					return 0 !== strcasecmp( $primary_key_column, $column_name );
 				}
@@ -16288,7 +16484,7 @@ class WP_DuckDB_Driver {
 			}
 		}
 
-		foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
+		foreach ( $this->primary_key_index_rows( $table_name, $temporary ) as $index_row ) {
 			if ( 0 === strcasecmp( (string) $index_row[4], $current_column_name ) ) {
 				if ( 0 !== strcasecmp( $current_column_name, $new_column_name ) ) {
 					throw new WP_DuckDB_Driver_Exception( 'Unsupported ALTER TABLE statement in DuckDB driver. CHANGE/MODIFY on a primary key column requires a table rebuild.' );
@@ -16413,8 +16609,8 @@ class WP_DuckDB_Driver {
 	 * @param array<int,array{sql:string,table_name:string,index_name:string,unique:bool,columns:array<int,array{name:string,sub_part:int|null}>}> $index_definitions Current secondary indexes.
 	 * @return bool Whether the column is part of any key.
 	 */
-	private function alter_table_change_modify_column_targets_key( string $table_name, string $column_name, array $index_definitions ): bool {
-		foreach ( $this->primary_key_index_rows( $table_name ) as $index_row ) {
+	private function alter_table_change_modify_column_targets_key( string $table_name, string $column_name, array $index_definitions, bool $temporary = false ): bool {
+		foreach ( $this->primary_key_index_rows( $table_name, $temporary ) as $index_row ) {
 			if ( 0 === strcasecmp( (string) $index_row[4], $column_name ) ) {
 				return true;
 			}
@@ -16821,7 +17017,7 @@ class WP_DuckDB_Driver {
 			? $this->secondary_index_definitions_after_column_rename( $table_name, $current_column_name, $new_column_name, $index_definitions, $temporary )
 			: $index_definitions;
 		$has_physical_changes = $rename_column || $type_change || $default_change || $nullability_change;
-		$targets_key_column   = $this->alter_table_change_modify_column_targets_key( $table_name, $current_column_name, $index_definitions );
+		$targets_key_column   = $this->alter_table_change_modify_column_targets_key( $table_name, $current_column_name, $index_definitions, $temporary );
 
 		if ( ! $rename_column && $auto_increment_rebuild && ! $has_physical_changes ) {
 			$metadata['column_key'] = '' === $metadata['column_key']
@@ -16980,7 +17176,7 @@ class WP_DuckDB_Driver {
 	 * @param bool                           $temporary           Whether the target is a temporary table.
 	 */
 	private function execute_alter_table_change_modify_column_rebuild( string $table_name, string $current_column_name, array $metadata, array $metadata_rows, bool $temporary = false ): void {
-		$primary_key_columns  = $this->primary_key_columns_for_table( $table_name );
+		$primary_key_columns  = $this->primary_key_columns_for_table( $table_name, $temporary );
 		$column_metadata_rows = $this->column_metadata_rows_after_change_modify( $metadata_rows, $current_column_name, $metadata );
 		if ( count( $primary_key_columns ) > 0 ) {
 			$column_metadata_rows = $this->column_metadata_rows_with_primary_key_not_null( $column_metadata_rows, $primary_key_columns );
@@ -17918,7 +18114,7 @@ class WP_DuckDB_Driver {
 	 */
 	private function index_rows_for_table( string $table_name, bool $temporary = false ): array {
 		return array_merge(
-			$this->primary_key_index_rows( $table_name ),
+			$this->primary_key_index_rows( $table_name, $temporary ),
 			$this->secondary_index_rows( $table_name, $temporary )
 		);
 	}
@@ -18103,13 +18299,13 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array<int,mixed>>
 	 */
-	private function primary_key_index_rows( string $table_name ): array {
-		$cache_key = $this->metadata_table_cache_key( $table_name, false );
+	private function primary_key_index_rows( string $table_name, bool $temporary = false ): array {
+		$cache_key = $this->metadata_table_cache_key( $table_name, $temporary );
 		if ( isset( $this->primary_key_index_rows_cache[ $cache_key ] ) ) {
 			return $this->primary_key_index_rows_cache[ $cache_key ];
 		}
 
-		$rows = $this->primary_key_index_rows_from_constraints( $table_name );
+		$rows = $this->primary_key_index_rows_from_constraints( $table_name, $temporary );
 		if ( null !== $rows ) {
 			$this->primary_key_index_rows_cache[ $cache_key ] = $rows;
 			return $rows;
@@ -18142,12 +18338,15 @@ class WP_DuckDB_Driver {
 	 * @param string $table_name Table name.
 	 * @return array<int,array<int,mixed>>|null Rows, or null when the catalog source is unavailable.
 	 */
-	private function primary_key_index_rows_from_constraints( string $table_name ): ?array {
+	private function primary_key_index_rows_from_constraints( string $table_name, bool $temporary = false ): ?array {
 		try {
 			$stmt = $this->execute_duckdb_query(
 				'SELECT constraint_column_names FROM duckdb_constraints() WHERE table_name = '
 					. $this->connection->quote( $table_name )
-					. " AND constraint_type = 'PRIMARY KEY' ORDER BY constraint_index LIMIT 1",
+					. " AND constraint_type = 'PRIMARY KEY' AND database_name "
+					. ( $temporary ? '= ' : '<> ' )
+					. $this->connection->quote( 'temp' )
+					. ' ORDER BY constraint_index LIMIT 1',
 				'Failed to inspect DuckDB primary key constraints'
 			);
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
@@ -24738,7 +24937,7 @@ class WP_DuckDB_Driver {
 		$metadata_primary = $this->primary_key_columns_from_column_metadata_rows( $metadata_rows );
 		$primary          = 1 === count( $metadata_primary ) ? $metadata_primary : array();
 		if ( count( $primary ) === 0 && ( count( $metadata_rows ) === 0 || count( $metadata_primary ) > 1 ) ) {
-			$primary = $this->primary_key_columns_for_table( $table_name );
+			$primary = $this->primary_key_columns_for_table( $table_name, $temporary );
 		}
 		if ( count( $primary ) > 0 ) {
 			$sets[] = $primary;
@@ -30528,19 +30727,19 @@ class WP_DuckDB_Driver {
 	 */
 	private function clear_schema_metadata_cache( ?string $table_name = null, ?bool $temporary = null ): void {
 		if ( null === $table_name ) {
-			$this->table_name_cache              = array();
-			$this->visible_table_reference_cache = array();
-			$this->table_metadata_cache          = array();
-			$this->column_metadata_cache         = array();
-			$this->table_column_metadata_cache   = array();
-			$this->auto_increment_metadata_cache = array();
-			$this->primary_key_index_rows_cache  = array();
-			$this->unique_key_column_sets_cache  = array();
+			$this->table_name_cache                      = array();
+			$this->visible_table_reference_cache         = array();
+			$this->table_metadata_cache                  = array();
+			$this->column_metadata_cache                 = array();
+			$this->table_column_metadata_cache           = array();
+			$this->wildcard_result_column_metadata_cache = array();
+			$this->auto_increment_metadata_cache         = array();
+			$this->primary_key_index_rows_cache          = array();
+			$this->unique_key_column_sets_cache          = array();
 			return;
 		}
 
 		unset( $this->visible_table_reference_cache[ strtolower( $table_name ) ] );
-		unset( $this->primary_key_index_rows_cache[ $this->metadata_table_cache_key( $table_name, false ) ] );
 
 		$sets = null === $temporary ? array( false, true ) : array( $temporary );
 		foreach ( $sets as $temporary_set ) {
@@ -30548,9 +30747,15 @@ class WP_DuckDB_Driver {
 			unset(
 				$this->column_metadata_cache[ $key ],
 				$this->table_column_metadata_cache[ $key ],
+				$this->primary_key_index_rows_cache[ $key ],
 				$this->auto_increment_metadata_cache[ $key ],
 				$this->unique_key_column_sets_cache[ $key ]
 			);
+			foreach ( array_keys( $this->wildcard_result_column_metadata_cache ) as $wildcard_key ) {
+				if ( 0 === strpos( $wildcard_key, $key . ':alias:' ) ) {
+					unset( $this->wildcard_result_column_metadata_cache[ $wildcard_key ] );
+				}
+			}
 
 			$table_set_key = $this->metadata_ensure_key( 'tables', $temporary_set );
 			unset(
@@ -30849,8 +31054,9 @@ class WP_DuckDB_Driver {
 			}
 
 			$this->clear_metadata_table_ensure_cache( $temporary );
-			$this->column_metadata_cache       = array();
-			$this->table_column_metadata_cache = array();
+			$this->column_metadata_cache                 = array();
+			$this->table_column_metadata_cache           = array();
+			$this->wildcard_result_column_metadata_cache = array();
 			$this->ensure_column_metadata_table( $temporary );
 
 			return $this->execute_duckdb_query( $sql, $context );
@@ -31326,7 +31532,7 @@ class WP_DuckDB_Driver {
 			function ( array $row ): string {
 				return (string) $row[4];
 			},
-			$this->primary_key_index_rows( $table_name )
+			$this->primary_key_index_rows( $table_name, $temporary )
 		);
 
 		$metadata_table = $this->connection->quote_identifier( $this->column_metadata_table_name( $temporary ) );
@@ -31384,7 +31590,7 @@ class WP_DuckDB_Driver {
 		$this->rebuild_table_from_metadata_plan(
 			$table_name,
 			$this->table_column_metadata_rows( $table_name, $temporary ),
-			$this->primary_key_columns_for_table( $table_name ),
+			$this->primary_key_columns_for_table( $table_name, $temporary ),
 			$this->secondary_index_definitions_for_table( $table_name, $temporary ),
 			$this->check_constraint_metadata_rows( $table_name, $temporary ),
 			$this->show_create_table_foreign_key_groups( $table_name, $temporary ),
