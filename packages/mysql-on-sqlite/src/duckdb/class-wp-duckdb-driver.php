@@ -26035,18 +26035,17 @@ class WP_DuckDB_Driver {
 		$left_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index );
 		if ( null !== $left_operand ) {
 			$operator_index = $left_operand['next_index'];
-			$literal_index  = $operator_index + 1;
+			$literal        = $this->text_value_numeric_literal_sequence_sql( $tokens, $operator_index + 1 );
 			if (
-				isset( $tokens[ $literal_index ] )
+				null !== $literal
 				&& $this->is_text_value_numeric_comparison_operator_token( $tokens[ $operator_index ] ?? null )
-				&& $this->is_integer_number_token( $tokens[ $literal_index ] )
-				&& $this->text_value_numeric_comparison_has_boundary( $tokens, $literal_index + 1 )
+				&& $this->text_value_numeric_comparison_has_boundary( $tokens, $literal['end_index'] + 1 )
 			) {
-				$index = $literal_index;
+				$index = $literal['end_index'];
 				return $this->text_value_numeric_literal_comparison_sql(
 					$left_operand['sql'],
 					$tokens[ $operator_index ],
-					$tokens[ $literal_index ],
+					$literal['sql'],
 					true
 				);
 			}
@@ -26066,21 +26065,20 @@ class WP_DuckDB_Driver {
 
 		if (
 			isset( $tokens[ $index + 2 ] )
-			&& $this->is_integer_number_token( $tokens[ $index ] )
-			&& $this->is_text_value_numeric_comparison_operator_token( $tokens[ $index + 1 ] )
 		) {
-			$right_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index + 2 );
+			$literal        = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
+			$operator_index = null === $literal ? null : $literal['end_index'] + 1;
+			$right_operand  = null === $operator_index ? null : $this->text_value_numeric_comparison_operand_sql( $tokens, $operator_index + 1 );
 			if (
 				null !== $right_operand
+				&& $this->is_text_value_numeric_comparison_operator_token( $tokens[ $operator_index ] ?? null )
 				&& $this->text_value_numeric_comparison_has_boundary( $tokens, $right_operand['next_index'] )
 			) {
-				$literal_token  = $tokens[ $index ];
-				$operator_token = $tokens[ $index + 1 ];
-				$index          = $right_operand['next_index'] - 1;
+				$index = $right_operand['next_index'] - 1;
 				return $this->text_value_numeric_literal_comparison_sql(
 					$right_operand['sql'],
-					$operator_token,
-					$literal_token,
+					$tokens[ $operator_index ],
+					$literal['sql'],
 					false
 				);
 			}
@@ -26102,16 +26100,15 @@ class WP_DuckDB_Driver {
 			&& in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true );
 
 		$between_index = $not ? $operator_index + 1 : $operator_index;
-		$lower_index   = $between_index + 1;
-		$and_index     = $between_index + 2;
-		$upper_index   = $between_index + 3;
+		$lower         = $this->text_value_numeric_literal_sequence_sql( $tokens, $between_index + 1 );
+		$and_index     = null === $lower ? null : $lower['end_index'] + 1;
+		$upper         = null === $and_index ? null : $this->text_value_numeric_literal_sequence_sql( $tokens, $and_index + 1 );
 		if (
-			! isset( $tokens[ $upper_index ] )
+			null === $lower
+			|| null === $upper
 			|| WP_MySQL_Lexer::BETWEEN_SYMBOL !== $tokens[ $between_index ]->id
-			|| ! $this->is_integer_number_token( $tokens[ $lower_index ] )
 			|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $and_index ]->id
-			|| ! $this->is_integer_number_token( $tokens[ $upper_index ] )
-			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $upper_index + 1 )
+			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $upper['end_index'] + 1 )
 		) {
 			return null;
 		}
@@ -26119,10 +26116,10 @@ class WP_DuckDB_Driver {
 		return array(
 			'sql'       => $this->text_value_sqlite_text_operand_sql( $operand['sql'] )
 				. ( $not ? ' NOT BETWEEN ' : ' BETWEEN ' )
-				. $this->text_value_numeric_literal_text_sql( $tokens[ $lower_index ] )
+				. $lower['sql']
 				. ' AND '
-				. $this->text_value_numeric_literal_text_sql( $tokens[ $upper_index ] ),
-			'end_index' => $upper_index,
+				. $upper['sql'],
+			'end_index' => $upper['end_index'],
 		);
 	}
 
@@ -26150,11 +26147,12 @@ class WP_DuckDB_Driver {
 		$literal_sql = array();
 		$list_index  = $in_index + 2;
 		while ( isset( $tokens[ $list_index ] ) ) {
-			if ( ! $this->is_integer_number_token( $tokens[ $list_index ] ) ) {
+			$literal = $this->text_value_numeric_literal_sequence_sql( $tokens, $list_index );
+			if ( null === $literal ) {
 				return null;
 			}
-			$literal_sql[] = $this->text_value_numeric_literal_text_sql( $tokens[ $list_index ] );
-			++$list_index;
+			$literal_sql[] = $literal['sql'];
+			$list_index    = $literal['end_index'] + 1;
 
 			if ( ! isset( $tokens[ $list_index ] ) ) {
 				return null;
@@ -26191,13 +26189,12 @@ class WP_DuckDB_Driver {
 	 *
 	 * @param string          $operand_sql  Text column SQL.
 	 * @param WP_Parser_Token $operator     Comparison operator.
-	 * @param WP_Parser_Token $literal      Integer literal.
+	 * @param string          $literal_sql  Numeric literal text SQL.
 	 * @param bool            $operand_left Whether the text operand is on the left.
 	 * @return string Comparison SQL.
 	 */
-	private function text_value_numeric_literal_comparison_sql( string $operand_sql, WP_Parser_Token $operator, WP_Parser_Token $literal, bool $operand_left ): string {
+	private function text_value_numeric_literal_comparison_sql( string $operand_sql, WP_Parser_Token $operator, string $literal_sql, bool $operand_left ): string {
 		$text_operand_sql = $this->text_value_sqlite_text_operand_sql( $operand_sql );
-		$literal_sql      = $this->text_value_numeric_literal_text_sql( $literal );
 		$left_sql         = $operand_left ? $text_operand_sql : $literal_sql;
 		$right_sql        = $operand_left ? $literal_sql : $text_operand_sql;
 
@@ -26219,13 +26216,82 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Cast an integer literal to text using the SQL engine's numeric display.
+	 * Build text SQL for a text-value numeric literal token sequence.
 	 *
-	 * @param WP_Parser_Token $literal Integer literal token.
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Literal start index.
+	 * @return array{sql:string,end_index:int}|null Literal SQL and consumed index.
+	 */
+	private function text_value_numeric_literal_sequence_sql( array $tokens, int $index ): ?array {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		$sign_token = null;
+		if (
+			$this->is_sign_token( $tokens[ $index ] )
+			&& isset( $tokens[ $index + 1 ] )
+			&& $this->is_number_token( $tokens[ $index + 1 ] )
+		) {
+			$sign_token   = $tokens[ $index ];
+			$number_token = $tokens[ $index + 1 ];
+			$end_index    = $index + 1;
+		} elseif ( $this->is_number_token( $tokens[ $index ] ) ) {
+			$number_token = $tokens[ $index ];
+			$end_index    = $index;
+		} else {
+			return null;
+		}
+
+		$literal_sql = $this->text_value_numeric_literal_text_sql( $number_token, $sign_token );
+
+		return array(
+			'sql'       => $literal_sql,
+			'end_index' => $end_index,
+		);
+	}
+
+	/**
+	 * Cast a numeric literal to text using SQLite-compatible numeric display.
+	 *
+	 * @param WP_Parser_Token      $literal Numeric literal token.
+	 * @param WP_Parser_Token|null $sign    Optional sign token.
 	 * @return string DuckDB SQL.
 	 */
-	private function text_value_numeric_literal_text_sql( WP_Parser_Token $literal ): string {
-		return 'CAST(' . $literal->get_bytes() . ' AS VARCHAR)';
+	private function text_value_numeric_literal_text_sql( WP_Parser_Token $literal, ?WP_Parser_Token $sign = null ): string {
+		$prefix      = null !== $sign ? $sign->get_bytes() : '';
+		$literal_sql = $prefix . $literal->get_bytes();
+
+		if (
+			( null === $sign || WP_MySQL_Lexer::PLUS_OPERATOR !== $sign->id )
+			&& $this->is_integer_number_token( $literal )
+		) {
+			return 'CAST(' . $literal_sql . ' AS VARCHAR)';
+		}
+
+		return $this->connection->quote( $this->sqlite_numeric_literal_text_value( $literal, $sign ) );
+	}
+
+	/**
+	 * Format a numeric literal the way SQLite displays numeric values as text.
+	 *
+	 * @param WP_Parser_Token      $literal Numeric literal token.
+	 * @param WP_Parser_Token|null $sign    Optional sign token.
+	 * @return string SQLite-compatible text value.
+	 */
+	private function sqlite_numeric_literal_text_value( WP_Parser_Token $literal, ?WP_Parser_Token $sign = null ): string {
+		$value = null === $sign ? $this->number_token_value( $literal ) : $this->signed_number_token_value( $sign, $literal );
+
+		if ( $this->is_integer_number_token( $literal ) ) {
+			return (string) $value;
+		}
+
+		$text = sprintf( '%.15g', (float) $value );
+		if ( false === stripos( $text, 'e' ) && false === strpos( $text, '.' ) ) {
+			$text .= '.0';
+		}
+
+		return $text;
 	}
 
 	/**
