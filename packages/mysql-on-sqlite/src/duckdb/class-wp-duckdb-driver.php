@@ -685,6 +685,16 @@ class WP_DuckDB_Driver {
 			return $wordpress_comments_group_by_meta_order_result;
 		}
 
+		$wordpress_comments_group_by_cast_meta_order_result = $this->execute_wordpress_comments_group_by_cast_meta_order_fast_path_statement( $normalized );
+		if ( null !== $wordpress_comments_group_by_cast_meta_order_result ) {
+			return $wordpress_comments_group_by_cast_meta_order_result;
+		}
+
+		$wordpress_comments_group_by_two_cast_meta_orders_result = $this->execute_wordpress_comments_group_by_two_cast_meta_orders_fast_path_statement( $normalized );
+		if ( null !== $wordpress_comments_group_by_two_cast_meta_orders_result ) {
+			return $wordpress_comments_group_by_two_cast_meta_orders_result;
+		}
+
 		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
 			$this->found_rows                             = 0;
 			$this->session_system_variables['autocommit'] = (int) $matches[1];
@@ -2578,6 +2588,327 @@ class WP_DuckDB_Driver {
 			. '.'
 			. $this->connection->quote_identifier( 'meta_value' )
 			. ') DESC, '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' DESC';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
+	 * Execute WordPress comment queries ordered by comment date and casted commentmeta value.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_comments_group_by_cast_meta_order_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		if (
+			! preg_match(
+				'/^SELECT\s+(?<select_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<select_column>`comment_ID`|comment_ID)\s+FROM\s+(?<comments_table>' . $identifier_pattern . ')\s+INNER\s+JOIN\s+(?<meta_table>' . $identifier_pattern . ')\s+ON\s*\(\s*(?<on_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<on_comments_column>`comment_ID`|comment_ID)\s*=\s*(?<on_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<on_meta_column>`comment_id`|comment_id)\s*\)\s+WHERE\s*\(\s*\(\s*(?<approved_column>`comment_approved`|comment_approved)\s*=\s*(?<approved_left>' . $literal_pattern . ')\s+OR\s*(?<approved_column_right>`comment_approved`|comment_approved)\s*=\s*(?<approved_right>' . $literal_pattern . ')\s*\)\s*\)\s+AND\s*\(\s*(?<where_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<meta_key_column>`meta_key`|meta_key)\s*=\s*(?<meta_key>' . $literal_pattern . ')\s*\)\s+GROUP\s+BY\s+(?<group_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<group_column>`comment_ID`|comment_ID)\s+ORDER\s+BY\s+(?<order_date_table>' . $identifier_pattern . ')\s*\.\s*(?<order_date_column>`comment_date`|comment_date)\s+ASC\s*,\s*CAST\s*\(\s*(?<cast_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<cast_meta_column>`meta_value`|meta_value)\s+AS\s+CHAR\s*\)\s+ASC\s*,\s*(?<order_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<order_comments_column>`comment_ID`|comment_ID)\s+ASC$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$comments_table = $this->fast_path_mysql_identifier_value( $matches['comments_table'] );
+		$meta_table     = $this->fast_path_mysql_identifier_value( $matches['meta_table'] );
+		if (
+			! $this->is_wordpress_comments_table_name( $comments_table )
+			|| ! $this->is_wordpress_commentmeta_table_name( $meta_table )
+			|| ! $this->wordpress_comments_commentmeta_table_prefixes_match( $comments_table, $meta_table )
+		) {
+			return null;
+		}
+
+		foreach ( array( 'select_comments_table', 'on_comments_table', 'group_comments_table', 'order_date_table', 'order_comments_table' ) as $comments_match ) {
+			if ( 0 !== strcasecmp( $comments_table, $this->fast_path_mysql_identifier_value( $matches[ $comments_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		foreach ( array( 'on_meta_table', 'where_meta_table', 'cast_meta_table' ) as $meta_match ) {
+			if ( 0 !== strcasecmp( $meta_table, $this->fast_path_mysql_identifier_value( $matches[ $meta_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		foreach ( array( 'select_column', 'on_comments_column', 'group_column', 'order_comments_column' ) as $column_match ) {
+			if ( ! $this->fast_path_identifier_matches( 'comment_ID', $matches[ $column_match ] ) ) {
+				return null;
+			}
+		}
+
+		$expected_columns = array(
+			'on_meta_column'    => 'comment_id',
+			'approved_column'   => 'comment_approved',
+			'meta_key_column'   => 'meta_key',
+			'order_date_column' => 'comment_date',
+			'cast_meta_column'  => 'meta_value',
+		);
+		foreach ( $expected_columns as $match_name => $column_name ) {
+			if ( ! $this->fast_path_identifier_matches( $column_name, $matches[ $match_name ] ) ) {
+				return null;
+			}
+		}
+		if ( ! $this->fast_path_identifier_matches( 'comment_approved', $matches['approved_column_right'] ) ) {
+			return null;
+		}
+
+		$approved_values = array(
+			$this->fast_path_mysql_single_quoted_literal_value( $matches['approved_left'] ),
+			$this->fast_path_mysql_single_quoted_literal_value( $matches['approved_right'] ),
+		);
+		sort( $approved_values );
+		if ( array( '0', '1' ) !== $approved_values ) {
+			return null;
+		}
+
+		$comments_reference = $this->resolve_visible_user_table_reference( $comments_table );
+		$meta_reference     = $this->resolve_visible_user_table_reference( $meta_table );
+		if ( null === $comments_reference || null === $meta_reference ) {
+			return null;
+		}
+
+		$column_meta = $this->wordpress_single_column_result_metadata(
+			$comments_reference['table_name'],
+			$comments_reference['temporary'],
+			$comments_table,
+			'comment_ID'
+		);
+		if ( null === $column_meta ) {
+			return null;
+		}
+
+		$comments_sql = $this->connection->quote_identifier( $comments_reference['table_name'] );
+		$meta_sql     = $this->connection->quote_identifier( $meta_reference['table_name'] );
+		$sql          = 'SELECT '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' FROM '
+			. $comments_sql
+			. ' INNER JOIN '
+			. $meta_sql
+			. ' ON ('
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' = '
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_id' )
+			. ') WHERE (('
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_approved' )
+			. ' = \'0\' OR '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_approved' )
+			. ' = \'1\')) AND ('
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'meta_key' )
+			. ' = '
+			. $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['meta_key'] ) )
+			. ') GROUP BY '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' ORDER BY ANY_VALUE('
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_date' )
+			. ') ASC, ANY_VALUE(CAST('
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'meta_value' )
+			. ' AS VARCHAR)) ASC, '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' ASC';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
+	 * Execute WordPress comment queries ordered by two casted commentmeta values.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_comments_group_by_two_cast_meta_orders_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		if (
+			! preg_match(
+				'/^SELECT\s+(?<select_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<select_column>`comment_ID`|comment_ID)\s+FROM\s+(?<comments_table>' . $identifier_pattern . ')\s+INNER\s+JOIN\s+(?<meta_table>' . $identifier_pattern . ')\s+ON\s*\(\s*(?<on_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<on_comments_column>`comment_ID`|comment_ID)\s*=\s*(?<on_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<on_meta_column>`comment_id`|comment_id)\s*\)\s+INNER\s+JOIN\s+(?<second_meta_table>' . $identifier_pattern . ')\s+AS\s+(?<second_meta_alias>' . $identifier_pattern . ')\s+ON\s*\(\s*(?<on_second_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<on_second_comments_column>`comment_ID`|comment_ID)\s*=\s*(?<on_second_meta_alias>' . $identifier_pattern . ')\s*\.\s*(?<on_second_meta_column>`comment_id`|comment_id)\s*\)\s+WHERE\s*\(\s*\(\s*(?<approved_column>`comment_approved`|comment_approved)\s*=\s*(?<approved_left>' . $literal_pattern . ')\s+OR\s*(?<approved_column_right>`comment_approved`|comment_approved)\s*=\s*(?<approved_right>' . $literal_pattern . ')\s*\)\s*\)\s+AND\s*\(\s*(?<where_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<meta_key_column>`meta_key`|meta_key)\s*=\s*(?<meta_key>' . $literal_pattern . ')\s+AND\s+(?<where_second_meta_alias>' . $identifier_pattern . ')\s*\.\s*(?<second_meta_key_column>`meta_key`|meta_key)\s*=\s*(?<second_meta_key>' . $literal_pattern . ')\s*\)\s+GROUP\s+BY\s+(?<group_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<group_column>`comment_ID`|comment_ID)\s+ORDER\s+BY\s+CAST\s*\(\s*(?<cast_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<cast_meta_column>`meta_value`|meta_value)\s+AS\s+CHAR\s*\)\s+ASC\s*,\s*CAST\s*\(\s*(?<cast_second_meta_alias>' . $identifier_pattern . ')\s*\.\s*(?<cast_second_meta_column>`meta_value`|meta_value)\s+AS\s+CHAR\s*\)\s+DESC\s*,\s*(?<order_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<order_comments_column>`comment_ID`|comment_ID)\s+DESC$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$comments_table    = $this->fast_path_mysql_identifier_value( $matches['comments_table'] );
+		$meta_table        = $this->fast_path_mysql_identifier_value( $matches['meta_table'] );
+		$second_meta_table = $this->fast_path_mysql_identifier_value( $matches['second_meta_table'] );
+		$second_meta_alias = $this->fast_path_mysql_identifier_value( $matches['second_meta_alias'] );
+		if (
+			! $this->is_wordpress_comments_table_name( $comments_table )
+			|| ! $this->is_wordpress_commentmeta_table_name( $meta_table )
+			|| ! $this->is_wordpress_commentmeta_table_name( $second_meta_table )
+			|| ! $this->wordpress_comments_commentmeta_table_prefixes_match( $comments_table, $meta_table )
+			|| ! $this->wordpress_comments_commentmeta_table_prefixes_match( $comments_table, $second_meta_table )
+			|| 0 !== strcasecmp( $meta_table, $second_meta_table )
+			|| 1 !== preg_match( '/^mt[0-9]+$/i', $second_meta_alias )
+		) {
+			return null;
+		}
+
+		foreach ( array( 'select_comments_table', 'on_comments_table', 'on_second_comments_table', 'group_comments_table', 'order_comments_table' ) as $comments_match ) {
+			if ( 0 !== strcasecmp( $comments_table, $this->fast_path_mysql_identifier_value( $matches[ $comments_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		foreach ( array( 'on_meta_table', 'where_meta_table', 'cast_meta_table' ) as $meta_match ) {
+			if ( 0 !== strcasecmp( $meta_table, $this->fast_path_mysql_identifier_value( $matches[ $meta_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		foreach ( array( 'on_second_meta_alias', 'where_second_meta_alias', 'cast_second_meta_alias' ) as $second_meta_alias_match ) {
+			if ( 0 !== strcasecmp( $second_meta_alias, $this->fast_path_mysql_identifier_value( $matches[ $second_meta_alias_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		foreach ( array( 'select_column', 'on_comments_column', 'on_second_comments_column', 'group_column', 'order_comments_column' ) as $column_match ) {
+			if ( ! $this->fast_path_identifier_matches( 'comment_ID', $matches[ $column_match ] ) ) {
+				return null;
+			}
+		}
+
+		$expected_columns = array(
+			'on_meta_column'          => 'comment_id',
+			'on_second_meta_column'   => 'comment_id',
+			'approved_column'         => 'comment_approved',
+			'meta_key_column'         => 'meta_key',
+			'second_meta_key_column'  => 'meta_key',
+			'cast_meta_column'        => 'meta_value',
+			'cast_second_meta_column' => 'meta_value',
+		);
+		foreach ( $expected_columns as $match_name => $column_name ) {
+			if ( ! $this->fast_path_identifier_matches( $column_name, $matches[ $match_name ] ) ) {
+				return null;
+			}
+		}
+		if ( ! $this->fast_path_identifier_matches( 'comment_approved', $matches['approved_column_right'] ) ) {
+			return null;
+		}
+
+		$approved_values = array(
+			$this->fast_path_mysql_single_quoted_literal_value( $matches['approved_left'] ),
+			$this->fast_path_mysql_single_quoted_literal_value( $matches['approved_right'] ),
+		);
+		sort( $approved_values );
+		if ( array( '0', '1' ) !== $approved_values ) {
+			return null;
+		}
+
+		$comments_reference = $this->resolve_visible_user_table_reference( $comments_table );
+		$meta_reference     = $this->resolve_visible_user_table_reference( $meta_table );
+		if ( null === $comments_reference || null === $meta_reference ) {
+			return null;
+		}
+
+		$column_meta = $this->wordpress_single_column_result_metadata(
+			$comments_reference['table_name'],
+			$comments_reference['temporary'],
+			$comments_table,
+			'comment_ID'
+		);
+		if ( null === $column_meta ) {
+			return null;
+		}
+
+		$comments_sql          = $this->connection->quote_identifier( $comments_reference['table_name'] );
+		$meta_sql              = $this->connection->quote_identifier( $meta_reference['table_name'] );
+		$second_meta_alias_sql = $this->connection->quote_identifier( $second_meta_alias );
+		$sql                   = 'SELECT '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' FROM '
+			. $comments_sql
+			. ' INNER JOIN '
+			. $meta_sql
+			. ' ON ('
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' = '
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_id' )
+			. ') INNER JOIN '
+			. $meta_sql
+			. ' AS '
+			. $second_meta_alias_sql
+			. ' ON ('
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' = '
+			. $second_meta_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_id' )
+			. ') WHERE (('
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_approved' )
+			. ' = \'0\' OR '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_approved' )
+			. ' = \'1\')) AND ('
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'meta_key' )
+			. ' = '
+			. $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['meta_key'] ) )
+			. ' AND '
+			. $second_meta_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'meta_key' )
+			. ' = '
+			. $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['second_meta_key'] ) )
+			. ') GROUP BY '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' ORDER BY ANY_VALUE(CAST('
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'meta_value' )
+			. ' AS VARCHAR)) ASC, ANY_VALUE(CAST('
+			. $second_meta_alias_sql
+			. '.'
+			. $this->connection->quote_identifier( 'meta_value' )
+			. ' AS VARCHAR)) DESC, '
 			. $comments_sql
 			. '.'
 			. $this->connection->quote_identifier( 'comment_ID' )
