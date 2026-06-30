@@ -6837,8 +6837,36 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) = CAST(10 + 1 AS VARCHAR) ORDER BY id',
 			),
 			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value = post_id + 10 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) = CAST("post_id" + 10 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE post_id + 10 = meta_value ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("post_id" + 10 AS VARCHAR) = CAST("meta_value" AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT pm.id FROM postmeta pm WHERE pm.meta_value = pm.post_id + 10 ORDER BY pm.id',
+				'duckdb' => 'SELECT pm.id FROM postmeta pm WHERE CAST("pm"."meta_value" AS VARCHAR) = CAST("pm"."post_id" + 10 AS VARCHAR) ORDER BY pm.id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM options WHERE option_value = option_id + 10 ORDER BY id',
+				'duckdb' => 'SELECT id FROM options WHERE CAST("option_value" AS VARCHAR) = CAST("option_id" + 10 AS VARCHAR) ORDER BY id',
+			),
+			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value <> 10.50 + 0 ORDER BY id',
 				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) <> CAST(CAST(10.50 + 0 AS DOUBLE) AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value <> post_id + 10 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) <> CAST("post_id" + 10 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE meta_value < post_id + 10 ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("meta_value" AS VARCHAR) < CAST("post_id" + 10 AS VARCHAR) ORDER BY id',
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta WHERE post_id + 10 < meta_value ORDER BY id',
+				'duckdb' => 'SELECT id FROM postmeta WHERE CAST("post_id" + 10 AS VARCHAR) < CAST("meta_value" AS VARCHAR) ORDER BY id',
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta WHERE -6 < meta_value ORDER BY id',
@@ -6893,6 +6921,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN CAST(10 + 0 AS VARCHAR) AND 'abc' ORDER BY id",
 			),
 			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value BETWEEN post_id + 10 AND 'zz' ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN CAST(\"post_id\" + 10 AS VARCHAR) AND 'zz' ORDER BY id",
+			),
+			array(
 				'mysql'  => "SELECT id FROM postmeta WHERE meta_value BETWEEN ABS(10) AND 'abc' ORDER BY id",
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) BETWEEN CAST(abs(10) AS VARCHAR) AND 'abc' ORDER BY id",
 			),
@@ -6929,6 +6961,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT BETWEEN CAST(10 + 0 AS VARCHAR) AND 'abc' ORDER BY id",
 			),
 			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value NOT BETWEEN post_id + 10 AND 'zz' ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT BETWEEN CAST(\"post_id\" + 10 AS VARCHAR) AND 'zz' ORDER BY id",
+			),
+			array(
 				'mysql'  => "SELECT id FROM postmeta WHERE meta_value NOT BETWEEN ABS(10) AND 'abc' ORDER BY id",
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT BETWEEN CAST(abs(10) AS VARCHAR) AND 'abc' ORDER BY id",
 			),
@@ -6947,6 +6983,14 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				'mysql'  => "SELECT id FROM postmeta WHERE meta_value IN (10 + 1, 'abc') ORDER BY id",
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) IN (CAST(10 + 1 AS VARCHAR), 'abc') ORDER BY id",
+			),
+			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value IN (post_id + 10, 'abc') ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) IN (CAST(\"post_id\" + 10 AS VARCHAR), 'abc') ORDER BY id",
+			),
+			array(
+				'mysql'  => "SELECT pm.id FROM postmeta pm WHERE pm.meta_value IN (pm.post_id + 10, 'abc') ORDER BY pm.id",
+				'duckdb' => "SELECT pm.id FROM postmeta pm WHERE CAST(\"pm\".\"meta_value\" AS VARCHAR) IN (CAST(\"pm\".\"post_id\" + 10 AS VARCHAR), 'abc') ORDER BY pm.id",
 			),
 			array(
 				'mysql'  => "SELECT id FROM postmeta WHERE meta_value IN (ABS(10), 'abc') ORDER BY id",
@@ -6975,6 +7019,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array(
 				'mysql'  => "SELECT id FROM postmeta WHERE meta_value NOT IN (10 + 1, 'abc') ORDER BY id",
 				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT IN (CAST(10 + 1 AS VARCHAR), 'abc') ORDER BY id",
+			),
+			array(
+				'mysql'  => "SELECT id FROM postmeta WHERE meta_value NOT IN (post_id + 10, 'abc') ORDER BY id",
+				'duckdb' => "SELECT id FROM postmeta WHERE CAST(\"meta_value\" AS VARCHAR) NOT IN (CAST(\"post_id\" + 10 AS VARCHAR), 'abc') ORDER BY id",
 			),
 			array(
 				'mysql'  => "SELECT id FROM postmeta WHERE meta_value NOT IN (ABS(10), 'abc') ORDER BY id",
@@ -7161,22 +7209,35 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				"SELECT id FROM plugin_items WHERE parent != 'abc' ORDER BY id",
 				"SELECT plugin_items.count FROM plugin_items WHERE plugin_items.count < '10' ORDER BY plugin_items.count",
 				"SELECT id FROM postmeta WHERE meta_value IN (10 + title, 'abc') ORDER BY id",
+				"SELECT id FROM postmeta WHERE meta_value IN (title + 10, 'abc') ORDER BY id",
+				"SELECT id FROM postmeta WHERE meta_value IN (post_id + title, 'abc') ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value IN (ABS(title), 'abc') ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value IN (ABS((SELECT 11)), 'abc') ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value IN (ABS(ABS(10)), 'abc') ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value IN ((SELECT 11), 'abc') ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN 10 AND 'abc' + 1 ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN 10 + title AND 'abc' ORDER BY id",
+				"SELECT id FROM postmeta WHERE meta_value BETWEEN title + 10 AND 'zz' ORDER BY id",
+				"SELECT id FROM postmeta WHERE meta_value BETWEEN post_id + title AND 'zz' ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN ABS(title) AND 'abc' ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN ABS((SELECT 11)) AND 'abc' ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN ABS(ABS(10)) AND 'abc' ORDER BY id",
 				"SELECT id FROM postmeta WHERE meta_value BETWEEN (SELECT 11) AND 'abc' ORDER BY id",
 				'SELECT id FROM postmeta WHERE meta_value = 10 + title ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = title + 10 ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = post_id + title ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = post_id + meta_id ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = post_id ORDER BY id',
+				'SELECT id FROM postmeta WHERE title = post_id + 10 ORDER BY id',
 				'SELECT id FROM postmeta WHERE meta_value = ABS(title) ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = ABS(post_id + 10) ORDER BY id',
 				'SELECT id FROM postmeta WHERE meta_value = ABS((SELECT 11)) ORDER BY id',
 				'SELECT id FROM postmeta WHERE meta_value = ABS(ABS(10)) ORDER BY id',
 				'SELECT id FROM postmeta WHERE meta_value = (SELECT 11) ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = (SELECT post_id) + 10 ORDER BY id',
+				'SELECT id FROM postmeta WHERE meta_value = post_id + (SELECT 10) ORDER BY id',
 				'SELECT id FROM postmeta WHERE 10 + title = meta_value ORDER BY id',
+				'SELECT id FROM postmeta WHERE post_id = meta_value ORDER BY id',
 				'SELECT id FROM postmeta WHERE ABS(title) = meta_value ORDER BY id',
 				'SELECT id FROM postmeta WHERE ABS((SELECT 11)) = meta_value ORDER BY id',
 				'SELECT id FROM postmeta WHERE (SELECT 11) = meta_value ORDER BY id',
@@ -7218,6 +7279,54 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 			$driver->query( 'SELECT id FROM postmeta WHERE meta_value = (SELECT 11) ORDER BY id' );
 			$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) =', $this->lastDuckDBQuery( $driver ) );
+
+		foreach (
+			array(
+				array(
+					'sql'      => "SELECT id FROM postmeta WHERE meta_value IN (title + 10, 'abc') ORDER BY id",
+					'fragment' => 'CAST("meta_value" AS VARCHAR) IN',
+				),
+				array(
+					'sql'      => "SELECT id FROM postmeta WHERE meta_value IN (post_id + title, 'abc') ORDER BY id",
+					'fragment' => 'CAST("meta_value" AS VARCHAR) IN',
+				),
+				array(
+					'sql'      => "SELECT id FROM postmeta WHERE meta_value BETWEEN title + 10 AND 'zz' ORDER BY id",
+					'fragment' => 'CAST("meta_value" AS VARCHAR) BETWEEN',
+				),
+				array(
+					'sql'      => "SELECT id FROM postmeta WHERE meta_value BETWEEN post_id + title AND 'zz' ORDER BY id",
+					'fragment' => 'CAST("meta_value" AS VARCHAR) BETWEEN',
+				),
+				array(
+					'sql'      => 'SELECT id FROM postmeta WHERE meta_value = title + 10 ORDER BY id',
+					'fragment' => 'CAST("meta_value" AS VARCHAR) =',
+				),
+				array(
+					'sql'      => 'SELECT id FROM postmeta WHERE meta_value = post_id + title ORDER BY id',
+					'fragment' => 'CAST("meta_value" AS VARCHAR) =',
+				),
+				array(
+					'sql'      => 'SELECT id FROM postmeta WHERE meta_value = post_id + meta_id ORDER BY id',
+					'fragment' => 'CAST("meta_value" AS VARCHAR) =',
+				),
+				array(
+					'sql'      => 'SELECT id FROM postmeta WHERE meta_value = post_id ORDER BY id',
+					'fragment' => 'CAST("meta_value" AS VARCHAR) =',
+				),
+				array(
+					'sql'      => 'SELECT id FROM postmeta WHERE title = post_id + 10 ORDER BY id',
+					'fragment' => 'CAST("title" AS VARCHAR) =',
+				),
+				array(
+					'sql'      => 'SELECT id FROM postmeta WHERE meta_value = ABS(post_id + 10) ORDER BY id',
+					'fragment' => 'CAST("meta_value" AS VARCHAR) =',
+				),
+			) as $case
+		) {
+			$driver->query( $case['sql'] );
+			$this->assertStringNotContainsString( $case['fragment'], $this->lastDuckDBQuery( $driver ), $case['sql'] );
+		}
 
 		foreach (
 				array(

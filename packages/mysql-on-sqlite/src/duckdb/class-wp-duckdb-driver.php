@@ -27034,6 +27034,15 @@ class WP_DuckDB_Driver {
 			);
 		}
 
+		$expression = $this->numeric_identifier_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'       => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index' => $expression['end_index'],
+				'numeric'   => true,
+			);
+		}
+
 		$numeric = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
 		if ( null !== $numeric ) {
 			return array(
@@ -27228,6 +27237,14 @@ class WP_DuckDB_Driver {
 			);
 		}
 
+		$expression = $this->numeric_identifier_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'       => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index' => $expression['end_index'],
+			);
+		}
+
 		$numeric = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
 		if ( null !== $numeric ) {
 			return $numeric;
@@ -27382,6 +27399,106 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Build SQL for arithmetic over WordPress numeric identifier columns.
+	 *
+	 * This intentionally accepts only the numeric identifier allow-list already
+	 * used for ID-vs-string predicates plus numeric literals and +, -, *.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Expression start index.
+	 * @return array{sql:string,end_index:int,has_decimal:bool}|null Expression SQL.
+	 */
+	private function numeric_identifier_arithmetic_expression_sql( array $tokens, int $index ): ?array {
+		$first = $this->numeric_identifier_arithmetic_operand_sql( $tokens, $index );
+		if ( null === $first ) {
+			return null;
+		}
+
+		$pieces           = array( $first['sql'] );
+		$end_index        = $first['end_index'];
+		$has_decimal      = $first['has_decimal'];
+		$identifier_count = $first['identifier_count'];
+		$literal_count    = $first['literal_count'];
+		$operator_count   = 0;
+
+		while (
+			isset( $tokens[ $end_index + 2 ] )
+			&& $this->is_numeric_arithmetic_operator_token( $tokens[ $end_index + 1 ] )
+		) {
+			$right = $this->numeric_identifier_arithmetic_operand_sql( $tokens, $end_index + 2 );
+			if ( null === $right ) {
+				return null;
+			}
+
+			$pieces[]          = $tokens[ $end_index + 1 ]->get_bytes();
+			$pieces[]          = $right['sql'];
+			$end_index         = $right['end_index'];
+			$has_decimal       = $has_decimal || $right['has_decimal'];
+			$identifier_count += $right['identifier_count'];
+			$literal_count    += $right['literal_count'];
+			++$operator_count;
+		}
+
+		if ( 0 === $operator_count || 0 === $identifier_count || 0 === $literal_count ) {
+			return null;
+		}
+
+		return array(
+			'sql'         => implode( ' ', $pieces ),
+			'end_index'   => $end_index,
+			'has_decimal' => $has_decimal,
+		);
+	}
+
+	/**
+	 * Build one operand for numeric identifier arithmetic.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Operand start index.
+	 * @return array{sql:string,end_index:int,has_decimal:bool,identifier_count:int,literal_count:int}|null Operand SQL.
+	 */
+	private function numeric_identifier_arithmetic_operand_sql( array $tokens, int $index ): ?array {
+		$identifier = $this->numeric_identifier_string_comparison_operand_sql( $tokens, $index );
+		if ( null !== $identifier ) {
+			return array(
+				'sql'              => $identifier['sql'],
+				'end_index'        => $identifier['next_index'] - 1,
+				'has_decimal'      => false,
+				'identifier_count' => 1,
+				'literal_count'    => 0,
+			);
+		}
+
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		$sign_sql = '';
+		if (
+			$this->is_sign_token( $tokens[ $index ] )
+			&& isset( $tokens[ $index + 1 ] )
+			&& $this->is_number_token( $tokens[ $index + 1 ] )
+		) {
+			$sign_sql     = $tokens[ $index ]->get_bytes();
+			$number_token = $tokens[ $index + 1 ];
+			$end_index    = $index + 1;
+		} elseif ( $this->is_number_token( $tokens[ $index ] ) ) {
+			$number_token = $tokens[ $index ];
+			$end_index    = $index;
+		} else {
+			return null;
+		}
+
+		return array(
+			'sql'              => $sign_sql . $number_token->get_bytes(),
+			'end_index'        => $end_index,
+			'has_decimal'      => ! $this->is_integer_number_token( $number_token ),
+			'identifier_count' => 0,
+			'literal_count'    => 1,
+		);
+	}
+
+	/**
 	 * Build a SQLite text-affinity comparison for text-value integer predicates.
 	 *
 	 * @param string          $operand_sql  Text column SQL.
@@ -27411,6 +27528,15 @@ class WP_DuckDB_Driver {
 	 */
 	private function text_value_numeric_comparison_value_sql( array $tokens, int $index ): ?array {
 		$expression = $this->numeric_constant_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'        => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index'  => $expression['end_index'],
+				'expression' => true,
+			);
+		}
+
+		$expression = $this->numeric_identifier_arithmetic_expression_sql( $tokens, $index );
 		if ( null !== $expression ) {
 			return array(
 				'sql'        => $this->text_value_numeric_expression_text_sql( $expression ),

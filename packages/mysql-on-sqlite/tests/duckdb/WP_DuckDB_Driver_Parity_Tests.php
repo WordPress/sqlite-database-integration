@@ -2977,6 +2977,56 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
 	}
 
+	public function test_numeric_identifier_text_value_predicates_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_numeric_identifier_text_postmeta (
+					meta_id BIGINT(20) UNSIGNED NOT NULL,
+					post_id BIGINT(20) UNSIGNED NOT NULL,
+					meta_value LONGTEXT,
+					PRIMARY KEY (meta_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_numeric_identifier_text_postmeta (meta_id, post_id, meta_value) VALUES
+					(1, 1, '11'),
+					(2, 1, '13'),
+					(3, 2, 'abc'),
+					(4, 2, NULL),
+					(5, 3, '13abc'),
+					(6, 3, '13'),
+					(7, 4, 'zz'),
+					(8, 4, '14')",
+				'CREATE TABLE wp_numeric_identifier_text_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL,
+					option_value LONGTEXT,
+					PRIMARY KEY (option_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_numeric_identifier_text_options (option_id, option_value) VALUES
+					(1, '11'),
+					(2, '12'),
+					(3, 'abc'),
+					(4, NULL)",
+			)
+		);
+
+		foreach (
+			array(
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value = post_id + 10 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE post_id + 10 = meta_value ORDER BY meta_id',
+				'SELECT pm.meta_id FROM wp_numeric_identifier_text_postmeta pm WHERE pm.meta_value = pm.post_id + 10 ORDER BY pm.meta_id',
+				'SELECT option_id FROM wp_numeric_identifier_text_options WHERE option_value = option_id + 10 ORDER BY option_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value <> post_id + 10 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value < post_id + 10 ORDER BY meta_id',
+				'SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE post_id + 10 < meta_value ORDER BY meta_id',
+				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value IN (post_id + 10, 'abc') ORDER BY meta_id",
+				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value NOT IN (post_id + 10, 'abc') ORDER BY meta_id",
+				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value BETWEEN post_id + 10 AND 'zz' ORDER BY meta_id",
+				"SELECT meta_id FROM wp_numeric_identifier_text_postmeta WHERE meta_value NOT BETWEEN post_id + 10 AND 'zz' ORDER BY meta_id",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
 	public function test_chained_constant_expression_text_value_scalar_comparisons_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
