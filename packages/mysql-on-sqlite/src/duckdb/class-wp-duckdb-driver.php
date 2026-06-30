@@ -854,7 +854,7 @@ class WP_DuckDB_Driver {
 
 		if (
 			preg_match(
-				'/^SELECT\s+(?:(?<table_projection>`?TABLE_NAME`?)\s*,\s*)?`?INDEX_NAME`?\s*,\s*`?COLUMN_NAME`?\s+FROM\s+'
+				'/^SELECT\s+(?:(?<table_projection>`?TABLE_NAME`?)\s*,\s*)?`?INDEX_NAME`?\s*,\s*`?COLUMN_NAME`?(?<non_unique_projection>\s*,\s*`?NON_UNIQUE`?)?\s+FROM\s+'
 				. $source_pattern
 				. '\s+WHERE\s+(?<schema_column>`?TABLE_SCHEMA`?)\s*=\s*(?<schema_value>' . $literal_pattern . ')'
 				. '\s+AND\s+(?<table_column>`?TABLE_NAME`?)\s+IN\s*\((?<table_names>' . $literal_pattern . '(?:\s*,\s*' . $literal_pattern . ')*)\)'
@@ -886,12 +886,17 @@ class WP_DuckDB_Driver {
 				return null;
 			}
 
+			$columns = isset( $matches['table_projection'] ) && '' !== $matches['table_projection']
+				? array( 'TABLE_NAME', 'INDEX_NAME', 'COLUMN_NAME' )
+				: array( 'INDEX_NAME', 'COLUMN_NAME' );
+			if ( isset( $matches['non_unique_projection'] ) && '' !== $matches['non_unique_projection'] ) {
+				$columns[] = 'NON_UNIQUE';
+			}
+
 			return $this->information_schema_statistics_projection_result(
 				$this->fast_path_mysql_single_quoted_literal_value( $matches['schema_value'] ),
 				$table_names,
-				isset( $matches['table_projection'] ) && '' !== $matches['table_projection']
-					? array( 'TABLE_NAME', 'INDEX_NAME', 'COLUMN_NAME' )
-					: array( 'INDEX_NAME', 'COLUMN_NAME' ),
+				$columns,
 				true
 			);
 		}
