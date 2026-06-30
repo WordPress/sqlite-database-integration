@@ -1962,6 +1962,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 
 		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND 10 LIKE meta_value
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND 10 NOT LIKE meta_value
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
 			'SELECT option_id
 			FROM wp_found_rows_coercion_options
 			WHERE option_value LIKE 10
@@ -1972,6 +1986,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			'SELECT option_id
 			FROM wp_found_rows_coercion_options
 			WHERE option_value NOT LIKE 10
+			ORDER BY option_id'
+		);
+
+		$this->assertParityRows(
+			'SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE 10 LIKE option_value
+			ORDER BY option_id'
+		);
+
+		$this->assertParityRows(
+			'SELECT option_id
+			FROM wp_found_rows_coercion_options
+			WHERE 10 NOT LIKE option_value
 			ORDER BY option_id'
 		);
 

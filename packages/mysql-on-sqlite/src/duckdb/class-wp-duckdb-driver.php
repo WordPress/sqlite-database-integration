@@ -26155,6 +26155,14 @@ class WP_DuckDB_Driver {
 					false
 				);
 			}
+
+			if ( null !== $literal && null !== $operator_index ) {
+				$reverse_like = $this->translate_numeric_literal_text_value_like_predicate( $tokens, $literal, $operator_index );
+				if ( null !== $reverse_like ) {
+					$index = $reverse_like['end_index'];
+					return $reverse_like['sql'];
+				}
+			}
 		}
 
 		return null;
@@ -26341,6 +26349,44 @@ class WP_DuckDB_Driver {
 				. ( $not ? ' NOT LIKE ' : ' LIKE ' )
 				. $pattern['sql']
 				. $escape,
+			'end_index' => $end_index,
+		);
+	}
+
+	/**
+	 * Translate a numeric-literal LIKE text-value predicate.
+	 *
+	 * @param WP_Parser_Token[]               $tokens         Token stream.
+	 * @param array{sql:string,end_index:int} $literal        Numeric literal.
+	 * @param int                             $operator_index Operator index.
+	 * @return array{sql:string,end_index:int}|null Translation and consumed index.
+	 */
+	private function translate_numeric_literal_text_value_like_predicate( array $tokens, array $literal, int $operator_index ): ?array {
+		$not        = isset( $tokens[ $operator_index ] )
+			&& in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true );
+		$like_index = $not ? $operator_index + 1 : $operator_index;
+		if ( ! isset( $tokens[ $like_index ] ) || WP_MySQL_Lexer::LIKE_SYMBOL !== $tokens[ $like_index ]->id ) {
+			return null;
+		}
+
+		$operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $like_index + 1 );
+		if ( null === $operand ) {
+			return null;
+		}
+
+		$end_index = $operand['next_index'] - 1;
+		if ( isset( $tokens[ $operand['next_index'] ] ) && WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $operand['next_index'] ]->id ) {
+			return null;
+		}
+
+		if ( ! $this->text_value_numeric_comparison_has_boundary( $tokens, $end_index + 1 ) ) {
+			return null;
+		}
+
+		return array(
+			'sql'       => $literal['sql']
+				. ( $not ? ' NOT LIKE ' : ' LIKE ' )
+				. $this->text_value_sqlite_text_operand_sql( $operand['sql'] ),
 			'end_index' => $end_index,
 		);
 	}
