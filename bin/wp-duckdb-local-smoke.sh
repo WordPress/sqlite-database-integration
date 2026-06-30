@@ -8,7 +8,50 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 WP_DIR="$ROOT_DIR/wordpress"
+WP_VERSION="${WP_DUCKDB_LOCAL_SMOKE_WP_VERSION:-6.7.2}"
 DUCKDB_PHP_AUTOLOAD="${DUCKDB_PHP_AUTOLOAD:-}"
+
+insert_duckdb_autoload_constant() {
+	local file="$1"
+	local autoload="$2"
+
+	php -r '
+$file     = $argv[1];
+$autoload = $argv[2];
+$contents = file_get_contents( $file );
+$needle   = "require_once \$sqlite_plugin_implementation_folder_path . " . chr(39) . "/wp-includes/db.php" . chr(39) . ";";
+$define   = "if ( ! defined( " . chr(39) . "DUCKDB_PHP_AUTOLOAD" . chr(39) . " ) ) {\n\tdefine( " . chr(39) . "DUCKDB_PHP_AUTOLOAD" . chr(39) . ", " . var_export( $autoload, true ) . " );\n}\n\n";
+
+if ( false === strpos( $contents, $needle ) ) {
+	fwrite( STDERR, "Error: Could not find DuckDB drop-in insertion point.\n" );
+	exit( 1 );
+}
+
+file_put_contents( $file, str_replace( $needle, $define . $needle, $contents ) );
+' "$file" "$autoload"
+}
+
+ensure_wordpress_checkout() {
+	if [ -f "$WP_DIR/src/wp-load.php" ] && [ -f "$WP_DIR/src/wp-includes/class-wpdb.php" ]; then
+		return
+	fi
+
+	command -v git > /dev/null 2>&1 || {
+		echo 'Error: Git is required to prepare the WordPress smoke checkout.' >&2
+		exit 1
+	}
+
+	rm -rf "$WP_DIR"
+	git clone --depth 1 --branch "$WP_VERSION" https://github.com/WordPress/wordpress-develop.git "$WP_DIR"
+}
+
+write_duckdb_dropin() {
+	mkdir -p "$WP_DIR/src/wp-content"
+	cp "$ROOT_DIR/packages/plugin-sqlite-database-integration/db-duckdb.copy" "$WP_DIR/src/wp-content/db.php"
+	sed -i.bak "s#'{SQLITE_IMPLEMENTATION_FOLDER_PATH}'#__DIR__.'/plugins/sqlite-database-integration'#g" "$WP_DIR/src/wp-content/db.php"
+	rm -f "$WP_DIR/src/wp-content/db.php.bak"
+	insert_duckdb_autoload_constant "$WP_DIR/src/wp-content/db.php" "$DUCKDB_PHP_AUTOLOAD"
+}
 
 if [ -z "$DUCKDB_PHP_AUTOLOAD" ]; then
 	echo 'Error: DUCKDB_PHP_AUTOLOAD must point to the DuckDB PHP runtime autoload file.' >&2
@@ -31,11 +74,13 @@ fi
 
 DUCKDB_PHP_AUTOLOAD="$(cd "$(dirname "$DUCKDB_PHP_AUTOLOAD")" && pwd -P)/$(basename "$DUCKDB_PHP_AUTOLOAD")"
 
+ensure_wordpress_checkout
+
 if [ ! -f "$WP_DIR/src/wp-load.php" ] || \
 	[ ! -f "$WP_DIR/src/wp-content/db.php" ] || \
 	! grep -q "define( 'DB_ENGINE', 'duckdb' );" "$WP_DIR/src/wp-content/db.php" 2>/dev/null || \
 	! grep -Fq "$DUCKDB_PHP_AUTOLOAD" "$WP_DIR/src/wp-content/db.php" 2>/dev/null; then
-	DUCKDB_PHP_AUTOLOAD="$DUCKDB_PHP_AUTOLOAD" WP_TEST_DB_ENGINE=duckdb "$ROOT_DIR/wp-setup.sh"
+	write_duckdb_dropin
 fi
 
 if [ ! -f "$WP_DIR/src/wp-includes/class-wpdb.php" ]; then
