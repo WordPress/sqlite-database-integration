@@ -20516,6 +20516,12 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$numeric_identifier_like_predicate = $this->translate_numeric_identifier_like_predicate( $tokens, $index );
+			if ( null !== $numeric_identifier_like_predicate ) {
+				$pieces[] = $numeric_identifier_like_predicate;
+				continue;
+			}
+
 			$unix_timestamp_comparison = $this->translate_unix_timestamp_comparison( $tokens, $index );
 			if ( null !== $unix_timestamp_comparison ) {
 				$pieces[] = $unix_timestamp_comparison;
@@ -26627,6 +26633,68 @@ class WP_DuckDB_Driver {
 
 		$index = $list_index;
 		return '(' . implode( $not ? ' AND ' : ' OR ', $comparison_sql ) . ')';
+	}
+
+	/**
+	 * Translate numeric WordPress id LIKE predicates with literal patterns.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated predicate, or null when the pattern does not match.
+	 */
+	private function translate_numeric_identifier_like_predicate( array $tokens, int &$index ): ?string {
+		$operand = $this->numeric_identifier_string_comparison_operand_sql( $tokens, $index );
+		if ( null === $operand || ! isset( $tokens[ $operand['next_index'] ] ) ) {
+			return null;
+		}
+
+		$is_not_like    = false;
+		$operator_index = $operand['next_index'];
+		$pattern_index  = $operator_index + 1;
+		if ( WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $operator_index ]->id ) {
+			$is_not_like = false;
+		} elseif (
+			in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true )
+			&& isset( $tokens[ $operator_index + 1 ] )
+			&& WP_MySQL_Lexer::LIKE_SYMBOL === $tokens[ $operator_index + 1 ]->id
+		) {
+			$is_not_like   = true;
+			$pattern_index = $operator_index + 2;
+		} else {
+			return null;
+		}
+
+		if ( ! isset( $tokens[ $pattern_index ] ) || ! $this->is_string_literal_token( $tokens[ $pattern_index ] ) ) {
+			return null;
+		}
+
+		$pattern = $this->token_value( $tokens[ $pattern_index ] );
+		$escape  = '';
+		$end     = $pattern_index;
+		if (
+			isset( $tokens[ $pattern_index + 2 ] )
+			&& WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $pattern_index + 1 ]->id
+			&& $this->is_string_literal_token( $tokens[ $pattern_index + 2 ] )
+		) {
+			$escape = ' ESCAPE ' . $this->connection->quote( $this->token_value( $tokens[ $pattern_index + 2 ] ) );
+			$end    = $pattern_index + 2;
+		} elseif ( isset( $tokens[ $pattern_index + 1 ] ) && WP_MySQL_Lexer::ESCAPE_SYMBOL === $tokens[ $pattern_index + 1 ]->id ) {
+			return null;
+		} elseif ( false !== strpos( $pattern, '\\' ) ) {
+			$escape = ' ESCAPE ' . $this->connection->quote( '\\' );
+		}
+
+		if ( ! $this->numeric_identifier_string_comparison_has_boundary( $tokens, $end + 1 ) ) {
+			return null;
+		}
+
+		$index = $end;
+		return 'CAST('
+			. $operand['sql']
+			. ' AS VARCHAR)'
+			. ( $is_not_like ? ' NOT LIKE ' : ' LIKE ' )
+			. $this->connection->quote( $pattern )
+			. $escape;
 	}
 
 	/**

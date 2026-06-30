@@ -2886,6 +2886,101 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
+	public function test_numeric_identifier_like_predicates_match_sqlite(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
+		$driver->query(
+			'CREATE TABLE wptests_posts (
+				ID BIGINT(20) UNSIGNED NOT NULL,
+				post_parent BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+				post_title VARCHAR(200) NOT NULL DEFAULT \'\',
+				PRIMARY KEY (ID)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_posts (ID, post_parent, post_title) VALUES
+				(1, 0, 'one'),
+				(2, 1, 'two'),
+				(10, 1, 'ten'),
+				(21, 2, 'twenty-one')"
+		);
+		$driver->query(
+			'CREATE TABLE wptests_postmeta (
+				meta_id BIGINT(20) UNSIGNED NOT NULL,
+				post_id BIGINT(20) UNSIGNED NOT NULL,
+				meta_key VARCHAR(255),
+				PRIMARY KEY (meta_id)
+			)'
+		);
+		$driver->query(
+			"INSERT INTO wptests_postmeta (meta_id, post_id, meta_key) VALUES
+				(1, 1, 'a'),
+				(2, 2, 'b'),
+				(10, 10, 'c'),
+				(21, 21, 'd')"
+		);
+
+		$cases = array(
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID LIKE '1%' ORDER BY ID",
+				'expected' => array( 1, 10 ),
+				'fragment' => 'CAST("ID" AS VARCHAR) LIKE \'1%\'',
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT LIKE '1%' ORDER BY ID",
+				'expected' => array( 2, 21 ),
+				'fragment' => 'CAST("ID" AS VARCHAR) NOT LIKE \'1%\'',
+			),
+			array(
+				'sql'      => "SELECT p.ID FROM wptests_posts AS p WHERE p.ID LIKE '1%' ORDER BY p.ID",
+				'expected' => array( 1, 10 ),
+				'fragment' => 'CAST("p"."ID" AS VARCHAR) LIKE \'1%\'',
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE post_parent LIKE '1%' ORDER BY ID",
+				'expected' => array( 2, 10 ),
+				'fragment' => 'CAST("post_parent" AS VARCHAR) LIKE \'1%\'',
+			),
+			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE post_id LIKE '1%' ORDER BY meta_id",
+				'expected' => array( 1, 10 ),
+				'fragment' => 'CAST("post_id" AS VARCHAR) LIKE \'1%\'',
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			$this->assertSame(
+				$case['expected'],
+				array_map(
+					'intval',
+					$driver->query( $case['sql'] )->fetchAll( PDO::FETCH_COLUMN )
+				),
+				$case['sql']
+			);
+			$this->assertStringContainsString( $case['fragment'], $this->lastDuckDBQuery( $driver ), $case['sql'] );
+		}
+
+		$result = $driver->query(
+			"SELECT SQL_CALC_FOUND_ROWS ID
+			FROM wptests_posts
+			WHERE ID LIKE '1%'
+			ORDER BY ID
+			LIMIT 10"
+		);
+		$this->assertSame(
+			array(
+				array( 'ID' => 1 ),
+				array( 'ID' => 10 ),
+			),
+			$result->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array( array( 'found_rows' => 2 ) ),
+			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function test_numeric_identifier_string_literal_in_predicates_match_sqlite(): void {
 		$this->requireDuckDBRuntime();
 
@@ -6443,6 +6538,26 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'mysql'  => "SELECT ID FROM users WHERE users.ID NOT IN (1, NULL, 'bad')",
 				'duckdb' => "SELECT ID FROM users WHERE (\"users\".\"ID\" <> 1 AND NULL AND CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN TRUE ELSE \"users\".\"ID\" <> TRY_CAST('bad' AS DOUBLE) END)",
 			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID LIKE '1%'",
+				'duckdb' => "SELECT ID FROM users WHERE CAST(\"ID\" AS VARCHAR) LIKE '1%'",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE users.ID NOT LIKE '1%'",
+				'duckdb' => "SELECT ID FROM users WHERE CAST(\"users\".\"ID\" AS VARCHAR) NOT LIKE '1%'",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID LIKE '1!%' ESCAPE '!'",
+				'duckdb' => "SELECT ID FROM users WHERE CAST(\"ID\" AS VARCHAR) LIKE '1!%' ESCAPE '!'",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID LIKE '1\\_%'",
+				'duckdb' => "SELECT ID FROM users WHERE CAST(\"ID\" AS VARCHAR) LIKE '1\\_%' ESCAPE '\\'",
+			),
+			array(
+				'mysql'  => "SELECT meta_id FROM postmeta WHERE post_id LIKE '1%' ORDER BY meta_id",
+				'duckdb' => "SELECT meta_id FROM postmeta WHERE CAST(\"post_id\" AS VARCHAR) LIKE '1%' ORDER BY meta_id",
+			),
 		);
 
 		foreach ( $rewrite_cases as $case ) {
@@ -6465,6 +6580,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				"SELECT ID FROM users WHERE users.ID NOT BETWEEN '1' AND 'bad' + 1",
 				"SELECT ID FROM users WHERE ID IN (1 + 2, 'bad')",
 				"SELECT ID FROM users WHERE user_login IN ('1', 'bad')",
+				'SELECT ID FROM users WHERE ID LIKE 1',
+				"SELECT id FROM plugin_items WHERE id LIKE '1%' ORDER BY id",
 			) as $sql
 		) {
 			$driver->query( $sql );
@@ -6474,6 +6591,12 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$driver->query( "SELECT id FROM postmeta WHERE meta_value IN (10 + 1, 'abc') ORDER BY id" );
 		$this->assertStringNotContainsString( 'CAST("meta_value" AS VARCHAR) IN', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( "SELECT id FROM plugin_items WHERE id LIKE '1%' ORDER BY id" );
+		$this->assertStringNotContainsString( 'CAST("id" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( "SELECT ID FROM users WHERE ID LIKE '1%' ESCAPE 1" );
+		$this->assertStringNotContainsString( 'CAST("ID" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );
 	}
 
 	public function test_escaped_like_literal_predicates_use_mysql_backslash_semantics(): void {

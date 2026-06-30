@@ -1812,6 +1812,21 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 
 		$this->assertParityRows(
+			"SELECT SQL_CALC_FOUND_ROWS ID
+			FROM wp_found_rows_coercion_users
+			WHERE ID LIKE '1%'
+			ORDER BY ID"
+		);
+		$this->assertParityRows( 'SELECT FOUND_ROWS() AS found_rows' );
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_found_rows_coercion_users
+			WHERE ID NOT LIKE '1%'
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
 			"SELECT wp_found_rows_coercion_users.ID
 			FROM wp_found_rows_coercion_users
 			WHERE wp_found_rows_coercion_users.ID IN ('1', 'bad')
@@ -1843,6 +1858,13 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			"SELECT umeta_id
 			FROM wp_found_rows_coercion_usermeta
 			WHERE user_id BETWEEN '1' AND 'bad'
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE user_id LIKE '1%'
 			ORDER BY umeta_id"
 		);
 
