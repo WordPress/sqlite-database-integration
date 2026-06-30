@@ -26038,7 +26038,7 @@ class WP_DuckDB_Driver {
 			$literal_index  = $operator_index + 1;
 			if (
 				isset( $tokens[ $literal_index ] )
-				&& $this->is_numeric_comparison_operator_token( $tokens[ $operator_index ] ?? null )
+				&& $this->is_text_value_numeric_comparison_operator_token( $tokens[ $operator_index ] ?? null )
 				&& $this->is_integer_number_token( $tokens[ $literal_index ] )
 				&& $this->text_value_numeric_comparison_has_boundary( $tokens, $literal_index + 1 )
 			) {
@@ -26067,7 +26067,7 @@ class WP_DuckDB_Driver {
 		if (
 			isset( $tokens[ $index + 2 ] )
 			&& $this->is_integer_number_token( $tokens[ $index ] )
-			&& $this->is_numeric_comparison_operator_token( $tokens[ $index + 1 ] )
+			&& $this->is_text_value_numeric_comparison_operator_token( $tokens[ $index + 1 ] )
 		) {
 			$right_operand = $this->text_value_numeric_comparison_operand_sql( $tokens, $index + 2 );
 			if (
@@ -26098,12 +26098,16 @@ class WP_DuckDB_Driver {
 	 * @return array{sql:string,end_index:int}|null Translation and consumed index.
 	 */
 	private function translate_text_value_numeric_between_predicate( array $tokens, array $operand, int $operator_index ): ?array {
-		$lower_index = $operator_index + 1;
-		$and_index   = $operator_index + 2;
-		$upper_index = $operator_index + 3;
+		$not = isset( $tokens[ $operator_index ] )
+			&& in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true );
+
+		$between_index = $not ? $operator_index + 1 : $operator_index;
+		$lower_index   = $between_index + 1;
+		$and_index     = $between_index + 2;
+		$upper_index   = $between_index + 3;
 		if (
 			! isset( $tokens[ $upper_index ] )
-			|| WP_MySQL_Lexer::BETWEEN_SYMBOL !== $tokens[ $operator_index ]->id
+			|| WP_MySQL_Lexer::BETWEEN_SYMBOL !== $tokens[ $between_index ]->id
 			|| ! $this->is_integer_number_token( $tokens[ $lower_index ] )
 			|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $and_index ]->id
 			|| ! $this->is_integer_number_token( $tokens[ $upper_index ] )
@@ -26114,7 +26118,7 @@ class WP_DuckDB_Driver {
 
 		return array(
 			'sql'       => $this->text_value_sqlite_text_operand_sql( $operand['sql'] )
-				. ' BETWEEN '
+				. ( $not ? ' NOT BETWEEN ' : ' BETWEEN ' )
 				. $this->text_value_numeric_literal_text_sql( $tokens[ $lower_index ] )
 				. ' AND '
 				. $this->text_value_numeric_literal_text_sql( $tokens[ $upper_index ] ),
@@ -26131,16 +26135,20 @@ class WP_DuckDB_Driver {
 	 * @return array{sql:string,end_index:int}|null Translation and consumed index.
 	 */
 	private function translate_text_value_numeric_in_predicate( array $tokens, array $operand, int $operator_index ): ?array {
+		$not      = isset( $tokens[ $operator_index ] )
+			&& in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true );
+		$in_index = $not ? $operator_index + 1 : $operator_index;
+
 		if (
-			! isset( $tokens[ $operator_index + 2 ] )
-			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $operator_index ]->id
-			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $operator_index + 1 ]->id
+			! isset( $tokens[ $in_index + 2 ] )
+			|| WP_MySQL_Lexer::IN_SYMBOL !== $tokens[ $in_index ]->id
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $in_index + 1 ]->id
 		) {
 			return null;
 		}
 
 		$literal_sql = array();
-		$list_index  = $operator_index + 2;
+		$list_index  = $in_index + 2;
 		while ( isset( $tokens[ $list_index ] ) ) {
 			if ( ! $this->is_integer_number_token( $tokens[ $list_index ] ) ) {
 				return null;
@@ -26171,7 +26179,7 @@ class WP_DuckDB_Driver {
 
 		return array(
 			'sql'       => $this->text_value_sqlite_text_operand_sql( $operand['sql'] )
-				. ' IN ('
+				. ( $not ? ' NOT IN (' : ' IN (' )
 				. implode( ', ', $literal_sql )
 				. ')',
 			'end_index' => $list_index,
@@ -26573,6 +26581,20 @@ class WP_DuckDB_Driver {
 					WP_MySQL_Lexer::EQUAL_OPERATOR,
 				),
 				true
+			);
+	}
+
+	/**
+	 * Check whether a token is a comparison operator for text-value integer predicates.
+	 *
+	 * @param WP_Parser_Token|null $token Token.
+	 * @return bool Whether the token is a supported comparison operator.
+	 */
+	private function is_text_value_numeric_comparison_operator_token( $token ): bool {
+		return $this->is_numeric_comparison_operator_token( $token )
+			|| (
+				$token instanceof WP_Parser_Token
+				&& WP_MySQL_Lexer::NOT_EQUAL_OPERATOR === $token->id
 			);
 	}
 
