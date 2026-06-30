@@ -98,7 +98,7 @@ $rows   = $GLOBALS['wpdb']->get_results( 'SELECT id, note FROM wp_duckdb_local_s
 
 $expected_rows = array(
 	array(
-		'id'   => 1,
+		'id'   => '1',
 		'note' => 'ok',
 	),
 );
