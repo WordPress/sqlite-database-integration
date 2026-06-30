@@ -1751,7 +1751,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
 		$this->create_wordpress_comment_group_by_tables( $driver );
 
-		$rows = $driver->query(
+		$result = $driver->query(
 			"SELECT wptests_comments.comment_ID
 			 FROM wptests_comments INNER JOIN wptests_commentmeta ON ( wptests_comments.comment_ID = wptests_commentmeta.comment_id )
 			 WHERE ( ( comment_approved = '0' OR comment_approved = '1' ) ) AND (
@@ -1759,7 +1759,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			 )
 			 GROUP BY wptests_comments.comment_ID
 			 ORDER BY wptests_commentmeta.meta_value DESC, wptests_comments.comment_ID DESC"
-		)->fetchAll( PDO::FETCH_ASSOC );
+		);
+		$rows   = $result->fetchAll( PDO::FETCH_ASSOC );
 
 		$this->assertSame(
 			array(
@@ -1770,12 +1771,20 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$rows
 		);
 
+		$column_meta = $result->getColumnMeta( 0 );
+		$this->assertSame( 'comment_ID', $column_meta['name'] );
+		$this->assertSame( 'wptests_comments', $column_meta['table'] );
+		$this->assertSame( 'comment_ID', $column_meta['mysqli:orgname'] );
+		$this->assertSame( 'wptests_comments', $column_meta['mysqli:orgtable'] );
+
 		$duckdb_queries = $driver->get_last_duckdb_queries();
 		$select_sql     = end( $duckdb_queries );
 
+		$this->assertCount( 1, $duckdb_queries, implode( "\n", $duckdb_queries ) );
 		$this->assertIsString( $select_sql );
-		$this->assertStringContainsString( 'ANY_VALUE(wptests_commentmeta.meta_value) DESC', $select_sql );
-		$this->assertStringContainsString( 'ORDER BY ANY_VALUE(wptests_commentmeta.meta_value) DESC, wptests_comments.comment_ID DESC', $select_sql );
+		$this->assertStringContainsString( 'ANY_VALUE("wptests_commentmeta"."meta_value") DESC', $select_sql );
+		$this->assertStringContainsString( 'ORDER BY ANY_VALUE("wptests_commentmeta"."meta_value") DESC, "wptests_comments"."comment_ID" DESC', $select_sql );
+		$this->assertSame( array( array( 'found_rows' => 3 ) ), $driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC ) );
 	}
 
 	public function test_select_comments_group_by_primary_key_orders_by_cast_joined_meta_value(): void {

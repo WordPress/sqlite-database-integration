@@ -680,6 +680,11 @@ class WP_DuckDB_Driver {
 			return $wordpress_meta_cache_load_result;
 		}
 
+		$wordpress_comments_group_by_meta_order_result = $this->execute_wordpress_comments_group_by_meta_order_fast_path_statement( $normalized );
+		if ( null !== $wordpress_comments_group_by_meta_order_result ) {
+			return $wordpress_comments_group_by_meta_order_result;
+		}
+
 		if ( preg_match( '/^SET\s+autocommit\s*=\s*([01])$/i', $normalized, $matches ) ) {
 			$this->found_rows                             = 0;
 			$this->session_system_variables['autocommit'] = (int) $matches[1];
@@ -2446,6 +2451,145 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Execute WordPress comment queries grouped by comment ID and ordered by meta value.
+	 *
+	 * @param string $normalized_query Normalized MySQL query.
+	 * @return WP_DuckDB_Result_Statement|null Fast-path result, or null.
+	 */
+	private function execute_wordpress_comments_group_by_meta_order_fast_path_statement( string $normalized_query ): ?WP_DuckDB_Result_Statement {
+		$identifier_pattern = '`(?:``|[^`])+`|[A-Za-z_][A-Za-z0-9_]*';
+		$literal_pattern    = '\'(?:\\\\.|\'\'|[^\'\\\\])*\'';
+		if (
+			! preg_match(
+				'/^SELECT\s+(?<select_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<select_column>`comment_ID`|comment_ID)\s+FROM\s+(?<comments_table>' . $identifier_pattern . ')\s+INNER\s+JOIN\s+(?<meta_table>' . $identifier_pattern . ')\s+ON\s*\(\s*(?<on_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<on_comments_column>`comment_ID`|comment_ID)\s*=\s*(?<on_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<on_meta_column>`comment_id`|comment_id)\s*\)\s+WHERE\s*\(\s*\(\s*(?<approved_column>`comment_approved`|comment_approved)\s*=\s*(?<approved_left>' . $literal_pattern . ')\s+OR\s*(?<approved_column_right>`comment_approved`|comment_approved)\s*=\s*(?<approved_right>' . $literal_pattern . ')\s*\)\s*\)\s+AND\s*\(\s*(?<where_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<meta_key_column>`meta_key`|meta_key)\s*=\s*(?<meta_key>' . $literal_pattern . ')\s*\)\s+GROUP\s+BY\s+(?<group_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<group_column>`comment_ID`|comment_ID)\s+ORDER\s+BY\s+(?<order_meta_table>' . $identifier_pattern . ')\s*\.\s*(?<order_meta_column>`meta_value`|meta_value)\s+DESC\s*,\s*(?<order_comments_table>' . $identifier_pattern . ')\s*\.\s*(?<order_comments_column>`comment_ID`|comment_ID)\s+DESC$/i',
+				$normalized_query,
+				$matches
+			)
+		) {
+			return null;
+		}
+
+		$comments_table = $this->fast_path_mysql_identifier_value( $matches['comments_table'] );
+		$meta_table     = $this->fast_path_mysql_identifier_value( $matches['meta_table'] );
+		if (
+			! $this->is_wordpress_comments_table_name( $comments_table )
+			|| ! $this->is_wordpress_commentmeta_table_name( $meta_table )
+			|| ! $this->wordpress_comments_commentmeta_table_prefixes_match( $comments_table, $meta_table )
+		) {
+			return null;
+		}
+
+		foreach ( array( 'select_comments_table', 'on_comments_table', 'group_comments_table', 'order_comments_table' ) as $comments_match ) {
+			if ( 0 !== strcasecmp( $comments_table, $this->fast_path_mysql_identifier_value( $matches[ $comments_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		foreach ( array( 'on_meta_table', 'where_meta_table', 'order_meta_table' ) as $meta_match ) {
+			if ( 0 !== strcasecmp( $meta_table, $this->fast_path_mysql_identifier_value( $matches[ $meta_match ] ) ) ) {
+				return null;
+			}
+		}
+
+		foreach ( array( 'select_column', 'on_comments_column', 'group_column', 'order_comments_column' ) as $column_match ) {
+			if ( ! $this->fast_path_identifier_matches( 'comment_ID', $matches[ $column_match ] ) ) {
+				return null;
+			}
+		}
+
+		$expected_columns = array(
+			'on_meta_column'    => 'comment_id',
+			'approved_column'   => 'comment_approved',
+			'meta_key_column'   => 'meta_key',
+			'order_meta_column' => 'meta_value',
+		);
+		foreach ( $expected_columns as $match_name => $column_name ) {
+			if ( ! $this->fast_path_identifier_matches( $column_name, $matches[ $match_name ] ) ) {
+				return null;
+			}
+		}
+		if ( ! $this->fast_path_identifier_matches( 'comment_approved', $matches['approved_column_right'] ) ) {
+			return null;
+		}
+
+		$approved_values = array(
+			$this->fast_path_mysql_single_quoted_literal_value( $matches['approved_left'] ),
+			$this->fast_path_mysql_single_quoted_literal_value( $matches['approved_right'] ),
+		);
+		sort( $approved_values );
+		if ( array( '0', '1' ) !== $approved_values ) {
+			return null;
+		}
+
+		$comments_reference = $this->resolve_visible_user_table_reference( $comments_table );
+		$meta_reference     = $this->resolve_visible_user_table_reference( $meta_table );
+		if ( null === $comments_reference || null === $meta_reference ) {
+			return null;
+		}
+
+		$column_meta = $this->wordpress_single_column_result_metadata(
+			$comments_reference['table_name'],
+			$comments_reference['temporary'],
+			$comments_table,
+			'comment_ID'
+		);
+		if ( null === $column_meta ) {
+			return null;
+		}
+
+		$comments_sql = $this->connection->quote_identifier( $comments_reference['table_name'] );
+		$meta_sql     = $this->connection->quote_identifier( $meta_reference['table_name'] );
+		$sql          = 'SELECT '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' FROM '
+			. $comments_sql
+			. ' INNER JOIN '
+			. $meta_sql
+			. ' ON ('
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' = '
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_id' )
+			. ') WHERE (('
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_approved' )
+			. ' = \'0\' OR '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_approved' )
+			. ' = \'1\')) AND ('
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'meta_key' )
+			. ' = '
+			. $this->connection->quote( $this->fast_path_mysql_single_quoted_literal_value( $matches['meta_key'] ) )
+			. ') GROUP BY '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' ORDER BY ANY_VALUE('
+			. $meta_sql
+			. '.'
+			. $this->connection->quote_identifier( 'meta_value' )
+			. ') DESC, '
+			. $comments_sql
+			. '.'
+			. $this->connection->quote_identifier( 'comment_ID' )
+			. ' DESC';
+
+		$result           = $this->execute_duckdb_query( $sql, 'Unsupported DuckDB MySQL-emulation SELECT statement' );
+		$this->found_rows = $sql;
+
+		return $this->apply_result_column_metadata( $result, $column_meta );
+	}
+
+	/**
 	 * Decode a simple MySQL identifier accepted by the fast-path regex.
 	 *
 	 * @param string $identifier MySQL identifier.
@@ -2622,6 +2766,20 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
+	 * Check whether WordPress comments and commentmeta tables use the same prefix.
+	 *
+	 * @param string $comments_table Comments table name.
+	 * @param string $meta_table     Commentmeta table name.
+	 * @return bool Whether both table names share the same WordPress prefix.
+	 */
+	private function wordpress_comments_commentmeta_table_prefixes_match( string $comments_table, string $meta_table ): bool {
+		$comments_prefix = $this->wordpress_fast_path_table_prefix( $comments_table, 'comments' );
+		$meta_prefix     = $this->wordpress_fast_path_table_prefix( $meta_table, 'commentmeta' );
+
+		return null !== $comments_prefix && null !== $meta_prefix && 0 === strcasecmp( $comments_prefix, $meta_prefix );
+	}
+
+	/**
 	 * Return a WordPress table prefix from a table name and suffix.
 	 *
 	 * @param string $table_name Table name.
@@ -2766,6 +2924,32 @@ class WP_DuckDB_Driver {
 		}
 
 		return $column_meta;
+	}
+
+	/**
+	 * Build MySQL-shaped metadata for one direct table column.
+	 *
+	 * @param string $table_name  Resolved table name.
+	 * @param bool   $temporary   Whether the resolved table is temporary.
+	 * @param string $table_alias Result table alias.
+	 * @param string $column_name Column name.
+	 * @return array<int,array<string,mixed>>|null Column metadata, or null when unavailable.
+	 */
+	private function wordpress_single_column_result_metadata( string $table_name, bool $temporary, string $table_alias, string $column_name ): ?array {
+		foreach ( $this->table_column_metadata_rows( $table_name, $temporary ) as $metadata ) {
+			if ( 0 === strcasecmp( $column_name, (string) $metadata['column_name'] ) ) {
+				return array(
+					$this->mysql_result_column_metadata(
+						$table_name,
+						$table_alias,
+						$metadata,
+						(string) $metadata['column_name']
+					),
+				);
+			}
+		}
+
+		return null;
 	}
 
 	/**
