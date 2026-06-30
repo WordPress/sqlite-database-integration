@@ -2796,9 +2796,24 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'fragment' => "TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE",
 			),
 			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID IN (1, 'yololololo', 3) ORDER BY ID",
+				'expected' => array( 1, 3 ),
+				'fragment' => "\"ID\" = 1 OR CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE",
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID IN (1, NULL, 'yololololo', 3) ORDER BY ID",
+				'expected' => array( 1, 3 ),
+				'fragment' => '"ID" = 1 OR NULL OR CASE WHEN "ID" IS NULL THEN NULL',
+			),
+			array(
 				'sql'      => "SELECT p.ID FROM wptests_posts AS p WHERE p.ID IN ('1', 'yololololo', '003') ORDER BY p.ID",
 				'expected' => array( 1, 3 ),
 				'fragment' => '"p"."ID" = TRY_CAST(\'003\' AS DOUBLE)',
+			),
+			array(
+				'sql'      => "SELECT p.ID FROM wptests_posts AS p WHERE p.ID IN (1, 'yololololo', 3) ORDER BY p.ID",
+				'expected' => array( 1, 3 ),
+				'fragment' => '"p"."ID" = 1 OR CASE WHEN "p"."ID" IS NULL THEN NULL',
 			),
 			array(
 				'sql'      => "SELECT ID FROM wptests_posts WHERE post_parent IN ('1', 'yololololo') ORDER BY ID",
@@ -2806,9 +2821,19 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'fragment' => '"post_parent" = TRY_CAST(\'1\' AS DOUBLE)',
 			),
 			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE post_parent IN (1, 'yololololo') ORDER BY ID",
+				'expected' => array( 2, 3 ),
+				'fragment' => '"post_parent" = 1 OR CASE WHEN "post_parent" IS NULL THEN NULL',
+			),
+			array(
 				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE post_id IN ('1', 'yololololo', '003') ORDER BY meta_id",
 				'expected' => array( 1, 2 ),
 				'fragment' => '"post_id" = TRY_CAST(\'003\' AS DOUBLE)',
+			),
+			array(
+				'sql'      => "SELECT meta_id FROM wptests_postmeta WHERE post_id IN (1, 'yololololo', 3) ORDER BY meta_id",
+				'expected' => array( 1, 2 ),
+				'fragment' => '"post_id" = 1 OR CASE WHEN "post_id" IS NULL THEN NULL',
 			),
 			array(
 				'sql'      => "SELECT ID FROM wptests_posts WHERE ID IN ('', '2') ORDER BY ID",
@@ -2819,6 +2844,26 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT IN ('1', 'yololololo', '003') ORDER BY ID",
 				'expected' => array( 2, 10 ),
 				'fragment' => "TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN TRUE",
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT IN (2, 'yololololo') ORDER BY ID",
+				'expected' => array( 1, 3, 10 ),
+				'fragment' => "\"ID\" <> 2 AND CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN TRUE",
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT IN (2, NULL, 'yololololo') ORDER BY ID",
+				'expected' => array(),
+				'fragment' => '"ID" <> 2 AND NULL AND CASE WHEN "ID" IS NULL THEN NULL',
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID IN ('yololololo', NULL) ORDER BY ID",
+				'expected' => array(),
+				'fragment' => "TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END OR NULL",
+			),
+			array(
+				'sql'      => "SELECT ID FROM wptests_posts WHERE ID NOT IN ('yololololo', NULL) ORDER BY ID",
+				'expected' => array(),
+				'fragment' => "TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN TRUE ELSE \"ID\" <> TRY_CAST('yololololo' AS DOUBLE) END AND NULL",
 			),
 		);
 
@@ -2837,7 +2882,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$result = $driver->query(
 			"SELECT SQL_CALC_FOUND_ROWS ID
 			FROM wptests_posts
-			WHERE ID IN ('1', 'yololololo', '003')
+			WHERE ID IN (1, NULL, 'yololololo', 3)
 			ORDER BY ID
 			LIMIT 10"
 		);
@@ -6228,8 +6273,24 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				'duckdb' => "SELECT ID FROM users WHERE (CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('1' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('1' AS DOUBLE) END OR CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('yololololo' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('yololololo' AS DOUBLE) END OR CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('003' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('003' AS DOUBLE) END)",
 			),
 			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID IN (1, 'bad', 3)",
+				'duckdb' => "SELECT ID FROM users WHERE (\"ID\" = 1 OR CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('bad' AS DOUBLE) END OR \"ID\" = 3)",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID IN (+1, -3, 'bad')",
+				'duckdb' => "SELECT ID FROM users WHERE (\"ID\" = +1 OR \"ID\" = -3 OR CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('bad' AS DOUBLE) END)",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE ID IN (1, NULL, 'bad')",
+				'duckdb' => "SELECT ID FROM users WHERE (\"ID\" = 1 OR NULL OR CASE WHEN \"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN FALSE ELSE \"ID\" = TRY_CAST('bad' AS DOUBLE) END)",
+			),
+			array(
 				'mysql'  => "SELECT ID FROM users WHERE users.ID NOT IN ('1', 'bad')",
 				'duckdb' => "SELECT ID FROM users WHERE (CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('1' AS DOUBLE) IS NULL THEN TRUE ELSE \"users\".\"ID\" <> TRY_CAST('1' AS DOUBLE) END AND CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN TRUE ELSE \"users\".\"ID\" <> TRY_CAST('bad' AS DOUBLE) END)",
+			),
+			array(
+				'mysql'  => "SELECT ID FROM users WHERE users.ID NOT IN (1, NULL, 'bad')",
+				'duckdb' => "SELECT ID FROM users WHERE (\"users\".\"ID\" <> 1 AND NULL AND CASE WHEN \"users\".\"ID\" IS NULL THEN NULL WHEN TRY_CAST('bad' AS DOUBLE) IS NULL THEN TRUE ELSE \"users\".\"ID\" <> TRY_CAST('bad' AS DOUBLE) END)",
 			),
 		);
 
@@ -6247,7 +6308,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				"SELECT id FROM plugin_items WHERE id < '10' ORDER BY id",
 				"SELECT id FROM plugin_items WHERE parent != 'abc' ORDER BY id",
 				"SELECT plugin_items.count FROM plugin_items WHERE plugin_items.count < '10' ORDER BY plugin_items.count",
-				"SELECT ID FROM users WHERE ID IN (1, 'bad')",
+				"SELECT ID FROM users WHERE ID IN (1 + 2, 'bad')",
 				"SELECT ID FROM users WHERE user_login IN ('1', 'bad')",
 			) as $sql
 		) {

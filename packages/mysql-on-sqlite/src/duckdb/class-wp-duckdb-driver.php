@@ -26406,7 +26406,7 @@ class WP_DuckDB_Driver {
 	}
 
 	/**
-	 * Translate numeric WordPress id IN lists containing quoted strings.
+	 * Translate numeric WordPress id IN lists containing quoted strings, numbers, and NULL.
 	 *
 	 * @param WP_Parser_Token[] $tokens Token stream.
 	 * @param int               $index  Current index, advanced on match.
@@ -26437,15 +26437,44 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$literal_tokens = array();
+		$comparison_sql = array();
 		$list_index     = $in_index + 2;
 		while ( isset( $tokens[ $list_index ] ) ) {
-			if ( ! $this->is_string_literal_token( $tokens[ $list_index ] ) ) {
-				return null;
-			}
+			$token = $tokens[ $list_index ];
+			if ( $this->is_string_literal_token( $token ) ) {
+				$comparison_sql[] = $this->sqlite_numeric_string_literal_comparison_sql(
+					$operand['sql'],
+					$not ? WP_MySQL_Lexer::NOT_EQUAL_OPERATOR : WP_MySQL_Lexer::EQUAL_OPERATOR,
+					$not ? '<>' : '=',
+					$token,
+					true
+				);
+				++$list_index;
+			} elseif ( WP_MySQL_Lexer::NULL_SYMBOL === $token->id || WP_MySQL_Lexer::NULL2_SYMBOL === $token->id ) {
+				$comparison_sql[] = 'NULL';
+				++$list_index;
+			} else {
+				$sign_sql = '';
+				if (
+					$this->is_sign_token( $token )
+					&& isset( $tokens[ $list_index + 1 ] )
+					&& $this->is_number_token( $tokens[ $list_index + 1 ] )
+				) {
+					$sign_sql = $token->get_bytes();
+					++$list_index;
+					$token = $tokens[ $list_index ];
+				}
 
-			$literal_tokens[] = $tokens[ $list_index ];
-			++$list_index;
+				if ( ! $this->is_number_token( $token ) ) {
+					return null;
+				}
+
+				$comparison_sql[] = $operand['sql']
+					. ( $not ? ' <> ' : ' = ' )
+					. $sign_sql
+					. $token->get_bytes();
+				++$list_index;
+			}
 
 			if ( ! isset( $tokens[ $list_index ] ) ) {
 				return null;
@@ -26460,22 +26489,11 @@ class WP_DuckDB_Driver {
 		}
 
 		if (
-			array() === $literal_tokens
+			array() === $comparison_sql
 			|| ! isset( $tokens[ $list_index ] )
 			|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL !== $tokens[ $list_index ]->id
 		) {
 			return null;
-		}
-
-		$comparison_sql = array();
-		foreach ( $literal_tokens as $literal ) {
-			$comparison_sql[] = $this->sqlite_numeric_string_literal_comparison_sql(
-				$operand['sql'],
-				$not ? WP_MySQL_Lexer::NOT_EQUAL_OPERATOR : WP_MySQL_Lexer::EQUAL_OPERATOR,
-				$not ? '<>' : '=',
-				$literal,
-				true
-			);
 		}
 
 		$index = $list_index;
