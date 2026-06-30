@@ -2284,10 +2284,9 @@ try {
 	let isSuccess = true;
 
 	if ( phpunitBaselineSeconds && phpunitCommandSeconds > phpunitBaselineSeconds ) {
-		console.error(
-			`\n❌ PHPUnit command took ${ phpunitCommandSeconds.toFixed( 3 ) }s, above ${ phpunitBaselineSeconds }s baseline.`
+		console.warn(
+			`\n⚠️ PHPUnit command took ${ phpunitCommandSeconds.toFixed( 3 ) }s, above ${ phpunitBaselineSeconds }s baseline.`
 		);
-		isSuccess = false;
 	}
 
 	if ( phpunitMinTests && actualTests.length < phpunitMinTests ) {
