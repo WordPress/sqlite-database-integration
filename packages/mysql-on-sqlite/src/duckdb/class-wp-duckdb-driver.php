@@ -26967,6 +26967,14 @@ class WP_DuckDB_Driver {
 	 * @return array{sql:string,end_index:int}|null Literal SQL and consumed index.
 	 */
 	private function text_value_in_list_literal_sequence_sql( array $tokens, int $index ): ?array {
+		$expression = $this->numeric_constant_arithmetic_expression_sql( $tokens, $index );
+		if ( null !== $expression ) {
+			return array(
+				'sql'       => $this->text_value_numeric_expression_text_sql( $expression ),
+				'end_index' => $expression['end_index'],
+			);
+		}
+
 		$numeric = $this->text_value_numeric_literal_sequence_sql( $tokens, $index );
 		if ( null !== $numeric ) {
 			return $numeric;
@@ -26991,6 +26999,107 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Cast a numeric constant expression to text with SQLite-compatible display.
+	 *
+	 * @param array{sql:string,end_index:int,has_decimal:bool} $expression Numeric expression.
+	 * @return string DuckDB SQL.
+	 */
+	private function text_value_numeric_expression_text_sql( array $expression ): string {
+		if ( $expression['has_decimal'] ) {
+			return 'CAST(CAST(' . $expression['sql'] . ' AS DOUBLE) AS VARCHAR)';
+		}
+
+		return 'CAST(' . $expression['sql'] . ' AS VARCHAR)';
+	}
+
+	/**
+	 * Build SQL for a constant numeric arithmetic expression.
+	 *
+	 * This intentionally accepts only numeric literals, optional signs, and the
+	 * arithmetic operators already used for text-value numeric coercion.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Expression start index.
+	 * @return array{sql:string,end_index:int,has_decimal:bool}|null Expression SQL.
+	 */
+	private function numeric_constant_arithmetic_expression_sql( array $tokens, int $index ): ?array {
+		$first = $this->numeric_constant_arithmetic_operand_sql( $tokens, $index );
+		if ( null === $first ) {
+			return null;
+		}
+
+		$pieces         = array( $first['sql'] );
+		$end_index      = $first['end_index'];
+		$has_decimal    = $first['has_decimal'];
+		$operator_count = 0;
+
+		while (
+			isset( $tokens[ $end_index + 2 ] )
+			&& $this->is_numeric_arithmetic_operator_token( $tokens[ $end_index + 1 ] )
+		) {
+			if ( $operator_count > 0 ) {
+				return null;
+			}
+
+			$right = $this->numeric_constant_arithmetic_operand_sql( $tokens, $end_index + 2 );
+			if ( null === $right ) {
+				return null;
+			}
+
+			$pieces[]    = $tokens[ $end_index + 1 ]->get_bytes();
+			$pieces[]    = $right['sql'];
+			$end_index   = $right['end_index'];
+			$has_decimal = $has_decimal || $right['has_decimal'];
+			++$operator_count;
+		}
+
+		if ( 0 === $operator_count ) {
+			return null;
+		}
+
+		return array(
+			'sql'         => implode( ' ', $pieces ),
+			'end_index'   => $end_index,
+			'has_decimal' => $has_decimal,
+		);
+	}
+
+	/**
+	 * Build SQL for a signed numeric literal in a constant arithmetic expression.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Operand start index.
+	 * @return array{sql:string,end_index:int,has_decimal:bool}|null Operand SQL.
+	 */
+	private function numeric_constant_arithmetic_operand_sql( array $tokens, int $index ): ?array {
+		if ( ! isset( $tokens[ $index ] ) ) {
+			return null;
+		}
+
+		$sign_sql = '';
+		if (
+			$this->is_sign_token( $tokens[ $index ] )
+			&& isset( $tokens[ $index + 1 ] )
+			&& $this->is_number_token( $tokens[ $index + 1 ] )
+		) {
+			$sign_sql     = $tokens[ $index ]->get_bytes();
+			$number_token = $tokens[ $index + 1 ];
+			$end_index    = $index + 1;
+		} elseif ( $this->is_number_token( $tokens[ $index ] ) ) {
+			$number_token = $tokens[ $index ];
+			$end_index    = $index;
+		} else {
+			return null;
+		}
+
+		return array(
+			'sql'         => $sign_sql . $number_token->get_bytes(),
+			'end_index'   => $end_index,
+			'has_decimal' => ! $this->is_integer_number_token( $number_token ),
+		);
 	}
 
 	/**
@@ -27332,8 +27441,14 @@ class WP_DuckDB_Driver {
 		$comparison_sql = array();
 		$list_index     = $in_index + 2;
 		while ( isset( $tokens[ $list_index ] ) ) {
-			$token = $tokens[ $list_index ];
-			if ( $this->is_string_literal_token( $token ) ) {
+			$token               = $tokens[ $list_index ];
+			$constant_expression = $this->numeric_constant_arithmetic_expression_sql( $tokens, $list_index );
+			if ( null !== $constant_expression ) {
+				$comparison_sql[] = $operand['sql']
+					. ( $not ? ' <> ' : ' = ' )
+					. $constant_expression['sql'];
+				$list_index       = $constant_expression['end_index'] + 1;
+			} elseif ( $this->is_string_literal_token( $token ) ) {
 				$comparison_sql[] = $this->sqlite_numeric_string_literal_comparison_sql(
 					$operand['sql'],
 					$not ? WP_MySQL_Lexer::NOT_EQUAL_OPERATOR : WP_MySQL_Lexer::EQUAL_OPERATOR,

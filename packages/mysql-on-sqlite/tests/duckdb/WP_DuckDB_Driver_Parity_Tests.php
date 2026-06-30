@@ -2007,6 +2007,20 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows(
 			"SELECT ID
 			FROM wp_found_rows_coercion_users
+			WHERE ID IN (1 + 1, 'bad')
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_found_rows_coercion_users
+			WHERE ID NOT IN (1 + 1, 'bad')
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_found_rows_coercion_users
 			WHERE ID NOT IN ('1', 'yololololo', '02')
 			ORDER BY ID"
 		);
@@ -2319,6 +2333,13 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows(
 			"SELECT umeta_id
 			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value IN (10 + 0, 10.50 + 0, +3 * 100, 'abc')
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
 			WHERE meta_key = 'numeric_prefix' AND meta_value NOT IN (10, 11)
 			ORDER BY umeta_id"
 		);
@@ -2327,6 +2348,13 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			"SELECT umeta_id
 			FROM wp_found_rows_coercion_usermeta
 			WHERE meta_key = 'numeric_prefix' AND meta_value NOT IN (10, NULL, 'abc')
+			ORDER BY umeta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT umeta_id
+			FROM wp_found_rows_coercion_usermeta
+			WHERE meta_key = 'numeric_prefix' AND meta_value NOT IN (10 + 0, 'abc')
 			ORDER BY umeta_id"
 		);
 
@@ -2440,6 +2468,71 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			FROM wp_plugin_text_ids
 			WHERE wp_plugin_text_ids.count < '10'
 			ORDER BY wp_plugin_text_ids.count"
+		);
+	}
+
+	public function test_constant_expression_in_list_items_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_expression_in_postmeta (
+					meta_id BIGINT(20) UNSIGNED NOT NULL,
+					post_id BIGINT(20) UNSIGNED NOT NULL,
+					meta_value LONGTEXT,
+					PRIMARY KEY (meta_id)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				"INSERT INTO wp_expression_in_postmeta (meta_id, post_id, meta_value) VALUES
+					(1, 1, '11'),
+					(2, 1, 'abc'),
+					(3, 2, '10'),
+					(4, 2, '10.5'),
+					(5, 3, '3'),
+					(6, 3, NULL)",
+				'CREATE TABLE wp_expression_in_posts (
+					ID BIGINT(20) UNSIGNED NOT NULL,
+					post_parent BIGINT(20) UNSIGNED NOT NULL,
+					PRIMARY KEY (ID)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+				'INSERT INTO wp_expression_in_posts (ID, post_parent) VALUES
+					(1, 0),
+					(2, 1),
+					(3, 3),
+					(4, 11)',
+			)
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_in_postmeta
+			WHERE meta_value IN (10 + 1, 'abc')
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			'SELECT meta_id
+			FROM wp_expression_in_postmeta
+			WHERE meta_value IN (10.50 + 0, +3 * 1)
+			ORDER BY meta_id'
+		);
+
+		$this->assertParityRows(
+			"SELECT meta_id
+			FROM wp_expression_in_postmeta
+			WHERE meta_value NOT IN (10 + 1, 'abc')
+			ORDER BY meta_id"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_in_posts
+			WHERE post_parent IN (10 + 1, 'abc')
+			ORDER BY ID"
+		);
+
+		$this->assertParityRows(
+			"SELECT ID
+			FROM wp_expression_in_posts
+			WHERE post_parent NOT IN (10 + 1, 'abc')
+			ORDER BY ID"
 		);
 	}
 
