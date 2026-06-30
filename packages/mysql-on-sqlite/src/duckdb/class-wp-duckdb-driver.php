@@ -25059,7 +25059,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_referential_constraints,
 		bool $rewrite_information_schema_check_constraints
 	): ?string {
-		$date_text = $this->date_text_expression_sql(
+		$start_index = $index;
+		$date_text   = $this->date_text_expression_sql(
 			$tokens,
 			$index,
 			$rewrite_information_schema_tables,
@@ -25077,12 +25078,18 @@ class WP_DuckDB_Driver {
 		) {
 			$operator_index = $date_text['next_index'];
 			$literal        = $this->text_value_numeric_literal_sequence_sql( $tokens, $operator_index + 1 );
+			$boundary_index = null !== $literal ? $literal['end_index'] + 1 : $operator_index + 1;
 			if (
 				null !== $literal
-				&& $this->text_value_numeric_comparison_has_boundary( $tokens, $literal['end_index'] + 1 )
+				&& $this->date_scalar_comparison_has_boundary( $tokens, $start_index, $boundary_index )
 			) {
 				$index = $literal['end_index'];
-				return $this->sqlite_date_text_numeric_comparison_sql( $date_text['sql'], $tokens[ $operator_index ], false );
+				return $this->sqlite_date_text_numeric_comparison_sql(
+					$date_text['sql'],
+					$tokens[ $operator_index ],
+					false,
+					$this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $boundary_index )
+				);
 			}
 		}
 
@@ -25096,7 +25103,7 @@ class WP_DuckDB_Driver {
 			return null;
 		}
 
-		$date_text = $this->date_text_expression_sql(
+		$date_text      = $this->date_text_expression_sql(
 			$tokens,
 			$operator_index + 1,
 			$rewrite_information_schema_tables,
@@ -25107,15 +25114,21 @@ class WP_DuckDB_Driver {
 			$rewrite_information_schema_referential_constraints,
 			$rewrite_information_schema_check_constraints
 		);
+		$boundary_index = null !== $date_text ? $date_text['next_index'] : $operator_index + 1;
 		if (
 			null === $date_text
-			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $date_text['next_index'] )
+			|| ! $this->date_scalar_comparison_has_boundary( $tokens, $start_index, $boundary_index )
 		) {
 			return null;
 		}
 
 		$index = $date_text['next_index'] - 1;
-		return $this->sqlite_date_text_numeric_comparison_sql( $date_text['sql'], $tokens[ $operator_index ], true );
+		return $this->sqlite_date_text_numeric_comparison_sql(
+			$date_text['sql'],
+			$tokens[ $operator_index ],
+			true,
+			$this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $boundary_index )
+		);
 	}
 
 	/**
@@ -25410,11 +25423,16 @@ class WP_DuckDB_Driver {
 	 * @param bool            $numeric_operand_left Whether the numeric literal is on the left.
 	 * @return string DuckDB SQL.
 	 */
-	private function sqlite_date_text_numeric_comparison_sql( string $date_text_sql, WP_Parser_Token $operator, bool $numeric_operand_left ): string {
+	private function sqlite_date_text_numeric_comparison_sql( string $date_text_sql, WP_Parser_Token $operator, bool $numeric_operand_left, bool $integer_result = false ): string {
+		$result_sql = $this->sqlite_numeric_string_null_comparison_result_sql( $operator->id, $numeric_operand_left );
+		if ( $integer_result ) {
+			$result_sql = 'TRUE' === $result_sql ? '1' : '0';
+		}
+
 		return '(CASE WHEN '
 			. $date_text_sql
 			. ' IS NULL THEN NULL ELSE '
-			. $this->sqlite_numeric_string_null_comparison_result_sql( $operator->id, $numeric_operand_left )
+			. $result_sql
 			. ' END)';
 	}
 
@@ -25456,7 +25474,8 @@ class WP_DuckDB_Driver {
 		bool $rewrite_information_schema_referential_constraints,
 		bool $rewrite_information_schema_check_constraints
 	): ?string {
-		$date_part = $this->date_part_numeric_expression_sql(
+		$start_index = $index;
+		$date_part   = $this->date_part_numeric_expression_sql(
 			$tokens,
 			$index,
 			$rewrite_information_schema_tables,
@@ -25472,10 +25491,16 @@ class WP_DuckDB_Driver {
 			&& isset( $tokens[ $date_part['next_index'] + 1 ] )
 			&& $this->is_numeric_string_comparison_operator_token( $tokens[ $date_part['next_index'] ] )
 			&& $this->is_string_literal_token( $tokens[ $date_part['next_index'] + 1 ] )
-			&& $this->text_value_numeric_comparison_has_boundary( $tokens, $date_part['next_index'] + 2 )
+			&& $this->date_scalar_comparison_has_boundary( $tokens, $start_index, $date_part['next_index'] + 2 )
 		) {
-			$index = $date_part['next_index'] + 1;
-			return $this->sqlite_date_part_string_literal_comparison_sql( $date_part['sql'], $tokens[ $date_part['next_index'] ], true );
+			$boundary_index = $date_part['next_index'] + 2;
+			$index          = $date_part['next_index'] + 1;
+			return $this->sqlite_date_part_string_literal_comparison_sql(
+				$date_part['sql'],
+				$tokens[ $date_part['next_index'] ],
+				true,
+				$this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $boundary_index )
+			);
 		}
 
 		if (
@@ -25500,13 +25525,18 @@ class WP_DuckDB_Driver {
 		);
 		if (
 			null === $date_part
-			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $date_part['next_index'] )
+			|| ! $this->date_scalar_comparison_has_boundary( $tokens, $start_index, $date_part['next_index'] )
 		) {
 			return null;
 		}
 
 		$index = $date_part['next_index'] - 1;
-		return $this->sqlite_date_part_string_literal_comparison_sql( $date_part['sql'], $operator, false );
+		return $this->sqlite_date_part_string_literal_comparison_sql(
+			$date_part['sql'],
+			$operator,
+			false,
+			$this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $date_part['next_index'] )
+		);
 	}
 
 	/**
@@ -25604,8 +25634,12 @@ class WP_DuckDB_Driver {
 	 * @param bool            $numeric_operand_left Whether the date-part function is on the left.
 	 * @return string DuckDB SQL.
 	 */
-	private function sqlite_date_part_string_literal_comparison_sql( string $date_part_sql, WP_Parser_Token $operator, bool $numeric_operand_left ): string {
+	private function sqlite_date_part_string_literal_comparison_sql( string $date_part_sql, WP_Parser_Token $operator, bool $numeric_operand_left, bool $integer_result = false ): string {
 		$result_sql = $this->sqlite_numeric_string_null_comparison_result_sql( $operator->id, $numeric_operand_left );
+		if ( $integer_result ) {
+			$result_sql = 'TRUE' === $result_sql ? '1' : '0';
+		}
+
 		return '(CASE WHEN '
 			. $date_part_sql
 			. ' IS NULL THEN '
@@ -25613,6 +25647,88 @@ class WP_DuckDB_Driver {
 			. ' ELSE '
 			. $result_sql
 			. ' END)';
+	}
+
+	/**
+	 * Check whether a date scalar comparison reaches a safe predicate boundary.
+	 *
+	 * @param WP_Parser_Token[] $tokens         Token stream.
+	 * @param int               $start_index    Predicate start token index.
+	 * @param int               $boundary_index Token index after the predicate.
+	 * @return bool Whether the next token is absent or a supported boundary.
+	 */
+	private function date_scalar_comparison_has_boundary( array $tokens, int $start_index, int $boundary_index ): bool {
+		if ( $this->text_value_numeric_comparison_has_boundary( $tokens, $boundary_index ) ) {
+			return true;
+		}
+
+		return $this->date_scalar_comparison_is_select_item_boundary( $tokens, $start_index, $boundary_index );
+	}
+
+	/**
+	 * Check whether a date scalar comparison ends at a SELECT-list item boundary.
+	 *
+	 * @param WP_Parser_Token[] $tokens         Token stream.
+	 * @param int               $start_index    Predicate start token index.
+	 * @param int               $boundary_index Token index after the predicate.
+	 * @return bool Whether the predicate is a top-level SELECT-list item.
+	 */
+	private function date_scalar_comparison_is_select_item_boundary( array $tokens, int $start_index, int $boundary_index ): bool {
+		if ( ! $this->date_scalar_comparison_starts_top_level_select_item( $tokens, $start_index ) ) {
+			return false;
+		}
+
+		if ( ! isset( $tokens[ $boundary_index ] ) ) {
+			return true;
+		}
+
+		if (
+			! in_array(
+				$tokens[ $boundary_index ]->id,
+				array(
+					WP_MySQL_Lexer::AS_SYMBOL,
+					WP_MySQL_Lexer::COMMA_SYMBOL,
+					WP_MySQL_Lexer::FROM_SYMBOL,
+				),
+				true
+			)
+		) {
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Check whether a date scalar comparison starts as a top-level SELECT item.
+	 *
+	 * @param WP_Parser_Token[] $tokens      Token stream.
+	 * @param int               $start_index Predicate start token index.
+	 * @return bool Whether the predicate starts at a SELECT-list item boundary.
+	 */
+	private function date_scalar_comparison_starts_top_level_select_item( array $tokens, int $start_index ): bool {
+		if ( ! isset( $tokens[ $start_index - 1 ] ) ) {
+			return false;
+		}
+
+		$depth = 0;
+		for ( $index = 0; $index < $start_index; ++$index ) {
+			if ( WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				++$depth;
+			} elseif ( WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $tokens[ $index ]->id ) {
+				$depth = max( 0, $depth - 1 );
+			}
+		}
+
+		return 0 === $depth
+			&& in_array(
+				$tokens[ $start_index - 1 ]->id,
+				array(
+					WP_MySQL_Lexer::SELECT_SYMBOL,
+					WP_MySQL_Lexer::COMMA_SYMBOL,
+				),
+				true
+			);
 	}
 
 	/**

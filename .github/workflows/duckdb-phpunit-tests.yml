@@ -141,7 +141,7 @@ jobs:
         env:
           WP_DUCKDB_LAST_FAILURE_REQUIRED: '1'
           WP_DUCKDB_LAST_FAILURE_MIN_TESTS: '20'
-          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '26'
+          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '27'
           WP_DUCKDB_LAST_FAILURE_TIMEOUT: '60'
           WP_DUCKDB_LAST_FAILURE_LIST: ${{ github.workspace }}/.github/workflows/duckdb-package-fast-fail-tests.txt
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
@@ -278,7 +278,7 @@ jobs:
         env:
           WP_DUCKDB_LAST_FAILURE_REQUIRED: '1'
           WP_DUCKDB_LAST_FAILURE_MIN_TESTS: '20'
-          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '26'
+          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '27'
           WP_DUCKDB_LAST_FAILURE_TIMEOUT: '60'
           WP_DUCKDB_LAST_FAILURE_LIST: ${{ github.workspace }}/.github/workflows/duckdb-package-fast-fail-tests.txt
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
@@ -601,7 +601,7 @@ jobs:
         env:
           WP_DUCKDB_LAST_FAILURE_REQUIRED: '1'
           WP_DUCKDB_LAST_FAILURE_MIN_TESTS: '20'
-          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '26'
+          WP_DUCKDB_LAST_FAILURE_MAX_TESTS: '27'
           WP_DUCKDB_LAST_FAILURE_TIMEOUT: '60'
           WP_DUCKDB_LAST_FAILURE_LIST: ${{ github.workspace }}/.github/workflows/duckdb-package-fast-fail-tests.txt
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php

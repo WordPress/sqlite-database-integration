@@ -285,6 +285,27 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		);
 	}
 
+	public function test_select_list_date_text_numeric_boundaries_match_sqlite(): void {
+		foreach (
+			array(
+				"SELECT DATE('2016-01-16') = 20160116 AS cmp",
+				"SELECT DATE('2016-01-16') != 20160116 AS cmp",
+				"SELECT 20160116 < DATE('2016-01-16') AS cmp",
+				"SELECT DATE_FORMAT('2016-01-16 00:00:00', '%Y%m%d') = 20160116 AS cmp",
+				"SELECT 20160116 < DATE_FORMAT('2016-01-16 00:00:00', '%Y%m%d') AS cmp",
+				"SELECT DATE_ADD('2016-01-16 00:00:00', INTERVAL 1 DAY) = 20160117 AS cmp",
+				"SELECT DATE_SUB('2016-01-16 00:00:00', INTERVAL 1 DAY) = 20160115 AS cmp",
+				"SELECT DATEDIFF('2016-01-16', '2016-01-15') = 1 AS cmp",
+				"SELECT 1 < DATEDIFF('2016-01-16', '2016-01-15') AS cmp",
+				"SELECT YEAR('2016-01-16 00:00:00') = '2016' AS cmp",
+				"SELECT '2016' = YEAR('2016-01-16 00:00:00') AS cmp",
+				"SELECT DATE('2016-01-16') = 20160116 AS cmp, DATE_FORMAT('2016-01-16 00:00:00', '%Y%m%d') != 20160116 AS other_cmp",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
 	public function test_select_unseeded_rand_range_matches_sqlite(): void {
 		$this->assertParityRows( 'SELECT CAST(RAND() >= 0 AND RAND() < 1 AS SIGNED) AS rand_in_range' );
 	}
