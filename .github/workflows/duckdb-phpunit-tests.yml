@@ -12,6 +12,7 @@ on:
       - '.github/workflows/wp-tests-phpunit-run.js'
       - '.github/workflows/wp-tests-phpunit-native-extension-setup.sh'
       - 'bin/wp-test-duckdb-last-failures.sh'
+      - 'bin/wp-duckdb-local-smoke.sh'
       - 'bin/wp-test-duckdb-smoke.sh'
       - 'bin/wp-test-ensure-env-duckdb.sh'
       - 'composer.json'
@@ -35,6 +36,7 @@ on:
       - '.github/workflows/wp-tests-phpunit-run.js'
       - '.github/workflows/wp-tests-phpunit-native-extension-setup.sh'
       - 'bin/wp-test-duckdb-last-failures.sh'
+      - 'bin/wp-duckdb-local-smoke.sh'
       - 'bin/wp-test-duckdb-smoke.sh'
       - 'bin/wp-test-ensure-env-duckdb.sh'
       - 'composer.json'
@@ -152,6 +154,15 @@ jobs:
           DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
           WP_DUCKDB_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
         run: composer run test-duckdb-last-failures
+
+      - name: Run local DuckDB smoke runtime sample
+        timeout-minutes: 2
+        env:
+          DUCKDB_PHP_AUTOLOAD: ${{ github.workspace }}/packages/mysql-on-sqlite/vendor/autoload.php
+          WP_DUCKDB_LOCAL_SMOKE_RUNTIME_SAMPLE: '1'
+          WP_DUCKDB_LOCAL_SMOKE_RUNTIME_ITERATIONS: '50'
+          WP_DUCKDB_LOCAL_SMOKE_RUNTIME_MAX_RATIO: '3'
+        run: composer run wp-smoke-duckdb-local
 
       - name: Run DuckDB PHPUnit suite
         timeout-minutes: 10
