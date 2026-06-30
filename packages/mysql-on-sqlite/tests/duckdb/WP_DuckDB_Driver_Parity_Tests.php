@@ -119,6 +119,86 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		}
 	}
 
+	public function test_date_part_quoted_string_comparisons_match_sqlite(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_date_part_posts (ID BIGINT, post_date_gmt DATETIME, post_date DATETIME)',
+				"INSERT INTO wp_date_part_posts (ID, post_date_gmt, post_date) VALUES
+					(1, '2016-01-16 00:00:00', '2016-01-16 13:14:15'),
+					(2, '2016-01-17 12:30:00', '2016-01-17 00:00:00'),
+					(3, '2015-12-31 23:59:59', '2015-12-31 23:59:59'),
+					(4, '2017-02-03 04:05:06', '2017-02-03 04:05:06')",
+			)
+		);
+
+		foreach (
+			array(
+				"SELECT ID FROM wp_date_part_posts WHERE YEAR(post_date_gmt) = '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE YEAR(post_date_gmt) != '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE YEAR(post_date_gmt) > '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE YEAR(post_date_gmt) >= '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE YEAR(post_date_gmt) < '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE YEAR(post_date_gmt) <= '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE '2016' = YEAR(post_date_gmt) ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE '2016' != YEAR(post_date_gmt) ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE '2016' > YEAR(post_date_gmt) ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE '2016' >= YEAR(post_date_gmt) ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE '2016' < YEAR(post_date_gmt) ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE '2016' <= YEAR(post_date_gmt) ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE MONTH(post_date_gmt) = '1' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE DAYOFMONTH(post_date_gmt) > '16' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE DAYOFWEEK(post_date_gmt) != '7' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE WEEK(post_date_gmt, 1) = '2' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_posts WHERE HOUR(post_date) = '13' ORDER BY ID",
+				'SELECT ID FROM wp_date_part_posts WHERE YEAR(post_date_gmt) = 2016 ORDER BY ID',
+				'SELECT ID FROM wp_date_part_posts WHERE MONTH(post_date_gmt) = 1 ORDER BY ID',
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
+	public function test_date_part_quoted_string_comparisons_match_sqlite_for_invalid_strings(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_date_part_invalid_posts (ID BIGINT, post_date_gmt VARCHAR(255), post_date VARCHAR(255))',
+				"INSERT INTO wp_date_part_invalid_posts (ID, post_date_gmt, post_date) VALUES
+					(1, 'not-a-date', 'not-a-time'),
+					(2, '2016-01-16 00:00:00', '2016-01-16 13:14:15')",
+			)
+		);
+
+		foreach (
+			array(
+				"SELECT ID FROM wp_date_part_invalid_posts WHERE YEAR(post_date_gmt) = '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_invalid_posts WHERE YEAR(post_date_gmt) != '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_invalid_posts WHERE YEAR(post_date_gmt) < '2016' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_invalid_posts WHERE '2016' > YEAR(post_date_gmt) ORDER BY ID",
+				"SELECT ID FROM wp_date_part_invalid_posts WHERE HOUR(post_date) = '13' ORDER BY ID",
+				"SELECT ID FROM wp_date_part_invalid_posts WHERE HOUR(post_date) != '13' ORDER BY ID",
+			) as $sql
+		) {
+			$this->assertParityRows( $sql );
+		}
+	}
+
+	public function test_date_part_quoted_string_comparisons_preserve_expression_errors(): void {
+		$this->runParitySetup(
+			array(
+				'CREATE TABLE wp_date_part_error_posts (ID BIGINT)',
+			)
+		);
+
+		$this->assertParityErrorContains(
+			"SELECT ID FROM wp_date_part_error_posts WHERE YEAR(missing_col) = '2016' ORDER BY ID",
+			'missing_col'
+		);
+		$this->assertParityErrorContains(
+			"SELECT ID FROM wp_date_part_error_posts WHERE '2016' != YEAR(missing_col) ORDER BY ID",
+			'missing_col'
+		);
+	}
+
 	public function test_select_unseeded_rand_range_matches_sqlite(): void {
 		$this->assertParityRows( 'SELECT CAST(RAND() >= 0 AND RAND() < 1 AS SIGNED) AS rand_in_range' );
 	}

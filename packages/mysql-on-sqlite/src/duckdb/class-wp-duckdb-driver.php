@@ -20461,6 +20461,22 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$date_part_string_comparison = $this->translate_date_part_string_literal_comparison(
+				$tokens,
+				$index,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+			if ( null !== $date_part_string_comparison ) {
+				$pieces[] = $date_part_string_comparison;
+				continue;
+			}
+
 			$date_time_function = $this->translate_date_time_function_call(
 				$tokens,
 				$index,
@@ -25286,6 +25302,189 @@ class WP_DuckDB_Driver {
 				$token instanceof WP_Parser_Token
 				&& WP_MySQL_Lexer::NOT_EQUAL_OPERATOR === $token->id
 			);
+	}
+
+	/**
+	 * Translate date-part numeric functions compared with quoted string literals.
+	 *
+	 * SQLite compares expression result storage classes directly for scalar
+	 * function results, so numeric date-part results compare against quoted
+	 * strings as number-vs-text constants. DuckDB coerces quoted numeric strings
+	 * to numbers instead, so handle this exact predicate shape before the generic
+	 * date-part scalar translation.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated predicate, or null when the pattern does not match.
+	 */
+	private function translate_date_part_string_literal_comparison(
+		array $tokens,
+		int &$index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?string {
+		$date_part = $this->date_part_numeric_expression_sql(
+			$tokens,
+			$index,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		if (
+			null !== $date_part
+			&& isset( $tokens[ $date_part['next_index'] + 1 ] )
+			&& $this->is_numeric_string_comparison_operator_token( $tokens[ $date_part['next_index'] ] )
+			&& $this->is_string_literal_token( $tokens[ $date_part['next_index'] + 1 ] )
+			&& $this->text_value_numeric_comparison_has_boundary( $tokens, $date_part['next_index'] + 2 )
+		) {
+			$index = $date_part['next_index'] + 1;
+			return $this->sqlite_date_part_string_literal_comparison_sql( $date_part['sql'], $tokens[ $date_part['next_index'] ], true );
+		}
+
+		if (
+			! isset( $tokens[ $index + 2 ] )
+			|| ! $this->is_string_literal_token( $tokens[ $index ] )
+			|| ! $this->is_numeric_string_comparison_operator_token( $tokens[ $index + 1 ] )
+		) {
+			return null;
+		}
+
+		$operator  = $tokens[ $index + 1 ];
+		$date_part = $this->date_part_numeric_expression_sql(
+			$tokens,
+			$index + 2,
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		);
+		if (
+			null === $date_part
+			|| ! $this->text_value_numeric_comparison_has_boundary( $tokens, $date_part['next_index'] )
+		) {
+			return null;
+		}
+
+		$index = $date_part['next_index'] - 1;
+		return $this->sqlite_date_part_string_literal_comparison_sql( $date_part['sql'], $operator, false );
+	}
+
+	/**
+	 * Translate a supported date-part numeric scalar function call.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Function token index.
+	 * @return array{sql:string,next_index:int}|null Translated expression, or null when unsupported.
+	 */
+	private function date_part_numeric_expression_sql(
+		array $tokens,
+		int $index,
+		bool $rewrite_information_schema_tables,
+		bool $rewrite_information_schema_columns,
+		bool $rewrite_information_schema_statistics,
+		bool $rewrite_information_schema_table_constraints,
+		bool $rewrite_information_schema_key_column_usage,
+		bool $rewrite_information_schema_referential_constraints,
+		bool $rewrite_information_schema_check_constraints
+	): ?array {
+		if (
+			! isset( $tokens[ $index ], $tokens[ $index + 1 ] )
+			|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL !== $tokens[ $index + 1 ]->id
+		) {
+			return null;
+		}
+
+		$name = strtoupper( $tokens[ $index ]->get_bytes() );
+		if (
+			! in_array(
+				$name,
+				array( 'DAY', 'DAYOFMONTH', 'DAYOFWEEK', 'HOUR', 'MINUTE', 'MONTH', 'MONTHNUM', 'SECOND', 'WEEK', 'WEEKDAY', 'YEAR' ),
+				true
+			)
+		) {
+			return null;
+		}
+
+		$end_index = $this->skip_balanced_parentheses( $tokens, $index + 1 );
+		$body      = array_slice( $tokens, $index + 2, $end_index - $index - 3 );
+		$items     = $this->split_top_level_comma_items( $body );
+		if ( 'WEEK' === $name ) {
+			if ( count( $items ) < 1 || count( $items ) > 2 || count( $items[0] ) === 0 ) {
+				return null;
+			}
+		} elseif ( 1 !== count( $items ) || count( $items[0] ) === 0 ) {
+			return null;
+		}
+
+		$translate = function ( array $item ) use (
+			$rewrite_information_schema_tables,
+			$rewrite_information_schema_columns,
+			$rewrite_information_schema_statistics,
+			$rewrite_information_schema_table_constraints,
+			$rewrite_information_schema_key_column_usage,
+			$rewrite_information_schema_referential_constraints,
+			$rewrite_information_schema_check_constraints
+		): string {
+			return $this->translate_tokens_to_duckdb_sql(
+				$item,
+				$rewrite_information_schema_tables,
+				$rewrite_information_schema_columns,
+				$rewrite_information_schema_statistics,
+				$rewrite_information_schema_table_constraints,
+				$rewrite_information_schema_key_column_usage,
+				$rewrite_information_schema_referential_constraints,
+				$rewrite_information_schema_check_constraints
+			);
+		};
+
+		if ( in_array( $name, array( 'DAY', 'DAYOFMONTH', 'MONTH', 'MONTHNUM', 'YEAR' ), true ) ) {
+			$function = 'DAY' === $name ? 'dayofmonth' : strtolower( $name );
+			$function = 'monthnum' === $function ? 'month' : $function;
+			$sql      = $function . '(TRY_CAST((' . $translate( $items[0] ) . ') AS TIMESTAMP))';
+		} elseif ( in_array( $name, array( 'HOUR', 'MINUTE', 'SECOND' ), true ) ) {
+			$sql = strtolower( $name ) . '(TRY_CAST((' . $translate( $items[0] ) . ') AS TIME))';
+		} elseif ( 'DAYOFWEEK' === $name || 'WEEKDAY' === $name ) {
+			$day_of_week = 'dayofweek(TRY_CAST((' . $translate( $items[0] ) . ') AS DATE))';
+			$sql         = 'DAYOFWEEK' === $name ? '(' . $day_of_week . ' + 1)' : '((' . $day_of_week . ' + 6) % 7)';
+		} else {
+			$sql = 'week(TRY_CAST((' . $translate( $items[0] ) . ') AS DATE))';
+		}
+
+		return array(
+			'sql'        => $sql,
+			'next_index' => $end_index,
+		);
+	}
+
+	/**
+	 * Build SQLite-compatible date-part number-vs-string comparison SQL.
+	 *
+	 * @param string          $date_part_sql        Date-part SQL expression.
+	 * @param WP_Parser_Token $operator             Comparison operator.
+	 * @param bool            $numeric_operand_left Whether the date-part function is on the left.
+	 * @return string DuckDB SQL.
+	 */
+	private function sqlite_date_part_string_literal_comparison_sql( string $date_part_sql, WP_Parser_Token $operator, bool $numeric_operand_left ): string {
+		$result_sql = $this->sqlite_numeric_string_null_comparison_result_sql( $operator->id, $numeric_operand_left );
+		return '(CASE WHEN '
+			. $date_part_sql
+			. ' IS NULL THEN '
+			. $result_sql
+			. ' ELSE '
+			. $result_sql
+			. ' END)';
 	}
 
 	/**

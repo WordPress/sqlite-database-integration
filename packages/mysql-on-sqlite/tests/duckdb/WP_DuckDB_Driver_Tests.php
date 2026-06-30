@@ -3358,6 +3358,20 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertStringContainsString( 'week(TRY_CAST((post_date) AS DATE)) AS week', $sql );
 		$this->assertStringContainsString( "strftime(TRY_CAST((post_date) AS TIMESTAMP), '%Y-%m-%d %H:%M:%S') AS formatted", $sql );
 		$this->assertStringContainsString( "CAST(strftime(TRY_CAST((post_date) AS TIMESTAMP), '%H.%M') AS DOUBLE) AS hm", $sql );
+
+		$tokens = $tokenize->invoke(
+			$driver,
+			"SELECT ID FROM wp_posts
+			WHERE YEAR(post_date_gmt) = '2016'
+				OR YEAR(post_date_gmt) != '2016'
+				OR '2016' > YEAR(post_date_gmt)
+				OR YEAR(post_date_gmt) = 2016"
+		);
+		$sql    = $translate->invoke( $driver, $tokens );
+
+		$this->assertStringContainsString( 'CASE WHEN year(TRY_CAST((post_date_gmt) AS TIMESTAMP)) IS NULL THEN FALSE ELSE FALSE END', $sql );
+		$this->assertStringContainsString( 'CASE WHEN year(TRY_CAST((post_date_gmt) AS TIMESTAMP)) IS NULL THEN TRUE ELSE TRUE END', $sql );
+		$this->assertStringContainsString( 'year(TRY_CAST((post_date_gmt) AS TIMESTAMP)) = 2016', $sql );
 	}
 
 	public function test_rest_iso_datetime_literal_comparisons_cast_known_datetime_columns(): void {
