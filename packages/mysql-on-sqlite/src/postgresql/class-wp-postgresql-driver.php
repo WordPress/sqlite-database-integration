@@ -155,6 +155,68 @@ class WP_PostgreSQL_Driver {
 	private const MYSQL_SELECT_CLAUSE_END_DESCRIPTORS     = array( 'from' => array( 1, self::MYSQL_SELECT_FROM_BOUNDARY_TOKENS ) ) + array( 'group' => array( 1, self::MYSQL_SELECT_GROUP_BOUNDARY_TOKENS ) ) + array( 'having' => array( 1, self::MYSQL_SELECT_HAVING_BOUNDARY_TOKENS ) ) + array( 'order' => array( 2, self::MYSQL_SELECT_ORDER_BOUNDARY_TOKENS ) ) + array( 'where' => array( 1, self::MYSQL_SELECT_WHERE_BOUNDARY_TOKENS ) );
 	private const MYSQL_SELECT_ROW_LOCKING_MODE_TOKENS    = array( WP_MySQL_Lexer::SHARE_SYMBOL, WP_MySQL_Lexer::UPDATE_SYMBOL );
 	private const MYSQL_SIMPLE_SELECT_UNSUPPORTED_TOKENS  = array( WP_MySQL_Lexer::DISTINCT_SYMBOL, WP_MySQL_Lexer::FOR_SYMBOL, WP_MySQL_Lexer::GROUP_SYMBOL, WP_MySQL_Lexer::HAVING_SYMBOL, WP_MySQL_Lexer::HIGH_PRIORITY_SYMBOL, WP_MySQL_Lexer::INTO_SYMBOL, WP_MySQL_Lexer::JOIN_SYMBOL, WP_MySQL_Lexer::LOCK_SYMBOL, WP_MySQL_Lexer::PROCEDURE_SYMBOL, WP_MySQL_Lexer::SELECT_SYMBOL, WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL, WP_MySQL_Lexer::STRAIGHT_JOIN_SYMBOL, WP_MySQL_Lexer::UNION_SYMBOL );
+	private const MYSQL_SELECT_TRANSLATOR_PIPELINE        = array(
+		array(
+			'name'        => 'row_locking',
+			'guard'       => 'has_row_locking_clause',
+			'translators' => array( 'translate_mysql_select_row_locking_query' ),
+		),
+		array(
+			'name'        => 'information_schema_rewrite',
+			'guard'       => 'requires_information_schema_guard',
+			'translators' => array(
+				'translate_direct_information_schema_select_query',
+				'translate_application_select_with_direct_information_schema_nested_selects',
+			),
+		),
+		array(
+			'name'                      => 'information_schema_rejection',
+			'guard'                     => 'requires_information_schema_guard',
+			'reject_information_schema' => true,
+		),
+		array(
+			'name'        => 'aggregate_ordering',
+			'guard'       => 'may_need_aggregate_order_rewrite',
+			'translators' => array(
+				'translate_strict_aggregate_grouped_order_by_query',
+				'translate_grouped_having_alias_query',
+			),
+		),
+		array(
+			'name'           => 'last_insert_id_assignment',
+			'guard'          => 'may_assign_last_insert_id',
+			'last_insert_id' => true,
+		),
+		array(
+			'name'        => 'version_function',
+			'guard'       => 'may_read_version_function',
+			'translators' => array( 'translate_mysql_version_function_select_query' ),
+		),
+		array(
+			'name'        => 'simple_select',
+			'guard'       => 'may_use_simple_select',
+			'translators' => array( 'translate_simple_mysql_select_query' ),
+		),
+		array(
+			'name'        => 'information_schema_main_database',
+			'guard'       => 'may_target_main_database_from_information_schema',
+			'translators' => array( 'translate_information_schema_main_database_select_query' ),
+		),
+		array(
+			'name'        => 'distinct_ordering',
+			'guard'       => 'has_distinct',
+			'translators' => array( 'translate_distinct_order_by_query' ),
+		),
+		array(
+			'name'        => 'sql_calc_found_rows',
+			'guard'       => 'has_sql_calc_found_rows',
+			'translators' => array( 'translate_sql_calc_found_rows_select_query' ),
+		),
+		array(
+			'name'        => 'compatible_select',
+			'translators' => array( 'translate_mysql_compatible_query' ),
+		),
+	);
 	private const MYSQL_AGGREGATE_CALL_TOKEN_IDS          = array( WP_MySQL_Lexer::AVG_SYMBOL, WP_MySQL_Lexer::BIT_AND_SYMBOL, WP_MySQL_Lexer::BIT_OR_SYMBOL, WP_MySQL_Lexer::BIT_XOR_SYMBOL, WP_MySQL_Lexer::COUNT_SYMBOL, WP_MySQL_Lexer::GROUP_CONCAT_SYMBOL, WP_MySQL_Lexer::MAX_SYMBOL, WP_MySQL_Lexer::MIN_SYMBOL, WP_MySQL_Lexer::STD_SYMBOL, WP_MySQL_Lexer::STDDEV_POP_SYMBOL, WP_MySQL_Lexer::STDDEV_SAMP_SYMBOL, WP_MySQL_Lexer::STDDEV_SYMBOL, WP_MySQL_Lexer::SUM_SYMBOL, WP_MySQL_Lexer::VAR_POP_SYMBOL, WP_MySQL_Lexer::VAR_SAMP_SYMBOL, WP_MySQL_Lexer::VARIANCE_SYMBOL );
 
 	private const MYSQL_CONSTANT_STRING_FUNCTION_DESCRIPTORS = array(
@@ -1754,19 +1816,26 @@ class WP_PostgreSQL_Driver {
 			&& null !== $this->get_mysql_query_context_statement_end_position( $query_context, 1 );
 	}
 	private function translate_mysql_select_query_for_postgresql( string $query, ?array &$query_context = null ): array {
-		foreach ( array( array( 'translate_first', array( 'translate_mysql_select_row_locking_query', 'translate_direct_information_schema_select_query', 'translate_application_select_with_direct_information_schema_nested_selects' ) ), array( 'reject_information_schema' ), array( 'translate_first', array( 'translate_strict_aggregate_grouped_order_by_query', 'translate_grouped_having_alias_query' ) ), array( 'last_insert_id' ), array( 'translate_first', array( 'translate_mysql_version_function_select_query', 'translate_simple_mysql_select_query', 'translate_information_schema_main_database_select_query', 'translate_distinct_order_by_query', 'translate_sql_calc_found_rows_select_query', 'translate_mysql_compatible_query' ) ) )
-			as $rule ) {
-			if ( 'reject_information_schema' === $rule[0] ) {
+		$classification = $this->get_mysql_select_translation_classification( $query, $query_context );
+		foreach ( self::MYSQL_SELECT_TRANSLATOR_PIPELINE as $translator ) {
+			$guard = $translator['guard'] ?? null;
+			if ( null !== $guard && empty( $classification[ $guard ] ) ) {
+				continue;
+			}
+
+			if ( ! empty( $translator['reject_information_schema'] ) ) {
 				$this->reject_unsupported_information_schema_select_query( $query, $query_context );
 				continue;
 			}
 
-			$translation = 'last_insert_id' === $rule[0] ? $this->translate_mysql_last_insert_id_assignment_select_query( $query, $query_context ) : $this->translate_first_mysql_query( $query, $rule[1], $query_context );
+			$translation = ! empty( $translator['last_insert_id'] )
+				? $this->translate_mysql_last_insert_id_assignment_select_query( $query, $query_context )
+				: $this->translate_first_mysql_query( $query, $translator['translators'], $query_context );
 			if ( null === $translation ) {
 				continue;
 			}
 
-			if ( 'last_insert_id' === $rule[0] ) {
+			if ( ! empty( $translator['last_insert_id'] ) ) {
 				return array(
 					'sql'            => $translation['sql'],
 					'translated'     => true,
@@ -1783,6 +1852,49 @@ class WP_PostgreSQL_Driver {
 			'sql'        => $query,
 			'translated' => false,
 		);
+	}
+	private function get_mysql_select_translation_classification( string $query, ?array &$query_context = null ): array {
+		$classification = array(
+			'has_distinct'                      => false,
+			'has_row_locking_clause'            => false,
+			'has_sql_calc_found_rows'           => false,
+			'may_assign_last_insert_id'         => false,
+			'may_need_aggregate_order_rewrite'  => false,
+			'may_read_version_function'         => false,
+			'may_target_main_database_from_information_schema' => false,
+			'may_use_simple_select'             => false,
+			'requires_information_schema_guard' => false,
+		);
+
+		$select = $this->get_mysql_top_level_select_parts( $query, 1, $query_context );
+		if ( null === $select ) {
+			return $classification;
+		}
+
+		$tokens              = $select['tokens'];
+		$statement_end       = $select['statement_end'];
+		$top_level_token_ids = $this->get_mysql_query_context_top_level_token_index( $query_context, 1, $statement_end );
+		$from_position       = $top_level_token_ids[ WP_MySQL_Lexer::FROM_SYMBOL ][0] ?? null;
+
+		$classification['has_distinct']                                     = ! empty( $top_level_token_ids[ WP_MySQL_Lexer::DISTINCT_SYMBOL ] );
+		$classification['has_row_locking_clause']                           = null !== $this->find_mysql_select_row_locking_clause_start( $tokens, 1, $statement_end );
+		$classification['has_sql_calc_found_rows']                          = ! empty( $top_level_token_ids[ WP_MySQL_Lexer::SQL_CALC_FOUND_ROWS_SYMBOL ] );
+		$classification['may_assign_last_insert_id']                        = $this->mysql_select_range_contains_common_function( $tokens, 1, $statement_end, 'last_insert_id' );
+		$classification['may_need_aggregate_order_rewrite']                 = ! empty( $top_level_token_ids[ WP_MySQL_Lexer::ORDER_SYMBOL ] ) || ! empty( $top_level_token_ids[ WP_MySQL_Lexer::HAVING_SYMBOL ] );
+		$classification['may_read_version_function']                        = $this->mysql_select_range_contains_common_function( $tokens, 1, $statement_end, 'version' );
+		$classification['may_target_main_database_from_information_schema'] = 0 === strcasecmp( $this->db_name, 'information_schema' );
+		$classification['may_use_simple_select']                            = null !== $from_position && ! $this->contains_top_level_mysql_query_context_token( $query_context, 1, $statement_end, self::MYSQL_SIMPLE_SELECT_UNSUPPORTED_TOKENS );
+		$classification['requires_information_schema_guard']                = $this->mysql_select_range_requires_direct_information_schema_rewrite( $tokens, 0, $statement_end );
+		return $classification;
+	}
+	private function mysql_select_range_contains_common_function( array $tokens, int $start, int $end, string $function_name ): bool {
+		for ( $i = $start; $i < $end; $i++ ) {
+			$bounds = $this->get_mysql_common_function_bounds( $tokens, $i, $end );
+			if ( null !== $bounds && $function_name === $bounds['function'] ) {
+				return true;
+			}
+		}
+		return false;
 	}
 	private function reject_unsupported_information_schema_select_query( string $query, ?array &$query_context = null ): void {
 		$tokens = $this->get_mysql_query_context_tokens( $query, $query_context );
