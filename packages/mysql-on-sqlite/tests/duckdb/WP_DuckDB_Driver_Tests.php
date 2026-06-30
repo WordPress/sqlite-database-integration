@@ -2689,7 +2689,8 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			array( array( 'found_rows' => 3 ) ),
 			$driver->query( 'SELECT FOUND_ROWS() AS found_rows' )->fetchAll( PDO::FETCH_ASSOC )
 		);
-		$meta_value_numeric_prefix_sql = 'CASE WHEN "wptests_usermeta"."meta_value" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST("wptests_usermeta"."meta_value" AS VARCHAR), \'^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?\', 0), \'\') AS DOUBLE), 0) END';
+		$meta_value_numeric_prefix_sql             = 'CASE WHEN "wptests_usermeta"."meta_value" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST("wptests_usermeta"."meta_value" AS VARCHAR), \'^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?\', 0), \'\') AS DOUBLE), 0) END';
+		$unqualified_meta_value_numeric_prefix_sql = 'CASE WHEN "meta_value" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST("meta_value" AS VARCHAR), \'^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?\', 0), \'\') AS DOUBLE), 0) END';
 		$this->assertStringContainsString( $meta_value_numeric_prefix_sql . ' + 0', implode( "\n", $meta_sort_queries ) );
 
 		$this->assertSame(
@@ -2766,6 +2767,70 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				ORDER BY meta_value + 0 ASC, umeta_id"
 			)->fetchAll( PDO::FETCH_ASSOC )
 		);
+
+		$this->assertSame(
+			array(
+				array( 'umeta_id' => 22 ),
+				array( 'umeta_id' => 16 ),
+				array( 'umeta_id' => 19 ),
+				array( 'umeta_id' => 20 ),
+				array( 'umeta_id' => 21 ),
+				array( 'umeta_id' => 18 ),
+				array( 'umeta_id' => 14 ),
+				array( 'umeta_id' => 15 ),
+				array( 'umeta_id' => 17 ),
+			),
+			$driver->query(
+				"SELECT umeta_id
+				FROM wptests_usermeta
+				WHERE meta_key = 'numeric_prefix'
+				ORDER BY meta_value + 0 ASC, umeta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString( $unqualified_meta_value_numeric_prefix_sql . ' + 0 ASC NULLS FIRST', $this->lastDuckDBQuery( $driver ) );
+
+		$this->assertSame(
+			array(
+				array( 'umeta_id' => 22 ),
+				array( 'umeta_id' => 16 ),
+				array( 'umeta_id' => 19 ),
+				array( 'umeta_id' => 20 ),
+				array( 'umeta_id' => 21 ),
+				array( 'umeta_id' => 18 ),
+				array( 'umeta_id' => 14 ),
+				array( 'umeta_id' => 15 ),
+				array( 'umeta_id' => 17 ),
+			),
+			$driver->query(
+				"SELECT umeta_id
+				FROM wptests_usermeta
+				WHERE meta_key = 'numeric_prefix'
+				ORDER BY meta_value + 0, umeta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString( $unqualified_meta_value_numeric_prefix_sql . ' + 0 NULLS FIRST', $this->lastDuckDBQuery( $driver ) );
+
+		$this->assertSame(
+			array(
+				array( 'umeta_id' => 17 ),
+				array( 'umeta_id' => 15 ),
+				array( 'umeta_id' => 14 ),
+				array( 'umeta_id' => 18 ),
+				array( 'umeta_id' => 19 ),
+				array( 'umeta_id' => 20 ),
+				array( 'umeta_id' => 21 ),
+				array( 'umeta_id' => 16 ),
+				array( 'umeta_id' => 22 ),
+			),
+			$driver->query(
+				"SELECT umeta_id
+				FROM wptests_usermeta
+				WHERE meta_key = 'numeric_prefix'
+				ORDER BY meta_value + 0 DESC, umeta_id"
+			)->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertStringContainsString( $unqualified_meta_value_numeric_prefix_sql . ' + 0 DESC', $this->lastDuckDBQuery( $driver ) );
+		$this->assertStringNotContainsString( 'DESC NULLS FIRST', $this->lastDuckDBQuery( $driver ) );
 
 		$this->assertSame(
 			array( array( 'label' => 'one' ) ),
@@ -6496,7 +6561,23 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			),
 			array(
 				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0',
-				'duckdb' => "SELECT id FROM postmeta ORDER BY CASE WHEN \"meta_value\" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST(\"meta_value\" AS VARCHAR), '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?', 0), '') AS DOUBLE), 0) END + 0",
+				'duckdb' => "SELECT id FROM postmeta ORDER BY CASE WHEN \"meta_value\" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST(\"meta_value\" AS VARCHAR), '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?', 0), '') AS DOUBLE), 0) END + 0 NULLS FIRST",
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0 ASC, id',
+				'duckdb' => "SELECT id FROM postmeta ORDER BY CASE WHEN \"meta_value\" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST(\"meta_value\" AS VARCHAR), '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?', 0), '') AS DOUBLE), 0) END + 0 ASC NULLS FIRST, id",
+			),
+			array(
+				'mysql'  => 'SELECT pm.id FROM postmeta pm ORDER BY pm.meta_value + 0 ASC, pm.id',
+				'duckdb' => "SELECT pm.id FROM postmeta pm ORDER BY CASE WHEN \"pm\".\"meta_value\" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST(\"pm\".\"meta_value\" AS VARCHAR), '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?', 0), '') AS DOUBLE), 0) END + 0 ASC NULLS FIRST, pm.id",
+			),
+			array(
+				'mysql'  => 'SELECT id FROM options ORDER BY option_value + 0',
+				'duckdb' => "SELECT id FROM options ORDER BY CASE WHEN \"option_value\" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST(\"option_value\" AS VARCHAR), '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?', 0), '') AS DOUBLE), 0) END + 0 NULLS FIRST",
+			),
+			array(
+				'mysql'  => 'SELECT id FROM postmeta ORDER BY meta_value + 0 DESC',
+				'duckdb' => "SELECT id FROM postmeta ORDER BY CASE WHEN \"meta_value\" IS NULL THEN NULL ELSE COALESCE(TRY_CAST(NULLIF(regexp_extract(CAST(\"meta_value\" AS VARCHAR), '^\\s*[+-]?(?:(?:[0-9]+(?:\\.[0-9]*)?)|(?:\\.[0-9]+))(?:[eE][+-]?[0-9]+)?', 0), '') AS DOUBLE), 0) END + 0 DESC",
 			),
 			array(
 				'mysql'  => 'SELECT ID FROM users WHERE ID = \'yololololo\'',
@@ -6594,6 +6675,9 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 
 		$driver->query( "SELECT id FROM plugin_items WHERE id LIKE '1%' ORDER BY id" );
 		$this->assertStringNotContainsString( 'CAST("id" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );
+
+		$driver->query( 'SELECT id FROM postmeta ORDER BY title + 0' );
+		$this->assertStringNotContainsString( 'NULLS FIRST', $this->lastDuckDBQuery( $driver ) );
 
 		$driver->query( "SELECT ID FROM users WHERE ID LIKE '1%' ESCAPE 1" );
 		$this->assertStringNotContainsString( 'CAST("ID" AS VARCHAR) LIKE', $this->lastDuckDBQuery( $driver ) );

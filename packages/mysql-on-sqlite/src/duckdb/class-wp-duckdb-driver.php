@@ -3039,6 +3039,7 @@ class WP_DuckDB_Driver {
 		$order_by_item_rewrites     += $this->grouped_posts_date_order_by_tiebreak_rewrites( $sql_tokens, $group_by_expansion, $order_by_item_rewrites );
 		$order_by_item_rewrites     += $this->posts_date_order_by_tiebreak_rewrites( $sql_tokens, $order_by_item_rewrites );
 		$order_by_item_rewrites     += $this->posts_page_hierarchy_order_by_tiebreak_rewrites( $sql_tokens, $order_by_item_rewrites );
+		$order_by_item_rewrites     += $this->text_value_numeric_order_by_null_rewrites( $sql_tokens, $order_by_item_rewrites );
 
 		$sql                          = $this->translate_tokens_to_duckdb_sql(
 			$sql_tokens,
@@ -6444,6 +6445,54 @@ class WP_DuckDB_Driver {
 		}
 
 		return count( $tokens );
+	}
+
+	/**
+	 * Force SQLite-compatible NULL placement for text-value numeric ORDER BY items.
+	 *
+	 * @param WP_Parser_Token[]                    $tokens            MySQL tokens.
+	 * @param array<int,array{end:int,sql:string}> $existing_rewrites Existing ORDER BY rewrites keyed by item start offset.
+	 * @return array<int,array{end:int,sql:string}> Rewrites keyed by ORDER BY item start offset.
+	 */
+	private function text_value_numeric_order_by_null_rewrites( array $tokens, array $existing_rewrites = array() ): array {
+		if ( ! isset( $tokens[0] ) || WP_MySQL_Lexer::SELECT_SYMBOL !== $tokens[0]->id ) {
+			return array();
+		}
+
+		$order_index = $this->find_top_level_token_index( $tokens, 1, WP_MySQL_Lexer::ORDER_SYMBOL );
+		if (
+			null === $order_index
+			|| ! isset( $tokens[ $order_index + 1 ] )
+			|| WP_MySQL_Lexer::BY_SYMBOL !== $tokens[ $order_index + 1 ]->id
+		) {
+			return array();
+		}
+
+		$rewrites  = array();
+		$order_end = $this->primary_key_order_by_clause_end( $tokens, $order_index + 2 );
+		foreach ( $this->split_top_level_select_item_ranges( $tokens, $order_index + 2, $order_end ) as $item ) {
+			if ( isset( $existing_rewrites[ $item['start'] ] ) ) {
+				continue;
+			}
+
+			$order_item = $this->order_by_item_expression_and_direction( $item['tokens'] );
+			if ( ' DESC' === $order_item['direction_sql'] || count( $order_item['tokens'] ) === 0 ) {
+				continue;
+			}
+
+			$expression_index = 0;
+			$expression_sql   = $this->translate_text_value_numeric_arithmetic_expression( $order_item['tokens'], $expression_index );
+			if ( null === $expression_sql || count( $order_item['tokens'] ) - 1 !== $expression_index ) {
+				continue;
+			}
+
+			$rewrites[ $item['start'] ] = array(
+				'end' => $item['end'],
+				'sql' => $expression_sql . $order_item['direction_sql'] . ' NULLS FIRST',
+			);
+		}
+
+		return $rewrites;
 	}
 
 	/**
