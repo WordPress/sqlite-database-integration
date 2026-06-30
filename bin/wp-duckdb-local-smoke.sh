@@ -107,6 +107,161 @@ if ( ! is_string( $root ) || '' === $root ) {
 	exit( 1 );
 }
 
+function wp_duckdb_local_smoke_env_enabled( string $name ): bool {
+	$value = getenv( $name );
+	if ( false === $value ) {
+		return false;
+	}
+	return in_array( strtolower( trim( $value ) ), array( '1', 'true', 'yes', 'on' ), true );
+}
+
+function wp_duckdb_local_smoke_positive_int_env( string $name, int $default ): int {
+	$value = getenv( $name );
+	if ( false === $value || '' === trim( $value ) ) {
+		return $default;
+	}
+	if ( ! ctype_digit( $value ) || (int) $value < 1 ) {
+		throw new RuntimeException( "{$name} must be a positive integer." );
+	}
+	return (int) $value;
+}
+
+function wp_duckdb_local_smoke_positive_float_env( string $name ): ?float {
+	$value = getenv( $name );
+	if ( false === $value || '' === trim( $value ) ) {
+		return null;
+	}
+	if ( ! is_numeric( $value ) || (float) $value <= 0.0 ) {
+		throw new RuntimeException( "{$name} must be a positive number." );
+	}
+	return (float) $value;
+}
+
+function wp_duckdb_local_smoke_normalize_rows( array $rows ): array {
+	foreach ( $rows as $row_index => $row ) {
+		foreach ( $row as $column => $value ) {
+			if ( null === $value ) {
+				$rows[ $row_index ][ $column ] = null;
+			} elseif ( is_bool( $value ) ) {
+				$rows[ $row_index ][ $column ] = $value ? '1' : '0';
+			} else {
+				$rows[ $row_index ][ $column ] = (string) $value;
+			}
+		}
+	}
+	return $rows;
+}
+
+function wp_duckdb_local_smoke_run_runtime_probe(): array {
+	$iterations = wp_duckdb_local_smoke_positive_int_env( 'WP_DUCKDB_LOCAL_SMOKE_RUNTIME_ITERATIONS', 100 );
+	$warmups    = wp_duckdb_local_smoke_positive_int_env( 'WP_DUCKDB_LOCAL_SMOKE_RUNTIME_WARMUPS', 5 );
+	$max_ratio  = wp_duckdb_local_smoke_positive_float_env( 'WP_DUCKDB_LOCAL_SMOKE_MAX_RATIO' );
+	if ( null === $max_ratio ) {
+		$max_ratio = wp_duckdb_local_smoke_positive_float_env( 'WP_DUCKDB_LOCAL_SMOKE_RUNTIME_MAX_RATIO' );
+	}
+
+	$smoke_wpdb_was_set = array_key_exists( 'wpdb', $GLOBALS );
+	$smoke_wpdb         = $smoke_wpdb_was_set ? $GLOBALS['wpdb'] : null;
+	unset( $GLOBALS['wpdb'] );
+	if ( ! defined( 'WP_CLI' ) ) {
+		define( 'WP_CLI', true );
+	}
+
+	try {
+		$sqlite = new WP_SQLite_Driver(
+			new WP_SQLite_Connection(
+				array(
+					'path'         => ':memory:',
+					'journal_mode' => 'MEMORY',
+				)
+			),
+			'wp'
+		);
+
+		$duckdb_native_queries = 0;
+		$duckdb_connection     = new WP_DuckDB_Connection( array( 'path' => ':memory:' ) );
+		$duckdb_connection->set_query_logger(
+			static function ( string $sql, array $params ) use ( &$duckdb_native_queries ): void {
+				unset( $sql, $params );
+				++$duckdb_native_queries;
+			}
+		);
+		$duckdb = new WP_DuckDB_Driver(
+			array(
+				'connection' => $duckdb_connection,
+				'database'   => 'wp',
+			)
+		);
+
+		foreach ( array( $sqlite, $duckdb ) as $driver ) {
+			$driver->query(
+				"CREATE TABLE wp_options (
+					option_id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+					option_name VARCHAR(191) NOT NULL DEFAULT '',
+					option_value LONGTEXT NOT NULL,
+					autoload VARCHAR(20) NOT NULL DEFAULT 'yes',
+					PRIMARY KEY (option_id),
+					UNIQUE KEY option_name (option_name)
+				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+			);
+			$driver->query( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('siteurl', 'https://example.test', 'yes')" );
+			$driver->query( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('home', 'https://example.test', 'yes')" );
+			$driver->query( "INSERT INTO wp_options (option_name, option_value, autoload) VALUES ('blogname', 'DuckDB Smoke', 'yes')" );
+		}
+
+		$query       = "SELECT option_name, option_value FROM wp_options WHERE option_name IN ('siteurl', 'home') ORDER BY option_name";
+		$sqlite_rows = wp_duckdb_local_smoke_normalize_rows( $sqlite->query( $query, PDO::FETCH_ASSOC ) );
+		$duckdb_rows = wp_duckdb_local_smoke_normalize_rows( $duckdb->query( $query )->fetchAll( PDO::FETCH_ASSOC ) );
+		$rows_equal  = $sqlite_rows === $duckdb_rows;
+
+		if ( ! $rows_equal ) {
+			return array(
+				'enabled'     => true,
+				'rows_equal'  => false,
+				'sqlite_rows' => $sqlite_rows,
+				'duckdb_rows' => $duckdb_rows,
+			);
+		}
+
+		for ( $i = 0; $i < $warmups; $i++ ) {
+			$sqlite->query( $query, PDO::FETCH_ASSOC );
+			$duckdb->query( $query )->fetchAll( PDO::FETCH_ASSOC );
+		}
+
+		$sqlite_started_at = hrtime( true );
+		for ( $i = 0; $i < $iterations; $i++ ) {
+			$sqlite->query( $query, PDO::FETCH_ASSOC );
+		}
+		$sqlite_seconds = ( hrtime( true ) - $sqlite_started_at ) / 1000000000;
+
+		$duckdb_native_queries = 0;
+		$duckdb_started_at     = hrtime( true );
+		for ( $i = 0; $i < $iterations; $i++ ) {
+			$duckdb->query( $query )->fetchAll( PDO::FETCH_ASSOC );
+		}
+		$duckdb_seconds = ( hrtime( true ) - $duckdb_started_at ) / 1000000000;
+		$ratio          = $sqlite_seconds > 0.0 ? $duckdb_seconds / $sqlite_seconds : null;
+		$within_ratio   = null === $max_ratio || ( null !== $ratio && $ratio <= $max_ratio );
+
+		return array(
+			'enabled'               => true,
+			'iterations'            => $iterations,
+			'warmups'               => $warmups,
+			'sqlite_ms'             => round( $sqlite_seconds * 1000, 3 ),
+			'duckdb_ms'             => round( $duckdb_seconds * 1000, 3 ),
+			'ratio'                 => null === $ratio ? null : round( $ratio, 6 ),
+			'max_ratio'             => $max_ratio,
+			'within_max_ratio'      => $within_ratio,
+			'rows_equal'            => true,
+			'duckdb_native_queries' => $duckdb_native_queries,
+		);
+	} finally {
+		if ( $smoke_wpdb_was_set ) {
+			$GLOBALS['wpdb'] = $smoke_wpdb;
+		}
+	}
+}
+
 define( 'ABSPATH', $root . '/wordpress/src/' );
 define( 'WPINC', 'wp-includes' );
 define( 'WP_CONTENT_DIR', ABSPATH . 'wp-content' );
@@ -165,16 +320,27 @@ if ( true !== $create || 1 !== $insert || $expected_rows !== $rows || '' !== $GL
 	exit( 1 );
 }
 
-echo json_encode(
-	array(
-		'wpdb_class' => get_class( $GLOBALS['wpdb'] ),
-		'connect'    => $connected,
-		'create'     => $create,
-		'insert'     => $insert,
-		'rows'       => $rows,
-		'ready'      => $GLOBALS['wpdb']->ready,
-		'last_error' => $GLOBALS['wpdb']->last_error,
-	),
-	JSON_UNESCAPED_SLASHES
-) . "\n";
+$diagnostics = array(
+	'wpdb_class' => get_class( $GLOBALS['wpdb'] ),
+	'connect'    => $connected,
+	'create'     => $create,
+	'insert'     => $insert,
+	'rows'       => $rows,
+	'ready'      => $GLOBALS['wpdb']->ready,
+	'last_error' => $GLOBALS['wpdb']->last_error,
+);
+
+if ( wp_duckdb_local_smoke_env_enabled( 'WP_DUCKDB_LOCAL_SMOKE_RUNTIME_SAMPLE' ) ) {
+	$diagnostics['runtime_probe'] = wp_duckdb_local_smoke_run_runtime_probe();
+	if (
+		false === $diagnostics['runtime_probe']['rows_equal'] ||
+		false === $diagnostics['runtime_probe']['within_max_ratio']
+	) {
+		fwrite( STDERR, "Error: DuckDB local smoke runtime probe failed.\n" );
+		fwrite( STDERR, json_encode( $diagnostics, JSON_UNESCAPED_SLASHES ) . "\n" );
+		exit( 1 );
+	}
+}
+
+echo json_encode( $diagnostics, JSON_UNESCAPED_SLASHES ) . "\n";
 PHP
