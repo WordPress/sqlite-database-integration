@@ -28,7 +28,9 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				'SELECT LENGTH(UTC_TIME()) AS value_length, SUBSTR(UTC_TIME(), 3, 1) AS hour_sep',
 				'SELECT LENGTH(UTC_TIMESTAMP()) AS value_length, SUBSTR(UTC_TIMESTAMP(), 5, 1) AS date_sep, SUBSTR(UTC_TIMESTAMP(), 14, 1) AS time_sep',
 				"SELECT DATE('2008-01-02 13:29:17') AS value_date",
+				"SELECT DATE('not-a-date') AS value_date",
 				"SELECT DATEDIFF('2008-01-09 13:29:17', '2008-01-02 00:00:00') AS day_delta",
+				"SELECT DATE_FORMAT('not-a-date', '%Y-%m-%d') AS formatted",
 				"SELECT DATE_ADD('2008-01-02 13:29:17', INTERVAL 1 SECOND) AS shifted",
 				"SELECT DATE_ADD('2008-01-02 13:29:17', INTERVAL 2 WEEK) AS shifted",
 				"SELECT DATE_SUB('2008-01-02 13:29:17', INTERVAL 1 MONTH) AS shifted",
@@ -37,6 +39,18 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 			) as $sql
 		) {
 			$this->assertParityRows( $sql );
+		}
+	}
+
+	public function test_datediff_invalid_string_inputs_match_sqlite(): void {
+		foreach (
+			array(
+				"SELECT DATEDIFF('not-a-date', '2020-01-01') AS day_delta",
+				"SELECT DATEDIFF('2020-01-01', 'not-a-date') AS day_delta",
+				"SELECT DATEDIFF('bad-a', 'bad-b') AS day_delta",
+			) as $sql
+		) {
+			$this->assertParityErrorContains( $sql, 'Failed to parse time string' );
 		}
 	}
 

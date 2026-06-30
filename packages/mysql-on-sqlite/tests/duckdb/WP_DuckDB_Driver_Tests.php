@@ -3308,7 +3308,10 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$sql    = $translate->invoke( $driver, $tokens );
 
 		$this->assertStringContainsString( "strftime(TRY_CAST((post_date) AS TIMESTAMP), '%Y-%m-%d') AS post_day", $sql );
-		$this->assertStringContainsString( 'CAST(TRY_CAST((post_modified) AS DATE) - TRY_CAST((post_date) AS DATE) AS BIGINT) AS days_old', $sql );
+		$this->assertStringContainsString( 'WHEN CAST((post_modified) AS VARCHAR) IN (\'0000-00-00\', \'0000-00-00 00:00:00\') THEN NULL', $sql );
+		$this->assertStringContainsString( 'WHEN TRY_CAST((post_modified) AS DATE) IS NULL THEN error(\'Failed to parse time string\')', $sql );
+		$this->assertStringContainsString( 'WHEN CAST((post_date) AS VARCHAR) IN (\'0000-00-00\', \'0000-00-00 00:00:00\') THEN NULL', $sql );
+		$this->assertStringContainsString( 'WHEN TRY_CAST((post_date) AS DATE) IS NULL THEN error(\'Failed to parse time string\')', $sql );
 		$this->assertStringContainsString( 'month(TRY_CAST((post_date) AS TIMESTAMP)) AS monthnum', $sql );
 
 		$tokens = $tokenize->invoke(

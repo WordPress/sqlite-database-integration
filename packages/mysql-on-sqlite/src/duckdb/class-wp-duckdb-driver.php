@@ -24919,7 +24919,7 @@ class WP_DuckDB_Driver {
 			$end_sql   = $translate( $items[1] );
 
 			$index = $end_index - 1;
-			return 'CAST(TRY_CAST((' . $start_sql . ') AS DATE) - TRY_CAST((' . $end_sql . ') AS DATE) AS BIGINT)';
+			return 'CAST(' . $this->translate_datediff_date_operand( $start_sql ) . ' - ' . $this->translate_datediff_date_operand( $end_sql ) . ' AS BIGINT)';
 		}
 
 		if ( in_array( $name, array( 'DAY', 'DAYOFMONTH', 'MONTH', 'MONTHNUM', 'YEAR' ), true ) ) {
@@ -25043,6 +25043,27 @@ class WP_DuckDB_Driver {
 				'%y' => '%y',
 			)
 		);
+	}
+
+	/**
+	 * Translate one DATEDIFF() date operand.
+	 *
+	 * SQLite's DATEDIFF() shim uses DateTime and raises on arbitrary invalid
+	 * strings, but WordPress zero-date sentinels are still normalized to NULL
+	 * by the DuckDB path for compatibility with existing date part behavior.
+	 *
+	 * @param string $sql DuckDB SQL expression.
+	 * @return string DuckDB DATE expression.
+	 */
+	private function translate_datediff_date_operand( string $sql ): string {
+		$expression = '(' . $sql . ')';
+
+		return '(CASE'
+			. ' WHEN ' . $expression . ' IS NULL THEN NULL'
+			. ' WHEN CAST(' . $expression . " AS VARCHAR) IN ('0000-00-00', '0000-00-00 00:00:00') THEN NULL"
+			. ' WHEN TRY_CAST(' . $expression . ' AS DATE) IS NULL THEN error(' . $this->connection->quote( 'Failed to parse time string' ) . ')'
+			. ' ELSE TRY_CAST(' . $expression . ' AS DATE)'
+			. ' END)';
 	}
 
 	/**
