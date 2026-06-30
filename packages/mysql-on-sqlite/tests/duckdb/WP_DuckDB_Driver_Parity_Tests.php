@@ -1566,21 +1566,13 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 		$this->assertParityRows( "SHOW FULL TABLES LIKE 'temp_only_show'" );
 	}
 
-	public function test_view_lifecycle_limitations_match_sqlite(): void {
+	public function test_view_metadata_limitations_match_sqlite(): void {
 		$this->runParitySetup(
 			array(
 				'CREATE TABLE view_source (id INT, name VARCHAR(20))',
 			)
 		);
 
-		$this->assertParityErrorContains(
-			'CREATE VIEW visible_view AS SELECT id, name FROM view_source',
-			'createView'
-		);
-		$this->assertParityErrorContains(
-			'CREATE OR REPLACE VIEW visible_view AS SELECT id FROM view_source',
-			'createView'
-		);
 		$this->assertParityErrorContains( 'SHOW CREATE VIEW visible_view', 'CREATE' );
 		$this->assertParityErrorContains( 'DROP VIEW missing_view', 'missing_view' );
 		$this->runParitySetup( array( 'DROP VIEW IF EXISTS missing_view' ) );

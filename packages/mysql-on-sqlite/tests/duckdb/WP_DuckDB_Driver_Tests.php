@@ -4298,7 +4298,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 	}
 
-	public function test_create_and_show_create_view_remain_explicitly_unsupported(): void {
+	public function test_create_view_with_column_list_translates_and_reads_rows(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver(
@@ -4308,26 +4308,164 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			)
 		);
 		$driver->query( 'CREATE TABLE view_source (id INT, name VARCHAR(20))' );
+		$driver->query( "INSERT INTO view_source (id, name) VALUES (1, 'one'), (2, 'two')" );
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE VIEW view_copy (`item_id`, `item_name`) AS SELECT `id`, `name` FROM `view_source` WHERE `id` > 1' )->rowCount()
+		);
+		$this->assertSame(
+			array(
+				array(
+					'item_id'   => 2,
+					'item_name' => 'two',
+				),
+			),
+			$driver->query( 'SELECT item_id, item_name FROM view_copy ORDER BY item_id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'CREATE OR REPLACE VIEW view_copy AS SELECT id AS item_id, name AS item_name FROM view_source WHERE id = 1' )->rowCount()
+		);
+		$this->assertSame(
+			array(
+				array(
+					'item_id'   => 1,
+					'item_name' => 'one',
+				),
+			),
+			$driver->query( 'SELECT item_id, item_name FROM view_copy ORDER BY item_id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+
+		$this->assertSame(
+			0,
+			$driver->query( 'ALTER VIEW view_copy AS SELECT id AS item_id, name AS item_name FROM view_source WHERE id = 2' )->rowCount()
+		);
+		$this->assertSame(
+			array(
+				array(
+					'item_id'   => 2,
+					'item_name' => 'two',
+				),
+			),
+			$driver->query( 'SELECT item_id, item_name FROM view_copy ORDER BY item_id' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
+	public function test_show_create_view_remains_explicitly_unsupported(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+		$driver->query( 'CREATE VIEW visible_view AS SELECT 1 AS id' );
+
+		try {
+			$driver->query( 'SHOW CREATE VIEW visible_view' );
+			$this->fail( 'Expected SHOW CREATE VIEW to remain unsupported.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'SHOW CREATE VIEW statement', $e->getMessage() );
+			$this->assertStringContainsString( 'view definition metadata is not supported', strtolower( $e->getMessage() ) );
+		}
+	}
+
+	public function test_qualified_view_ddl_accepts_current_database_targets(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$this->assertSame( 0, $driver->query( 'CREATE VIEW wp.qualified_view AS SELECT 1 AS id' )->rowCount() );
+		$this->assertSame(
+			array(
+				array(
+					'id' => 1,
+				),
+			),
+			$driver->query( 'SELECT id FROM qualified_view' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame( 0, $driver->query( 'DROP VIEW wp.qualified_view CASCADE' )->rowCount() );
+
+		try {
+			$driver->query( 'SELECT id FROM qualified_view' );
+			$this->fail( 'Expected dropped qualified view to be unavailable.' );
+		} catch ( WP_DuckDB_Driver_Exception $e ) {
+			$this->assertStringContainsString( 'qualified_view', $e->getMessage() );
+		}
+	}
+
+	public function test_drop_view_accepts_multiple_targets_and_restrict_cascade(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
+
+		$driver->query( 'CREATE VIEW drop_view_one AS SELECT 1 AS id' );
+		$driver->query( 'CREATE VIEW drop_view_two AS SELECT 2 AS id' );
+
+		$this->assertSame( 0, $driver->query( 'DROP VIEW IF EXISTS drop_view_one, drop_view_two RESTRICT' )->rowCount() );
+
+		foreach ( array( 'drop_view_one', 'drop_view_two' ) as $view_name ) {
+			try {
+				$driver->query( 'SELECT id FROM ' . $view_name );
+				$this->fail( 'Expected dropped view to be unavailable: ' . $view_name );
+			} catch ( WP_DuckDB_Driver_Exception $e ) {
+				$this->assertStringContainsString( $view_name, $e->getMessage() );
+			}
+		}
+
+		$this->assertSame( 0, $driver->query( 'DROP VIEW IF EXISTS missing_view_one, missing_view_two CASCADE' )->rowCount() );
+	}
+
+	public function test_view_ddl_validation_is_bounded(): void {
+		$this->requireDuckDBRuntime();
+
+		$driver = new WP_DuckDB_Driver(
+			array(
+				'path'     => ':memory:',
+				'database' => 'wp',
+			)
+		);
 
 		foreach (
 			array(
-				'CREATE VIEW visible_view AS SELECT id, name FROM view_source' => 'CREATE VIEW statement',
-				'CREATE OR REPLACE VIEW visible_view AS SELECT id FROM view_source' => 'CREATE VIEW statement',
-				'CREATE VIEW internal_view AS SELECT table_name FROM information_schema.tables' => 'CREATE VIEW statement',
-				'SHOW CREATE VIEW visible_view' => 'SHOW CREATE VIEW statement',
+				'CREATE ALGORITHM = MERGE VIEW plugin_view AS SELECT 1 AS id' => 'Unsupported CREATE VIEW statement',
+				'CREATE DEFINER = root@localhost VIEW plugin_view AS SELECT 1 AS id' => 'Unsupported CREATE VIEW statement',
+				'CREATE SQL SECURITY DEFINER VIEW plugin_view AS SELECT 1 AS id' => 'Unsupported CREATE VIEW statement',
+				'CREATE VIEW plugin_view AS SELECT 1 AS id WITH CHECK OPTION' => 'Unsupported CREATE VIEW statement',
+				'CREATE VIEW plugin_view AS SELECT 1 AS id WITH LOCAL CHECK OPTION' => 'Unsupported CREATE VIEW statement',
+				'ALTER VIEW plugin_view AS SELECT 1 AS id WITH LOCAL CHECK OPTION' => 'Unsupported ALTER VIEW statement',
+				'CREATE VIEW information_schema.plugin_view AS SELECT 1 AS id' => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
+				'DROP VIEW information_schema.plugin_view' => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
+				'CREATE VIEW __wp_duckdb_column_metadata AS SELECT 1 AS id' => 'Internal DuckDB metadata tables cannot be modified',
+				'DROP VIEW __wp_duckdb_column_metadata'    => 'Internal DuckDB metadata tables cannot be modified',
+				'CREATE VIEW other_database.plugin_view AS SELECT 1 AS id' => 'Only the current database is supported',
+				'DROP VIEW other_database.plugin_view'     => 'Only the current database is supported',
+				'CREATE VIEW plugin_view (id,) AS SELECT 1 AS id' => 'could not parse MySQL statement',
 			) as $sql => $message
 		) {
 			try {
 				$driver->query( $sql );
-				$this->fail( 'Expected view lifecycle statement to be unsupported: ' . $sql );
+				$this->fail( 'Expected view DDL validation to reject SQL: ' . $sql );
 			} catch ( WP_DuckDB_Driver_Exception $e ) {
-				$this->assertStringContainsString( $message, $e->getMessage() );
-				$this->assertStringContainsString( 'view lifecycle metadata is not supported', strtolower( $e->getMessage() ) );
+				$this->assertStringContainsString( $message, $e->getMessage(), $sql );
 			}
 		}
 	}
 
-	public function test_native_views_can_be_selected_and_dropped_but_remain_omitted_from_metadata(): void {
+	public function test_views_can_be_selected_and_dropped_but_remain_omitted_from_metadata(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver(
@@ -4338,7 +4476,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 		$driver->query( 'CREATE TABLE view_source (id INT, name VARCHAR(20))' );
 		$driver->query( "INSERT INTO view_source (id, name) VALUES (1, 'Ada'), (2, 'Grace')" );
-		$driver->get_connection()->query( 'CREATE VIEW "native_view" AS SELECT id, name FROM "view_source"' );
+		$driver->query( 'CREATE VIEW native_view AS SELECT id, name FROM view_source' );
 
 		$this->assertSame(
 			array(
@@ -4394,7 +4532,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 0, $driver->query( 'DROP VIEW native_view' )->rowCount() );
 		try {
 			$driver->query( 'SELECT id FROM native_view' );
-			$this->fail( 'Expected dropped native view to be unavailable.' );
+			$this->fail( 'Expected dropped view to be unavailable.' );
 		} catch ( WP_DuckDB_Driver_Exception $e ) {
 			$this->assertStringContainsString( 'native_view', $e->getMessage() );
 		}
@@ -4406,33 +4544,6 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 			$this->assertStringContainsString( 'missing_native_view', $e->getMessage() );
 		}
 		$this->assertSame( 0, $driver->query( 'DROP VIEW IF EXISTS missing_native_view' )->rowCount() );
-	}
-
-	public function test_drop_view_lifecycle_validation_is_bounded(): void {
-		$this->requireDuckDBRuntime();
-
-		$driver = new WP_DuckDB_Driver(
-			array(
-				'path'     => ':memory:',
-				'database' => 'wp',
-			)
-		);
-
-		foreach (
-			array(
-				'DROP VIEW information_schema.tables'   => "Access denied for user 'duckdb'@'%' to database 'information_schema'",
-				'DROP VIEW __wp_duckdb_column_metadata' => 'Internal DuckDB metadata tables cannot be modified',
-				'DROP VIEW other_database.native_view'  => 'Only the current database is supported',
-				'DROP VIEW first_view, second_view'     => 'Only a single view target is supported',
-			) as $sql => $message
-		) {
-			try {
-				$driver->query( $sql );
-				$this->fail( 'Expected DROP VIEW validation to reject SQL: ' . $sql );
-			} catch ( WP_DuckDB_Driver_Exception $e ) {
-				$this->assertStringContainsString( $message, $e->getMessage() );
-			}
-		}
 	}
 
 	public function test_show_admin_metadata_statements_are_emulated(): void {
