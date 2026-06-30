@@ -20504,6 +20504,12 @@ class WP_DuckDB_Driver {
 				continue;
 			}
 
+			$numeric_string_between_predicate = $this->translate_numeric_identifier_string_literal_between_predicate( $tokens, $index );
+			if ( null !== $numeric_string_between_predicate ) {
+				$pieces[] = $numeric_string_between_predicate;
+				continue;
+			}
+
 			$numeric_string_in_predicate = $this->translate_numeric_identifier_string_literal_in_predicate( $tokens, $index );
 			if ( null !== $numeric_string_in_predicate ) {
 				$pieces[] = $numeric_string_in_predicate;
@@ -26403,6 +26409,95 @@ class WP_DuckDB_Driver {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Translate numeric WordPress id BETWEEN predicates against quoted strings.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Current index, advanced on match.
+	 * @return string|null Translated predicate, or null when the pattern does not match.
+	 */
+	private function translate_numeric_identifier_string_literal_between_predicate( array $tokens, int &$index ): ?string {
+		$operand = $this->numeric_identifier_string_comparison_operand_sql( $tokens, $index );
+		if ( null === $operand || ! isset( $tokens[ $operand['next_index'] ] ) ) {
+			return null;
+		}
+
+		$not            = false;
+		$operator_index = $operand['next_index'];
+		$between_index  = $operator_index;
+		if (
+			in_array( $tokens[ $operator_index ]->id, array( WP_MySQL_Lexer::NOT_SYMBOL, WP_MySQL_Lexer::NOT2_SYMBOL ), true )
+			&& isset( $tokens[ $operator_index + 1 ] )
+		) {
+			$not           = true;
+			$between_index = $operator_index + 1;
+		}
+
+		$lower_index = $between_index + 1;
+		$and_index   = $between_index + 2;
+		$upper_index = $between_index + 3;
+		if (
+			! isset( $tokens[ $upper_index ] )
+			|| WP_MySQL_Lexer::BETWEEN_SYMBOL !== $tokens[ $between_index ]->id
+			|| ! $this->is_string_literal_token( $tokens[ $lower_index ] )
+			|| WP_MySQL_Lexer::AND_SYMBOL !== $tokens[ $and_index ]->id
+			|| ! $this->is_string_literal_token( $tokens[ $upper_index ] )
+			|| ! $this->numeric_identifier_string_comparison_has_boundary( $tokens, $upper_index + 1 )
+		) {
+			return null;
+		}
+
+		$index = $upper_index;
+		if ( $not ) {
+			return '('
+				. $this->sqlite_numeric_string_literal_comparison_sql(
+					$operand['sql'],
+					WP_MySQL_Lexer::LESS_THAN_OPERATOR,
+					'<',
+					$tokens[ $lower_index ],
+					true
+				)
+				. ' OR '
+				. $this->sqlite_numeric_string_literal_comparison_sql(
+					$operand['sql'],
+					WP_MySQL_Lexer::GREATER_THAN_OPERATOR,
+					'>',
+					$tokens[ $upper_index ],
+					true
+				)
+				. ')';
+		}
+
+		return '('
+			. $this->sqlite_numeric_string_literal_comparison_sql(
+				$operand['sql'],
+				WP_MySQL_Lexer::GREATER_OR_EQUAL_OPERATOR,
+				'>=',
+				$tokens[ $lower_index ],
+				true
+			)
+			. ' AND '
+			. $this->sqlite_numeric_string_literal_comparison_sql(
+				$operand['sql'],
+				WP_MySQL_Lexer::LESS_OR_EQUAL_OPERATOR,
+				'<=',
+				$tokens[ $upper_index ],
+				true
+			)
+			. ')';
+	}
+
+	/**
+	 * Check whether a translated numeric identifier string predicate reaches a boundary.
+	 *
+	 * @param WP_Parser_Token[] $tokens Token stream.
+	 * @param int               $index  Token index after the predicate.
+	 * @return bool Whether the next token is absent or a supported boundary.
+	 */
+	private function numeric_identifier_string_comparison_has_boundary( array $tokens, int $index ): bool {
+		return ! isset( $tokens[ $index ] ) || $this->is_text_value_numeric_comparison_boundary_token( $tokens[ $index ] );
 	}
 
 	/**
