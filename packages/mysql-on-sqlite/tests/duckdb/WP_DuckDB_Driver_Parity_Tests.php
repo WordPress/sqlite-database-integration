@@ -3360,10 +3360,11 @@ class WP_DuckDB_Driver_Parity_Tests extends WP_DuckDB_Differential_TestCase {
 				) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
 				"INSERT INTO wptests_posts (ID, post_date, post_type, post_status) VALUES
 					(1, '2024-02-01 00:00:00', 'post', 'publish'),
-					(2, '2024-01-10 00:00:00', 'post', 'publish'),
-					(3, '2023-12-31 00:00:00', 'post', 'publish'),
-					(4, '2024-02-02 00:00:00', 'page', 'publish'),
-					(5, '2024-03-01 00:00:00', 'post', 'draft')",
+					(2, '2024-02-03 00:00:00', 'post', 'publish'),
+					(3, '2024-01-10 00:00:00', 'post', 'publish'),
+					(4, '2023-12-31 00:00:00', 'post', 'publish'),
+					(5, '2024-02-04 00:00:00', 'page', 'publish'),
+					(6, '2024-03-01 00:00:00', 'post', 'draft')",
 			)
 		);
 

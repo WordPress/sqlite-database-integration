@@ -3742,7 +3742,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		$this->assertSame( 2, $row['timestamp_day'] );
 	}
 
-	public function test_weekly_archive_date_format_select_uses_grouped_date_boundary(): void {
+	public function test_weekly_archive_date_format_select_uses_grouped_date_representative(): void {
 		$this->requireDuckDBRuntime();
 
 		$driver = new WP_DuckDB_Driver( array( 'path' => ':memory:' ) );
@@ -3780,7 +3780,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 				array(
 					'week'     => 5,
 					'yr'       => 2024,
-					'yyyymmdd' => '2024-02-03',
+					'yyyymmdd' => '2024-02-01',
 					'posts'    => 2,
 				),
 				array(
@@ -3794,7 +3794,7 @@ class WP_DuckDB_Driver_Tests extends WP_DuckDB_TestCase {
 		);
 
 		$this->assertStringContainsString(
-			'strftime(TRY_CAST((MAX("post_date")) AS TIMESTAMP), \'%Y-%m-%d\') AS "yyyymmdd"',
+			'strftime(TRY_CAST((first("post_date")) AS TIMESTAMP), \'%Y-%m-%d\') AS "yyyymmdd"',
 			$this->lastDuckDBQuery( $driver )
 		);
 		$this->assertStringContainsString( 'ORDER BY MAX("post_date") DESC', $this->lastDuckDBQuery( $driver ) );

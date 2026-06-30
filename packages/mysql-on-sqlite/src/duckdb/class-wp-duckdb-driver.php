@@ -7202,8 +7202,9 @@ class WP_DuckDB_Driver {
 	 *
 	 * WordPress weekly archive queries select DATE_FORMAT(post_date, ...)
 	 * while grouping by WEEK(post_date, mode), YEAR(post_date). DuckDB requires
-	 * that selected date expression to be grouped or aggregated, so use the same
-	 * bucket boundary aggregate selected for ORDER BY post_date.
+	 * that selected date expression to be grouped or aggregated, so use the first
+	 * grouped value to match SQLite's representative-row behavior. ORDER BY keeps
+	 * its separate MIN/MAX bucket-boundary rewrite.
 	 *
 	 * @param WP_Parser_Token[] $tokens MySQL tokens.
 	 * @return array<int,array{end:int,sql:string}> Rewrites keyed by SELECT item start offset.
@@ -7285,9 +7286,7 @@ class WP_DuckDB_Driver {
 					continue;
 				}
 
-				$aggregate_sql   = $order_column['aggregate'] . '('
-					. $this->grouped_date_aggregate_column_sql( $date_format, $order_column['column'] )
-					. ')';
+				$aggregate_sql   = 'first(' . $this->grouped_date_aggregate_column_sql( $date_format, $order_column['column'] ) . ')';
 				$date_format_sql = 'strftime(TRY_CAST(('
 					. $aggregate_sql
 					. ') AS TIMESTAMP), '
