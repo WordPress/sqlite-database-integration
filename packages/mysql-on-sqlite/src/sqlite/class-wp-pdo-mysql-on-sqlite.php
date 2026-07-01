@@ -934,10 +934,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				if (
 					'selectStatement' === $statement_node->rule_name
 					|| 'showStatement' === $statement_node->rule_name
-					// A SET statement only changes session state (sql_mode, etc.)
-					// and writes nothing to the database, so it must not take a
-					// write lock. Treat it as read-only -> deferred BEGIN instead
-					// of BEGIN IMMEDIATE. (Mirrors the SHOW/DESCRIBE handling.)
+					// Supported SET statements mutate only connection-local driver state
+					// (sql_mode, user variables, etc.) or fail before touching SQLite.
+					// They do not write to the SQLite database, so they must not take a
+					// write lock. Use a deferred BEGIN instead of BEGIN IMMEDIATE.
+					// This mirrors the SHOW/DESCRIBE handling.
 					|| 'setStatement' === $statement_node->rule_name
 				) {
 					$this->is_readonly = true;
@@ -7035,7 +7036,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			if ( ! $this->empty_result_table_ready ) {
 				$pdo->exec(
 					sprintf(
-						'CREATE TEMP TABLE IF NOT EXISTS %s ( x )',
+						'CREATE TEMP TABLE IF NOT EXISTS %s ( placeholder_for_empty_insert )',
 						$this->quote_sqlite_identifier( self::EMPTY_RESULT_TABLE_NAME )
 					)
 				);
@@ -7043,7 +7044,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			}
 			return $pdo->query(
 				sprintf(
-					'INSERT INTO %s ( x ) SELECT NULL WHERE FALSE',
+					'INSERT INTO %s ( placeholder_for_empty_insert ) SELECT NULL WHERE FALSE',
 					$this->quote_sqlite_identifier( self::EMPTY_RESULT_TABLE_NAME )
 				)
 			);
