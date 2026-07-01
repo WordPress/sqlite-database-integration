@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath, janjakes, zieladam, berislav.grgic
 Requires at least: 6.4
 Tested up to:      6.9
 Requires PHP:      7.2
-Stable tag:        3.0.0-rc.5
+Stable tag:        3.0.0-rc.6
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              performance, database
@@ -43,6 +43,12 @@ the wpdb API, while queries are internally adapted to be compatible
 with SQLite syntax and behavior.
 
 == Changelog ==
+
+= 3.0.0-rc.6 =
+
+* Don't take a write lock for SET statements (fixes "database is locked" on connect) ([#443](https://github.com/WordPress/sqlite-database-integration/pull/443))
+* Add REVERSE() to user defined functions ([#434](https://github.com/WordPress/sqlite-database-integration/pull/434))
+* LALR(1) parser from official MySQL grammar ([#429](https://github.com/WordPress/sqlite-database-integration/pull/429))
 
 = 3.0.0-rc.5 =
 
