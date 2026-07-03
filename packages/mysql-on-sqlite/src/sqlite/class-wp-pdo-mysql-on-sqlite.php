@@ -1253,7 +1253,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 			// Without "SQLITE_ENABLE_COLUMN_METADATA", PDO leaves "table" empty,
 			// which would drop the column key flags below. Fall back to the last
-			// SELECT's single source table so the keys still resolve.
+			// SELECT's single source table so the keys still resolve. This is
+			// only a candidate: expression columns (e.g. "COUNT(*)") share that
+			// table name but aren't real columns, so we confirm each one exists
+			// via the information schema lookup before trusting it (see below).
 			if ( ( null === $table || '' === $table ) && null !== $this->last_result_single_table ) {
 				$table = $this->last_result_single_table;
 			}
@@ -1381,9 +1384,14 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$mysqli_charsetnr = 63;  // binary
 			}
 
-			// Expose the resolved table (see fallback above) so consumers keying
-			// off the origin table work without "SQLITE_ENABLE_COLUMN_METADATA".
-			$table_name = $table ?? ( $meta['table'] ?? '' );
+			// Expose the origin table. Prefer what PDO reported; otherwise use the
+			// single-table fallback, but only for columns confirmed to belong to
+			// that table via the information schema ("$column_info" is set). This
+			// keeps expression columns (e.g. "COUNT(*)") without a spurious table.
+			$pdo_table  = $meta['table'] ?? '';
+			$table_name = '' !== $pdo_table
+				? $pdo_table
+				: ( null !== $column_info ? ( $table ?? '' ) : '' );
 
 			$column_meta[] = array(
 				'native_type'      => $native_type,
