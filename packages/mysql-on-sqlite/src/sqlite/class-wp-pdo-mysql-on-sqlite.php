@@ -503,6 +503,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	private $last_column_meta = array();
 
 	/**
+	 * Source table of the last SELECT, if it read from exactly one base table.
+	 *
+	 * Fallback origin table for "get_last_column_meta()" when PDO doesn't report
+	 * one (SQLite built without "SQLITE_ENABLE_COLUMN_METADATA"). Null otherwise.
+	 *
+	 * @var string|null
+	 */
+	private $last_result_single_table = null;
+
+	/**
 	 * Data for emulating the "FOUND_ROWS()" function.
 	 *
 	 * When "SQL_CALC_FOUND_ROWS" is used, the appropriate value is stored here.
@@ -1241,9 +1251,16 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$name  = $meta['name'];
 			$type  = strtoupper( $meta['sqlite:decl_type'] ?? $meta['native_type'] ?? '' );
 
+			// Without "SQLITE_ENABLE_COLUMN_METADATA", PDO leaves "table" empty,
+			// which would drop the column key flags below. Fall back to the last
+			// SELECT's single source table so the keys still resolve.
+			if ( ( null === $table || '' === $table ) && null !== $this->last_result_single_table ) {
+				$table = $this->last_result_single_table;
+			}
+
 			// When table is known, we can get data from the information schema.
 			$column_info = null;
-			if ( null !== $table ) {
+			if ( null !== $table && '' !== $table ) {
 				$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table );
 				$columns_table      = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
 				$column_info        = $this->execute_sqlite_query(
@@ -1364,11 +1381,15 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$mysqli_charsetnr = 63;  // binary
 			}
 
+			// Expose the resolved table (see fallback above) so consumers keying
+			// off the origin table work without "SQLITE_ENABLE_COLUMN_METADATA".
+			$table_name = $table ?? ( $meta['table'] ?? '' );
+
 			$column_meta[] = array(
 				'native_type'      => $native_type,
 				'pdo_type'         => $pdo_type,
 				'flags'            => $flags,
-				'table'            => $meta['table'] ?? '',
+				'table'            => $table_name,
 				'name'             => $meta['name'],
 				'len'              => $len,
 				'precision'        => $precision,
@@ -1379,7 +1400,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				 * We'll add the data here for use cases such as "wpdb::get_col_info()".
 				 */
 				'mysqli:orgname'   => $meta['name'],        // TODO: Use correct original name when alias is used.
-				'mysqli:orgtable'  => $meta['table'] ?? '', // TODO: Use correct original name when table alias is used.
+				'mysqli:orgtable'  => $table_name,          // TODO: Use correct original name when table alias is used.
 				'mysqli:db'        => $this->db_name,       // TODO: Use correct DB for queries to information schema.
 				'mysqli:charsetnr' => $mysqli_charsetnr,
 				'mysqli:flags'     => 0,                    // TODO: We can compute correct MySQL flags.
@@ -1894,7 +1915,40 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		// Store column meta info. This must be done before fetching data, which
 		// seems to erase type information for expressions in the SELECT clause.
 		$this->store_last_column_meta_from_statement( $stmt );
-		$this->last_result_statement = $stmt;
+		$this->last_result_statement    = $stmt;
+		$this->last_result_single_table = $this->get_select_single_table_name( $node );
+	}
+
+	/**
+	 * Get the single base table a SELECT reads from, or null when not exactly
+	 * one (joins, subqueries, derived tables, UNIONs). See
+	 * "$last_result_single_table".
+	 *
+	 * @param  WP_Parser_Node $node The "selectStatement" AST node.
+	 * @return string|null
+	 */
+	private function get_select_single_table_name( WP_Parser_Node $node ): ?string {
+		// A single-table read has exactly one table reference and no subquery.
+		$single_tables = $node->get_descendant_nodes( 'singleTable' );
+		if ( count( $single_tables ) !== 1 ) {
+			return null;
+		}
+		if ( null !== $node->get_first_descendant_node( 'derivedTable' ) ) {
+			return null;
+		}
+
+		$table_ref = $single_tables[0]->get_first_child_node( 'tableRef' );
+		if ( null === $table_ref ) {
+			return null;
+		}
+
+		// Only base tables in the current schema qualify; skip information_schema.
+		$database = $this->get_database_name( $table_ref );
+		if ( 'information_schema' === strtolower( $database ) ) {
+			return null;
+		}
+
+		return $this->unquote_sqlite_identifier( $this->translate( $table_ref ) );
 	}
 
 	/**
@@ -2783,7 +2837,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 					$sql = $this->get_mysql_create_table_statement( $table_is_temporary, $table_name );
 
-					$this->last_column_meta = array(
+					// Synthetic result columns; no single source table applies.
+					$this->last_result_single_table = null;
+					$this->last_column_meta          = array(
 						array(
 							'native_type' => 'STRING',
 							'pdo_type'    => PDO::PARAM_STR,
@@ -5670,6 +5726,9 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function store_last_column_meta_from_statement( PDOStatement $stmt ): void {
 		$this->last_column_meta = array();
+
+		// Clear the fallback; only a single-table SELECT re-sets it.
+		$this->last_result_single_table = null;
 		for ( $i = 0; $i < $stmt->columnCount(); $i++ ) {
 			/*
 			 * Workaround for PHP PDO SQLite bug (#79664) in PHP < 7.3.
