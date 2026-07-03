@@ -71,6 +71,7 @@ class WP_SQLite_Driver {
 			array(
 				'mysql_version' => $mysql_version,
 				'pdo'           => $connection->get_pdo(),
+				'journal_mode'  => $connection->query( 'PRAGMA journal_mode' )->fetchColumn(),
 			)
 		);
 		$this->main_db_name           = $database;
