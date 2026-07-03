@@ -52,8 +52,9 @@ class WP_SQLite_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Blank out the "table" in the stored PDO column metadata to simulate a
-	 * SQLite library built without "SQLITE_ENABLE_COLUMN_METADATA".
+	 * Remove the "table" key from the stored PDO column metadata to simulate a
+	 * SQLite library built without "SQLITE_ENABLE_COLUMN_METADATA" (which omits
+	 * the key entirely).
 	 */
 	private function stripPdoColumnMetaTable(): void {
 		$driver_prop = new ReflectionProperty( WP_SQLite_Driver::class, 'mysql_on_sqlite_driver' );
@@ -64,7 +65,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$meta_prop->setAccessible( true );
 		$meta = $meta_prop->getValue( $pdo_driver );
 		foreach ( $meta as &$column ) {
-			$column['table'] = '';
+			unset( $column['table'] );
 		}
 		unset( $column );
 		$meta_prop->setValue( $pdo_driver, $meta );

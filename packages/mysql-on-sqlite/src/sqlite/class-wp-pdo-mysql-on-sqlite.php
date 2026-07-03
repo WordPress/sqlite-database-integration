@@ -1251,13 +1251,15 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$name  = $meta['name'];
 			$type  = strtoupper( $meta['sqlite:decl_type'] ?? $meta['native_type'] ?? '' );
 
-			// Without "SQLITE_ENABLE_COLUMN_METADATA", PDO leaves "table" empty,
-			// which would drop the column key flags below. Fall back to the last
-			// SELECT's single source table so the keys still resolve. This is
-			// only a candidate: expression columns (e.g. "COUNT(*)") share that
-			// table name but aren't real columns, so we confirm each one exists
-			// via the information schema lookup before trusting it (see below).
-			if ( ( null === $table || '' === $table ) && null !== $this->last_result_single_table ) {
+			// PDO only includes the "table" key when SQLite was built with
+			// "SQLITE_ENABLE_COLUMN_METADATA"; otherwise the origin table is
+			// unknown and the information schema lookup below (and its column key
+			// flags) would be skipped. When the key is absent, fall back to the
+			// last SELECT's single source table. It's only a candidate - each
+			// column is still confirmed against the information schema, so
+			// expression columns (e.g. "COUNT(*)") don't inherit it.
+			$table_is_known = array_key_exists( 'table', $meta );
+			if ( ! $table_is_known && null !== $this->last_result_single_table ) {
 				$table = $this->last_result_single_table;
 			}
 
@@ -1384,14 +1386,15 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 				$mysqli_charsetnr = 63;  // binary
 			}
 
-			// Expose the origin table. Prefer what PDO reported; otherwise use the
-			// single-table fallback, but only for columns confirmed to belong to
-			// that table via the information schema ("$column_info" is set). This
-			// keeps expression columns (e.g. "COUNT(*)") without a spurious table.
-			$pdo_table  = $meta['table'] ?? '';
-			$table_name = '' !== $pdo_table
-				? $pdo_table
-				: ( null !== $column_info ? ( $table ?? '' ) : '' );
+			// Expose the origin table. When PDO reported it, use that verbatim.
+			// Otherwise apply the single-table fallback, but only to columns
+			// confirmed to belong to that table via the information schema
+			// ("$column_info" is set) - so expression columns keep an empty table.
+			if ( $table_is_known ) {
+				$table_name = $meta['table'];
+			} else {
+				$table_name = null !== $column_info ? ( $table ?? '' ) : '';
+			}
 
 			$column_meta[] = array(
 				'native_type'      => $native_type,
@@ -2847,7 +2850,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 
 					// Synthetic result columns; no single source table applies.
 					$this->last_result_single_table = null;
-					$this->last_column_meta          = array(
+					$this->last_column_meta         = array(
 						array(
 							'native_type' => 'STRING',
 							'pdo_type'    => PDO::PARAM_STR,
