@@ -6,7 +6,18 @@ The spike now builds and loads `wp_mysql_parser` in Playground across every
 PHP version supported by the current `ext-php-rs` binding layer: 8.0 through
 8.5, all JSPI. CI verifies each generated side module by loading its manifest
 through Playground's compile-extension test harness and running a native lexer
-smoke test. PHP 7.4 is outside this Rust path because `ext-php-rs` 0.15
+smoke test. CI also validates every generated side module with the pinned
+Wasmtime CLI: it parses the module with Node's WebAssembly API, confirms the
+PHP extension import/export shape, and invokes the pinned `wasmtime` CLI with
+the same proposal gates used by CI. When Wasmtime can precompile the module,
+the check verifies `wasmtime compile`, checks the compiled output with
+`wasmtime objdump`, and asserts `wasmtime run` rejects it as an Emscripten PHP
+side module rather than a standalone WASI command. Current Playground JSPI PHP
+side modules use legacy-encoded exception instructions that Wasmtime 46 reports
+as `legacy_exceptions feature required for try instruction`, so CI also accepts
+that exact validator diagnostic from both `wasmtime compile` and `wasmtime run`
+as the expected Wasmtime compatibility result. PHP 7.4 is
+outside this Rust path because `ext-php-rs` 0.15
 depends on PHP 8 Zend APIs and does not compile against PHP 7.4 headers.
 
 ## PHP version scope
@@ -113,6 +124,7 @@ extension build and manifest machinery.
 | `write-extension-manifest.mjs` | Writes the combined all-version artifact manifest for the publish workflow. |
 | `shim/config.m4` | Minimal phpize wrapper. |
 | `shim/wp_mysql_parser_shim.c` | Pulls the Rust `get_module()` symbol into the side-module link. |
+| `check-wasmtime-cli.mjs` | Validates the built side module with the pinned Wasmtime CLI. |
 | `run-spike.mjs` | Loads the generated manifest in Playground and verifies the native lexer. |
 
 ## Reproduce
@@ -122,6 +134,9 @@ cd packages/php-ext-wp-mysql-parser/wasm-spike
 
 PLAYGROUND_REPO=/abs/path/to/wordpress-playground \
   bash build-in-docker-rust.sh
+
+PLAYGROUND_REPO=/abs/path/to/wordpress-playground PHP_VERSION=8.4 \
+  node check-wasmtime-cli.mjs
 
 PLAYGROUND_REPO=/abs/path/to/wordpress-playground PHP_VERSION=8.4 \
   node run-spike.mjs

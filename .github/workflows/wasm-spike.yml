@@ -22,6 +22,10 @@ on:
 # Any needed permissions should be configured at the job level.
 permissions: {}
 
+env:
+  WASMTIME_VERSION: v46.0.1
+  WASMTIME_X86_64_LINUX_SHA256: 9ae0b17ea298bcc52277a8208d6ab7fae8e1a89579672f9d82f9d86c116edb62
+
 jobs:
   base-image:
     name: Build shared Playground base image
@@ -134,6 +138,18 @@ jobs:
       - name: Load Playground base image
         run: docker load --input "${RUNNER_TEMP}/playground-base-image/playground-php-wasm-base.tar"
 
+      - name: Install Wasmtime CLI
+        run: |
+          set -euo pipefail
+          archive="wasmtime-${WASMTIME_VERSION}-x86_64-linux.tar.xz"
+          url="https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VERSION}/${archive}"
+          curl -fsSL "$url" --output "${RUNNER_TEMP}/${archive}"
+          echo "${WASMTIME_X86_64_LINUX_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check -
+          mkdir -p "${RUNNER_TEMP}/wasmtime"
+          tar -xJf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/wasmtime" --strip-components=1
+          "${RUNNER_TEMP}/wasmtime/wasmtime" --version
+          echo "${RUNNER_TEMP}/wasmtime" >> "$GITHUB_PATH"
+
       - name: Install Playground deps
         working-directory: wordpress-playground
         run: npm ci --ignore-scripts
@@ -174,6 +190,14 @@ jobs:
           PHP_VERSION: ${{ matrix.php }}
           ASYNC_MODE: ${{ matrix.async-mode }}
         run: node check-playground-web-compat.mjs
+
+      - name: Validate the side module with Wasmtime CLI
+        working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
+        env:
+          PHP_VERSION: ${{ matrix.php }}
+          ASYNC_MODE: ${{ matrix.async-mode }}
+          WASMTIME_EXPECTED_VERSION: ${{ env.WASMTIME_VERSION }}
+        run: node check-wasmtime-cli.mjs
 
       - name: Load the extension in Playground and parse a query
         working-directory: sqlite-database-integration/packages/php-ext-wp-mysql-parser/wasm-spike
