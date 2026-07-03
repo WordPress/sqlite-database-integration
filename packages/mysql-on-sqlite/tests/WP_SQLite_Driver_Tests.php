@@ -52,23 +52,30 @@ class WP_SQLite_Driver_Tests extends TestCase {
 	}
 
 	/**
-	 * Remove the "table" key from the stored PDO column metadata to simulate a
-	 * SQLite library built without "SQLITE_ENABLE_COLUMN_METADATA" (which omits
-	 * the key entirely).
+	 * Set a private property of the inner WP_PDO_MySQL_On_SQLite driver.
+	 *
+	 * @param mixed $value
 	 */
-	private function stripPdoColumnMetaTable(): void {
-		$driver_prop = new ReflectionProperty( WP_SQLite_Driver::class, 'mysql_on_sqlite_driver' );
-		$driver_prop->setAccessible( true );
-		$pdo_driver = $driver_prop->getValue( $this->engine );
+	private function setPdoDriverProperty( string $name, $value ): void {
+		$this->pdoDriverProperty( $name )->setValue( $this->getPdoDriver(), $value );
+	}
 
-		$meta_prop = new ReflectionProperty( WP_PDO_MySQL_On_SQLite::class, 'last_column_meta' );
-		$meta_prop->setAccessible( true );
-		$meta = $meta_prop->getValue( $pdo_driver );
-		foreach ( $meta as &$column ) {
-			unset( $column['table'] );
+	private function getPdoDriver(): WP_PDO_MySQL_On_SQLite {
+		$prop = new ReflectionProperty( WP_SQLite_Driver::class, 'mysql_on_sqlite_driver' );
+		// ReflectionProperty::setAccessible() is a no-op since PHP 8.1 and
+		// deprecated in 8.5; only needed on older versions the suite still tests.
+		if ( PHP_VERSION_ID < 80100 ) {
+			$prop->setAccessible( true );
 		}
-		unset( $column );
-		$meta_prop->setValue( $pdo_driver, $meta );
+		return $prop->getValue( $this->engine );
+	}
+
+	private function pdoDriverProperty( string $name ): ReflectionProperty {
+		$prop = new ReflectionProperty( WP_PDO_MySQL_On_SQLite::class, $name );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$prop->setAccessible( true );
+		}
+		return $prop;
 	}
 
 	public function testRegexp() {
@@ -8090,8 +8097,12 @@ END;
 
 	/**
 	 * When PHP's SQLite is built without "SQLITE_ENABLE_COLUMN_METADATA", PDO
-	 * leaves "getColumnMeta()['table']" empty. The driver should still resolve
-	 * the origin table (and thus the column keys) for a single-table SELECT.
+	 * omits the column "table", so the driver can't read the origin table from
+	 * it. For a single-table SELECT it should fall back to that table and still
+	 * resolve the column keys - while leaving expression columns untouched.
+	 *
+	 * The stored column metadata is injected directly so the test doesn't depend
+	 * on how a given PHP/SQLite build populates "getColumnMeta()".
 	 */
 	public function testColumnInfoWithoutPdoColumnMetadata(): void {
 		$this->assertQuery(
@@ -8103,23 +8114,64 @@ END;
 			)'
 		);
 
-		$this->assertQuery( 'SELECT * FROM t' );
-		$this->stripPdoColumnMetaTable();
+		// "id" and "name" are real columns; "cnt" is an expression column. None
+		// carry a "table" (as on a build without SQLITE_ENABLE_COLUMN_METADATA).
+		$this->setColumnMetaForSingleTable(
+			't',
+			array(
+				array(
+					'name'             => 'id',
+					'sqlite:decl_type' => 'INT',
+				),
+				array(
+					'name'             => 'name',
+					'sqlite:decl_type' => 'TEXT',
+				),
+				array(
+					'name'             => 'cnt',
+					'sqlite:decl_type' => 'INTEGER',
+				),
+			)
+		);
 		$column_info = $this->engine->get_last_column_meta();
 
+		// Real columns get the fallback table and their keys.
 		$this->assertSame( 't', $column_info[0]['table'] );
 		$this->assertSame( 't', $column_info[0]['mysqli:orgtable'] );
 		$this->assertContains( 'primary_key', $column_info[0]['flags'] );
 		$this->assertContains( 'unique_key', $column_info[1]['flags'] );
 
-		// A join is ambiguous, so the fallback must stay off: no table, no keys.
-		$this->assertQuery( 'CREATE TABLE t2 (t_id INT, note TEXT)' );
-		$this->assertQuery( 'SELECT t.id, t2.note FROM t JOIN t2 ON t2.t_id = t.id' );
-		$this->stripPdoColumnMetaTable();
+		// The expression column is not in the table, so it keeps an empty table.
+		$this->assertSame( '', $column_info[2]['table'] );
+		$this->assertNotContains( 'primary_key', $column_info[2]['flags'] );
+
+		// With no single source table (e.g. a join), the fallback stays off.
+		$this->setColumnMetaForSingleTable(
+			null,
+			array(
+				array(
+					'name'             => 'id',
+					'sqlite:decl_type' => 'INT',
+				),
+			)
+		);
 		$column_info = $this->engine->get_last_column_meta();
 
 		$this->assertSame( '', $column_info[0]['table'] );
 		$this->assertNotContains( 'primary_key', $column_info[0]['flags'] );
+	}
+
+	/**
+	 * Inject stored column metadata (without a "table" key) plus a single-table
+	 * fallback, to drive get_last_column_meta() deterministically.
+	 *
+	 * @param string|null $single_table Fallback table, or null for none.
+	 * @param array       $columns      Partial column-meta rows; "name" and
+	 *                                  "sqlite:decl_type" are enough.
+	 */
+	private function setColumnMetaForSingleTable( ?string $single_table, array $columns ): void {
+		$this->setPdoDriverProperty( 'last_column_meta', $columns );
+		$this->setPdoDriverProperty( 'last_result_single_table', $single_table );
 	}
 
 	public function testColumnInfoWithConstraints(): void {
