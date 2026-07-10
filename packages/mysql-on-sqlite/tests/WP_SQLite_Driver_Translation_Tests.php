@@ -11,7 +11,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	private static $grammar;
 
 	/**
-	 * @var WP_SQLite_Driver
+	 * @var WP_PDO_MySQL_On_SQLite
 	 */
 	private $driver;
 
@@ -25,10 +25,8 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	}
 
 	public function setUp(): void {
-		$this->driver = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
-			'wp'
-		);
+		$this->driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
+		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 
 		$supports_strict_tables = version_compare( $this->driver->get_sqlite_version(), '3.37.0', '>=' );
 		$this->strict_suffix    = $supports_strict_tables ? ' STRICT' : '';

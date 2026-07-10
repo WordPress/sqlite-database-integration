@@ -25,17 +25,19 @@ function sqlite_make_db_sqlite() {
 	$table_schemas = wp_get_db_schema();
 	$queries       = explode( ';', $table_schemas );
 	try {
-		$pdo_class  = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class; // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
-		$pdo        = new $pdo_class( 'sqlite:' . FQDB, null, null, array( PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ) ); // phpcs:ignore WordPress.DB.RestrictedClasses
-		$translator = new WP_SQLite_Driver(
-			new WP_SQLite_Connection(
-				array(
-					'pdo'          => $pdo,
-					'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
-				)
+		$translator = new WP_PDO_MySQL_On_SQLite(
+			sprintf(
+				'mysql-on-sqlite:path=%s;dbname=%s',
+				str_replace( ';', ';;', FQDB ),
+				str_replace( ';', ';;', $wpdb->dbname )
 			),
-			$wpdb->dbname
+			null,
+			null,
+			array(
+				'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+			)
 		);
+		$translator->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 	} catch ( PDOException $err ) {
 		$err_data = $err->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
 		$message  = 'Database connection error!<br />';
@@ -46,7 +48,7 @@ function sqlite_make_db_sqlite() {
 	$query = null;
 
 	try {
-		$translator->begin_transaction();
+		$translator->beginTransaction();
 		foreach ( $queries as $query ) {
 			$query = trim( $query );
 			if ( empty( $query ) ) {
@@ -57,7 +59,7 @@ function sqlite_make_db_sqlite() {
 		}
 		$translator->commit();
 	} catch ( PDOException $err ) {
-		$translator->rollback();
+		$translator->rollBack();
 		$message  = sprintf(
 			'Error occurred while creating tables or indexes...<br />Query was: %s<br />',
 			var_export( $query, true )
@@ -112,8 +114,6 @@ function sqlite_make_db_sqlite() {
 			}
 		}
 	}
-
-	$pdo = null;
 
 	return true;
 }

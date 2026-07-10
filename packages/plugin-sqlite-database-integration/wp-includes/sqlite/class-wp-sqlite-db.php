@@ -16,7 +16,7 @@ class WP_SQLite_DB extends wpdb {
 	/**
 	 * Database Handle
 	 *
-	 * @var WP_SQLite_Driver
+	 * @var WP_PDO_MySQL_On_SQLite
 	 */
 	protected $dbh;
 
@@ -95,7 +95,7 @@ class WP_SQLite_DB extends wpdb {
 	 */
 	public function set_sql_mode( $modes = array() ) {
 		if ( empty( $modes ) ) {
-			$result = $this->dbh->query( 'SELECT @@SESSION.sql_mode' );
+			$result = $this->dbh->query( 'SELECT @@SESSION.sql_mode' )->fetchAll( PDO::FETCH_OBJ ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 			if ( ! isset( $result[0] ) ) {
 				return;
 			}
@@ -311,14 +311,23 @@ class WP_SQLite_DB extends wpdb {
 		$this->ensure_database_directory( FQDB );
 
 		try {
-			$connection      = new WP_SQLite_Connection(
-				array(
-					'pdo'          => $pdo,
-					'path'         => FQDB,
-					'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
-				)
+			$options = array(
+				'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
 			);
-			$this->dbh       = new WP_SQLite_Driver( $connection, $this->dbname );
+			if ( null !== $pdo ) {
+				$options['pdo'] = $pdo;
+			}
+			$this->dbh = new WP_PDO_MySQL_On_SQLite(
+				sprintf(
+					'mysql-on-sqlite:path=%s;dbname=%s',
+					str_replace( ';', ';;', FQDB ),
+					str_replace( ';', ';;', $this->dbname )
+				),
+				null,
+				null,
+				$options
+			);
+			$this->dbh->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 			$GLOBALS['@pdo'] = $this->dbh->get_connection()->get_pdo();
 		} catch ( Throwable $e ) {
 			$this->last_error = $this->format_error_message( $e );
@@ -435,7 +444,7 @@ class WP_SQLite_DB extends wpdb {
 		if ( preg_match( '/^\s*(create|alter|truncate|drop)\s/i', $query ) ) {
 			$return_val = true;
 		} elseif ( preg_match( '/^\s*(insert|delete|update|replace)\s/i', $query ) ) {
-			$this->rows_affected = $this->dbh->get_last_return_value();
+			$this->rows_affected = $this->result->rowCount();
 
 			// Take note of the insert_id.
 			if ( preg_match( '/^\s*(insert|replace)\s/i', $query ) ) {
@@ -447,9 +456,9 @@ class WP_SQLite_DB extends wpdb {
 		} else {
 			$num_rows = 0;
 
-			if ( is_array( $this->result ) ) {
-				$this->last_result = $this->result;
-				$num_rows          = count( $this->result );
+			if ( $this->result->columnCount() > 0 ) {
+				$this->last_result = $this->result->fetchAll();
+				$num_rows          = count( $this->last_result );
 			}
 
 			// Log and return the number of rows selected.
@@ -500,7 +509,7 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		try {
-			$this->result = $this->dbh->query( $query );
+			$this->result = $this->dbh->query( $query, PDO::FETCH_OBJ ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 		} catch ( Throwable $e ) {
 			$this->last_error = $this->format_error_message( $e );
 		}

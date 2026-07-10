@@ -109,7 +109,7 @@ class WP_SQLite_Driver_Concurrency_Tests extends TestCase {
 	public function testSetQuerySucceedsWhileAnotherConnectionHoldsWriteLock(): void {
 		// Connection A: set up the database and hold a write transaction.
 		$conn_a   = new WP_SQLite_Connection( array( 'path' => $this->db_path ) );
-		$driver_a = new WP_SQLite_Driver( $conn_a, 'wp' );
+		$driver_a = $this->create_driver( $conn_a );
 		$driver_a->query( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
 		$driver_a->query( "INSERT INTO t VALUES (1, 'Alice')" );
 
@@ -124,13 +124,13 @@ class WP_SQLite_Driver_Concurrency_Tests extends TestCase {
 					'timeout' => 0,
 				)
 			);
-			$driver_b = new WP_SQLite_Driver( $conn_b, 'wp' );
+			$driver_b = $this->create_driver( $conn_b );
 			$conn_b->get_pdo()->setAttribute( PDO::ATTR_TIMEOUT, 0 );
 
 			// SET writes nothing, so it must not contend for the write lock.
 			$result = $driver_b->query( "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'" );
 
-			$this->assertSame( 0, $result );
+			$this->assertSame( 0, $result->rowCount() );
 		} finally {
 			$conn_a->get_pdo()->exec( 'ROLLBACK' );
 		}
@@ -139,7 +139,7 @@ class WP_SQLite_Driver_Concurrency_Tests extends TestCase {
 	private function assertReadOnlyQuerySucceedsUnderWriteLock( string $query ): void {
 		// Connection A: set up the database.
 		$conn_a   = new WP_SQLite_Connection( array( 'path' => $this->db_path ) );
-		$driver_a = new WP_SQLite_Driver( $conn_a, 'wp' );
+		$driver_a = $this->create_driver( $conn_a );
 		$driver_a->query( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
 		$driver_a->query( "INSERT INTO t VALUES (1, 'Alice')" );
 
@@ -154,22 +154,33 @@ class WP_SQLite_Driver_Concurrency_Tests extends TestCase {
 					'timeout' => 0,
 				)
 			);
-			$driver_b = new WP_SQLite_Driver( $conn_b, 'wp' );
+			$driver_b = $this->create_driver( $conn_b );
 			$conn_b->get_pdo()->setAttribute( PDO::ATTR_TIMEOUT, 0 );
 
 			$result = $driver_b->query( $query );
 
-			$this->assertIsArray( $result );
-			$this->assertNotEmpty( $result );
+			$this->assertNotEmpty( $result->fetchAll() );
 		} finally {
 			$conn_a->get_pdo()->exec( 'ROLLBACK' );
 		}
 	}
 
-	private function create_in_memory_driver(): WP_SQLite_Driver {
+	private function create_in_memory_driver(): WP_PDO_MySQL_On_SQLite {
 		$pdo_class  = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$pdo        = new $pdo_class( 'sqlite::memory:' );
 		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
-		return new WP_SQLite_Driver( $connection, 'wp' );
+		return $this->create_driver( $connection );
+	}
+
+	private function create_driver( WP_SQLite_Connection $connection ): WP_PDO_MySQL_On_SQLite {
+		return new WP_PDO_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'          => $connection->get_pdo(),
+				'journal_mode' => $connection->query( 'PRAGMA journal_mode' )->fetchColumn(),
+			)
+		);
 	}
 }

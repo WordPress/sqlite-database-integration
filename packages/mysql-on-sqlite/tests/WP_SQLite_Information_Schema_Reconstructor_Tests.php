@@ -11,7 +11,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 			PRIMARY KEY(`table`, `column_or_index`)
 	)';
 
-	/** @var WP_SQLite_Driver */
+	/** @var WP_PDO_MySQL_On_SQLite */
 	private $engine;
 
 	/** @var WP_SQLite_Information_Schema_Reconstructor */
@@ -43,10 +43,13 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	public function setUp(): void {
 		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
-		$this->engine = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
-			'wp'
+		$this->engine = new WP_PDO_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'pdo' => $this->sqlite )
 		);
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 
 		$builder = new WP_SQLite_Information_Schema_Builder(
 			WP_PDO_MySQL_On_SQLite::RESERVED_PREFIX,
@@ -426,7 +429,8 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	}
 
 	private function assertQuery( $sql ) {
-		$retval = $this->engine->query( $sql );
+		$statement = $this->engine->query( $sql, PDO::FETCH_OBJ );
+		$retval    = $statement->columnCount() > 0 ? $statement->fetchAll() : $statement->rowCount();
 		$this->assertNotFalse( $retval );
 		return $retval;
 	}

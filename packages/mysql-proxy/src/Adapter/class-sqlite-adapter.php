@@ -2,27 +2,27 @@
 
 namespace WP_MySQL_Proxy\Adapter;
 
+use PDO;
 use PDOException;
 use Throwable;
 use WP_MySQL_Proxy\MySQL_Result;
-use WP_SQLite_Connection;
-use WP_SQLite_Driver;
+use WP_PDO_MySQL_On_SQLite;
 use WP_MySQL_Proxy\MySQL_Protocol;
 
 require_once __DIR__ . '/../../../../wp-pdo-mysql-on-sqlite.php';
 
 class SQLite_Adapter implements Adapter {
-	/** @var WP_SQLite_Driver */
+	/** @var WP_PDO_MySQL_On_SQLite */
 	private $sqlite_driver;
 
 	public function __construct( $sqlite_database_path ) {
 		define( 'FQDB', $sqlite_database_path );
 		define( 'FQDBDIR', dirname( FQDB ) . '/' );
 
-		$this->sqlite_driver = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'path' => $sqlite_database_path ) ),
-			'sqlite_database'
+		$this->sqlite_driver = new WP_PDO_MySQL_On_SQLite(
+			sprintf( 'mysql-on-sqlite:path=%s;dbname=sqlite_database', str_replace( ';', ';;', $sqlite_database_path ) )
 		);
+		$this->sqlite_driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}
 
 	public function handle_query( string $query ): MySQL_Result {
@@ -32,12 +32,12 @@ class SQLite_Adapter implements Adapter {
 		$rows           = array();
 
 		try {
-			$return_value   = $this->sqlite_driver->query( $query );
+			$statement      = $this->sqlite_driver->query( $query, PDO::FETCH_OBJ );
 			$last_insert_id = $this->sqlite_driver->get_insert_id() ?? null;
-			if ( is_numeric( $return_value ) ) {
-				$affected_rows = (int) $return_value;
-			} elseif ( is_array( $return_value ) ) {
-				$rows = $return_value;
+			if ( $statement->columnCount() > 0 ) {
+				$rows = $statement->fetchAll();
+			} else {
+				$affected_rows = $statement->rowCount();
 			}
 			if ( $this->sqlite_driver->get_last_column_count() > 0 ) {
 				$columns = $this->computeColumnInfo();

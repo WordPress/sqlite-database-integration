@@ -179,14 +179,12 @@ class WP_SQLite_Connection_Tests extends TestCase {
 	}
 
 	public function testDriverKeepsConfiguredJournalMode(): void {
-		$connection = new WP_SQLite_Connection(
-			array(
-				'path'         => $this->db_path,
-				'journal_mode' => 'DELETE',
-			)
+		$driver = new WP_PDO_MySQL_On_SQLite(
+			sprintf( 'mysql-on-sqlite:path=%s;dbname=wp', $this->db_path ),
+			null,
+			null,
+			array( 'journal_mode' => 'DELETE' )
 		);
-
-		$driver = new WP_SQLite_Driver( $connection, 'wp' );
 
 		$this->assertSame( 'delete', $this->get_journal_mode( $driver->get_connection() ) );
 	}

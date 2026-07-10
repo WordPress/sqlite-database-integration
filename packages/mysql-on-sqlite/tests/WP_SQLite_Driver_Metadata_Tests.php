@@ -3,20 +3,26 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_SQLite_Driver_Metadata_Tests extends TestCase {
-	/** @var WP_SQLite_Driver */
+	/** @var WP_PDO_MySQL_On_SQLite */
 	private $engine;
 
 	/** @var PDO */
 	private $sqlite;
 
+	/** @var mixed */
+	private $last_result;
+
 	// Before each test, we create a new database
 	public function setUp(): void {
 		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
-		$this->engine = new WP_SQLite_Driver(
-			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
-			'wp'
+		$this->engine = new WP_PDO_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'pdo' => $this->sqlite )
 		);
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}
 
 	public function testCountTables() {
@@ -208,7 +214,13 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 	}
 
 	private function assertQuery( $sql ) {
-		$retval = $this->engine->query( $sql );
+		$statement = $this->engine->query( $sql, PDO::FETCH_OBJ );
+		if ( $statement->columnCount() > 0 ) {
+			$this->last_result = $statement->fetchAll();
+		} else {
+			$this->last_result = $statement->rowCount();
+		}
+		$retval = $this->last_result;
 		$this->assertNotFalse( $retval );
 		return $retval;
 	}
@@ -385,7 +397,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 					'Msg_text' => 'Operation failed',
 				),
 			),
-			$this->engine->get_query_results()
+			$this->last_result
 		);
 
 		// One good and one missing table.
@@ -503,7 +515,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 	public function testShowCollation(): void {
 		// Simple.
 		$this->assertQuery( 'SHOW COLLATION' );
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertCount( 7, $actual );
 		$this->assertEquals( 'binary', $actual[0]->Collation );
 		$this->assertEquals( 'utf8_bin', $actual[1]->Collation );
@@ -515,7 +527,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 
 		// With LIKE clause.
 		$this->assertQuery( "SHOW COLLATION LIKE 'utf8%'" );
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertCount( 6, $actual );
 		$this->assertEquals( 'utf8_bin', $actual[0]->Collation );
 		$this->assertEquals( 'utf8_general_ci', $actual[1]->Collation );
@@ -524,7 +536,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 
 		// With WHERE clause.
 		$this->assertQuery( "SHOW COLLATION WHERE Collation = 'utf8_bin'" );
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertCount( 1, $actual );
 		$this->assertEquals( 'utf8_bin', $actual[0]->Collation );
 	}
@@ -532,7 +544,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 	public function testShowDatabases(): void {
 		// Simple.
 		$this->assertQuery( 'SHOW DATABASES' );
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertEquals(
 			array(
 				(object) array( 'Database' => 'information_schema' ),
@@ -543,7 +555,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 
 		// With LIKE clause.
 		$this->assertQuery( 'SHOW DATABASES LIKE "w%"' );
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertEquals(
 			array( (object) array( 'Database' => 'wp' ) ),
 			$actual
@@ -551,7 +563,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 
 		// With WHERE clause.
 		$this->assertQuery( 'SHOW DATABASES WHERE `Database` = "wp"' );
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertEquals(
 			array( (object) array( 'Database' => 'wp' ) ),
 			$actual
@@ -561,7 +573,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 	public function testShowTableSchemas(): void {
 		$this->assertQuery( 'SHOW SCHEMAS' );
 
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertEquals(
 			array(
 				(object) array( 'Database' => 'information_schema' ),
@@ -572,7 +584,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 
 		// With LIKE clause.
 		$this->assertQuery( 'SHOW DATABASES LIKE "inf%"' );
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertEquals(
 			array( (object) array( 'Database' => 'information_schema' ) ),
 			$actual
@@ -580,7 +592,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 
 		// With WHERE clause.
 		$this->assertQuery( 'SHOW DATABASES WHERE `Database` = "information_schema"' );
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertEquals(
 			array( (object) array( 'Database' => 'information_schema' ) ),
 			$actual
@@ -913,7 +925,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 			"SELECT COUNT(*) num FROM $table_name"
 		);
 
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		if ( $empty_var ) {
 			$this->assertEquals( 0, $actual[0]->num, "$table_name is not empty" );
 		} else {
@@ -939,7 +951,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 		$this->assertQuery(
 			'TRUNCATE TABLE wp_comments;'
 		);
-		$actual = $this->engine->get_query_results();
+		$actual = $this->last_result;
 		$this->assertSame( 0, $actual );
 		$this->assertTableEmpty( 'wp_comments', true );
 	}

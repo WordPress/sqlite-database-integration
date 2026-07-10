@@ -2,10 +2,7 @@
 
 require_once __DIR__ . '/../../src/load.php';
 
-$driver = new WP_SQLite_Driver(
-	new WP_SQLite_Connection( array( 'path' => ':memory:' ) ),
-	'wp'
-);
+$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
 
 $query = "SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id WHERE t1.name = 'abc'";
 

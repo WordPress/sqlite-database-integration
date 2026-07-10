@@ -1014,15 +1014,6 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * A temporary alias for back compatibility.
-	 *
-	 * @see self::beginTransaction()
-	 */
-	public function begin_transaction(): void {
-		$this->beginTransaction();
-	}
-
-	/**
 	 * PDO API: Commit a transaction.
 	 *
 	 * @return bool True on success, false on failure.
@@ -4211,7 +4202,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * When the ORDER BY clause is present, we need to disambiguate the item
 		 * list and make sure they don't cause an "ambiguous column name" error.
 		 *
-		 * @see WP_SQLite_Driver::disambiguate_item()
+		 * @see WP_PDO_MySQL_On_SQLite::disambiguate_item()
 		 */
 		$disambiguated_order_list = array();
 		$order_clause             = $node->get_first_child_node( 'orderClause' );
@@ -4279,7 +4270,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * When the GROUP BY or HAVING clause is present, we need to disambiguate
 		 * the items to ensure they don't cause an "ambiguous column name" error.
 		 *
-		 * @see WP_SQLite_Driver::disambiguate_item()
+		 * @see WP_PDO_MySQL_On_SQLite::disambiguate_item()
 		 */
 		$group_by_clause = null;
 		$having_clause   = null;
@@ -5788,7 +5779,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 *        consider column references in forms like "db.table.column".
 	 *
 	 * @param  array          $disambiguation_map The SELECT item disambiguation map (column name => array of select items).
-	 *                                            @see WP_SQLite_Driver::create_select_item_disambiguation_map()
+	 *                                            @see WP_PDO_MySQL_On_SQLite::create_select_item_disambiguation_map()
 	 * @param  WP_Parser_Node $expr               The expression AST node or subnode.
 	 * @return string|null                        The disambiguated and translated expression;
 	 *                                            null when the expression cannot be disambiguated.
@@ -5827,7 +5818,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * Create a SELECT item disambiguation map from a SELECT item list for use
 	 * with the ORDER BY, GROUP BY, and HAVING clause disambiguation algorithm.
 	 *
-	 * @see WP_SQLite_Driver::disambiguate_item()
+	 * @see WP_PDO_MySQL_On_SQLite::disambiguate_item()
 	 *
 	 * @param  WP_Parser_Node $select_item_list The "selectItemList" AST node.
 	 * @return array                            The SELECT item disambiguation map (column name => array of select items).
