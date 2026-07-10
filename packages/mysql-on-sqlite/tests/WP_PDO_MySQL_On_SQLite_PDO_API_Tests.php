@@ -598,7 +598,13 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	}
 
 	private function remove_database_files( string $path ): void {
-		foreach ( array( $path, $path . '-wal', $path . '-shm', $path . '-journal' ) as $file ) {
+		foreach ( array(
+			$path,
+			$path . '-wal',
+			$path . '-shm',
+			$path . '-journal',
+			dirname( $path ) . '/.' . basename( $path ) . '-lock',
+		) as $file ) {
 			if ( file_exists( $file ) ) {
 				unlink( $file );
 			}

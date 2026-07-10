@@ -34,6 +34,7 @@ class WP_SQLite_Connection_Tests extends TestCase {
 			$this->db_path . '-wal',
 			$this->db_path . '-shm',
 			$this->db_path . '-journal',
+			dirname( $this->db_path ) . '/.' . basename( $this->db_path ) . '-lock',
 		) as $path ) {
 			if ( is_string( $path ) && file_exists( $path ) ) {
 				unlink( $path );
