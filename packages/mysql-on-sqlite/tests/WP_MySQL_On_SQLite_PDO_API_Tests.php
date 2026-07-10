@@ -16,12 +16,12 @@ class FetchObjectTestClass {
 	}
 }
 
-class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
-	/** @var WP_PDO_MySQL_On_SQLite */
+class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
+	/** @var WP_MySQL_On_SQLite */
 	private $driver;
 
 	public function setUp(): void {
-		$this->driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+		$this->driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
 
 		// Run all tests with stringified fetch mode results, so we can use
 		// assertions that are consistent across all tested PHP versions.
@@ -30,41 +30,41 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	}
 
 	public function test_connection(): void {
-		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=WordPress;' );
+		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=WordPress;' );
 		$this->assertInstanceOf( PDO::class, $driver );
 	}
 
 	public function test_dsn_parsing(): void {
 		// Standard DSN.
-		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
+		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
 		$this->assertSame( 'wp', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 
 		// DSN with trailing semicolon.
-		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
 		$this->assertSame( 'wp', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 
 		// DSN with whitespace before argument names.
-		$driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:  path=:memory:; \n\r\t\v\fdbname=wp" );
+		$driver = new WP_MySQL_On_SQLite( "mysql-on-sqlite:  path=:memory:; \n\r\t\v\fdbname=wp" );
 		$this->assertSame( 'wp', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 
 		// DSN with whitespace in the database name.
-		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname= w p ' );
+		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname= w p ' );
 		$this->assertSame( ' w p ', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 
 		// DSN with semicolon in the database name.
-		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;dbname=w;;p;' );
+		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;dbname=w;;p;' );
 		$this->assertSame( 'w;p', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 
 		// DSN with semicolon in the database name and a terminating semicolon.
-		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=w;;;p' );
+		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=w;;;p' );
 		$this->assertSame( 'w;', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 
 		// DSN with two semicolons in the database name.
-		$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=w;;;;p' );
+		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=w;;;;p' );
 		$this->assertSame( 'w;;p', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 
 		// DSN with a "\0" byte (always terminates the DSN string).
-		$driver = new WP_PDO_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=w\0p;" );
+		$driver = new WP_MySQL_On_SQLite( "mysql-on-sqlite:path=:memory:;dbname=w\0p;" );
 		$this->assertSame( 'w', $driver->query( 'SELECT DATABASE()' )->fetch()[0] );
 	}
 
@@ -73,7 +73,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		unlink( $path );
 
 		try {
-			$driver     = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=' . $path . ';dbname=wp' );
+			$driver     = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=' . $path . ';dbname=wp' );
 			$connection = $driver->get_connection();
 			$this->assertSame(
 				'wal',
@@ -93,7 +93,7 @@ class WP_PDO_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		unlink( $path );
 
 		try {
-			$driver     = new WP_PDO_MySQL_On_SQLite(
+			$driver     = new WP_MySQL_On_SQLite(
 				'mysql-on-sqlite:path=' . $path . ';dbname=wp',
 				null,
 				null,

@@ -25,7 +25,7 @@ function sqlite_make_db_sqlite() {
 	$table_schemas = wp_get_db_schema();
 	$queries       = explode( ';', $table_schemas );
 	try {
-		$translator = new WP_PDO_MySQL_On_SQLite(
+		$translator = new WP_MySQL_On_SQLite(
 			sprintf(
 				'mysql-on-sqlite:path=%s;dbname=%s',
 				str_replace( ';', ';;', FQDB ),

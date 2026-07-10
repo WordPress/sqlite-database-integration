@@ -2,8 +2,8 @@
 
 use PHPUnit\Framework\TestCase;
 
-class WP_SQLite_Driver_Metadata_Tests extends TestCase {
-	/** @var WP_PDO_MySQL_On_SQLite */
+class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
+	/** @var WP_MySQL_On_SQLite */
 	private $engine;
 
 	/** @var PDO */
@@ -16,7 +16,7 @@ class WP_SQLite_Driver_Metadata_Tests extends TestCase {
 	public function setUp(): void {
 		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
-		$this->engine = new WP_PDO_MySQL_On_SQLite(
+		$this->engine = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,

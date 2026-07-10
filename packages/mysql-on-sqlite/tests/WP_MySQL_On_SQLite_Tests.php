@@ -2,8 +2,8 @@
 
 use PHPUnit\Framework\TestCase;
 
-class WP_SQLite_Driver_Tests extends TestCase {
-	/** @var WP_PDO_MySQL_On_SQLite */
+class WP_MySQL_On_SQLite_Tests extends TestCase {
+	/** @var WP_MySQL_On_SQLite */
 	private $engine;
 
 	/** @var PDO */
@@ -17,7 +17,7 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
 
-		$this->engine = new WP_PDO_MySQL_On_SQLite(
+		$this->engine = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,
@@ -6338,14 +6338,14 @@ QUERY
 	}
 
 	public function testQuoteMysqlUtf8StringLiteral(): void {
-		// WP_PDO_MySQL_On_SQLite::quote_mysql_utf8_string_literal() is a private method.
+		// WP_MySQL_On_SQLite::quote_mysql_utf8_string_literal() is a private method.
 		// Let's use a closure bound to the driver instance to access it for tests.
 		$quote = Closure::bind(
 			function ( string $utf8_literal ) {
 				return $this->quote_mysql_utf8_string_literal( $utf8_literal );
 			},
 			$this->engine,
-			WP_PDO_MySQL_On_SQLite::class
+			WP_MySQL_On_SQLite::class
 		);
 
 		$backslash = chr( 92 );
@@ -7001,7 +7001,7 @@ END;
 		$pdo       = new $pdo_class( 'sqlite::memory:' );
 		$this->expectException( WP_SQLite_Driver_Exception::class );
 		$this->expectExceptionMessage( 'The database name cannot be empty.' );
-		new WP_PDO_MySQL_On_SQLite(
+		new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:dbname=',
 			null,
 			null,
@@ -10318,7 +10318,7 @@ END;
 				$this->main_db_name = $name;
 			},
 			$this->engine,
-			WP_PDO_MySQL_On_SQLite::class
+			WP_MySQL_On_SQLite::class
 		);
 
 		// Default database name.
@@ -10360,7 +10360,7 @@ END;
 				$this->main_db_name = $name;
 			},
 			$this->engine,
-			WP_PDO_MySQL_On_SQLite::class
+			WP_MySQL_On_SQLite::class
 		);
 
 		$this->assertQuery( 'CREATE TABLE t (id INT, db_name TEXT)' );
@@ -10406,7 +10406,7 @@ END;
 				$this->main_db_name = $name;
 			},
 			$this->engine,
-			WP_PDO_MySQL_On_SQLite::class
+			WP_MySQL_On_SQLite::class
 		);
 
 		// Default database name.
@@ -11237,7 +11237,7 @@ END;
 		$this->assertQuery( "INSERT INTO t VALUES ('2')" );
 		$this->assertQuery( "INSERT INTO t VALUES ('3.0')" );
 
-		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
 		if ( $is_legacy_sqlite ) {
 			$this->assertQuery( "INSERT INTO t VALUES ('4.5')" );
 			$this->assertQuery( 'INSERT INTO t VALUES (0x05)' );
@@ -11744,7 +11744,7 @@ END;
 		$this->assertQuery( "UPDATE t SET value = '3.0'" );
 		$this->assertSame( '3', $this->assertQuery( 'SELECT * FROM t' )[0]->value );
 
-		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_PDO_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
+		$is_legacy_sqlite = version_compare( $this->engine->get_sqlite_version(), WP_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' );
 		if ( $is_legacy_sqlite ) {
 			$this->assertQuery( "UPDATE t SET value = '4.5'" );
 			$this->assertQuery( 'UPDATE t SET value = 0x05' );

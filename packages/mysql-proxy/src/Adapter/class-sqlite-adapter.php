@@ -6,20 +6,20 @@ use PDO;
 use PDOException;
 use Throwable;
 use WP_MySQL_Proxy\MySQL_Result;
-use WP_PDO_MySQL_On_SQLite;
+use WP_MySQL_On_SQLite;
 use WP_MySQL_Proxy\MySQL_Protocol;
 
 require_once __DIR__ . '/../../../../wp-pdo-mysql-on-sqlite.php';
 
 class SQLite_Adapter implements Adapter {
-	/** @var WP_PDO_MySQL_On_SQLite */
+	/** @var WP_MySQL_On_SQLite */
 	private $sqlite_driver;
 
 	public function __construct( $sqlite_database_path ) {
 		define( 'FQDB', $sqlite_database_path );
 		define( 'FQDBDIR', dirname( FQDB ) . '/' );
 
-		$this->sqlite_driver = new WP_PDO_MySQL_On_SQLite(
+		$this->sqlite_driver = new WP_MySQL_On_SQLite(
 			sprintf( 'mysql-on-sqlite:path=%s;dbname=sqlite_database', str_replace( ';', ';;', $sqlite_database_path ) )
 		);
 		$this->sqlite_driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );

@@ -179,7 +179,7 @@ class WP_SQLite_Connection_Tests extends TestCase {
 	}
 
 	public function testDriverKeepsConfiguredJournalMode(): void {
-		$driver = new WP_PDO_MySQL_On_SQLite(
+		$driver = new WP_MySQL_On_SQLite(
 			sprintf( 'mysql-on-sqlite:path=%s;dbname=wp', $this->db_path ),
 			null,
 			null,

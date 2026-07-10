@@ -14,7 +14,7 @@
  *
  * The driver requires PDO with the SQLite driver, and the PCRE engine.
  */
-class WP_PDO_MySQL_On_SQLite extends PDO {
+class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * The path to the MySQL SQL grammar file.
 	 */
@@ -632,8 +632,17 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
 	 *
-	 * @param WP_SQLite_Connection $connection A SQLite database connection.
-	 * @param string               $db_name    The database name.
+	 * @param string      $dsn      MySQL-on-SQLite DSN containing the SQLite path and database name.
+	 * @param string|null $username Optional. Ignored by this driver.
+	 * @param string|null $password Optional. Ignored by this driver.
+	 * @param array       $options  {
+	 *     Optional driver options.
+	 *
+	 *     @type int             $mysql_version Optional. MySQL version to emulate. Default 80038.
+	 *     @type PDO|null        $pdo           Optional. Existing SQLite PDO connection.
+	 *     @type string|null     $journal_mode  Optional. SQLite journal mode. Default 'WAL'.
+	 *     @type string|int|null $synchronous   Optional. SQLite synchronous setting.
+	 * }
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
 	 */
@@ -789,11 +798,12 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 *
 	 * A single MySQL query can be translated into zero or more SQLite queries.
 	 *
-	 * @param string $query              Full SQL statement string.
-	 * @param int    $fetch_mode         PDO fetch mode. Default is PDO::FETCH_OBJ.
-	 * @param array  ...$fetch_mode_args Additional fetch mode arguments.
+	 * @param string   $query              Full SQL statement string.
+	 * @param int|null $fetch_mode         Optional. PDO fetch mode. Defaults to the configured
+	 *                                     PDO::ATTR_DEFAULT_FETCH_MODE.
+	 * @param mixed    ...$fetch_mode_args Additional fetch mode arguments.
 	 *
-	 * @return mixed Return value, depending on the query type.
+	 * @return PDOStatement|false PDO statement, or false when the fetch mode is invalid on PHP < 8.1.
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
 	 */
@@ -4202,7 +4212,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * When the ORDER BY clause is present, we need to disambiguate the item
 		 * list and make sure they don't cause an "ambiguous column name" error.
 		 *
-		 * @see WP_PDO_MySQL_On_SQLite::disambiguate_item()
+		 * @see WP_MySQL_On_SQLite::disambiguate_item()
 		 */
 		$disambiguated_order_list = array();
 		$order_clause             = $node->get_first_child_node( 'orderClause' );
@@ -4270,7 +4280,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * When the GROUP BY or HAVING clause is present, we need to disambiguate
 		 * the items to ensure they don't cause an "ambiguous column name" error.
 		 *
-		 * @see WP_PDO_MySQL_On_SQLite::disambiguate_item()
+		 * @see WP_MySQL_On_SQLite::disambiguate_item()
 		 */
 		$group_by_clause = null;
 		$having_clause   = null;
@@ -5779,7 +5789,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 *        consider column references in forms like "db.table.column".
 	 *
 	 * @param  array          $disambiguation_map The SELECT item disambiguation map (column name => array of select items).
-	 *                                            @see WP_PDO_MySQL_On_SQLite::create_select_item_disambiguation_map()
+	 *                                            @see WP_MySQL_On_SQLite::create_select_item_disambiguation_map()
 	 * @param  WP_Parser_Node $expr               The expression AST node or subnode.
 	 * @return string|null                        The disambiguated and translated expression;
 	 *                                            null when the expression cannot be disambiguated.
@@ -5818,7 +5828,7 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 * Create a SELECT item disambiguation map from a SELECT item list for use
 	 * with the ORDER BY, GROUP BY, and HAVING clause disambiguation algorithm.
 	 *
-	 * @see WP_PDO_MySQL_On_SQLite::disambiguate_item()
+	 * @see WP_MySQL_On_SQLite::disambiguate_item()
 	 *
 	 * @param  WP_Parser_Node $select_item_list The "selectItemList" AST node.
 	 * @return array                            The SELECT item disambiguation map (column name => array of select items).

@@ -63,17 +63,17 @@ function wp_sqlite_verify_native_parser_extension(): void {
 		wp_sqlite_native_parser_verification_fail( 'Native parser did not produce the expected query AST.' );
 	}
 
-	$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+	$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
 	$parser = $driver->create_parser( 'SELECT 1' );
 	wp_sqlite_assert_native_parser_delegate(
 		$parser,
-		'WP_PDO_MySQL_On_SQLite did not create a native parser delegate.'
+		'WP_MySQL_On_SQLite did not create a native parser delegate.'
 	);
 
 	$parser->next_query();
 	$ast = $parser->get_query_ast();
 	if ( ! ( $ast instanceof WP_MySQL_Native_Parser_Node ) ) {
-		wp_sqlite_native_parser_verification_fail( 'WP_PDO_MySQL_On_SQLite did not produce a native-backed AST.' );
+		wp_sqlite_native_parser_verification_fail( 'WP_MySQL_On_SQLite did not produce a native-backed AST.' );
 	}
 
 	$reflection = new ReflectionObject( $ast );

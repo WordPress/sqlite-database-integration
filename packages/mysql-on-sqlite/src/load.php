@@ -41,5 +41,5 @@ require_once __DIR__ . '/sqlite/class-wp-sqlite-information-schema-builder.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-information-schema-exception.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-information-schema-reconstructor.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-pdo-user-defined-functions.php';
-require_once __DIR__ . '/sqlite/class-wp-pdo-mysql-on-sqlite.php';
+require_once __DIR__ . '/sqlite/class-wp-mysql-on-sqlite.php';
 require_once __DIR__ . '/sqlite/class-wp-pdo-proxy-statement.php';

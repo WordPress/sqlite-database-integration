@@ -149,7 +149,7 @@ if ( ! ( $parser_ast instanceof WP_MySQL_Native_Parser_Node ) ) {
 	wp_sqlite_native_parser_verification_fail( 'Native parser did not produce a native-backed AST in the WordPress PHP test container.' );
 }
 
-$driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
+$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp;' );
 $parser = $driver->create_parser( 'SELECT 1' );
 wp_sqlite_assert_native_parser_delegate( $parser, 'WordPress PHP test container SQLite driver did not create a native parser delegate.' );
 $parser->next_query();

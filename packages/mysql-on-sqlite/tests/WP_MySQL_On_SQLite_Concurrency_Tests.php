@@ -5,7 +5,7 @@ use PHPUnit\Framework\TestCase;
 /**
  * Tests for concurrent access to the same SQLite database file.
  */
-class WP_SQLite_Driver_Concurrency_Tests extends TestCase {
+class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 	/**
 	 * Path to the temporary SQLite database file used in file-based tests.
 	 *
@@ -165,15 +165,15 @@ class WP_SQLite_Driver_Concurrency_Tests extends TestCase {
 		}
 	}
 
-	private function create_in_memory_driver(): WP_PDO_MySQL_On_SQLite {
+	private function create_in_memory_driver(): WP_MySQL_On_SQLite {
 		$pdo_class  = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$pdo        = new $pdo_class( 'sqlite::memory:' );
 		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
 		return $this->create_driver( $connection );
 	}
 
-	private function create_driver( WP_SQLite_Connection $connection ): WP_PDO_MySQL_On_SQLite {
-		return new WP_PDO_MySQL_On_SQLite(
+	private function create_driver( WP_SQLite_Connection $connection ): WP_MySQL_On_SQLite {
+		return new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,

@@ -11,7 +11,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 			PRIMARY KEY(`table`, `column_or_index`)
 	)';
 
-	/** @var WP_PDO_MySQL_On_SQLite */
+	/** @var WP_MySQL_On_SQLite */
 	private $engine;
 
 	/** @var WP_SQLite_Information_Schema_Reconstructor */
@@ -43,7 +43,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	public function setUp(): void {
 		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
-		$this->engine = new WP_PDO_MySQL_On_SQLite(
+		$this->engine = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,
@@ -52,7 +52,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 
 		$builder = new WP_SQLite_Information_Schema_Builder(
-			WP_PDO_MySQL_On_SQLite::RESERVED_PREFIX,
+			WP_MySQL_On_SQLite::RESERVED_PREFIX,
 			$this->engine->get_connection()
 		);
 

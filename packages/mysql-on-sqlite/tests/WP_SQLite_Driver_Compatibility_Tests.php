@@ -19,7 +19,7 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 		$this->driver->query( 'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, value VARCHAR(255))' );
 	}
 
-	public function test_wraps_pdo_driver(): void {
+	public function test_wraps_renamed_driver(): void {
 		$get_driver = Closure::bind(
 			function () {
 				return $this->mysql_on_sqlite_driver;
@@ -28,7 +28,7 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 			WP_SQLite_Driver::class
 		);
 
-		$this->assertInstanceOf( WP_PDO_MySQL_On_SQLite::class, $get_driver() );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite::class, $get_driver() );
 		$this->assertSame( $this->sqlite, $this->driver->get_connection()->get_pdo() );
 		$this->assertSame( $this->driver->get_sqlite_version(), $this->driver->client_info );
 		$this->assertSame( SQLITE_DRIVER_VERSION, $this->driver->get_saved_driver_version() );

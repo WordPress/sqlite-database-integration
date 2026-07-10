@@ -2,7 +2,7 @@
 
 use PHPUnit\Framework\TestCase;
 
-class WP_SQLite_Driver_Translation_Tests extends TestCase {
+class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 	const GRAMMAR_PATH = __DIR__ . '/../src/mysql/mysql-grammar.php';
 
 	/**
@@ -11,7 +11,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	private static $grammar;
 
 	/**
-	 * @var WP_PDO_MySQL_On_SQLite
+	 * @var WP_MySQL_On_SQLite
 	 */
 	private $driver;
 
@@ -25,7 +25,7 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	}
 
 	public function setUp(): void {
-		$this->driver = new WP_PDO_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
+		$this->driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );
 		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 
 		$supports_strict_tables = version_compare( $this->driver->get_sqlite_version(), '3.37.0', '>=' );

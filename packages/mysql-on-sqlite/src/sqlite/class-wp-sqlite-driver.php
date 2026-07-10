@@ -9,14 +9,14 @@
  * For back compatibility with dependencies that use their own loader scripts
  * (e.g., WP CLI SQLite Command), ensure the PDO-based classes are loaded.
  */
-require_once __DIR__ . '/class-wp-pdo-mysql-on-sqlite.php';
+require_once __DIR__ . '/class-wp-mysql-on-sqlite.php';
 require_once __DIR__ . '/class-wp-pdo-proxy-statement.php';
 
 /**
- * Deprecated: A proxy of the WP_PDO_MySQL_On_SQLite class preserving the legacy API.
+ * Deprecated: A proxy of the WP_MySQL_On_SQLite class preserving the legacy API.
  *
  * This class temporarily preserves the legacy constructor and result API while
- * consumers transition to the PDO-based WP_PDO_MySQL_On_SQLite API.
+ * consumers transition to the PDO-based WP_MySQL_On_SQLite API.
  */
 class WP_SQLite_Driver {
 	/**
@@ -38,7 +38,7 @@ class WP_SQLite_Driver {
 	/**
 	 * The MySQL-on-SQLite driver instance.
 	 *
-	 * @var WP_PDO_MySQL_On_SQLite
+	 * @var WP_MySQL_On_SQLite
 	 */
 	private $mysql_on_sqlite_driver;
 
@@ -64,7 +64,7 @@ class WP_SQLite_Driver {
 		string $database,
 		int $mysql_version = 80038
 	) {
-		$this->mysql_on_sqlite_driver = new WP_PDO_MySQL_On_SQLite(
+		$this->mysql_on_sqlite_driver = new WP_MySQL_On_SQLite(
 			sprintf( 'mysql-on-sqlite:dbname=%s', $database ),
 			null,
 			null,

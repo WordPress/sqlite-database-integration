@@ -16,7 +16,7 @@ class WP_SQLite_DB extends wpdb {
 	/**
 	 * Database Handle
 	 *
-	 * @var WP_PDO_MySQL_On_SQLite
+	 * @var WP_MySQL_On_SQLite
 	 */
 	protected $dbh;
 
@@ -317,7 +317,7 @@ class WP_SQLite_DB extends wpdb {
 			if ( null !== $pdo ) {
 				$options['pdo'] = $pdo;
 			}
-			$this->dbh = new WP_PDO_MySQL_On_SQLite(
+			$this->dbh = new WP_MySQL_On_SQLite(
 				sprintf(
 					'mysql-on-sqlite:path=%s;dbname=%s',
 					str_replace( ';', ';;', FQDB ),
