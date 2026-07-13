@@ -25,6 +25,7 @@ test.describe( 'Query Monitor plugin', () => {
 		await admin.visitAdminPage( '/plugins.php' );
 		await page.getByLabel( 'Activate Query Monitor', { exact: true } ).click();
 		await page.getByText( 'Plugin activated.', { exact: true } ).waitFor();
+		await page.reload();
 
 		// Skip this test if QM 4.0+ is not active (no shadow DOM container).
 		const hasContainer = await page.locator( '#query-monitor-container' ).count();
@@ -168,6 +169,7 @@ test.describe( 'Query Monitor plugin', () => {
 		await admin.visitAdminPage( '/plugins.php' );
 		await page.getByLabel( 'Activate Query Monitor', { exact: true } ).click();
 		await page.getByText( 'Plugin activated.', { exact: true } ).waitFor();
+		await page.reload();
 
 		// Skip this test if QM 3.x is not active (has shadow DOM container = QM 4.0+).
 		const hasContainer = await page.locator( '#query-monitor-container' ).count();
