@@ -8,7 +8,7 @@
 
 set -e
 
-WP_VERSION="6.7.2"
+WP_VERSION="7.0.1"
 
 DIR="$(dirname "$0")"
 WP_DIR="$DIR/wordpress"

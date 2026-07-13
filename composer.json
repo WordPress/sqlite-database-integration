@@ -62,7 +62,7 @@
 		"wp-test-ensure-env": [
 			"if [ ! -f wordpress/src/wp-load.php ]; then composer run wp-setup; fi",
 			"@putenv COMPOSE_IGNORE_ORPHANS=true",
-			"cd wordpress && if [ -z \"$(node tools/local-env/scripts/docker.js ps -q)\" ]; then cd ..; composer run wp-test-start; fi"
+			"cd wordpress && if [ -z \"$(DOTENV_CONFIG_QUIET=true node tools/local-env/scripts/docker.js ps -q)\" ]; then cd ..; composer run wp-test-start; fi"
 		],
 		"wp-test-php": [
 			"@wp-test-ensure-env @no_additional_args",
