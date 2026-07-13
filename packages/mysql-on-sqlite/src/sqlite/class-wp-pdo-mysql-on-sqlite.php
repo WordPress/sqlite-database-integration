@@ -4073,10 +4073,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		/*
 		 * Translate datetime literals.
 		 *
-		 * Process only strings that could possibly represent a datetime
-		 * literal ("YYYY-MM-DDTHH:MM:SS", "YYYY-MM-DDTHH:MM:SSZ", etc.).
+		 * Process only strings that could possibly represent a date or datetime
+		 * literal ("YYYY-M-D", "YYYY-MM-DDTHH:MM:SSZ", etc.).
 		 */
-		if ( strlen( $value ) >= 19 && is_numeric( $value[0] ) ) {
+		if ( strlen( $value ) >= 8 && is_numeric( $value[0] ) ) {
 			$value = $this->translate_datetime_literal( $value );
 		}
 
@@ -4681,7 +4681,11 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 	 */
 	private function translate_datetime_literal( string $value ): string {
 		/*
-		 * The code below converts the date format to one preferred by SQLite.
+		 * Normalize MySQL date and datetime literals for SQLite.
+		 *
+		 * MySQL accepts date and time components without zero padding. SQLite
+		 * stores temporal values as text, so they must be normalized for lexical
+		 * comparisons and SQLite date functions to work correctly.
 		 *
 		 * MySQL accepts ISO 8601 date strings:        'YYYY-MM-DDTHH:MM:SSZ'
 		 * SQLite prefers a slightly different format: 'YYYY-MM-DD HH:MM:SS'
@@ -4704,8 +4708,25 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 		 * which is true in the unit test suite, but there could also be a timezone offset
 		 * like "+00:00" or "+01:00". We could add support for that later if needed.
 		 */
-		if ( 1 === preg_match( '/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})Z$/', $value, $matches ) ) {
-			$value = $matches[1] . ' ' . $matches[2];
+		if (
+			1 === preg_match(
+				'/^(\d{4})-(\d{1,2})-(\d{1,2})(?:([ T])(\d{1,2}):(\d{1,2}):(\d{1,2})(Z)?)?$/',
+				$value,
+				$matches
+			)
+		) {
+			$value = sprintf( '%04d-%02d-%02d', $matches[1], $matches[2], $matches[3] );
+			if ( isset( $matches[4] ) && '' !== $matches[4] ) {
+				$is_iso_8601 = 'T' === $matches[4] && 'Z' === ( $matches[8] ?? '' );
+				$value      .= sprintf(
+					'%s%02d:%02d:%02d%s',
+					$is_iso_8601 ? ' ' : $matches[4],
+					$matches[5],
+					$matches[6],
+					$matches[7],
+					$is_iso_8601 ? '' : ( $matches[8] ?? '' )
+				);
+			}
 		}
 
 		/*

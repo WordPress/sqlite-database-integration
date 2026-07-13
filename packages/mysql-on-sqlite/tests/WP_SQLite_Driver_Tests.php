@@ -2963,6 +2963,20 @@ class WP_SQLite_Driver_Tests extends TestCase {
 		$this->assertEquals( 'second', $results[0]->option_name );
 	}
 
+	public function testSelectFilterByNonPaddedDates() {
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('first', '2025-02-01 12:00:00');" );
+		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('second', '2025-03-01 12:00:00');" );
+
+		$this->assertQuery(
+			"SELECT * FROM _dates
+			WHERE option_value >= '2025-2-01 0:0:0'
+			AND option_value <= '2025-2-28 23:59:59'"
+		);
+		$results = $this->engine->get_query_results();
+		$this->assertCount( 1, $results );
+		$this->assertEquals( 'first', $results[0]->option_name );
+	}
+
 	public function testSelectFilterByDatesZeroHour() {
 		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('first', '2014-10-21 00:42:29');" );
 		$this->assertQuery( "INSERT INTO _dates (option_name, option_value) VALUES ('second', '2014-10-21 01:42:29');" );
