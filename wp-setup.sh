@@ -61,7 +61,11 @@ sed -i.bak "s#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g" "$WP_DIR"/
 echo "Rewriting helper class 'WpdbExposedMethodsForTesting' to extend WP_SQLite_DB..."
 sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#class WpdbExposedMethodsForTesting extends WP_SQLite_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
 
-# 6. Install dependencies.
+# 6. Make wp-config.php changes immediately visible to E2E tests.
+echo "Disabling the PHP OPcache revalidation delay..."
+printf '\nopcache.revalidate_freq = 0\n' >> "$WP_DIR/tools/local-env/php-config.ini"
+
+# 7. Install dependencies.
 echo "Installing dependencies..."
 npm --prefix "$WP_DIR" install
 npm --prefix "$WP_DIR" run build:dev
