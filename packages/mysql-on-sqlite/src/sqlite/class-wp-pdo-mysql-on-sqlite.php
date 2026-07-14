@@ -4570,11 +4570,10 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 			$this->unquote_sqlite_identifier( $this->translate( $nodes[0] ) )
 		);
 
-		$args = array();
-		if ( isset( $nodes[1] ) ) {
-			foreach ( $nodes[1]->get_child_nodes() as $child ) {
-				$args[] = $this->translate( $child );
-			}
+		$arg_nodes = isset( $nodes[1] ) ? $nodes[1]->get_child_nodes() : array();
+		$args      = array();
+		foreach ( $arg_nodes as $child ) {
+			$args[] = $this->translate( $child );
 		}
 
 		switch ( $name ) {
@@ -4668,9 +4667,81 @@ class WP_PDO_MySQL_On_SQLite extends PDO {
 					substr( $version, 3, 2 )
 				);
 				return $this->quote_sqlite_value( $value );
+			case 'REGEXP_LIKE':
+			case 'REGEXP_REPLACE':
+			case 'REGEXP_SUBSTR':
+			case 'REGEXP_INSTR':
+				return sprintf(
+					'%s(%s)',
+					$name,
+					implode( ', ', $this->translate_regexp_function_args( $name, $arg_nodes ) )
+				);
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate REGEXP function arguments while preserving numeric literal text.
+	 *
+	 * @param string $name      Function name.
+	 * @param array  $arg_nodes Function argument nodes.
+	 *
+	 * @return array Translated arguments.
+	 */
+	private function translate_regexp_function_args( string $name, array $arg_nodes ): array {
+		$string_arg_indexes = array(
+			'REGEXP_LIKE'    => array( 0, 1, 2 ),
+			'REGEXP_REPLACE' => array( 0, 1, 2, 5 ),
+			'REGEXP_SUBSTR'  => array( 0, 1, 4 ),
+			'REGEXP_INSTR'   => array( 0, 1, 5 ),
+		);
+
+		$args = array();
+		foreach ( $arg_nodes as $index => $arg_node ) {
+			$numeric_literal = null;
+			if ( in_array( $index, $string_arg_indexes[ $name ], true ) ) {
+				$numeric_literal = $this->get_regexp_numeric_literal_string( $arg_node );
+			}
+			$args[] = null === $numeric_literal
+				? $this->translate( $arg_node )
+				: $this->quote_sqlite_value( $numeric_literal );
+		}
+		return $args;
+	}
+
+	/**
+	 * Read an exact decimal or floating-point literal from an expression node.
+	 *
+	 * @param WP_Parser_Node $node Expression node.
+	 *
+	 * @return string|null Literal text, or NULL for a non-literal expression.
+	 */
+	private function get_regexp_numeric_literal_string( WP_Parser_Node $node ): ?string {
+		$number = null;
+		$sign   = '';
+		foreach ( $node->get_descendant_tokens() as $token ) {
+			$value = $token->get_value();
+			if ( '(' === $value || ')' === $value ) {
+				continue;
+			}
+			if ( ( '+' === $value || '-' === $value ) && null === $number && '' === $sign ) {
+				$sign = '-' === $value ? '-' : '';
+				continue;
+			}
+			if (
+				null === $number
+				&& (
+					WP_MySQL_Lexer::DECIMAL_NUMBER === $token->id
+					|| WP_MySQL_Lexer::FLOAT_NUMBER === $token->id
+				)
+			) {
+				$number = $value;
+				continue;
+			}
+			return null;
+		}
+		return null === $number ? null : $sign . $number;
 	}
 
 	/**
