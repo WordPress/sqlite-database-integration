@@ -1,7 +1,5 @@
 <?php
 
-require_once __DIR__ . '/../../src/parser/class-wp-parser-node.php';
-
 use PHPUnit\Framework\TestCase;
 
 class WP_Parser_Node_Tests extends TestCase {
@@ -140,5 +138,51 @@ class WP_Parser_Node_Tests extends TestCase {
 			array(),
 			$root->get_descendant_tokens( 123 )
 		);
+	}
+
+	public function testFlattenedChildNodes(): void {
+		// A left-recursive list as produced by a grammar list rule:
+		//   list: list ',' item | item
+		//
+		// list [outer]
+		//   |- list [inner]
+		//   |    |- list [innermost]
+		//   |    |    |- item [a]
+		//   |    |- ","
+		//   |    |- item [b]
+		//   |- ","
+		//   |- item [c]
+		//   |- other
+		$input     = 'a, b, c';
+		$outer     = new WP_Parser_Node( 1, 'list' );
+		$inner     = new WP_Parser_Node( 1, 'list' );
+		$innermost = new WP_Parser_Node( 1, 'list' );
+		$item_a    = new WP_Parser_Node( 2, 'item' );
+		$item_b    = new WP_Parser_Node( 2, 'item' );
+		$item_c    = new WP_Parser_Node( 2, 'item' );
+		$other     = new WP_Parser_Node( 3, 'other' );
+		$comma_1   = new WP_Parser_Token( 100, 1, 1, $input );
+		$comma_2   = new WP_Parser_Token( 100, 4, 1, $input );
+
+		$innermost->append_child( $item_a );
+		$inner->append_child( $innermost );
+		$inner->append_child( $comma_1 );
+		$inner->append_child( $item_b );
+		$outer->append_child( $inner );
+		$outer->append_child( $comma_2 );
+		$outer->append_child( $item_c );
+		$outer->append_child( $other );
+
+		// The nested same-rule lists are flattened, in source order.
+		$this->assertSame( array( $item_a, $item_b, $item_c, $other ), $outer->get_flattened_child_nodes() );
+		$this->assertSame( array( $item_a, $item_b, $item_c ), $outer->get_flattened_child_nodes( 'item' ) );
+		$this->assertSame( array( $other ), $outer->get_flattened_child_nodes( 'other' ) );
+		$this->assertSame( array(), $outer->get_flattened_child_nodes( 'missing' ) );
+
+		// Flattening works at any level of the nested list.
+		$this->assertSame( array( $item_a, $item_b ), $inner->get_flattened_child_nodes() );
+
+		// Same-rule children are always flattened through, never returned.
+		$this->assertSame( array(), $outer->get_flattened_child_nodes( 'list' ) );
 	}
 }

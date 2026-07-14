@@ -9,10 +9,7 @@ const { execSync } = require( 'child_process' );
 const fs = require( 'fs' );
 const path = require( 'path' );
 
-const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
-
 const expectedErrors = [
-	'Tests_DB_Charset::test_invalid_characters_in_query',
 	'Tests_DB_Charset::test_set_charset_changes_the_connection_collation',
 ];
 
@@ -47,21 +44,8 @@ const expectedFailures = [
 	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #5',
 	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #6',
 	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #7',
+	'Tests_DB_Charset::test_invalid_characters_in_query',
 	'Tests_DB_Charset::test_process_field_charsets_on_nonexistent_table',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #21',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #22',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #23',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #24',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #25',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #26',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #27',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #28',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #30',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #31',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #32',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #33',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #34',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #39',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #40',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #41',
 	'Tests_DB_Charset::test_strip_invalid_text_for_column_bails_if_ascii_input_too_long',
@@ -92,31 +76,10 @@ const expectedFailures = [
 ];
 
 console.log( 'Running WordPress PHPUnit tests with expected failures tracking...' );
-if ( requiresNativeParserExtension ) {
-	console.log( 'Native parser extension is required for this PHPUnit run.' );
-}
 console.log( 'Expected errors:', expectedErrors );
 console.log( 'Expected failures:', expectedFailures );
 
-function verifyNativeParserExtension() {
-	const verifier = path.join( __dirname, '..', '..', 'wordpress', 'native-verify-extension.php' );
-	if ( ! fs.existsSync( verifier ) ) {
-		console.error( `Error: Native parser verifier not found at ${ verifier }.` );
-		process.exit( 1 );
-	}
-
-	execSync( 'composer run wp-test-ensure-env', { stdio: 'inherit' } );
-	execSync(
-		'cd wordpress && node tools/local-env/scripts/docker.js run --rm php php /var/www/native-verify-extension.php',
-		{ stdio: 'inherit' }
-	);
-}
-
 try {
-	if ( requiresNativeParserExtension ) {
-		verifyNativeParserExtension();
-	}
-
 	try {
 		execSync(
 			`composer run wp-test-php -- --log-junit=phpunit-results.xml --verbose`,

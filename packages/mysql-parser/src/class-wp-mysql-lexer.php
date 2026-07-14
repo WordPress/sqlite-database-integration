@@ -114,6 +114,7 @@ class WP_MySQL_Lexer {
 	const SQL_MODE_PIPES_AS_CONCAT      = 2;
 	const SQL_MODE_IGNORE_SPACE         = 4;
 	const SQL_MODE_NO_BACKSLASH_ESCAPES = 8;
+	const SQL_MODE_ANSI_QUOTES          = 16;
 
 	/**
 	 * Character masks for frequently used character classes.
@@ -345,6 +346,8 @@ class WP_MySQL_Lexer {
 				$this->sql_modes |= self::SQL_MODE_IGNORE_SPACE;
 			} elseif ( 'NO_BACKSLASH_ESCAPES' === $sql_mode ) {
 				$this->sql_modes |= self::SQL_MODE_NO_BACKSLASH_ESCAPES;
+			} elseif ( 'ANSI_QUOTES' === $sql_mode ) {
+				$this->sql_modes |= self::SQL_MODE_ANSI_QUOTES;
 			}
 		}
 
@@ -1255,6 +1258,10 @@ class WP_MySQL_Lexer {
 		if ( '`' === $quote ) {
 			return self::BACK_TICK_QUOTED_ID;
 		} elseif ( '"' === $quote ) {
+			// With the ANSI_QUOTES SQL mode, '"' quotes an identifier, not a string.
+			if ( $this->is_sql_mode_active( self::SQL_MODE_ANSI_QUOTES ) ) {
+				return self::BACK_TICK_QUOTED_ID;
+			}
 			return self::DOUBLE_QUOTED_TEXT;
 		} else {
 			return self::SINGLE_QUOTED_TEXT;
@@ -1269,20 +1276,32 @@ class WP_MySQL_Lexer {
 	private function read_mysql_comment(): int {
 		// @TODO: Consider supporting optimizer hints (/*+ ... */) or document
 		//        that they are not supported.
-		// @TODO: Implement six-digit version number support (from MySQL 8.4).
 
 		// MySQL-specific comment in one of the following forms:
-		//   1. /*! ... */      - The content is treated as SQL.
-		//   2. /*!12345 ... */ - The content is treated as SQL when "MySQL version >= 12345".
+		//   1. /*! ... */       - The content is treated as SQL.
+		//   2. /*!12345 ... */  - The content is treated as SQL when "MySQL version >= 12345".
+		//   3. /*!123456 ... */ - As of MySQL 8.4, a six-digit version (MMmmrr).
 		$this->bytes_already_read += 3; // Consume the '/*!'.
 
-		// Check if the next 5 characters are digits.
-		$digit_count        = strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read, 5 );
-		$is_version_comment = 5 === $digit_count;
-
-		// For version comments, extract the version number.
-		$version = $is_version_comment
-			? (int) substr( $this->sql, $this->bytes_already_read, $digit_count )
+		/*
+		 * Extract the version number, mirroring MySQL's own strict rule: the first
+		 * five characters must be digits. If a sixth digit follows and is itself
+		 * followed by whitespace, it is a six-digit version (MMmmrr, as of MySQL
+		 * 8.4); otherwise the version is the first five digits and any extra digit
+		 * stays comment content.
+		 */
+		$version_length = 0;
+		if ( 5 === strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read, 5 ) ) {
+			$version_length = 5;
+			if (
+				1 === strspn( $this->sql, self::DIGIT_MASK, $this->bytes_already_read + 5, 1 )
+				&& 1 === strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read + 6, 1 )
+			) {
+				$version_length = 6;
+			}
+		}
+		$version = $version_length > 0
+			? (int) substr( $this->sql, $this->bytes_already_read, $version_length )
 			: 0;
 
 		if ( $this->mysql_version < $version ) {
@@ -1291,7 +1310,7 @@ class WP_MySQL_Lexer {
 			return self::COMMENT;
 		} else {
 			// Version satisfied or not specified. Treat the content as SQL code.
-			$this->bytes_already_read += $digit_count; // Skip the version number.
+			$this->bytes_already_read += $version_length; // Skip the version number.
 			$this->in_mysql_comment    = true;
 			return self::MYSQL_COMMENT_START;
 		}
@@ -1326,11 +1345,16 @@ class WP_MySQL_Lexer {
 		// Function keywords (declared with SYM_FN in MySQL's lex.h) are keywords
 		// only when directly followed by an opening parenthesis.
 		if ( isset( self::FUNCTIONS[ $word ] ) ) {
-			// Skip any whitespace character if the SQL mode says they should be ignored.
+			// Under SQL_MODE_IGNORE_SPACE, whitespace may sit between the keyword and
+			// the "(", so peek past it WITHOUT consuming it. Those bytes belong to the
+			// next lexeme, not to this token: consuming them would stretch the token's
+			// byte range (corrupting an identifier's value, or padding the keyword),
+			// because produce() derives the length from bytes_already_read.
+			$peek = $this->bytes_already_read;
 			if ( $this->is_sql_mode_active( self::SQL_MODE_IGNORE_SPACE ) ) {
-				$this->bytes_already_read += strspn( $this->sql, self::WHITESPACE_MASK, $this->bytes_already_read );
+				$peek += strspn( $this->sql, self::WHITESPACE_MASK, $peek );
 			}
-			if ( '(' !== ( $this->sql[ $this->bytes_already_read ] ?? null ) ) {
+			if ( '(' !== ( $this->sql[ $peek ] ?? null ) ) {
 				return self::IDENTIFIER;
 			}
 		}

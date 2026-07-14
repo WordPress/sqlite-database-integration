@@ -195,47 +195,47 @@ class WP_SQLite_Information_Schema_Builder {
 	 * This is used to store column data types in the information schema.
 	 */
 	const TOKEN_TO_TYPE_MAP = array(
-		WP_MySQL_Lexer::INT_SYMBOL                => 'int',
-		WP_MySQL_Lexer::TINYINT_SYMBOL            => 'tinyint',
-		WP_MySQL_Lexer::SMALLINT_SYMBOL           => 'smallint',
-		WP_MySQL_Lexer::MEDIUMINT_SYMBOL          => 'mediumint',
-		WP_MySQL_Lexer::BIGINT_SYMBOL             => 'bigint',
-		WP_MySQL_Lexer::REAL_SYMBOL               => 'double',
-		WP_MySQL_Lexer::DOUBLE_SYMBOL             => 'double',
-		WP_MySQL_Lexer::FLOAT_SYMBOL              => 'float',
-		WP_MySQL_Lexer::DECIMAL_SYMBOL            => 'decimal',
-		WP_MySQL_Lexer::NUMERIC_SYMBOL            => 'decimal',
-		WP_MySQL_Lexer::FIXED_SYMBOL              => 'decimal',
-		WP_MySQL_Lexer::BIT_SYMBOL                => 'bit',
-		WP_MySQL_Lexer::BOOL_SYMBOL               => 'tinyint',
-		WP_MySQL_Lexer::BOOLEAN_SYMBOL            => 'tinyint',
-		WP_MySQL_Lexer::BINARY_SYMBOL             => 'binary',
-		WP_MySQL_Lexer::VARBINARY_SYMBOL          => 'varbinary',
-		WP_MySQL_Lexer::YEAR_SYMBOL               => 'year',
-		WP_MySQL_Lexer::DATE_SYMBOL               => 'date',
-		WP_MySQL_Lexer::TIME_SYMBOL               => 'time',
-		WP_MySQL_Lexer::TIMESTAMP_SYMBOL          => 'timestamp',
-		WP_MySQL_Lexer::DATETIME_SYMBOL           => 'datetime',
-		WP_MySQL_Lexer::TINYBLOB_SYMBOL           => 'tinyblob',
-		WP_MySQL_Lexer::BLOB_SYMBOL               => 'blob',
-		WP_MySQL_Lexer::MEDIUMBLOB_SYMBOL         => 'mediumblob',
-		WP_MySQL_Lexer::LONGBLOB_SYMBOL           => 'longblob',
-		WP_MySQL_Lexer::TINYTEXT_SYMBOL           => 'tinytext',
-		WP_MySQL_Lexer::TEXT_SYMBOL               => 'text',
-		WP_MySQL_Lexer::MEDIUMTEXT_SYMBOL         => 'mediumtext',
-		WP_MySQL_Lexer::LONGTEXT_SYMBOL           => 'longtext',
-		WP_MySQL_Lexer::ENUM_SYMBOL               => 'enum',
-		WP_MySQL_Lexer::SET_SYMBOL                => 'set',
-		WP_MySQL_Lexer::SERIAL_SYMBOL             => 'bigint',
-		WP_MySQL_Lexer::GEOMETRY_SYMBOL           => 'geometry',
-		WP_MySQL_Lexer::GEOMETRYCOLLECTION_SYMBOL => 'geomcollection',
-		WP_MySQL_Lexer::POINT_SYMBOL              => 'point',
-		WP_MySQL_Lexer::MULTIPOINT_SYMBOL         => 'multipoint',
-		WP_MySQL_Lexer::LINESTRING_SYMBOL         => 'linestring',
-		WP_MySQL_Lexer::MULTILINESTRING_SYMBOL    => 'multilinestring',
-		WP_MySQL_Lexer::POLYGON_SYMBOL            => 'polygon',
-		WP_MySQL_Lexer::MULTIPOLYGON_SYMBOL       => 'multipolygon',
-		WP_MySQL_Lexer::JSON_SYMBOL               => 'json',
+		WP_MySQL_Lexer::KEYWORDS['INT']                => 'int',
+		WP_MySQL_Lexer::KEYWORDS['TINYINT']            => 'tinyint',
+		WP_MySQL_Lexer::KEYWORDS['SMALLINT']           => 'smallint',
+		WP_MySQL_Lexer::KEYWORDS['MEDIUMINT']          => 'mediumint',
+		WP_MySQL_Lexer::KEYWORDS['BIGINT']             => 'bigint',
+		WP_MySQL_Lexer::KEYWORDS['REAL']               => 'double',
+		WP_MySQL_Lexer::KEYWORDS['DOUBLE']             => 'double',
+		WP_MySQL_Lexer::KEYWORDS['FLOAT']              => 'float',
+		WP_MySQL_Lexer::KEYWORDS['DECIMAL']            => 'decimal',
+		WP_MySQL_Lexer::KEYWORDS['NUMERIC']            => 'decimal',
+		WP_MySQL_Lexer::KEYWORDS['FIXED']              => 'decimal',
+		WP_MySQL_Lexer::KEYWORDS['BIT']                => 'bit',
+		WP_MySQL_Lexer::KEYWORDS['BOOL']               => 'tinyint',
+		WP_MySQL_Lexer::KEYWORDS['BOOLEAN']            => 'tinyint',
+		WP_MySQL_Lexer::KEYWORDS['BINARY']             => 'binary',
+		WP_MySQL_Lexer::KEYWORDS['VARBINARY']          => 'varbinary',
+		WP_MySQL_Lexer::KEYWORDS['YEAR']               => 'year',
+		WP_MySQL_Lexer::KEYWORDS['DATE']               => 'date',
+		WP_MySQL_Lexer::KEYWORDS['TIME']               => 'time',
+		WP_MySQL_Lexer::KEYWORDS['TIMESTAMP']          => 'timestamp',
+		WP_MySQL_Lexer::KEYWORDS['DATETIME']           => 'datetime',
+		WP_MySQL_Lexer::KEYWORDS['TINYBLOB']           => 'tinyblob',
+		WP_MySQL_Lexer::KEYWORDS['BLOB']               => 'blob',
+		WP_MySQL_Lexer::KEYWORDS['MEDIUMBLOB']         => 'mediumblob',
+		WP_MySQL_Lexer::KEYWORDS['LONGBLOB']           => 'longblob',
+		WP_MySQL_Lexer::KEYWORDS['TINYTEXT']           => 'tinytext',
+		WP_MySQL_Lexer::KEYWORDS['TEXT']               => 'text',
+		WP_MySQL_Lexer::KEYWORDS['MEDIUMTEXT']         => 'mediumtext',
+		WP_MySQL_Lexer::KEYWORDS['LONGTEXT']           => 'longtext',
+		WP_MySQL_Lexer::KEYWORDS['ENUM']               => 'enum',
+		WP_MySQL_Lexer::KEYWORDS['SET']                => 'set',
+		WP_MySQL_Lexer::KEYWORDS['SERIAL']             => 'bigint',
+		WP_MySQL_Lexer::KEYWORDS['GEOMETRY']           => 'geometry',
+		WP_MySQL_Lexer::KEYWORDS['GEOMETRYCOLLECTION'] => 'geomcollection',
+		WP_MySQL_Lexer::KEYWORDS['POINT']              => 'point',
+		WP_MySQL_Lexer::KEYWORDS['MULTIPOINT']         => 'multipoint',
+		WP_MySQL_Lexer::KEYWORDS['LINESTRING']         => 'linestring',
+		WP_MySQL_Lexer::KEYWORDS['MULTILINESTRING']    => 'multilinestring',
+		WP_MySQL_Lexer::KEYWORDS['POLYGON']            => 'polygon',
+		WP_MySQL_Lexer::KEYWORDS['MULTIPOLYGON']       => 'multipolygon',
+		WP_MySQL_Lexer::KEYWORDS['JSON']               => 'json',
 	);
 
 	/**
@@ -484,10 +484,10 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Analyze CREATE TABLE statement and record data in the information schema.
 	 *
-	 * @param WP_Parser_Node $node The "createStatement" AST node with "createTable" child.
+	 * @param WP_Parser_Node $node The "create_table_stmt" AST node.
 	 */
 	public function record_create_table( WP_Parser_Node $node ): void {
-		$table_name_node  = $node->get_first_descendant_node( 'tableName' );
+		$table_name_node  = $node->get_first_descendant_node( 'table_ident' );
 		$table_name       = $this->get_table_name_from_node( $table_name_node );
 		$table_engine     = $this->get_table_engine( $node );
 		$table_row_format = 'MyISAM' === $table_engine ? 'Fixed' : 'Dynamic';
@@ -499,8 +499,7 @@ class WP_SQLite_Information_Schema_Builder {
 		 *   1. Track that we're processing a temporary table.
 		 *   2. Ensure that the temporary information schema tables exist.
 		 */
-		$subnode            = $node->get_first_child_node();
-		$table_is_temporary = $subnode->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
+		$table_is_temporary = $node->has_child_node( 'opt_temporary' );
 		if ( $table_is_temporary && ! $this->temporary_information_schema_exists ) {
 			$this->ensure_temporary_information_schema_tables();
 		}
@@ -549,8 +548,8 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// 2. Columns.
 		$column_position = 1;
-		foreach ( $node->get_descendant_nodes( 'columnDefinition' ) as $column_node ) {
-			$column_name = $this->get_value( $column_node->get_first_child_node( 'fieldIdentifier' ) );
+		foreach ( $node->get_descendant_nodes( 'column_def' ) as $column_node ) {
+			$column_name = $this->get_value( $column_node->get_first_child_node( 'ident' ) );
 
 			// Column definition.
 			$column_data = $this->extract_column_data(
@@ -634,7 +633,7 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		// 3. Constraints and indexes.
-		foreach ( $node->get_descendant_nodes( 'tableConstraintDef' ) as $constraint_node ) {
+		foreach ( $node->get_descendant_nodes( 'table_constraint_def' ) as $constraint_node ) {
 			$this->record_add_constraint_or_index( $table_is_temporary, $table_name, $constraint_node );
 		}
 	}
@@ -642,12 +641,12 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Analyze ALTER TABLE statement and record data in the information schema.
 	 *
-	 * @param WP_Parser_Node $node The "alterStatement" AST node with "alterTable" child.
+	 * @param WP_Parser_Node $node The "alter_table_stmt" AST node.
 	 */
 	public function record_alter_table( WP_Parser_Node $node ): void {
-		$table_ref  = $node->get_first_descendant_node( 'tableRef' );
+		$table_ref  = $node->get_first_descendant_node( 'table_ident' );
 		$table_name = $this->get_table_name_from_node( $table_ref );
-		$actions    = $node->get_descendant_nodes( 'alterListItem' );
+		$actions    = $node->get_descendant_nodes( 'alter_list_item' );
 
 		// Check if a temporary table with the given name exists.
 		$table_is_temporary = $this->temporary_table_exists( $table_name );
@@ -656,28 +655,28 @@ class WP_SQLite_Information_Schema_Builder {
 			$first_token = $action->get_first_child_token();
 
 			// ADD
-			if ( WP_MySQL_Lexer::ADD_SYMBOL === $first_token->id ) {
+			if ( WP_MySQL_Lexer::KEYWORDS['ADD'] === $first_token->id ) {
 				// ADD [COLUMN] (...[, ...])
-				$column_definitions = $action->get_descendant_nodes( 'columnDefinition' );
+				$column_definitions = $action->get_descendant_nodes( 'column_def' );
 				if ( count( $column_definitions ) > 0 ) {
 					foreach ( $column_definitions as $column_definition ) {
-						$name = $this->get_value( $column_definition->get_first_child_node( 'identifier' ) );
+						$name = $this->get_value( $column_definition->get_first_child_node( 'ident' ) );
 						$this->record_add_column( $table_is_temporary, $table_name, $name, $column_definition );
 					}
 					continue;
 				}
 
 				// ADD [COLUMN] ...
-				$field_definition = $action->get_first_descendant_node( 'fieldDefinition' );
+				$field_definition = $action->get_first_descendant_node( 'field_def' );
 				if ( null !== $field_definition ) {
-					$name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
+					$name = $this->get_value( $action->get_first_child_node( 'ident' ) );
 					$this->record_add_column( $table_is_temporary, $table_name, $name, $field_definition );
 					// @TODO: Handle FIRST/AFTER.
 					continue;
 				}
 
 				// ADD constraint or index.
-				$constraint = $action->get_first_descendant_node( 'tableConstraintDef' );
+				$constraint = $action->get_first_descendant_node( 'table_constraint_def' );
 				if ( null !== $constraint ) {
 					$this->record_add_constraint_or_index( $table_is_temporary, $table_name, $constraint );
 					continue;
@@ -687,74 +686,73 @@ class WP_SQLite_Information_Schema_Builder {
 			}
 
 			// CHANGE [COLUMN]
-			if ( WP_MySQL_Lexer::CHANGE_SYMBOL === $first_token->id ) {
-				$old_name = $this->get_value( $action->get_first_child_node( 'fieldIdentifier' ) );
-				$new_name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
+			if ( WP_MySQL_Lexer::KEYWORDS['CHANGE'] === $first_token->id ) {
+				$identifiers = $action->get_child_nodes( 'ident' );
+				$old_name    = $this->get_value( $identifiers[0] );
+				$new_name    = $this->get_value( $identifiers[1] );
 				$this->record_change_column(
 					$table_is_temporary,
 					$table_name,
 					$old_name,
 					$new_name,
-					$action->get_first_descendant_node( 'fieldDefinition' )
+					$action->get_first_descendant_node( 'field_def' )
 				);
 				continue;
 			}
 
 			// MODIFY [COLUMN]
-			if ( WP_MySQL_Lexer::MODIFY_SYMBOL === $first_token->id ) {
-				$name = $this->get_value( $action->get_first_child_node( 'fieldIdentifier' ) );
+			if ( WP_MySQL_Lexer::KEYWORDS['MODIFY'] === $first_token->id ) {
+				$name = $this->get_value( $action->get_first_child_node( 'ident' ) );
 				$this->record_modify_column(
 					$table_is_temporary,
 					$table_name,
 					$name,
-					$action->get_first_descendant_node( 'fieldDefinition' )
+					$action->get_first_descendant_node( 'field_def' )
 				);
 				continue;
 			}
 
 			// DROP
-			if ( WP_MySQL_Lexer::DROP_SYMBOL === $first_token->id ) {
+			if ( WP_MySQL_Lexer::KEYWORDS['DROP'] === $first_token->id ) {
 				// DROP CONSTRAINT
-				if ( $action->has_child_token( WP_MySQL_Lexer::CONSTRAINT_SYMBOL ) ) {
-					$name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
+				if ( $action->has_child_token( WP_MySQL_Lexer::KEYWORDS['CONSTRAINT'] ) ) {
+					$name = $this->get_value( $action->get_first_child_node( 'ident' ) );
 					$this->record_drop_constraint( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 
 				// DROP PRIMARY KEY
-				if ( $action->has_child_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+				if ( $action->has_child_token( WP_MySQL_Lexer::KEYWORDS['PRIMARY'] ) ) {
 					$this->record_drop_key( $table_is_temporary, $table_name, 'PRIMARY' );
 					continue;
 				}
 
 				// DROP FOREIGN KEY
-				if ( $action->has_child_token( WP_MySQL_Lexer::FOREIGN_SYMBOL ) ) {
-					$field_identifier = $action->get_first_child_node( 'fieldIdentifier' );
-					$identifiers      = $field_identifier->get_descendant_nodes( 'identifier' );
-					$name             = $this->get_value( end( $identifiers ) );
+				if ( $action->has_child_token( WP_MySQL_Lexer::KEYWORDS['FOREIGN'] ) ) {
+					$name = $this->get_value( $action->get_first_child_node( 'ident' ) );
 					$this->record_drop_foreign_key( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 
 				// DROP CHECK
-				if ( $action->has_child_token( WP_MySQL_Lexer::CHECK_SYMBOL ) ) {
-					$name = $this->get_value( $action->get_first_child_node( 'identifier' ) );
+				if ( $action->has_child_token( WP_MySQL_Lexer::KEYWORDS['CHECK'] ) ) {
+					$name = $this->get_value( $action->get_first_child_node( 'ident' ) );
 					$this->record_drop_check_constraint( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 
-				// DROP [COLUMN]
-				$column_ref = $action->get_first_child_node( 'fieldIdentifier' );
-				if ( null !== $column_ref ) {
-					$name = $this->get_value( $column_ref );
-					$this->record_drop_column( $table_is_temporary, $table_name, $name );
+				// DROP INDEX
+				if ( $action->has_child_node( 'key_or_index' ) ) {
+					$name = $this->get_value( $action->get_first_child_node( 'ident' ) );
+					$this->record_drop_index_data( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 
-				// DROP INDEX
-				if ( $action->has_child_node( 'keyOrIndex' ) ) {
-					$name = $this->get_value( $action->get_first_child_node( 'indexRef' ) );
-					$this->record_drop_index_data( $table_is_temporary, $table_name, $name );
+				// DROP [COLUMN]
+				$column_ref = $action->get_first_child_node( 'ident' );
+				if ( null !== $column_ref ) {
+					$name = $this->get_value( $column_ref );
+					$this->record_drop_column( $table_is_temporary, $table_name, $name );
 					continue;
 				}
 			}
@@ -764,14 +762,12 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Analyze DROP TABLE statement and record data in the information schema.
 	 *
-	 * @param WP_Parser_Node $node The "dropStatement" AST node with "dropTable" child.
+	 * @param WP_Parser_Node $node The "drop_table_stmt" AST node.
 	 */
 	public function record_drop_table( WP_Parser_Node $node ): void {
-		$child_node = $node->get_first_child_node();
+		$has_temporary_keyword = $node->has_child_node( 'opt_temporary' );
 
-		$has_temporary_keyword = $child_node->has_child_token( WP_MySQL_Lexer::TEMPORARY_SYMBOL );
-
-		$table_refs = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
+		$table_refs = $node->get_first_child_node( 'table_list' )->get_flattened_child_nodes( 'table_ident' );
 		foreach ( $table_refs as $table_ref ) {
 			$table_name         = $this->get_table_name_from_node( $table_ref );
 			$table_is_temporary = $has_temporary_keyword || $this->temporary_table_exists( $table_name );
@@ -812,28 +808,25 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Analyze CREATE INDEX definition and record data in the information schema.
 	 *
-	 * @param WP_Parser_Node $node The "createStatement" AST node with "createIndex" child.
+	 * @param WP_Parser_Node $node The "create_index_stmt" AST node.
 	 */
 	public function record_create_index( WP_Parser_Node $node ): void {
-		$create_index = $node->get_first_child_node( 'createIndex' );
-		$target       = $create_index->get_first_child_node( 'createIndexTarget' );
-		$table_ref    = $target->get_first_child_node( 'tableRef' );
-		$table_name   = $this->get_table_name_from_node( $table_ref );
+		$table_ref  = $node->get_first_child_node( 'table_ident' );
+		$table_name = $this->get_table_name_from_node( $table_ref );
 
 		$table_is_temporary = $this->temporary_table_exists( $table_name );
-		$this->record_add_index( $table_is_temporary, $table_name, $create_index );
+		$this->record_add_index( $table_is_temporary, $table_name, $node );
 	}
 
 	/**
 	 * Analyze DROP INDEX definition and record data in the information schema.
 	 *
-	 * @param WP_Parser_Node $node The "dropStatement" AST node with "dropIndex" child.
+	 * @param WP_Parser_Node $node The "drop_index_stmt" AST node.
 	 */
 	public function record_drop_index( WP_Parser_Node $node ): void {
-		$drop_index         = $node->get_first_child_node( 'dropIndex' );
-		$table_ref          = $drop_index->get_first_child_node( 'tableRef' );
+		$table_ref          = $node->get_first_child_node( 'table_ident' );
 		$table_name         = $this->get_table_name_from_node( $table_ref );
-		$index_name         = $this->get_value( $drop_index->get_first_child_node( 'indexRef' ) );
+		$index_name         = $this->get_value( $node->get_first_child_node( 'ident' ) );
 		$table_is_temporary = $this->temporary_table_exists( $table_name );
 		$this->record_drop_index_data( $table_is_temporary, $table_name, $index_name );
 	}
@@ -844,7 +837,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param bool           $table_is_temporary Whether the table is temporary.
 	 * @param string         $table_name         The table name.
 	 * @param string         $column_name        The column name.
-	 * @param WP_Parser_Node $node               The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param WP_Parser_Node $node               The "column_def" or "field_def" AST node.
 	 */
 	private function record_add_column(
 		bool $table_is_temporary,
@@ -904,7 +897,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param string         $table_name         The table name.
 	 * @param string         $column_name        The column name.
 	 * @param string         $new_column_name    The new column name when the column is renamed.
-	 * @param WP_Parser_Node $node               The "fieldDefinition" AST node.
+	 * @param WP_Parser_Node $node               The "field_def" AST node.
 	 */
 	private function record_change_column(
 		bool $table_is_temporary,
@@ -975,7 +968,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param bool           $table_is_temporary Whether the table is temporary.
 	 * @param string         $table_name         The table name.
 	 * @param string         $column_name        The column name.
-	 * @param WP_Parser_Node $node               The "fieldDefinition" AST node.
+	 * @param WP_Parser_Node $node               The "field_def" AST node.
 	 */
 	private function record_modify_column(
 		bool $table_is_temporary,
@@ -1108,24 +1101,24 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Analyze ADD "tableConstraintDef" and record data in the information schema.
+	 * Analyze ADD "table_constraint_def" and record data in the information schema.
 	 *
 	 * @param bool           $table_is_temporary Whether the table is temporary.
 	 * @param string         $table_name         The table name.
-	 * @param WP_Parser_Node $node               The "tableConstraintDef" AST node.
+	 * @param WP_Parser_Node $node               The "table_constraint_def" AST node.
 	 */
 	private function record_add_constraint_or_index(
 		bool $table_is_temporary,
 		string $table_name,
 		WP_Parser_Node $node
 	): void {
-		$child                = $node->get_first_child();
-		$first_child_token_id = $child instanceof WP_MySQL_Token ? $child->id : null;
+		$keyword    = $this->get_constraint_keyword_token( $node );
+		$keyword_id = null !== $keyword ? $keyword->id : null;
 		if (
-			WP_MySQL_Lexer::KEY_SYMBOL === $first_child_token_id
-			|| WP_MySQL_Lexer::INDEX_SYMBOL === $first_child_token_id
-			|| WP_MySQL_Lexer::FULLTEXT_SYMBOL === $first_child_token_id
-			|| WP_MySQL_Lexer::SPATIAL_SYMBOL === $first_child_token_id
+			WP_MySQL_Lexer::KEYWORDS['KEY'] === $keyword_id
+			|| WP_MySQL_Lexer::KEYWORDS['INDEX'] === $keyword_id
+			|| WP_MySQL_Lexer::KEYWORDS['FULLTEXT'] === $keyword_id
+			|| WP_MySQL_Lexer::KEYWORDS['SPATIAL'] === $keyword_id
 		) {
 			$this->record_add_index( $table_is_temporary, $table_name, $node );
 		} else {
@@ -1140,7 +1133,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 *
 	 * @param bool           $table_is_temporary Whether the table is temporary.
 	 * @param string         $table_name         The table name.
-	 * @param WP_Parser_Node $node               The "tableConstraintDef" or "createIndex" AST node.
+	 * @param WP_Parser_Node $node               The "table_constraint_def" or "create_index_stmt" AST node.
 	 */
 	private function record_add_index(
 		bool $table_is_temporary,
@@ -1167,7 +1160,8 @@ class WP_SQLite_Information_Schema_Builder {
 		$this->sync_column_key_info( $table_is_temporary, $table_name );
 
 		// For UNIQUE index, save also constraint data.
-		if ( $node->has_child_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+		$keyword = $this->get_constraint_keyword_token( $node );
+		if ( null !== $keyword && WP_MySQL_Lexer::KEYWORDS['UNIQUE'] === $keyword->id ) {
 			$constraint_data = $this->extract_table_constraint_data(
 				$node,
 				$table_name,
@@ -1239,7 +1233,7 @@ class WP_SQLite_Information_Schema_Builder {
 	 *
 	 * @param bool           $table_is_temporary Whether the table is temporary.
 	 * @param string         $table_name         The table name.
-	 * @param WP_Parser_Node $node               The "tableConstraintDef" AST node.
+	 * @param WP_Parser_Node $node               The "table_constraint_def" AST node.
 	 */
 	private function record_add_constraint(
 		bool $table_is_temporary,
@@ -1247,20 +1241,15 @@ class WP_SQLite_Information_Schema_Builder {
 		WP_Parser_Node $node
 	): void {
 		// Get first constraint keyword.
-		$children = $node->get_children();
-		if ( $children[0] instanceof WP_Parser_Node && 'constraintName' === $children[0]->rule_name ) {
-			$keyword = $children[1];
-		} else {
-			$keyword = $children[0];
-		}
-		if ( ! $keyword instanceof WP_MySQL_Token ) {
-			$keyword = $keyword->get_first_child_token();
-		}
+		$keyword = $this->get_constraint_keyword_token( $node );
 
 		// PRIMARY KEY and UNIQUE require an index.
 		if (
-			WP_MySQL_Lexer::PRIMARY_SYMBOL === $keyword->id
-			|| WP_MySQL_Lexer::UNIQUE_SYMBOL === $keyword->id
+			null !== $keyword
+			&& (
+				WP_MySQL_Lexer::KEYWORDS['PRIMARY'] === $keyword->id
+				|| WP_MySQL_Lexer::KEYWORDS['UNIQUE'] === $keyword->id
+			)
 		) {
 			$statistics_data = $this->extract_index_statistics_data( $table_is_temporary, $table_name, $node );
 			$index_name      = $statistics_data[0]['index_name'];
@@ -1494,11 +1483,11 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Analyze "columnDefinition" or "fieldDefinition" AST node and extract column data.
+	 * Analyze "column_def" or "field_def" AST node and extract column data.
 	 *
 	 * @param  string         $table_name  The table name.
 	 * @param  string         $column_name The column name.
-	 * @param  WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node        The "column_def" or "field_def" AST node.
 	 * @param  int            $position    The ordinal position of the column in the table.
 	 * @return array                       Column data for the information schema.
 	 */
@@ -1543,11 +1532,11 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Analyze "columnDefinition" or "fieldDefinition" AST node and extract constraint data.
+	 * Analyze "column_def" or "field_def" AST node and extract constraint data.
 	 *
 	 * @param  string         $table_name  The table name.
 	 * @param  string         $column_name The column name.
-	 * @param  WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node        The "column_def" or "field_def" AST node.
 	 * @param  bool           $nullable    Whether the column is nullable.
 	 * @return array|null                  Column statistics data for the information schema.
 	 */
@@ -1558,8 +1547,8 @@ class WP_SQLite_Information_Schema_Builder {
 		bool $nullable
 	): ?array {
 		// Handle inline PRIMARY KEY and UNIQUE constraints.
-		$has_inline_primary_key = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL );
-		$has_inline_unique_key  = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
+		$has_inline_primary_key = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['KEY'] );
+		$has_inline_unique_key  = null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['UNIQUE'] );
 		if ( $has_inline_primary_key || $has_inline_unique_key ) {
 			$index_name = $has_inline_primary_key ? 'PRIMARY' : $column_name;
 			return array(
@@ -1586,11 +1575,11 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Analyze "tableConstraintDef" or "createIndex" AST node and extract index data.
+	 * Analyze "table_constraint_def" or "create_index_stmt" AST node and extract index data.
 	 *
 	 * @param  bool           $table_is_temporary Whether the table is temporary.
 	 * @param  string         $table_name         The table name.
-	 * @param  WP_Parser_Node $node               The "tableConstraintDef" or "createIndex" AST node.
+	 * @param  WP_Parser_Node $node               The "table_constraint_def" or "create_index_stmt" AST node.
 	 * @return array                              Index statistics data for the information schema.
 	 */
 	private function extract_index_statistics_data(
@@ -1598,22 +1587,14 @@ class WP_SQLite_Information_Schema_Builder {
 		string $table_name,
 		WP_Parser_Node $node
 	): array {
-		// Get first keyword.
-		$children = $node->get_children();
-		$keyword  = $children[0] instanceof WP_MySQL_Token ? $children[0] : $children[1];
-		if ( ! $keyword instanceof WP_MySQL_Token ) {
-			$keyword = $keyword->get_first_child_token();
-		}
+		// Get first constraint keyword.
+		$keyword = $this->get_constraint_keyword_token( $node );
 
-		// Get key parts.
-		$key_list = $node->get_first_descendant_node( 'keyListVariants' )->get_first_child();
-		if ( 'keyListWithExpression' === $key_list->rule_name ) {
-			$key_parts = array();
-			foreach ( $key_list->get_descendant_nodes( 'keyPartOrExpression' ) as $key_part ) {
-				$key_parts[] = $key_part->get_first_child();
-			}
-		} else {
-			$key_parts = $key_list->get_descendant_nodes( 'keyPart' );
+		// Get key parts ("key_part" nodes, or "expr" nodes for functional key parts).
+		$key_list  = $node->get_first_descendant_node( 'key_list_with_expression' );
+		$key_parts = array();
+		foreach ( $key_list->get_flattened_child_nodes( 'key_part_with_expression' ) as $key_part ) {
+			$key_parts[] = $key_part->get_first_child_node();
 		}
 
 		// Get index column names.
@@ -1708,9 +1689,9 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract table constraint data from the "tableConstraintDef" or "columnDefinition" AST node.
+	 * Extract table constraint data from the "table_constraint_def" or "column_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node        The "tableConstraintDef" or "columnDefinition" AST node.
+	 * @param  WP_Parser_Node $node        The "table_constraint_def" or "column_def" AST node.
 	 * @param  string         $table_name  The table name.
 	 * @param  string         $column_name The column name.
 	 * @return array|null                  Table constraint data for the information schema.
@@ -1729,8 +1710,8 @@ class WP_SQLite_Information_Schema_Builder {
 		$name = $index_name ?? $this->get_table_constraint_name( $node, $table_name );
 
 		// Constraint enforcement.
-		$constraint_enforcement = $node->get_first_descendant_node( 'constraintEnforcement' );
-		if ( $constraint_enforcement && $constraint_enforcement->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL ) ) {
+		$constraint_enforcement = $node->get_first_descendant_node( 'constraint_enforcement' );
+		if ( $constraint_enforcement && $constraint_enforcement->has_child_node( 'opt_not' ) ) {
 			$enforced = 'NO';
 		} else {
 			$enforced = 'YES';
@@ -1747,9 +1728,9 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract referential constraint data from the "tableConstraintDef" AST node.
+	 * Extract referential constraint data from the "table_constraint_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node       The "tableConstraintDef" AST node.
+	 * @param  WP_Parser_Node $node       The "table_constraint_def" AST node.
 	 * @param  string         $table_name The table name.
 	 * @return array|null                 The referential constraint data as stored in information schema.
 	 */
@@ -1760,15 +1741,13 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		// Referenced table name.
-		$referenced_table      = $references->get_first_child_node( 'tableRef' );
+		$referenced_table      = $references->get_first_child_node( 'table_ident' );
 		$referenced_table_name = $this->get_table_name_from_node( $referenced_table );
 
 		// Referenced column names.
-		$reference_parts = $references->get_first_child_node( 'identifierListWithParentheses' )
-			->get_first_child_node( 'identifierList' )
-			->get_child_nodes( 'identifier' );
+		$reference_parts = $this->get_reference_list_columns( $references );
 
-		// ON UPDATE and ON DELETE both use the "deleteOption" node.
+		// ON UPDATE and ON DELETE both use the "delete_option" node.
 		$actions   = $this->get_foreign_key_actions( $references );
 		$on_update = $actions['on_update'];
 		$on_delete = $actions['on_delete'];
@@ -1826,9 +1805,9 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract key column usage data from the "tableConstraintDef" AST node.
+	 * Extract key column usage data from the "table_constraint_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node        The "tableConstraintDef" AST node.
+	 * @param  WP_Parser_Node $node        The "table_constraint_def" AST node.
 	 * @param  string         $table_name  The table name.
 	 * @param  string         $index_name  The index name, when the constraint uses an index.
 	 * @return array                       The key column usage data as stored in information schema.
@@ -1838,8 +1817,8 @@ class WP_SQLite_Information_Schema_Builder {
 		string $table_name,
 		?string $index_name = null
 	): array {
-		$is_primary = $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL );
-		$is_unique  = $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL );
+		$is_primary = $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['PRIMARY'] );
+		$is_unique  = $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['UNIQUE'] );
 		$references = $node->get_first_descendant_node( 'references' );
 		if ( null === $references && ! $is_primary && ! $is_unique ) {
 			return array();
@@ -1847,15 +1826,13 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// Referenced table name and column names.
 		if ( $references ) {
-			$referenced_table        = $references->get_first_child_node( 'tableRef' );
-			$referenced_identifiers  = $referenced_table->get_descendant_nodes( 'identifier' );
+			$referenced_table        = $references->get_first_child_node( 'table_ident' );
+			$referenced_identifiers  = $referenced_table->get_child_nodes( 'ident' );
 			$referenced_table_schema = count( $referenced_identifiers ) > 1
 				? $this->get_value( $referenced_identifiers[0] )
 				: self::SAVED_DATABASE_NAME;
 			$referenced_table_name   = $this->get_table_name_from_node( $referenced_table );
-			$referenced_columns      = $references->get_first_child_node( 'identifierListWithParentheses' )
-				->get_first_child_node( 'identifierList' )
-				->get_child_nodes( 'identifier' );
+			$referenced_columns      = $this->get_reference_list_columns( $references );
 		} else {
 			$referenced_table_schema = null;
 			$referenced_table_name   = null;
@@ -1866,15 +1843,12 @@ class WP_SQLite_Information_Schema_Builder {
 		$name = $index_name ?? $this->get_table_constraint_name( $node, $table_name );
 
 		// Key parts.
-		if ( 'columnDefinition' === $node->rule_name ) {
-			$identifiers = $node
-				->get_first_descendant_node( 'fieldIdentifier' )
-				->get_descendant_nodes( 'identifier' );
-			$key_parts   = array( end( $identifiers ) );
+		if ( 'column_def' === $node->rule_name ) {
+			$key_parts = array( $node->get_first_child_node( 'ident' ) );
 		} else {
 			$key_parts = array();
-			foreach ( $node->get_descendant_nodes( 'keyPart' ) as $key_part ) {
-				$key_parts[] = $key_part->get_first_child_node( 'identifier' );
+			foreach ( $node->get_descendant_nodes( 'key_part' ) as $key_part ) {
+				$key_parts[] = $key_part->get_first_child_node( 'ident' );
 			}
 		}
 
@@ -1900,19 +1874,19 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract check constraint data from the "tableConstraintDef" AST node.
+	 * Extract check constraint data from the "table_constraint_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node       The "tableConstraintDef" AST node.
+	 * @param  WP_Parser_Node $node       The "table_constraint_def" AST node.
 	 * @param  string         $table_name The table name.
 	 * @return array|null                 The check constraint data as stored in information schema.
 	 */
 	private function extract_check_constraint_data( WP_Parser_Node $node, string $table_name ): ?array {
-		$check_constraint = $node->get_first_descendant_node( 'checkConstraint' );
+		$check_constraint = $node->get_first_descendant_node( 'check_constraint' );
 		if ( null === $check_constraint ) {
 			return null;
 		}
 
-		$expr         = $check_constraint->get_first_child_node( 'exprWithParentheses' );
+		$expr         = $check_constraint->get_first_child_node( 'expr' );
 		$check_clause = $this->serialize_mysql_expression( $expr );
 
 		return array(
@@ -1971,14 +1945,14 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract table name from one of fully-qualified name AST nodes.
+	 * Extract table name from a fully-qualified name AST node.
 	 *
-	 * @param  WP_Parser_Node $node The AST node. One of "tableName" or "tableRef".
+	 * @param  WP_Parser_Node $node The "table_ident" AST node.
 	 * @return string               The table name.
 	 */
 	private function get_table_name_from_node( WP_Parser_Node $node ): string {
-		if ( 'tableRef' === $node->rule_name || 'tableName' === $node->rule_name ) {
-			$parts = $node->get_descendant_nodes( 'identifier' );
+		if ( 'table_ident' === $node->rule_name ) {
+			$parts = $node->get_child_nodes( 'ident' );
 			return $this->get_value( end( $parts ) );
 		}
 
@@ -1988,13 +1962,19 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract table engine value from the "createStatement" AST node.
+	 * Extract table engine value from the "create_table_stmt" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "createStatement" AST node with "createTable" child.
+	 * @param  WP_Parser_Node $node The "create_table_stmt" AST node.
 	 * @return string               The table engine as stored in information schema.
 	 */
 	private function get_table_engine( WP_Parser_Node $node ): string {
-		$engine_node = $node->get_first_descendant_node( 'engineRef' );
+		$engine_node = null;
+		foreach ( $node->get_descendant_nodes( 'create_table_option' ) as $option ) {
+			if ( $option->has_child_token( WP_MySQL_Lexer::KEYWORDS['ENGINE'] ) ) {
+				$engine_node = $option->get_first_child_node( 'ident_or_text' );
+				break;
+			}
+		}
 		if ( null === $engine_node ) {
 			return 'InnoDB';
 		}
@@ -2009,13 +1989,13 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract table collation value from the "createStatement" AST node.
+	 * Extract table collation value from the "create_table_stmt" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "createStatement" AST node with "createTable" child.
+	 * @param  WP_Parser_Node $node The "create_table_stmt" AST node.
 	 * @return string               The table collation as stored in information schema.
 	 */
 	private function get_table_collation( WP_Parser_Node $node ): string {
-		$collate_node = $node->get_first_descendant_node( 'collationName' );
+		$collate_node = $node->get_first_descendant_node( 'collation_name' );
 		if ( null === $collate_node ) {
 			// @TODO: Use default DB collation or DB_CHARSET & DB_COLLATE.
 			return 'utf8mb4_0900_ai_ci';
@@ -2024,31 +2004,31 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract table comment from the "createStatement" AST node.
+	 * Extract table comment from the "create_table_stmt" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "createStatement" AST node with "createTable" child.
+	 * @param  WP_Parser_Node $node The "create_table_stmt" AST node.
 	 * @return string               The table comment as stored in information schema.
 	 */
 	private function get_table_comment( WP_Parser_Node $node ): string {
-		foreach ( $node->get_descendant_nodes( 'createTableOption' ) as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
-				return $this->get_value( $attr->get_first_child_node( 'textStringLiteral' ) );
+		foreach ( $node->get_descendant_nodes( 'create_table_option' ) as $attr ) {
+			if ( $attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['COMMENT'] ) ) {
+				return $this->get_value( $attr->get_first_child_node( 'TEXT_STRING_sys' ) );
 			}
 		}
 		return '';
 	}
 
 	/**
-	 * Extract column default value from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column default value from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node      The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node      The "column_def" or "field_def" AST node.
 	 * @param  string         $data_type The column data type as stored in information schema.
 	 * @return string|null               The column default as stored in information schema.
 	 */
 	private function get_column_default( WP_Parser_Node $node, string $data_type ): ?string {
 		$default_attr = null;
-		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
+		foreach ( $node->get_descendant_nodes( 'column_attribute' ) as $attr ) {
+			if ( $attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['DEFAULT'] ) ) {
 				$default_attr = $attr;
 			}
 		}
@@ -2059,22 +2039,29 @@ class WP_SQLite_Information_Schema_Builder {
 
 		/*
 		 * [GRAMMAR]
-		 * DEFAULT_SYMBOL (
-		 *    signedLiteral
-		 *    | NOW_SYMBOL timeFunctionParameters?
-		 *    | {serverVersion >= 80013}? exprWithParentheses
-		 * )
+		 * column_attribute:
+		 *   DEFAULT_SYM now_or_signed_literal
+		 *   | DEFAULT_SYM '(' expr ')'
+		 *   | ...
+		 * now_or_signed_literal: now | signed_literal_or_null
+		 * signed_literal_or_null: signed_literal | null_as_literal
 		 */
+		$now_or_literal = $default_attr->get_first_child_node( 'now_or_signed_literal' );
+		if ( $now_or_literal ) {
+			// DEFAULT NOW()
+			if ( $now_or_literal->has_child_node( 'now' ) ) {
+				return 'CURRENT_TIMESTAMP';
+			}
 
-		// DEFAULT NOW()
-		if ( $default_attr->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL ) ) {
-			return 'CURRENT_TIMESTAMP';
-		}
+			$literal_or_null = $now_or_literal->get_first_child_node( 'signed_literal_or_null' );
 
-		// DEFAULT signedLiteral
-		$signed_literal = $default_attr->get_first_child_node( 'signedLiteral' );
-		if ( $signed_literal ) {
-			$literal = $signed_literal->get_first_child_node( 'literal' );
+			// DEFAULT NULL
+			if ( $literal_or_null->has_child_node( 'null_as_literal' ) ) {
+				return null;
+			}
+
+			$signed_literal = $literal_or_null->get_first_child_node( 'signed_literal' );
+			$literal        = $signed_literal->get_first_child_node( 'literal' );
 			if ( null === $literal ) {
 				// A signed number, such as "-5", has no "literal" child node.
 				return $this->get_value( $signed_literal );
@@ -2082,10 +2069,10 @@ class WP_SQLite_Information_Schema_Builder {
 			return $this->get_literal_default( $literal, $data_type );
 		}
 
-		// DEFAULT (expression) - MySQL 8.0.13+ supports exprWithParentheses
-		$expr_with_parens = $default_attr->get_first_child_node( 'exprWithParentheses' );
-		if ( $expr_with_parens ) {
-			return $this->serialize_mysql_expression( $expr_with_parens );
+		// DEFAULT (expression) - supported as of MySQL 8.0.13
+		$expr = $default_attr->get_first_child_node( 'expr' );
+		if ( $expr ) {
+			return $this->serialize_mysql_expression( $expr );
 		}
 
 		throw new Exception( 'DEFAULT value of this type is not supported.' );
@@ -2096,18 +2083,15 @@ class WP_SQLite_Information_Schema_Builder {
 	 *
 	 * @param  WP_Parser_Node $literal   The "literal" AST node.
 	 * @param  string         $data_type The column data type as stored in information schema.
-	 * @return string|null               The default value as stored in information schema.
+	 * @return string                    The default value as stored in information schema.
 	 */
-	private function get_literal_default( WP_Parser_Node $literal, string $data_type ): ?string {
-		// DEFAULT NULL
-		if ( $literal->has_child_node( 'nullLiteral' ) ) {
-			return null;
-		}
-
+	private function get_literal_default( WP_Parser_Node $literal, string $data_type ): string {
 		// DEFAULT TRUE or DEFAULT FALSE
-		if ( $literal->has_child_node( 'boolLiteral' ) ) {
-			$bool_literal = $literal->get_first_child_node( 'boolLiteral' );
-			$bool_value   = $bool_literal->has_child_token( WP_MySQL_Lexer::TRUE_SYMBOL ) ? '1' : '0';
+		if (
+			$literal->has_child_token( WP_MySQL_Lexer::KEYWORDS['TRUE'] )
+			|| $literal->has_child_token( WP_MySQL_Lexer::KEYWORDS['FALSE'] )
+		) {
+			$bool_value = $literal->has_child_token( WP_MySQL_Lexer::KEYWORDS['TRUE'] ) ? '1' : '0';
 			return 'bit' === $data_type ? "b'{$bool_value}'" : $bool_value;
 		}
 
@@ -2160,28 +2144,28 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract column nullability from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column nullability from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node The "column_def" or "field_def" AST node.
 	 * @return string               The column nullability as stored in information schema.
 	 */
 	private function get_column_nullable( WP_Parser_Node $node ): string {
 		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
-		$data_type = $node->get_first_descendant_node( 'dataType' );
-		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+		$data_type = $node->get_first_descendant_node( 'type' );
+		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['SERIAL'] ) ) {
 			return 'NO';
 		}
 
-		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
+		foreach ( $node->get_descendant_nodes( 'column_attribute' ) as $attr ) {
 			// PRIMARY KEY columns are always NOT NULL.
-			if ( $attr->has_child_token( WP_MySQL_Lexer::KEY_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['KEY'] ) ) {
 				return 'NO';
 			}
 
 			// Check for NOT NULL attribute.
 			if (
-				$attr->has_child_token( WP_MySQL_Lexer::NOT_SYMBOL )
-				&& $attr->has_child_node( 'nullLiteral' )
+				$attr->has_child_node( 'not' )
+				&& $attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['NULL'] )
 			) {
 				return 'NO';
 			}
@@ -2190,32 +2174,32 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract column key info from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column key info from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node The "column_def" or "field_def" AST node.
 	 * @return string               The column key info as stored in information schema.
 	 */
 	private function get_column_key( WP_Parser_Node $node ): string {
 		// 1. PRI: Column is a primary key or its any component.
 		if (
-			null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEY_SYMBOL )
+			null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['KEY'] )
 		) {
 			return 'PRI';
 		}
 
 		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
-		$data_type = $node->get_first_descendant_node( 'dataType' );
-		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+		$data_type = $node->get_first_descendant_node( 'type' );
+		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['SERIAL'] ) ) {
 			return 'PRI';
 		}
 
 		// 2. UNI: Column has UNIQUE constraint.
-		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['UNIQUE'] ) ) {
 			return 'UNI';
 		}
 
 		// 3. MUL: Column has INDEX.
-		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::INDEX_SYMBOL ) ) {
+		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['INDEX'] ) ) {
 			return 'MUL';
 		}
 
@@ -2223,35 +2207,36 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract column extra from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column extra from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node The "column_def" or "field_def" AST node.
 	 * @return string               The column extra as stored in information schema.
 	 */
 	private function get_column_extra( WP_Parser_Node $node ): string {
 		$extras     = array();
-		$attributes = $node->get_descendant_nodes( 'columnAttribute' );
+		$attributes = $node->get_descendant_nodes( 'column_attribute' );
 
 		// SERIAL
-		$data_type = $node->get_first_descendant_node( 'dataType' );
-		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+		$data_type = $node->get_first_descendant_node( 'type' );
+		if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['SERIAL'] ) ) {
 			return 'auto_increment';
 		}
 
 		// AUTO_INCREMENT columns can't have a DEFAULT value.
 		foreach ( $attributes as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::AUTO_INCREMENT_SYMBOL ) ) {
+			if ( $attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['AUTO_INCREMENT'] ) ) {
 				return 'auto_increment';
 			}
 		}
 
 		// Check whether DEFAULT value is generated.
 		foreach ( $attributes as $attr ) {
+			$now_or_literal = $attr->get_first_child_node( 'now_or_signed_literal' );
 			if (
-				$attr->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL )
+				$attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['DEFAULT'] )
 				&& (
-					$attr->has_child_node( 'exprWithParentheses' )
-					|| $attr->has_child_token( WP_MySQL_Lexer::NOW_SYMBOL )
+					$attr->has_child_node( 'expr' )
+					|| ( null !== $now_or_literal && $now_or_literal->has_child_node( 'now' ) )
 				)
 			) {
 				$extras[] = 'DEFAULT_GENERATED';
@@ -2261,45 +2246,45 @@ class WP_SQLite_Information_Schema_Builder {
 		// Check for ON UPDATE CURRENT_TIMESTAMP.
 		foreach ( $attributes as $attr ) {
 			if (
-				$attr->has_child_token( WP_MySQL_Lexer::ON_SYMBOL )
-				&& $attr->has_child_token( WP_MySQL_Lexer::UPDATE_SYMBOL )
+				$attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['ON'] )
+				&& $attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['UPDATE'] )
 			) {
 				$extras[] = 'on update CURRENT_TIMESTAMP';
 			}
 		}
 
 		// Check for generated columns.
-		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::VIRTUAL_SYMBOL ) ) {
+		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['VIRTUAL'] ) ) {
 			$extras[] = 'VIRTUAL GENERATED';
-		} elseif ( $node->get_first_descendant_token( WP_MySQL_Lexer::STORED_SYMBOL ) ) {
+		} elseif ( $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['STORED'] ) ) {
 			$extras[] = 'STORED GENERATED';
 		}
 		return implode( ' ', $extras );
 	}
 
 	/**
-	 * Extract column comment from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column comment from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node The "column_def" or "field_def" AST node.
 	 * @return string               The column comment as stored in information schema.
 	 */
 	private function get_column_comment( WP_Parser_Node $node ): string {
-		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
-				return $this->get_value( $attr->get_first_child_node( 'textLiteral' ) );
+		foreach ( $node->get_descendant_nodes( 'column_attribute' ) as $attr ) {
+			if ( $attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['COMMENT'] ) ) {
+				return $this->get_value( $attr->get_first_child_node( 'TEXT_STRING_sys' ) );
 			}
 		}
 		return '';
 	}
 
 	/**
-	 * Extract column data type from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column data type from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node    The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node    The "column_def" or "field_def" AST node.
 	 * @return array{ string, string } The data type and column type as stored in information schema.
 	 */
 	private function get_column_data_types( WP_Parser_Node $node ): array {
-		$type_node = $node->get_first_descendant_node( 'dataType' );
+		$type_node = $node->get_first_descendant_node( 'type' );
 		$type      = $type_node->get_descendant_tokens();
 		$token     = $type[0];
 
@@ -2311,36 +2296,36 @@ class WP_SQLite_Information_Schema_Builder {
 			// NCHAR/NATIONAL VARCHAR
 			// CHAR/CHARACTER/NCHAR VARYING
 			// NATIONAL CHAR/CHARACTER VARYING
-			WP_MySQL_Lexer::VARCHAR_SYMBOL === $token->id
-			|| WP_MySQL_Lexer::NVARCHAR_SYMBOL === $token->id
-			|| ( isset( $type[1] ) && WP_MySQL_Lexer::VARCHAR_SYMBOL === $type[1]->id )
-			|| ( isset( $type[1] ) && WP_MySQL_Lexer::VARYING_SYMBOL === $type[1]->id )
-			|| ( isset( $type[2] ) && WP_MySQL_Lexer::VARYING_SYMBOL === $type[2]->id )
+			WP_MySQL_Lexer::KEYWORDS['VARCHAR'] === $token->id
+			|| WP_MySQL_Lexer::KEYWORDS['NVARCHAR'] === $token->id
+			|| ( isset( $type[1] ) && WP_MySQL_Lexer::KEYWORDS['VARCHAR'] === $type[1]->id )
+			|| ( isset( $type[1] ) && WP_MySQL_Lexer::KEYWORDS['VARYING'] === $type[1]->id )
+			|| ( isset( $type[2] ) && WP_MySQL_Lexer::KEYWORDS['VARYING'] === $type[2]->id )
 		) {
 			$type = 'varchar';
 		} elseif (
 			// CHAR, NCHAR, NATIONAL CHAR
-			WP_MySQL_Lexer::CHAR_SYMBOL === $token->id
-			|| WP_MySQL_Lexer::NCHAR_SYMBOL === $token->id
-			|| isset( $type[1] ) && WP_MySQL_Lexer::CHAR_SYMBOL === $type[1]->id
+			WP_MySQL_Lexer::KEYWORDS['CHAR'] === $token->id
+			|| WP_MySQL_Lexer::KEYWORDS['NCHAR'] === $token->id
+			|| isset( $type[1] ) && WP_MySQL_Lexer::KEYWORDS['CHAR'] === $type[1]->id
 		) {
 			$type = 'char';
 		} elseif (
 			// LONG VARBINARY
-			WP_MySQL_Lexer::LONG_SYMBOL === $token->id
-			&& isset( $type[1] ) && WP_MySQL_Lexer::VARBINARY_SYMBOL === $type[1]->id
+			WP_MySQL_Lexer::KEYWORDS['LONG'] === $token->id
+			&& isset( $type[1] ) && WP_MySQL_Lexer::KEYWORDS['VARBINARY'] === $type[1]->id
 		) {
 			$type = 'mediumblob';
 		} elseif (
 			// LONG CHAR/CHARACTER, LONG CHAR/CHARACTER VARYING
-			WP_MySQL_Lexer::LONG_SYMBOL === $token->id
-			&& isset( $type[1] ) && WP_MySQL_Lexer::CHAR_SYMBOL === $type[1]->id
+			WP_MySQL_Lexer::KEYWORDS['LONG'] === $token->id
+			&& isset( $type[1] ) && WP_MySQL_Lexer::KEYWORDS['CHAR'] === $type[1]->id
 		) {
 			$type = 'mediumtext';
 		} elseif (
 			// LONG VARCHAR
-			WP_MySQL_Lexer::LONG_SYMBOL === $token->id
-			&& isset( $type[1] ) && WP_MySQL_Lexer::VARCHAR_SYMBOL === $type[1]->id
+			WP_MySQL_Lexer::KEYWORDS['LONG'] === $token->id
+			&& isset( $type[1] ) && WP_MySQL_Lexer::KEYWORDS['VARCHAR'] === $type[1]->id
 		) {
 			$type = 'mediumtext';
 		} else {
@@ -2350,15 +2335,15 @@ class WP_SQLite_Information_Schema_Builder {
 		// Get full type.
 		$full_type = $type;
 		if ( 'enum' === $type || 'set' === $type ) {
-			$string_list = $type_node->get_first_descendant_node( 'stringList' );
-			$values      = $string_list->get_child_nodes( 'textString' );
+			$string_list = $type_node->get_first_descendant_node( 'string_list' );
+			$values      = $string_list->get_flattened_child_nodes( 'text_string' );
 			foreach ( $values as $i => $value ) {
 				$values[ $i ] = "'" . str_replace( "'", "''", $this->get_value( $value ) ) . "'";
 			}
 			$full_type .= '(' . implode( ',', $values ) . ')';
 		}
 
-		$field_length = $type_node->get_first_descendant_node( 'fieldLength' );
+		$field_length = $type_node->get_first_descendant_node( 'field_length' );
 		if ( null !== $field_length ) {
 			if ( 'decimal' === $type || 'float' === $type || 'double' === $type ) {
 				$full_type .= rtrim( $this->get_value( $field_length ), ')' ) . ',0)';
@@ -2379,14 +2364,14 @@ class WP_SQLite_Information_Schema_Builder {
 			$full_type .= $this->get_value( $precision );
 		}
 
-		$datetime_precision = $type_node->get_first_descendant_node( 'typeDatetimePrecision' );
+		$datetime_precision = $type_node->get_first_descendant_node( 'type_datetime_precision' );
 		if ( null !== $datetime_precision ) {
 			$full_type .= $this->get_value( $datetime_precision );
 		}
 
 		if (
-			WP_MySQL_Lexer::BOOL_SYMBOL === $token->id
-			|| WP_MySQL_Lexer::BOOLEAN_SYMBOL === $token->id
+			WP_MySQL_Lexer::KEYWORDS['BOOL'] === $token->id
+			|| WP_MySQL_Lexer::KEYWORDS['BOOLEAN'] === $token->id
 		) {
 			$full_type .= '(1)'; // Add length for booleans.
 		}
@@ -2402,14 +2387,14 @@ class WP_SQLite_Information_Schema_Builder {
 		// UNSIGNED.
 		// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
 		if (
-			$type_node->get_first_descendant_token( WP_MySQL_Lexer::UNSIGNED_SYMBOL )
-			|| $type_node->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL )
+			$type_node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['UNSIGNED'] )
+			|| $type_node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['SERIAL'] )
 		) {
 			$full_type .= ' unsigned';
 		}
 
 		// ZEROFILL.
-		if ( $type_node->get_first_descendant_token( WP_MySQL_Lexer::ZEROFILL_SYMBOL ) ) {
+		if ( $type_node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['ZEROFILL'] ) ) {
 			$full_type .= ' zerofill';
 		}
 
@@ -2417,9 +2402,9 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract column charset and collation from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column charset and collation from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node              The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node              The "column_def" or "field_def" AST node.
 	 * @param  string         $data_type         The column data type as stored in information schema.
 	 * @return array{ string|null, string|null } The column charset and collation as stored in information schema.
 	 */
@@ -2442,32 +2427,33 @@ class WP_SQLite_Information_Schema_Builder {
 		$is_binary = false;
 
 		// Charset.
-		$charset_node = $node->get_first_descendant_node( 'charsetWithOptBinary' );
+		$charset_node = $node->get_first_descendant_node( 'opt_charset_with_opt_binary' );
 		if ( null !== $charset_node ) {
-			$charset_name_node = $charset_node->get_first_child_node( 'charsetName' );
+			$charset_name_node = $charset_node->get_first_child_node( 'charset_name' );
 			if ( null !== $charset_name_node ) {
 				$charset = strtolower( $this->get_value( $charset_name_node ) );
-			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::ASCII_SYMBOL ) ) {
+			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::KEYWORDS['ASCII'] ) ) {
 				$charset = 'latin1';
-			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::UNICODE_SYMBOL ) ) {
+			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::KEYWORDS['UNICODE'] ) ) {
 				$charset = 'ucs2';
-			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::BYTE_SYMBOL ) ) {
+			} elseif ( $charset_node->has_child_token( WP_MySQL_Lexer::KEYWORDS['BYTE'] ) ) {
 				// @TODO: This changes varchar to varbinary.
 			}
 
 			// @TODO: "DEFAULT"
 
-			if ( $charset_node->has_child_token( WP_MySQL_Lexer::BINARY_SYMBOL ) ) {
+			if (
+				$charset_node->has_child_token( WP_MySQL_Lexer::KEYWORDS['BINARY'] )
+				|| $charset_node->has_child_node( 'opt_bin_mod' )
+			) {
 				$is_binary = true;
 			}
 		} else {
 			// National charsets (in MySQL, it's "utf8").
-			$data_type_node = $node->get_first_descendant_node( 'dataType' );
+			$data_type_node = $node->get_first_descendant_node( 'type' );
 			if (
 				$data_type_node->has_child_node( 'nchar' )
-				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NCHAR_SYMBOL )
-				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NATIONAL_SYMBOL )
-				|| $data_type_node->has_child_token( WP_MySQL_Lexer::NVARCHAR_SYMBOL )
+				|| $data_type_node->has_child_node( 'nvarchar' )
 			) {
 				$charset = 'utf8';
 			}
@@ -2479,7 +2465,7 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		// Collation.
-		$collation_node = $node->get_first_descendant_node( 'collationName' );
+		$collation_node = $node->get_first_descendant_node( 'collation_name' );
 		if ( null !== $collation_node ) {
 			$collation = strtolower( $this->get_value( $collation_node ) );
 		}
@@ -2509,9 +2495,9 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract column length info from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column length info from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node        The "column_def" or "field_def" AST node.
 	 * @param  string         $data_type   The column data type as stored in information schema.
 	 * @param  string|null    $charset     The column charset as stored in information schema.
 	 * @return array{ int|null, int|null } The column char length and octet length as stored in information schema.
@@ -2535,7 +2521,7 @@ class WP_SQLite_Information_Schema_Builder {
 			|| 'varchar' === $data_type
 			|| 'varbinary' === $data_type
 		) {
-			$field_length = $node->get_first_descendant_node( 'fieldLength' );
+			$field_length = $node->get_first_descendant_node( 'field_length' );
 			if ( null === $field_length ) {
 				$length = 1;
 			} else {
@@ -2552,8 +2538,8 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// For ENUM and SET, we need to check the longest value.
 		if ( 'enum' === $data_type || 'set' === $data_type ) {
-			$string_list = $node->get_first_descendant_node( 'stringList' );
-			$values      = $string_list->get_child_nodes( 'textString' );
+			$string_list = $node->get_first_descendant_node( 'string_list' );
+			$values      = $string_list->get_flattened_child_nodes( 'text_string' );
 			$length      = 0;
 			foreach ( $values as $value ) {
 				if ( 'enum' === $data_type ) {
@@ -2577,9 +2563,9 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract column precision and scale from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column precision and scale from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node        The "column_def" or "field_def" AST node.
 	 * @param  string         $data_type   The column data type as stored in information schema.
 	 * @return array{ int|null, int|null } The column precision and scale as stored in information schema.
 	 */
@@ -2593,13 +2579,13 @@ class WP_SQLite_Information_Schema_Builder {
 		} elseif ( 'int' === $data_type ) {
 			return array( 10, 0 );
 		} elseif ( 'bigint' === $data_type ) {
-			if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::UNSIGNED_SYMBOL ) ) {
+			if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['UNSIGNED'] ) ) {
 				return array( 20, 0 );
 			}
 
 			// SERIAL is an alias for BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE.
-			$data_type = $node->get_first_descendant_node( 'dataType' );
-			if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::SERIAL_SYMBOL ) ) {
+			$data_type = $node->get_first_descendant_node( 'type' );
+			if ( null !== $data_type->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['SERIAL'] ) ) {
 				return array( 20, 0 );
 			}
 
@@ -2608,7 +2594,7 @@ class WP_SQLite_Information_Schema_Builder {
 
 		// For bit columns, we need to check the precision.
 		if ( 'bit' === $data_type ) {
-			$field_length = $node->get_first_descendant_node( 'fieldLength' );
+			$field_length = $node->get_first_descendant_node( 'field_length' );
 			if ( null === $field_length ) {
 				return array( 1, null );
 			}
@@ -2631,8 +2617,8 @@ class WP_SQLite_Information_Schema_Builder {
 			return array( $precision ?? 22, $scale );
 		} elseif ( 'decimal' === $data_type ) {
 			if ( null === $precision ) {
-				// Only precision can be specified ("fieldLength" in the grammar).
-				$field_length = $node->get_first_descendant_node( 'fieldLength' );
+				// Only precision can be specified ("field_length" in the grammar).
+				$field_length = $node->get_first_descendant_node( 'field_length' );
 				if ( null !== $field_length ) {
 					$precision = (int) trim( $this->get_value( $field_length ), '()' );
 				}
@@ -2644,15 +2630,15 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract column date/time precision from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column date/time precision from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node      The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node      The "column_def" or "field_def" AST node.
 	 * @param  string         $data_type The column data type as stored in information schema.
 	 * @return int|null                  The date/time precision as stored in information schema.
 	 */
 	private function get_column_datetime_precision( WP_Parser_Node $node, string $data_type ): ?int {
 		if ( 'time' === $data_type || 'datetime' === $data_type || 'timestamp' === $data_type ) {
-			$precision = $node->get_first_descendant_node( 'typeDatetimePrecision' );
+			$precision = $node->get_first_descendant_node( 'type_datetime_precision' );
 			if ( null === $precision ) {
 				return 0;
 			} else {
@@ -2663,34 +2649,34 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract column generation expression from the "columnDefinition" or "fieldDefinition" AST node.
+	 * Extract column generation expression from the "column_def" or "field_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  WP_Parser_Node $node The "column_def" or "field_def" AST node.
 	 * @return string               The column generation expression as stored in information schema.
 	 */
 	private function get_column_generation_expression( WP_Parser_Node $node ): string {
-		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::GENERATED_SYMBOL ) ) {
-			$expr = $node->get_first_descendant_node( 'exprWithParentheses' );
-			return $this->get_value( $expr );
+		if ( null !== $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['GENERATED'] ) ) {
+			$expr = $node->get_first_descendant_node( 'expr' );
+			return '(' . $this->get_value( $expr ) . ')';
 		}
 		return '';
 	}
 
 	/**
-	 * Extract table constraint name from the "tableConstraintDef" or "columnDefinition" AST node.
+	 * Extract table constraint name from the "table_constraint_def" or "column_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node       The "tableConstraintDef" or "columnDefinition" AST node.
+	 * @param  WP_Parser_Node $node       The "table_constraint_def" or "column_def" AST node.
 	 * @param  string         $table_name The table name.
 	 * @return string|null                The table constraint name.
 	 */
 	public function get_table_constraint_name( WP_Parser_Node $node, string $table_name ): ?string {
-		$name_node = $node->get_first_child_node( 'constraintName' );
-		if ( null !== $name_node ) {
-			return $this->get_value( $name_node->get_first_child_node( 'identifier' ) );
+		$name_node = $node->get_first_child_node( 'opt_constraint_name' );
+		if ( null !== $name_node && null !== $name_node->get_first_descendant_node( 'ident' ) ) {
+			return $this->get_value( $name_node->get_first_descendant_node( 'ident' ) );
 		}
 
 		$foreign_key      = $node->get_first_descendant_node( 'references' );
-		$check_constraint = $node->get_first_descendant_node( 'checkConstraint' );
+		$check_constraint = $node->get_first_descendant_node( 'check_constraint' );
 
 		// FOREIGN KEY and CHECK constraints without a name get a generated name.
 		if ( $foreign_key || $check_constraint ) {
@@ -2735,36 +2721,36 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract table constraint type from the "tableConstraintDef" or "columnDefinition" AST node.
+	 * Extract table constraint type from the "table_constraint_def" or "column_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "tableConstraintDef" or "columnDefinition" AST node.
+	 * @param  WP_Parser_Node $node The "table_constraint_def" or "column_def" AST node.
 	 * @return string|null          The table constraint type as stored in information schema.
 	 */
 	private function get_table_constraint_type( WP_Parser_Node $node ): ?string {
-		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['PRIMARY'] ) ) {
 			return 'PRIMARY KEY';
 		}
-		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::UNIQUE_SYMBOL ) ) {
+		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['UNIQUE'] ) ) {
 			return 'UNIQUE';
 		}
 		if ( $node->get_first_descendant_node( 'references' ) ) {
 			return 'FOREIGN KEY';
 		}
-		if ( $node->get_first_descendant_node( 'checkConstraint' ) ) {
+		if ( $node->get_first_descendant_node( 'check_constraint' ) ) {
 			return 'CHECK';
 		}
 		return null;
 	}
 
 	/**
-	 * Extract index name from the "tableConstraintDef" AST node.
+	 * Extract index name from the "table_constraint_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node       The "tableConstraintDef" or "createIndex" AST node.
+	 * @param  WP_Parser_Node $node       The "table_constraint_def" or "create_index_stmt" AST node.
 	 * @param  string         $table_name The table name.
 	 * @return string                     The index name as stored in information schema.
 	 */
 	private function get_index_name( WP_Parser_Node $node, string $table_name ): string {
-		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::PRIMARY_SYMBOL ) ) {
+		if ( $node->get_first_descendant_token( WP_MySQL_Lexer::KEYWORDS['PRIMARY'] ) ) {
 			return 'PRIMARY';
 		}
 
@@ -2774,11 +2760,19 @@ class WP_SQLite_Information_Schema_Builder {
 		 * When both index and constraint name are defined, the index name will
 		 * be used. E.g., in "CONSTRAINT c UNIQUE u (id)", the name will be "u".
 		 */
-		$name_node = $node->get_first_descendant_node( 'indexName' );
-		if ( null === $name_node && $node->has_child_node( 'constraintName' ) ) {
+		if ( 'create_index_stmt' === $node->rule_name ) {
+			$name_node = $node->get_first_child_node( 'ident' );
+		} else {
+			$name_and_type = $node->get_first_child_node( 'opt_index_name_and_type' );
+			$opt_ident     = null !== $name_and_type
+				? $name_and_type->get_first_child_node( 'opt_ident' )
+				: $node->get_first_child_node( 'opt_ident' );
+			$name_node     = null !== $opt_ident ? $opt_ident->get_first_child_node( 'ident' ) : null;
+		}
+		if ( null === $name_node && $node->has_child_node( 'opt_constraint_name' ) ) {
 			$name_node = $node
-				->get_first_child_node( 'constraintName' )
-				->get_first_child_node( 'identifier' );
+				->get_first_child_node( 'opt_constraint_name' )
+				->get_first_descendant_node( 'ident' );
 		}
 
 		if ( null === $name_node ) {
@@ -2787,11 +2781,11 @@ class WP_SQLite_Information_Schema_Builder {
 			 * If any part is an expression, the name will be "functional_index".
 			 * If the name is already used, we need to append a number.
 			 */
-			$subnode = $node->get_first_child_node( 'keyListVariants' )->get_first_child_node();
-			if ( null !== $subnode->get_first_descendant_node( 'exprWithParentheses' ) ) {
+			$subnode = $node->get_first_descendant_node( 'key_list_with_expression' );
+			if ( null !== $subnode->get_first_descendant_node( 'expr' ) ) {
 				$name = 'functional_index';
 			} else {
-				$name = $this->get_value( $subnode->get_first_descendant_node( 'identifier' ) );
+				$name = $this->get_value( $subnode->get_first_descendant_node( 'ident' ) );
 			}
 
 			// Check if the name is already used.
@@ -2837,15 +2831,55 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract index non-unique value from the "tableConstraintDef" AST node.
+	 * Extract the first constraint keyword token (PRIMARY, UNIQUE, KEY, INDEX,
+	 * FULLTEXT, SPATIAL, FOREIGN, or CHECK) from a constraint or index AST node.
+	 *
+	 * @param  WP_Parser_Node $node The "table_constraint_def" or "create_index_stmt" AST node.
+	 * @return WP_MySQL_Token|null  The first constraint keyword token.
+	 */
+	private function get_constraint_keyword_token( WP_Parser_Node $node ): ?WP_MySQL_Token {
+		if ( 'create_index_stmt' === $node->rule_name ) {
+			if ( $node->has_child_node( 'opt_unique' ) ) {
+				return $node->get_first_child_node( 'opt_unique' )->get_first_child_token();
+			}
+			if ( $node->has_child_token( WP_MySQL_Lexer::KEYWORDS['FULLTEXT'] ) ) {
+				return $node->get_first_child_token( WP_MySQL_Lexer::KEYWORDS['FULLTEXT'] );
+			}
+			if ( $node->has_child_token( WP_MySQL_Lexer::KEYWORDS['SPATIAL'] ) ) {
+				return $node->get_first_child_token( WP_MySQL_Lexer::KEYWORDS['SPATIAL'] );
+			}
+			return $node->get_first_child_token( WP_MySQL_Lexer::KEYWORDS['INDEX'] );
+		}
+
+		foreach ( $node->get_children() as $child ) {
+			// Skip the "CONSTRAINT [name]" prefix.
+			if ( $child instanceof WP_Parser_Node && 'opt_constraint_name' === $child->rule_name ) {
+				continue;
+			}
+
+			// FULLTEXT, SPATIAL, and FOREIGN appear as direct tokens.
+			if ( $child instanceof WP_MySQL_Token ) {
+				return $child;
+			}
+
+			// PRIMARY [KEY], UNIQUE, KEY, INDEX, and CHECK appear under the
+			// "constraint_key_type", "key_or_index", and "check_constraint"
+			// wrapper nodes.
+			return $child->get_first_descendant_token();
+		}
+		return null;
+	}
+
+	/**
+	 * Extract index non-unique value from the "table_constraint_def" AST node.
 	 *
 	 * @param  WP_MySQL_Token $token The first constraint keyword.
 	 * @return int                   The value of non-unique as stored in information schema.
 	 */
 	private function get_index_non_unique( WP_MySQL_Token $token ): int {
 		if (
-			WP_MySQL_Lexer::PRIMARY_SYMBOL === $token->id
-			|| WP_MySQL_Lexer::UNIQUE_SYMBOL === $token->id
+			WP_MySQL_Lexer::KEYWORDS['PRIMARY'] === $token->id
+			|| WP_MySQL_Lexer::KEYWORDS['UNIQUE'] === $token->id
 		) {
 			return 0;
 		}
@@ -2853,9 +2887,9 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract index type from the "tableConstraintDef" AST node.
+	 * Extract index type from the "table_constraint_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node               The "tableConstraintDef" or "createIndex" AST node.
+	 * @param  WP_Parser_Node $node               The "table_constraint_def" or "create_index_stmt" AST node.
 	 * @param  WP_MySQL_Token $token              The first constraint keyword.
 	 * @param  bool           $has_spatial_column Whether the index contains a spatial column.
 	 * @return string                             The index type as stored in information schema.
@@ -2866,7 +2900,7 @@ class WP_SQLite_Information_Schema_Builder {
 		bool $has_spatial_column
 	): string {
 		// Handle "USING ..." clause.
-		$index_type_node = $node->get_first_descendant_node( 'indexType' );
+		$index_type_node = $node->get_first_descendant_node( 'index_type' );
 		if ( null !== $index_type_node ) {
 			$index_type = strtoupper( $this->get_value( $index_type_node ) );
 			if ( 'RTREE' === $index_type ) {
@@ -2879,9 +2913,9 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		// Derive index type from its definition.
-		if ( WP_MySQL_Lexer::FULLTEXT_SYMBOL === $token->id ) {
+		if ( WP_MySQL_Lexer::KEYWORDS['FULLTEXT'] === $token->id ) {
 			return 'FULLTEXT';
-		} elseif ( WP_MySQL_Lexer::SPATIAL_SYMBOL === $token->id ) {
+		} elseif ( WP_MySQL_Lexer::KEYWORDS['SPATIAL'] === $token->id ) {
 			return 'SPATIAL';
 		}
 
@@ -2894,37 +2928,37 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract index comment from the "tableConstraintDef" AST node.
+	 * Extract index comment from the "table_constraint_def" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "tableConstraintDef" or "createIndex" AST node.
+	 * @param  WP_Parser_Node $node The "table_constraint_def" or "create_index_stmt" AST node.
 	 * @return string               The index comment as stored in information schema.
 	 */
 	public function get_index_comment( WP_Parser_Node $node ): string {
-		foreach ( $node->get_descendant_nodes( 'commonIndexOption' ) as $attr ) {
-			if ( $attr->has_child_token( WP_MySQL_Lexer::COMMENT_SYMBOL ) ) {
-				return $this->get_value( $attr->get_first_child_node( 'textLiteral' ) );
+		foreach ( $node->get_descendant_nodes( 'common_index_option' ) as $attr ) {
+			if ( $attr->has_child_token( WP_MySQL_Lexer::KEYWORDS['COMMENT'] ) ) {
+				return $this->get_value( $attr->get_first_child_node( 'TEXT_STRING_sys' ) );
 			}
 		}
 		return '';
 	}
 
 	/**
-	 * Extract index column name from the "keyPart" AST node.
+	 * Extract index column name from the "key_part" AST node.
 	 *
-	 * @param  WP_Parser_Node $node The "keyPart" AST node.
+	 * @param  WP_Parser_Node $node The "key_part" AST node.
 	 * @return string               The index column name as stored in information schema.
 	 */
 	private function get_index_column_name( WP_Parser_Node $node ): ?string {
-		if ( 'keyPart' !== $node->rule_name ) {
+		if ( 'key_part' !== $node->rule_name ) {
 			return null;
 		}
-		return $this->get_value( $node->get_first_descendant_node( 'identifier' ) );
+		return $this->get_value( $node->get_first_descendant_node( 'ident' ) );
 	}
 
 	/**
-	 * Extract index column name from the "keyPart" AST node.
+	 * Extract index column name from the "key_part" AST node.
 	 *
-	 * @param  WP_Parser_Node $node       The "keyPart" AST node.
+	 * @param  WP_Parser_Node $node       The "key_part" AST node.
 	 * @param  string         $index_type The index type as stored in information schema.
 	 * @return string                     The index column name as stored in information schema.
 	 */
@@ -2933,7 +2967,7 @@ class WP_SQLite_Information_Schema_Builder {
 			return null;
 		}
 
-		$collate_node = $node->get_first_descendant_node( 'direction' );
+		$collate_node = $node->get_first_descendant_node( 'ordering_direction' );
 		if ( null === $collate_node ) {
 			return 'A';
 		}
@@ -2942,9 +2976,9 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Extract index column sub-part value from the "keyPart" AST node.
+	 * Extract index column sub-part value from the "key_part" AST node.
 	 *
-	 * @param  WP_Parser_Node $node       The "keyPart" AST node.
+	 * @param  WP_Parser_Node $node       The "key_part" AST node.
 	 * @param  int|null       $max_length The maximum character length of the index column.
 	 * @param  bool           $is_spatial Whether the index column is a spatial column.
 	 * @return int|null                   The index column sub-part value as stored in information schema.
@@ -2954,19 +2988,36 @@ class WP_SQLite_Information_Schema_Builder {
 		?int $max_length,
 		bool $is_spatial
 	): ?int {
-		$field_length = $node->get_first_descendant_node( 'fieldLength' );
-		if ( null === $field_length ) {
+		// A prefix length appears as bare "( INT_NUMBER )" tokens in "key_part".
+		$length_token = 'key_part' === $node->rule_name
+			? $node->get_first_child_token( WP_MySQL_Lexer::INT_NUMBER )
+			: null;
+		if ( null === $length_token ) {
 			if ( $is_spatial ) {
 				return 32;
 			}
 			return null;
 		}
 
-		$value = (int) trim( $this->get_value( $field_length ), '()' );
+		$value = (int) $length_token->get_value();
 		if ( null !== $max_length && $value >= $max_length ) {
 			return $max_length;
 		}
 		return $value;
+	}
+
+	/**
+	 * Extract referenced column "ident" nodes from the "references" AST node.
+	 *
+	 * @param  WP_Parser_Node $node The "references" AST node.
+	 * @return WP_Parser_Node[]     The referenced column "ident" nodes.
+	 */
+	private function get_reference_list_columns( WP_Parser_Node $node ): array {
+		$ref_list = $node->get_first_child_node( 'opt_ref_list' );
+		if ( null === $ref_list ) {
+			return array();
+		}
+		return $ref_list->get_first_child_node( 'reference_list' )->get_flattened_child_nodes( 'ident' );
 	}
 
 	/**
@@ -2976,15 +3027,16 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return array<string, string> The foreign key actions as stored in information schema.
 	 */
 	private function get_foreign_key_actions( WP_Parser_Node $node ): array {
-		$children = $node->get_children();
+		$on_update_delete = $node->get_first_child_node( 'opt_on_update_delete' );
+		$children         = null !== $on_update_delete ? $on_update_delete->get_children() : array();
 
-		// ON UPDATE and ON DELETE both use the "deleteOption" node.
+		// ON UPDATE and ON DELETE both use the "delete_option" node.
 		$update_option = null;
 		$delete_option = null;
 		foreach ( $children as $i => $child ) {
-			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::UPDATE_SYMBOL === $child->id ) {
+			if ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::KEYWORDS['UPDATE'] === $child->id ) {
 				$update_option = $children[ $i + 1 ];
-			} elseif ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::DELETE_SYMBOL === $child->id ) {
+			} elseif ( $child instanceof WP_MySQL_Token && WP_MySQL_Lexer::KEYWORDS['DELETE'] === $child->id ) {
 				$delete_option = $children[ $i + 1 ];
 			}
 		}
@@ -3002,15 +3054,15 @@ class WP_SQLite_Information_Schema_Builder {
 			$tokens    = $option->get_descendant_tokens();
 			$token1_id = isset( $tokens[0] ) ? $tokens[0]->id : null;
 			$token2_id = isset( $tokens[1] ) ? $tokens[1]->id : null;
-			if ( WP_MySQL_Lexer::NO_SYMBOL === $token1_id ) {
+			if ( WP_MySQL_Lexer::KEYWORDS['NO'] === $token1_id ) {
 				$result[ $action ] = 'NO ACTION';
-			} elseif ( WP_MySQL_Lexer::RESTRICT_SYMBOL === $token1_id ) {
+			} elseif ( WP_MySQL_Lexer::KEYWORDS['RESTRICT'] === $token1_id ) {
 				$result[ $action ] = 'RESTRICT';
-			} elseif ( WP_MySQL_Lexer::CASCADE_SYMBOL === $token1_id ) {
+			} elseif ( WP_MySQL_Lexer::KEYWORDS['CASCADE'] === $token1_id ) {
 				$result[ $action ] = 'CASCADE';
-			} elseif ( WP_MySQL_Lexer::SET_SYMBOL === $token1_id && WP_MySQL_Lexer::NULL_SYMBOL === $token2_id ) {
+			} elseif ( WP_MySQL_Lexer::KEYWORDS['SET'] === $token1_id && WP_MySQL_Lexer::KEYWORDS['NULL'] === $token2_id ) {
 				$result[ $action ] = 'SET NULL';
-			} elseif ( WP_MySQL_Lexer::SET_SYMBOL === $token1_id && WP_MySQL_Lexer::DEFAULT_SYMBOL === $token2_id ) {
+			} elseif ( WP_MySQL_Lexer::KEYWORDS['SET'] === $token1_id && WP_MySQL_Lexer::KEYWORDS['DEFAULT'] === $token2_id ) {
 				$result[ $action ] = 'SET DEFAULT';
 			} else {
 				throw new \Exception( sprintf( 'Unsupported foreign key action: %s', $option->get_value() ) );
@@ -3041,9 +3093,9 @@ class WP_SQLite_Information_Schema_Builder {
 	 *
 	 * @TODO: This should be done in a more correct way, for names maybe allowing
 	 *        descending only a single-child hierarchy, such as these:
-	 *          identifier -> pureIdentifier -> IDENTIFIER
-	 *          identifier -> pureIdentifier -> BACKTICK_QUOTED_ID
-	 *          identifier -> pureIdentifier -> DOUBLE_QUOTED_TEXT
+	 *          ident -> IDENT_sys -> IDENTIFIER
+	 *          ident -> IDENT_sys -> BACK_TICK_QUOTED_ID
+	 *          ident -> IDENT_sys -> DOUBLE_QUOTED_TEXT
 	 *          etc.
 	 *
 	 *        For saving "DEFAULT ..." in column definitions, we actually need to
@@ -3064,7 +3116,7 @@ class WP_SQLite_Information_Schema_Builder {
 				 * This is because SQLite doesn't support case-insensitive Unicode
 				 * character matching: https://sqlite.org/faq.html#q18
 				 */
-				if ( 'pureIdentifier' === $child->rule_name ) {
+				if ( 'IDENT_sys' === $child->rule_name ) {
 					for ( $i = 0; $i < strlen( $value ); $i++ ) {
 						if ( ord( $value[ $i ] ) > 127 ) {
 							throw new Exception( 'The SQLite driver only supports ASCII characters in identifiers.' );
@@ -3101,12 +3153,6 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return string               The serialized value of the node.
 	 */
 	private function serialize_mysql_expression( WP_Parser_Node $node ): string {
-		// The wrapping parentheses are generally not stored, although in MySQL,
-		// this varies by expression type as per the expression formatter logic.
-		if ( 'exprWithParentheses' === $node->rule_name ) {
-			return $this->serialize_mysql_expression( $node->get_first_child_node( 'expr' ) );
-		}
-
 		$value         = '';
 		$last_token_id = null;
 		foreach ( $node->get_descendant_tokens() as $i => $token ) {

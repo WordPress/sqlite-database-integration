@@ -25,8 +25,6 @@ foreach ( $argv as $arg ) {
 	}
 }
 
-// Use the integration loader so an already-loaded native extension selects
-// the same public lexer/parser classes that runtime code uses.
 require_once __DIR__ . '/../../src/load.php';
 
 function get_stats( $total, $failures, $exceptions ) {
@@ -40,9 +38,8 @@ function get_stats( $total, $failures, $exceptions ) {
 	);
 }
 
-// Load the MySQL grammar.
-$grammar_data = include __DIR__ . '/../../src/mysql/mysql-grammar.php';
-$grammar      = new WP_Parser_Grammar( $grammar_data );
+// Load the MySQL parser.
+$parser = WP_MySQL_Parser_Factory::create_parser();
 
 // Load the bounded checked-in corpus before timing so file IO is excluded
 // from the benchmark.
@@ -68,15 +65,12 @@ $start      = microtime( true );
 foreach ( $queries as $query ) {
 	try {
 		$lexer  = new WP_MySQL_Lexer( $query );
-		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
-			? $lexer->native_token_stream()
-			: $lexer->remaining_tokens();
-		if ( ( is_array( $tokens ) ? count( $tokens ) : $tokens->count() ) === 0 ) {
+		$tokens = $lexer->remaining_tokens();
+		if ( count( $tokens ) === 0 ) {
 			throw new Exception( 'Failed to tokenize query: ' . $query );
 		}
 
-		$parser = new WP_MySQL_Parser( $grammar, $tokens );
-		$ast    = $parser->parse();
+		$ast = $parser->parse( $tokens );
 		if ( null === $ast ) {
 			$failures[] = $query;
 		}
@@ -95,15 +89,14 @@ $qps      = $processed / $duration;
 if ( $json ) {
 	echo json_encode(
 		array(
-			'benchmark'        => 'mysql-parser',
-			'implementation'   => class_exists( 'WP_MySQL_Native_Parser', false ) ? 'native-extension' : 'php',
-			'extension_loaded' => extension_loaded( 'wp_mysql_parser' ),
-			'queries'          => $processed,
-			'duration'         => $duration,
-			'qps'              => $qps,
-			'failures'         => count( $failures ),
-			'exceptions'       => count( $exceptions ),
-			'php_version'      => PHP_VERSION,
+			'benchmark'      => 'mysql-parser',
+			'implementation' => 'php',
+			'queries'        => $processed,
+			'duration'       => $duration,
+			'qps'            => $qps,
+			'failures'       => count( $failures ),
+			'exceptions'     => count( $exceptions ),
+			'php_version'    => PHP_VERSION,
 		),
 		JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
 	), "\n";

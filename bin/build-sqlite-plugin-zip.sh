@@ -26,6 +26,26 @@ cp -R "$DIR/packages/plugin-sqlite-database-integration" "$PLUGIN_DIR"
 rm "$PLUGIN_DIR/wp-includes/database"
 cp -R "$DIR/packages/mysql-on-sqlite/src" "$PLUGIN_DIR/wp-includes/database"
 
+# Bundle the driver's production Composer dependencies (wordpress/mysql-parser).
+# The dependencies are installed into a temporary vendor directory, so that the
+# development vendor directory of the package is left untouched, and copied with
+# the path-repository symlink resolved into a real copy of the parser package.
+COMPOSER_VENDOR_DIR="$BUILD_DIR/driver-vendor" composer install \
+	--working-dir "$DIR/packages/mysql-on-sqlite" \
+	--no-dev --no-interaction --optimize-autoloader --quiet
+cp -RL "$BUILD_DIR/driver-vendor" "$PLUGIN_DIR/wp-includes/vendor"
+rm -rf "$BUILD_DIR/driver-vendor"
+
+# Strip development files from the bundled parser package.
+rm -rf "$PLUGIN_DIR/wp-includes/vendor/wordpress/mysql-parser/bin" \
+	"$PLUGIN_DIR/wp-includes/vendor/wordpress/mysql-parser/build" \
+	"$PLUGIN_DIR/wp-includes/vendor/wordpress/mysql-parser/data" \
+	"$PLUGIN_DIR/wp-includes/vendor/wordpress/mysql-parser/tests" \
+	"$PLUGIN_DIR/wp-includes/vendor/wordpress/mysql-parser/tools" \
+	"$PLUGIN_DIR/wp-includes/vendor/wordpress/mysql-parser/vendor" \
+	"$PLUGIN_DIR/wp-includes/vendor/wordpress/mysql-parser/composer.lock" \
+	"$PLUGIN_DIR/wp-includes/vendor/wordpress/mysql-parser/phpunit.xml.dist"
+
 # Remove dev-only files.
 rm -rf "$PLUGIN_DIR/composer.json"
 rm -rf "$PLUGIN_DIR/vendor"

@@ -26,7 +26,26 @@ rm -rf "$WP_DIR"
 echo "Cloning the WordPress repository..."
 git clone --depth 1 --branch "$WP_VERSION" https://github.com/WordPress/wordpress-develop.git "$WP_DIR"
 
-# 3. Add "docker-compose.override.yml" to the WordPress repository.
+# 3. Install the SQLite driver Composer dependencies (wordpress/mysql-parser)
+#    into a dedicated, self-contained vendor directory (path repositories are
+#    mirrored instead of symlinked) used only by the WordPress containers.
+#
+#    A production (--no-dev) install is required here: the driver development
+#    vendor directory contains PHPUnit, and loading it inside the WordPress
+#    test process would clash with the WordPress PHPUnit test runner.
+#
+#    Note that Docker resolves the driver source mountpoint through the
+#    plugin's "wp-includes/database" symlink, so the driver lands in the
+#    containers at "plugins/mysql-on-sqlite/src", and the vendor directory
+#    is mounted next to it.
+echo "Installing the SQLite driver Composer dependencies..."
+rm -rf "$WP_DIR/driver-vendor"
+# The vendor path must be absolute: Composer resolves a relative vendor-dir
+# against the working directory, not against the current directory.
+COMPOSER_VENDOR_DIR="$(cd "$WP_DIR" && pwd)/driver-vendor" COMPOSER_MIRROR_PATH_REPOS=1 \
+	composer install --working-dir="$DIR/packages/mysql-on-sqlite" --no-dev --no-interaction
+
+# 4. Add "docker-compose.override.yml" to the WordPress repository.
 echo "Adding 'docker-compose.override.yml' to the WordPress repository..."
 cat << EOF > "$WP_DIR/docker-compose.override.yml"
 services:
@@ -34,6 +53,7 @@ services:
     volumes:
       - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
       - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
+      - ./driver-vendor:/var/www/src/wp-content/plugins/mysql-on-sqlite/vendor
 
   php:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
@@ -41,6 +61,7 @@ services:
     volumes:
       - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
       - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
+      - ./driver-vendor:/var/www/src/wp-content/plugins/mysql-on-sqlite/vendor
 
   cli:
     # PHP temporarily pinned to 8.3.10, see: https://github.com/WordPress/wordpress-develop/pull/9602
@@ -48,20 +69,21 @@ services:
     volumes:
       - ../packages/plugin-sqlite-database-integration:/var/www/src/wp-content/plugins/sqlite-database-integration
       - ../packages/mysql-on-sqlite/src:/var/www/src/wp-content/plugins/sqlite-database-integration/wp-includes/database
+      - ./driver-vendor:/var/www/src/wp-content/plugins/mysql-on-sqlite/vendor
 EOF
 
-# 4. Add "db.php" to the "wp-content" directory.
+# 5. Add "db.php" to the "wp-content" directory.
 echo "Adding 'db.php' to the 'wp-content' directory..."
 rm -f "$WP_DIR"/src/wp-content/db.php
 cp "$DIR"/packages/plugin-sqlite-database-integration/db.copy "$WP_DIR"/src/wp-content/db.php
 sed -i.bak "s#'{SQLITE_IMPLEMENTATION_FOLDER_PATH}'#__DIR__.'/plugins/sqlite-database-integration'#g" "$WP_DIR"/src/wp-content/db.php
 sed -i.bak "s#{SQLITE_PLUGIN}#sqlite-database-integration/load.php#g" "$WP_DIR"/src/wp-content/db.php
 
-# 5. Rewrite helper class WpdbExposedMethodsForTesting to extend WP_SQLite_DB.
+# 6. Rewrite helper class WpdbExposedMethodsForTesting to extend WP_SQLite_DB.
 echo "Rewriting helper class 'WpdbExposedMethodsForTesting' to extend WP_SQLite_DB..."
 sed -i.bak "s#class WpdbExposedMethodsForTesting extends wpdb {#class WpdbExposedMethodsForTesting extends WP_SQLite_DB {#g" "$WP_DIR"/tests/phpunit/includes/utils.php
 
-# 6. Install dependencies.
+# 7. Install dependencies.
 echo "Installing dependencies..."
 npm --prefix "$WP_DIR" install
 npm --prefix "$WP_DIR" run build:dev

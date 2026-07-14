@@ -85,6 +85,49 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	public function test_ignore_space_does_not_absorb_whitespace_into_function_identifiers(): void {
+		// COUNT is a function keyword (SYM_FN). Under IGNORE_SPACE, "COUNT" that is
+		// not followed by "(" is a plain identifier, and its byte range must exclude
+		// the trailing whitespace that the mode skips while peeking for "(".
+		foreach ( array( 'SELECT COUNT FROM t', "SELECT COUNT\t\n FROM t" ) as $sql ) {
+			$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+			$this->assertSame( 'IDENTIFIER', $tokens[1]->get_name(), $sql );
+			$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
+			$this->assertSame( 5, $tokens[1]->length, $sql );
+		}
+
+		// When "(" does follow across whitespace, COUNT stays a function keyword and
+		// its byte range still excludes the whitespace.
+		$tokens = ( new WP_MySQL_Lexer( 'SELECT COUNT (1)', 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 5, $tokens[1]->length );
+		$this->assertNotSame( 'IDENTIFIER', $tokens[1]->get_name() );
+		$this->assertSame( 'OPEN_PAR_SYMBOL', $tokens[2]->get_name() );
+	}
+
+	public function test_version_comments_gate_the_body_by_version(): void {
+		// Five-digit version: the body is SQL only when the server version satisfies it.
+		$this->assertSame(
+			array( 'SELECT', 'INT_NUMBER', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			self::token_names( 'SELECT /*!50000 1 */ 2' )
+		);
+		$this->assertSame(
+			array( 'SELECT', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			self::token_names( 'SELECT /*!99999 1 */ 2' )
+		);
+
+		// Six-digit MMmmrr version (MySQL 8.4): a sixth digit followed by whitespace
+		// belongs to the version, not the body — so 080400 is consumed whole (no stray
+		// digit), and 100000 gates above 8.4.0 rather than as 10000.
+		$this->assertSame(
+			array( 'SELECT', 'INT_NUMBER', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			self::token_names( 'SELECT /*!080400 1 */ 2' )
+		);
+		$this->assertSame(
+			array( 'SELECT', 'INT_NUMBER', 'END_OF_INPUT', 'END_MARKER' ),
+			self::token_names( 'SELECT /*!100000 1 */ 2' )
+		);
+	}
+
 	public function test_at_name_splits_into_at_and_ident(): void {
 		$tokens = ( new WP_MySQL_Lexer( 'SELECT @var1' ) )->remaining_tokens();
 		$this->assertSame( 'AT_SIGN_SYMBOL', $tokens[1]->get_name() );

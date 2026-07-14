@@ -72,11 +72,15 @@ final class WP_MySQL_Token extends WP_Parser_Token {
 			$value = substr( $value, 1, -1 );
 
 			/*
-			 * When the NO_BACKSLASH_ESCAPES SQL mode is enabled, we only need to
-			 * handle escaped bounding quotes, as the other characters preserve
-			 * their literal values.
+			 * Backtick-quoted identifiers never use backslash escaping; only a doubled
+			 * backtick is an escape. The same is true of any literal under the
+			 * NO_BACKSLASH_ESCAPES SQL mode. In both cases only the doubled bounding
+			 * quote is unescaped; every other byte keeps its literal value.
 			 */
-			if ( $this->sql_mode_no_backslash_escapes_enabled ) {
+			if (
+				WP_MySQL_Lexer::BACK_TICK_QUOTED_ID === $this->id
+				|| $this->sql_mode_no_backslash_escapes_enabled
+			) {
 				return str_replace( $quote . $quote, $quote, $value );
 			}
 
@@ -166,8 +170,14 @@ final class WP_MySQL_Token extends WP_Parser_Token {
 			 * A backslash with any other character represents the character itself.
 			 * That is, \x evaluates to x, \\ evaluates to \, and \🙂 evaluates to 🙂.
 			 */
+			// Use the "s" (DOTALL) modifier, never "u" (UTF-8): "u" makes PCRE
+			// validate the whole subject as UTF-8 and return null on the first
+			// invalid byte, which would crash on the legitimate non-UTF-8 bytes a
+			// MySQL literal may carry (binary or other-charset payloads). A byte-wise
+			// strip is binary-safe and identical for valid UTF-8, since no UTF-8
+			// continuation byte is a backslash.
 			$preg_quoted_backslash = preg_quote( $backslash );
-			$value                 = preg_replace( "/$preg_quoted_backslash(.)/u", '$1', $value );
+			$value                 = preg_replace( "/$preg_quoted_backslash(.)/s", '$1', $value );
 		}
 		return $value;
 	}

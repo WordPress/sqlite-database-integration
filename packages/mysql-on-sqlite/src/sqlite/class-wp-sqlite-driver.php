@@ -169,13 +169,14 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * Tokenize a MySQL query and initialize a parser.
+	 * Parse a MySQL query string into a list of per-statement ASTs.
 	 *
-	 * @param  string          $query The MySQL query to parse.
-	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
+	 * @param  string $query The MySQL query string (possibly multi-statement).
+	 * @return WP_Parser_Node[]|null One "sql_statement" AST per statement, or
+	 *                               null when a statement fails to parse.
 	 */
-	public function create_parser( string $query ): WP_MySQL_Parser {
-		return $this->mysql_on_sqlite_driver->create_parser( $query );
+	public function parse_mysql_query( string $query ): ?array {
+		return $this->mysql_on_sqlite_driver->parse_mysql_query( $query );
 	}
 
 	/**

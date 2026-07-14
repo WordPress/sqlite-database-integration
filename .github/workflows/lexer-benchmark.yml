@@ -38,6 +38,12 @@ jobs:
           php-version: '8.4'
           coverage: none
 
+      - name: Install Composer dependencies (mysql-on-sqlite)
+        uses: ramsey/composer-install@v3
+        with:
+          working-directory: packages/mysql-on-sqlite
+          composer-options: "--optimize-autoloader"
+
       - name: Benchmark base vs PR
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

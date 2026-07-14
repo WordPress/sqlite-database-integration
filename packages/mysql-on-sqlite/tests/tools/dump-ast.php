@@ -2,7 +2,9 @@
 
 /**
  * This script runs the MySQL lexer & parser on a single query and dumps its AST.
- * It is useful for testing and testing the lexer and parser functionality.
+ * It is useful for testing and debugging the lexer and parser functionality.
+ *
+ * Usage: php dump-ast.php "SELECT 1"
  */
 
 // throw exception if anything fails
@@ -12,28 +14,36 @@ set_error_handler(
 	}
 );
 
-require_once __DIR__ . '/../../src/parser/class-wp-parser.php';
-require_once __DIR__ . '/../../src/parser/class-wp-parser-grammar.php';
-require_once __DIR__ . '/../../src/parser/class-wp-parser-node.php';
-require_once __DIR__ . '/../../src/parser/class-wp-parser-token.php';
-require_once __DIR__ . '/../../src/mysql/class-wp-mysql-lexer.php';
-require_once __DIR__ . '/../../src/mysql/class-wp-mysql-parser.php';
-require_once __DIR__ . '/../../src/mysql/class-wp-mysql-token.php';
+require_once __DIR__ . '/../../src/load.php';
 
-$grammar_data = include __DIR__ . '/../../src/mysql/mysql-grammar.php';
-$grammar      = new WP_Parser_Grammar( $grammar_data );
-
-// Edit the query below to test different inputs:
-$lexer  = new WP_MySQL_Lexer( 'SELECT 1' );
+$query  = $argv[1] ?? 'SELECT 1';
+$lexer  = new WP_MySQL_Lexer( $query );
 $tokens = $lexer->remaining_tokens();
 
 echo "Tokens:\n";
 foreach ( $tokens as $token ) {
 	echo $token, "\n";
 }
-$parser = new WP_MySQL_Parser( $grammar, $tokens );
-$ast    = $parser->parse();
+
+$parser = WP_MySQL_Parser_Factory::create_parser();
+$ast    = $parser->parse( $tokens );
 
 echo "\n\n";
 echo "AST:\n";
-var_dump( $ast );
+if ( null === $ast ) {
+	echo "PARSE ERROR\n";
+	exit( 1 );
+}
+
+function dump_node( $node, int $depth = 0 ): void {
+	$pad = str_repeat( '  ', $depth );
+	if ( $node instanceof WP_Parser_Node ) {
+		echo $pad, $node->rule_name, "\n";
+		foreach ( $node->get_children() as $child ) {
+			dump_node( $child, $depth + 1 );
+		}
+	} else {
+		echo $pad, $node->get_name(), '<', $node->get_value(), ">\n";
+	}
+}
+dump_node( $ast );

@@ -226,6 +226,33 @@ final class WP_Parser_Node {
 	}
 
 	/**
+	 * Get all child nodes of this node, flattening nested same-rule lists.
+	 *
+	 * Left-recursive grammar list rules nest through their own rule name
+	 * ("list: list ',' item | item"). This method collects child nodes of the
+	 * whole nested chain in source order, as if the list rule were flat.
+	 *
+	 * @param  string|null $rule_name Optional. A node rule name to check for.
+	 * @return WP_Parser_Node[]       An array of all matching child nodes.
+	 */
+	public function get_flattened_child_nodes( ?string $rule_name = null ): array {
+		$nodes = array();
+		foreach ( $this->children as $child ) {
+			if ( ! $child instanceof WP_Parser_Node ) {
+				continue;
+			}
+			if ( $child->rule_name === $this->rule_name ) {
+				foreach ( $child->get_flattened_child_nodes( $rule_name ) as $node ) {
+					$nodes[] = $node;
+				}
+			} elseif ( null === $rule_name || $child->rule_name === $rule_name ) {
+				$nodes[] = $child;
+			}
+		}
+		return $nodes;
+	}
+
+	/**
 	 * Get all child tokens of this node.
 	 *
 	 * @param  int|null $token_id Optional. A token ID to check for.

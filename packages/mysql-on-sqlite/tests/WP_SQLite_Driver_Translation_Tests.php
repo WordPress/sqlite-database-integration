@@ -3,13 +3,6 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_SQLite_Driver_Translation_Tests extends TestCase {
-	const GRAMMAR_PATH = __DIR__ . '/../src/mysql/mysql-grammar.php';
-
-	/**
-	 * @var WP_Parser_Grammar
-	 */
-	private static $grammar;
-
 	/**
 	 * @var WP_SQLite_Driver
 	 */
@@ -19,10 +12,6 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 	 * @var string
 	 */
 	private $strict_suffix;
-
-	public static function setUpBeforeClass(): void {
-		self::$grammar = new WP_Parser_Grammar( include self::GRAMMAR_PATH );
-	}
 
 	public function setUp(): void {
 		$this->driver = new WP_SQLite_Driver(
@@ -98,6 +87,17 @@ class WP_SQLite_Driver_Translation_Tests extends TestCase {
 		$this->assertQuery(
 			'SELECT * FROM `t1` LEFT JOIN `t2` ON `t1`.`id` = `t2`.`t1_id` WHERE `t1`.`name` = \'abc\'',
 			"SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.t1_id WHERE t1.name = 'abc'"
+		);
+
+		// A string SELECT alias must stay quoted (used by WP_Site_Health).
+		$this->assertQuery(
+			"SELECT `c` AS 'table' FROM `t`",
+			"SELECT c AS 'table' FROM t"
+		);
+
+		$this->assertQuery(
+			"SELECT `c` 'a ''quoted'' alias' FROM `t`",
+			"SELECT c 'a ''quoted'' alias' FROM t"
 		);
 	}
 
