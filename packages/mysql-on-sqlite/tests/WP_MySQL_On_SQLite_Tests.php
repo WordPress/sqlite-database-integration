@@ -12585,6 +12585,14 @@ END;
 		$result = $this->assertQuery( "SELECT REVERSE('aoeuidhtns') AS reversed" );
 		$this->assertSame( 'snthdiueoa', $result[0]->reversed );
 
+		// Unicode reverse.
+		$result = $this->assertQuery( "SELECT REVERSE('Héllö Wörld!') AS reversed" );
+		$this->assertSame( '!dlröW ölléH', $result[0]->reversed );
+
+		// Emoji reverse.
+		$result = $this->assertQuery( "SELECT REVERSE('Text with 😁😂🤣 emoji 🚀') AS reversed" );
+		$this->assertSame( '🚀 ijome 🤣😂😁 htiw txeT', $result[0]->reversed );
+
 		// Empty string.
 		$result = $this->assertQuery( "SELECT REVERSE('') AS reversed" );
 		$this->assertSame( '', $result[0]->reversed );

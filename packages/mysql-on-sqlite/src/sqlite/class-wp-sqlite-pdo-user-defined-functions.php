@@ -934,14 +934,19 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * Method to emulate MySQL REVERSE() function.
 	 *
 	 * Takes a string and returns the reverse of it.
+	 * Compatible with MySQL behaviour for utf8mb4 strings.
 	 *
-	* @param string|null $str The string to reverse.
-	*
-	* @return string|null reversed string, or NULL.
-	*/
+	 * @param string|null $str The string to reverse.
+	 *
+	 * @return string|null reversed string, or NULL.
+	 */
 	public function reverse( $str ) {
 		if ( null === $str ) {
 			return null;
+		}
+		if ( preg_match( '/[^\x00-\x7F]/', $str ) ) {
+			preg_match_all( '/./u', $str, $matches );
+			return implode( '', array_reverse( $matches[0] ) );
 		}
 		return strrev( $str );
 	}
