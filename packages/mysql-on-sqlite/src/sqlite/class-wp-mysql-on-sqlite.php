@@ -3580,7 +3580,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		 *          SET updatable_views_with_limit = false; SELECT @@updatable_views_with_limit; -> NO
 		 */
 		$lowercase_value = null === $value ? null : strtolower( $value );
-		if ( 'on' === $lowercase_value || 'off' === $lowercase_value ) {
+		if ( 'sql_mode' !== $name && ( 'on' === $lowercase_value || 'off' === $lowercase_value ) ) {
 			$value = 'on' === $lowercase_value ? 1 : 0;
 		}
 
@@ -3589,7 +3589,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				if ( null !== $value_node->get_first_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
 					$sql_modes = $this->get_default_sql_modes();
 				} elseif ( is_string( $value ) ) {
-					$sql_modes = explode( ',', $value );
+					$sql_modes = explode( ',', rtrim( $value, ' ' ) );
 				} else {
 					$sql_modes = $value;
 				}
@@ -5770,18 +5770,102 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param string[]|int $modes SQL mode names or a numeric bitmask.
 	 */
 	private function set_sql_modes( $modes ): void {
-		if ( is_int( $modes ) ) {
-			$this->active_sql_modes = $modes;
-			return;
+		if ( null === $modes ) {
+			throw $this->new_invalid_sql_mode_exception( $modes );
 		}
 
-		$sql_modes = 0;
-		foreach ( (array) $modes as $mode ) {
-			$mode       = strtoupper( trim( $mode ) );
-			$sql_modes |= self::SQL_MODES[ $mode ] ?? 0;
+		$known_sql_modes_mask = array_sum( self::SQL_MODES );
+
+		// TIME_TRUNCATE_FRACTIONAL was introduced in MySQL 8.0.1.
+		if ( $this->mysql_version < 80001 ) {
+			$known_sql_modes_mask &= ~self::SQL_MODES['TIME_TRUNCATE_FRACTIONAL'];
+		}
+
+		// Numeric SQL mode bitmap assignment (e.g., "SET sql_mode = 4" for ANSI_QUOTES).
+		if ( is_int( $modes ) ) {
+			// Ensure the bitmap contains only SQL mode bits known to the emulated MySQL version.
+			if ( $modes < 0 || ( $modes & ~$known_sql_modes_mask ) !== 0 ) {
+				throw $this->new_invalid_sql_mode_exception( $modes );
+			}
+
+			// Reject recognized but no longer supported SQL modes.
+			$unsupported_sql_modes = 0;
+			foreach ( self::SQL_MODES as $mode => $value ) {
+				if ( ( $modes & $value ) !== 0 && $this->is_sql_mode_removed( $mode ) ) {
+					$unsupported_sql_modes |= $value;
+				}
+			}
+
+			if ( 0 !== $unsupported_sql_modes ) {
+				throw $this->new_driver_exception(
+					sprintf(
+						'SQLSTATE[HY000]: General error: 3899 sql_mode=0x%08x is not supported.',
+						$unsupported_sql_modes
+					),
+					'HY000'
+				);
+			}
+
+			$sql_modes = $modes;
+		} elseif ( is_array( $modes ) ) {
+			// String SQL mode assignment (e.g., "SET sql_mode = 'ANSI_QUOTES,STRICT_TRANS_TABLES'").
+			$sql_modes = 0;
+			foreach ( $modes as $mode ) {
+				if ( '' === $mode ) {
+					continue;
+				}
+
+				$normalized_mode = strtoupper( $mode );
+				$mode_value      = self::SQL_MODES[ $normalized_mode ] ?? 0;
+				if (
+					0 === ( $mode_value & $known_sql_modes_mask )
+					|| ( 'NOT_USED' === $normalized_mode && $this->mysql_version < 80000 )
+					|| $this->is_sql_mode_removed( $normalized_mode )
+				) {
+					throw $this->new_invalid_sql_mode_exception( $mode );
+				}
+
+				$sql_modes |= $mode_value;
+			}
+		} else {
+			throw $this->new_driver_exception(
+				"SQLSTATE[42000]: Syntax error or access violation: 1232 Incorrect argument type to variable 'sql_mode'",
+				'42000'
+			);
 		}
 
 		$this->active_sql_modes = $sql_modes;
+	}
+
+	/**
+	 * Check whether an SQL mode was removed from the emulated MySQL version.
+	 *
+	 * @param  string $mode Normalized SQL mode name.
+	 * @return bool         Whether the SQL mode was removed.
+	 */
+	private function is_sql_mode_removed( string $mode ): bool {
+		/*
+		 * MySQL still recognizes the legacy bits for modes removed in 8.0.11
+		 * so it can report them as unsupported, rather than unknown.
+		 */
+		return $this->mysql_version >= 80011
+			&& in_array(
+				$mode,
+				array(
+					'POSTGRESQL',
+					'ORACLE',
+					'MSSQL',
+					'DB2',
+					'MAXDB',
+					'NO_KEY_OPTIONS',
+					'NO_TABLE_OPTIONS',
+					'NO_FIELD_OPTIONS',
+					'MYSQL323',
+					'MYSQL40',
+					'NO_AUTO_CREATE_USER',
+				),
+				true
+			);
 	}
 
 	/**
@@ -7291,6 +7375,22 @@ class WP_MySQL_On_SQLite extends PDO {
 		return new WP_SQLite_Driver_Exception(
 			$this,
 			sprintf( 'MySQL query not supported. Cause: %s', $cause )
+		);
+	}
+
+	/**
+	 * Create a MySQL-compatible exception for an invalid SQL mode value.
+	 *
+	 * @param  mixed $value The invalid SQL mode value.
+	 * @return WP_SQLite_Driver_Exception
+	 */
+	private function new_invalid_sql_mode_exception( $value ): WP_SQLite_Driver_Exception {
+		return $this->new_driver_exception(
+			sprintf(
+				"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
+				null === $value ? 'NULL' : (string) $value
+			),
+			'42000'
 		);
 	}
 

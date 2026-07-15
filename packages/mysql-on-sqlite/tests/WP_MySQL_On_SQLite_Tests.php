@@ -2914,6 +2914,91 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertFalse( $this->engine->is_sql_mode_active( 'NOT_USED' ) );
 	}
 
+	public function testSqlModeValidationUsesEmulatedMySQLVersion() {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->sqlite,
+				'mysql_version' => 50744,
+			)
+		);
+
+		$this->assertQuery( "SET sql_mode = 'POSTGRESQL,NO_AUTO_CREATE_USER'" );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'POSTGRESQL,NO_AUTO_CREATE_USER', $this->last_result[0]->mode );
+
+		foreach (
+			array(
+				array( "SET sql_mode = 'TIME_TRUNCATE_FRACTIONAL'", 'TIME_TRUNCATE_FRACTIONAL' ),
+				array( 'SET sql_mode = 4294967296', '4294967296' ),
+			) as $invalid_sql_mode
+		) {
+			$exception = null;
+			try {
+				$this->query( $invalid_sql_mode[0] );
+			} catch ( WP_SQLite_Driver_Exception $e ) {
+				$exception = $e;
+			}
+
+			$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+			$this->assertSame(
+				sprintf(
+					"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
+					$invalid_sql_mode[1]
+				),
+				$exception->getMessage()
+			);
+			$this->assertSame( '42000', $exception->getCode() );
+		}
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'POSTGRESQL,NO_AUTO_CREATE_USER', $this->last_result[0]->mode );
+	}
+
+	public function testMySQL57RejectsNotUsedSqlModeName() {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->sqlite,
+				'mysql_version' => 50744,
+			)
+		);
+
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionCode( '42000' );
+		$this->expectExceptionMessage(
+			"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of 'NOT_USED'"
+		);
+
+		$this->query( "SET sql_mode = 'NOT_USED'" );
+	}
+
+	public function testRemovedSqlModeBitmapThrowsMySQLError() {
+		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+
+		$exception = null;
+		try {
+			// ANSI_QUOTES is supported, while POSTGRESQL and ORACLE are not.
+			$this->query( 'SET sql_mode = 772' );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame(
+			'SQLSTATE[HY000]: General error: 3899 sql_mode=0x00000300 is not supported.',
+			$exception->getMessage()
+		);
+		$this->assertSame( 'HY000', $exception->getCode() );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'ANSI_QUOTES', $this->last_result[0]->mode );
+	}
+
 	public function testSqlModeDefaultRestoresDefaultBitmap() {
 		$this->assertQuery( "SET sql_mode = ''" );
 		$this->assertQuery( 'SET sql_mode = DEFAULT' );
@@ -2945,6 +3030,80 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery( 'SET sql_mode = DEFAULT' );
 		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
 		$this->assertSame( $expected_modes, $this->last_result[0]->mode );
+	}
+
+	/**
+	 * @dataProvider invalidSqlModeValues
+	 */
+	public function testInvalidSqlModeValueThrowsMySQLError( string $query, string $invalid_value ) {
+		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
+
+		$exception = null;
+		try {
+			$this->query( $query );
+		} catch ( WP_SQLite_Driver_Exception $e ) {
+			$exception = $e;
+		}
+
+		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertSame(
+			sprintf(
+				"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
+				$invalid_value
+			),
+			$exception->getMessage()
+		);
+		$this->assertSame( '42000', $exception->getCode() );
+
+		// A rejected assignment must not change the active modes.
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'ANSI_QUOTES', $this->last_result[0]->mode );
+	}
+
+	public function invalidSqlModeValues(): array {
+		return array(
+			'unknown mode'              => array( "SET sql_mode = 'FOOBAR'", 'FOOBAR' ),
+			'ON keyword'                => array( 'SET sql_mode = ON', 'ON' ),
+			'quoted OFF'                => array( "SET sql_mode = 'OFF'", 'OFF' ),
+			'quoted DEFAULT'            => array( "SET sql_mode = 'DEFAULT'", 'DEFAULT' ),
+			'mode removed in MySQL 8.0' => array( "SET sql_mode = 'POSTGRESQL'", 'POSTGRESQL' ),
+			'mixed valid and invalid'   => array( "SET sql_mode = 'ERROR_FOR_DIVISION_BY_ZERO,FOOBAR,IGNORE_SPACE'", 'FOOBAR' ),
+			'invalid among empty modes' => array( "SET sql_mode = ',,,,FOOBAR,,,,,'", 'FOOBAR' ),
+			'leading mode whitespace'   => array( "SET sql_mode = 'ANSI_QUOTES, NO_ENGINE_SUBSTITUTION'", ' NO_ENGINE_SUBSTITUTION' ),
+			'trailing mode whitespace'  => array( "SET sql_mode = 'ANSI_QUOTES ,NO_ENGINE_SUBSTITUTION'", 'ANSI_QUOTES ' ),
+			'whitespace-only mode'      => array( "SET sql_mode = 'ANSI_QUOTES, ,NO_ENGINE_SUBSTITUTION'", ' ' ),
+			'null'                      => array( 'SET sql_mode = NULL', 'NULL' ),
+			'negative bitmap'           => array( 'SET sql_mode = -1', '-1' ),
+			'unsupported bitmap bit'    => array( 'SET sql_mode = 8589934592', '8589934592' ),
+		);
+	}
+
+	public function testSqlModeAllowsEmptyListComponents() {
+		$this->assertQuery( "SET sql_mode = ',,,,ONLY_FULL_GROUP_BY,,,'" );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'ONLY_FULL_GROUP_BY', $this->last_result[0]->mode );
+	}
+
+	public function testSqlModeIgnoresTrailingSpaces() {
+		$this->assertQuery( "SET sql_mode = 'ONLY_FULL_GROUP_BY,   '" );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'ONLY_FULL_GROUP_BY', $this->last_result[0]->mode );
+
+		$this->assertQuery( "SET sql_mode = '   '" );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( '', $this->last_result[0]->mode );
+	}
+
+	public function testSqlModeRejectsIncorrectValueType() {
+		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectExceptionCode( '42000' );
+		$this->expectExceptionMessage(
+			"SQLSTATE[42000]: Syntax error or access violation: 1232 Incorrect argument type to variable 'sql_mode'"
+		);
+
+		$this->query( 'SET sql_mode = 0.5' );
 	}
 
 	public function testAutoIncrementZeroAdvancesSequenceByDefault() {
