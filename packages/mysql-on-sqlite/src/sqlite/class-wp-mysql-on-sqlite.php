@@ -58,6 +58,69 @@ class WP_MySQL_On_SQLite extends PDO {
 	const DRIVER_VERSION_VARIABLE_NAME = self::RESERVED_PREFIX . 'driver_version';
 
 	/**
+	 * MySQL SQL modes mapped to their bitmask values.
+	 *
+	 * The modes are ordered by their bit position, matching MySQL's canonical
+	 * serialization order.
+	 *
+	 * See:
+	 *   https://github.com/mysql/mysql-server/blob/8.4/sql/system_variables.h
+	 *   https://github.com/mysql/mysql-server/blob/5.7/sql/sys_vars.cc
+	 */
+	private const SQL_MODES = array(
+		'REAL_AS_FLOAT'              => 1 << 0,
+		'PIPES_AS_CONCAT'            => 1 << 1,
+		'ANSI_QUOTES'                => 1 << 2,
+		'IGNORE_SPACE'               => 1 << 3,
+		'NOT_USED'                   => 1 << 4,
+		'ONLY_FULL_GROUP_BY'         => 1 << 5,
+		'NO_UNSIGNED_SUBTRACTION'    => 1 << 6,
+		'NO_DIR_IN_CREATE'           => 1 << 7,
+		'POSTGRESQL'                 => 1 << 8,
+		'ORACLE'                     => 1 << 9,
+		'MSSQL'                      => 1 << 10,
+		'DB2'                        => 1 << 11,
+		'MAXDB'                      => 1 << 12,
+		'NO_KEY_OPTIONS'             => 1 << 13,
+		'NO_TABLE_OPTIONS'           => 1 << 14,
+		'NO_FIELD_OPTIONS'           => 1 << 15,
+		'MYSQL323'                   => 1 << 16,
+		'MYSQL40'                    => 1 << 17,
+		'ANSI'                       => 1 << 18,
+		'NO_AUTO_VALUE_ON_ZERO'      => 1 << 19,
+		'NO_BACKSLASH_ESCAPES'       => 1 << 20,
+		'STRICT_TRANS_TABLES'        => 1 << 21,
+		'STRICT_ALL_TABLES'          => 1 << 22,
+		'NO_ZERO_IN_DATE'            => 1 << 23,
+		'NO_ZERO_DATE'               => 1 << 24,
+		'ALLOW_INVALID_DATES'        => 1 << 25,
+		'ERROR_FOR_DIVISION_BY_ZERO' => 1 << 26,
+		'TRADITIONAL'                => 1 << 27,
+		'NO_AUTO_CREATE_USER'        => 1 << 28,
+		'HIGH_NOT_PRECEDENCE'        => 1 << 29,
+		'NO_ENGINE_SUBSTITUTION'     => 1 << 30,
+		'PAD_CHAR_TO_FULL_LENGTH'    => 1 << 31,
+
+		// Modes below require 64-bit PHP.
+		// TODO: Consider supporting these values on 32-bit PHP as well.
+		'TIME_TRUNCATE_FRACTIONAL'   => 1 << 32,
+	);
+
+	/**
+	 * The default SQL modes shared by MySQL 5.7 and 8.0.
+	 *
+	 * MySQL 5.7 additionally enables NO_AUTO_CREATE_USER.
+	 */
+	private const DEFAULT_SQL_MODES = array(
+		'ERROR_FOR_DIVISION_BY_ZERO',
+		'NO_ENGINE_SUBSTITUTION',
+		'NO_ZERO_DATE',
+		'NO_ZERO_IN_DATE',
+		'ONLY_FULL_GROUP_BY',
+		'STRICT_TRANS_TABLES',
+	);
+
+	/**
 	 * A map of MySQL tokens to SQLite data types.
 	 *
 	 * This is used to translate a MySQL data type to an SQLite data type.
@@ -591,16 +654,9 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * TODO: This may be represented using a temporary table in the future,
 	 *       together with GLOBAL SQL mode (a non-temporary table).
 	 *
-	 * @var string[]
+	 * @var int
 	 */
-	private $active_sql_modes = array(
-		'ERROR_FOR_DIVISION_BY_ZERO',
-		'NO_ENGINE_SUBSTITUTION',
-		'NO_ZERO_DATE',
-		'NO_ZERO_IN_DATE',
-		'ONLY_FULL_GROUP_BY',
-		'STRICT_TRANS_TABLES',
-	);
+	private $active_sql_modes;
 
 	/**
 	 * A name-to-value map of MySQL system variables for the current session.
@@ -706,6 +762,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		$this->mysql_version = $options['mysql_version'] ?? 80038;
 		$this->main_db_name  = $db_name;
 		$this->db_name       = $db_name;
+		$this->set_sql_modes( $this->get_default_sql_modes() );
 
 		// Check the database name.
 		if ( '' === $this->db_name ) {
@@ -1152,7 +1209,12 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @return bool         True if the SQL mode is active, false otherwise.
 	 */
 	public function is_sql_mode_active( string $mode ): bool {
-		return in_array( strtoupper( $mode ), $this->active_sql_modes, true );
+		$mode = strtoupper( $mode );
+		if ( 'NOT_USED' === $mode && $this->mysql_version < 80000 ) {
+			return false;
+		}
+		return isset( self::SQL_MODES[ $mode ] )
+			&& ( $this->active_sql_modes & self::SQL_MODES[ $mode ] ) !== 0;
 	}
 
 	/**
@@ -1196,7 +1258,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		$lexer  = new WP_MySQL_Lexer(
 			$query,
 			80038,
-			$this->active_sql_modes
+			$this->get_active_sql_mode_names()
 		);
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
 			? $lexer->native_token_stream()
@@ -3524,8 +3586,14 @@ class WP_MySQL_On_SQLite extends PDO {
 
 		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 			if ( 'sql_mode' === $name ) {
-				$modes                  = explode( ',', strtoupper( $value ) );
-				$this->active_sql_modes = $modes;
+				if ( null !== $value_node->get_first_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
+					$sql_modes = $this->get_default_sql_modes();
+				} elseif ( is_string( $value ) ) {
+					$sql_modes = explode( ',', $value );
+				} else {
+					$sql_modes = $value;
+				}
+				$this->set_sql_modes( $sql_modes );
 			} else {
 				$this->session_system_variables[ $name ] = $value;
 			}
@@ -3876,7 +3944,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				$name = strtolower( $original_name );
 				$type = $type_token ? $type_token->id : WP_MySQL_Lexer::SESSION_SYMBOL;
 				if ( 'sql_mode' === $name ) {
-					$value = implode( ',', $this->active_sql_modes );
+					$value = implode( ',', $this->get_active_sql_mode_names() );
 				} elseif ( 'version' === $name ) {
 					$version = (string) $this->mysql_version;
 					$value   = sprintf(
@@ -5680,6 +5748,66 @@ class WP_MySQL_On_SQLite extends PDO {
 			$fragment .= $value;
 		}
 		return $fragment;
+	}
+
+	/**
+	 * Get the default SQL modes for the emulated MySQL version.
+	 *
+	 * @return string[] Default SQL mode names.
+	 */
+	private function get_default_sql_modes(): array {
+		$sql_modes = self::DEFAULT_SQL_MODES;
+		if ( $this->mysql_version < 80000 ) {
+			$sql_modes[] = 'NO_AUTO_CREATE_USER';
+		}
+
+		return $sql_modes;
+	}
+
+	/**
+	 * Set the active SQL modes from a name list or numeric bitmask.
+	 *
+	 * @param string[]|int $modes SQL mode names or a numeric bitmask.
+	 */
+	private function set_sql_modes( $modes ): void {
+		if ( is_int( $modes ) ) {
+			$this->active_sql_modes = $modes;
+			return;
+		}
+
+		$sql_modes = 0;
+		foreach ( (array) $modes as $mode ) {
+			$mode       = strtoupper( trim( $mode ) );
+			$sql_modes |= self::SQL_MODES[ $mode ] ?? 0;
+		}
+
+		$this->active_sql_modes = $sql_modes;
+	}
+
+	/**
+	 * Get the active SQL mode names in canonical bitmask order.
+	 *
+	 * @return string[] Active SQL mode names.
+	 */
+	private function get_active_sql_mode_names(): array {
+		$active_modes = array();
+		foreach ( self::SQL_MODES as $mode => $value ) {
+			if ( ( $this->active_sql_modes & $value ) !== 0 ) {
+				if ( 'NOT_USED' === $mode && $this->mysql_version < 80000 ) {
+					/*
+					 * MySQL 5.7 represents reserved bit 4 with a comma in its mode
+					 * name table. Two empty components preserve that serialization
+					 * when the final list is joined with commas.
+					 */
+					$active_modes[] = '';
+					$active_modes[] = '';
+				} else {
+					$active_modes[] = $mode;
+				}
+			}
+		}
+
+		return $active_modes;
 	}
 
 	/**
