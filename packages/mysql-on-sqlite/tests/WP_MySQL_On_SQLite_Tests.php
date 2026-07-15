@@ -2860,6 +2860,93 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertStringNotContainsString( 'NO_AUTO_VALUE_ON_ZERO', strtoupper( $results[0]->mode ) );
 	}
 
+	public function testSqlModesUseCanonicalBitmapOrder() {
+		$this->assertQuery(
+			"SET sql_mode = 'no_engine_substitution,only_full_group_by,strict_all_tables,only_full_group_by'"
+		);
+
+		$this->assertTrue( $this->engine->is_sql_mode_active( 'ONLY_FULL_GROUP_BY' ) );
+		$this->assertTrue( $this->engine->is_sql_mode_active( 'strict_all_tables' ) );
+		$this->assertTrue( $this->engine->is_sql_mode_active( 'NO_ENGINE_SUBSTITUTION' ) );
+		$this->assertFalse( $this->engine->is_sql_mode_active( 'STRICT_TRANS_TABLES' ) );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame(
+			'ONLY_FULL_GROUP_BY,STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION',
+			$this->last_result[0]->mode
+		);
+	}
+
+	public function testSqlModesAcceptNumericBitmap() {
+		$this->assertQuery( 'SET sql_mode = 4294967299' );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame(
+			'REAL_AS_FLOAT,PIPES_AS_CONCAT,TIME_TRUNCATE_FRACTIONAL',
+			$this->last_result[0]->mode
+		);
+	}
+
+	public function testSqlModesPreserveNotUsedBit() {
+		$this->assertQuery( "SET sql_mode = 'NOT_USED'" );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'NOT_USED', $this->last_result[0]->mode );
+
+		$this->assertQuery( 'SET sql_mode = 16' );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( 'NOT_USED', $this->last_result[0]->mode );
+	}
+
+	public function testMySQL57PreservesUnnamedSqlModeBit() {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->sqlite,
+				'mysql_version' => 50744,
+			)
+		);
+
+		$this->assertQuery( 'SET sql_mode = 16' );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( ',', $this->last_result[0]->mode );
+		$this->assertFalse( $this->engine->is_sql_mode_active( 'NOT_USED' ) );
+	}
+
+	public function testSqlModeDefaultRestoresDefaultBitmap() {
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'SET sql_mode = DEFAULT' );
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame(
+			'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION',
+			$this->last_result[0]->mode
+		);
+	}
+
+	public function testSqlModeDefaultUsesEmulatedMySQLVersion() {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->sqlite,
+				'mysql_version' => 50744,
+			)
+		);
+
+		$expected_modes = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( $expected_modes, $this->last_result[0]->mode );
+
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'SET sql_mode = DEFAULT' );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		$this->assertSame( $expected_modes, $this->last_result[0]->mode );
+	}
+
 	public function testAutoIncrementZeroAdvancesSequenceByDefault() {
 		// Default SQL modes do not include NO_AUTO_VALUE_ON_ZERO.
 		// Values like 0 and '0' should behave like NULL and advance the sequence.
