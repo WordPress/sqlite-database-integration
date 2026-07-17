@@ -943,13 +943,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		if ( null === $str ) {
 			return null;
 		}
-		if ( preg_match( '/[^\x00-\x7F]/', $str ) ) {
-			if ( function_exists( 'mb_str_split' ) && mb_check_encoding( $str, 'UTF-8' ) ) {
-				return implode( '', array_reverse( mb_str_split( $str ) ) );
-			}
-			if ( preg_match_all( '/./us', $str, $matches ) ) {
-				return implode( '', array_reverse( $matches[0] ) );
-			}
+		if (
+			preg_match( '/[^\x00-\x7F]/', $str )
+			&& preg_match_all( '/./us', $str, $matches )
+		) {
+			return implode( '', array_reverse( $matches[0] ) );
 		}
 		return strrev( $str );
 	}
