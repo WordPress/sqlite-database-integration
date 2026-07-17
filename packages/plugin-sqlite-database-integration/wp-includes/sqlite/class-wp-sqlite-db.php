@@ -729,33 +729,20 @@ class WP_SQLite_DB extends wpdb {
 	/**
 	 * Determines whether the database supports a given feature.
 	 *
-	 * This overrides wpdb::has_cap() while closely mirroring its implementation.
-	 * The override is needed because the parent's 'utf8mb4' capability check calls
-	 * mysqli_get_client_info(), which is environment-dependent and not applicable
-	 * for SQLite.
+	 * The utf8mb4 check is handled here because older WordPress versions inspect
+	 * the MySQL client library. All other capabilities use the parent logic.
 	 *
 	 * @see wpdb::has_cap()
 	 *
-	 * @param string $db_cap The feature to check for. Accepts 'collation',
-	 *                       'group_concat', 'subqueries', 'set_charset',
-	 *                       'utf8mb4', or 'utf8mb4_520'.
-	 * @return bool Whether the database feature is supported, false otherwise.
+	 * @param string $db_cap The feature to check for.
+	 * @return bool True when the database feature is supported, false otherwise.
 	 */
 	public function has_cap( $db_cap ) {
-		$db_cap = strtolower( $db_cap );
-
-		switch ( $db_cap ) {
-			case 'collation':
-			case 'group_concat':
-			case 'subqueries':
-			case 'set_charset':
-			case 'utf8mb4':
-				return true;
-			case 'utf8mb4_520':
-				return version_compare( $GLOBALS['wp_version'], '4.6', '>=' );
+		if ( 'utf8mb4' === strtolower( $db_cap ) ) {
+			return true;
 		}
 
-		return false;
+		return parent::has_cap( $db_cap );
 	}
 
 	/**
@@ -774,9 +761,13 @@ class WP_SQLite_DB extends wpdb {
 	/**
 	 * Returns the version of the SQLite engine.
 	 *
-	 * @return string SQLite engine version as a string.
+	 * @return string SQLite engine version, or an empty string while disconnected.
 	 */
 	public function db_server_info() {
+		if ( ! $this->dbh ) {
+			return '';
+		}
+
 		return $this->dbh->get_sqlite_version();
 	}
 
