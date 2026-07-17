@@ -933,8 +933,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	/**
 	 * Method to emulate MySQL REVERSE() function.
 	 *
-	 * Takes a string and returns the reverse of it.
-	 * Compatible with MySQL behaviour for utf8mb4 strings.
+	 * Reverse UTF-8 text by code point, matching MySQL behavior.
 	 *
 	 * @param string|null $str The string to reverse.
 	 *
@@ -945,8 +944,12 @@ class WP_SQLite_PDO_User_Defined_Functions {
 			return null;
 		}
 		if ( preg_match( '/[^\x00-\x7F]/', $str ) ) {
-			preg_match_all( '/./u', $str, $matches );
-			return implode( '', array_reverse( $matches[0] ) );
+			if ( function_exists( 'mb_str_split' ) && mb_check_encoding( $str, 'UTF-8' ) ) {
+				return implode( '', array_reverse( mb_str_split( $str ) ) );
+			}
+			if ( preg_match_all( '/./us', $str, $matches ) ) {
+				return implode( '', array_reverse( $matches[0] ) );
+			}
 		}
 		return strrev( $str );
 	}
