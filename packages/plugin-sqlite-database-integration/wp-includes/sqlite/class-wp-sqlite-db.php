@@ -248,6 +248,10 @@ class WP_SQLite_DB extends wpdb {
 	 * }
 	 */
 	public function determine_charset( $charset, $collate ) {
+		if ( ! $this->dbh ) {
+			return compact( 'charset', 'collate' );
+		}
+
 		if ( 'utf8' === $charset ) {
 			$charset = 'utf8mb4';
 		}
@@ -407,7 +411,9 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		$this->last_error = '';
-		$this->init_charset();
+		if ( ! isset( $this->charset ) ) {
+			$this->init_charset();
+		}
 
 		$this->is_pdo_external = isset( $GLOBALS['@pdo'] );
 		$pdo                   = $this->is_pdo_external ? $GLOBALS['@pdo'] : null;
@@ -468,8 +474,11 @@ class WP_SQLite_DB extends wpdb {
 		if ( $this->last_error ) {
 			return false;
 		}
-		$this->ready         = true;
+
 		$this->has_connected = true;
+		$this->set_charset( $this->dbh );
+
+		$this->ready = true;
 		$this->set_sql_mode();
 		return true;
 	}
