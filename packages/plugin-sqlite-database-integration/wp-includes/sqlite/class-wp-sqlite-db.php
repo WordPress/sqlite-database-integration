@@ -91,6 +91,8 @@ class WP_SQLite_DB extends wpdb {
 	 *                               no character set. WP_Error object on failure.
 	 */
 	public function get_col_charset( $table, $column ) {
+		$original_is_mysql = $this->is_mysql ?? null;
+
 		/*
 		 * The parent method returns early when `$this->is_mysql` is falsy.
 		 * Since SQLite doesn't set this flag, we enable it temporarily so
@@ -102,7 +104,7 @@ class WP_SQLite_DB extends wpdb {
 			$this->is_mysql = true;
 			return parent::get_col_charset( $table, $column );
 		} finally {
-			$this->is_mysql = null;
+			$this->is_mysql = $original_is_mysql;
 		}
 	}
 
@@ -120,12 +122,14 @@ class WP_SQLite_DB extends wpdb {
 	 *                              no length. WP_Error object on failure.
 	 */
 	public function get_col_length( $table, $column ) {
+		$original_is_mysql = $this->is_mysql ?? null;
+
 		// See get_col_charset() for an explanation of the is_mysql flag.
 		try {
 			$this->is_mysql = true;
 			return parent::get_col_length( $table, $column );
 		} finally {
-			$this->is_mysql = null;
+			$this->is_mysql = $original_is_mysql;
 		}
 	}
 
