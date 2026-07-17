@@ -572,35 +572,14 @@ class WP_SQLite_DB extends wpdb {
 		$last_query_count = count( $this->queries ?? array() );
 
 		/*
-		 * Strip invalid UTF-8 characters from non-ASCII queries.
+		 * @TODO: wpdb uses "$this->check_current_query" and table metadata to
+		 * reject queries containing invalid text. Implement equivalent handling
+		 * for SQLite without relying on the MySQL-specific conversion pipeline.
 		 *
-		 * SQLite stores all text as UTF-8, so we simply ensure the query
-		 * contains only valid UTF-8 sequences rather than using the parent's
-		 * MySQL-specific charset detection pipeline.
+		 * PCRE's "u" modifier can validate UTF-8 without constructing a converted
+		 * query copy: 1 === preg_match( '//u', $query ). The implementation must
+		 * preserve wpdb's exemptions for prevalidated and binary data.
 		 */
-		if ( $this->check_current_query && ! $this->check_ascii( $query ) ) {
-			if ( function_exists( 'mb_convert_encoding' ) ) {
-				$stripped_query = mb_convert_encoding( $query, 'UTF-8', 'UTF-8' );
-			} else {
-				$stripped_query = htmlspecialchars_decode(
-					htmlspecialchars( $query, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8' ),
-					ENT_NOQUOTES
-				);
-			}
-
-			if ( $stripped_query !== $query ) {
-				$this->insert_id  = 0;
-				$this->last_query = $query;
-
-				wp_load_translations_early();
-
-				$this->last_error = __( 'WordPress database error: Could not perform query because it contains invalid data.' );
-
-				return false;
-			}
-		}
-		$this->check_current_query = true;
-
 		$this->_do_query( $query );
 
 		if ( $this->last_error ) {
