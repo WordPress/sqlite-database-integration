@@ -67,7 +67,6 @@ const expectedFailures = [
 	'Tests_DB_Charset::test_strip_invalid_text_for_column_bails_if_ascii_input_too_long',
 	'Tests_DB_dbDelta::test_spatial_indices',
 	'Tests_DB::test_charset_switched_to_utf8mb4',
-	'Tests_DB::test_close',
 	'Tests_DB::test_delete_value_too_long_for_field with data set &quot;too long&quot;',
 	'Tests_DB::test_has_cap',
 	'Tests_DB::test_insert_value_too_long_for_field with data set &quot;too long&quot;',

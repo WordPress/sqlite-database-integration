@@ -21,6 +21,13 @@ class WP_SQLite_DB extends wpdb {
 	protected $dbh;
 
 	/**
+	 * Whether the PDO instance was provided externally through $GLOBALS['@pdo'].
+	 *
+	 * @var bool
+	 */
+	private $is_pdo_external;
+
+	/**
 	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
 	 *
 	 * This property is mirroring "wpdb::$allow_unsafe_unquoted_parameters",
@@ -181,6 +188,41 @@ class WP_SQLite_DB extends wpdb {
 			return false;
 		}
 
+		$connection = $this->dbh->get_connection();
+		$pdo        = $connection->get_pdo();
+
+		try {
+			if ( $this->dbh->inTransaction() ) {
+				$this->dbh->rollBack();
+			} elseif ( $pdo->inTransaction() ) {
+				$pdo->rollBack();
+			} else {
+				/*
+				 * On PHP < 8.4, PDO cannot detect transactions started via SQL.
+				 * A savepoint ensures ROLLBACK succeeds with or without one.
+				 */
+				$pdo->exec( 'SAVEPOINT wp_sqlite_db_close' );
+				$pdo->exec( 'ROLLBACK' );
+			}
+		} catch ( Throwable $e ) {
+			return false;
+		}
+
+		/*
+		 * @TODO: Replace and deprecate the $GLOBALS['@pdo'] injection mechanism.
+		 * PDO has no close method and is released only when all references are unset.
+		 * Until then, retain external PDOs so reconnects reuse the same database.
+		 */
+		if (
+			! $this->is_pdo_external
+			&& isset( $GLOBALS['@pdo'] )
+			&& $GLOBALS['@pdo'] === $pdo
+		) {
+			unset( $GLOBALS['@pdo'] );
+		}
+
+		$connection->set_query_logger( null );
+		$this->result        = null;
 		$this->dbh           = null;
 		$this->ready         = false;
 		$this->has_connected = false;
@@ -357,18 +399,18 @@ class WP_SQLite_DB extends wpdb {
 	 * @see wpdb::db_connect()
 	 *
 	 * @param bool $allow_bail Not used.
-	 * @return void
+	 * @return bool True on a successful connection, false on failure.
 	 */
 	public function db_connect( $allow_bail = true ) {
 		if ( $this->dbh ) {
-			return;
+			return $this->ready;
 		}
+
+		$this->last_error = '';
 		$this->init_charset();
 
-		$pdo = null;
-		if ( isset( $GLOBALS['@pdo'] ) ) {
-			$pdo = $GLOBALS['@pdo'];
-		}
+		$this->is_pdo_external = isset( $GLOBALS['@pdo'] );
+		$pdo                   = $this->is_pdo_external ? $GLOBALS['@pdo'] : null;
 
 		// Migrate the database file from a legacy path, if it exists.
 		if ( ! defined( 'DB_FILE' ) && ! file_exists( FQDB ) ) {
@@ -406,7 +448,7 @@ class WP_SQLite_DB extends wpdb {
 			if ( null !== $pdo ) {
 				$options['pdo'] = $pdo;
 			}
-			$this->dbh = new WP_MySQL_On_SQLite(
+			$dbh = new WP_MySQL_On_SQLite(
 				sprintf(
 					'mysql-on-sqlite:path=%s;dbname=%s',
 					str_replace( ';', ';;', FQDB ),
@@ -416,27 +458,35 @@ class WP_SQLite_DB extends wpdb {
 				null,
 				$options
 			);
-			$this->dbh->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
-			$GLOBALS['@pdo'] = $this->dbh->get_connection()->get_pdo();
+			$dbh->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+			$pdo             = $dbh->get_connection()->get_pdo();
+			$this->dbh       = $dbh;
+			$GLOBALS['@pdo'] = $pdo;
 		} catch ( Throwable $e ) {
 			$this->last_error = $this->format_error_message( $e );
 		}
 		if ( $this->last_error ) {
 			return false;
 		}
-		$this->ready = true;
+		$this->ready         = true;
+		$this->has_connected = true;
 		$this->set_sql_mode();
+		return true;
 	}
 
 	/**
-	 * Method to dummy out wpdb::check_connection()
+	 * Checks that the database connection is available.
 	 *
 	 * @param bool $allow_bail Not used.
 	 *
-	 * @return bool
+	 * @return bool True when the connection is available, false otherwise.
 	 */
 	public function check_connection( $allow_bail = true ) {
-		return true;
+		if ( $this->dbh ) {
+			return true;
+		}
+
+		return $this->db_connect( $allow_bail );
 	}
 
 	/**
