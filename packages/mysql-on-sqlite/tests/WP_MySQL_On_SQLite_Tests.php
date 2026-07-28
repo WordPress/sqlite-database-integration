@@ -430,6 +430,82 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( '0', $this->last_result[0]->r );
 	}
 
+	public function testRegexpLegacyOperatorNullPropagation() {
+		$this->assertQuery( "SELECT NULL REGEXP 'a' AS r" );
+		$this->assertNull( $this->last_result[0]->r );
+		$this->assertQuery( "SELECT 'a' RLIKE NULL AS r" );
+		$this->assertNull( $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorInvalidPattern() {
+		$this->assertQueryError(
+			"SELECT 'abc' REGEXP '(abc'",
+			'Invalid regular expression: (abc.'
+		);
+		$this->assertQueryError(
+			"SELECT 'abc' RLIKE ''",
+			'Illegal argument to a regular expression.'
+		);
+	}
+
+	public function testRegexpLegacyOperatorEscapedDelimiter() {
+		$this->assertQuery( "SELECT '/' REGEXP '\\\\/' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT '/' REGEXP '\\\\Q/\\\\E' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorNumericOperands() {
+		$this->assertQuery( "SELECT 123 REGEXP '^12' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT 'x123' NOT REGEXP 123 AS r" );
+		$this->assertSame( '0', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorUtf8Handling() {
+		$this->assertQuery( "SELECT 'é' REGEXP '^.\$' AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+		$this->assertQuery( "SELECT CAST(X'FF' AS CHAR) REGEXP BINARY CAST(X'FF' AS CHAR) AS r" );
+		$this->assertSame( '1', $this->last_result[0]->r );
+	}
+
+	public function testRegexpLegacyOperatorMatchesBinaryDataByBytes() {
+		// Non-UTF-8 data is matched like MySQL binary strings: byte by byte and case-sensitively.
+		$this->assertQuery( 'CREATE TABLE blobs (id INT PRIMARY KEY, b BLOB)' );
+		$this->assertQuery( "INSERT INTO blobs VALUES (1, X'61FF62'), (2, NULL)" );
+		$this->assertQuery(
+			"SELECT
+				b REGEXP 'a.b' AS any_byte,
+				b REGEXP '^a.b\$' AS anchored,
+				b REGEXP 'A' AS other_case,
+				b NOT REGEXP 'zzz' AS negated,
+				b REGEXP X'FF62' AS binary_pattern,
+				b REGEXP X'FE' AS other_byte
+			FROM blobs ORDER BY id"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'any_byte'       => '1',
+					'anchored'       => '1',
+					'other_case'     => '0',
+					'negated'        => '1',
+					'binary_pattern' => '1',
+					'other_byte'     => '0',
+				),
+				(object) array(
+					'any_byte'       => null,
+					'anchored'       => null,
+					'other_case'     => null,
+					'negated'        => null,
+					'binary_pattern' => null,
+					'other_byte'     => null,
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	public function testRegexpLikeEscapedDelimiter() {
 		$this->assertQuery( "SELECT REGEXP_LIKE('/', '\\\\/') AS r" );
 		$this->assertSame( '1', $this->last_result[0]->r );
