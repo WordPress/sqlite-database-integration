@@ -15,7 +15,7 @@ function sqlite_add_admin_menu() {
 	add_options_page(
 		__( 'SQLite integration', 'sqlite-database-integration' ),
 		__( 'SQLite integration', 'sqlite-database-integration' ),
-		'manage_options',
+		sqlite_plugin_get_manage_capability(),
 		'sqlite-integration',
 		'sqlite_integration_admin_screen'
 	);
@@ -26,6 +26,8 @@ add_action( 'admin_menu', 'sqlite_add_admin_menu' );
  * The admin page contents.
  */
 function sqlite_integration_admin_screen() {
+	sqlite_plugin_check_manage_capability();
+
 	$db_dropin_path = WP_CONTENT_DIR . '/db.php';
 
 	/*
@@ -154,6 +156,10 @@ function sqlite_integration_admin_screen() {
 function sqlite_plugin_adminbar_item( $admin_bar ) {
 	global $wpdb;
 
+	if ( is_multisite() && ! current_user_can( sqlite_plugin_get_manage_capability() ) ) {
+		return;
+	}
+
 	if ( defined( 'SQLITE_DB_DROPIN_VERSION' ) && defined( 'DB_ENGINE' ) && 'sqlite' === DB_ENGINE ) {
 		$title = '<span style="color:#46B450;">' . __( 'Database: SQLite', 'sqlite-database-integration' ) . '</span>';
 	} elseif ( stripos( $wpdb->db_server_info(), 'maria' ) !== false ) {
@@ -172,3 +178,32 @@ function sqlite_plugin_adminbar_item( $admin_bar ) {
 	$admin_bar->add_node( $args );
 }
 add_action( 'admin_bar_menu', 'sqlite_plugin_adminbar_item', 999 );
+
+/**
+ * Stop users who cannot manage the SQLite integration.
+ *
+ * @since n.e.x.t
+ */
+function sqlite_plugin_check_manage_capability() {
+	if ( ! current_user_can( sqlite_plugin_get_manage_capability() ) ) {
+		wp_die(
+			esc_html__( 'Sorry, you are not allowed to manage the SQLite integration.', 'sqlite-database-integration' ),
+			'',
+			403
+		);
+	}
+}
+
+/**
+ * Get the capability required to manage the SQLite integration.
+ *
+ * The database drop-in is shared by every site in a multisite network, so only
+ * users who can manage network options may change it.
+ *
+ * @since n.e.x.t
+ *
+ * @return string Required capability.
+ */
+function sqlite_plugin_get_manage_capability() {
+	return is_multisite() ? 'manage_network_options' : 'manage_options';
+}
