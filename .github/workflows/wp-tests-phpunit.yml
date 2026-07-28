@@ -33,6 +33,12 @@ jobs:
       - name: Run WordPress PHPUnit tests
         run: node .github/workflows/wp-tests-phpunit-run.js
 
+      - name: Run SQLite plugin single-site PHPUnit tests
+        run: composer run wp-test-plugin-php
+
+      - name: Run SQLite plugin multisite PHPUnit tests
+        run: composer run wp-test-plugin-php-multisite
+
       - name: Stop Docker containers
         if: always()
         run: composer run wp-test-clean

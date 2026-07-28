@@ -48,6 +48,10 @@ composer run test -- --filter testName  # Run specific unit test class/method
 # SQLite Database Integration plugin E2E tests
 composer run test-e2e                   # Run E2E tests (Playwright via WP env)
 
+# SQLite Database Integration plugin PHPUnit tests
+composer run wp-test-plugin-php          # Run single-site plugin tests
+composer run wp-test-plugin-php-multisite # Run multisite plugin tests
+
 # WordPress tests
 composer run wp-setup                   # Set up WordPress with SQLite for tests
 composer run wp-run                     # Run a WordPress repository command
