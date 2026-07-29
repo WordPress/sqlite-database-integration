@@ -1010,6 +1010,34 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * PDO API: Quote a string for use in a MySQL query.
+	 *
+	 * @param  string $string The string to quote.
+	 * @param  int    $type   The PDO parameter type. Ignored.
+	 * @return string         The quoted string.
+	 */
+	#[ReturnTypeWillChange]
+	// phpcs:ignore Universal.NamingConventions.NoReservedKeywordParameterNames.stringFound
+	public function quote( $string, $type = PDO::PARAM_STR ) {
+		$string = (string) $string;
+		if ( $this->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ) {
+			return "'" . str_replace( "'", "''", $string ) . "'";
+		}
+
+		$backslash    = chr( 92 );
+		$replacements = array(
+			chr( 0 )   => $backslash . '0',
+			chr( 10 )  => $backslash . 'n',
+			chr( 13 )  => $backslash . 'r',
+			$backslash => $backslash . $backslash,
+			"'"        => $backslash . "'",
+			'"'        => $backslash . '"',
+			chr( 26 )  => $backslash . 'Z',
+		);
+		return "'" . strtr( $string, $replacements ) . "'";
+	}
+
+	/**
 	 * PDO API: Begin a transaction.
 	 *
 	 * @return bool True on success, false on failure.

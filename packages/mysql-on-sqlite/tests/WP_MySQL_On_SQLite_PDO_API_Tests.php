@@ -299,6 +299,25 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertEquals( 0, $result );
 	}
 
+	public function test_quote_honors_no_backslash_escapes(): void {
+		$backslash = chr( 92 );
+		$value     = chr( 0 ) . "\n\r{$backslash}'\"" . chr( 26 ) . "\tƮềʂᴛ🙂";
+
+		$this->driver->query( "SET SESSION sql_mode = ''" );
+		$quoted = $this->driver->quote( $value );
+		$this->assertSame(
+			"'{$backslash}0{$backslash}n{$backslash}r"
+				. "{$backslash}{$backslash}{$backslash}'{$backslash}\"{$backslash}Z\tƮềʂᴛ🙂'",
+			$quoted
+		);
+		$this->assertSame( $value, $this->driver->query( "SELECT $quoted" )->fetchColumn() );
+
+		$this->driver->query( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
+		$quoted = $this->driver->quote( $value );
+		$this->assertSame( "'" . str_replace( "'", "''", $value ) . "'", $quoted );
+		$this->assertSame( $value, $this->driver->query( "SELECT $quoted" )->fetchColumn() );
+	}
+
 	public function test_begin_transaction(): void {
 		$result = $this->driver->beginTransaction();
 		$this->assertTrue( $result );
