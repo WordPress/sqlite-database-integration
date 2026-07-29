@@ -346,6 +346,55 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
+	public function testDefaultValueEscapingWithoutBackslashEscapes(): void {
+		$this->engine->get_connection()->query(
+			"
+			CREATE TABLE t (
+				single_quote text DEFAULT 'abc''xyz',
+				backslash text DEFAULT 'abc\\xyz',
+				newline text DEFAULT 'abc\nxyz',
+				carriage_return text DEFAULT 'abc\rxyz',
+				blob_value blob DEFAULT x'275C'
+			)
+		"
+		);
+		$this->assertQuery( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
+
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery(
+			'SELECT column_name, column_default
+			 FROM information_schema.columns
+			 WHERE table_name = "t"
+			 ORDER BY ordinal_position'
+		);
+
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME'    => 'single_quote',
+					'COLUMN_DEFAULT' => "abc'xyz",
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'backslash',
+					'COLUMN_DEFAULT' => 'abc\xyz',
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'newline',
+					'COLUMN_DEFAULT' => "abc\nxyz",
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'carriage_return',
+					'COLUMN_DEFAULT' => "abc\rxyz",
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'blob_value',
+					'COLUMN_DEFAULT' => "'\\",
+				),
+			),
+			$result
+		);
+	}
+
 	public function testInvalidDataTypeCacheDataForDecimalDefinition(): void {
 		// Recreate the invalid database state before the following fix:
 		//   https://github.com/WordPress/sqlite-database-integration/pull/126

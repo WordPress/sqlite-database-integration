@@ -581,7 +581,9 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		// Checking the prefix is enough as SQLite doesn't allow malformed values.
 		if ( str_starts_with( $uppercase_default_value, "X'" ) ) {
 			// Convert the hex string to ASCII bytes.
-			return "'" . pack( 'H*', substr( $default_value, 2, -1 ) ) . "'";
+			return $this->quote_mysql_utf8_string_literal(
+				pack( 'H*', substr( $default_value, 2, -1 ) )
+			);
 		}
 
 		// Unquoted string literal. E.g.: abc
@@ -772,6 +774,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * @return string               The escaped string literal.
 	 */
 	private function quote_mysql_utf8_string_literal( string $utf8_literal ): string {
+		if ( $this->driver->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ) {
+			return "'" . str_replace( "'", "''", $utf8_literal ) . "'";
+		}
+
 		$backslash    = chr( 92 );
 		$replacements = array(
 			"'"        => "''",                    // A single quote character (').
