@@ -1010,6 +1010,75 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * PDO API: Quote a string for use in a MySQL query.
+	 *
+	 * @param  string $string The string to quote.
+	 * @param  int    $type   The PDO parameter type.
+	 * @return string         The quoted string.
+	 */
+	#[ReturnTypeWillChange]
+	// phpcs:ignore Universal.NamingConventions.NoReservedKeywordParameterNames.stringFound
+	public function quote( $string, $type = PDO::PARAM_STR ) {
+		// Mirror PDO\MySQL::quote() value validation.
+		if (
+			is_array( $string )
+			|| is_resource( $string )
+			|| ( is_object( $string ) && ! method_exists( $string, '__toString' ) )
+		) {
+			$given_type = is_object( $string ) ? get_class( $string ) : gettype( $string );
+			throw new TypeError(
+				sprintf(
+					'WP_MySQL_On_SQLite::quote(): Argument #1 ($string) must be of type string, %s given',
+					$given_type
+				)
+			);
+		}
+		$string = (string) $string;
+
+		// Handle binary and national character prefixes.
+		$prefix = '';
+		if ( PDO::PARAM_LOB === ( $type & PDO::PARAM_LOB ) ) {
+			$prefix = '_binary';
+		} elseif (
+			PDO::PARAM_STR_NATL === ( $type & PDO::PARAM_STR_NATL )
+			&& PDO::PARAM_STR_CHAR !== ( $type & PDO::PARAM_STR_CHAR )
+		) {
+			$prefix = 'N';
+		}
+
+		/*
+		 * PDO uses mysqlnd by default and can alternatively use libmysqlclient.
+		 * This escaped character mapping matches the escaping of both drivers.
+		 * Their malformed multibyte sequence handling is not needed for UTF-8.
+		 *
+		 * @see https://github.com/php/php-src/blob/dd6e76cce27aaa0ed9f7520648ed1081dfb6af36/ext/mysqlnd/mysqlnd_charset.c#L905
+		 * @see https://github.com/mysql/mysql-server/blob/dc86e412f18b36ce271f791026714e8caa0ec919/mysys/charset.cc#L413
+		 *
+		 * We can't use "addcslashes()" here, because it has an unusual handling
+		 * of the ASCII NULL and Control+Z characters, escaping them to "\000"
+		 * and "\032" instead of "\0" and "\Z", respectively.
+		 *
+		 * It is important to use "strtr()" and not "str_replace()", because
+		 * "str_replace()" applies replacements one after another, modifying
+		 * intermediate changes rather than just the original string:
+		 *
+		 *   - str_replace( [ 'a', 'b' ], [ 'b', 'c' ], 'ab' ); // 'cc' (bad)
+		 *   - strtr( 'ab', [ 'a' => 'b', 'b' => 'c' ] );       // 'bc' (good)
+		 */
+		$backslash    = chr( 92 );
+		$replacements = array(
+			chr( 0 )   => $backslash . '0',        // An ASCII NULL character (\0).
+			chr( 10 )  => $backslash . 'n',        // A newline (linefeed) character (\n).
+			chr( 13 )  => $backslash . 'r',        // A carriage return character (\r).
+			$backslash => $backslash . $backslash, // A backslash character (\).
+			"'"        => $backslash . "'",        // A single quote character (').
+			'"'        => $backslash . '"',        // A double quote character (").
+			chr( 26 )  => $backslash . 'Z',        // An ASCII 26 (Control+Z) character.
+		);
+		return $prefix . "'" . strtr( $string, $replacements ) . "'";
+	}
+
+	/**
 	 * PDO API: Begin a transaction.
 	 *
 	 * @return bool True on success, false on failure.

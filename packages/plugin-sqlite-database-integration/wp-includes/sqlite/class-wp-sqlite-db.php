@@ -301,12 +301,20 @@ class WP_SQLite_DB extends wpdb {
 	 * @param string $data The string to escape.
 	 *
 	 * @return string escaped
+	 * @throws RuntimeException When the database connection is not initialized.
 	 */
 	public function _real_escape( $data ) {
 		if ( ! is_scalar( $data ) ) {
 			return '';
 		}
-		$escaped = addslashes( $data );
+
+		if ( ! $this->dbh ) {
+			throw new RuntimeException( 'Cannot escape data without an active database connection.' );
+		}
+
+		// Escape the string without bounding quotes to mirror mysqli_real_escape_string().
+		$quoted  = $this->dbh->quote( (string) $data );
+		$escaped = substr( $quoted, 1, -1 );
 		return $this->add_placeholder_escape( $escaped );
 	}
 

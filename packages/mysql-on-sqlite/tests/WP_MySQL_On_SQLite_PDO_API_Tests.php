@@ -299,6 +299,64 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertEquals( 0, $result );
 	}
 
+	public function test_quote_matches_mysql_escaping(): void {
+		$backslash = chr( 92 );
+		$value     = chr( 0 ) . "\n\r{$backslash}'\"" . chr( 26 ) . "\tƮềʂᴛ🙂";
+
+		$quoted = $this->driver->quote( $value );
+		$this->assertSame(
+			"'{$backslash}0{$backslash}n{$backslash}r"
+				. "{$backslash}{$backslash}{$backslash}'{$backslash}\"{$backslash}Z\tƮềʂᴛ🙂'",
+			$quoted
+		);
+		$this->assertSame( $value, $this->driver->query( "SELECT $quoted" )->fetchColumn() );
+	}
+
+	public function test_quote_supports_parameter_types(): void {
+		$value  = "\0\n\r\\'\"" . chr( 26 ) . "\tƮềʂᴛ🙂";
+		$quoted = $this->driver->quote( $value );
+
+		$this->assertSame( $quoted, $this->driver->quote( $value, PDO::PARAM_STR ) );
+		$this->assertSame( 'N' . $quoted, $this->driver->quote( $value, PDO::PARAM_STR_NATL ) );
+		$this->assertSame( $quoted, $this->driver->quote( $value, PDO::PARAM_STR_CHAR ) );
+		$this->assertSame(
+			$quoted,
+			$this->driver->quote( $value, PDO::PARAM_STR_NATL | PDO::PARAM_STR_CHAR )
+		);
+		$this->assertSame( '_binary' . $quoted, $this->driver->quote( $value, PDO::PARAM_LOB ) );
+		$this->assertSame(
+			'_binary' . $quoted,
+			$this->driver->quote( $value, PDO::PARAM_LOB | PDO::PARAM_STR_NATL )
+		);
+	}
+
+	public function test_quote_rejects_non_stringable_values(): void {
+		$resource = fopen( 'php://memory', 'r' );
+
+		try {
+			foreach ( array( array(), $resource, new stdClass() ) as $value ) {
+				try {
+					$this->driver->quote( $value );
+					$this->fail( 'Expected quote() to throw a TypeError.' );
+				} catch ( TypeError $e ) {
+					$this->assertStringContainsString( 'must be of type string', $e->getMessage() );
+				}
+			}
+		} finally {
+			fclose( $resource );
+		}
+	}
+
+	public function test_quote_accepts_stringable_objects(): void {
+		$value = new class() {
+			public function __toString(): string {
+				return 'value';
+			}
+		};
+
+		$this->assertSame( "'value'", $this->driver->quote( $value ) );
+	}
+
 	public function test_begin_transaction(): void {
 		$result = $this->driver->beginTransaction();
 		$this->assertTrue( $result );
