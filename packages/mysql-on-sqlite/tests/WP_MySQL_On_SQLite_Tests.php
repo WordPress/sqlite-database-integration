@@ -4452,6 +4452,18 @@ QUERY
 		// Test LIKE without BINARY
 		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE 'FIRST'" );
 		$this->assertCount( 2, $result ); // Should match both 'first' and 'FIRST'
+
+		$this->assertQuery( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
+
+		// Backslashes are literal, while the following "_" remains a wildcard.
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'special\\_hars'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'special\chars', $result[0]->name );
+
+		// Backslashes are literal, while the following "%" remains a wildcard.
+		$result = $this->assertQuery( "SELECT * FROM _tmp_table WHERE name LIKE BINARY 'special\\%'" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'special\chars', $result[0]->name );
 	}
 
 	public function testUniqueConstraints() {

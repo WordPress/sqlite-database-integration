@@ -4446,8 +4446,9 @@ class WP_MySQL_On_SQLite extends PDO {
 		if ( true === $is_binary ) {
 			$children = $node->get_children();
 			return sprintf(
-				'GLOB _helper_like_to_glob_pattern(%s)',
-				$this->translate( $children[1] )
+				'GLOB _helper_like_to_glob_pattern(%s, %d)',
+				$this->translate( $children[1] ),
+				$this->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ? 0 : 1
 			);
 		}
 

@@ -960,9 +960,10 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 *        consider applying some of the conversions more broadly.
 	 *
 	 * @param string $pattern
+	 * @param bool   $backslash_escapes Whether backslashes escape pattern characters.
 	 * @return string
 	 */
-	public function _helper_like_to_glob_pattern( $pattern ) {
+	public function _helper_like_to_glob_pattern( $pattern, $backslash_escapes ) {
 		if ( null === $pattern ) {
 			return null;
 		}
@@ -978,6 +979,10 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		$pattern = str_replace( ']', '[]]', $pattern );
 		$pattern = str_replace( '*', '[*]', $pattern );
 		$pattern = str_replace( '?', '[?]', $pattern );
+
+		if ( ! $backslash_escapes ) {
+			return str_replace( array( '%', '_' ), array( '*', '?' ), $pattern );
+		}
 
 		/*
 		 * 2. Convert LIKE wildcards to GLOB wildcards ("%" -> "*", "_" -> "?").
