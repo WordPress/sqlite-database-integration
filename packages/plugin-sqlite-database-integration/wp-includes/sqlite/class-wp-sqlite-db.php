@@ -306,7 +306,42 @@ class WP_SQLite_DB extends wpdb {
 		if ( ! is_scalar( $data ) ) {
 			return '';
 		}
-		$escaped = addslashes( $data );
+
+		/*
+		 * Match mysqlnd's escaping for single-quoted strings, which is the
+		 * quoting convention used by wpdb::prepare().
+		 */
+		$data = (string) $data;
+		if ( ! $this->dbh ) {
+			$escaped = addslashes( $data );
+		} elseif ( $this->dbh->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ) {
+			$escaped = str_replace( "'", "''", $data );
+		} else {
+			/*
+			 * We can't use "addcslashes()" here, because it has an unusual handling
+			 * of the ASCII NULL and Control+Z characters, escaping them to "\000"
+			 * and "\032" instead of "\0" and "\Z", respectively.
+			 *
+			 * It is important to use "strtr()" and not "str_replace()", because
+			 * "str_replace()" applies replacements one after another, modifying
+			 * intermediate changes rather than just the original string:
+			 *
+			 *   - str_replace( [ 'a', 'b' ], [ 'b', 'c' ], 'ab' ); // 'cc' (bad)
+			 *   - strtr( 'ab', [ 'a' => 'b', 'b' => 'c' ] );       // 'bc' (good)
+			 */
+			$backslash    = chr( 92 );
+			$replacements = array(
+				chr( 0 )   => $backslash . '0',        // An ASCII NULL character (\0).
+				chr( 10 )  => $backslash . 'n',        // A newline (linefeed) character (\n).
+				chr( 13 )  => $backslash . 'r',        // A carriage return character (\r).
+				$backslash => $backslash . $backslash, // A backslash character (\).
+				"'"        => $backslash . "'",        // A single quote character (').
+				'"'        => $backslash . '"',        // A double quote character (").
+				chr( 26 )  => $backslash . 'Z',        // An ASCII 26 (Control+Z) character.
+			);
+			$escaped      = strtr( $data, $replacements );
+		}
+
 		return $this->add_placeholder_escape( $escaped );
 	}
 
