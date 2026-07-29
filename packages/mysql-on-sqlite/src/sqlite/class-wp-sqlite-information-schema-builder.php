@@ -3110,6 +3110,15 @@ class WP_SQLite_Information_Schema_Builder {
 		$value         = '';
 		$last_token_id = null;
 		foreach ( $node->get_descendant_tokens() as $i => $token ) {
+			if (
+				WP_MySQL_Lexer::SINGLE_QUOTED_TEXT === $token->id
+				|| WP_MySQL_Lexer::DOUBLE_QUOTED_TEXT === $token->id
+			) {
+				$token_bytes = $this->quote_mysql_string_literal( $token->get_value() );
+			} else {
+				$token_bytes = $token->get_bytes();
+			}
+
 			// Do not insert whitespace around parentheses. This is primarily to
 			// avoid inserting whitespace before '(', which may break function
 			// calls, depending on the value of the "IGNORE_SPACE" SQL mode.
@@ -3120,13 +3129,32 @@ class WP_SQLite_Information_Schema_Builder {
 				|| WP_MySQL_Lexer::OPEN_PAR_SYMBOL === $last_token_id
 				|| WP_MySQL_Lexer::CLOSE_PAR_SYMBOL === $last_token_id
 			) {
-				$value .= $token->get_bytes();
+				$value .= $token_bytes;
 			} else {
-				$value .= ' ' . $token->get_bytes();
+				$value .= ' ' . $token_bytes;
 			}
 			$last_token_id = $token->id;
 		}
 		return $value;
+	}
+
+	/**
+	 * Quote a string literal for parsing with the default MySQL SQL mode.
+	 *
+	 * @param  string $value The unquoted string value.
+	 * @return string        The quoted string literal.
+	 */
+	private function quote_mysql_string_literal( string $value ): string {
+		$backslash    = chr( 92 );
+		$replacements = array(
+			"'"        => "''",
+			$backslash => $backslash . $backslash,
+			chr( 0 )   => $backslash . '0',
+			chr( 10 )  => $backslash . 'n',
+			chr( 13 )  => $backslash . 'r',
+			chr( 26 )  => $backslash . 'Z',
+		);
+		return "'" . strtr( $value, $replacements ) . "'";
 	}
 
 	/**

@@ -1193,10 +1193,21 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
 	 */
 	public function create_parser( string $query ): WP_MySQL_Parser {
+		return $this->create_parser_for_sql_modes( $query, $this->active_sql_modes );
+	}
+
+	/**
+	 * Tokenize a MySQL query using specific SQL modes and initialize a parser.
+	 *
+	 * @param  string   $query     The MySQL query to parse.
+	 * @param  string[] $sql_modes The SQL modes active during tokenization.
+	 * @return WP_MySQL_Parser     A parser initialized for the MySQL query.
+	 */
+	private function create_parser_for_sql_modes( string $query, array $sql_modes ): WP_MySQL_Parser {
 		$lexer  = new WP_MySQL_Lexer(
 			$query,
 			80038,
-			$this->active_sql_modes
+			$sql_modes
 		);
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
 			? $lexer->native_token_stream()
@@ -6360,7 +6371,10 @@ class WP_MySQL_On_SQLite extends PDO {
 				} elseif ( str_contains( $column['EXTRA'], 'DEFAULT_GENERATED' ) ) {
 					// Handle DEFAULT values with expressions (DEFAULT_GENERATED).
 					// Translate the default clause from MySQL to SQLite.
-					$ast            = $this->create_parser( 'SELECT ' . $column['COLUMN_DEFAULT'] )->parse();
+					$ast            = $this->create_parser_for_sql_modes(
+						'SELECT ' . $column['COLUMN_DEFAULT'],
+						array()
+					)->parse();
 					$expr           = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
 					$default_clause = $this->translate( $expr );
 					$query         .= sprintf( ' DEFAULT (%s)', $default_clause );
@@ -6486,7 +6500,10 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 
 			// Translate the check clause from MySQL to SQLite.
-			$ast          = $this->create_parser( 'SELECT ' . $check_constraint['CHECK_CLAUSE'] )->parse();
+			$ast          = $this->create_parser_for_sql_modes(
+				'SELECT ' . $check_constraint['CHECK_CLAUSE'],
+				array()
+			)->parse();
 			$expr         = $ast->get_first_descendant_node( 'selectItem' )->get_first_child_node();
 			$check_clause = $this->translate( $expr );
 

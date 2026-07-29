@@ -6174,6 +6174,46 @@ QUERY
 		$this->assertSame( $backslash . '_', $result[0]->value_12 );
 	}
 
+	public function testStoredExpressionsPreserveStringValuesAcrossSqlModeChanges(): void {
+		$backslash = chr( 92 );
+
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery(
+			"CREATE TABLE default_mode (
+				id INT,
+				value VARCHAR(20) DEFAULT (CONCAT('a{$backslash}n', 'b')),
+				CHECK (value = 'a{$backslash}nb')
+			)"
+		);
+		$this->assertQuery( 'INSERT INTO default_mode (id) VALUES (1)' );
+
+		$this->assertQuery( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
+		$this->assertQuery( 'ALTER TABLE default_mode ADD COLUMN extra INT' );
+		$this->assertQuery( 'INSERT INTO default_mode (id) VALUES (2)' );
+
+		$result = $this->assertQuery( 'SELECT value FROM default_mode ORDER BY id' );
+		$this->assertSame( array( "a\nb", "a\nb" ), array_column( $result, 'value' ) );
+
+		$this->assertQuery(
+			"CREATE TABLE no_backslash_mode (
+				id INT,
+				value VARCHAR(20) DEFAULT (CONCAT('a{$backslash}n', 'b')),
+				CHECK (value = 'a{$backslash}nb')
+			)"
+		);
+		$this->assertQuery( 'INSERT INTO no_backslash_mode (id) VALUES (1)' );
+
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery( 'ALTER TABLE no_backslash_mode ADD COLUMN extra INT' );
+		$this->assertQuery( 'INSERT INTO no_backslash_mode (id) VALUES (2)' );
+
+		$result = $this->assertQuery( 'SELECT value FROM no_backslash_mode ORDER BY id' );
+		$this->assertSame(
+			array( "a{$backslash}nb", "a{$backslash}nb" ),
+			array_column( $result, 'value' )
+		);
+	}
+
 	public function testNoBackslashEscapesSqlModeWithPatternMatching(): void {
 		$backslash = chr( 92 );
 
