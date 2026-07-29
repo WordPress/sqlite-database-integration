@@ -5873,6 +5873,35 @@ QUERY
 		$this->assertSame( 'ONLY_FULL_GROUP_BY', $result[0]->{'@@session.SQL_mode'} );
 	}
 
+	public function testNoBackslashEscapesSqlModeIsNotSupported(): void {
+		$queries = array(
+			"SET sql_mode = 'NO_BACKSLASH_ESCAPES'",
+			"SET @@sql_mode = 'NO_BACKSLASH_ESCAPES'",
+			"SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'",
+			"SET @@SESSION.sql_mode = 'NO_BACKSLASH_ESCAPES'",
+			"SET sql_mode = 'STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES'",
+			"SET sql_mode = 'STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES '",
+			"SET sql_mode = 'no_backslash_escapes'",
+		);
+
+		foreach ( $queries as $query ) {
+			$this->assertQuery( "SET sql_mode = 'ONLY_FULL_GROUP_BY'" );
+
+			try {
+				$this->assertQuery( $query );
+				$this->fail( 'Expected NO_BACKSLASH_ESCAPES to be rejected.' );
+			} catch ( WP_SQLite_Driver_Exception $e ) {
+				$this->assertSame(
+					"MySQL query not supported. Cause: SQL mode 'NO_BACKSLASH_ESCAPES'",
+					$e->getMessage()
+				);
+			}
+
+			$result = $this->assertQuery( 'SELECT @@SESSION.sql_mode' );
+			$this->assertSame( 'ONLY_FULL_GROUP_BY', $result[0]->{'@@SESSION.sql_mode'} );
+		}
+	}
+
 	public function testMultiQueryNotSupported(): void {
 		$this->expectException( WP_SQLite_Driver_Exception::class );
 		$this->expectExceptionMessage( 'Multi-query is not supported.' );
@@ -6108,7 +6137,7 @@ QUERY
 		// Primary and unique key names must be unique per table, not per schema.
 	}
 
-	public function testNoBackslashEscapesSqlMode(): void {
+	public function testBackslashEscapesInStringLiterals(): void {
 		$backslash = chr( 92 );
 
 		$query = "SELECT
@@ -6126,7 +6155,6 @@ QUERY
 			'{$backslash}_'            AS value_12
 		";
 
-		// With NO_BACKSLASH_ESCAPES disabled:
 		$this->assertQuery( "SET SESSION sql_mode = ''" );
 		$result = $this->assertQuery( $query );
 		$this->assertSame( chr( 39 ), $result[0]->value_1 ); // single quote
@@ -6144,25 +6172,9 @@ QUERY
 		// "\%" and "\_" preserve the backslash so it can be used in some contexts.
 		$this->assertSame( $backslash . '%', $result[0]->value_11 );
 		$this->assertSame( $backslash . '_', $result[0]->value_12 );
-
-		// With NO_BACKSLASH_ESCAPES enabled:
-		$this->assertQuery( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
-		$result = $this->assertQuery( $query );
-		$this->assertSame( "'", $result[0]->value_1 );
-		$this->assertSame( $backslash . '"', $result[0]->value_2 );
-		$this->assertSame( $backslash . '0', $result[0]->value_3 );
-		$this->assertSame( $backslash . 'n', $result[0]->value_4 );
-		$this->assertSame( $backslash . 'r', $result[0]->value_5 );
-		$this->assertSame( $backslash . 't', $result[0]->value_6 );
-		$this->assertSame( $backslash . 'b', $result[0]->value_7 );
-		$this->assertSame( $backslash . $backslash, $result[0]->value_8 );
-		$this->assertSame( '🙂', $result[0]->value_9 );
-		$this->assertSame( $backslash . '🙂', $result[0]->value_10 );
-		$this->assertSame( $backslash . '%', $result[0]->value_11 );
-		$this->assertSame( $backslash . '_', $result[0]->value_12 );
 	}
 
-	public function testNoBackslashEscapesSqlModeWithPatternMatching(): void {
+	public function testBackslashEscapesInPatternMatching(): void {
 		$backslash = chr( 92 );
 
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT, value TEXT)' );
@@ -6172,8 +6184,6 @@ QUERY
 		$this->assertQuery( "INSERT INTO t (value) VALUES ('abc{$backslash}{$backslash}x')" ); // abc\x
 
 		/*
-		 * 1. With NO_BACKSLASH_ESCAPES disabled:
-		 *
 		 * Backslashes serve as special escape characters on two levels:
 		 *
 		 *   1. In MySQL string literals.
@@ -6282,59 +6292,6 @@ QUERY
 		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}{$backslash}{$backslash}x'" );
 		$this->assertCount( 1, $result );
 		$this->assertSame( "abc{$backslash}x", $result[0]->value );
-
-		/*
-		 * 2. With NO_BACKSLASH_ESCAPES enabled:
-		 *
-		 * Backslashes don't serve as special escape characters at all:
-		 *
-		 *   1. No special meaning in MySQL string literals.
-		 *   2. No special meaning in LIKE patterns.
-		 *      This can be overriden using the "ESCAPE ..." clause of the LIKE
-		 *      expression. This is not implemented in the SQLite driver yet.
-		 */
-		$this->assertQuery( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
-
-		// A "_" = a wildcard:
-		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc_' ORDER BY id" );
-		$this->assertCount( 2, $result );
-		$this->assertSame( 'abc_', $result[0]->value );
-		$this->assertSame( 'abc%', $result[1]->value );
-
-		// A "\_" sequence = the "\" character and a wildcard:
-		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}_'" );
-		$this->assertCount( 1, $result );
-		$this->assertSame( "abc{$backslash}x", $result[0]->value );
-
-		// A "\\_" sequence = two "\" characters and a wildcard:
-		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}_'" );
-		$this->assertCount( 0, $result );
-
-		// A "%" = a wildcard:
-		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc%' ORDER BY id" );
-		$this->assertCount( 4, $result );
-		$this->assertSame( 'abc', $result[0]->value );
-		$this->assertSame( 'abc_', $result[1]->value );
-		$this->assertSame( 'abc%', $result[2]->value );
-		$this->assertSame( "abc{$backslash}x", $result[3]->value );
-
-		// A "\%" sequence = the "\" character and a wildcard.
-		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}%'" );
-		$this->assertCount( 1, $result );
-		$this->assertSame( "abc{$backslash}x", $result[0]->value );
-
-		// A "\\%" sequence = two "\" characters and a wildcard.
-		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}%'" );
-		$this->assertCount( 0, $result );
-
-		// A "\x" sequence = the "\" and the "x" character.
-		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}x'" );
-		$this->assertCount( 1, $result );
-		$this->assertSame( "abc{$backslash}x", $result[0]->value );
-
-		// A "\\x" sequence = two "\" characters and the "x" character.
-		$result = $this->assertQuery( "SELECT value FROM t WHERE value LIKE 'abc{$backslash}{$backslash}x'" );
-		$this->assertCount( 0, $result );
 	}
 
 	public function testQuoteMysqlUtf8StringLiteral(): void {

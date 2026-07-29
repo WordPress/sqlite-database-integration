@@ -3524,7 +3524,14 @@ class WP_MySQL_On_SQLite extends PDO {
 
 		if ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 			if ( 'sql_mode' === $name ) {
-				$modes                  = explode( ',', strtoupper( $value ) );
+				// MySQL ignores trailing ASCII spaces in SQL mode names.
+				$modes = explode( ',', strtoupper( $value ) );
+				foreach ( $modes as $i => $mode ) {
+					$modes[ $i ] = rtrim( $mode, ' ' );
+				}
+				if ( in_array( 'NO_BACKSLASH_ESCAPES', $modes, true ) ) {
+					throw $this->new_not_supported_exception( "SQL mode 'NO_BACKSLASH_ESCAPES'" );
+				}
 				$this->active_sql_modes = $modes;
 			} else {
 				$this->session_system_variables[ $name ] = $value;
