@@ -58,20 +58,21 @@ class MySQL_Protocol {
 	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__com_8h.html#a1d854e841086925be1883e4d7b4e8cad
 	 * @see https://github.com/mysql/mysql-server/blob/056a391cdc1af9b17b5415aee243483d1bac532d/include/mysql_com.h#L810
 	 */
-	const SERVER_STATUS_IN_TRANS          = 1 << 0;  // A multi-statement transaction has been started.
-	const SERVER_STATUS_AUTOCOMMIT        = 1 << 1;  // Server in autocommit mode.
-	const SERVER_STATUS_UNUSED_2          = 1 << 2;  // [UNUSED]
-	const SERVER_MORE_RESULTS_EXISTS      = 1 << 3;  // Multi query - next query exists.
-	const SERVER_QUERY_NO_GOOD_INDEX_USED = 1 << 4;  // No good index was used for the query.
-	const SERVER_QUERY_NO_INDEX_USED      = 1 << 5;  // No index was used for the query.
-	const SERVER_STATUS_CURSOR_EXISTS     = 1 << 6;  // A cursor exists for a query. FETCH must be used to get data.
-	const SERVER_STATUS_LAST_ROW_SENT     = 1 << 7;  // A cursor has been exhausted. Sent in reply to FETCH command.
-	const SERVER_STATUS_DB_DROPPED        = 1 << 8;  // A database was dropped.
-	const SERVER_STATUS_METADATA_CHANGED  = 1 << 9;  // A set of columns changed after a prepared statement was reprepared.
-	const SERVER_QUERY_WAS_SLOW           = 1 << 10; // A query was slow.
-	const SERVER_PS_OUT_PARAMS            = 1 << 11; // Mark ResultSet containing output parameter values.
-	const SERVER_STATUS_IN_TRANS_READONLY = 1 << 12; // Set together with SERVER_STATUS_IN_TRANS for read-only transactions.
-	const SERVER_SESSION_STATE_CHANGED    = 1 << 13; // One of the server state information has changed during last statement.
+	const SERVER_STATUS_IN_TRANS             = 1 << 0;  // A multi-statement transaction has been started.
+	const SERVER_STATUS_AUTOCOMMIT           = 1 << 1;  // Server in autocommit mode.
+	const SERVER_STATUS_UNUSED_2             = 1 << 2;  // [UNUSED]
+	const SERVER_MORE_RESULTS_EXISTS         = 1 << 3;  // Multi query - next query exists.
+	const SERVER_QUERY_NO_GOOD_INDEX_USED    = 1 << 4;  // No good index was used for the query.
+	const SERVER_QUERY_NO_INDEX_USED         = 1 << 5;  // No index was used for the query.
+	const SERVER_STATUS_CURSOR_EXISTS        = 1 << 6;  // A cursor exists for a query. FETCH must be used to get data.
+	const SERVER_STATUS_LAST_ROW_SENT        = 1 << 7;  // A cursor has been exhausted. Sent in reply to FETCH command.
+	const SERVER_STATUS_DB_DROPPED           = 1 << 8;  // A database was dropped.
+	const SERVER_STATUS_NO_BACKSLASH_ESCAPES = 1 << 9;  // Backslashes are not used as string escape characters.
+	const SERVER_STATUS_METADATA_CHANGED     = 1 << 10; // A set of columns changed after a prepared statement was reprepared.
+	const SERVER_QUERY_WAS_SLOW              = 1 << 11; // A query was slow.
+	const SERVER_PS_OUT_PARAMS               = 1 << 12; // Mark ResultSet containing output parameter values.
+	const SERVER_STATUS_IN_TRANS_READONLY    = 1 << 13; // Set together with SERVER_STATUS_IN_TRANS for read-only transactions.
+	const SERVER_SESSION_STATE_CHANGED       = 1 << 14; // One of the server state information has changed during last statement.
 
 	/**
 	 * MySQL command types.

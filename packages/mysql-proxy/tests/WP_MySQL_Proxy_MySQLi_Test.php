@@ -21,4 +21,14 @@ class WP_MySQL_Proxy_MySQLi_Test extends WP_MySQL_Proxy_Test {
 		// TODO: Implement prepared statements in the MySQL proxy.
 		$this->markTestSkipped( 'Prepared statements are not supported yet.' );
 	}
+
+	public function test_real_escape_string_honors_no_backslash_escapes(): void {
+		$value = "a'b\\c";
+
+		$this->mysqli->query( "SET SESSION sql_mode = ''" );
+		$this->assertSame( "a\\'b\\\\c", $this->mysqli->real_escape_string( $value ) );
+
+		$this->mysqli->query( "SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'" );
+		$this->assertSame( "a''b\\c", $this->mysqli->real_escape_string( $value ) );
+	}
 }

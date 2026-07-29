@@ -105,6 +105,7 @@ class MySQL_Session {
 
 		// Generate random auth plugin data (20-byte salt)
 		$this->auth_plugin_data = random_bytes( 20 );
+		$this->sync_status_flags();
 	}
 
 	/**
@@ -334,6 +335,8 @@ class MySQL_Session {
 				);
 			}
 
+			$this->sync_status_flags();
+
 			if ( count( $result->columns ) > 0 ) {
 				return $this->build_result_set_packets(
 					$result->columns,
@@ -357,6 +360,17 @@ class MySQL_Session {
 				'Unknown error: ' . $e->getMessage()
 			);
 		}
+	}
+
+	/**
+	 * Synchronize adapter-managed server status flags.
+	 */
+	private function sync_status_flags(): void {
+		$adapter_flags = $this->adapter->get_server_status_flags();
+		$managed_flags = MySQL_Protocol::SERVER_STATUS_NO_BACKSLASH_ESCAPES;
+
+		$this->status_flags &= ~$managed_flags;
+		$this->status_flags |= $adapter_flags & $managed_flags;
 	}
 
 	/**

@@ -6,4 +6,6 @@ use WP_MySQL_Proxy\MySQL_Result;
 
 interface Adapter {
 	public function handle_query( string $query ): MySQL_Result;
+
+	public function get_server_status_flags(): int;
 }

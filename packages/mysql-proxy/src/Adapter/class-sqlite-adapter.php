@@ -52,6 +52,13 @@ class SQLite_Adapter implements Adapter {
 		}
 	}
 
+	public function get_server_status_flags(): int {
+		if ( $this->sqlite_driver->is_sql_mode_active( 'NO_BACKSLASH_ESCAPES' ) ) {
+			return MySQL_Protocol::SERVER_STATUS_NO_BACKSLASH_ESCAPES;
+		}
+		return 0;
+	}
+
 	public function computeColumnInfo() {
 		$columns = array();
 
