@@ -18,7 +18,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * The path to the MySQL SQL grammar file.
 	 */
-	const MYSQL_GRAMMAR_PATH = __DIR__ . '/../mysql/mysql-grammar.php';
+	private const MYSQL_GRAMMAR_PATH = __DIR__ . '/../mysql/mysql-grammar.php';
 
 	/**
 	 * The minimum required version of SQLite.
@@ -47,7 +47,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Name of the connection-private TEMP table used to build empty result sets
 	 * without acquiring a write lock on the database. See create_result_statement_from_data().
 	 */
-	const EMPTY_RESULT_TABLE_NAME = self::RESERVED_PREFIX . 'empty_result';
+	private const EMPTY_RESULT_TABLE_NAME = self::RESERVED_PREFIX . 'empty_result';
 
 	/**
 	 * The name of the SQLite driver version variable.
@@ -125,7 +125,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * This is used to translate a MySQL data type to an SQLite data type.
 	 */
-	const DATA_TYPE_MAP = array(
+	private const DATA_TYPE_MAP = array(
 		// Numeric data types:
 		WP_MySQL_Lexer::BIT_SYMBOL                => 'INTEGER',
 		WP_MySQL_Lexer::BOOL_SYMBOL               => 'INTEGER',
@@ -191,7 +191,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * INFORMATION_SCHEMA tables. They keys are MySQL data types normalized
 	 * as they appear in the INFORMATION_SCHEMA. Values are SQLite data types.
 	 */
-	const DATA_TYPE_STRING_MAP = array(
+	private const DATA_TYPE_STRING_MAP = array(
 		// Numeric data types:
 		'bit'                => 'INTEGER',
 		'bool'               => 'INTEGER',
@@ -262,7 +262,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *   https://www.sqlite.org/lang_datefunc.html
 	 *   https://strftime.org/
 	 */
-	const MYSQL_DATE_FORMAT_TO_SQLITE_STRFTIME_MAP = array(
+	private const MYSQL_DATE_FORMAT_TO_SQLITE_STRFTIME_MAP = array(
 		'%a' => '%D',
 		'%b' => '%M',
 		'%c' => '%n',
@@ -304,7 +304,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * See:
 	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 */
-	const DATA_TYPE_IMPLICIT_DEFAULT_MAP = array(
+	private const DATA_TYPE_IMPLICIT_DEFAULT_MAP = array(
 		// Numeric data types:
 		'bit'                => '0',
 		'bool'               => '0',
@@ -374,7 +374,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * This is used to compute the column metadata from the information schema.
 	 */
-	const COLUMN_INFO_MYSQL_TO_NATIVE_TYPES_MAP = array(
+	private const COLUMN_INFO_MYSQL_TO_NATIVE_TYPES_MAP = array(
 		// Numeric data types:
 		'bit'             => array( 'BIT', 16, 1, 0 ),
 		'tinyint'         => array( 'TINY', 1, 4, 0 ),
@@ -438,7 +438,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * This is used to compute the MySQL column metadata for non-column fields
 	 * that have no records in the information schema (i.e., expressions).
 	 */
-	const COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP = array(
+	private const COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP = array(
 		'NULL'    => array( 'NULL', 6, 0, 0 ),
 		'INT'     => array( 'LONGLONG', 8, 21, 0 ),
 		'INTEGER' => array( 'LONGLONG', 8, 21, 0 ),
@@ -3854,7 +3854,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param  WP_Parser_Node $node The "expr" AST node.
 	 * @return mixed                The value of the expression.
 	 */
-	public function evaluate_expression( WP_Parser_Node $node ) {
+	private function evaluate_expression( WP_Parser_Node $node ) {
 		// To support expressions, we'll use a SQLite query.
 		$stmt = $this->execute_sqlite_query(
 			sprintf( 'SELECT %s', $this->translate( $node ) )
@@ -4942,7 +4942,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param  WP_Parser_Node $node       The "selectItem" AST node.
 	 * @return string                     The translated expression.
 	 */
-	public function translate_select_item( WP_Parser_Node $node ): string {
+	private function translate_select_item( WP_Parser_Node $node ): string {
 		/*
 		 * First, let's translate the select item subtree.
 		 *
@@ -5058,7 +5058,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @return string                     The translated value.
 	 * @throws WP_SQLite_Driver_Exception When the translation fails.
 	 */
-	public function translate_table_ref( WP_Parser_Node $node ): string {
+	private function translate_table_ref( WP_Parser_Node $node ): string {
 		// The table reference is in "<schema>.<table>" or "<table>" format.
 		$parts  = $node->get_descendant_nodes( 'identifier' );
 		$table  = array_pop( $parts );
