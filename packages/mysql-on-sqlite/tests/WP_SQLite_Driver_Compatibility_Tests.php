@@ -75,21 +75,4 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 		$this->driver->commit();
 		$this->assertSame( '1', $this->driver->query( 'SELECT COUNT(*) FROM t' )[0]->{'COUNT(*)'} );
 	}
-
-	public function test_proxies_legacy_test_helpers(): void {
-		$this->driver->main_db_name = 'wp_test_new';
-		$result                     = $this->driver->query(
-			'SELECT schema_name FROM information_schema.schemata ORDER BY schema_name'
-		);
-		$this->assertSame( 'wp_test_new', $result[1]->SCHEMA_NAME );
-
-		$quote = Closure::bind(
-			function ( string $value ) {
-				return $this->quote_mysql_utf8_string_literal( $value );
-			},
-			$this->driver,
-			WP_SQLite_Driver::class
-		);
-		$this->assertSame( "'abc''xyz'", $quote( "abc'xyz" ) );
-	}
 }

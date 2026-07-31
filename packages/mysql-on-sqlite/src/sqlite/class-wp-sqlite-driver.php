@@ -65,7 +65,7 @@ class WP_SQLite_Driver {
 		int $mysql_version = 80038
 	) {
 		$this->mysql_on_sqlite_driver = new WP_MySQL_On_SQLite(
-			sprintf( 'mysql-on-sqlite:dbname=%s', $database ),
+			sprintf( 'mysql-on-sqlite:dbname=%s', str_replace( ';', ';;', $database ) ),
 			null,
 			null,
 			array(
@@ -74,7 +74,6 @@ class WP_SQLite_Driver {
 				'journal_mode'  => $connection->query( 'PRAGMA journal_mode' )->fetchColumn(),
 			)
 		);
-		$this->main_db_name           = $database;
 		$this->client_info            = $this->mysql_on_sqlite_driver->client_info;
 
 		$connection->get_pdo()->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
@@ -254,27 +253,5 @@ class WP_SQLite_Driver {
 	 */
 	public function rollback(): void {
 		$this->mysql_on_sqlite_driver->rollback();
-	}
-
-	/**
-	 * Proxy also the private property "$main_db_name", as it is used in tests.
-	 */
-	public function __set( string $name, $value ): void {
-		if ( 'main_db_name' === $name ) {
-			$closure = function ( string $value ) {
-				$this->main_db_name = $value;
-			};
-			$closure->call( $this->mysql_on_sqlite_driver, $value );
-		}
-	}
-
-	/**
-	 * Proxy also this private method, as it is used in tests.
-	 */
-	private function quote_mysql_utf8_string_literal( string $utf8_literal ): string {
-		$closure = function ( string $utf8_literal ) {
-			return $this->quote_mysql_utf8_string_literal( $utf8_literal );
-		};
-		return $closure->call( $this->mysql_on_sqlite_driver, $utf8_literal );
 	}
 }
