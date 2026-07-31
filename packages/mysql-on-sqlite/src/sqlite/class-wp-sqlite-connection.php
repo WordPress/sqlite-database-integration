@@ -12,6 +12,8 @@
  * It requires PDO with the SQLite driver, and currently, it is only a simple
  * wrapper that leaks some of the PDO APIs (returns PDOStatement values, etc.).
  * In the future, we may abstract it away from PDO and support SQLite3 as well.
+ *
+ * @access private
  */
 class WP_SQLite_Connection {
 	/**

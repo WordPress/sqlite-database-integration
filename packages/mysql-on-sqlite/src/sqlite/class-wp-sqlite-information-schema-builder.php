@@ -6,6 +6,8 @@
  * This class builds and maintains MySQL INFORMATION_SCHEMA tables in SQLite.
  * It consumes the AST of MySQL DDL queries and records the schema information
  * in SQLite tables that emulate the MySQL INFORMATION_SCHEMA.
+ *
+ * @access private
  */
 class WP_SQLite_Information_Schema_Builder {
 	/**

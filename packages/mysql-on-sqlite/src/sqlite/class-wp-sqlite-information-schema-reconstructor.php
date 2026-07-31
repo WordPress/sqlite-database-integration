@@ -14,6 +14,8 @@
  * Currently, it reconstructs schema infromation for missing tables, and removes
  * stale data for tables that no longer exist. When used with WordPress, it uses
  * the "wp_get_db_schema()" function to reconstruct WordPress table information.
+ *
+ * @access private
  */
 class WP_SQLite_Information_Schema_Reconstructor {
 	/**

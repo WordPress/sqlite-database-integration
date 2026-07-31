@@ -5,6 +5,8 @@
  *
  * This class is used to represent errors that may occur when building
  * the MySQL information schema for emulation in SQLite.
+ *
+ * @access private
  */
 class WP_SQLite_Information_Schema_Exception extends Exception {
 	// Information schema exception types.

@@ -31,6 +31,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * An identifier prefix for internal database objects.
 	 *
+	 * @access private
+	 *
 	 * @TODO: Do not allow accessing objects with this prefix.
 	 */
 	const RESERVED_PREFIX = '_wp_sqlite_';
@@ -40,6 +42,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * This special table is used to emulate MySQL global variables and to store
 	 * some internal configuration values.
+	 *
+	 * @access private
 	 */
 	const GLOBAL_VARIABLES_TABLE_NAME = self::RESERVED_PREFIX . 'global_variables';
 
@@ -54,6 +58,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * This internal variable is used to store the latest version of the SQLite
 	 * driver that was used to initialize and configure the SQLite database.
+	 *
+	 * @access private
 	 */
 	const DRIVER_VERSION_VARIABLE_NAME = self::RESERVED_PREFIX . 'driver_version';
 
@@ -1228,6 +1234,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Get the SQLite connection instance.
 	 *
+	 * @access private
+	 *
 	 * @return WP_SQLite_Connection
 	 */
 	public function get_connection(): WP_SQLite_Connection {
@@ -1248,6 +1256,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * The saved driver version corresponds to the latest version of the SQLite
 	 * driver that was used to initialize and configure the SQLite database.
+	 *
+	 * @access private
 	 *
 	 * @return string       SQLite driver version as a string.
 	 * @throws PDOException When the query execution fails.
@@ -1274,6 +1284,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Check if a specific SQL mode is active.
 	 *
+	 * @access private
+	 *
 	 * @param  string $mode The SQL mode to check.
 	 * @return bool         True if the SQL mode is active, false otherwise.
 	 */
@@ -1289,6 +1301,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Get the last executed MySQL query.
 	 *
+	 * @access private
+	 *
 	 * @return string|null
 	 */
 	public function get_last_mysql_query(): ?string {
@@ -1297,6 +1311,8 @@ class WP_MySQL_On_SQLite extends PDO {
 
 	/**
 	 * Get SQLite queries executed for the last MySQL query.
+	 *
+	 * @access private
 	 *
 	 * @return array{ sql: string, params: array }[]
 	 */
@@ -1319,6 +1335,8 @@ class WP_MySQL_On_SQLite extends PDO {
 
 	/**
 	 * Tokenize a MySQL query and initialize a parser.
+	 *
+	 * @access private
 	 *
 	 * @param  string          $query The MySQL query to parse.
 	 * @return WP_MySQL_Parser        A parser initialized for the MySQL query.
@@ -1354,6 +1372,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Get the number of columns returned by the last emulated query.
 	 *
+	 * @access private
+	 *
 	 * @return int
 	 */
 	public function get_last_column_count(): int {
@@ -1362,6 +1382,8 @@ class WP_MySQL_On_SQLite extends PDO {
 
 	/**
 	 * Get column metadata for results of the last emulated query.
+	 *
+	 * @access private
 	 *
 	 * @return array
 	 */
@@ -1523,6 +1545,8 @@ class WP_MySQL_On_SQLite extends PDO {
 
 	/**
 	 * Execute a query in SQLite.
+	 *
+	 * @access private
 	 *
 	 * @param string $sql   The query to execute.
 	 * @param array $params The query parameters.

@@ -7,6 +7,8 @@
  *
  * @TODO: Add a detailed description and list the properties that a grammar must
  *        satisfy in order to be supported by this parser (e.g., no left recursion).
+ *
+ * @access private
  */
 class WP_Parser {
 	protected $grammar;

@@ -19,6 +19,8 @@
  *
  * This automatically enables ref_to_pdo_obj to replace the function in the SQL statement
  * to the ones defined here.
+ *
+ * @access private
  */
 class WP_SQLite_PDO_User_Defined_Functions {
 

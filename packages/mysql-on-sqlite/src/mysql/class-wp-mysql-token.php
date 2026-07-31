@@ -5,6 +5,8 @@
  *
  * This class represents a MySQL SQL token that is produced by WP_MySQL_Lexer,
  * and consumed by WP_MySQL_Parser during the parsing process.
+ *
+ * @access private
  */
 class WP_MySQL_Token extends WP_Parser_Token {
 	/**
