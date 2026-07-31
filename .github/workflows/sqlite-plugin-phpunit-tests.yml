@@ -1,0 +1,45 @@
+name: SQLite Plugin PHPUnit Tests
+
+on:
+  push:
+    branches:
+      - trunk
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Disable permissions for all available scopes by default.
+# Any needed permissions should be configured at the job level.
+permissions: {}
+
+jobs:
+  test:
+    name: SQLite Plugin PHPUnit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # Required to clone the repo.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set UID and GID for PHP in WordPress images
+        run: |
+          echo "PHP_FPM_UID=$(id -u)" >> $GITHUB_ENV
+          echo "PHP_FPM_GID=$(id -g)" >> $GITHUB_ENV
+
+      - name: Run SQLite plugin single-site PHPUnit tests
+        run: composer run wp-test-sqlite-plugin-php
+
+      - name: Run SQLite plugin multisite PHPUnit tests
+        run: composer run wp-test-sqlite-plugin-php-multisite
+
+      - name: Stop Docker containers
+        if: always()
+        run: composer run wp-test-clean

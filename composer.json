@@ -69,6 +69,12 @@
 			"rm -rf wordpress/src/wp-content/database/.ht.sqlite @no_additional_args",
 			"npm --prefix wordpress run test:php -- @additional_args"
 		],
+		"wp-test-sqlite-plugin-php": [
+			"@wp-test-php /var/www/tests-sqlite-database-integration/phpunit"
+		],
+		"wp-test-sqlite-plugin-php-multisite": [
+			"@wp-test-php -c tests/phpunit/multisite.xml /var/www/tests-sqlite-database-integration/phpunit"
+		],
 		"wp-test-e2e": [
 			"@wp-test-ensure-env @no_additional_args",
 			"npm --prefix wordpress run test:e2e -- @additional_args"

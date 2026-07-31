@@ -45,6 +45,10 @@ composer run test                       # Run unit tests
 composer run test tests/SomeTest.php    # Run specific unit test file
 composer run test -- --filter testName  # Run specific unit test class/method
 
+# SQLite Database Integration plugin PHPUnit tests
+composer run wp-test-sqlite-plugin-php           # Run single-site plugin tests
+composer run wp-test-sqlite-plugin-php-multisite # Run multisite plugin tests
+
 # SQLite Database Integration plugin E2E tests
 composer run test-e2e                   # Run E2E tests (Playwright via WP env)
 
