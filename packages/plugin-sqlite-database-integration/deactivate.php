@@ -14,7 +14,7 @@
  * @param bool $network_deactivating Whether the plugin is being deactivated network-wide.
  */
 function sqlite_plugin_remove_db_file( $network_deactivating = false ) {
-	if ( ! defined( 'SQLITE_DB_DROPIN_VERSION' ) || ! file_exists( WP_CONTENT_DIR . '/db.php' ) ) {
+	if ( ! sqlite_plugin_has_active_dropin() ) {
 		return;
 	}
 
