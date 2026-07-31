@@ -10,9 +10,6 @@
 if ( ! defined( 'DB_ENGINE' ) ) {
 	if ( defined( 'SQLITE_DB_DROPIN_VERSION' ) ) {
 		define( 'DB_ENGINE', 'sqlite' );
-	} elseif ( defined( 'DATABASE_ENGINE' ) ) {
-		// backwards compatibility with previous versions of the plugin.
-		define( 'DB_ENGINE', DATABASE_ENGINE );
 	} else {
 		define( 'DB_ENGINE', 'mysql' );
 	}
