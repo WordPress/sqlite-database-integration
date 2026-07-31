@@ -17,6 +17,8 @@ require_once __DIR__ . '/class-wp-pdo-proxy-statement.php';
  *
  * This class temporarily preserves the legacy constructor and result API while
  * consumers transition to the PDO-based WP_MySQL_On_SQLite API.
+ *
+ * @deprecated 3.0.0 Use WP_MySQL_On_SQLite instead.
  */
 class WP_SQLite_Driver {
 	/**
@@ -54,8 +56,9 @@ class WP_SQLite_Driver {
 	 *
 	 * Set up an SQLite connection and the MySQL-on-SQLite driver.
 	 *
-	 * @param WP_SQLite_Connection $connection A SQLite database connection.
-	 * @param string               $database   The database name.
+	 * @param WP_SQLite_Connection $connection    A SQLite database connection.
+	 * @param string               $database      The database name.
+	 * @param int                  $mysql_version The emulated MySQL version as an integer.
 	 *
 	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
 	 */
