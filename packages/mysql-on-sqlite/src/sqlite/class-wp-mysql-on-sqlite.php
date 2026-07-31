@@ -2147,15 +2147,21 @@ class WP_MySQL_On_SQLite extends PDO {
 						)->fetchAll( PDO::FETCH_COLUMN );
 					}
 
-					$matched_tables          = array_merge( $matched_temporary_tables, $matched_persistent_tables );
-					$matched_aliases         = array_keys(
-						array_filter(
-							$table_alias_map,
-							function ( $data ) use ( $matched_tables ) {
-								return in_array( $data['table_name'], $matched_tables, true );
+					$matched_tables  = array_merge( $matched_temporary_tables, $matched_persistent_tables );
+					$matched_aliases = array();
+					foreach ( $table_alias_map as $alias => $data ) {
+						// Derived tables do not have a table name.
+						if ( null === $data['table_name'] ) {
+							continue;
+						}
+
+						foreach ( $matched_tables as $matched_table ) {
+							if ( 0 === strcasecmp( $data['table_name'], $matched_table ) ) {
+								$matched_aliases[] = $alias;
+								break;
 							}
-						)
-					);
+						}
+					}
 					$updates_multiple_tables = count( $matched_aliases ) > 1;
 					if ( 1 === count( $matched_aliases ) ) {
 						$table_or_alias = $matched_aliases[0];

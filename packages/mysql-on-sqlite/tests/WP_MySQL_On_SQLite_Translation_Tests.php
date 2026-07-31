@@ -428,7 +428,7 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		$this->driver->query( "INSERT INTO actions VALUES (1, 0, 'pending'), (2, 0, 'pending'), (3, 0, 'complete'), (4, 0, 'canceled')" );
 
 		$statement = $this->driver->query(
-			"UPDATE actions t1
+			"UPDATE Actions t1
 			JOIN (
 				SELECT action_id
 				FROM actions
@@ -449,7 +449,7 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 			array_column( $this->driver->get_last_sqlite_queries(), 'sql' )
 		);
 		$this->assertContains(
-			"UPDATE `actions` AS `t1` SET `claim_id` = 99 FROM ( SELECT `action_id` FROM `actions` WHERE `claim_id` = 0 AND `status` = 'pending' ORDER BY `action_id` ASC LIMIT 1 ) AS `t2` WHERE `t1`.`action_id` = `t2`.`action_id`",
+			"UPDATE `Actions` AS `t1` SET `claim_id` = 99 FROM ( SELECT `action_id` FROM `actions` WHERE `claim_id` = 0 AND `status` = 'pending' ORDER BY `action_id` ASC LIMIT 1 ) AS `t2` WHERE `t1`.`action_id` = `t2`.`action_id`",
 			$queries
 		);
 		$this->assertSame(
