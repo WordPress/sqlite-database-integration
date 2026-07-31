@@ -21,6 +21,7 @@ require_once __DIR__ . '/wp-includes/database/version.php';
 
 define( 'SQLITE_MAIN_FILE', __FILE__ );
 
+require_once __DIR__ . '/capabilities.php';
 require_once __DIR__ . '/admin-page.php';
 require_once __DIR__ . '/activate.php';
 require_once __DIR__ . '/deactivate.php';

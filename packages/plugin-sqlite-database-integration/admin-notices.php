@@ -12,6 +12,9 @@
  * When the plugin gets merged in wp-core, this is not to be ported.
  */
 function sqlite_plugin_admin_notice() {
+	if ( ! current_user_can( sqlite_plugin_get_manage_capability() ) ) {
+		return;
+	}
 
 	// Don't print notices in the plugin's admin screen.
 	global $current_screen;
