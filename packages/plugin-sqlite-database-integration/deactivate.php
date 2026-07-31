@@ -18,6 +18,12 @@ function sqlite_plugin_remove_db_file( $network_deactivating = false ) {
 		return;
 	}
 
+	// WP-CLI and other programmatic callers may deactivate without a current user.
+	// In those cases, the caller is responsible for authorization.
+	if ( is_user_logged_in() && ! current_user_can( sqlite_plugin_get_manage_capability() ) ) {
+		return;
+	}
+
 	global $wp_filesystem;
 
 	require_once ABSPATH . '/wp-admin/includes/file.php';

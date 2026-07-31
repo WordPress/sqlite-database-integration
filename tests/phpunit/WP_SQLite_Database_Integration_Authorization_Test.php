@@ -396,6 +396,183 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 		);
 	}
 
+	/**
+	 * @group ms-excluded
+	 */
+	public function test_single_site_bulk_deactivation_skips_sqlite() {
+		$this->set_single_site_user( 'administrator' );
+		wp_get_current_user()->add_cap( 'manage_options', false );
+		$plugins = array( 'another-plugin/plugin.php', plugin_basename( SQLITE_MAIN_FILE ) );
+
+		foreach ( $plugins as $index => $plugin ) {
+			if ( ! current_user_can( 'deactivate_plugin', $plugin ) ) {
+				unset( $plugins[ $index ] );
+			}
+		}
+
+		$this->assertSame( array( 'another-plugin/plugin.php' ), array_values( $plugins ) );
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_network_bulk_deactivation_skips_sqlite_and_continues() {
+		$sqlite_plugin = plugin_basename( SQLITE_MAIN_FILE );
+		$other_plugin  = 'another-plugin/plugin.php';
+		$plugins       = array( $other_plugin, $sqlite_plugin );
+
+		$this->run_as_delegated_network_plugin_manager(
+			function () use ( $plugins, $sqlite_plugin, $other_plugin ) {
+				$this->run_with_network_active_plugins(
+					$plugins,
+					function () use ( $plugins, $sqlite_plugin, $other_plugin ) {
+						$dropin_before = file_get_contents( WP_CONTENT_DIR . '/db.php' );
+
+						$this->set_bulk_deactivation_request( $plugins );
+						$this->run_bulk_deactivation_preflight( 'plugins-network' );
+
+						$this->assertSame( array( $other_plugin ), $_POST['checked'] );
+
+						deactivate_plugins( $_POST['checked'], false, true );
+
+						$this->assertTrue( is_plugin_active_for_network( $sqlite_plugin ) );
+						$this->assertFalse( is_plugin_active_for_network( $other_plugin ) );
+						$this->assertSame( $dropin_before, file_get_contents( WP_CONTENT_DIR . '/db.php' ) );
+					}
+				);
+			}
+		);
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_super_admin_can_bulk_deactivate_sqlite() {
+		$this->set_multisite_user( true );
+		$sqlite_plugin = plugin_basename( SQLITE_MAIN_FILE );
+
+		$this->run_with_network_active_plugins(
+			array( $sqlite_plugin ),
+			function () use ( $sqlite_plugin ) {
+				$this->set_bulk_deactivation_request( array( $sqlite_plugin ) );
+				$this->run_bulk_deactivation_preflight( 'plugins-network' );
+
+				$this->assertSame( array( $sqlite_plugin ), $_POST['checked'] );
+
+				$filesystem = $this->run_with_deactivation_filesystem(
+					function () use ( $sqlite_plugin ) {
+						deactivate_plugins( $sqlite_plugin, false, true );
+					}
+				);
+
+				$this->assertFalse( is_plugin_active_for_network( $sqlite_plugin ) );
+				$this->assertSame( WP_CONTENT_DIR . '/db.php', $filesystem->deleted_path );
+			}
+		);
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_site_admin_bulk_preflight_does_not_modify_request() {
+		$this->set_multisite_user( false );
+		$sqlite_plugin = plugin_basename( SQLITE_MAIN_FILE );
+		$plugins       = array( 'another-plugin/plugin.php', $sqlite_plugin );
+
+		$this->set_bulk_deactivation_request( $plugins );
+		$this->run_bulk_deactivation_preflight( 'plugins' );
+
+		$this->assertSame( $plugins, $_POST['checked'] );
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_network_bulk_preflight_preserves_slashed_plugin_names() {
+		$sqlite_plugin = plugin_basename( SQLITE_MAIN_FILE );
+		$other_plugin  = "another-plugin/plugin's.php";
+
+		$this->run_as_delegated_network_plugin_manager(
+			function () use ( $sqlite_plugin, $other_plugin ) {
+				$this->set_bulk_deactivation_request( array( $other_plugin, $sqlite_plugin ) );
+				$_POST['checked'] = wp_slash( $_POST['checked'] );
+
+				$this->run_bulk_deactivation_preflight( 'plugins-network' );
+
+				$this->assertSame( wp_slash( array( $other_plugin ) ), $_POST['checked'] );
+			}
+		);
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_network_bulk_preflight_ignores_non_string_action() {
+		$this->set_multisite_user( false );
+		$plugins = array( plugin_basename( SQLITE_MAIN_FILE ) );
+
+		$this->set_bulk_deactivation_request( $plugins );
+		$_REQUEST['action'] = array( 'deactivate-selected' );
+
+		$this->run_bulk_deactivation_preflight( 'plugins-network' );
+
+		$this->assertSame( $plugins, $_POST['checked'] );
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_network_bulk_deactivation_allows_sqlite_without_dropin() {
+		$sqlite_plugin = plugin_basename( SQLITE_MAIN_FILE );
+
+		$this->run_as_delegated_network_plugin_manager(
+			function () use ( $sqlite_plugin ) {
+				$this->run_without_dropin(
+					function () use ( $sqlite_plugin ) {
+						$this->set_bulk_deactivation_request( array( $sqlite_plugin ) );
+						$this->run_bulk_deactivation_preflight( 'plugins-network' );
+
+						$this->assertSame( array( $sqlite_plugin ), $_POST['checked'] );
+					}
+				);
+			}
+		);
+	}
+
+	/**
+	 * @group ms-required
+	 */
+	public function test_deactivation_hook_preserves_dropin_when_bulk_preflight_is_bypassed() {
+		$sqlite_plugin = plugin_basename( SQLITE_MAIN_FILE );
+
+		$this->run_as_delegated_network_plugin_manager(
+			function () use ( $sqlite_plugin ) {
+				$this->run_with_network_active_plugins(
+					array( $sqlite_plugin ),
+					function () use ( $sqlite_plugin ) {
+						$filesystem = $this->run_with_deactivation_filesystem(
+							function () use ( $sqlite_plugin ) {
+								deactivate_plugins( $sqlite_plugin, false, true );
+							}
+						);
+
+						$this->assertFalse( is_plugin_active_for_network( $sqlite_plugin ) );
+						$this->assertNull( $filesystem->deleted_path );
+					}
+				);
+			}
+		);
+	}
+
+	/**
+	 * @group ms-excluded
+	 */
+	public function test_deactivation_hook_allows_programmatic_call_without_user() {
+		wp_set_current_user( 0 );
+
+		$this->assert_deactivation_removes_dropin();
+	}
+
 	private function set_single_site_user( $role ) {
 		$user_id = self::factory()->user->create( array( 'role' => $role ) );
 
@@ -424,6 +601,46 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 		} finally {
 			foreach ( $capabilities as $capability ) {
 				$user->remove_cap( $capability );
+			}
+		}
+	}
+
+	private function run_with_network_active_plugins( $plugins, $callback ) {
+		$active_before = get_site_option( 'active_sitewide_plugins', array() );
+		$active        = $active_before;
+
+		foreach ( $plugins as $plugin ) {
+			$active[ $plugin ] = time();
+		}
+		update_site_option( 'active_sitewide_plugins', $active );
+
+		try {
+			return call_user_func( $callback );
+		} finally {
+			update_site_option( 'active_sitewide_plugins', $active_before );
+		}
+	}
+
+	private function set_bulk_deactivation_request( $plugins ) {
+		$_POST    = array( 'checked' => $plugins );
+		$_REQUEST = array(
+			'action' => 'deactivate-selected',
+		);
+	}
+
+	private function run_bulk_deactivation_preflight( $screen_id ) {
+		$screen_was_set = array_key_exists( 'current_screen', $GLOBALS );
+		$screen_before  = $screen_was_set ? $GLOBALS['current_screen'] : null;
+
+		$GLOBALS['current_screen'] = WP_Screen::get( $screen_id );
+
+		try {
+			sqlite_plugin_filter_network_bulk_deactivation();
+		} finally {
+			if ( $screen_was_set ) {
+				$GLOBALS['current_screen'] = $screen_before;
+			} else {
+				unset( $GLOBALS['current_screen'] );
 			}
 		}
 	}
