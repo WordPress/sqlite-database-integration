@@ -10,5 +10,4 @@ wp-setup.sh export-ignore
 /grammar-tools export-ignore
 /packages export-ignore
 /tests export-ignore
-/wp-includes/sqlite/class-wp-sqlite-crosscheck-db.php export-ignore
 /wordpress export-ignore
