@@ -415,6 +415,70 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testUpdateJoinWithDerivedTablePreservesTargetAlias(): void {
+		$sqlite_version = $this->driver->get_sqlite_version();
+		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
+			$this->markTestSkipped(
+				sprintf( "SQLite version %s doesn't support UPDATE with FROM clause.", $sqlite_version )
+			);
+			return;
+		}
+
+		$this->driver->query( 'CREATE TABLE actions (action_id INT, claim_id INT, status TEXT)' );
+		$this->driver->query( "INSERT INTO actions VALUES (1, 0, 'pending'), (2, 0, 'pending'), (3, 0, 'complete'), (4, 0, 'canceled')" );
+
+		$statement = $this->driver->query(
+			"UPDATE actions t1
+			JOIN (
+				SELECT action_id
+				FROM actions
+				WHERE claim_id = 0
+					AND status = 'pending'
+				ORDER BY action_id ASC
+				LIMIT 1
+				FOR UPDATE
+			) t2 ON t1.action_id = t2.action_id
+			SET claim_id = 99"
+		);
+
+		$this->assertSame( 1, $statement->rowCount() );
+		$queries = array_map(
+			function ( $query ) {
+				return trim( preg_replace( '/\s+/', ' ', $query ) );
+			},
+			array_column( $this->driver->get_last_sqlite_queries(), 'sql' )
+		);
+		$this->assertContains(
+			"UPDATE `actions` AS `t1` SET `claim_id` = 99 FROM ( SELECT `action_id` FROM `actions` WHERE `claim_id` = 0 AND `status` = 'pending' ORDER BY `action_id` ASC LIMIT 1 ) AS `t2` WHERE `t1`.`action_id` = `t2`.`action_id`",
+			$queries
+		);
+		$this->assertSame(
+			array(
+				array(
+					'action_id' => '1',
+					'claim_id'  => '99',
+					'status'    => 'pending',
+				),
+			),
+			$this->driver->query( 'SELECT * FROM actions WHERE claim_id = 99' )->fetchAll( PDO::FETCH_ASSOC )
+		);
+		$this->assertSame(
+			array(
+				array(
+					'action_id' => '3',
+					'claim_id'  => '0',
+					'status'    => 'complete',
+				),
+				array(
+					'action_id' => '4',
+					'claim_id'  => '0',
+					'status'    => 'canceled',
+				),
+			),
+			$this->driver->query( "SELECT * FROM actions WHERE status IN ( 'complete', 'canceled' ) ORDER BY action_id" )->fetchAll( PDO::FETCH_ASSOC )
+		);
+	}
+
 	public function testDelete(): void {
 		$this->assertQuery(
 			'DELETE FROM `t`',

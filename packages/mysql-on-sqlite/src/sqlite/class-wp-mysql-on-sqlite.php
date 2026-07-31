@@ -2148,9 +2148,17 @@ class WP_MySQL_On_SQLite extends PDO {
 					}
 
 					$matched_tables          = array_merge( $matched_temporary_tables, $matched_persistent_tables );
-					$updates_multiple_tables = count( $matched_tables ) > 1;
-					if ( 1 === count( $matched_tables ) ) {
-						$table_or_alias = $matched_tables[0];
+					$matched_aliases         = array_keys(
+						array_filter(
+							$table_alias_map,
+							function ( $data ) use ( $matched_tables ) {
+								return in_array( $data['table_name'], $matched_tables, true );
+							}
+						)
+					);
+					$updates_multiple_tables = count( $matched_aliases ) > 1;
+					if ( 1 === count( $matched_aliases ) ) {
+						$table_or_alias = $matched_aliases[0];
 					} else {
 						break;
 					}
