@@ -5,6 +5,7 @@
  * Author: The WordPress Team
  * Version: 3.0.0-rc.7
  * Requires PHP: 7.2
+ * Network: true
  * Textdomain: sqlite-database-integration
  *
  * This feature plugin allows WordPress to use SQLite instead of MySQL as its database.
