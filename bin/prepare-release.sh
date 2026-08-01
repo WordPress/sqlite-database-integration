@@ -19,7 +19,8 @@ fail() {
 	exit 1
 }
 
-REPO_URL="https://github.com/WordPress/sqlite-database-integration"
+REPO="WordPress/sqlite-database-integration"
+REPO_URL="https://github.com/$REPO"
 VERSION_PHP="packages/mysql-on-sqlite/src/version.php"
 LOAD_PHP="packages/plugin-sqlite-database-integration/load.php"
 README_TXT="packages/plugin-sqlite-database-integration/readme.txt"
@@ -58,19 +59,45 @@ git pull --ff-only origin trunk --quiet || fail "trunk is not up to date with or
 LATEST_TAG="v$CURRENT_VERSION"
 
 echo "Generating changelog from merged PRs since $LATEST_TAG..."
+git fetch --quiet origin "refs/tags/$LATEST_TAG:refs/tags/$LATEST_TAG" \
+	|| fail "Failed to fetch release tag $LATEST_TAG from origin."
+git merge-base --is-ancestor "$LATEST_TAG" origin/trunk \
+	|| fail "Release tag $LATEST_TAG is not an ancestor of origin/trunk."
+
+COMMITS="$(git rev-list --first-parent "$LATEST_TAG..origin/trunk")"
 CHANGELOG=""
 
-if git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
-	TAG_TIMESTAMP="$(git log -1 --format='%aI' "$LATEST_TAG")"
+if [ -n "$COMMITS" ]; then
+	QUERY='query($owner: String!, $name: String!) {
+		repository(owner: $owner, name: $name) {'
+	while IFS= read -r commit; do
+		QUERY="$QUERY
+			commit_$commit: object(oid: \"$commit\") {
+				... on Commit {
+					associatedPullRequests(first: 100) {
+						nodes { number title mergedAt baseRefName }
+					}
+				}
+		}"
+	done <<< "$COMMITS"
+	QUERY="$QUERY
+		}
+	}"
 
-	CHANGELOG="$(gh pr list \
-		--state merged \
-		--base trunk \
-		--search "merged:>$TAG_TIMESTAMP" \
-		--limit 100 \
-		--json number,title,mergedAt \
-		--jq "sort_by(.mergedAt) | reverse | .[]
-			| \"* \\(.title) ([#\\(.number)]($REPO_URL/pull/\\(.number)))\"")"
+	if ! CHANGELOG="$(gh api graphql \
+		-f query="$QUERY" \
+		-F owner="${REPO%%/*}" \
+		-F name="${REPO#*/}" \
+		--jq "[.data.repository[]
+			| .associatedPullRequests.nodes[]
+			| select(.mergedAt != null and .baseRefName == \"trunk\")]
+			| unique_by(.number)
+			| sort_by(.mergedAt)
+			| reverse
+			| .[]
+			| \"* \\(.title) ([#\\(.number)]($REPO_URL/pull/\\(.number)))\"")"; then
+		fail "Failed to generate changelog from merged pull requests."
+	fi
 fi
 
 if [ -z "$CHANGELOG" ]; then
