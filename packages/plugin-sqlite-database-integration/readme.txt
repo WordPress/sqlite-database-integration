@@ -46,12 +46,12 @@ with SQLite syntax and behavior.
 
 = 3.0.0-rc.8 =
 
-* Preserve aliases in UPDATE JOIN translation ([#462](https://github.com/WordPress/sqlite-database-integration/pull/462))
+* Preserve aliases in `UPDATE JOIN` translation ([#462](https://github.com/WordPress/sqlite-database-integration/pull/462))
 * Restrict SQLite installation permissions ([#464](https://github.com/WordPress/sqlite-database-integration/pull/464))
 * Improve string escaping ([#466](https://github.com/WordPress/sqlite-database-integration/pull/466))
 * Stabilize WordPress E2E tests ([#459](https://github.com/WordPress/sqlite-database-integration/pull/459))
 * Address WordPress PHPUnit test fails: charset detection, length validation etc ([#331](https://github.com/WordPress/sqlite-database-integration/pull/331))
-* User defined REVERSE() function Unicode support 🎉 ([#453](https://github.com/WordPress/sqlite-database-integration/pull/453))
+* Add Unicode support to the user-defined `REVERSE()` function ([#453](https://github.com/WordPress/sqlite-database-integration/pull/453))
 * Simplify the MySQL-on-SQLite driver API ([#449](https://github.com/WordPress/sqlite-database-integration/pull/449))
 * Add WordPress 7.0 compatibility ([#450](https://github.com/WordPress/sqlite-database-integration/pull/450))
 
