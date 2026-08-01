@@ -36,7 +36,7 @@ if ( ! defined( 'DB_ENGINE' ) ) {
 // Require the implementation from the plugin.
 require_once $sqlite_plugin_implementation_folder_path . '/wp-includes/sqlite/db.php';
 
-// Activate the performance-lab plugin if it is not already activated.
+// Activate the SQLite Database Integration plugin if it is not already activated.
 add_action(
 	'admin_footer',
 	function() {
