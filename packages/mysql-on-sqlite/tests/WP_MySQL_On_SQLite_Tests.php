@@ -63,7 +63,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$exception = null;
 		try {
 			$this->query( $sql );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception, 'An exception was expected, but none was thrown.' );
@@ -2956,11 +2956,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			$exception = null;
 			try {
 				$this->query( $invalid_sql_mode[0] );
-			} catch ( WP_SQLite_Driver_Exception $e ) {
+			} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 				$exception = $e;
 			}
 
-			$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+			$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 			$this->assertSame(
 				sprintf(
 					"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
@@ -2986,7 +2986,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			)
 		);
 
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionCode( '42000' );
 		$this->expectExceptionMessage(
 			"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of 'NOT_USED'"
@@ -3002,11 +3002,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$exception = null;
 		try {
 			$this->query( "SET sql_mode = $bitmap" );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame(
 			'SQLSTATE[HY000]: General error: 3899 sql_mode=0x00000300 is not supported.',
 			$exception->getMessage()
@@ -3060,11 +3060,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$exception = null;
 		try {
 			$this->query( $query );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame(
 			sprintf(
 				"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
@@ -3118,7 +3118,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	public function testSqlModeRejectsIncorrectValueType() {
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionCode( '42000' );
 		$this->expectExceptionMessage(
 			"SQLSTATE[42000]: Syntax error or access violation: 1232 Incorrect argument type to variable 'sql_mode'"
@@ -5473,7 +5473,7 @@ QUERY
 	 * @dataProvider getReservedPrefixTestData
 	 */
 	public function testReservedPrefix( string $query, string $error ): void {
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( $error );
 		$this->assertQuery( $query );
 	}
@@ -5512,7 +5512,7 @@ QUERY
 	 */
 	public function testInformationSchemaIsReadonly( string $query ): void {
 		$this->assertQuery( 'CREATE TABLE tables (id INT)' );
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( "Access denied for user 'root'@'%' to database 'information_schema'" );
 		$this->assertQuery( $query );
 	}
@@ -5544,7 +5544,7 @@ QUERY
 	 */
 	public function testInformationSchemaIsReadonlyWithUse( string $query ): void {
 		$this->assertQuery( 'CREATE TABLE tables (id INT)' );
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( "Access denied for user 'root'@'%' to database 'information_schema'" );
 		$this->assertQuery( 'USE information_schema' );
 		$this->assertQuery( $query );
@@ -5616,7 +5616,7 @@ QUERY
 		$this->assertEquals( 'a', $result[0]->Field );
 
 		// Second DROP TABLE removes the standard table.
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( "Table 'wp.t' doesn't exist" );
 		$this->assertQuery( 'DROP TABLE t' );
 		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
@@ -5682,7 +5682,7 @@ QUERY
 		$exception = null;
 		try {
 			$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -5696,7 +5696,7 @@ QUERY
 		$exception = null;
 		try {
 			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -5711,7 +5711,7 @@ QUERY
 		try {
 			$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
 			$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -5736,7 +5736,7 @@ QUERY
 		$exception = null;
 		try {
 			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -5751,7 +5751,7 @@ QUERY
 		try {
 			$this->assertQuery( "INSERT INTO t3 (id, value) VALUES (1, 'initial-value')" );
 			$this->assertQuery( 'UPDATE t3 SET value = NULL WHERE id = 1' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -5828,7 +5828,7 @@ QUERY
 		$exception = null;
 		try {
 			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -5861,7 +5861,7 @@ QUERY
 		$exception = null;
 		try {
 			$this->assertQuery( 'INSERT INTO t2 (id, value) VALUES (1, NULL)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -6229,7 +6229,7 @@ QUERY
 			try {
 				$this->assertQuery( $query );
 				$this->fail( 'Expected NO_BACKSLASH_ESCAPES to be rejected.' );
-			} catch ( WP_SQLite_Driver_Exception $e ) {
+			} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 				$this->assertSame(
 					"MySQL query not supported. Cause: SQL mode 'NO_BACKSLASH_ESCAPES'",
 					$e->getMessage()
@@ -6242,7 +6242,7 @@ QUERY
 	}
 
 	public function testMultiQueryNotSupported(): void {
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( 'Multi-query is not supported.' );
 		$this->assertQuery( 'SELECT 1; SELECT 2' );
 	}
@@ -6252,11 +6252,11 @@ QUERY
 		try {
 			$this->assertQuery( 'CREATE TABLE t (id INT)' );
 			$this->assertQuery( 'CREATE TABLE t (id INT)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42S01]: Base table or view already exists: 1050 Table 't' already exists", $exception->getMessage() );
 		$this->assertSame( '42S01', $exception->getCode() );
 	}
@@ -6265,11 +6265,11 @@ QUERY
 		$exception = null;
 		try {
 			$this->assertQuery( 'CREATE TABLE t (col INT, col INT)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name 'col'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
@@ -6278,11 +6278,11 @@ QUERY
 		$exception = null;
 		try {
 			$this->assertQuery( 'CREATE TABLE t (id1 INT, id2 INT, INDEX idx (id1), INDEX idx (id2))' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
@@ -6291,11 +6291,11 @@ QUERY
 		$exception = null;
 		try {
 			$this->assertQuery( 'CREATE TABLE t (id1 INT, id2 INT, INDEX idx (id1), UNIQUE idx (id2))' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
@@ -6310,11 +6310,11 @@ QUERY
 		try {
 			$this->assertQuery( 'CREATE TABLE t (col INT)' );
 			$this->assertQuery( 'ALTER TABLE t ADD COLUMN col INT' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name 'col'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
@@ -6324,11 +6324,11 @@ QUERY
 		try {
 			$this->assertQuery( 'CREATE TABLE t (id INT)' );
 			$this->assertQuery( 'ALTER TABLE t ADD COLUMN col INT, ADD COLUMN col INT' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name 'col'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
@@ -6338,11 +6338,11 @@ QUERY
 		try {
 			$this->assertQuery( 'CREATE TABLE t (id INT, INDEX idx (id))' );
 			$this->assertQuery( 'ALTER TABLE t ADD INDEX idx (id)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
@@ -6352,11 +6352,11 @@ QUERY
 		try {
 			$this->assertQuery( 'CREATE TABLE t (id INT)' );
 			$this->assertQuery( 'ALTER TABLE t ADD INDEX idx (id), ADD INDEX idx (id)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
@@ -6366,11 +6366,11 @@ QUERY
 		try {
 			$this->assertQuery( 'CREATE TABLE t (id INT, INDEX idx (id))' );
 			$this->assertQuery( 'ALTER TABLE t ADD UNIQUE idx (id)' );
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 
-		$this->assertInstanceOf( WP_SQLite_Driver_Exception::class, $exception );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
 		$this->assertSame( '42S21', $exception->getCode() );
 	}
@@ -6770,19 +6770,19 @@ QUERY
 	}
 
 	public function testAliasesMustBeAscii(): void {
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( 'The SQLite driver only supports ASCII characters in identifiers.' );
 		$this->assertQuery( 'SELECT 123 AS `ńôñ-ášçíì`' );
 	}
 
 	public function testTableNamesMustBeAscii(): void {
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( 'The SQLite driver only supports ASCII characters in identifiers.' );
 		$this->assertQuery( 'CREATE TABLE `ńôñ-ášçíì` (id INT)' );
 	}
 
 	public function testColumnNamesMustBeAscii(): void {
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( 'The SQLite driver only supports ASCII characters in identifiers.' );
 		$this->assertQuery( 'CREATE TABLE t (`ńôñ-ášçíì` INT)' );
 	}
@@ -7009,7 +7009,7 @@ QUERY
 		$this->assertQuery( 'CREATE TABLE t (id INT, val1 INT, val2 INT)' );
 		$this->assertQuery( 'CREATE INDEX idx_value ON t (val1)' );
 
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( "1061 Duplicate key name 'idx_value'" );
 
 		$this->assertQuery( 'CREATE INDEX idx_value ON t (val2)' );
@@ -7018,7 +7018,7 @@ QUERY
 	public function testCreateIndexOnNonExistentColumn(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT)' );
 
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( "SQLSTATE[42000]: Syntax error or access violation: 1072 Key column 'val' doesn't exist in table" );
 
 		$this->assertQuery( 'CREATE INDEX idx_value ON t (val)' );
@@ -7295,7 +7295,7 @@ END;
 	public function testDatabaseNameEmpty(): void {
 		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$pdo       = new $pdo_class( 'sqlite::memory:' );
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( 'The database name cannot be empty.' );
 		new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:dbname=',
@@ -7594,13 +7594,13 @@ END;
 	}
 
 	public function testLockNonExistentTableForRead(): void {
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( "Table 'wp.t' doesn't exist" );
 		$this->assertQuery( 'LOCK TABLES t READ' );
 	}
 
 	public function testLockNonExistentTableForWrite(): void {
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( "Table 'wp.t' doesn't exist" );
 		$this->assertQuery( 'LOCK TABLES t WRITE' );
 	}
@@ -7609,7 +7609,7 @@ END;
 		$this->assertQuery( 'CREATE TABLE t1 (id INT)' );
 		$this->assertQuery( 'CREATE TABLE t3 (id INT)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( "Table 'wp.t2' doesn't exist" );
 		$this->assertQuery( 'LOCK TABLES t1 READ, t2 READ, t3 WRITE' );
 	}
@@ -7803,7 +7803,7 @@ END;
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'ambiguous column name: name' );
 		$this->assertQuery( 'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name DESC' );
 	}
@@ -7813,7 +7813,7 @@ END;
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'ambiguous column name: name' );
 		$this->assertQuery( 'SELECT 1 FROM t1 JOIN t2 ON t2.id = t1.id ORDER BY name' );
 	}
@@ -7865,7 +7865,7 @@ END;
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'ambiguous column name: name' );
 		$this->assertQuery( 'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name' );
 	}
@@ -7874,7 +7874,7 @@ END;
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'ambiguous column name: name' );
 		$this->assertQuery( 'SELECT 1 FROM t1 JOIN t2 ON t2.id = t1.id GROUP BY name' );
 	}
@@ -7914,7 +7914,7 @@ END;
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'ambiguous column name: name' );
 		$this->assertQuery( 'SELECT t1.name, t2.name FROM t1 JOIN t2 ON t2.id = t1.id HAVING name' );
 	}
@@ -7923,13 +7923,13 @@ END;
 		$this->assertQuery( 'CREATE TABLE t1 (id INT, name TEXT)' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT, name TEXT)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'ambiguous column name: name' );
 		$this->assertQuery( 'SELECT 1 FROM t1 JOIN t2 ON t2.id = t1.id HAVING name' );
 	}
 
 	public function testRollbackNonExistentTransactionSavepoint(): void {
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'no such savepoint: sp1' );
 		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
 	}
@@ -7940,7 +7940,7 @@ END;
 		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
 		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
 		$this->assertQuery( 'UPDATE t1 SET id = 2 WHERE id = 1' );
 	}
@@ -7951,7 +7951,7 @@ END;
 		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
 		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
 		$this->assertQuery( 'UPDATE t1 SET id = 2 WHERE id = 1' );
 	}
@@ -7996,7 +7996,7 @@ END;
 		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
 		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
 		$this->assertQuery( 'DELETE FROM t1 WHERE id = 1' );
 	}
@@ -8007,7 +8007,7 @@ END;
 		$this->assertQuery( 'INSERT INTO t1 (id) VALUES (1)' );
 		$this->assertQuery( 'INSERT INTO t2 (id) VALUES (1)' );
 
-		$this->expectException( 'WP_SQLite_Driver_Exception' );
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
 		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed' );
 		$this->assertQuery( 'DELETE FROM t1 WHERE id = 1' );
 	}
@@ -10369,7 +10369,7 @@ END;
 				VALUES (0, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
 			"
 			);
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -10386,7 +10386,7 @@ END;
 				VALUES (1, '', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
 			"
 			);
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -10403,7 +10403,7 @@ END;
 				VALUES (1, 'test', 100, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
 			"
 			);
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -10420,7 +10420,7 @@ END;
 				VALUES (1, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', 'invalid JSON')
 			"
 			);
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -10437,7 +10437,7 @@ END;
 				VALUES (11, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"value\"}')
 			"
 			);
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -10454,7 +10454,7 @@ END;
 				VALUES (1, 'test', 50, '2025-01-02 12:00:00', '2025-01-01 12:00:00', '{\"key\":\"value\"}')
 			"
 			);
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -10471,7 +10471,7 @@ END;
 				VALUES (1, 'test', 50, '2025-01-01 12:00:00', '2025-01-02 12:00:00', '{\"key\":\"a-very-long-value\"}')
 			"
 			);
-		} catch ( WP_SQLite_Driver_Exception $e ) {
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
 			$exception = $e;
 		}
 		$this->assertNotNull( $exception );
@@ -10544,7 +10544,7 @@ END;
 		$this->assertCount( 1, $result );
 
 		// Insert invalid data.
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( 'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: c' );
 		$this->assertQuery( 'INSERT INTO t (id) VALUES (0)' );
 	}

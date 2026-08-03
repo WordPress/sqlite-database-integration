@@ -60,7 +60,7 @@ class WP_SQLite_Driver {
 	 * @param string               $database      The database name.
 	 * @param int                  $mysql_version The emulated MySQL version as an integer.
 	 *
-	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the driver initialization fails.
 	 */
 	public function __construct(
 		WP_SQLite_Connection $connection,
@@ -157,7 +157,7 @@ class WP_SQLite_Driver {
 	 *
 	 * @return mixed Return value, depending on the query type.
 	 *
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
 		$stmt = $this->mysql_on_sqlite_driver->query( $query, $fetch_mode, ...$fetch_mode_args );

@@ -34,6 +34,12 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertInstanceOf( PDO::class, $driver );
 	}
 
+	public function test_driver_exception_exposes_originating_driver(): void {
+		$exception = new WP_MySQL_On_SQLite_Exception( $this->driver, 'Test error.' );
+
+		$this->assertSame( $this->driver, $exception->get_driver() );
+	}
+
 	public function test_exposes_underlying_sqlite_pdo(): void {
 		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
 		$pdo       = new $pdo_class( 'sqlite::memory:' );

@@ -2291,7 +2291,7 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 	public function testInformationSchemaAlterTableDropMissingConstraint(): void {
 		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY)' );
 
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( "SQLSTATE[HY000]: General error: 3940 Constraint 'cnst' does not exist." );
 		$this->expectExceptionCode( 'HY000' );
 		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT cnst' );
@@ -2307,7 +2307,7 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 			)'
 		);
 
-		$this->expectException( WP_SQLite_Driver_Exception::class );
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( "SQLSTATE[HY000]: General error: 3939 Table has multiple constraints with the name 'cnst'. Please use constraint specific 'DROP' clause." );
 		$this->expectExceptionCode( 'HY000' );
 		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT cnst' );

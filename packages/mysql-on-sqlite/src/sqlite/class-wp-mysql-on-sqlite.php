@@ -706,7 +706,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *     @type string|int|null $synchronous   Optional. SQLite synchronous setting.
 	 * }
 	 *
-	 * @throws WP_SQLite_Driver_Exception When the driver initialization fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the driver initialization fails.
 	 */
 	public function __construct(
 		string $dsn,
@@ -868,7 +868,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @return PDOStatement|false PDO statement, or false when the fetch mode is invalid on PHP < 8.1.
 	 *
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	#[ReturnTypeWillChange]
 	public function query( string $query, ?int $fetch_mode = null, ...$fetch_mode_args ) {
@@ -1047,7 +1047,7 @@ class WP_MySQL_On_SQLite extends PDO {
 			} catch ( Throwable $rollback_exception ) {
 				// Ignore rollback errors.
 			}
-			if ( $e instanceof WP_SQLite_Driver_Exception ) {
+			if ( $e instanceof WP_MySQL_On_SQLite_Exception ) {
 				throw $e;
 			} elseif ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
 				throw $this->convert_information_schema_exception( $e );
@@ -1575,7 +1575,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL query in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "query" AST node with "simpleStatement" child.
-	 * @throws WP_SQLite_Driver_Exception When the query is not supported.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query is not supported.
 	 */
 	private function execute_mysql_query( WP_Parser_Node $node ): void {
 		if ( 'query' !== $node->rule_name ) {
@@ -1874,7 +1874,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Execute a MySQL transaction or locking statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "transactionOrLockingStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_transaction_or_locking_statement( WP_Parser_Node $node ): void {
 		$subnode = $node->get_first_child_node();
@@ -1991,7 +1991,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL SELECT statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "selectStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_select_statement( WP_Parser_Node $node ): void {
 		/*
@@ -2071,7 +2071,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL INSERT or REPLACE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "insertStatement" or "replaceStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_insert_or_replace_statement( WP_Parser_Node $node ): void {
 		$parts                   = array();
@@ -2198,7 +2198,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL UPDATE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "updateStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_update_statement( WP_Parser_Node $node ): void {
 		// @TODO: Add support for UPDATE with multiple tables and JOINs.
@@ -2448,7 +2448,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL DELETE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "deleteStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_delete_statement( WP_Parser_Node $node ): void {
 		/*
@@ -2589,7 +2589,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL CREATE TABLE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "createStatement" AST node with "createTable" child.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_create_table_statement( WP_Parser_Node $node ): void {
 		$subnode = $node->get_first_child_node();
@@ -2660,7 +2660,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL ALTER TABLE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "alterStatement" AST node with "alterTable" child.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_alter_table_statement( WP_Parser_Node $node ): void {
 		$table_ref  = $node->get_first_descendant_node( 'tableRef' );
@@ -2748,7 +2748,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL DROP TABLE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "dropStatement" AST node with "dropTable" child.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_drop_table_statement( WP_Parser_Node $node ): void {
 		// Record the changes in the information schema.
@@ -2800,7 +2800,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL TRUNCATE TABLE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "truncateTableStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_truncate_table_statement( WP_Parser_Node $node ): void {
 		$table_ref  = $node->get_first_child_node( 'tableRef' );
@@ -2831,7 +2831,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL CREATE INDEX statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "createStatement" AST node with "createIndex" child.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_create_index_statement( WP_Parser_Node $node ): void {
 		$create_index = $node->get_first_child_node( 'createIndex' );
@@ -2889,7 +2889,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL DROP INDEX statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "dropStatement" AST node with "dropIndex" child.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_drop_index_statement( WP_Parser_Node $node ): void {
 		$drop_index = $node->get_first_child_node( 'dropIndex' );
@@ -2930,7 +2930,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL SHOW statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "showStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_show_statement( WP_Parser_Node $node ): void {
 		$tokens   = $node->get_child_tokens();
@@ -3228,7 +3228,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL SHOW TABLE STATUS statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "showStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_show_table_status_statement( WP_Parser_Node $node ): void {
 		// FROM/IN database.
@@ -3315,7 +3315,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL SHOW TABLES statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "showStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_show_tables_statement( WP_Parser_Node $node ): void {
 		// FROM/IN database.
@@ -3365,7 +3365,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL SHOW COLUMNS statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "showStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 * @throws PDOException               When given table doesn't exist.
 	 */
 	private function execute_show_columns_statement( WP_Parser_Node $node ): void {
@@ -3460,7 +3460,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL DESCRIBE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "describeStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_describe_statement( WP_Parser_Node $node ): void {
 		$table_ref  = $node->get_first_child_node( 'tableRef' );
@@ -3499,7 +3499,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL USE statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "useStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_use_statement( WP_Parser_Node $node ): void {
 		$database_name = $this->unquote_sqlite_identifier(
@@ -3524,7 +3524,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Translate and execute a MySQL SET statement in SQLite.
 	 *
 	 * @param  WP_Parser_Node $node       The "setStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_set_statement( WP_Parser_Node $node ): void {
 		/*
@@ -3637,7 +3637,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param  WP_Parser_Node $value_node    The "setExprOrDefault" AST node.
 	 * @param  int            $default_type  The currently active default variable type.
 	 *                                       One of the SESSION, GLOBAL, PERSIST, PERSIST_ONLY tokens.
-	 * @throws WP_SQLite_Driver_Exception    When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception  When the query execution fails.
 	 */
 	private function execute_set_system_variable_statement(
 		WP_Parser_Node $set_var_node,
@@ -3740,7 +3740,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  WP_Parser_Node $user_variable The "userVariable" AST node.
 	 * @param  WP_Parser_Node $expr          The "expr" AST node.
-	 * @throws WP_SQLite_Driver_Exception    When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception  When the query execution fails.
 	 */
 	private function execute_set_user_variable_statement(
 		WP_Parser_Node $user_variable,
@@ -3765,7 +3765,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *  - REPAIR TABLE
 	 *
 	 * @param  WP_Parser_Node $node       A "tableAdministrationStatement" AST node.
-	 * @throws WP_SQLite_Driver_Exception When the query execution fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	private function execute_administration_statement( WP_Parser_Node $node ): void {
 		$first_token    = $node->get_first_child_token();
@@ -3916,7 +3916,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  WP_Parser_Node|WP_MySQL_Token $node The AST node to translate.
 	 * @return string|null                         The translated query fragment.
-	 * @throws WP_SQLite_Driver_Exception          When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception        When the translation fails.
 	 */
 	private function translate( $node ): ?string {
 		if ( null === $node ) {
@@ -4235,7 +4235,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param  array<WP_Parser_Node|WP_MySQL_Token> $nodes     The MySQL token to translate.
 	 * @param  string                               $separator The separator to use between fragments.
 	 * @return string|null                                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception                      When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception                    When the translation fails.
 	 */
 	private function translate_sequence( array $nodes, string $separator = ' ' ): ?string {
 		$parts = array();
@@ -4341,7 +4341,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *                                          (table, view, procedure, trigger, etc.).
 	 * @param  WP_Parser_Node|null $child_node  An identifier node representing an object child name (column, index, etc.).
 	 * @return string                           The translated value.
-	 * @throws WP_SQLite_Driver_Exception       When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception     When the translation fails.
 	 */
 	private function translate_qualified_identifier(
 		?WP_Parser_Node $schema_node,
@@ -4389,7 +4389,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  WP_Parser_Node $node       The "queryExpression" AST node.
 	 * @return string                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
 	private function translate_query_expression( WP_Parser_Node $node ): string {
 		// Get the query expression subnode under which we need to look for the
@@ -4464,7 +4464,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  WP_Parser_Node $node       The "querySpecification" AST node.
 	 * @return string                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 * @return string|null
 	 */
 	private function translate_query_specification( WP_Parser_Node $node ): string {
@@ -4550,7 +4550,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param WP_Parser_Node $node        The "simpleExprBody" AST node.
 	 * @return string                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
 	private function translate_simple_expr_body( WP_Parser_Node $node ): string {
 		$token = $node->get_first_child_token();
@@ -4632,7 +4632,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param WP_Parser_Node $node        The "predicateOperations" AST node.
 	 * @return string                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
 	private function translate_like( WP_Parser_Node $node ): string {
 		$tokens    = $node->get_descendant_tokens();
@@ -4676,7 +4676,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  WP_Parser_Node $node       The "predicateOperations" AST node.
 	 * @return string                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
 	private function translate_regexp_functions( WP_Parser_Node $node ): string {
 		$tokens    = $node->get_descendant_tokens();
@@ -4706,7 +4706,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  WP_Parser_Node $node       The "runtimeFunctionCall" AST node.
 	 * @return string                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
 	private function translate_runtime_function_call( WP_Parser_Node $node ): string {
 		$child = $node->get_first_child();
@@ -4758,7 +4758,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  WP_Parser_Node $node       The "functionCall" AST node.
 	 * @return string                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
 	private function translate_function_call( WP_Parser_Node $node ): string {
 		$nodes = $node->get_child_nodes();
@@ -5094,7 +5094,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @param  WP_Parser_Node $node       The "tableRef" AST node.
 	 * @return string                     The translated value.
-	 * @throws WP_SQLite_Driver_Exception When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
 	private function translate_table_ref( WP_Parser_Node $node ): string {
 		// The table reference is in "<schema>.<table>" or "<table>" format.
@@ -5217,7 +5217,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param  array  $column_map         Optional. A map of column names (old name -> new name)
 	 *                                    to use when copying data from the original table.
 	 *                                    When not provided, all columns are copied without renaming.
-	 * @throws WP_SQLite_Driver_Exception
+	 * @throws WP_MySQL_On_SQLite_Exception
 	 */
 	private function recreate_table_from_information_schema(
 		bool $table_is_temporary,
@@ -5385,7 +5385,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param  WP_Parser_Node $like_or_where The "likeOrWhere" AST node.
 	 * @param  string         $like_column   The column name to use in the LIKE clause ("table_name", "column_name", etc.).
 	 * @return string                        The translated value.
-	 * @throws WP_SQLite_Driver_Exception    When the translation fails.
+	 * @throws WP_MySQL_On_SQLite_Exception  When the translation fails.
 	 */
 	private function translate_show_like_or_where_condition( WP_Parser_Node $like_or_where, string $like_column ): string {
 		$like_clause = $like_or_where->get_first_child_node( 'likeClause' );
@@ -6530,7 +6530,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param  string      $table_name         The name of the table to create.
 	 * @param  string|null $new_table_name     Override the original table name for ALTER TABLE emulation.
 	 * @return string[]                        Queries to create the table, indexes, and constraints.
-	 * @throws WP_SQLite_Driver_Exception      When the table information is missing.
+	 * @throws WP_MySQL_On_SQLite_Exception    When the table information is missing.
 	 */
 	private function get_sqlite_create_table_statement(
 		bool $table_is_temporary,
@@ -7484,19 +7484,19 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Create a new SQLite driver exception.
+	 * Create a new MySQL-on-SQLite driver exception.
 	 *
 	 * @param string         $message  The exception message.
 	 * @param int|string     $code     The exception code. For PDO errors, a string representing SQLSTATE.
 	 * @param Throwable|null $previous The previous exception.
-	 * @return WP_SQLite_Driver_Exception
+	 * @return WP_MySQL_On_SQLite_Exception
 	 */
 	private function new_driver_exception(
 		string $message,
 		$code = 0,
 		?Throwable $previous = null
-	): WP_SQLite_Driver_Exception {
-		return new WP_SQLite_Driver_Exception( $this, $message, $code, $previous );
+	): WP_MySQL_On_SQLite_Exception {
+		return new WP_MySQL_On_SQLite_Exception( $this, $message, $code, $previous );
 	}
 
 	/**
@@ -7505,10 +7505,10 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * This exception can be used to mark cases that should never occur according
 	 * to the MySQL grammar. It may serve as an assertion that should never fail.
 	 *
-	 * @return WP_SQLite_Driver_Exception
+	 * @return WP_MySQL_On_SQLite_Exception
 	 */
-	private function new_invalid_input_exception(): WP_SQLite_Driver_Exception {
-		return new WP_SQLite_Driver_Exception( $this, 'MySQL query syntax error.' );
+	private function new_invalid_input_exception(): WP_MySQL_On_SQLite_Exception {
+		return new WP_MySQL_On_SQLite_Exception( $this, 'MySQL query syntax error.' );
 	}
 
 	/**
@@ -7517,10 +7517,10 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * This exception can be used to mark MySQL constructs that are not supported.
 	 *
 	 * @param string $cause The cause, indicating which construct is not supported.
-	 * @return WP_SQLite_Driver_Exception
+	 * @return WP_MySQL_On_SQLite_Exception
 	 */
-	private function new_not_supported_exception( string $cause ): WP_SQLite_Driver_Exception {
-		return new WP_SQLite_Driver_Exception(
+	private function new_not_supported_exception( string $cause ): WP_MySQL_On_SQLite_Exception {
+		return new WP_MySQL_On_SQLite_Exception(
 			$this,
 			sprintf( 'MySQL query not supported. Cause: %s', $cause )
 		);
@@ -7530,9 +7530,9 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Create a MySQL-compatible exception for an invalid SQL mode value.
 	 *
 	 * @param  mixed $value The invalid SQL mode value.
-	 * @return WP_SQLite_Driver_Exception
+	 * @return WP_MySQL_On_SQLite_Exception
 	 */
-	private function new_invalid_sql_mode_exception( $value ): WP_SQLite_Driver_Exception {
+	private function new_invalid_sql_mode_exception( $value ): WP_MySQL_On_SQLite_Exception {
 		return $this->new_driver_exception(
 			sprintf(
 				"SQLSTATE[42000]: Syntax error or access violation: 1231 Variable 'sql_mode' can't be set to the value of '%s'",
@@ -7545,9 +7545,9 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Create a new access denied exception for the information schema database.
 	 *
-	 * @return WP_SQLite_Driver_Exception
+	 * @return WP_MySQL_On_SQLite_Exception
 	 */
-	private function new_access_denied_to_information_schema_exception(): WP_SQLite_Driver_Exception {
+	private function new_access_denied_to_information_schema_exception(): WP_MySQL_On_SQLite_Exception {
 		return $this->new_driver_exception(
 			"Access denied for user 'root'@'%' to database 'information_schema'",
 			'42000'

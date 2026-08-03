@@ -36,7 +36,7 @@ if ( class_exists( 'WP_MySQL_Native_Parser', false ) ) {
 require_once __DIR__ . '/sqlite/class-wp-sqlite-connection.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-configurator.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-driver.php';
-require_once __DIR__ . '/sqlite/class-wp-sqlite-driver-exception.php';
+require_once __DIR__ . '/sqlite/class-wp-mysql-on-sqlite-exception.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-information-schema-builder.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-information-schema-exception.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-information-schema-reconstructor.php';

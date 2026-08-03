@@ -821,7 +821,7 @@ class WP_SQLite_DB extends wpdb {
 
 
 	/**
-	 * Format SQLite driver error message.
+	 * Format MySQL-on-SQLite driver error message.
 	 *
 	 * @return string
 	 */
@@ -829,8 +829,8 @@ class WP_SQLite_DB extends wpdb {
 		$output = '<div style="clear:both">&nbsp;</div>' . PHP_EOL;
 
 		// Queries.
-		if ( $e instanceof WP_SQLite_Driver_Exception ) {
-			$driver = $e->getDriver();
+		if ( $e instanceof WP_MySQL_On_SQLite_Exception ) {
+			$driver = $e->get_driver();
 
 			$output .= '<div class="queries" style="clear:both;margin-bottom:2px;border:red dotted thin;">' . PHP_EOL;
 			$output .= '<p>MySQL query:</p>' . PHP_EOL;
