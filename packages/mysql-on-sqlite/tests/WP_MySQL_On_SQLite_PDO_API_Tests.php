@@ -137,6 +137,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 
 	public function test_query(): void {
 		$result = $this->driver->query( "SELECT 1, 'abc'" );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Statement::class, $result );
 		$this->assertInstanceOf( PDOStatement::class, $result );
 		if ( PHP_VERSION_ID < 80000 ) {
 			$this->assertSame(

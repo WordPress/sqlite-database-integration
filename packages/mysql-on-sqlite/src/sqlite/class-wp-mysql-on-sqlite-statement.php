@@ -26,7 +26,12 @@
  * we conditionally define traits with different APIs based on the PHP version.
  */
 if ( PHP_VERSION_ID < 80000 ) {
-	trait WP_PDO_Proxy_Statement_PHP_Compat {
+	/**
+	 * PHP compatibility methods for WP_MySQL_On_SQLite_Statement.
+	 *
+	 * @access private
+	 */
+	trait WP_MySQL_On_SQLite_Statement_PHP_Compat {
 		/**
 		 * Set the default fetch mode for this statement.
 		 *
@@ -61,7 +66,12 @@ if ( PHP_VERSION_ID < 80000 ) {
 		}
 	}
 } else {
-	trait WP_PDO_Proxy_Statement_PHP_Compat {
+	/**
+	 * PHP compatibility methods for WP_MySQL_On_SQLite_Statement.
+	 *
+	 * @access private
+	 */
+	trait WP_MySQL_On_SQLite_Statement_PHP_Compat {
 		/**
 		 * Set the default fetch mode for this statement.
 		 *
@@ -88,10 +98,10 @@ if ( PHP_VERSION_ID < 80000 ) {
 }
 
 /**
- * PDOStatement implementation that operates on in-memory data.
+ * PDOStatement implementation for MySQL-on-SQLite query results.
  *
- * This class implements a complete PDOStatement interface on top of PHP arrays.
- * It is used for result sets that are composed or transformed in the PHP layer.
+ * Delegates operations to the underlying SQLite statement while adapting
+ * MySQL-specific behavior such as affected row counts.
  *
  * PDO supports the following fetch modes:
  *   - PDO::FETCH_DEFAULT:  current default fetch mode (available from PHP 8.0)
@@ -108,8 +118,8 @@ if ( PHP_VERSION_ID < 80000 ) {
  *   - PDO::FETCH_BOUND:    bind values to PHP variables, can't be used with fetchAll()
  *   - PDO::FETCH_FUNC:     custom function, only works with fetchAll(), can't be default [1 extra arg]
  */
-class WP_PDO_Proxy_Statement extends PDOStatement {
-	use WP_PDO_Proxy_Statement_PHP_Compat;
+class WP_MySQL_On_SQLite_Statement extends PDOStatement {
+	use WP_MySQL_On_SQLite_Statement_PHP_Compat;
 
 	/**
 	 * The original PDO statement.
@@ -347,7 +357,7 @@ class WP_PDO_Proxy_Statement extends PDOStatement {
 	/**
 	 * Fetch all remaining rows from the result set.
 	 *
-	 * This is used internally by the "WP_PDO_Proxy_Statement_PHP_Compat" trait,
+	 * This is used internally by the "WP_MySQL_On_SQLite_Statement_PHP_Compat" trait,
 	 * that is defined conditionally based on the current PHP version.
 	 *
 	 * @param  int   $mode The fetch mode to use.
@@ -361,7 +371,7 @@ class WP_PDO_Proxy_Statement extends PDOStatement {
 	/**
 	 * Set the default fetch mode for this statement.
 	 *
-	 * This is used internally by the "WP_PDO_Proxy_Statement_PHP_Compat" trait,
+	 * This is used internally by the "WP_MySQL_On_SQLite_Statement_PHP_Compat" trait,
 	 * that is defined conditionally based on the current PHP version.
 	 *
 	 * @param  int   $mode   The fetch mode to set as the default.

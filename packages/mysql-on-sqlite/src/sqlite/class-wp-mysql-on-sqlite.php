@@ -1037,7 +1037,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
 			}
 
-			$stmt = new WP_PDO_Proxy_Statement( $this->last_result_statement, $this->last_affected_rows );
+			$stmt = new WP_MySQL_On_SQLite_Statement( $this->last_result_statement, $this->last_affected_rows );
 			$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
 			return $stmt;
 		} catch ( Throwable $e ) {
