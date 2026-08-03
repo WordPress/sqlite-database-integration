@@ -21,6 +21,28 @@ class WP_SQLite_DB_Tests extends TestCase {
 		);
 	}
 
+	public function test_exposes_mysql_on_sqlite_driver(): void {
+		$wpdb = new class( $this->driver ) extends WP_SQLite_DB {
+			public function __construct( WP_MySQL_On_SQLite $driver ) {
+				$this->dbh = $driver;
+			}
+		};
+
+		$this->assertSame( $this->driver, $wpdb->get_driver() );
+	}
+
+	public function test_rejects_driver_access_without_database_connection(): void {
+		$wpdb = new class() extends WP_SQLite_DB {
+			public function __construct() {
+				$this->dbh = null;
+			}
+		};
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'Cannot access the driver without an active database connection.' );
+		$wpdb->get_driver();
+	}
+
 	/**
 	 * @dataProvider dataMysqlEscaping
 	 */

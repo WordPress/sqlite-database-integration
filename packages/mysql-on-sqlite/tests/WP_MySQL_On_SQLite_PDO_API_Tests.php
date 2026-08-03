@@ -34,6 +34,19 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertInstanceOf( PDO::class, $driver );
 	}
 
+	public function test_exposes_underlying_sqlite_pdo(): void {
+		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo       = new $pdo_class( 'sqlite::memory:' );
+		$driver    = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'pdo' => $pdo )
+		);
+
+		$this->assertSame( $pdo, $driver->get_sqlite_pdo() );
+	}
+
 	public function test_dsn_parsing(): void {
 		// Standard DSN.
 		$driver = new WP_MySQL_On_SQLite( 'mysql-on-sqlite:path=:memory:;dbname=wp' );

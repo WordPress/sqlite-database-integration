@@ -21,13 +21,6 @@ class WP_SQLite_DB extends wpdb {
 	protected $dbh;
 
 	/**
-	 * Whether the PDO instance was provided externally through $GLOBALS['@pdo'].
-	 *
-	 * @var bool
-	 */
-	private $is_pdo_external;
-
-	/**
 	 * Backward compatibility, see wpdb::$allow_unsafe_unquoted_parameters.
 	 *
 	 * This property is mirroring "wpdb::$allow_unsafe_unquoted_parameters",
@@ -61,6 +54,22 @@ class WP_SQLite_DB extends wpdb {
 
 		parent::__construct( '', '', $dbname, '' );
 		$this->charset = 'utf8mb4';
+	}
+
+	/**
+	 * Returns the active MySQL-on-SQLite driver.
+	 *
+	 * @since 3.0.0
+	 *
+	 * @return WP_MySQL_On_SQLite The active driver.
+	 * @throws RuntimeException When there is no active database connection.
+	 */
+	public function get_driver(): WP_MySQL_On_SQLite {
+		if ( ! $this->dbh ) {
+			throw new RuntimeException( 'Cannot access the driver without an active database connection.' );
+		}
+
+		return $this->dbh;
 	}
 
 	/**
@@ -212,14 +221,8 @@ class WP_SQLite_DB extends wpdb {
 			return false;
 		}
 
-		/*
-		 * @TODO: Replace and deprecate the $GLOBALS['@pdo'] injection mechanism.
-		 * PDO has no close method and is released only when all references are unset.
-		 * Until then, retain external PDOs so reconnects reuse the same database.
-		 */
 		if (
-			! $this->is_pdo_external
-			&& isset( $GLOBALS['@pdo'] )
+			isset( $GLOBALS['@pdo'] )
 			&& $GLOBALS['@pdo'] === $pdo
 		) {
 			unset( $GLOBALS['@pdo'] );
@@ -423,12 +426,16 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		$this->last_error = '';
+		if ( isset( $GLOBALS['@pdo'] ) ) {
+			trigger_error(
+				'PDO injection via $GLOBALS[\'@pdo\'] is no longer supported. The existing PDO will be ignored and a new connection will be created.',
+				E_USER_WARNING
+			);
+		}
+
 		if ( ! isset( $this->charset ) ) {
 			$this->init_charset();
 		}
-
-		$this->is_pdo_external = isset( $GLOBALS['@pdo'] );
-		$pdo                   = $this->is_pdo_external ? $GLOBALS['@pdo'] : null;
 
 		// Migrate the database file from a legacy path, if it exists.
 		if ( ! defined( 'DB_FILE' ) && ! file_exists( FQDB ) ) {
@@ -463,10 +470,7 @@ class WP_SQLite_DB extends wpdb {
 			$options = array(
 				'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
 			);
-			if ( null !== $pdo ) {
-				$options['pdo'] = $pdo;
-			}
-			$dbh = new WP_MySQL_On_SQLite(
+			$dbh     = new WP_MySQL_On_SQLite(
 				sprintf(
 					'mysql-on-sqlite:path=%s;dbname=%s',
 					str_replace( ';', ';;', FQDB ),
@@ -477,9 +481,15 @@ class WP_SQLite_DB extends wpdb {
 				$options
 			);
 			$dbh->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
-			$pdo             = $dbh->get_connection()->get_pdo();
-			$this->dbh       = $dbh;
-			$GLOBALS['@pdo'] = $pdo;
+			$this->dbh = $dbh;
+
+			/**
+			 * Exposes the SQLite PDO instance for backward compatibility.
+			 *
+			 * @deprecated 3.0.0 Use WP_SQLite_DB::get_driver() with
+			 *                   WP_MySQL_On_SQLite::get_sqlite_pdo() instead.
+			 */
+			$GLOBALS['@pdo'] = $dbh->get_sqlite_pdo();
 		} catch ( Throwable $e ) {
 			$this->last_error = $this->format_error_message( $e );
 		}
