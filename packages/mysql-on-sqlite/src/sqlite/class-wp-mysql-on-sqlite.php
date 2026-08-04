@@ -945,6 +945,31 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * PDO API: Prepare a MySQL statement for execution.
+	 *
+	 * Prepared statements are not implemented yet. Report the standard PDO
+	 * unsupported-function diagnostic instead of using uninitialized parent
+	 * PDO state.
+	 *
+	 * @param  string     $query   The MySQL statement to prepare.
+	 * @param  array|null $options Optional statement options.
+	 * @return PDOStatement|false False when exceptions are disabled.
+	 *
+	 * @throws WP_MySQL_On_SQLite_Exception When exception mode is enabled.
+	 */
+	#[ReturnTypeWillChange]
+	public function prepare( $query, $options = null ) {
+		$driver_message = 'driver does not support prepared statements';
+		$exception      = $this->new_driver_exception(
+			'SQLSTATE[IM001]: Driver does not support this function: ' . $driver_message,
+			'IM001',
+			null,
+			array( 'IM001', 0, $driver_message )
+		);
+		return $this->handle_pdo_error( $exception );
+	}
+
+	/**
 	 * PDO API: Translate and execute a MySQL query in SQLite.
 	 *
 	 * A single MySQL query can be translated into zero or more SQLite queries.
