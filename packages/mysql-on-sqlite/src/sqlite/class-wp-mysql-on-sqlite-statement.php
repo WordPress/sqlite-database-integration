@@ -8,6 +8,7 @@
  * PDO uses camel case naming, enable non-snake case:
  *   phpcs:disable WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
  *   phpcs:disable WordPress.NamingConventions.ValidVariableName.VariableNotSnakeCase
+ *   phpcs:disable WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
  *
  * PDO uses $class as a variable name, enable it:
  *   phpcs:disable Universal.NamingConventions.NoReservedKeywordParameterNames.classFound
@@ -118,7 +119,7 @@ if ( PHP_VERSION_ID < 80000 ) {
  *   - PDO::FETCH_BOUND:    bind values to PHP variables, can't be used with fetchAll()
  *   - PDO::FETCH_FUNC:     custom function, only works with fetchAll(), can't be default [1 extra arg]
  */
-class WP_MySQL_On_SQLite_Statement extends PDOStatement {
+class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggregate {
 	use WP_MySQL_On_SQLite_Statement_PHP_Compat;
 
 	/**
@@ -139,13 +140,20 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement {
 	 * Constructor.
 	 *
 	 * @param PDOStatement $statement     The original PDO statement.
-	 * @param int          $affected_rows The number of affected rows.
+	 * @param string       $query         The original MySQL query.
+	 * @param int|null     $affected_rows The number of affected rows.
 	 */
 	public function __construct(
 		PDOStatement $statement,
+		string $query,
 		?int $affected_rows = null
 	) {
-		$this->statement     = $statement;
+		$this->statement = $statement;
+
+		// Userland can only initialize PDOStatement::$queryString on PHP 8.1+.
+		if ( PHP_VERSION_ID >= 80100 ) {
+			$this->queryString = $query;
+		}
 		$this->affected_rows = $affected_rows;
 	}
 
@@ -239,7 +247,7 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement {
 	 *                     or null if there is no error.
 	 */
 	public function errorCode(): ?string {
-		throw new RuntimeException( 'Not implemented' );
+		return $this->statement->errorCode();
 	}
 
 	/**
@@ -251,7 +259,11 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement {
 	 *                 2: Driver-specific error message.
 	 */
 	public function errorInfo(): array {
-		throw new RuntimeException( 'Not implemented' );
+		// Normalize successful results. PDO_SQLite may retain stale driver-specific fields on PHP < 8.0.
+		if ( '00000' === $this->statement->errorCode() ) {
+			return array( '00000', null, null );
+		}
+		return $this->statement->errorInfo();
 	}
 
 	/**
@@ -282,7 +294,7 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement {
 	 * @return Iterator The iterator for the result set.
 	 */
 	public function getIterator(): Iterator {
-		throw new RuntimeException( 'Not implemented' );
+		yield from $this->statement;
 	}
 
 	/**
@@ -300,7 +312,7 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement {
 	 * @return bool True on success, false on failure.
 	 */
 	public function closeCursor(): bool {
-		throw new RuntimeException( 'Not implemented' );
+		return $this->statement->closeCursor();
 	}
 
 	/**
@@ -313,8 +325,8 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement {
 	 * @param  mixed      $driverOptions Optional parameters for the driver.
 	 * @return bool                      True on success, false on failure.
 	 */
-	public function bindColumn( $column, &$var, $type = null, $maxLength = null, $driverOptions = null ): bool {
-		throw new RuntimeException( 'Not implemented' );
+	public function bindColumn( $column, &$var, $type = PDO::PARAM_STR, $maxLength = 0, $driverOptions = null ): bool {
+		return $this->statement->bindColumn( $column, $var, $type, $maxLength, $driverOptions );
 	}
 
 	/**

@@ -161,6 +161,66 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		}
 	}
 
+	public function test_statement_query_string(): void {
+		$query = 'SELECT 1 AS value';
+		$stmt  = $this->driver->query( $query );
+
+		$this->assertSame( $query, $stmt->queryString );
+	}
+
+	public function test_statement_error_information(): void {
+		$stmt = $this->driver->query( 'SELECT 1' );
+
+		$this->assertSame( '00000', $stmt->errorCode() );
+		$this->assertSame( array( '00000', null, null ), $stmt->errorInfo() );
+	}
+
+	public function test_statement_error_information_discards_stale_sqlite_error(): void {
+		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo       = new $pdo_class( 'sqlite::memory:' );
+		$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT );
+		$pdo->query( 'SELECT * FROM missing_table' );
+
+		$stmt = new WP_MySQL_On_SQLite_Statement(
+			$pdo->query( 'SELECT 1' ),
+			'SELECT 1',
+			function () {
+				return false;
+			}
+		);
+
+		$this->assertSame( '00000', $stmt->errorCode() );
+		$this->assertSame( array( '00000', null, null ), $stmt->errorInfo() );
+	}
+
+	public function test_statement_iteration(): void {
+		$stmt = $this->driver->query( 'SELECT 1 AS value UNION ALL SELECT 2', PDO::FETCH_ASSOC );
+
+		$this->assertSame(
+			array(
+				array( 'value' => '1' ),
+				array( 'value' => '2' ),
+			),
+			iterator_to_array( $stmt )
+		);
+	}
+
+	public function test_statement_close_cursor(): void {
+		$stmt = $this->driver->query( 'SELECT 1 UNION ALL SELECT 2' );
+
+		$this->assertTrue( $stmt->closeCursor() );
+		$this->assertFalse( $stmt->fetch() );
+	}
+
+	public function test_statement_bind_column(): void {
+		$stmt  = $this->driver->query( 'SELECT 1 AS value' );
+		$value = null;
+
+		$this->assertTrue( $stmt->bindColumn( 'value', $value ) );
+		$this->assertTrue( $stmt->fetch( PDO::FETCH_BOUND ) );
+		$this->assertSame( '1', $value );
+	}
+
 	/**
 	 * @dataProvider data_pdo_fetch_methods
 	 */
