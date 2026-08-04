@@ -38,6 +38,33 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$exception = new WP_MySQL_On_SQLite_Exception( $this->driver, 'Test error.' );
 
 		$this->assertSame( $this->driver, $exception->get_driver() );
+		$this->assertSame( array( 'HY000', 1105, 'Test error.' ), $exception->errorInfo );
+	}
+
+	public function test_driver_exception_preserves_pdo_error_information(): void {
+		try {
+			$this->driver->query( 'SELECT * FROM missing_table' );
+			$this->fail( 'Expected query() to throw an exception.' );
+		} catch ( WP_MySQL_On_SQLite_Exception $exception ) {
+			$this->assertSame( 'HY000', $exception->errorInfo[0] );
+			$this->assertSame( 1, $exception->errorInfo[1] );
+			$this->assertSame( 'no such table: missing_table', $exception->errorInfo[2] );
+		}
+	}
+
+	public function test_emulated_driver_exception_exposes_mysql_error_information(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT)' );
+
+		try {
+			$this->driver->query( 'CREATE TABLE t (id INT)' );
+			$this->fail( 'Expected query() to throw an exception.' );
+		} catch ( WP_MySQL_On_SQLite_Exception $exception ) {
+			$this->assertSame( '42S01', $exception->getCode() );
+			$this->assertSame(
+				array( '42S01', 1050, "Table 't' already exists" ),
+				$exception->errorInfo
+			);
+		}
 	}
 
 	public function test_exposes_underlying_sqlite_pdo(): void {

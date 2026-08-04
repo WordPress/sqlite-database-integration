@@ -7519,17 +7519,19 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Create a new MySQL-on-SQLite driver exception.
 	 *
-	 * @param string         $message  The exception message.
-	 * @param int|string     $code     The exception code. For PDO errors, a string representing SQLSTATE.
-	 * @param Throwable|null $previous The previous exception.
+	 * @param string         $message    The exception message.
+	 * @param int|string     $code       The exception code. For PDO errors, a string representing SQLSTATE.
+	 * @param Throwable|null $previous   The previous exception.
+	 * @param array|null     $error_info PDO-style error information.
 	 * @return WP_MySQL_On_SQLite_Exception
 	 */
 	private function new_driver_exception(
 		string $message,
 		$code = 0,
-		?Throwable $previous = null
+		?Throwable $previous = null,
+		?array $error_info = null
 	): WP_MySQL_On_SQLite_Exception {
-		return new WP_MySQL_On_SQLite_Exception( $this, $message, $code, $previous );
+		return new WP_MySQL_On_SQLite_Exception( $this, $message, $code, $previous, $error_info );
 	}
 
 	/**
@@ -7601,52 +7603,55 @@ class WP_MySQL_On_SQLite extends PDO {
 	private function convert_information_schema_exception( WP_SQLite_Information_Schema_Exception $e ): Throwable {
 		switch ( $e->get_type() ) {
 			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_TABLE_NAME:
+				$driver_message = sprintf( "Table '%s' already exists", $e->get_data()['table_name'] );
 				return $this->new_driver_exception(
-					sprintf(
-						"SQLSTATE[42S01]: Base table or view already exists: 1050 Table '%s' already exists",
-						$e->get_data()['table_name']
-					),
-					'42S01'
+					'SQLSTATE[42S01]: Base table or view already exists: 1050 ' . $driver_message,
+					'42S01',
+					null,
+					array( '42S01', 1050, $driver_message )
 				);
 			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_COLUMN_NAME:
+				$driver_message = sprintf( "Duplicate column name '%s'", $e->get_data()['column_name'] );
 				return $this->new_driver_exception(
-					sprintf(
-						"SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name '%s'",
-						$e->get_data()['column_name']
-					),
-					'42S21'
+					'SQLSTATE[42S21]: Column already exists: 1060 ' . $driver_message,
+					'42S21',
+					null,
+					array( '42S21', 1060, $driver_message )
 				);
 			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_KEY_NAME:
+				$driver_message = sprintf( "Duplicate key name '%s'", $e->get_data()['key_name'] );
 				return $this->new_driver_exception(
-					sprintf(
-						"SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name '%s'",
-						$e->get_data()['key_name']
-					),
-					'42S21'
+					'SQLSTATE[42000]: Syntax error or access violation: 1061 ' . $driver_message,
+					'42000',
+					null,
+					array( '42000', 1061, $driver_message )
 				);
 			case WP_SQLite_Information_Schema_Exception::TYPE_KEY_COLUMN_NOT_FOUND:
+				$driver_message = sprintf( "Key column '%s' doesn't exist in table", $e->get_data()['column_name'] );
 				return $this->new_driver_exception(
-					sprintf(
-						"SQLSTATE[42000]: Syntax error or access violation: 1072 Key column '%s' doesn't exist in table",
-						$e->get_data()['column_name']
-					),
-					'42000'
+					'SQLSTATE[42000]: Syntax error or access violation: 1072 ' . $driver_message,
+					'42000',
+					null,
+					array( '42000', 1072, $driver_message )
 				);
 			case WP_SQLite_Information_Schema_Exception::TYPE_CONSTRAINT_DOES_NOT_EXIST:
+				$driver_message = sprintf( "Constraint '%s' does not exist.", $e->get_data()['name'] );
 				return $this->new_driver_exception(
-					sprintf(
-						"SQLSTATE[HY000]: General error: 3940 Constraint '%s' does not exist.",
-						$e->get_data()['name']
-					),
-					'HY000'
+					'SQLSTATE[HY000]: General error: 3940 ' . $driver_message,
+					'HY000',
+					null,
+					array( 'HY000', 3940, $driver_message )
 				);
 			case WP_SQLite_Information_Schema_Exception::TYPE_MULTIPLE_CONSTRAINTS_WITH_NAME:
+				$driver_message = sprintf(
+					"Table has multiple constraints with the name '%s'. Please use constraint specific 'DROP' clause.",
+					$e->get_data()['name']
+				);
 				return $this->new_driver_exception(
-					sprintf(
-						"SQLSTATE[HY000]: General error: 3939 Table has multiple constraints with the name '%s'. Please use constraint specific 'DROP' clause.",
-						$e->get_data()['name']
-					),
-					'HY000'
+					'SQLSTATE[HY000]: General error: 3939 ' . $driver_message,
+					'HY000',
+					null,
+					array( 'HY000', 3939, $driver_message )
 				);
 			default:
 				return $e;

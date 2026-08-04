@@ -6284,7 +6284,7 @@ QUERY
 
 		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
-		$this->assertSame( '42S21', $exception->getCode() );
+		$this->assertSame( '42000', $exception->getCode() );
 	}
 
 	public function testCreateTableDuplicateKeyNameWithUnique(): void {
@@ -6297,7 +6297,7 @@ QUERY
 
 		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
-		$this->assertSame( '42S21', $exception->getCode() );
+		$this->assertSame( '42000', $exception->getCode() );
 	}
 
 	public function testCreateTableDuplicateKeyNameWithPrimaryKey(): void {
@@ -6344,7 +6344,7 @@ QUERY
 
 		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
-		$this->assertSame( '42S21', $exception->getCode() );
+		$this->assertSame( '42000', $exception->getCode() );
 	}
 
 	public function testAlterTableDuplicateKeyNameWithMultipleOperations(): void {
@@ -6358,7 +6358,7 @@ QUERY
 
 		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
-		$this->assertSame( '42S21', $exception->getCode() );
+		$this->assertSame( '42000', $exception->getCode() );
 	}
 
 	public function testAlterTableDuplicateKeyNameWithUnique(): void {
@@ -6372,7 +6372,7 @@ QUERY
 
 		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
 		$this->assertSame( "SQLSTATE[42000]: Syntax error or access violation: 1061 Duplicate key name 'idx'", $exception->getMessage() );
-		$this->assertSame( '42S21', $exception->getCode() );
+		$this->assertSame( '42000', $exception->getCode() );
 	}
 
 	public function testConstraintName(): void {
