@@ -81,6 +81,7 @@ class WP_SQLite_Connection {
 	 *     @type string|null     $journal_mode Optional. SQLite journal mode. Defaults to WAL.
 	 *     @type string|int|null $synchronous  Optional. SQLite synchronous setting. Defaults to
 	 *                                         NORMAL when the effective journal mode is WAL.
+	 *     @type array           $pdo_options  Optional. PDO constructor options.
 	 * }
 	 *
 	 * @throws InvalidArgumentException When some connection options are invalid.
@@ -94,8 +95,13 @@ class WP_SQLite_Connection {
 			if ( ! isset( $options['path'] ) || ! is_string( $options['path'] ) ) {
 				throw new InvalidArgumentException( 'Option "path" is required when "connection" is not provided.' );
 			}
-			$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
-			$this->pdo = new $pdo_class( 'sqlite:' . $options['path'] );
+			$pdo_class   = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+			$pdo_options = $options['pdo_options'] ?? array();
+
+			// Internal driver operations require exceptions regardless of the
+			// caller-visible WP_MySQL_On_SQLite::ATTR_ERRMODE setting.
+			$pdo_options[ PDO::ATTR_ERRMODE ] = PDO::ERRMODE_EXCEPTION;
+			$this->pdo                        = new $pdo_class( 'sqlite:' . $options['path'], null, null, $pdo_options );
 		}
 
 		// Throw exceptions on error.

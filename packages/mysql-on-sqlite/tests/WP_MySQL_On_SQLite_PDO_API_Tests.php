@@ -34,6 +34,85 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertInstanceOf( PDO::class, $driver );
 	}
 
+	public function test_constructor_accepts_null_options(): void {
+		$driver = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
+			null,
+			null,
+			null
+		);
+
+		$this->assertInstanceOf( PDO::class, $driver );
+	}
+
+	public function test_constructor_applies_pdo_options(): void {
+		$driver = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
+			null,
+			null,
+			array(
+				PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+				PDO::ATTR_ERRMODE            => PDO::ERRMODE_SILENT,
+				PDO::ATTR_STRINGIFY_FETCHES  => true,
+			)
+		);
+
+		$this->assertSame( PDO::FETCH_ASSOC, $driver->getAttribute( PDO::ATTR_DEFAULT_FETCH_MODE ) );
+		$this->assertSame( PDO::ERRMODE_SILENT, $driver->getAttribute( PDO::ATTR_ERRMODE ) );
+		$this->assertTrue( $driver->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
+		$this->assertSame( array( 'value' => '1' ), $driver->query( 'SELECT 1 AS value' )->fetch() );
+
+		// Internal operations always retain exception mode.
+		$this->assertSame( PDO::ERRMODE_EXCEPTION, $driver->get_sqlite_pdo()->getAttribute( PDO::ATTR_ERRMODE ) );
+	}
+
+	public function test_constructor_applies_fetch_column_default(): void {
+		$driver = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
+			null,
+			null,
+			array( PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_COLUMN )
+		);
+
+		$this->assertSame( 'value', $driver->query( "SELECT 'value'" )->fetch() );
+	}
+
+	public function test_constructor_applies_persistent_option(): void {
+		$path = tempnam( sys_get_temp_dir(), 'wp_sqlite_' );
+		unlink( $path );
+
+		try {
+			$driver = new WP_MySQL_On_SQLite(
+				'mysql-on-sqlite:path=' . $path . ';dbname=WordPress;',
+				null,
+				null,
+				array( PDO::ATTR_PERSISTENT => true )
+			);
+
+			$this->assertTrue( $driver->getAttribute( PDO::ATTR_PERSISTENT ) );
+		} finally {
+			$this->remove_database_files( $path );
+		}
+	}
+
+	public function test_constructor_reports_stringify_fetches_from_injected_pdo(): void {
+		if ( PHP_VERSION_ID < 80200 ) {
+			$this->markTestSkipped( 'PDO SQLite cannot report PDO::ATTR_STRINGIFY_FETCHES before PHP 8.2.' );
+		}
+
+		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo       = new $pdo_class( 'sqlite::memory:' );
+		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$driver = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'pdo' => $pdo )
+		);
+
+		$this->assertTrue( $driver->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
+	}
+
 	public function test_driver_exception_exposes_originating_driver(): void {
 		$exception = new WP_MySQL_On_SQLite_Exception( $this->driver, 'Test error.' );
 
@@ -778,6 +857,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 
 	public function test_attr_stringify_fetches(): void {
 		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$this->assertTrue( $this->driver->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
 		$result = $this->driver->query( "SELECT 123, 1.23, 'abc', true, false" );
 		$this->assertSame(
 			array( '123', '1.23', 'abc', '1', '0' ),
@@ -785,6 +865,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		);
 
 		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, false );
+		$this->assertFalse( $this->driver->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
 		$result = $this->driver->query( "SELECT 123, 1.23, 'abc', true, false" );
 		$this->assertSame(
 			/*

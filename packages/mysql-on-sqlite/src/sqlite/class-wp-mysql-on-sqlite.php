@@ -536,6 +536,16 @@ class WP_MySQL_On_SQLite extends PDO {
 	private $error_mode = PDO::ERRMODE_EXCEPTION;
 
 	/**
+	 * Whether fetched scalar values should be converted to strings.
+	 *
+	 * PDO SQLite cannot report PDO::ATTR_STRINGIFY_FETCHES on PHP 7.2–8.1,
+	 * so the wrapper tracks its value on those versions.
+	 *
+	 * @var bool
+	 */
+	private $stringify_fetches = false;
+
+	/**
 	 * SQLSTATE associated with the last PDO operation.
 	 *
 	 * @var string|null
@@ -735,8 +745,10 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param string      $dsn      MySQL-on-SQLite DSN containing the SQLite path and database name.
 	 * @param string|null $username Optional. Ignored by this driver.
 	 * @param string|null $password Optional. Ignored by this driver.
-	 * @param array       $options  {
+	 * @param array|null  $options  {
 	 *     Optional driver options.
+	 *
+	 *     Numeric keys are handled as standard PDO constructor options.
 	 *
 	 *     @type int             $mysql_version Optional. MySQL version to emulate. Default 80038.
 	 *     @type PDO|null        $pdo           Optional. Existing SQLite PDO connection.
@@ -750,8 +762,10 @@ class WP_MySQL_On_SQLite extends PDO {
 		string $dsn,
 		?string $username = null,
 		?string $password = null,
-		array $options = array()
+		?array $options = null
 	) {
+		$options = $options ?? array();
+
 		// PDO DSN can't include "\0" bytes; parsing stops at the first one.
 		$first_null_byte_index = strpos( $dsn, "\0" );
 		if ( false !== $first_null_byte_index ) {
@@ -792,9 +806,18 @@ class WP_MySQL_On_SQLite extends PDO {
 		$db_name = $args['dbname'] ?? 'sqlite_database';
 
 		// Create a new SQLite connection.
+		$pdo_options = array_filter(
+			$options,
+			function ( $key ) {
+				return is_int( $key );
+			},
+			ARRAY_FILTER_USE_KEY
+		);
+
 		$connection_options = array(
 			'journal_mode' => $options['journal_mode'] ?? null,
 			'synchronous'  => $options['synchronous'] ?? null,
+			'pdo_options'  => $pdo_options,
 		);
 		if ( isset( $options['pdo'] ) ) {
 			$connection_options['pdo'] = $options['pdo'];
@@ -892,6 +915,15 @@ class WP_MySQL_On_SQLite extends PDO {
 				);
 			}
 		);
+
+		foreach ( $pdo_options as $attribute => $value ) {
+			// Persistence is a connection-time-only option and was already passed
+			// to the underlying PDO constructor when creating a new connection.
+			if ( PDO::ATTR_PERSISTENT === $attribute ) {
+				continue;
+			}
+			$this->setAttribute( $attribute, $value );
+		}
 	}
 
 	/**
@@ -937,11 +969,6 @@ class WP_MySQL_On_SQLite extends PDO {
 				);
 				return false;
 			}
-
-			// When the default FETCH_BOTH is not set explicitly, additional
-			// arguments are ignored, and the argument count is not validated.
-			$fetch_mode      = $this->connection->get_pdo()->getAttribute( PDO::ATTR_DEFAULT_FETCH_MODE );
-			$fetch_mode_args = array();
 		} elseif ( PDO::FETCH_COLUMN === $fetch_mode ) {
 			if ( 3 !== $arg_count ) {
 				throw new ArgumentCountError(
@@ -1076,7 +1103,9 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 
 			$stmt = new WP_MySQL_On_SQLite_Statement( $this->last_result_statement, $query, $this->last_affected_rows );
-			$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
+			if ( null !== $fetch_mode ) {
+				$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
+			}
 			$this->error_code = '00000';
 			$this->error_info = array( '00000', null, null );
 			return $stmt;
@@ -1317,7 +1346,12 @@ class WP_MySQL_On_SQLite extends PDO {
 			$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
 			return true;
 		}
-		return $this->connection->get_pdo()->setAttribute( $attribute, $value );
+
+		$result = $this->connection->get_pdo()->setAttribute( $attribute, $value );
+		if ( $result && PDO::ATTR_STRINGIFY_FETCHES === $attribute ) {
+			$this->stringify_fetches = (bool) $value;
+		}
+		return $result;
 	}
 
 	/**
@@ -1335,6 +1369,10 @@ class WP_MySQL_On_SQLite extends PDO {
 		// Return the caller's error mode instead of the exception mode used internally.
 		if ( PDO::ATTR_ERRMODE === $attribute ) {
 			return $this->error_mode;
+		}
+		if ( PDO::ATTR_STRINGIFY_FETCHES === $attribute && PHP_VERSION_ID < 80200 ) {
+			// PDO SQLite cannot report this attribute before PHP 8.2.
+			return $this->stringify_fetches;
 		}
 		return $this->connection->get_pdo()->getAttribute( $attribute );
 	}
