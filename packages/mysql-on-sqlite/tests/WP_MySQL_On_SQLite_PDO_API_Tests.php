@@ -319,6 +319,28 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertEquals( 0, $result );
 	}
 
+	public function test_last_insert_id(): void {
+		$this->driver->query( 'CREATE TABLE t (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY)' );
+		$this->driver->query( 'INSERT INTO t (id) VALUES (NULL)' );
+
+		$this->assertSame( '1', $this->driver->lastInsertId() );
+		$this->assertSame( '1', $this->driver->lastInsertId( 'ignored_sequence_name' ) );
+	}
+
+	public function test_last_insert_id_rejects_invalid_sequence_name(): void {
+		if ( PHP_VERSION_ID < 80000 ) {
+			$result = @$this->driver->lastInsertId( array() ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+			$this->assertFalse( $result );
+			$this->assertSame( 'PDO::lastInsertId() expects parameter 1 to be string, array given', error_get_last()['message'] );
+			return;
+		}
+
+		$this->expectException( TypeError::class );
+		$this->expectExceptionMessage( 'PDO::lastInsertId(): Argument #1 ($name) must be of type ?string, array given' );
+		$this->driver->lastInsertId( array() );
+	}
+
 	public function test_quote_matches_mysql_escaping(): void {
 		$backslash = chr( 92 );
 		$value     = chr( 0 ) . "\n\r{$backslash}'\"" . chr( 26 ) . "\tƮềʂᴛ🙂";

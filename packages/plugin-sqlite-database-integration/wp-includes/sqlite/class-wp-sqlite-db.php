@@ -617,7 +617,7 @@ class WP_SQLite_DB extends wpdb {
 
 			// Take note of the insert_id.
 			if ( preg_match( '/^\s*(insert|replace)\s/i', $query ) ) {
-				$this->insert_id = $this->dbh->get_insert_id();
+				$this->insert_id = (int) $this->dbh->lastInsertId();
 			}
 
 			// Return number of rows affected.

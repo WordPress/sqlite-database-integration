@@ -3,6 +3,12 @@
 /*
  * The SQLite driver uses PDO. Enable PDO function calls:
  * phpcs:disable WordPress.DB.RestrictedClasses.mysql__PDO
+ *
+ * PDO uses camel case naming, enable non-snake case:
+ * phpcs:disable WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+ *
+ * PDO uses $string as a parameter name, enable it:
+ * phpcs:disable Universal.NamingConventions.NoReservedKeywordParameterNames.stringFound
  */
 
 /**
@@ -1073,6 +1079,37 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * PDO API: Return the ID of the last inserted row.
+	 *
+	 * @param  string|null $name Optional sequence name. Ignored by SQLite.
+	 * @return string|false      The last insert ID, or false on failure.
+	 */
+	#[ReturnTypeWillChange]
+	public function lastInsertId( $name = null ) {
+		if (
+			is_array( $name )
+			|| is_resource( $name )
+			|| ( is_object( $name ) && ! method_exists( $name, '__toString' ) )
+		) {
+			if ( PHP_VERSION_ID >= 80000 ) {
+				throw new TypeError(
+					sprintf(
+						'PDO::lastInsertId(): Argument #1 ($name) must be of type ?string, %s given',
+						get_debug_type( $name )
+					)
+				);
+			}
+			trigger_error(
+				sprintf( 'PDO::lastInsertId() expects parameter 1 to be string, %s given', strtolower( gettype( $name ) ) ),
+				E_USER_WARNING
+			);
+			return false;
+		}
+
+		return $this->connection->get_pdo()->lastInsertId( $name );
+	}
+
+	/**
 	 * PDO API: Quote a string for use in a MySQL query.
 	 *
 	 * @param  string $string The string to quote.
@@ -1080,7 +1117,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @return string         The quoted string.
 	 */
 	#[ReturnTypeWillChange]
-	// phpcs:ignore Universal.NamingConventions.NoReservedKeywordParameterNames.stringFound
 	public function quote( $string, $type = PDO::PARAM_STR ) {
 		// Mirror PDO\MySQL::quote() value validation.
 		if (
@@ -1146,7 +1182,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @return bool True on success, false on failure.
 	 */
-	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 	public function beginTransaction(): bool {
 		if ( $this->inTransaction() ) {
 			throw $this->new_driver_exception( 'There is already an active transaction' );
@@ -1173,7 +1208,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @return bool True on success, false on failure.
 	 */
-	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 	public function rollBack(): bool {
 		if ( ! $this->inTransaction() ) {
 			throw $this->new_driver_exception( 'There is no active transaction' );
@@ -1187,7 +1221,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *
 	 * @return bool True if a transaction is active, false otherwise.
 	 */
-	// phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
 	public function inTransaction(): bool {
 		if ( PHP_VERSION_ID < 80400 ) {
 			/*
@@ -1332,19 +1365,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	 */
 	public function get_last_sqlite_queries(): array {
 		return $this->last_sqlite_queries;
-	}
-
-	/**
-	 * Get the auto-increment value generated for the last query.
-	 *
-	 * @return int|string
-	 */
-	public function get_insert_id() {
-		$last_insert_id = $this->connection->get_last_insert_id();
-		if ( is_numeric( $last_insert_id ) ) {
-			$last_insert_id = (int) $last_insert_id;
-		}
-		return $last_insert_id;
 	}
 
 	/**

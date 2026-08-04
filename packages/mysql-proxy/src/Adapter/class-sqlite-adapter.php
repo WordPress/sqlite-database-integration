@@ -33,7 +33,7 @@ class SQLite_Adapter implements Adapter {
 
 		try {
 			$statement      = $this->sqlite_driver->query( $query, PDO::FETCH_OBJ );
-			$last_insert_id = $this->sqlite_driver->get_insert_id() ?? null;
+			$last_insert_id = (int) $this->sqlite_driver->lastInsertId();
 			if ( $statement->columnCount() > 0 ) {
 				$rows = $statement->fetchAll();
 			} else {

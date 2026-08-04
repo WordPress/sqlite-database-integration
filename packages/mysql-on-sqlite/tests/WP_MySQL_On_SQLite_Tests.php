@@ -5093,10 +5093,10 @@ QUERY
 		);
 
 		$this->assertQuery( "INSERT INTO t (name) VALUES ('a')" );
-		$this->assertEquals( 1, $this->engine->get_insert_id() );
+		$this->assertSame( '1', $this->engine->lastInsertId() );
 
 		$this->assertQuery( "INSERT INTO t (name) VALUES ('b')" );
-		$this->assertEquals( 2, $this->engine->get_insert_id() );
+		$this->assertSame( '2', $this->engine->lastInsertId() );
 	}
 
 	public function testCharLength(): void {

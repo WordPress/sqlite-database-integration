@@ -3,6 +3,9 @@
 /*
  * The SQLite driver uses PDO. Enable PDO function calls:
  * phpcs:disable WordPress.DB.RestrictedClasses.mysql__PDO
+ *
+ * PDO uses camel case naming, enable non-snake case:
+ * phpcs:disable WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
  */
 
 /**
@@ -147,7 +150,11 @@ class WP_SQLite_Driver {
 	 * @return int|string
 	 */
 	public function get_insert_id() {
-		return $this->mysql_on_sqlite_driver->get_insert_id();
+		$last_insert_id = $this->mysql_on_sqlite_driver->lastInsertId();
+		if ( is_numeric( $last_insert_id ) ) {
+			$last_insert_id = (int) $last_insert_id;
+		}
+		return $last_insert_id;
 	}
 
 	/**
@@ -231,7 +238,7 @@ class WP_SQLite_Driver {
 	/**
 	 * Begin a new transaction or nested transaction.
 	 */
-	public function beginTransaction(): void { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid
+	public function beginTransaction(): void {
 		$this->mysql_on_sqlite_driver->beginTransaction();
 	}
 
