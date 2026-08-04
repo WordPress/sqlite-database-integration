@@ -320,11 +320,18 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	}
 
 	public function test_last_insert_id(): void {
+		$this->assertSame( '0', $this->driver->lastInsertId() );
+
 		$this->driver->query( 'CREATE TABLE t (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY)' );
+		$this->assertSame( '0', $this->driver->lastInsertId() );
+
 		$this->driver->query( 'INSERT INTO t (id) VALUES (NULL)' );
 
 		$this->assertSame( '1', $this->driver->lastInsertId() );
 		$this->assertSame( '1', $this->driver->lastInsertId( 'ignored_sequence_name' ) );
+
+		$this->driver->query( 'CREATE TABLE another_table (id INT)' );
+		$this->assertSame( '0', $this->driver->lastInsertId() );
 	}
 
 	public function test_last_insert_id_rejects_invalid_sequence_name(): void {
