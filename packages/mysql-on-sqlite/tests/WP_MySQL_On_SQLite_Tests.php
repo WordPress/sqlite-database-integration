@@ -25,6 +25,9 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	/** @var mixed */
 	private $last_result;
 
+	/** @var WP_MySQL_On_SQLite_Statement */
+	private $last_statement;
+
 	// Before each test, we create a new database
 	public function setUp(): void {
 		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
@@ -71,13 +74,23 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	private function query( $sql ) {
-		$statement = $this->engine->query( $sql, PDO::FETCH_OBJ );
+		$statement            = $this->engine->query( $sql, PDO::FETCH_OBJ );
+		$this->last_statement = $statement;
 		if ( $statement->columnCount() > 0 ) {
 			$this->last_result = $statement->fetchAll();
 		} else {
 			$this->last_result = $statement->rowCount();
 		}
 		return $this->last_result;
+	}
+
+	private function getLastColumnMeta(): array {
+		$column_meta  = array();
+		$column_count = $this->last_statement->columnCount();
+		for ( $i = 0; $i < $column_count; $i++ ) {
+			$column_meta[] = $this->last_statement->getColumnMeta( $i );
+		}
+		return $column_meta;
 	}
 
 	public function testRegexp() {
@@ -8303,9 +8316,9 @@ END;
 		$this->assertQuery( "INSERT INTO t VALUES (1, 'name', 1.1, B'01101001')" );
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 4, $this->engine->get_last_column_count() );
+		$this->assertEquals( 4, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 		$this->assertCount( 4, $column_info );
 
 		$this->assertSame(
@@ -8410,9 +8423,9 @@ END;
 		$this->assertQuery( 'INSERT INTO t VALUES (1, "slug", 1)' );
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 3, $this->engine->get_last_column_count() );
+		$this->assertEquals( 3, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -8493,9 +8506,9 @@ END;
 		$this->assertQuery( 'INSERT INTO t VALUES (0, 1, 2, 3, 4, 5, 6)' );
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 7, $this->engine->get_last_column_count() );
+		$this->assertEquals( 7, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -8644,9 +8657,9 @@ END;
 		$this->assertQuery( 'INSERT INTO t VALUES (1, 2, 3, 4, 5)' );
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 5, $this->engine->get_last_column_count() );
+		$this->assertEquals( 5, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -8761,9 +8774,9 @@ END;
 		$this->assertQuery( 'INSERT INTO t VALUES (1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7)' );
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 7, $this->engine->get_last_column_count() );
+		$this->assertEquals( 7, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -8918,9 +8931,9 @@ END;
 		$this->assertQuery( 'INSERT INTO t VALUES ("a", "b", "c", "d", "e", "f", "g", "h", "a", "b", "{}")' );
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 11, $this->engine->get_last_column_count() );
+		$this->assertEquals( 11, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -9141,9 +9154,9 @@ END;
 		$this->assertQuery( 'INSERT INTO t VALUES ("2024-01-01", "12:00:00", "2024-01-01 12:00:00", "2024-01-01 12:00:00", 2024)' );
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 5, $this->engine->get_last_column_count() );
+		$this->assertEquals( 5, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -9257,9 +9270,9 @@ END;
 		$this->assertQuery( "INSERT INTO t VALUES (B'01000001', B'01101001', B'10101010', B'01010101', B'10000000', B'11111111')" );
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 6, $this->engine->get_last_column_count() );
+		$this->assertEquals( 6, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -9406,9 +9419,9 @@ END;
 		);
 
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 9, $this->engine->get_last_column_count() );
+		$this->assertEquals( 9, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -9606,9 +9619,9 @@ END;
 				(SELECT 1) AS col_expr_20
 			FROM t"
 		);
-		$this->assertEquals( 20, $this->engine->get_last_column_count() );
+		$this->assertEquals( 20, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 
 		$this->assertSame(
 			array(
@@ -10005,9 +10018,9 @@ END;
 				CASE WHEN col_int < 5 THEN 'string' ELSE 123 END AS col_expr_4
 			FROM t"
 		);
-		$this->assertEquals( 16, $this->engine->get_last_column_count() );
+		$this->assertEquals( 16, $this->last_statement->columnCount() );
 
-		$column_info = $this->engine->get_last_column_meta();
+		$column_info = $this->getLastColumnMeta();
 		$this->assertCount( 16, $column_info );
 
 		$this->assertSame(
@@ -10313,8 +10326,8 @@ END;
 
 		$this->assertQuery( 'CREATE TABLE t ( id INT )' );
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertEquals( 1, $this->engine->get_last_column_count() );
-		$column_info = $this->engine->get_last_column_meta();
+		$this->assertEquals( 1, $this->last_statement->columnCount() );
+		$column_info = $this->getLastColumnMeta();
 		$this->assertCount( 1, $column_info );
 		$this->assertSame(
 			array(
@@ -11284,242 +11297,242 @@ END;
 
 		// SELECT
 		$this->assertQuery( 'SELECT * FROM t' );
-		$this->assertSame( 1, $this->engine->get_last_column_count() );
-		$this->assertSame( 'id', $this->engine->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 1, $this->last_statement->columnCount() );
+		$this->assertSame( 'id', $this->last_statement->getColumnMeta( 0 )['name'] );
 
 		// SHOW COLLATION
 		$this->assertQuery( 'SHOW COLLATION' );
-		$this->assertSame( 7, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Collation', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Charset', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Id', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Default', $this->engine->get_last_column_meta()[3]['name'] );
-		$this->assertSame( 'Compiled', $this->engine->get_last_column_meta()[4]['name'] );
-		$this->assertSame( 'Sortlen', $this->engine->get_last_column_meta()[5]['name'] );
-		$this->assertSame( 'Pad_attribute', $this->engine->get_last_column_meta()[6]['name'] );
+		$this->assertSame( 7, $this->last_statement->columnCount() );
+		$this->assertSame( 'Collation', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Charset', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Id', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Default', $this->last_statement->getColumnMeta( 3 )['name'] );
+		$this->assertSame( 'Compiled', $this->last_statement->getColumnMeta( 4 )['name'] );
+		$this->assertSame( 'Sortlen', $this->last_statement->getColumnMeta( 5 )['name'] );
+		$this->assertSame( 'Pad_attribute', $this->last_statement->getColumnMeta( 6 )['name'] );
 
 		// SHOW DATABASES
 		$this->assertQuery( 'SHOW DATABASES' );
-		$this->assertSame( 1, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Database', $this->engine->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 1, $this->last_statement->columnCount() );
+		$this->assertSame( 'Database', $this->last_statement->getColumnMeta( 0 )['name'] );
 
 		// SHOW CREATE TABLE
 		$this->assertQuery( 'SHOW CREATE TABLE t' );
-		$this->assertSame( 2, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Table', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Create Table', $this->engine->get_last_column_meta()[1]['name'] );
+		$this->assertSame( 2, $this->last_statement->columnCount() );
+		$this->assertSame( 'Table', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Create Table', $this->last_statement->getColumnMeta( 1 )['name'] );
 
 		// SHOW TABLE STATUS
 		$this->assertQuery( 'SHOW TABLE STATUS' );
-		$this->assertSame( 18, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Name', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Engine', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Version', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Row_format', $this->engine->get_last_column_meta()[3]['name'] );
-		$this->assertSame( 'Rows', $this->engine->get_last_column_meta()[4]['name'] );
-		$this->assertSame( 'Avg_row_length', $this->engine->get_last_column_meta()[5]['name'] );
-		$this->assertSame( 'Data_length', $this->engine->get_last_column_meta()[6]['name'] );
-		$this->assertSame( 'Max_data_length', $this->engine->get_last_column_meta()[7]['name'] );
-		$this->assertSame( 'Index_length', $this->engine->get_last_column_meta()[8]['name'] );
-		$this->assertSame( 'Data_free', $this->engine->get_last_column_meta()[9]['name'] );
-		$this->assertSame( 'Auto_increment', $this->engine->get_last_column_meta()[10]['name'] );
-		$this->assertSame( 'Create_time', $this->engine->get_last_column_meta()[11]['name'] );
-		$this->assertSame( 'Update_time', $this->engine->get_last_column_meta()[12]['name'] );
-		$this->assertSame( 'Check_time', $this->engine->get_last_column_meta()[13]['name'] );
-		$this->assertSame( 'Collation', $this->engine->get_last_column_meta()[14]['name'] );
-		$this->assertSame( 'Checksum', $this->engine->get_last_column_meta()[15]['name'] );
-		$this->assertSame( 'Create_options', $this->engine->get_last_column_meta()[16]['name'] );
-		$this->assertSame( 'Comment', $this->engine->get_last_column_meta()[17]['name'] );
+		$this->assertSame( 18, $this->last_statement->columnCount() );
+		$this->assertSame( 'Name', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Engine', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Version', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Row_format', $this->last_statement->getColumnMeta( 3 )['name'] );
+		$this->assertSame( 'Rows', $this->last_statement->getColumnMeta( 4 )['name'] );
+		$this->assertSame( 'Avg_row_length', $this->last_statement->getColumnMeta( 5 )['name'] );
+		$this->assertSame( 'Data_length', $this->last_statement->getColumnMeta( 6 )['name'] );
+		$this->assertSame( 'Max_data_length', $this->last_statement->getColumnMeta( 7 )['name'] );
+		$this->assertSame( 'Index_length', $this->last_statement->getColumnMeta( 8 )['name'] );
+		$this->assertSame( 'Data_free', $this->last_statement->getColumnMeta( 9 )['name'] );
+		$this->assertSame( 'Auto_increment', $this->last_statement->getColumnMeta( 10 )['name'] );
+		$this->assertSame( 'Create_time', $this->last_statement->getColumnMeta( 11 )['name'] );
+		$this->assertSame( 'Update_time', $this->last_statement->getColumnMeta( 12 )['name'] );
+		$this->assertSame( 'Check_time', $this->last_statement->getColumnMeta( 13 )['name'] );
+		$this->assertSame( 'Collation', $this->last_statement->getColumnMeta( 14 )['name'] );
+		$this->assertSame( 'Checksum', $this->last_statement->getColumnMeta( 15 )['name'] );
+		$this->assertSame( 'Create_options', $this->last_statement->getColumnMeta( 16 )['name'] );
+		$this->assertSame( 'Comment', $this->last_statement->getColumnMeta( 17 )['name'] );
 
 		// SHOW TABLES
 		$this->assertQuery( 'SHOW TABLES' );
-		$this->assertSame( 1, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Tables_in_wp', $this->engine->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 1, $this->last_statement->columnCount() );
+		$this->assertSame( 'Tables_in_wp', $this->last_statement->getColumnMeta( 0 )['name'] );
 
 		// SHOW FULL TABLES
 		$this->assertQuery( 'SHOW FULL TABLES' );
-		$this->assertSame( 2, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Tables_in_wp', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Table_type', $this->engine->get_last_column_meta()[1]['name'] );
+		$this->assertSame( 2, $this->last_statement->columnCount() );
+		$this->assertSame( 'Tables_in_wp', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Table_type', $this->last_statement->getColumnMeta( 1 )['name'] );
 
 		// SHOW COLUMNS
 		$this->assertQuery( 'SHOW COLUMNS FROM t' );
-		$this->assertSame( 6, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Field', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Type', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Null', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Key', $this->engine->get_last_column_meta()[3]['name'] );
-		$this->assertSame( 'Default', $this->engine->get_last_column_meta()[4]['name'] );
-		$this->assertSame( 'Extra', $this->engine->get_last_column_meta()[5]['name'] );
+		$this->assertSame( 6, $this->last_statement->columnCount() );
+		$this->assertSame( 'Field', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Type', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Null', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Key', $this->last_statement->getColumnMeta( 3 )['name'] );
+		$this->assertSame( 'Default', $this->last_statement->getColumnMeta( 4 )['name'] );
+		$this->assertSame( 'Extra', $this->last_statement->getColumnMeta( 5 )['name'] );
 
 		// SHOW INDEX
 		$this->assertQuery( 'SHOW INDEX FROM t' );
-		$this->assertSame( 15, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Table', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Non_unique', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Key_name', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Seq_in_index', $this->engine->get_last_column_meta()[3]['name'] );
-		$this->assertSame( 'Column_name', $this->engine->get_last_column_meta()[4]['name'] );
-		$this->assertSame( 'Collation', $this->engine->get_last_column_meta()[5]['name'] );
-		$this->assertSame( 'Cardinality', $this->engine->get_last_column_meta()[6]['name'] );
-		$this->assertSame( 'Sub_part', $this->engine->get_last_column_meta()[7]['name'] );
-		$this->assertSame( 'Packed', $this->engine->get_last_column_meta()[8]['name'] );
-		$this->assertSame( 'Null', $this->engine->get_last_column_meta()[9]['name'] );
-		$this->assertSame( 'Index_type', $this->engine->get_last_column_meta()[10]['name'] );
-		$this->assertSame( 'Comment', $this->engine->get_last_column_meta()[11]['name'] );
-		$this->assertSame( 'Index_comment', $this->engine->get_last_column_meta()[12]['name'] );
-		$this->assertSame( 'Visible', $this->engine->get_last_column_meta()[13]['name'] );
-		$this->assertSame( 'Expression', $this->engine->get_last_column_meta()[14]['name'] );
+		$this->assertSame( 15, $this->last_statement->columnCount() );
+		$this->assertSame( 'Table', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Non_unique', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Key_name', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Seq_in_index', $this->last_statement->getColumnMeta( 3 )['name'] );
+		$this->assertSame( 'Column_name', $this->last_statement->getColumnMeta( 4 )['name'] );
+		$this->assertSame( 'Collation', $this->last_statement->getColumnMeta( 5 )['name'] );
+		$this->assertSame( 'Cardinality', $this->last_statement->getColumnMeta( 6 )['name'] );
+		$this->assertSame( 'Sub_part', $this->last_statement->getColumnMeta( 7 )['name'] );
+		$this->assertSame( 'Packed', $this->last_statement->getColumnMeta( 8 )['name'] );
+		$this->assertSame( 'Null', $this->last_statement->getColumnMeta( 9 )['name'] );
+		$this->assertSame( 'Index_type', $this->last_statement->getColumnMeta( 10 )['name'] );
+		$this->assertSame( 'Comment', $this->last_statement->getColumnMeta( 11 )['name'] );
+		$this->assertSame( 'Index_comment', $this->last_statement->getColumnMeta( 12 )['name'] );
+		$this->assertSame( 'Visible', $this->last_statement->getColumnMeta( 13 )['name'] );
+		$this->assertSame( 'Expression', $this->last_statement->getColumnMeta( 14 )['name'] );
 
 		// SHOW GRANTS
 		$this->assertQuery( 'SHOW GRANTS' );
-		$this->assertSame( 1, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Grants for root@%', $this->engine->get_last_column_meta()[0]['name'] );
+		$this->assertSame( 1, $this->last_statement->columnCount() );
+		$this->assertSame( 'Grants for root@%', $this->last_statement->getColumnMeta( 0 )['name'] );
 
 		// SHOW VARIABLES
 		$this->assertQuery( 'SHOW VARIABLES' );
-		$this->assertSame( 2, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Variable_name', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Value', $this->engine->get_last_column_meta()[1]['name'] );
+		$this->assertSame( 2, $this->last_statement->columnCount() );
+		$this->assertSame( 'Variable_name', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Value', $this->last_statement->getColumnMeta( 1 )['name'] );
 
 		// DESCRIBE/EXPLAIN
 		$this->assertQuery( 'DESCRIBE t' );
-		$this->assertSame( 6, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Field', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Type', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Null', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Key', $this->engine->get_last_column_meta()[3]['name'] );
-		$this->assertSame( 'Default', $this->engine->get_last_column_meta()[4]['name'] );
-		$this->assertSame( 'Extra', $this->engine->get_last_column_meta()[5]['name'] );
+		$this->assertSame( 6, $this->last_statement->columnCount() );
+		$this->assertSame( 'Field', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Type', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Null', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Key', $this->last_statement->getColumnMeta( 3 )['name'] );
+		$this->assertSame( 'Default', $this->last_statement->getColumnMeta( 4 )['name'] );
+		$this->assertSame( 'Extra', $this->last_statement->getColumnMeta( 5 )['name'] );
 
 		// ANALYZE TABLE
 		$this->assertQuery( 'ANALYZE TABLE t' );
-		$this->assertSame( 4, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Table', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Op', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Msg_type', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Msg_text', $this->engine->get_last_column_meta()[3]['name'] );
+		$this->assertSame( 4, $this->last_statement->columnCount() );
+		$this->assertSame( 'Table', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Op', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Msg_type', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Msg_text', $this->last_statement->getColumnMeta( 3 )['name'] );
 
 		// CHECK TABLE
 		$this->assertQuery( 'CHECK TABLE t' );
-		$this->assertSame( 4, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Table', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Op', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Msg_type', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Msg_text', $this->engine->get_last_column_meta()[3]['name'] );
+		$this->assertSame( 4, $this->last_statement->columnCount() );
+		$this->assertSame( 'Table', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Op', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Msg_type', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Msg_text', $this->last_statement->getColumnMeta( 3 )['name'] );
 
 		// OPTIMIZE TABLE
 		$this->assertQuery( 'OPTIMIZE TABLE t' );
-		$this->assertSame( 4, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Table', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Op', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Msg_type', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Msg_text', $this->engine->get_last_column_meta()[3]['name'] );
+		$this->assertSame( 4, $this->last_statement->columnCount() );
+		$this->assertSame( 'Table', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Op', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Msg_type', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Msg_text', $this->last_statement->getColumnMeta( 3 )['name'] );
 
 		// REPAIR TABLE
 		$this->assertQuery( 'REPAIR TABLE t' );
-		$this->assertSame( 4, $this->engine->get_last_column_count() );
-		$this->assertSame( 'Table', $this->engine->get_last_column_meta()[0]['name'] );
-		$this->assertSame( 'Op', $this->engine->get_last_column_meta()[1]['name'] );
-		$this->assertSame( 'Msg_type', $this->engine->get_last_column_meta()[2]['name'] );
-		$this->assertSame( 'Msg_text', $this->engine->get_last_column_meta()[3]['name'] );
+		$this->assertSame( 4, $this->last_statement->columnCount() );
+		$this->assertSame( 'Table', $this->last_statement->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'Op', $this->last_statement->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'Msg_type', $this->last_statement->getColumnMeta( 2 )['name'] );
+		$this->assertSame( 'Msg_text', $this->last_statement->getColumnMeta( 3 )['name'] );
 	}
 
 	public function testEmptyColumnMeta(): void {
 		// CREATE TABLE
 		$this->assertQuery( 'CREATE TABLE t (id INT)' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// INSERT
 		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// REPLACE
 		$this->assertQuery( 'UPDATE t SET id = 1' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// DELETE
 		$this->assertQuery( 'DELETE FROM t' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// TRUNCATE TABLE
 		$this->assertQuery( 'TRUNCATE TABLE t' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// START TRANSACTION
 		$this->assertQuery( 'START TRANSACTION' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// COMMIT
 		$this->assertQuery( 'COMMIT' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// ROLLBACK
 		$this->assertQuery( 'ROLLBACK' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// SAVEPOINT
 		$this->assertQuery( 'SAVEPOINT s1' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// ROLLBACK TO SAVEPOINT
 		$this->assertQuery( 'ROLLBACK TO SAVEPOINT s1' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// RELEASE SAVEPOINT
 		$this->assertQuery( 'RELEASE SAVEPOINT s1' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// LOCK TABLE
 		$this->assertQuery( 'LOCK TABLES t READ' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// UNLOCK TABLE
 		$this->assertQuery( 'UNLOCK TABLES' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// ALTER TABLE
 		$this->assertQuery( 'ALTER TABLE t ADD COLUMN name VARCHAR(255)' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// CREATE INDEX
 		$this->assertQuery( 'CREATE INDEX idx_name ON t (name)' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// DROP INDEX
 		$this->assertQuery( 'DROP INDEX idx_name ON t' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// DROP TABLE
 		$this->assertQuery( 'DROP TABLE t' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// USE
 		$this->assertQuery( 'USE wp' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 
 		// SET
 		$this->assertQuery( 'SET @my_var = 1' );
-		$this->assertSame( 0, $this->engine->get_last_column_count() );
-		$this->assertSame( array(), $this->engine->get_last_column_meta() );
+		$this->assertSame( 0, $this->last_statement->columnCount() );
+		$this->assertSame( array(), $this->getLastColumnMeta() );
 	}
 
 	public function testCastValuesOnInsert(): void {

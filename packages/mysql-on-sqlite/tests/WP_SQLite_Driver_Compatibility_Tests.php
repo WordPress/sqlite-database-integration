@@ -55,7 +55,9 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 		$this->assertSame( $result, $this->driver->get_query_results() );
 		$this->assertSame( $result, $this->driver->get_last_return_value() );
 		$this->assertSame( 2, $this->driver->get_last_column_count() );
-		$this->assertCount( 2, $this->driver->get_last_column_meta() );
+		$this->assertSame( array( 'id', 'value' ), array_column( $this->driver->get_last_column_meta(), 'name' ) );
+		$this->assertFalse( method_exists( WP_MySQL_On_SQLite::class, 'get_last_column_count' ) );
+		$this->assertFalse( method_exists( WP_MySQL_On_SQLite::class, 'get_last_column_meta' ) );
 	}
 
 	public function test_delegates_diagnostics_and_native_queries(): void {

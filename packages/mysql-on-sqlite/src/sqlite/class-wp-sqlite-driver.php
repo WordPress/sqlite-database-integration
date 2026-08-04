@@ -48,6 +48,13 @@ class WP_SQLite_Driver {
 	private $mysql_on_sqlite_driver;
 
 	/**
+	 * Statement returned for the last emulated query.
+	 *
+	 * @var WP_MySQL_On_SQLite_Statement|null
+	 */
+	private $last_statement;
+
+	/**
 	 * Results of the last emulated query.
 	 *
 	 * @var mixed
@@ -167,7 +174,9 @@ class WP_SQLite_Driver {
 	 * @throws WP_MySQL_On_SQLite_Exception When the query execution fails.
 	 */
 	public function query( string $query, $fetch_mode = PDO::FETCH_OBJ, ...$fetch_mode_args ) {
-		$stmt = $this->mysql_on_sqlite_driver->query( $query, $fetch_mode, ...$fetch_mode_args );
+		$this->last_statement = null;
+		$stmt                 = $this->mysql_on_sqlite_driver->query( $query, $fetch_mode, ...$fetch_mode_args );
+		$this->last_statement = $stmt;
 
 		if ( $stmt->columnCount() > 0 ) {
 			$this->last_result = $stmt->fetchAll( $fetch_mode );
@@ -211,7 +220,7 @@ class WP_SQLite_Driver {
 	 * @return int
 	 */
 	public function get_last_column_count(): int {
-		return $this->mysql_on_sqlite_driver->get_last_column_count();
+		return null === $this->last_statement ? 0 : $this->last_statement->columnCount();
 	}
 
 	/**
@@ -220,7 +229,16 @@ class WP_SQLite_Driver {
 	 * @return array
 	 */
 	public function get_last_column_meta(): array {
-		return $this->mysql_on_sqlite_driver->get_last_column_meta();
+		if ( null === $this->last_statement ) {
+			return array();
+		}
+
+		$column_meta  = array();
+		$column_count = $this->last_statement->columnCount();
+		for ( $i = 0; $i < $column_count; $i++ ) {
+			$column_meta[] = $this->last_statement->getColumnMeta( $i );
+		}
+		return $column_meta;
 	}
 
 	/**

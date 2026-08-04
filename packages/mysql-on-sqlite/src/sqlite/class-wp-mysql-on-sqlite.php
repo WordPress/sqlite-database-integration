@@ -1145,7 +1145,12 @@ class WP_MySQL_On_SQLite extends PDO {
 				$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
 			}
 
-			$stmt = new WP_MySQL_On_SQLite_Statement( $this->last_result_statement, $query, $this->last_affected_rows );
+			$stmt = new WP_MySQL_On_SQLite_Statement(
+				$this->last_result_statement,
+				$query,
+				$this->create_column_meta_resolver( $this->last_column_meta ),
+				$this->last_affected_rows
+			);
 			if ( null !== $fetch_mode ) {
 				$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
 			}
@@ -1560,180 +1565,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Get the number of columns returned by the last emulated query.
-	 *
-	 * @access private
-	 *
-	 * @return int
-	 */
-	public function get_last_column_count(): int {
-		return count( $this->last_column_meta );
-	}
-
-	/**
-	 * Get column metadata for results of the last emulated query.
-	 *
-	 * @access private
-	 *
-	 * @return array
-	 */
-	public function get_last_column_meta(): array {
-		// Build the column metadata as per "PDOStatement::getColumnMeta()".
-		$column_meta = array();
-		foreach ( $this->last_column_meta as $meta ) {
-			$table = $meta['table'] ?? null;
-			$name  = $meta['name'];
-			$type  = strtoupper( $meta['sqlite:decl_type'] ?? $meta['native_type'] ?? '' );
-
-			// When table is known, we can get data from the information schema.
-			$column_info = null;
-			if ( null !== $table ) {
-				$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table );
-				$columns_table      = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
-				$column_info        = $this->execute_sqlite_query(
-					sprintf(
-						'
-							SELECT
-								IS_NULLABLE,
-								DATA_TYPE,
-								COLUMN_TYPE,
-								COLUMN_KEY,
-								CHARACTER_MAXIMUM_LENGTH,
-								NUMERIC_PRECISION,
-								NUMERIC_SCALE
-							FROM %s
-							WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
-						',
-						$this->quote_sqlite_identifier( $columns_table )
-					),
-					array( $this->get_saved_db_name(), $table, $name )
-				)->fetch( PDO::FETCH_ASSOC );
-
-				if ( false === $column_info ) {
-					$column_info = null;
-				}
-			}
-
-			// If we have information schema data, we can use it.
-			if ( null !== $column_info ) {
-				$type_info = self::COLUMN_INFO_MYSQL_TO_NATIVE_TYPES_MAP[ $column_info['DATA_TYPE'] ] ?? null;
-				if ( null === $type_info ) {
-					$type_info = self::COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP[ $type ] ?? null;
-				}
-				$native_type = $type_info[0];
-				$mysqli_type = $type_info[1];
-				$len         = $type_info[2];
-				$precision   = $type_info[3];
-
-				if ( 'tinyint(1)' === $column_info['COLUMN_TYPE'] ) {
-					$len = 1;
-				}
-
-				if ( 'decimal' === $column_info['DATA_TYPE'] ) {
-					$len       = (int) $column_info['NUMERIC_PRECISION'] + (int) $column_info['NUMERIC_SCALE'];
-					$precision = (int) $column_info['NUMERIC_SCALE'];
-				}
-
-				if (
-					str_contains( $column_info['COLUMN_TYPE'], 'unsigned' )
-					&& ! str_contains( $column_info['COLUMN_TYPE'], 'bigint' )
-				) {
-					$len -= 1;
-				}
-
-				// If set, lenght can be taken from the information schema.
-				if ( isset( $column_info['CHARACTER_MAXIMUM_LENGTH'] ) ) {
-					$len = (int) $column_info['CHARACTER_MAXIMUM_LENGTH'];
-				}
-
-				// For string types, the length is multiplied by the maximum number
-				// of bytes per character for the used connection encoding. In our
-				// case, it's always "utf8mb4" and therefore 4 bytes per character.
-				if (
-					str_contains( $column_info['DATA_TYPE'], 'text' )
-					|| str_contains( $column_info['DATA_TYPE'], 'char' )
-					|| 'enum' === $column_info['DATA_TYPE']
-					|| 'set' === $column_info['DATA_TYPE']
-				) {
-					// Except for "longtext" - this might be a MySQL bug.
-					if ( 'longtext' !== $column_info['DATA_TYPE'] ) {
-						$len = 4 * $len;
-					}
-				}
-
-				// Flags.
-				$flags = array();
-				if ( 'NO' === $column_info['IS_NULLABLE'] ) {
-					$flags[] = 'not_null';
-				}
-				if ( 'PRI' === $column_info['COLUMN_KEY'] ) {
-					$flags[] = 'primary_key';
-				} elseif ( 'UNI' === $column_info['COLUMN_KEY'] ) {
-					$flags[] = 'unique_key';
-				} elseif ( 'MUL' === $column_info['COLUMN_KEY'] ) {
-					$flags[] = 'multiple_key';
-				}
-			} else {
-				$type_info   = self::COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP[ $type ];
-				$native_type = $type_info[0];
-				$mysqli_type = $type_info[1];
-				$len         = $type_info[2] ?? 0;
-				$precision   = $type_info[3];
-
-				// Flags.
-				$flags = array();
-				if ( 'NULL' !== $type ) {
-					$flags[] = 'not_null';
-				}
-			}
-
-			if ( 'BLOB' === $native_type || 'GEOMETRY' === $native_type ) {
-				$flags[] = 'blob';
-			}
-
-			// PDO type.
-			if ( 'INT' === $type || 'INTEGER' === $type ) {
-				$pdo_type = PDO::PARAM_INT;
-			} else {
-				$pdo_type = PDO::PARAM_STR;
-			}
-
-			// MySQLi charset number.
-			$is_string   = 'STRING' === $type || 'TEXT' === $type;
-			$is_binary   = 'BLOB' === $type || 'GEOMETRY' === $native_type;
-			$is_datetime = str_contains( $native_type, 'DATE' ) || str_contains( $native_type, 'TIME' ) || 'YEAR' === $native_type;
-			if ( $is_string && ! $is_binary && ! $is_datetime ) {
-				$mysqli_charsetnr = 255; // utf8mb4_0900_ai_ci
-			} else {
-				$mysqli_charsetnr = 63;  // binary
-			}
-
-			$column_meta[] = array(
-				'native_type'      => $native_type,
-				'pdo_type'         => $pdo_type,
-				'flags'            => $flags,
-				'table'            => $meta['table'] ?? '',
-				'name'             => $meta['name'],
-				'len'              => $len,
-				'precision'        => $precision,
-				'sqlite:decl_type' => $meta['sqlite:decl_type'] ?? '',
-
-				/*
-				 * The MySQLi PHP extension exposes more MySQL column metadata than PDO.
-				 * We'll add the data here for use cases such as "wpdb::get_col_info()".
-				 */
-				'mysqli:orgname'   => $meta['name'],        // TODO: Use correct original name when alias is used.
-				'mysqli:orgtable'  => $meta['table'] ?? '', // TODO: Use correct original name when table alias is used.
-				'mysqli:db'        => $this->db_name,       // TODO: Use correct DB for queries to information schema.
-				'mysqli:charsetnr' => $mysqli_charsetnr,
-				'mysqli:flags'     => 0,                    // TODO: We can compute correct MySQL flags.
-				'mysqli:type'      => $mysqli_type,
-			);
-		}
-		return $column_meta;
-	}
-
-	/**
 	 * Execute a query in SQLite.
 	 *
 	 * @access private
@@ -1745,6 +1576,191 @@ class WP_MySQL_On_SQLite extends PDO {
 	 */
 	public function execute_sqlite_query( string $sql, array $params = array() ): PDOStatement {
 		return $this->connection->query( $sql, $params );
+	}
+
+	/**
+	 * Create a lazy MySQL-compatible column metadata resolver.
+	 *
+	 * Only raw SQLite metadata and database context are snapshotted here.
+	 * The INFORMATION_SCHEMA metadata is resolved lazily and may reflect
+	 * schema changes made after statement execution. This is a trade-off
+	 * that avoids schema queries when column metadata is not requested.
+	 *
+	 * @param  array $raw_column_meta Raw SQLite result column metadata.
+	 * @return callable               The column metadata resolver.
+	 */
+	private function create_column_meta_resolver( array $raw_column_meta ): callable {
+		$db_name = $this->db_name;
+		return function ( $column ) use ( $raw_column_meta, $db_name ) {
+			if ( ! array_key_exists( $column, $raw_column_meta ) ) {
+				return false;
+			}
+
+			$last_sqlite_queries = $this->last_sqlite_queries;
+			try {
+				return $this->resolve_column_meta( $raw_column_meta[ $column ], $db_name );
+			} finally {
+				$this->last_sqlite_queries = $last_sqlite_queries;
+			}
+		};
+	}
+
+	/**
+	 * Resolve raw SQLite column metadata into MySQL-compatible metadata.
+	 *
+	 * @param  array  $meta    Raw SQLite column metadata.
+	 * @param  string $db_name Database selected when the query was executed.
+	 * @return array            MySQL-compatible column metadata.
+	 */
+	private function resolve_column_meta( array $meta, string $db_name ): array {
+		$table = $meta['table'] ?? null;
+		$name  = $meta['name'];
+		$type  = strtoupper( $meta['sqlite:decl_type'] ?? $meta['native_type'] ?? '' );
+
+		// When table is known, we can get data from the information schema.
+		$column_info = null;
+		if ( null !== $table ) {
+			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table );
+			$columns_table      = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
+			$column_info        = $this->execute_sqlite_query(
+				sprintf(
+					'
+						SELECT
+							IS_NULLABLE,
+							DATA_TYPE,
+							COLUMN_TYPE,
+							COLUMN_KEY,
+							CHARACTER_MAXIMUM_LENGTH,
+							NUMERIC_PRECISION,
+							NUMERIC_SCALE
+						FROM %s
+						WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
+					',
+					$this->quote_sqlite_identifier( $columns_table )
+				),
+				array( $this->get_saved_db_name( $db_name ), $table, $name )
+			)->fetch( PDO::FETCH_ASSOC );
+
+			if ( false === $column_info ) {
+				$column_info = null;
+			}
+		}
+
+		// If we have information schema data, we can use it.
+		if ( null !== $column_info ) {
+			$type_info = self::COLUMN_INFO_MYSQL_TO_NATIVE_TYPES_MAP[ $column_info['DATA_TYPE'] ] ?? null;
+			if ( null === $type_info ) {
+				$type_info = self::COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP[ $type ] ?? null;
+			}
+			$native_type = $type_info[0];
+			$mysqli_type = $type_info[1];
+			$len         = $type_info[2];
+			$precision   = $type_info[3];
+
+			if ( 'tinyint(1)' === $column_info['COLUMN_TYPE'] ) {
+				$len = 1;
+			}
+
+			if ( 'decimal' === $column_info['DATA_TYPE'] ) {
+				$len       = (int) $column_info['NUMERIC_PRECISION'] + (int) $column_info['NUMERIC_SCALE'];
+				$precision = (int) $column_info['NUMERIC_SCALE'];
+			}
+
+			if (
+				str_contains( $column_info['COLUMN_TYPE'], 'unsigned' )
+				&& ! str_contains( $column_info['COLUMN_TYPE'], 'bigint' )
+			) {
+				$len -= 1;
+			}
+
+			// If set, length can be taken from the information schema.
+			if ( isset( $column_info['CHARACTER_MAXIMUM_LENGTH'] ) ) {
+				$len = (int) $column_info['CHARACTER_MAXIMUM_LENGTH'];
+			}
+
+			// For string types, the length is multiplied by the maximum number
+			// of bytes per character for the used connection encoding. In our
+			// case, it's always "utf8mb4" and therefore 4 bytes per character.
+			if (
+				str_contains( $column_info['DATA_TYPE'], 'text' )
+				|| str_contains( $column_info['DATA_TYPE'], 'char' )
+				|| 'enum' === $column_info['DATA_TYPE']
+				|| 'set' === $column_info['DATA_TYPE']
+			) {
+				// Except for "longtext" - this might be a MySQL bug.
+				if ( 'longtext' !== $column_info['DATA_TYPE'] ) {
+					$len = 4 * $len;
+				}
+			}
+
+			// Flags.
+			$flags = array();
+			if ( 'NO' === $column_info['IS_NULLABLE'] ) {
+				$flags[] = 'not_null';
+			}
+			if ( 'PRI' === $column_info['COLUMN_KEY'] ) {
+				$flags[] = 'primary_key';
+			} elseif ( 'UNI' === $column_info['COLUMN_KEY'] ) {
+				$flags[] = 'unique_key';
+			} elseif ( 'MUL' === $column_info['COLUMN_KEY'] ) {
+				$flags[] = 'multiple_key';
+			}
+		} else {
+			$type_info   = self::COLUMN_INFO_SQLITE_TO_NATIVE_TYPES_MAP[ $type ];
+			$native_type = $type_info[0];
+			$mysqli_type = $type_info[1];
+			$len         = $type_info[2] ?? 0;
+			$precision   = $type_info[3];
+
+			// Flags.
+			$flags = array();
+			if ( 'NULL' !== $type ) {
+				$flags[] = 'not_null';
+			}
+		}
+
+		if ( 'BLOB' === $native_type || 'GEOMETRY' === $native_type ) {
+			$flags[] = 'blob';
+		}
+
+		// PDO type.
+		if ( 'INT' === $type || 'INTEGER' === $type ) {
+			$pdo_type = PDO::PARAM_INT;
+		} else {
+			$pdo_type = PDO::PARAM_STR;
+		}
+
+		// MySQLi charset number.
+		$is_string   = 'STRING' === $type || 'TEXT' === $type;
+		$is_binary   = 'BLOB' === $type || 'GEOMETRY' === $native_type;
+		$is_datetime = str_contains( $native_type, 'DATE' ) || str_contains( $native_type, 'TIME' ) || 'YEAR' === $native_type;
+		if ( $is_string && ! $is_binary && ! $is_datetime ) {
+			$mysqli_charsetnr = 255; // utf8mb4_0900_ai_ci
+		} else {
+			$mysqli_charsetnr = 63;  // binary
+		}
+
+		return array(
+			'native_type'      => $native_type,
+			'pdo_type'         => $pdo_type,
+			'flags'            => $flags,
+			'table'            => $meta['table'] ?? '',
+			'name'             => $meta['name'],
+			'len'              => $len,
+			'precision'        => $precision,
+			'sqlite:decl_type' => $meta['sqlite:decl_type'] ?? '',
+
+			/*
+			 * The MySQLi PHP extension exposes more MySQL column metadata than PDO.
+			 * We'll add the data here for use cases such as "wpdb::get_col_info()".
+			 */
+			'mysqli:orgname'   => $meta['name'],        // TODO: Use correct original name when alias is used.
+			'mysqli:orgtable'  => $meta['table'] ?? '', // TODO: Use correct original name when table alias is used.
+			'mysqli:db'        => $db_name,             // TODO: Use correct DB for queries to information schema.
+			'mysqli:charsetnr' => $mysqli_charsetnr,
+			'mysqli:flags'     => 0,                    // TODO: We can compute correct MySQL flags.
+			'mysqli:type'      => $mysqli_type,
+		);
 	}
 
 	/**

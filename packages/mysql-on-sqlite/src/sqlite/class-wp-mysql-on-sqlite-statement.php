@@ -65,6 +65,18 @@ if ( PHP_VERSION_ID < 80000 ) {
 			}
 			return $this->fetchAllRows( $mode, $class_name, $constructor_args );
 		}
+
+		/**
+		 * Get metadata for a column in a result set.
+		 *
+		 * @param  int         $column The index of the column (0-indexed).
+		 * @return array|false         The column metadata as an associative array,
+		 *                             or false if the column does not exist.
+		 */
+		#[ReturnTypeWillChange]
+		public function getColumnMeta( $column ) {
+			return $this->getColumnMetadata( $column );
+		}
 	}
 } else {
 	/**
@@ -94,6 +106,21 @@ if ( PHP_VERSION_ID < 80000 ) {
 		 */
 		public function fetchAll( $mode = PDO::FETCH_DEFAULT, ...$args ): array {
 			return $this->fetchAllRows( $mode, ...$args );
+		}
+
+		/**
+		 * Get metadata for a column in a result set.
+		 *
+		 * @param  int         $column The index of the column (0-indexed).
+		 * @return array|false         The column metadata as an associative array,
+		 *                             or false if the column does not exist.
+		 */
+		#[ReturnTypeWillChange]
+		public function getColumnMeta( int $column ) {
+			if ( $column < 0 ) {
+				throw new ValueError( 'PDOStatement::getColumnMeta(): Argument #1 ($column) must be greater than or equal to 0' );
+			}
+			return $this->getColumnMetadata( $column );
 		}
 	}
 }
@@ -130,6 +157,20 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	private $statement;
 
 	/**
+	 * Resolve MySQL-compatible metadata by column index.
+	 *
+	 * @var callable
+	 */
+	private $column_meta_resolver;
+
+	/**
+	 * Resolved MySQL-compatible metadata, keyed by column index.
+	 *
+	 * @var array<int, array|false>
+	 */
+	private $resolved_column_meta = array();
+
+	/**
 	 * The number of affected rows.
 	 *
 	 * @var int|null
@@ -139,13 +180,15 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	/**
 	 * Constructor.
 	 *
-	 * @param PDOStatement $statement     The original PDO statement.
-	 * @param string       $query         The original MySQL query.
-	 * @param int|null     $affected_rows The number of affected rows.
+	 * @param PDOStatement $statement            The original PDO statement.
+	 * @param string       $query                The original MySQL query.
+	 * @param callable     $column_meta_resolver Resolves metadata by column index.
+	 * @param int|null     $affected_rows        The number of affected rows.
 	 */
 	public function __construct(
 		PDOStatement $statement,
 		string $query,
+		callable $column_meta_resolver,
 		?int $affected_rows = null
 	) {
 		$this->statement = $statement;
@@ -154,7 +197,8 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 		if ( PHP_VERSION_ID >= 80100 ) {
 			$this->queryString = $query;
 		}
-		$this->affected_rows = $affected_rows;
+		$this->column_meta_resolver = $column_meta_resolver;
+		$this->affected_rows        = $affected_rows;
 	}
 
 	/**
@@ -227,17 +271,6 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	#[ReturnTypeWillChange]
 	public function fetchObject( $class = 'stdClass', $constructorArgs = array() ) {
 		return $this->statement->fetchObject( $class, $constructorArgs );
-	}
-
-	/**
-	 * Get metadata for a column in a result set.
-	 *
-	 * @param  int         $column The index of the column (0-indexed).
-	 * @return array|false         The column metadata as an associative array,
-	 *                             or false if the column does not exist.
-	 */
-	public function getColumnMeta( $column ): array {
-		throw new RuntimeException( 'Not implemented' );
 	}
 
 	/**
@@ -364,6 +397,26 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	 */
 	public function debugDumpParams(): ?bool {
 		throw new RuntimeException( 'Not implemented' );
+	}
+
+	/**
+	 * Get metadata for a column in a result set.
+	 *
+	 * This is used internally by the "WP_MySQL_On_SQLite_Statement_PHP_Compat" trait,
+	 * that is defined conditionally based on the current PHP version.
+	 *
+	 * @param  int         $column The index of the column (0-indexed).
+	 * @return array|false         The column metadata as an associative array,
+	 *                             or false if the column does not exist.
+	 */
+	private function getColumnMetadata( $column ) {
+		if ( ! array_key_exists( $column, $this->resolved_column_meta ) ) {
+			$this->resolved_column_meta[ $column ] = call_user_func(
+				$this->column_meta_resolver,
+				$column
+			);
+		}
+		return $this->resolved_column_meta[ $column ];
 	}
 
 	/**

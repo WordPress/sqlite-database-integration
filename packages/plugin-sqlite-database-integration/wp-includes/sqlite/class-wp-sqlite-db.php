@@ -708,7 +708,11 @@ class WP_SQLite_DB extends wpdb {
 			return;
 		}
 		$this->col_info = array();
-		foreach ( $this->dbh->get_last_column_meta() as $column ) {
+		if ( null === $this->result ) {
+			return;
+		}
+		for ( $i = 0; $i < $this->result->columnCount(); $i++ ) {
+			$column           = $this->result->getColumnMeta( $i );
 			$this->col_info[] = (object) array(
 				'name'       => $column['name'],
 				'orgname'    => $column['mysqli:orgname'],

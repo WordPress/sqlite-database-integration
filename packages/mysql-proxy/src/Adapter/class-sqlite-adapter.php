@@ -4,6 +4,7 @@ namespace WP_MySQL_Proxy\Adapter;
 
 use PDO;
 use PDOException;
+use PDOStatement;
 use Throwable;
 use WP_MySQL_Proxy\MySQL_Result;
 use WP_MySQL_On_SQLite;
@@ -39,8 +40,8 @@ class SQLite_Adapter implements Adapter {
 			} else {
 				$affected_rows = $statement->rowCount();
 			}
-			if ( $this->sqlite_driver->get_last_column_count() > 0 ) {
-				$columns = $this->computeColumnInfo();
+			if ( $statement->columnCount() > 0 ) {
+				$columns = $this->computeColumnInfo( $statement );
 			}
 			return MySQL_Result::from_data( $affected_rows, $last_insert_id, $columns, $rows ?? array() );
 		} catch ( Throwable $e ) {
@@ -52,10 +53,13 @@ class SQLite_Adapter implements Adapter {
 		}
 	}
 
-	public function computeColumnInfo() {
+	public function computeColumnInfo( PDOStatement $statement ) {
 		$columns = array();
 
-		$column_meta = $this->sqlite_driver->get_last_column_meta();
+		$column_meta = array();
+		for ( $i = 0; $i < $statement->columnCount(); $i++ ) {
+			$column_meta[] = $statement->getColumnMeta( $i );
+		}
 
 		$types = array(
 			'DECIMAL'     => MySQL_Protocol::FIELD_TYPE_DECIMAL,

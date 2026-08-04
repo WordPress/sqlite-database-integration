@@ -43,6 +43,33 @@ class WP_SQLite_DB_Tests extends TestCase {
 		$wpdb->get_driver();
 	}
 
+	public function test_load_col_info_without_result(): void {
+		$wpdb = new class( $this->driver ) extends WP_SQLite_DB {
+			public $col_info;
+			public $last_error;
+			public $last_query;
+			public $last_result;
+			public $num_rows;
+			public $result;
+			public $rows_affected;
+
+			public function __construct( WP_MySQL_On_SQLite $driver ) {
+				$this->dbh = $driver;
+			}
+
+			public function get_loaded_col_info(): array {
+				$this->load_col_info();
+				return $this->col_info;
+			}
+		};
+
+		$this->assertSame( array(), $wpdb->get_loaded_col_info() );
+
+		$wpdb->flush();
+
+		$this->assertSame( array(), $wpdb->get_loaded_col_info() );
+	}
+
 	/**
 	 * @dataProvider dataMysqlEscaping
 	 */

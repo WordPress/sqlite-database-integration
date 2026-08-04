@@ -287,7 +287,93 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$query = 'SELECT 1 AS value';
 		$stmt  = $this->driver->query( $query );
 
-		$this->assertSame( $query, $stmt->queryString );
+		// Userland cannot initialize PDOStatement::$queryString before PHP 8.1.
+		$this->assertSame( PHP_VERSION_ID < 80100 ? null : $query, $stmt->queryString );
+	}
+
+	public function test_statement_column_metadata_is_snapshotted(): void {
+		$stmt = $this->driver->query( "SELECT 1 AS first, 'value' AS second" );
+
+		$this->assertSame( 'first', $stmt->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'second', $stmt->getColumnMeta( 1 )['name'] );
+		$this->assertSame( 'second', $stmt->getColumnMeta( '1' )['name'] );
+		$this->assertFalse( $stmt->getColumnMeta( 2 ) );
+
+		$this->driver->query( 'SELECT 3 AS third' );
+
+		$this->assertSame( 'first', $stmt->getColumnMeta( 0 )['name'] );
+		$this->assertSame( 'second', $stmt->getColumnMeta( 1 )['name'] );
+	}
+
+	public function test_statement_column_metadata_rejects_negative_index(): void {
+		if ( PHP_VERSION_ID < 80000 ) {
+			$this->markTestSkipped( 'PDOStatement::getColumnMeta() throws ValueError on PHP 8.0 or newer.' );
+		}
+
+		$stmt = $this->driver->query( 'SELECT 1' );
+
+		$this->expectException( ValueError::class );
+		$stmt->getColumnMeta( -1 );
+	}
+
+	public function test_statement_column_metadata_rejects_invalid_index_type(): void {
+		if ( PHP_VERSION_ID < 80000 ) {
+			$this->markTestSkipped( 'PDOStatement::getColumnMeta() throws TypeError on PHP 8.0 or newer.' );
+		}
+
+		$stmt = $this->driver->query( 'SELECT 1' );
+
+		$this->expectException( TypeError::class );
+		$stmt->getColumnMeta( 'invalid' );
+	}
+
+	public function test_statement_column_metadata_is_resolved_lazily(): void {
+		$resolved_columns = array();
+		$raw_column_meta  = array(
+			array( 'name' => 'first' ),
+			array( 'name' => 'second' ),
+		);
+		$stmt             = new WP_MySQL_On_SQLite_Statement(
+			$this->driver->get_sqlite_pdo()->query( 'SELECT 1, 2' ),
+			'SELECT 1, 2',
+			function ( $column ) use ( &$resolved_columns, $raw_column_meta ) {
+				if ( ! array_key_exists( $column, $raw_column_meta ) ) {
+					return false;
+				}
+
+				$column_meta        = $raw_column_meta[ $column ];
+				$resolved_columns[] = $column_meta['name'];
+				return $column_meta;
+			}
+		);
+
+		$this->assertSame( array(), $resolved_columns );
+		$this->assertSame( 'second', $stmt->getColumnMeta( 1 )['name'] );
+		$this->assertSame( array( 'second' ), $resolved_columns );
+
+		$this->assertSame( 'second', $stmt->getColumnMeta( 1 )['name'] );
+		$this->assertFalse( $stmt->getColumnMeta( 2 ) );
+		$this->assertSame( array( 'second' ), $resolved_columns );
+
+		$this->assertSame( 'first', $stmt->getColumnMeta( 0 )['name'] );
+		$this->assertSame( array( 'second', 'first' ), $resolved_columns );
+	}
+
+	public function test_statement_column_metadata_resolution_preserves_the_query_log(): void {
+		$this->driver->exec( 'CREATE TABLE metadata_test (id INT)' );
+		$this->driver->exec( 'INSERT INTO metadata_test VALUES (1)' );
+		$stmt                = $this->driver->query( 'SELECT id FROM metadata_test' );
+		$last_sqlite_queries = $this->driver->get_last_sqlite_queries();
+
+		$this->assertSame( 'id', $stmt->getColumnMeta( 0 )['name'] );
+		$this->assertSame( $last_sqlite_queries, $this->driver->get_last_sqlite_queries() );
+	}
+
+	public function test_statement_column_metadata_snapshots_database_context(): void {
+		$stmt = $this->driver->query( 'SELECT 1 AS value' );
+		$this->driver->exec( 'USE information_schema' );
+
+		$this->assertSame( 'wp', $stmt->getColumnMeta( 0 )['mysqli:db'] );
 	}
 
 	public function test_statement_error_information(): void {
