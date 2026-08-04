@@ -10,7 +10,23 @@
  *
  * PDO uses $string as a parameter name, enable it:
  * phpcs:disable Universal.NamingConventions.NoReservedKeywordParameterNames.stringFound
+ *
+ * We conditionally define a trait for PHP-version-specific PDO methods:
+ * phpcs:disable Generic.Files.OneObjectStructurePerFile.MultipleFound
  */
+
+/*
+ * The "PDO::connect()" method in PHP 8.4 uses a "static" return type declaration,
+ * which PHP 7 cannot parse. Therefore, a conditional file import is needed.
+ */
+if ( PHP_VERSION_ID >= 80400 ) {
+	require_once __DIR__ . '/trait-wp-mysql-on-sqlite-pdo-compat-php-84.php';
+} else {
+	/**
+	 * @access private
+	 */
+	trait WP_MySQL_On_SQLite_PDO_Compat {}
+}
 
 /**
  * SQLite driver for MySQL.
@@ -22,6 +38,8 @@
  * The driver requires PDO with the SQLite driver, and the PCRE engine.
  */
 class WP_MySQL_On_SQLite extends PDO {
+	use WP_MySQL_On_SQLite_PDO_Compat;
+
 	/**
 	 * The path to the MySQL SQL grammar file.
 	 */

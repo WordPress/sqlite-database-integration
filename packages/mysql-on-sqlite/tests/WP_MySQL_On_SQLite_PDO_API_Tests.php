@@ -34,6 +34,22 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertInstanceOf( PDO::class, $driver );
 	}
 
+	public function test_static_connect(): void {
+		if ( PHP_VERSION_ID < 80400 ) {
+			$this->markTestSkipped( 'PDO::connect() requires PHP 8.4 or newer.' );
+		}
+
+		$driver = WP_MySQL_On_SQLite::connect(
+			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
+			null,
+			null,
+			array( PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC )
+		);
+
+		$this->assertInstanceOf( WP_MySQL_On_SQLite::class, $driver );
+		$this->assertSame( array( 'value' => 1 ), $driver->query( 'SELECT 1 AS value' )->fetch() );
+	}
+
 	public function test_constructor_accepts_null_options(): void {
 		$driver = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
