@@ -435,6 +435,54 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->driver->lastInsertId( array() );
 	}
 
+	public function test_connection_error_information(): void {
+		$this->assertNull( $this->driver->errorCode() );
+		$this->assertSame( array( '', null, null ), $this->driver->errorInfo() );
+
+		$this->driver->query( 'SELECT 1' );
+
+		$this->assertSame( '00000', $this->driver->errorCode() );
+		$this->assertSame(
+			array( '00000', null, null ),
+			$this->driver->errorInfo()
+		);
+	}
+
+	public function test_silent_error_mode(): void {
+		$this->driver->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT );
+
+		$this->assertFalse( $this->driver->query( 'SELECT * FROM missing_table' ) );
+		$this->assertSame( 'HY000', $this->driver->errorCode() );
+		$this->assertSame( 1, $this->driver->errorInfo()[1] );
+		$this->assertSame( 'no such table: missing_table', $this->driver->errorInfo()[2] );
+		$this->assertFalse( $this->driver->exec( 'SELECT * FROM missing_table' ) );
+
+		$this->assertInstanceOf( PDOStatement::class, $this->driver->query( 'SELECT 1' ) );
+		$this->assertSame( '00000', $this->driver->errorCode() );
+	}
+
+	public function test_warning_error_mode(): void {
+		$this->driver->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_WARNING );
+		$warning = null;
+		set_error_handler(
+			function ( $level, $message ) use ( &$warning ) {
+				if ( E_USER_WARNING === $level ) {
+					$warning = $message;
+					return true;
+				}
+				return false;
+			}
+		);
+
+		try {
+			$this->assertFalse( $this->driver->query( 'SELECT * FROM missing_table' ) );
+		} finally {
+			restore_error_handler();
+		}
+
+		$this->assertStringContainsString( 'no such table: missing_table', $warning );
+	}
+
 	public function test_quote_matches_mysql_escaping(): void {
 		$backslash = chr( 92 );
 		$value     = chr( 0 ) . "\n\r{$backslash}'\"" . chr( 26 ) . "\tƮềʂᴛ🙂";
