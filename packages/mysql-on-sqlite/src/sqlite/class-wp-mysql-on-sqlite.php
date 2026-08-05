@@ -1193,6 +1193,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		if ( $this->inTransaction() ) {
 			throw $this->new_driver_exception( 'There is already an active transaction' );
 		}
+		$this->flush();
 		$this->begin_user_transaction();
 		return true;
 	}
@@ -1206,6 +1207,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		if ( ! $this->inTransaction() ) {
 			throw $this->new_driver_exception( 'There is no active transaction' );
 		}
+		$this->flush();
 		$this->commit_user_transaction();
 		return true;
 	}
@@ -1219,6 +1221,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		if ( ! $this->inTransaction() ) {
 			throw $this->new_driver_exception( 'There is no active transaction' );
 		}
+		$this->flush();
 		$this->rollback_user_transaction();
 		return true;
 	}

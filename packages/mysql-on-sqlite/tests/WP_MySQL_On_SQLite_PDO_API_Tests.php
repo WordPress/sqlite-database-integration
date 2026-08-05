@@ -446,6 +446,34 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->driver->rollBack();
 	}
 
+	public function test_transaction_methods_flush_operation_state(): void {
+		$this->driver->query( 'CREATE TABLE t (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY)' );
+		$this->driver->query( 'INSERT INTO t (id) VALUES (NULL)' );
+
+		$this->assertSame( '1', $this->driver->lastInsertId() );
+		$this->assertTrue( $this->driver->beginTransaction() );
+		$this->assertSame( '0', $this->driver->lastInsertId() );
+		$this->assertSame( '', $this->driver->get_last_mysql_query() );
+		$this->assertSame( array( 'BEGIN IMMEDIATE' ), array_column( $this->driver->get_last_sqlite_queries(), 'sql' ) );
+
+		$this->driver->query( 'INSERT INTO t (id) VALUES (NULL)' );
+
+		$this->assertSame( '2', $this->driver->lastInsertId() );
+		$this->assertTrue( $this->driver->commit() );
+		$this->assertSame( '0', $this->driver->lastInsertId() );
+		$this->assertSame( '', $this->driver->get_last_mysql_query() );
+		$this->assertSame( array( 'COMMIT' ), array_column( $this->driver->get_last_sqlite_queries(), 'sql' ) );
+
+		$this->driver->beginTransaction();
+		$this->driver->query( 'INSERT INTO t (id) VALUES (NULL)' );
+
+		$this->assertSame( '3', $this->driver->lastInsertId() );
+		$this->assertTrue( $this->driver->rollBack() );
+		$this->assertSame( '0', $this->driver->lastInsertId() );
+		$this->assertSame( '', $this->driver->get_last_mysql_query() );
+		$this->assertSame( array( 'ROLLBACK' ), array_column( $this->driver->get_last_sqlite_queries(), 'sql' ) );
+	}
+
 	public function test_fetch_default(): void {
 		// Default fetch mode is PDO::FETCH_BOTH.
 		$result = $this->driver->query( "SELECT 1, 'abc', 2" );
