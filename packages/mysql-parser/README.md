@@ -1,5 +1,9 @@
 # MySQL Parser
 
+> [!WARNING]
+> This standalone package is experimental and intended for development use. Its
+> APIs may change without notice.
+
 A fast and complete **MySQL parser** in pure PHP with zero dependencies, generated
 directly from the **official MySQL grammar**.
 

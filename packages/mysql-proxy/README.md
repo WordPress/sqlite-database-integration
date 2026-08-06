@@ -1,4 +1,10 @@
 # WP MySQL Proxy
+
+> [!WARNING]
+> This package is experimental and intended for local development. Authentication
+> is not implemented, and the proxy listens on all network interfaces. Do not
+> expose it to an untrusted network.
+
 A MySQL proxy that bridges the MySQL wire protocol to a PDO-like interface.
 
 This is a zero-dependency, pure PHP implementation of a MySQL proxy that acts as
