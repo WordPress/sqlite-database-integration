@@ -3193,14 +3193,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public function testAnsiQuotesAllowsDoubleQuotedIdentifiersInDdl() {
 		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
 
-		// Identifiers may contain spaces and escape the double quote by doubling it.
-		$this->assertQuery( 'CREATE TABLE "my ""tbl""" ("my col" INTEGER);' );
-		$this->assertQuery( 'INSERT INTO "my ""tbl""" ("my col") VALUES (42);' );
-		$this->assertQuery( 'SELECT "my col" FROM "my ""tbl""";' );
+		// Double quotes within the column name are escaped by doubling them.
+		$this->assertQuery( 'CREATE TABLE "table with spaces" ("column with ""quotes"" in name" INTEGER);' );
+		$this->assertQuery( 'INSERT INTO "table with spaces" ("column with ""quotes"" in name") VALUES (42);' );
+		$this->assertQuery( 'SELECT "column with ""quotes"" in name" FROM "table with spaces";' );
 
 		$results = $this->last_result;
 		$this->assertCount( 1, $results );
-		$this->assertEquals( 42, $results[0]->{'my col'} );
+		$this->assertEquals( 42, $results[0]->{'column with "quotes" in name'} );
 	}
 
 	public function testCompositeAnsiModeEnablesAnsiQuotes() {
