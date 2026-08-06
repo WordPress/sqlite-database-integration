@@ -6,7 +6,7 @@
  *
  * @see https://github.com/symfony/polyfill-php80
  *
- * @package wp-sqlite-integration
+ * @package mysql-on-sqlite
  */
 
 if ( ! function_exists( 'str_starts_with' ) ) {

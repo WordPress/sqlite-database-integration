@@ -132,8 +132,6 @@ function sqlite_integration_admin_screen() {
 /**
  * Adds a link to the admin bar.
  *
- * @since n.e.x.t
- *
  * @global wpdb $wpdb WordPress database abstraction object.
  *
  * @param WP_Admin_Bar $admin_bar The admin bar object.
