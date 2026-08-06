@@ -5923,6 +5923,10 @@ class WP_MySQL_On_SQLite extends PDO {
 			);
 		}
 
+		if ( ( $sql_modes & self::SQL_MODES['NO_BACKSLASH_ESCAPES'] ) !== 0 ) {
+			throw $this->new_not_supported_exception( "SQL mode 'NO_BACKSLASH_ESCAPES'" );
+		}
+
 		/*
 		 * MySQL retains composite SQL modes while enabling their component modes.
 		 * Store both so "@@sql_mode" and individual mode checks match MySQL, even

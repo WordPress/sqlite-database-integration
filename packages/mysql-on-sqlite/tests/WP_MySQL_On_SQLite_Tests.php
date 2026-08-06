@@ -12,6 +12,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	private const SQL_MODE_NOT_USED                 = 1 << 4;
 	private const SQL_MODE_POSTGRESQL               = 1 << 8;
 	private const SQL_MODE_ORACLE                   = 1 << 9;
+	private const SQL_MODE_NO_BACKSLASH_ESCAPES     = 1 << 20;
 	private const SQL_MODE_TIME_TRUNCATE_FRACTIONAL = 1 << 32;
 	private const UNKNOWN_SQL_MODE_BIT              = 1 << 33;
 
@@ -6219,6 +6220,7 @@ QUERY
 			"SET sql_mode = 'STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES'",
 			"SET sql_mode = 'STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES '",
 			"SET sql_mode = 'no_backslash_escapes'",
+			'SET sql_mode = ' . self::SQL_MODE_NO_BACKSLASH_ESCAPES,
 		);
 
 		foreach ( $queries as $query ) {
