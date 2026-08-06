@@ -12,7 +12,7 @@ This project implements SQLite database support for MySQL-based projects.
 It is a monorepo that includes the following components:
 - **MySQL lexer** — A fast MySQL lexer with multi-version support.
 - **MySQL parser** — An exhaustive MySQL parser with multi-version support.
-- **SQLite driver** — A MySQL emulation layer on top of SQLite with a PDO-compatible API.
+- **SQLite driver** — [`WP_MySQL_On_SQLite`](packages/mysql-on-sqlite/README.md), a MySQL emulation layer on top of SQLite with a PDO-compatible API.
 - **MySQL proxy** — A MySQL binary protocol implementation to support MySQL-based projects beyond PHP.
 - **WordPress plugin** — A plugin that adds SQLite support to WordPress.
 - **Test suites** — A set of extensive test suites to cover MySQL syntax and functionality.

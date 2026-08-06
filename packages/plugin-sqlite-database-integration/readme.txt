@@ -42,6 +42,20 @@ SQLite-backed implementation. Core WordPress code continues to use
 the wpdb API, while queries are internally adapted to be compatible
 with SQLite syntax and behavior.
 
+== Configuration ==
+
+Define configuration constants in `wp-config.php` before WordPress loads:
+
+* `DB_ENGINE`: Set to `sqlite` to select the SQLite drop-in.
+* `DB_DIR`: Directory containing the SQLite database. Defaults to `wp-content/database`.
+* `DB_FILE`: SQLite database filename. Defaults to `.ht.sqlite`.
+* `FQDBDIR`: Absolute database-directory override. If unset, it is derived from `DB_DIR`.
+* `FQDB`: Absolute database-file override. If unset, it is derived from `FQDBDIR` and `DB_FILE`.
+* `SQLITE_JOURNAL_MODE`: SQLite journal mode. Defaults to `WAL`.
+* `WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS`: Allow SQLite 3.27.0 through 3.36.x. This unsafe compatibility mode can corrupt databases created with newer SQLite versions.
+* `ERRORLOGFILE`: On multisite, also write displayed database errors to this file.
+* `DIEONDBERROR`: On multisite, stop execution after displaying a database error.
+
 == Changelog ==
 
 = 3.0.0-rc.8 =
