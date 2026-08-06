@@ -411,10 +411,7 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	 */
 	private function getColumnMetadata( $column ) {
 		if ( ! array_key_exists( $column, $this->resolved_column_meta ) ) {
-			$this->resolved_column_meta[ $column ] = call_user_func(
-				$this->column_meta_resolver,
-				$column
-			);
+			$this->resolved_column_meta[ $column ] = ( $this->column_meta_resolver )( $column );
 		}
 		return $this->resolved_column_meta[ $column ];
 	}
