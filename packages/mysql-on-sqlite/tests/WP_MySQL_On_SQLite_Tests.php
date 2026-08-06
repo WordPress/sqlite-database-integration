@@ -3085,8 +3085,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertSame( 'ONLY_FULL_GROUP_BY', $this->last_result[0]->mode );
 	}
 
-	public function testSqlModeIgnoresTrailingSpaces() {
-		$this->assertQuery( "SET sql_mode = 'ONLY_FULL_GROUP_BY,   '" );
+	public function testSqlModeIgnoresSpacesAtEndOfValue() {
+		$this->assertQuery( "SET sql_mode = 'ONLY_FULL_GROUP_BY   '" );
 
 		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
 		$this->assertSame( 'ONLY_FULL_GROUP_BY', $this->last_result[0]->mode );

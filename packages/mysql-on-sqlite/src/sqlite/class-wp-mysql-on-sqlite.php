@@ -3672,6 +3672,12 @@ class WP_MySQL_On_SQLite extends PDO {
 				if ( null !== $value_node->get_first_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
 					$sql_modes = $this->get_default_sql_modes();
 				} elseif ( is_string( $value ) ) {
+					/*
+					 * MySQL removes spaces only from the end of the complete value.
+					 * Spaces within individual mode names remain invalid.
+					 *
+					 * See: https://github.com/mysql/mysql-server/blob/8.4/sql/strfunc.cc#L39-L64
+					 */
 					$sql_modes = explode( ',', rtrim( $value, ' ' ) );
 				} else {
 					$sql_modes = $value;
