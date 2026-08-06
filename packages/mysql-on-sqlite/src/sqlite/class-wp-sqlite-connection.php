@@ -95,7 +95,7 @@ class WP_SQLite_Connection {
 			if ( ! isset( $options['path'] ) || ! is_string( $options['path'] ) ) {
 				throw new InvalidArgumentException( 'Option "path" is required when "pdo" is not provided.' );
 			}
-			$pdo_class   = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+			$pdo_class   = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 			$pdo_options = $options['pdo_options'] ?? array();
 
 			// Internal driver operations require exceptions regardless of the
@@ -148,7 +148,7 @@ class WP_SQLite_Connection {
 		 *
 		 *   The synchronous=NORMAL setting provides the best balance between
 		 *   performance and safety for most applications running in WAL mode.
-		 *   You lose durability across power lose with synchronous NORMAL in WAL
+		 *   You lose durability across power loss with synchronous NORMAL in WAL
 		 *   mode, but that is not important for most applications. Transactions
 		 *   are still atomic, consistent, and isolated, which are the most
 		 *   important characteristics in most use cases.

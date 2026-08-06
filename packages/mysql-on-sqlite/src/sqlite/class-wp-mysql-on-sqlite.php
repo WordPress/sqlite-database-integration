@@ -770,7 +770,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *     Driver-specific PDO options are not supported.
 	 *
 	 *     @type int             $mysql_version Optional. MySQL version to emulate. Default 80038.
-	 *     @type PDO|null        $pdo           Optional. Existing SQLite PDO connection.
+	 *     @type PDO|null        $pdo           Optional. Existing PDO SQLite connection.
 	 *     @type string|null     $journal_mode  Optional. SQLite journal mode. Default 'WAL'.
 	 *     @type string|int|null $synchronous   Optional. SQLite synchronous setting.
 	 * }
@@ -886,7 +886,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				 * with SQLite versions < 3.37.0 when "PRAGMA writable_schema" is
 				 * set to "ON", which also enables error-tolerant schema parsing.
 				 *
-				 * This is an unsafe opt-in feature for special back compatibility
+				 * This is an unsafe opt-in feature for special backward compatibility
 				 * use cases, as it can corrupt the database by allowing incorrect
 				 * types into STRICT tables. Additionally, depending on the legacy
 				 * SQLite version used, there is no guarantee that all features of
@@ -1255,7 +1255,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 */
 	#[ReturnTypeWillChange]
 	public function quote( $string, $type = PDO::PARAM_STR ) {
-		// Mirror PDO\MySQL::quote() value validation.
+		// Mirror value validation from the PDO MySQL driver.
 		if (
 			is_array( $string )
 			|| is_resource( $string )
@@ -1377,8 +1377,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * PDO API: Set a PDO attribute.
 	 *
-	 * TODO: Evaluate whether we should pass all PDO attributes to the PDO SQLite
-	 *       instance, or whether some of them require special handling.
+	 * TODO: Evaluate whether we should pass all PDO attributes to the underlying
+	 *       PDO instance, or whether some of them require special handling.
 	 *       See: https://github.com/php/php-src/blob/b391c28f903536e3bc6a0021ae0976ddbc2745f8/ext/pdo/php_pdo_driver.h#L103
 	 *
 	 * @param int   $attribute The attribute to set.
@@ -1414,8 +1414,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * PDO API: Get a PDO attribute.
 	 *
-	 * TODO: Evaluate whether we should get all PDO attributes from the PDO SQLite
-	 *       instance, or whether some of them require special handling.
+	 * TODO: Evaluate whether we should get all PDO attributes from the underlying
+	 *       PDO instance, or whether some of them require special handling.
 	 *       See: https://github.com/php/php-src/blob/b391c28f903536e3bc6a0021ae0976ddbc2745f8/ext/pdo/php_pdo_driver.h#L103
 	 *
 	 * @param  int   $attribute The attribute to get.
@@ -1435,12 +1435,12 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
-	 * Get the underlying SQLite PDO instance.
+	 * Get the underlying PDO SQLite instance.
 	 *
-	 * Exposes the SQLite PDO for advanced use, bypassing MySQL emulation.
+	 * Exposes the PDO SQLite connection for advanced use, bypassing MySQL emulation.
 	 * Do not retain it across reconnections or modify driver-owned state.
 	 *
-	 * @return PDO The underlying SQLite PDO instance.
+	 * @return PDO The underlying PDO SQLite instance.
 	 */
 	public function get_sqlite_pdo(): PDO {
 		return $this->connection->get_pdo();
@@ -2338,7 +2338,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				 * ON CONFLICT clause differently, and at this stage, we only
 				 * save the translated update list to a variable.
 				 *
-				 * See bellow at "Handle ON CONFLICT clause for SQLite < 3.35.0".
+				 * See below at "Handle ON CONFLICT clause for SQLite < 3.35.0".
 				 */
 				$sqlite_version = $this->get_sqlite_version();
 				if ( version_compare( $sqlite_version, '3.35.0', '<' ) ) {
@@ -3912,7 +3912,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		/*
 		 * Handle ON/OFF values. They are accepted as both strings and keywords.
 		 *
-		 * @TODO: This is actually variable-specific and depends on the its type.
+		 * @TODO: This is actually variable-specific and depends on its type.
 		 *        For example:
 		 *          SET autocommit = OFF;                   SELECT @@autocommit;                 -> 0
 		 *          SET autocommit = false;                 SELECT @@autocommit;                 -> 0
@@ -4819,7 +4819,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				return $this->translate_cast_expr( $expr, $cast_type );
 			} else {
 				// CONVERT(expr USING charset): Keep "expr" as is (no SQLite support).
-				// TODO: Consider rejecting UTF-8-incompatible charasets.
+				// TODO: Consider rejecting UTF-8-incompatible charsets.
 				return $this->translate( $expr );
 			}
 		}

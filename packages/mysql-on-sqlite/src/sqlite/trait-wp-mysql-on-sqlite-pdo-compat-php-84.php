@@ -12,7 +12,7 @@
  */
 trait WP_MySQL_On_SQLite_PDO_Compat {
 	/**
-	 * Create a MySQL-on-SQLite PDO connection.
+	 * Create a PDO connection to MySQL on SQLite.
 	 *
 	 * @param  string      $dsn      MySQL-on-SQLite data source name.
 	 * @param  string|null $username Optional. Ignored by this driver.

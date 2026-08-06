@@ -22,7 +22,7 @@ class MySQL_Protocol {
 	const CLIENT_LONG_PASSWORD                  = 1 << 0;  // [NOT USED] Use improved version of old authentication.
 	const CLIENT_FOUND_ROWS                     = 1 << 1;  // Send found rows instead of affected rows in EOF packet.
 	const CLIENT_LONG_FLAG                      = 1 << 2;  // Get all column flags.
-	const CLIENT_CONNECT_WITH_DB                = 1 << 3;  // Database can be specified in handshake reponse packet.
+	const CLIENT_CONNECT_WITH_DB                = 1 << 3;  // Database can be specified in handshake response packet.
 	const CLIENT_NO_SCHEMA                      = 1 << 4;  // [DEPRECATED] Don't allow "database.table.column".
 	const CLIENT_COMPRESS                       = 1 << 5;  // Compression protocol supported.
 	const CLIENT_ODBC                           = 1 << 6;  // Special handling of ODBC behavior. None since 3.22.

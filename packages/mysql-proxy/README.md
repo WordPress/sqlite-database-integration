@@ -1,4 +1,4 @@
-# WP MySQL Proxy
+# MySQL proxy
 
 > [!WARNING]
 > This package is experimental. Use it at your own risk.
@@ -10,7 +10,7 @@ a MySQL server, accepts MySQL-native commands, and executes them using a configu
 PDO-like driver. This allows MySQL-compatible clients to connect and run queries
 against alternative database backends over the MySQL wire protocol.
 
-Combined with the [**MySQL on SQLite driver**](../mysql-on-sqlite/), this allows
+Combined with [**MySQL on SQLite**](../mysql-on-sqlite/), this allows
 MySQL-based projects to run on SQLite.
 
 ## Usage

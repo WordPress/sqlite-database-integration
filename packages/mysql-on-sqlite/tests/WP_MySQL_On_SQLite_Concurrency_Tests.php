@@ -166,7 +166,7 @@ class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 	}
 
 	private function create_in_memory_driver(): WP_MySQL_On_SQLite {
-		$pdo_class  = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo_class  = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 		$pdo        = new $pdo_class( 'sqlite::memory:' );
 		$connection = new WP_SQLite_Connection( array( 'pdo' => $pdo ) );
 		return $this->create_driver( $connection );

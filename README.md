@@ -12,15 +12,15 @@ This project implements SQLite database support for MySQL-based projects.
 It is a monorepo that includes the following components:
 - **MySQL lexer** — A fast MySQL lexer with multi-version support.
 - **MySQL parser** — An exhaustive MySQL parser with multi-version support.
-- [**SQLite driver**](packages/mysql-on-sqlite/) — A MySQL emulation layer on top of SQLite with a PDO-compatible API.
-- **MySQL proxy** — A MySQL binary protocol implementation to support MySQL-based projects beyond PHP.
+- [**MySQL on SQLite**](packages/mysql-on-sqlite/) — A MySQL emulation layer on top of SQLite with a PDO-compatible API.
+- [**MySQL proxy**](packages/mysql-proxy/) — A MySQL binary protocol implementation to support MySQL-based projects beyond PHP.
 - **WordPress plugin** — A plugin that adds SQLite support to WordPress.
 - **Test suites** — A set of extensive test suites to cover MySQL syntax and functionality.
 
 The monorepo packages are placed under the `packages` directory.
 
-The WordPress plugin links the SQLite driver using a symlink. The build script
-replaces the symlink with a copy of the driver for release.
+The WordPress plugin links the MySQL on SQLite package using a symlink. The build
+script replaces the symlink with a copy of the package for release.
 
 The codebase is pure PHP with zero dependencies. It supports PHP 7.2 through 8.5,
 MySQL syntax from version 5.7 onward, and requires SQLite 3.37.0 or newer
@@ -37,7 +37,7 @@ composer run fix-cs                     # Auto-fix coding standards (PHPCBF)
 composer run build-sqlite-plugin-zip    # Build the plugin zip
 composer run prepare-release <version>  # Prepare a new release
 
-# SQLite driver tests (under packages/mysql-on-sqlite)
+# MySQL on SQLite tests (under packages/mysql-on-sqlite)
 cd packages/mysql-on-sqlite
 composer run test                       # Run unit tests
 composer run test tests/SomeTest.php    # Run specific unit test file
@@ -61,7 +61,7 @@ composer run wp-test-clean              # Clean up WordPress environment (Docker
 
 ## Optional: Native MySQL Parser Extension
 
-The default code path is pure PHP. For environments that can load PHP extensions, the optional `wp_mysql_parser` extension accelerates the MySQL lexer/parser used by the SQLite driver.
+The default code path is pure PHP. For environments that can load PHP extensions, the optional `wp_mysql_parser` extension accelerates the MySQL lexer/parser used by MySQL on SQLite.
 
 - [Published WASM release list, manifest links, Playground links, and native extension overview](https://wordpress.github.io/sqlite-database-integration/)
 - [Build, load, and benchmark docs](packages/php-ext-wp-mysql-parser/README.md)
@@ -91,7 +91,7 @@ Release is streamlined with a local preparation script and GitHub Actions:
 
 ## Architecture
 The project consists of multiple components providing different APIs that funnel
-into the SQLite driver to support diverse use cases both inside and outside the
+into MySQL on SQLite to support diverse use cases both inside and outside the
 PHP ecosystem.
 
 ### Component overview
@@ -104,10 +104,10 @@ using components from this project:
 │ Adminer, phpMyAdmin  │──────────────────────────┐
 └──────────────────────┘                          │
                                                   │
-┌──────────────────────┐  wpdb API                │  PDO\MySQL API           PDO\SQLite
-│ WordPress + plugins  │   │   ╔══════════════╗   │   │   ╔═══════════════╗   │   ┌────────┐
-│ WordPress Playground │───┴──→║ wpdb drop-in ║───┼───┴──→║ SQLite driver ║───┴──→│ SQLite │
-│ Studio, wp-env       │       ╚══════════════╝   │       ╚═══════════════╝       └────────┘
+┌──────────────────────┐  wpdb API                │  PDO MySQL API             PDO SQLite
+│ WordPress + plugins  │   │   ╔══════════════╗   │   │   ╔═════════════════╗   │   ┌────────┐
+│ WordPress Playground │───┴──→║ wpdb drop-in ║───┼───┴──→║ MySQL on SQLite ║───┴──→│ SQLite │
+│ Studio, wp-env       │       ╚══════════════╝   │       ╚═════════════════╝       └────────┘
 └──────────────────────┘                          │
                           MySQL binary protocol   │
 ┌──────────────────────┐   │   ╔══════════════╗   │

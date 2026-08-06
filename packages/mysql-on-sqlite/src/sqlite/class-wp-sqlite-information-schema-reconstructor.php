@@ -6,12 +6,12 @@
  */
 
 /**
- * SQLite information schema recconstructor for MySQL.
+ * SQLite information schema reconstructor for MySQL.
  *
  * This class checks and reconstructs the MySQL INFORMATION_SCHEMA data in SQLite
  * when it becomes out of sync with the actual SQLite database schema.
  *
- * Currently, it reconstructs schema infromation for missing tables, and removes
+ * Currently, it reconstructs schema information for missing tables, and removes
  * stale data for tables that no longer exist. When used with WordPress, it uses
  * the "wp_get_db_schema()" function to reconstruct WordPress table information.
  *
@@ -768,7 +768,7 @@ class WP_SQLite_Information_Schema_Reconstructor {
 	 * See WP_MySQL_On_SQLite::quote_mysql_utf8_string_literal().
 	 *
 	 * TODO: This is a copy of WP_MySQL_On_SQLite::quote_mysql_utf8_string_literal().
-	 *       We may consider extracing it to reusable MySQL helpers.
+	 *       We may consider extracting it to reusable MySQL helpers.
 	 *
 	 * @param  string $utf8_literal The UTF-8 string literal to escape.
 	 * @return string               The escaped string literal.

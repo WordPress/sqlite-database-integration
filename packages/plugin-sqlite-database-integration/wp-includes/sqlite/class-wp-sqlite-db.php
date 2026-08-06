@@ -479,7 +479,7 @@ class WP_SQLite_DB extends wpdb {
 			$this->dbh = $dbh;
 
 			/**
-			 * Exposes the SQLite PDO instance for backward compatibility.
+			 * Exposes the underlying PDO SQLite connection for backward compatibility.
 			 *
 			 * @deprecated 3.0.0 Use WP_SQLite_DB::get_driver() with
 			 *                   WP_MySQL_On_SQLite::get_sqlite_pdo() instead.

@@ -10,7 +10,7 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 	private $sqlite;
 
 	public function setUp(): void {
-		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo_class    = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
 		$this->driver = new WP_SQLite_Driver(
 			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),

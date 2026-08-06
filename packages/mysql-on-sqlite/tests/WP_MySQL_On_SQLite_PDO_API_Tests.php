@@ -135,7 +135,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			$this->markTestSkipped( 'PDO SQLite cannot report PDO::ATTR_STRINGIFY_FETCHES before PHP 8.2.' );
 		}
 
-		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo_class = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 		$pdo       = new $pdo_class( 'sqlite::memory:' );
 		$pdo->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 		$driver = new WP_MySQL_On_SQLite(
@@ -182,7 +182,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	}
 
 	public function test_exposes_underlying_sqlite_pdo(): void {
-		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo_class = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 		$pdo       = new $pdo_class( 'sqlite::memory:' );
 		$driver    = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:dbname=wp',
@@ -403,7 +403,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	}
 
 	public function test_statement_error_information_discards_stale_sqlite_error(): void {
-		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo_class = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 		$pdo       = new $pdo_class( 'sqlite::memory:' );
 		$pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT );
 		$pdo->query( 'SELECT * FROM missing_table' );

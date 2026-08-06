@@ -141,7 +141,7 @@ if ( PHP_VERSION_ID < 80000 ) {
  *   - PDO::FETCH_KEY_PAIR: key-value pair
  *   - PDO::FETCH_OBJ:      object (stdClass)
  *   - PDO::FETCH_CLASS:    object (custom class) [1-2 extra args]
- *   - PDO::FETCH_INTO:     update an exisisting object, can't be used with fetchAll() [1 extra arg]
+ *   - PDO::FETCH_INTO:     update an existing object, can't be used with fetchAll() [1 extra arg]
  *   - PDO::FETCH_LAZY:     lazy fetch via PDORow, can't be used with fetchAll()
  *   - PDO::FETCH_BOUND:    bind values to PHP variables, can't be used with fetchAll()
  *   - PDO::FETCH_FUNC:     custom function, only works with fetchAll(), can't be default [1 extra arg]
@@ -292,7 +292,7 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	 *                 2: Driver-specific error message.
 	 */
 	public function errorInfo(): array {
-		// Normalize successful results. PDO_SQLite may retain stale driver-specific fields on PHP < 8.0.
+		// Normalize successful results. PDO SQLite may retain stale driver-specific fields on PHP < 8.0.
 		if ( '00000' === $this->statement->errorCode() ) {
 			return array( '00000', null, null );
 		}
@@ -391,7 +391,7 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	/**
 	 * Dump information about the statement.
 	 *
-	 * Dupms the SQL query and parameters information.
+	 * Dumps the SQL query and parameter information.
 	 *
 	 * @return bool|null Returns null, or false on failure.
 	 */

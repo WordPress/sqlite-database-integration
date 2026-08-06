@@ -19,11 +19,11 @@ function sqlite_plugin_admin_notice() {
 		return;
 	}
 
-	// If PDO SQLite is not loaded, bail early.
+	// Bail early if the pdo_sqlite extension is not loaded.
 	if ( ! extension_loaded( 'pdo_sqlite' ) ) {
 		printf(
 			'<div class="notice notice-error"><p>%s</p></div>',
-			esc_html__( 'The SQLite Integration plugin is active, but the PDO SQLite extension is missing from your server. Please make sure that PDO SQLite is enabled in your PHP installation.', 'sqlite-database-integration' )
+			esc_html__( 'The SQLite Integration plugin is active, but the pdo_sqlite extension is missing from your server. Please make sure that pdo_sqlite is enabled in your PHP installation.', 'sqlite-database-integration' )
 		);
 		return;
 	}

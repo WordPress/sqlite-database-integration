@@ -30,7 +30,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 	// Before each test, we create a new database
 	public function setUp(): void {
-		$pdo_class    = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo_class    = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
 
 		$this->engine = new WP_MySQL_On_SQLite(
@@ -7306,7 +7306,7 @@ END;
 	}
 
 	public function testDatabaseNameEmpty(): void {
-		$pdo_class = PHP_VERSION_ID >= 80400 ? PDO\SQLite::class : PDO::class;
+		$pdo_class = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
 		$pdo       = new $pdo_class( 'sqlite::memory:' );
 		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( 'The database name cannot be empty.' );

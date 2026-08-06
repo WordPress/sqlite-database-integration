@@ -3,7 +3,7 @@
 require_once __DIR__ . '/wp-sqlite-schema.php';
 require_once __DIR__ . '/../src/load.php';
 
-// When on an older SQLite version, enable unsafe back compatibility.
+// When on an older SQLite version, enable unsafe backward compatibility.
 $sqlite_version = ( new PDO( 'sqlite::memory:' ) )->query( 'SELECT SQLITE_VERSION();' )->fetch()[0];
 if ( version_compare( $sqlite_version, WP_MySQL_On_SQLite::MINIMUM_SQLITE_VERSION, '<' ) ) {
 	define( 'WP_SQLITE_UNSAFE_ENABLE_UNSUPPORTED_VERSIONS', true );

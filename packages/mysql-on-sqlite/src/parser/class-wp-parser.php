@@ -51,7 +51,7 @@ class WP_Parser {
 			return false;
 		}
 
-		// Bale out from processing the current branch if none of its rules can
+		// Bail out from processing the current branch if none of its rules can
 		// possibly match the current token.
 		if ( isset( $this->grammar->lookahead_is_match_possible[ $rule_id ] ) ) {
 			$token_id = $this->tokens[ $this->position ]->id;

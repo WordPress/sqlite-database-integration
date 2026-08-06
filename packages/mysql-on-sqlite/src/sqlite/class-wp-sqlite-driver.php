@@ -9,7 +9,7 @@
  */
 
 /**
- * For back compatibility with dependencies that use their own loader scripts
+ * For backward compatibility with dependencies that use their own loader scripts
  * (e.g., WP CLI SQLite Command), ensure the PDO-based classes are loaded.
  */
 require_once __DIR__ . '/class-wp-mysql-on-sqlite.php';
@@ -261,7 +261,7 @@ class WP_SQLite_Driver {
 	}
 
 	/**
-	 * A temporary alias for back compatibility.
+	 * A temporary alias for backward compatibility.
 	 *
 	 * @see self::beginTransaction()
 	 */

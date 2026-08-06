@@ -10,7 +10,7 @@ use WP_MySQL_Proxy\Adapter\Adapter;
  */
 class MySQL_Session {
 	/**
-	 * Client capabilites that are supported by the server.
+	 * Client capabilities that are supported by the server.
 	 */
 	const CAPABILITIES = (
 		MySQL_Protocol::CLIENT_PROTOCOL_41

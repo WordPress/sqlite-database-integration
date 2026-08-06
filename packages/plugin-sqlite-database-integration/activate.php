@@ -71,7 +71,7 @@ add_filter(
  * When the plugin gets merged in wp-core, this is not to be ported.
  */
 function sqlite_plugin_copy_db_file() {
-	// Bail early if the PDO SQLite extension is not loaded.
+	// Bail early if the pdo_sqlite extension is not loaded.
 	if ( ! extension_loaded( 'pdo_sqlite' ) ) {
 		return;
 	}

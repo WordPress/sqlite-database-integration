@@ -1902,7 +1902,7 @@ filterStringList:
 ;
 
 filterWildDbTableString:
-    textStringNoLinebreak // sql_yacc.yy checks for the existance of at least one dot char in the string.
+    textStringNoLinebreak // sql_yacc.yy checks for the existence of at least one dot char in the string.
 ;
 
 filterDbPairList:
@@ -3844,7 +3844,7 @@ dataType: // type in sql_yacc.yy
         | type = NATIONAL_SYMBOL CHAR_SYMBOL VARYING_SYMBOL
         | type = NCHAR_SYMBOL VARYING_SYMBOL
     ) fieldLength BINARY_SYMBOL?
-    /* @CHANGED: Moved "nchar fieldLength? BINARY_SYMBOL?" after othe nchar definitions to solve conflicts. */
+    /* @CHANGED: Moved "nchar fieldLength? BINARY_SYMBOL?" after the other nchar definitions to solve conflicts. */
     | nchar fieldLength? BINARY_SYMBOL?
     | type = VARBINARY_SYMBOL fieldLength
     | type = YEAR_SYMBOL fieldLength? fieldOptions?
