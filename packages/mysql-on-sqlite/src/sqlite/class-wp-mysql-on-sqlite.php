@@ -767,6 +767,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *     Optional driver options.
 	 *
 	 *     Numeric keys are handled as standard PDO constructor options.
+	 *     Driver-specific PDO options are not supported.
 	 *
 	 *     @type int             $mysql_version Optional. MySQL version to emulate. Default 80038.
 	 *     @type PDO|null        $pdo           Optional. Existing SQLite PDO connection.
@@ -832,10 +833,17 @@ class WP_MySQL_On_SQLite extends PDO {
 			ARRAY_FILTER_USE_KEY
 		);
 
+		$connection_pdo_options = array();
+		if ( array_key_exists( PDO::ATTR_PERSISTENT, $pdo_options ) ) {
+			// Persistence is connection-time-only. Do not apply it again after initialization.
+			$connection_pdo_options[ PDO::ATTR_PERSISTENT ] = $pdo_options[ PDO::ATTR_PERSISTENT ];
+			unset( $pdo_options[ PDO::ATTR_PERSISTENT ] );
+		}
+
 		$connection_options = array(
 			'journal_mode' => $options['journal_mode'] ?? null,
 			'synchronous'  => $options['synchronous'] ?? null,
-			'pdo_options'  => $pdo_options,
+			'pdo_options'  => $connection_pdo_options,
 		);
 		if ( isset( $options['pdo'] ) ) {
 			$connection_options['pdo'] = $options['pdo'];
@@ -935,11 +943,6 @@ class WP_MySQL_On_SQLite extends PDO {
 		);
 
 		foreach ( $pdo_options as $attribute => $value ) {
-			// Persistence is a connection-time-only option and was already passed
-			// to the underlying PDO constructor when creating a new connection.
-			if ( PDO::ATTR_PERSISTENT === $attribute ) {
-				continue;
-			}
 			$this->setAttribute( $attribute, $value );
 		}
 	}
@@ -1383,6 +1386,12 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @return bool            True on success, false on failure.
 	 */
 	public function setAttribute( $attribute, $value ): bool {
+		// PDO reserves IDs starting at 1000 for driver-specific attributes.
+		// These differ for MySQL and SQLite and are currently not supported.
+		if ( is_int( $attribute ) && 1000 <= $attribute ) {
+			return false;
+		}
+
 		// Track the caller's error mode while keeping internal SQLite operations in exception mode.
 		if ( PDO::ATTR_ERRMODE === $attribute ) {
 			$pdo    = $this->connection->get_pdo();

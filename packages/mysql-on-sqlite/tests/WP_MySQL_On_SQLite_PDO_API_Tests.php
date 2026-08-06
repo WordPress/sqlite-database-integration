@@ -61,6 +61,25 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertInstanceOf( PDO::class, $driver );
 	}
 
+	public function test_constructor_does_not_forward_driver_specific_pdo_options(): void {
+		// PDO MySQL and PDO SQLite assign different options to attributes 1000 and 1002.
+		foreach (
+			array(
+				1000 => true,
+				1002 => 'SET NAMES utf8mb4',
+			) as $attribute => $value
+		) {
+			$driver = new WP_MySQL_On_SQLite(
+				'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
+				null,
+				null,
+				array( $attribute => $value )
+			);
+
+			$this->assertEquals( 1, $driver->query( 'SELECT 1' )->fetchColumn() );
+		}
+	}
+
 	public function test_constructor_applies_pdo_options(): void {
 		$driver = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
@@ -955,6 +974,11 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			),
 			$result->fetch()
 		);
+	}
+
+	public function test_set_attribute_rejects_driver_specific_attributes(): void {
+		// Attribute 1002 has unrelated meanings in PDO MySQL and PDO SQLite.
+		$this->assertFalse( $this->driver->setAttribute( 1002, true ) );
 	}
 
 	public function test_attr_stringify_fetches(): void {
