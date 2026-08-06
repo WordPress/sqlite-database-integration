@@ -37,7 +37,7 @@ composer install                        # Install dependencies
 composer run check-cs                   # Check coding standards (PHPCS)
 composer run fix-cs                     # Auto-fix coding standards (PHPCBF)
 composer run build-sqlite-plugin-zip    # Build the plugin zip
-composer run prepare-release            # Prepare a new release
+composer run prepare-release <version>  # Prepare a new release
 
 # SQLite driver tests (under packages/mysql-on-sqlite)
 cd packages/mysql-on-sqlite
@@ -70,7 +70,7 @@ Release is streamlined with a local preparation script and GitHub Actions:
    ```
    The script will:
      - Bump version numbers and generate a changelog from merged PRs.
-     - Create a `release/<version>` branch with a preparation commit.
+     - Create a `release/v<version>` branch with a preparation commit.
      - Push the branch and create a PR.
 
 2. **Review the PR.**
