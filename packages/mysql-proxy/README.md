@@ -1,4 +1,8 @@
 # WP MySQL Proxy
+
+> [!WARNING]
+> This package is experimental. Use it at your own risk.
+
 A MySQL proxy that bridges the MySQL wire protocol to a PDO-like interface.
 
 This is a zero-dependency, pure PHP implementation of a MySQL proxy that acts as
@@ -6,8 +10,8 @@ a MySQL server, accepts MySQL-native commands, and executes them using a configu
 PDO-like driver. This allows MySQL-compatible clients to connect and run queries
 against alternative database backends over the MySQL wire protocol.
 
-Combined with the **WP SQLite Driver**, this allows MySQL-based projects to run
-on SQLite.
+Combined with the [**MySQL on SQLite driver**](../mysql-on-sqlite/), this allows
+MySQL-based projects to run on SQLite.
 
 ## Usage
 
