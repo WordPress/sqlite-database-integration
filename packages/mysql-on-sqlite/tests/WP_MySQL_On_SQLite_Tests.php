@@ -3,6 +3,18 @@
 use PHPUnit\Framework\TestCase;
 
 class WP_MySQL_On_SQLite_Tests extends TestCase {
+	/**
+	 * SQL mode bit values asserted independently from the driver implementation.
+	 */
+	private const SQL_MODE_REAL_AS_FLOAT            = 1 << 0;
+	private const SQL_MODE_PIPES_AS_CONCAT          = 1 << 1;
+	private const SQL_MODE_ANSI_QUOTES              = 1 << 2;
+	private const SQL_MODE_NOT_USED                 = 1 << 4;
+	private const SQL_MODE_POSTGRESQL               = 1 << 8;
+	private const SQL_MODE_ORACLE                   = 1 << 9;
+	private const SQL_MODE_TIME_TRUNCATE_FRACTIONAL = 1 << 32;
+	private const UNKNOWN_SQL_MODE_BIT              = 1 << 33;
+
 	/** @var WP_MySQL_On_SQLite */
 	private $engine;
 
@@ -2878,7 +2890,10 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	public function testSqlModesAcceptNumericBitmap() {
-		$this->assertQuery( 'SET sql_mode = 4294967299' );
+		$bitmap = self::SQL_MODE_REAL_AS_FLOAT
+			| self::SQL_MODE_PIPES_AS_CONCAT
+			| self::SQL_MODE_TIME_TRUNCATE_FRACTIONAL;
+		$this->assertQuery( "SET sql_mode = $bitmap" );
 
 		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
 		$this->assertSame(
@@ -2887,12 +2902,12 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
-	public function testSqlModesPreserveNotUsedBit() {
+	public function testMySQL8PreservesNotUsedSqlModeBit() {
 		$this->assertQuery( "SET sql_mode = 'NOT_USED'" );
 		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
 		$this->assertSame( 'NOT_USED', $this->last_result[0]->mode );
 
-		$this->assertQuery( 'SET sql_mode = 16' );
+		$this->assertQuery( 'SET sql_mode = ' . self::SQL_MODE_NOT_USED );
 		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
 		$this->assertSame( 'NOT_USED', $this->last_result[0]->mode );
 	}
@@ -2908,7 +2923,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			)
 		);
 
-		$this->assertQuery( 'SET sql_mode = 16' );
+		// MySQL 5.7 serializes its unnamed bit 4 through a "," name-table placeholder.
+		$this->assertQuery( 'SET sql_mode = ' . self::SQL_MODE_NOT_USED );
 		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
 		$this->assertSame( ',', $this->last_result[0]->mode );
 		$this->assertFalse( $this->engine->is_sql_mode_active( 'NOT_USED' ) );
@@ -2929,10 +2945,11 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
 		$this->assertSame( 'POSTGRESQL,NO_AUTO_CREATE_USER', $this->last_result[0]->mode );
 
+		$time_truncate_fractional = self::SQL_MODE_TIME_TRUNCATE_FRACTIONAL;
 		foreach (
 			array(
 				array( "SET sql_mode = 'TIME_TRUNCATE_FRACTIONAL'", 'TIME_TRUNCATE_FRACTIONAL' ),
-				array( 'SET sql_mode = 4294967296', '4294967296' ),
+				array( "SET sql_mode = $time_truncate_fractional", (string) $time_truncate_fractional ),
 			) as $invalid_sql_mode
 		) {
 			$exception = null;
@@ -2980,10 +2997,10 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	public function testRemovedSqlModeBitmapThrowsMySQLError() {
 		$this->assertQuery( "SET sql_mode = 'ANSI_QUOTES'" );
 
+		$bitmap    = self::SQL_MODE_ANSI_QUOTES | self::SQL_MODE_POSTGRESQL | self::SQL_MODE_ORACLE;
 		$exception = null;
 		try {
-			// ANSI_QUOTES is supported, while POSTGRESQL and ORACLE are not.
-			$this->query( 'SET sql_mode = 772' );
+			$this->query( "SET sql_mode = $bitmap" );
 		} catch ( WP_SQLite_Driver_Exception $e ) {
 			$exception = $e;
 		}
@@ -3004,6 +3021,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery( 'SET sql_mode = DEFAULT' );
 
 		$this->assertQuery( 'SELECT @@sql_mode AS mode;' );
+		// Keep the expectation independent so accidental changes to the driver default fail this test.
 		$this->assertSame(
 			'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION',
 			$this->last_result[0]->mode
@@ -3061,6 +3079,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	public function invalidSqlModeValues(): array {
+		$unknown_sql_mode_bit = self::UNKNOWN_SQL_MODE_BIT;
+
 		return array(
 			'unknown mode'              => array( "SET sql_mode = 'FOOBAR'", 'FOOBAR' ),
 			'ON keyword'                => array( 'SET sql_mode = ON', 'ON' ),
@@ -3074,7 +3094,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'whitespace-only mode'      => array( "SET sql_mode = 'ANSI_QUOTES, ,NO_ENGINE_SUBSTITUTION'", ' ' ),
 			'null'                      => array( 'SET sql_mode = NULL', 'NULL' ),
 			'negative bitmap'           => array( 'SET sql_mode = -1', '-1' ),
-			'unsupported bitmap bit'    => array( 'SET sql_mode = 8589934592', '8589934592' ),
+			'unsupported bitmap bit'    => array( "SET sql_mode = $unknown_sql_mode_bit", (string) $unknown_sql_mode_bit ),
 		);
 	}
 
