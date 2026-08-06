@@ -1440,8 +1440,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Exposes the SQLite PDO for advanced use, bypassing MySQL emulation.
 	 * Do not retain it across reconnections or modify driver-owned state.
 	 *
-	 * @since 3.0.0
-	 *
 	 * @return PDO The underlying SQLite PDO instance.
 	 */
 	public function get_sqlite_pdo(): PDO {

@@ -9,8 +9,6 @@
  * Textdomain: sqlite-database-integration
  *
  * This feature plugin allows WordPress to use SQLite instead of MySQL as its database.
- *
- * @package wp-sqlite-integration
  */
 
 /**

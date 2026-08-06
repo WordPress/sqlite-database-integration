@@ -1,9 +1,6 @@
 <?php
 /**
  * Define constants for the SQLite implementation.
- *
- * @since 1.0.0
- * @package wp-sqlite-integration
  */
 
 // Temporary - This will be in wp-config.php once SQLite is merged in Core.

@@ -1,15 +1,10 @@
 <?php
 /**
  * Functions for the admin page of the plugin.
- *
- * @since 1.0.0
- * @package wp-sqlite-integration
  */
 
 /**
  * Add an admin menu page.
- *
- * @since 1.0.0
  */
 function sqlite_add_admin_menu() {
 	$parent_slug = is_multisite() ? 'settings.php' : 'options-general.php';
@@ -131,8 +126,6 @@ function sqlite_integration_admin_screen() {
 
 /**
  * Adds a link to the admin bar.
- *
- * @since n.e.x.t
  *
  * @global wpdb $wpdb WordPress database abstraction object.
  *

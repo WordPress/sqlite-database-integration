@@ -1,15 +1,10 @@
 <?php
 /**
  * Handle the SQLite activation.
- *
- * @since 1.0.0
- * @package wp-sqlite-integration
  */
 
 /**
  * Redirect to the plugin's admin screen on activation.
- *
- * @since 1.0.0
  *
  * @param string $plugin The plugin basename.
  */
@@ -33,8 +28,6 @@ add_action( 'activated_plugin', 'sqlite_plugin_activation_redirect' );
  * the user has permission to manage the database drop-in, and the nonce is valid.
  * If the above conditions are met, run the sqlite_plugin_copy_db_file() function,
  * and redirect to the install screen.
- *
- * @since 1.0.0
  */
 function sqlite_activation() {
 	if (

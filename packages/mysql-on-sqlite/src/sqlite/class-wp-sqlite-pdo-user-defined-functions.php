@@ -1,9 +1,6 @@
 <?php
 /**
  * Custom functions for the SQLite implementation.
- *
- * @package wp-sqlite-integration
- * @since 1.0.0
  */
 
 /**

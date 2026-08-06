@@ -1,17 +1,12 @@
 <?php
 /**
  * Main integration file.
- *
- * @package wp-sqlite-integration
- * @since 1.0.0
  */
 
 /**
  * Function to create tables according to the schemas of WordPress.
  *
  * This is executed only once while installation.
- *
- * @since 1.0.0
  *
  * @return boolean
  *
@@ -77,8 +72,6 @@ if ( ! function_exists( 'wp_install' ) ) {
 	 *
 	 * Runs the required functions to set up and populate the database,
 	 * including primary admin user and initial options.
-	 *
-	 * @since 1.0.0
 	 *
 	 * @param string $blog_title    Site title.
 	 * @param string $user_name     User's username.

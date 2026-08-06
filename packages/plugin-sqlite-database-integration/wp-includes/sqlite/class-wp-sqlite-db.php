@@ -1,9 +1,6 @@
 <?php
 /**
  * Extend and replace the wpdb class.
- *
- * @package wp-sqlite-integration
- * @since 1.0.0
  */
 
 /**
@@ -58,8 +55,6 @@ class WP_SQLite_DB extends wpdb {
 
 	/**
 	 * Returns the active MySQL-on-SQLite driver.
-	 *
-	 * @since 3.0.0
 	 *
 	 * @return WP_MySQL_On_SQLite The active driver.
 	 * @throws RuntimeException When there is no active database connection.

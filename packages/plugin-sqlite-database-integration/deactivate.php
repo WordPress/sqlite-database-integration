@@ -1,9 +1,6 @@
 <?php
 /**
  * Handle the SQLite deactivation.
- *
- * @since 1.0.0
- * @package wp-sqlite-integration
  */
 
 /**

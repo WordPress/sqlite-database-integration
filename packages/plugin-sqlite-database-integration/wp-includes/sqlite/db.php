@@ -1,9 +1,6 @@
 <?php
 /**
  * Main integration file.
- *
- * @package wp-sqlite-integration
- * @since 1.0.0
  */
 
 /**
