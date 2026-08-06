@@ -5,6 +5,12 @@
  * phpcs:disable WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
  */
 
+/**
+ * Exception raised by the MySQL-on-SQLite driver.
+ *
+ * Provides PDO-style error information and access to the driver that originated
+ * the exception.
+ */
 class WP_MySQL_On_SQLite_Exception extends PDOException {
 	/**
 	 * The MySQL-on-SQLite driver that originated the exception.
@@ -35,6 +41,11 @@ class WP_MySQL_On_SQLite_Exception extends PDOException {
 		$this->errorInfo = $error_info ?? $this->create_error_info( $message, $code, $previous );
 	}
 
+	/**
+	 * Get the MySQL-on-SQLite driver that originated the exception.
+	 *
+	 * @return WP_MySQL_On_SQLite The originating driver.
+	 */
 	public function get_driver(): WP_MySQL_On_SQLite {
 		return $this->driver;
 	}
