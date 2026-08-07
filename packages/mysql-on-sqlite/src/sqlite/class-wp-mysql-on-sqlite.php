@@ -3273,31 +3273,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				$this->execute_show_tables_statement( $node );
 				return;
 			case WP_MySQL_Lexer::VARIABLES_SYMBOL:
-				$this->last_column_meta      = array(
-					array(
-						'native_type' => 'STRING',
-						'pdo_type'    => PDO::PARAM_STR,
-						'flags'       => array( 'not_null' ),
-						'table'       => 'session_variables',
-						'name'        => 'Variable_name',
-						'len'         => 256,
-						'precision'   => 0,
-					),
-					array(
-						'native_type' => 'STRING',
-						'pdo_type'    => PDO::PARAM_STR,
-						'flags'       => array(),
-						'table'       => 'session_variables',
-						'name'        => 'Value',
-						'len'         => 4096,
-						'precision'   => 0,
-					),
-				);
-				$this->last_result_statement = $this->create_result_statement_from_data(
-					array_column( $this->last_column_meta, 'name' ),
-					array()
-				);
-				$this->found_rows            = 0;
+				$this->execute_show_variables_statement( $node );
 				return;
 		}
 
@@ -3308,6 +3284,39 @@ class WP_MySQL_On_SQLite extends PDO {
 				$keyword1->get_value()
 			)
 		);
+	}
+
+	/**
+	 * Translate and execute a MySQL SHOW VARIABLES statement in SQLite.
+	 *
+	 * @param WP_Parser_Node $node The "showStatement" AST node.
+	 */
+	private function execute_show_variables_statement( WP_Parser_Node $node ): void {
+		$like_or_where = $node->get_first_child_node( 'likeOrWhere' );
+		if ( null !== $like_or_where ) {
+			$condition = $this->translate_show_like_or_where_condition( $like_or_where, 'Variable_name' );
+		}
+
+		$query  = sprintf(
+			"SELECT column1 AS `Variable_name`, column2 AS `Value`
+			FROM (
+				VALUES
+					('version', ?),
+					('version_comment', ?)
+			)
+			WHERE TRUE %s
+			ORDER BY column1",
+			$condition ?? ''
+		);
+		$params = array(
+			$this->get_mysql_server_version_string(),
+			$this->get_mysql_server_version_comment(),
+		);
+
+		$stmt = $this->execute_sqlite_query( $query, $params );
+		$this->store_last_column_meta_from_statement( $stmt );
+		$this->last_result_statement = $stmt;
+		$this->found_rows            = array( $query, $params );
 	}
 
 	/**
