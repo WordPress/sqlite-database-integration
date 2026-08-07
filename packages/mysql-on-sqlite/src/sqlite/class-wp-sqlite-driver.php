@@ -25,7 +25,7 @@ require_once __DIR__ . '/class-wp-mysql-on-sqlite-statement.php';
  */
 class WP_SQLite_Driver {
 	/**
-	 * The SQLite engine version.
+	 * The emulated MySQL client library version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
 	 * the WordPress health info. The "WP_Debug_Data::get_wp_database()" method

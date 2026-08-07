@@ -101,6 +101,11 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( PDO::ERRMODE_EXCEPTION, $driver->get_sqlite_pdo()->getAttribute( PDO::ATTR_ERRMODE ) );
 	}
 
+	public function test_reports_mysql_driver_name(): void {
+		$this->assertSame( 'mysql', $this->driver->getAttribute( PDO::ATTR_DRIVER_NAME ) );
+		$this->assertSame( 'sqlite', $this->driver->get_sqlite_pdo()->getAttribute( PDO::ATTR_DRIVER_NAME ) );
+	}
+
 	public function test_configured_mysql_version_controls_reporting_and_parsing(): void {
 		$driver         = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
@@ -112,6 +117,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 
 		$this->assertSame( $server_version, $driver->getAttribute( PDO::ATTR_SERVER_VERSION ) );
 		$this->assertSame( 'mysqlnd ' . $server_version, $driver->getAttribute( PDO::ATTR_CLIENT_VERSION ) );
+		$this->assertSame( 'mysqlnd ' . $server_version, $driver->client_info );
 		$this->assertSame( $server_version, $driver->query( 'SELECT VERSION()' )->fetchColumn() );
 		$this->assertSame( $server_version, $driver->query( 'SELECT @@version' )->fetchColumn() );
 		$this->assertEquals( 1, $driver->query( 'SELECT 1 /*!80000 + 1 */' )->fetchColumn() );

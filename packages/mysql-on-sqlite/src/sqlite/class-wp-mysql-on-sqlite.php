@@ -498,7 +498,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	private $mysql_version;
 
 	/**
-	 * The SQLite engine version.
+	 * The emulated MySQL client library version.
 	 *
 	 * This is a mysqli-like property that is needed to avoid a PHP warning in
 	 * the WordPress health info. The "WP_Debug_Data::get_wp_database()" method
@@ -930,8 +930,8 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 		}
 
-		// Load SQLite version to a property used by WordPress health info.
-		$this->client_info = $sqlite_version;
+		// Load MySQL client information to a property used by WordPress health info.
+		$this->client_info = $this->getAttribute( PDO::ATTR_CLIENT_VERSION );
 
 		// Enable foreign keys. By default, they are off.
 		$this->connection->query( 'PRAGMA foreign_keys = ON' );
@@ -1444,7 +1444,9 @@ class WP_MySQL_On_SQLite extends PDO {
 	 */
 	#[ReturnTypeWillChange]
 	public function getAttribute( $attribute ) {
-		if ( PDO::ATTR_CLIENT_VERSION === $attribute ) {
+		if ( PDO::ATTR_DRIVER_NAME === $attribute ) {
+			return 'mysql';
+		} elseif ( PDO::ATTR_CLIENT_VERSION === $attribute ) {
 			return 'mysqlnd ' . $this->get_mysql_server_version_string();
 		} elseif ( PDO::ATTR_SERVER_VERSION === $attribute ) {
 			return $this->get_mysql_server_version_string();
@@ -4320,7 +4322,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				} elseif ( 'version' === $name ) {
 					$value = $this->get_mysql_server_version_string();
 				} elseif ( 'version_comment' === $name ) {
-					$value = 'MySQL Community Server - GPL';
+					$value = $this->get_mysql_server_version_comment();
 				} elseif ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
 					$value = $this->session_system_variables[ $name ] ?? null;
 				} else {
@@ -5126,6 +5128,15 @@ class WP_MySQL_On_SQLite extends PDO {
 			$this->get_mysql_version_string(),
 			SQLITE_DRIVER_VERSION
 		);
+	}
+
+	/**
+	 * Get the comment identifying the emulated MySQL server implementation.
+	 *
+	 * @return string The MySQL server version comment.
+	 */
+	private function get_mysql_server_version_comment(): string {
+		return 'MySQL on SQLite';
 	}
 
 	/**

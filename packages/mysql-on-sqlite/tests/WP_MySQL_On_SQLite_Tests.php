@@ -7366,7 +7366,7 @@ END;
 		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $result[0]->{'@@version'} );
 
 		$result = $this->assertQuery( 'SELECT @@version_comment' );
-		$this->assertSame( 'MySQL Community Server - GPL', $result[0]->{'@@version_comment'} );
+		$this->assertSame( 'MySQL on SQLite', $result[0]->{'@@version_comment'} );
 	}
 
 	public function testSessionSystemVariables(): void {

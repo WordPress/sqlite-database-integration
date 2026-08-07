@@ -33,7 +33,10 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 		$this->assertInstanceOf( WP_MySQL_On_SQLite::class, $mysql_on_sqlite_driver );
 		$this->assertTrue( $mysql_on_sqlite_driver->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
 		$this->assertSame( $this->sqlite, $this->driver->get_connection()->get_pdo() );
-		$this->assertSame( $this->driver->get_sqlite_version(), $this->driver->client_info );
+		$this->assertSame(
+			'mysqlnd 8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION,
+			$this->driver->client_info
+		);
 		$this->assertSame( SQLITE_DRIVER_VERSION, $this->driver->get_saved_driver_version() );
 		$this->assertTrue( $this->driver->is_sql_mode_active( 'STRICT_TRANS_TABLES' ) );
 	}
