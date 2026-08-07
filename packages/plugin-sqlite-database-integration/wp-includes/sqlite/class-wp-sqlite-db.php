@@ -746,29 +746,18 @@ class WP_SQLite_DB extends wpdb {
 	}
 
 	/**
-	 * Method to return database version number.
+	 * Returns the raw version string of the emulated MySQL server.
 	 *
-	 * This overrides wpdb::db_version() to avoid using MySQL function.
-	 * It returns mysql version number, but it means nothing for SQLite.
-	 * So it return the newest mysql version.
+	 * @see wpdb::db_server_info()
 	 *
-	 * @see wpdb::db_version()
-	 */
-	public function db_version() {
-		return '8.0';
-	}
-
-	/**
-	 * Returns the version of the SQLite engine.
-	 *
-	 * @return string SQLite engine version, or an empty string while disconnected.
+	 * @return string Emulated MySQL server version, or an empty string while disconnected.
 	 */
 	public function db_server_info() {
 		if ( ! $this->dbh ) {
 			return '';
 		}
 
-		return $this->dbh->get_sqlite_version();
+		return $this->dbh->getAttribute( PDO::ATTR_SERVER_VERSION ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 	}
 
 	/**

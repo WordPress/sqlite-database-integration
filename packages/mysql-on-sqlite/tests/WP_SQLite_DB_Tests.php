@@ -31,6 +31,37 @@ class WP_SQLite_DB_Tests extends TestCase {
 		$this->assertSame( $this->driver, $wpdb->get_driver() );
 	}
 
+	public function test_reports_emulated_mysql_version(): void {
+		$driver = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'pdo'           => $this->driver->get_sqlite_pdo(),
+				'mysql_version' => 50744,
+			)
+		);
+		$wpdb   = new class( $driver ) extends WP_SQLite_DB {
+			public function __construct( WP_MySQL_On_SQLite $driver ) {
+				$this->dbh = $driver;
+			}
+		};
+
+		$this->assertSame( '5.7.44', $wpdb->db_version() );
+		$this->assertSame( '5.7.44-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $wpdb->db_server_info() );
+	}
+
+	public function test_reports_empty_version_without_database_connection(): void {
+		$wpdb = new class() extends WP_SQLite_DB {
+			public function __construct() {
+				$this->dbh = null;
+			}
+		};
+
+		$this->assertSame( '', $wpdb->db_version() );
+		$this->assertSame( '', $wpdb->db_server_info() );
+	}
+
 	public function test_rejects_driver_access_without_database_connection(): void {
 		$wpdb = new class() extends WP_SQLite_DB {
 			public function __construct() {

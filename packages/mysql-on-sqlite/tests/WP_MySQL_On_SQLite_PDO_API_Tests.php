@@ -101,6 +101,72 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( PDO::ERRMODE_EXCEPTION, $driver->get_sqlite_pdo()->getAttribute( PDO::ATTR_ERRMODE ) );
 	}
 
+	public function test_configured_mysql_version_controls_reporting_and_parsing(): void {
+		$driver         = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
+			null,
+			null,
+			array( 'mysql_version' => 50744 )
+		);
+		$server_version = '5.7.44-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION;
+
+		$this->assertSame( $server_version, $driver->getAttribute( PDO::ATTR_SERVER_VERSION ) );
+		$this->assertSame( 'mysqlnd ' . $server_version, $driver->getAttribute( PDO::ATTR_CLIENT_VERSION ) );
+		$this->assertSame( $server_version, $driver->query( 'SELECT VERSION()' )->fetchColumn() );
+		$this->assertSame( $server_version, $driver->query( 'SELECT @@version' )->fetchColumn() );
+		$this->assertEquals( 1, $driver->query( 'SELECT 1 /*!80000 + 1 */' )->fetchColumn() );
+	}
+
+	public function test_formats_six_digit_mysql_version(): void {
+		$driver         = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
+			null,
+			null,
+			array( 'mysql_version' => 100000 )
+		);
+		$server_version = '10.0.0-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION;
+
+		$this->assertSame( $server_version, $driver->getAttribute( PDO::ATTR_SERVER_VERSION ) );
+		$this->assertSame( 'mysqlnd ' . $server_version, $driver->getAttribute( PDO::ATTR_CLIENT_VERSION ) );
+		$this->assertSame( $server_version, $driver->query( 'SELECT VERSION()' )->fetchColumn() );
+		$this->assertSame( $server_version, $driver->query( 'SELECT @@version' )->fetchColumn() );
+	}
+
+	/**
+	 * @dataProvider data_invalid_mysql_versions
+	 */
+	public function test_rejects_invalid_mysql_version( $mysql_version ): void {
+		$this->expectException( InvalidArgumentException::class );
+		$this->expectExceptionMessage(
+			'The "mysql_version" option must be an integer greater than or equal to 50700.'
+		);
+
+		new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',
+			null,
+			null,
+			array( 'mysql_version' => $mysql_version )
+		);
+	}
+
+	public function data_invalid_mysql_versions(): array {
+		return array(
+			'string'        => array( '80038' ),
+			'float'         => array( 80038.0 ),
+			'boolean'       => array( true ),
+			'array'         => array( array( 80038 ) ),
+			'below minimum' => array( 50699 ),
+			'zero'          => array( 0 ),
+			'negative'      => array( -80038 ),
+		);
+	}
+
+	public function test_uses_shared_default_mysql_version(): void {
+		$this->assertSame( 80038, WP_MySQL_On_SQLite::DEFAULT_MYSQL_VERSION );
+		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $this->driver->getAttribute( PDO::ATTR_SERVER_VERSION ) );
+		$this->assertSame( 'mysqlnd 8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $this->driver->getAttribute( PDO::ATTR_CLIENT_VERSION ) );
+	}
+
 	public function test_constructor_applies_fetch_column_default(): void {
 		$driver = new WP_MySQL_On_SQLite(
 			'mysql-on-sqlite:path=:memory:;dbname=WordPress;',

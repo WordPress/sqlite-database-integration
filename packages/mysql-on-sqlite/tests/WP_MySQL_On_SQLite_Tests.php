@@ -7363,7 +7363,7 @@ END;
 
 	public function testBuiltInSystemVariables(): void {
 		$result = $this->assertQuery( 'SELECT @@version' );
-		$this->assertSame( '8.0.38', $result[0]->{'@@version'} );
+		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $result[0]->{'@@version'} );
 
 		$result = $this->assertQuery( 'SELECT @@version_comment' );
 		$this->assertSame( 'MySQL Community Server - GPL', $result[0]->{'@@version_comment'} );
@@ -12681,7 +12681,7 @@ END;
 
 	public function testVersionFunction(): void {
 		$result = $this->query( 'SELECT VERSION()' );
-		$this->assertSame( '8.0.38', $result[0]->{'VERSION()'} );
+		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $result[0]->{'VERSION()'} );
 	}
 
 	public function testFromBase64Function(): void {

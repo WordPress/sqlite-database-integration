@@ -75,7 +75,7 @@ class WP_SQLite_Driver {
 	public function __construct(
 		WP_SQLite_Connection $connection,
 		string $database,
-		int $mysql_version = 80038
+		int $mysql_version = WP_MySQL_On_SQLite::DEFAULT_MYSQL_VERSION
 	) {
 		$this->mysql_on_sqlite_driver = new WP_MySQL_On_SQLite(
 			sprintf( 'mysql-on-sqlite:dbname=%s', str_replace( ';', ';;', $database ) ),

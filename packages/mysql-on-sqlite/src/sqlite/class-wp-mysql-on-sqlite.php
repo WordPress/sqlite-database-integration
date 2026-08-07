@@ -46,6 +46,16 @@ class WP_MySQL_On_SQLite extends PDO {
 	private const MYSQL_GRAMMAR_PATH = __DIR__ . '/../mysql/mysql-grammar.php';
 
 	/**
+	 * The minimum supported MySQL version.
+	 */
+	private const MINIMUM_MYSQL_VERSION = 50700;
+
+	/**
+	 * The default MySQL version to emulate.
+	 */
+	const DEFAULT_MYSQL_VERSION = 80038;
+
+	/**
 	 * The minimum required version of SQLite.
 	 *
 	 * Currently, we require SQLite >= 3.37.0 due to the STRICT table support:
@@ -775,6 +785,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 *     @type string|int|null $synchronous   Optional. SQLite synchronous setting.
 	 * }
 	 *
+	 * @throws InvalidArgumentException     When the MySQL version is invalid.
 	 * @throws WP_MySQL_On_SQLite_Exception When the driver initialization fails.
 	 */
 	public function __construct(
@@ -824,6 +835,16 @@ class WP_MySQL_On_SQLite extends PDO {
 		$path    = $args['path'] ?? ':memory:';
 		$db_name = $args['dbname'] ?? 'sqlite_database';
 
+		$mysql_version = $options['mysql_version'] ?? self::DEFAULT_MYSQL_VERSION;
+		if ( ! is_int( $mysql_version ) || $mysql_version < self::MINIMUM_MYSQL_VERSION ) {
+			throw new InvalidArgumentException(
+				sprintf(
+					'The "mysql_version" option must be an integer greater than or equal to %d.',
+					self::MINIMUM_MYSQL_VERSION
+				)
+			);
+		}
+
 		// Create a new SQLite connection.
 		$pdo_options = array_filter(
 			$options,
@@ -852,7 +873,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 		$this->connection = new WP_SQLite_Connection( $connection_options );
 
-		$this->mysql_version = $options['mysql_version'] ?? 80038;
+		$this->mysql_version = $mysql_version;
 		$this->main_db_name  = $db_name;
 		$this->db_name       = $db_name;
 		$this->set_sql_modes( $this->get_default_sql_modes() );
@@ -1423,11 +1444,14 @@ class WP_MySQL_On_SQLite extends PDO {
 	 */
 	#[ReturnTypeWillChange]
 	public function getAttribute( $attribute ) {
-		// Return the caller's error mode instead of the exception mode used internally.
-		if ( PDO::ATTR_ERRMODE === $attribute ) {
+		if ( PDO::ATTR_CLIENT_VERSION === $attribute ) {
+			return 'mysqlnd ' . $this->get_mysql_server_version_string();
+		} elseif ( PDO::ATTR_SERVER_VERSION === $attribute ) {
+			return $this->get_mysql_server_version_string();
+		} elseif ( PDO::ATTR_ERRMODE === $attribute ) {
+			// Return the caller's error mode instead of the exception mode used internally.
 			return $this->error_mode;
-		}
-		if ( PDO::ATTR_STRINGIFY_FETCHES === $attribute && PHP_VERSION_ID < 80200 ) {
+		} elseif ( PDO::ATTR_STRINGIFY_FETCHES === $attribute && PHP_VERSION_ID < 80200 ) {
 			// PDO SQLite cannot report this attribute before PHP 8.2.
 			return $this->stringify_fetches;
 		}
@@ -1546,7 +1570,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	public function create_parser( string $query ): WP_MySQL_Parser {
 		$lexer  = new WP_MySQL_Lexer(
 			$query,
-			80038,
+			$this->mysql_version,
 			$this->get_active_sql_mode_names()
 		);
 		$tokens = $lexer instanceof WP_MySQL_Native_Lexer
@@ -4294,13 +4318,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				if ( 'sql_mode' === $name ) {
 					$value = implode( ',', $this->get_active_sql_mode_names() );
 				} elseif ( 'version' === $name ) {
-					$version = (string) $this->mysql_version;
-					$value   = sprintf(
-						'%d.%d.%d',
-						$version[0],
-						substr( $version, 1, 2 ),
-						substr( $version, 3, 2 )
-					);
+					$value = $this->get_mysql_server_version_string();
 				} elseif ( 'version_comment' === $name ) {
 					$value = 'MySQL Community Server - GPL';
 				} elseif ( WP_MySQL_Lexer::SESSION_SYMBOL === $type ) {
@@ -5077,17 +5095,37 @@ class WP_MySQL_On_SQLite extends PDO {
 					return 0;
 				}
 			case 'VERSION':
-				$version = (string) $this->mysql_version;
-				$value   = sprintf(
-					'%d.%d.%d',
-					$version[0],
-					substr( $version, 1, 2 ),
-					substr( $version, 3, 2 )
-				);
-				return $this->quote_sqlite_value( $value );
+				return $this->quote_sqlite_value( $this->get_mysql_server_version_string() );
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Get the configured MySQL version in dotted notation.
+	 *
+	 * @return string The MySQL version.
+	 */
+	private function get_mysql_version_string(): string {
+		return sprintf(
+			'%d.%d.%d',
+			intdiv( $this->mysql_version, 10000 ),
+			intdiv( $this->mysql_version % 10000, 100 ),
+			$this->mysql_version % 100
+		);
+	}
+
+	/**
+	 * Get the raw version string of the emulated MySQL server.
+	 *
+	 * @return string The MySQL server version.
+	 */
+	private function get_mysql_server_version_string(): string {
+		return sprintf(
+			'%s-mysql-on-sqlite-%s',
+			$this->get_mysql_version_string(),
+			SQLITE_DRIVER_VERSION
+		);
 	}
 
 	/**

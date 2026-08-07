@@ -69,6 +69,17 @@ class WP_SQLite_Driver_Compatibility_Tests extends TestCase {
 		$this->assertSame( '42', $this->driver->execute_sqlite_query( 'SELECT 42' )->fetchColumn() );
 	}
 
+	public function test_preserves_configured_mysql_version(): void {
+		$driver = new WP_SQLite_Driver(
+			new WP_SQLite_Connection( array( 'pdo' => $this->sqlite ) ),
+			'wp',
+			50744
+		);
+
+		$this->assertSame( '5.7.44-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $driver->query( 'SELECT VERSION()' )[0]->{'VERSION()'} );
+		$this->assertSame( '1', $driver->query( 'SELECT 1 /*!80000 + 1 */' )[0]->{'1'} );
+	}
+
 	public function test_preserves_transaction_method_aliases(): void {
 		$this->driver->begin_transaction();
 		$this->driver->query( "INSERT INTO t (value) VALUES ('rolled back')" );
