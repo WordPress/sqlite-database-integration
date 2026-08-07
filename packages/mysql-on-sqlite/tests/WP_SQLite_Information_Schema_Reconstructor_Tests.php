@@ -47,7 +47,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,
-			array( 'pdo' => $this->sqlite )
+			array( 'sqlite_pdo' => $this->sqlite )
 		);
 		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 

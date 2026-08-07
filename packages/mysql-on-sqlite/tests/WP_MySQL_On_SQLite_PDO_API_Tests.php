@@ -214,7 +214,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,
-			array( 'pdo' => $pdo )
+			array( 'sqlite_pdo' => $pdo )
 		);
 
 		$this->assertTrue( $driver->getAttribute( PDO::ATTR_STRINGIFY_FETCHES ) );
@@ -260,7 +260,7 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,
-			array( 'pdo' => $pdo )
+			array( 'sqlite_pdo' => $pdo )
 		);
 
 		$this->assertSame( $pdo, $driver->get_sqlite_pdo() );
@@ -330,8 +330,8 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 				null,
 				null,
 				array(
-					'journal_mode' => 'DELETE',
-					'synchronous'  => 'FULL',
+					'sqlite_journal_mode' => 'DELETE',
+					'sqlite_synchronous'  => 'FULL',
 				)
 			);
 			$connection = $driver->get_connection();

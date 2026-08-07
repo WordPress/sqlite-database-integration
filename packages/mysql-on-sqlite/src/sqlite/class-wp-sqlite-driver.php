@@ -82,9 +82,9 @@ class WP_SQLite_Driver {
 			null,
 			null,
 			array(
-				'mysql_version' => $mysql_version,
-				'pdo'           => $connection->get_pdo(),
-				'journal_mode'  => $connection->query( 'PRAGMA journal_mode' )->fetchColumn(),
+				'mysql_version'       => $mysql_version,
+				'sqlite_pdo'          => $connection->get_pdo(),
+				'sqlite_journal_mode' => $connection->query( 'PRAGMA journal_mode' )->fetchColumn(),
 			)
 		);
 		$this->client_info            = $this->mysql_on_sqlite_driver->client_info;

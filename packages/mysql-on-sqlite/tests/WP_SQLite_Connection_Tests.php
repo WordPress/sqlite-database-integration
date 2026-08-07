@@ -183,7 +183,7 @@ class WP_SQLite_Connection_Tests extends TestCase {
 			sprintf( 'mysql-on-sqlite:path=%s;dbname=wp', $this->db_path ),
 			null,
 			null,
-			array( 'journal_mode' => 'DELETE' )
+			array( 'sqlite_journal_mode' => 'DELETE' )
 		);
 
 		$this->assertSame( 'delete', $this->get_journal_mode( $driver->get_connection() ) );

@@ -20,7 +20,7 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,
-			array( 'pdo' => $this->sqlite )
+			array( 'sqlite_pdo' => $this->sqlite )
 		);
 		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}

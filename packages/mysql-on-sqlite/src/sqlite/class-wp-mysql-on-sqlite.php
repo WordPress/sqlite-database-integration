@@ -774,15 +774,15 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @param string|null $username Optional. Ignored by this driver.
 	 * @param string|null $password Optional. Ignored by this driver.
 	 * @param array|null  $options  {
-	 *     Optional driver options.
+	 *     Optional PDO attributes and WP_MySQL_On_SQLite options.
 	 *
 	 *     Numeric keys are handled as standard PDO constructor options.
 	 *     Driver-specific PDO options are not supported.
 	 *
-	 *     @type int             $mysql_version Optional. MySQL version to emulate. Default 80038.
-	 *     @type PDO|null        $pdo           Optional. Existing PDO SQLite connection.
-	 *     @type string|null     $journal_mode  Optional. SQLite journal mode. Default 'WAL'.
-	 *     @type string|int|null $synchronous   Optional. SQLite synchronous setting.
+	 *     @type int             $mysql_version       Optional. MySQL version to emulate. Default 80038.
+	 *     @type PDO|null        $sqlite_pdo          Optional. Existing PDO SQLite connection.
+	 *     @type string|null     $sqlite_journal_mode Optional. SQLite journal mode. Default 'WAL'.
+	 *     @type string|int|null $sqlite_synchronous  Optional. SQLite synchronous setting.
 	 * }
 	 *
 	 * @throws InvalidArgumentException     When the MySQL version is invalid.
@@ -862,12 +862,12 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		$connection_options = array(
-			'journal_mode' => $options['journal_mode'] ?? null,
-			'synchronous'  => $options['synchronous'] ?? null,
+			'journal_mode' => $options['sqlite_journal_mode'] ?? null,
+			'synchronous'  => $options['sqlite_synchronous'] ?? null,
 			'pdo_options'  => $connection_pdo_options,
 		);
-		if ( isset( $options['pdo'] ) ) {
-			$connection_options['pdo'] = $options['pdo'];
+		if ( isset( $options['sqlite_pdo'] ) ) {
+			$connection_options['pdo'] = $options['sqlite_pdo'];
 		} else {
 			$connection_options['path'] = $path;
 		}

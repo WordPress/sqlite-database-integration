@@ -178,8 +178,8 @@ class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 			null,
 			null,
 			array(
-				'pdo'          => $connection->get_pdo(),
-				'journal_mode' => $connection->query( 'PRAGMA journal_mode' )->fetchColumn(),
+				'sqlite_pdo'          => $connection->get_pdo(),
+				'sqlite_journal_mode' => $connection->query( 'PRAGMA journal_mode' )->fetchColumn(),
 			)
 		);
 	}

@@ -17,7 +17,7 @@ class WP_SQLite_DB_Tests extends TestCase {
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,
-			array( 'pdo' => $pdo )
+			array( 'sqlite_pdo' => $pdo )
 		);
 	}
 

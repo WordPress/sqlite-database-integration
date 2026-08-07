@@ -463,7 +463,7 @@ class WP_SQLite_DB extends wpdb {
 
 		try {
 			$options = array(
-				'journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
+				'sqlite_journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
 			);
 			$dbh     = new WP_MySQL_On_SQLite(
 				sprintf(

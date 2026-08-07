@@ -37,7 +37,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'mysql-on-sqlite:dbname=wp',
 			null,
 			null,
-			array( 'pdo' => $this->sqlite )
+			array( 'sqlite_pdo' => $this->sqlite )
 		);
 		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 		$this->query(
@@ -2932,7 +2932,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			null,
 			null,
 			array(
-				'pdo'           => $this->sqlite,
+				'sqlite_pdo'    => $this->sqlite,
 				'mysql_version' => 50744,
 			)
 		);
@@ -2950,7 +2950,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			null,
 			null,
 			array(
-				'pdo'           => $this->sqlite,
+				'sqlite_pdo'    => $this->sqlite,
 				'mysql_version' => 50744,
 			)
 		);
@@ -2994,7 +2994,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			null,
 			null,
 			array(
-				'pdo'           => $this->sqlite,
+				'sqlite_pdo'    => $this->sqlite,
 				'mysql_version' => 50744,
 			)
 		);
@@ -3048,7 +3048,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			null,
 			null,
 			array(
-				'pdo'           => $this->sqlite,
+				'sqlite_pdo'    => $this->sqlite,
 				'mysql_version' => 50744,
 			)
 		);
@@ -7321,7 +7321,7 @@ END;
 			'mysql-on-sqlite:dbname=',
 			null,
 			null,
-			array( 'pdo' => $pdo )
+			array( 'sqlite_pdo' => $pdo )
 		);
 	}
 
