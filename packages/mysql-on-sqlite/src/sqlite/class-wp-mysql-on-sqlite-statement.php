@@ -208,7 +208,7 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	 * @return bool         True on success, false on failure.
 	 */
 	public function execute( $params = null ): bool {
-		return $this->statement->execute( $params );
+		throw new RuntimeException( 'Not implemented' );
 	}
 
 	/**
@@ -340,7 +340,7 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	}
 
 	/**
-	 * Closes the cursor, enabling the statement to be executed again.
+	 * Close the cursor and release the associated resources.
 	 *
 	 * @return bool True on success, false on failure.
 	 */
