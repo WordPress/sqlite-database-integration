@@ -957,7 +957,9 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 	}
 
 	public function testBogusQuery() {
-		$this->expectExceptionMessage( 'no such table: bogus' );
+		$this->expectExceptionMessage(
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'bogus' doesn't exist"
+		);
 		$this->assertQuery(
 			'SELECT 1, BOGUS(1) FROM bogus;'
 		);

@@ -1191,11 +1191,15 @@ class WP_MySQL_On_SQLite extends PDO {
 			if ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
 				$e = $this->convert_information_schema_exception( $e );
 			}
-			if ( ! ( $e instanceof WP_MySQL_On_SQLite_Exception ) ) {
-				$e = $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
+			if ( $e instanceof WP_MySQL_On_SQLite_Exception ) {
+				$driver_exception = $e;
+			} elseif ( $e instanceof PDOException ) {
+				$driver_exception = $this->convert_sqlite_exception( $e );
+			} else {
+				$driver_exception = $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
 			}
 
-			return $this->handle_pdo_error( $e );
+			return $this->handle_pdo_error( $driver_exception );
 		} finally {
 			// A query that doesn't return any rows or fails sets found rows to 0.
 			if ( ! $this->is_readonly || isset( $e ) ) {
@@ -2192,9 +2196,9 @@ class WP_MySQL_On_SQLite extends PDO {
 								sprintf( 'SELECT 1 FROM %s LIMIT 0', $table_name )
 							);
 						} catch ( PDOException $e ) {
-							throw $this->new_driver_exception(
-								sprintf( "Table '%s.%s' doesn't exist", $this->db_name, $table_name ),
-								'42S02'
+							throw $this->new_table_not_found_exception(
+								sprintf( '%s.%s', $this->db_name, $table_name ),
+								$e
 							);
 						}
 					}
@@ -3650,10 +3654,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		)->fetchColumn();
 
 		if ( ! $table_exists ) {
-			throw $this->new_driver_exception(
-				sprintf( "Table '%s.%s' doesn't exist", $database, $table_name ),
-				'42S02'
-			);
+			throw $this->new_table_not_found_exception( sprintf( '%s.%s', $database, $table_name ) );
 		}
 
 		// LIKE and WHERE clauses.
@@ -4072,7 +4073,9 @@ class WP_MySQL_On_SQLite extends PDO {
 						);
 				}
 			} catch ( PDOException $e ) {
-				if ( 'HY000' === $e->getCode() ) {
+				if ( '42S02' === $e->getCode() && isset( $e->errorInfo[2] ) ) {
+					$errors = array( $e->errorInfo[2] );
+				} elseif ( 'HY000' === $e->getCode() ) {
 					$errors = array( "Table '$table_name' doesn't exist" );
 				} else {
 					$errors = array( $e->getMessage() );
@@ -5774,13 +5777,7 @@ class WP_MySQL_On_SQLite extends PDO {
 
 		// Check if the table exists.
 		if ( 0 === count( $columns ) ) {
-			throw $this->new_driver_exception(
-				sprintf(
-					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exist",
-					$table_name
-				),
-				'42S02'
-			);
+			throw $this->new_table_not_found_exception( $table_name );
 		}
 
 		// Get a list of columns that are targeted by the INSERT or REPLACE query.
@@ -6088,13 +6085,7 @@ class WP_MySQL_On_SQLite extends PDO {
 
 		// Check if the table exists.
 		if ( 0 === count( $columns ) ) {
-			throw $this->new_driver_exception(
-				sprintf(
-					"SQLSTATE[42S02]: Base table or view not found: 1146 Table '%s' doesn't exist",
-					$table_name
-				),
-				'42S02'
-			);
+			throw $this->new_table_not_found_exception( $table_name );
 		}
 
 		$column_map = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
@@ -6833,10 +6824,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		)->fetch( PDO::FETCH_ASSOC );
 
 		if ( false === $table_info ) {
-			throw $this->new_driver_exception(
-				sprintf( "Table '%s' doesn't exist", $table_name ),
-				'42S02'
-			);
+			throw $this->new_table_not_found_exception( $table_name );
 		}
 
 		// 2. Get column info.
@@ -7809,6 +7797,26 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Create a MySQL-compatible table-not-found exception.
+	 *
+	 * @param  string         $table_name The missing table name.
+	 * @param  Throwable|null $previous   The previous exception.
+	 * @return WP_MySQL_On_SQLite_Exception
+	 */
+	private function new_table_not_found_exception(
+		string $table_name,
+		?Throwable $previous = null
+	): WP_MySQL_On_SQLite_Exception {
+		$driver_message = sprintf( "Table '%s' doesn't exist", $table_name );
+		return $this->new_driver_exception(
+			'SQLSTATE[42S02]: Base table or view not found: 1146 ' . $driver_message,
+			'42S02',
+			$previous,
+			array( '42S02', 1146, $driver_message )
+		);
+	}
+
+	/**
 	 * Create a MySQL-compatible exception for an invalid SQL mode value.
 	 *
 	 * @param  mixed $value The invalid SQL mode value.
@@ -7834,6 +7842,25 @@ class WP_MySQL_On_SQLite extends PDO {
 			"Access denied for user 'root'@'%' to database 'information_schema'",
 			'42000'
 		);
+	}
+
+	/**
+	 * Convert a SQLite PDO exception to a MySQL-on-SQLite driver exception.
+	 *
+	 * @param  PDOException $e The SQLite PDO exception.
+	 * @return WP_MySQL_On_SQLite_Exception
+	 */
+	private function convert_sqlite_exception( PDOException $e ): WP_MySQL_On_SQLite_Exception {
+		$error_info    = is_array( $e->errorInfo ) ? $e->errorInfo : array();
+		$sqlstate      = $error_info[0] ?? null;
+		$error_message = $error_info[2] ?? null;
+
+		if ( 'HY000' === $sqlstate && 0 === strpos( $error_message, 'no such table: ' ) ) {
+			$table_name = substr( $error_message, strlen( 'no such table: ' ) );
+			return $this->new_table_not_found_exception( $table_name, $e );
+		}
+
+		return $this->new_driver_exception( $e->getMessage(), $e->getCode(), $e );
 	}
 
 	/**

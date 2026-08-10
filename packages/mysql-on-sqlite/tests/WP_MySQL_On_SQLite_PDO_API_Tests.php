@@ -228,14 +228,45 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 	}
 
 	public function test_driver_exception_preserves_pdo_error_information(): void {
+		$previous            = new PDOException( 'Test PDO error.' );
+		$previous->errorInfo = array( 'HY000', 1, 'Test PDO error.' );
+		$exception           = new WP_MySQL_On_SQLite_Exception(
+			$this->driver,
+			$previous->getMessage(),
+			$previous->getCode(),
+			$previous
+		);
+
+		$this->assertSame( $previous->errorInfo, $exception->errorInfo );
+	}
+
+	/**
+	 * @dataProvider data_missing_table_queries
+	 */
+	public function test_missing_table_errors_use_mysql_identity( string $query ): void {
+		$driver_message = "Table 'missing_table' doesn't exist";
+		$message        = 'SQLSTATE[42S02]: Base table or view not found: 1146 ' . $driver_message;
+
 		try {
-			$this->driver->query( 'SELECT * FROM missing_table' );
+			$this->driver->query( $query );
 			$this->fail( 'Expected query() to throw an exception.' );
 		} catch ( WP_MySQL_On_SQLite_Exception $exception ) {
-			$this->assertSame( 'HY000', $exception->errorInfo[0] );
-			$this->assertSame( 1, $exception->errorInfo[1] );
-			$this->assertSame( 'no such table: missing_table', $exception->errorInfo[2] );
+			$this->assertSame( '42S02', $exception->getCode() );
+			$this->assertSame( $message, $exception->getMessage() );
+			$this->assertSame( array( '42S02', 1146, $driver_message ), $exception->errorInfo );
 		}
+
+		$this->assertSame( '42S02', $this->driver->errorCode() );
+		$this->assertSame( array( '42S02', 1146, $driver_message ), $this->driver->errorInfo() );
+	}
+
+	public function data_missing_table_queries(): array {
+		return array(
+			'Select' => array( 'SELECT * FROM missing_table' ),
+			'Insert' => array( 'INSERT INTO missing_table VALUES (1)' ),
+			'Update' => array( 'UPDATE missing_table SET value = 1' ),
+			'Delete' => array( 'DELETE FROM missing_table' ),
+		);
 	}
 
 	public function test_emulated_driver_exception_exposes_mysql_error_information(): void {
@@ -724,9 +755,11 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->driver->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT );
 
 		$this->assertFalse( $this->driver->query( 'SELECT * FROM missing_table' ) );
-		$this->assertSame( 'HY000', $this->driver->errorCode() );
-		$this->assertSame( 1, $this->driver->errorInfo()[1] );
-		$this->assertSame( 'no such table: missing_table', $this->driver->errorInfo()[2] );
+		$this->assertSame( '42S02', $this->driver->errorCode() );
+		$this->assertSame(
+			array( '42S02', 1146, "Table 'missing_table' doesn't exist" ),
+			$this->driver->errorInfo()
+		);
 		$this->assertFalse( $this->driver->exec( 'SELECT * FROM missing_table' ) );
 
 		$this->assertInstanceOf( PDOStatement::class, $this->driver->query( 'SELECT 1' ) );
@@ -752,7 +785,10 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 			restore_error_handler();
 		}
 
-		$this->assertStringContainsString( 'no such table: missing_table', $warning );
+		$this->assertSame(
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exist",
+			$warning
+		);
 	}
 
 	public function test_quote_matches_mysql_escaping(): void {
