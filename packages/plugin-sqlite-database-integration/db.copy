@@ -22,10 +22,15 @@ if ( ! $sqlite_plugin_implementation_folder_path || ! file_exists( $sqlite_plugi
 	return;
 }
 
-// Constant for backward compatibility.
+/**
+ * Legacy database type marker.
+ *
+ * @deprecated 3.0.0 Use DB_ENGINE instead.
+ */
 if ( ! defined( 'DATABASE_TYPE' ) ) {
 	define( 'DATABASE_TYPE', 'sqlite' );
 }
+
 // Define SQLite constant.
 if ( ! defined( 'DB_ENGINE' ) ) {
 	define( 'DB_ENGINE', 'sqlite' );

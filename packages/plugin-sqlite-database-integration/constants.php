@@ -23,6 +23,8 @@ if ( ! defined( 'DB_ENGINE' ) ) {
 /**
  * FQDBDIR is a directory where the sqlite database file is placed.
  * If DB_DIR is defined, it is used as FQDBDIR.
+ *
+ * @deprecated 3.0.0 Define DB_DIR instead of overriding FQDBDIR.
  */
 if ( ! defined( 'FQDBDIR' ) ) {
 	if ( defined( 'DB_DIR' ) ) {
@@ -37,6 +39,8 @@ if ( ! defined( 'FQDBDIR' ) ) {
 /**
  * FQDB is a database file name. If DB_FILE is defined, it is used
  * as FQDB.
+ *
+ * @deprecated 3.0.0 Define DB_DIR and DB_FILE instead of overriding FQDB.
  */
 if ( ! defined( 'FQDB' ) ) {
 	if ( defined( 'DB_FILE' ) ) {
