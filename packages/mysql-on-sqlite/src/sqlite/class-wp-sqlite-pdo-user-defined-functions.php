@@ -833,7 +833,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 * @return int long integer
 	 */
 	public function inet_aton( $addr ) {
-		return absint( ip2long( $addr ) );
+		return abs( (int) ip2long( $addr ) );
 	}
 
 	/**

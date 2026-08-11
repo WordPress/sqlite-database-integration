@@ -405,6 +405,12 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		}
 	}
 
+	public function test_inet_aton(): void {
+		$result = $this->driver->query( "SELECT INET_ATON('1.2.3.4')" );
+
+		$this->assertSame( '16909060', $result->fetchColumn() );
+	}
+
 	public function test_statement_query_string(): void {
 		$query = 'SELECT 1 AS value';
 		$stmt  = $this->driver->query( $query );
