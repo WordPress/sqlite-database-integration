@@ -7908,6 +7908,14 @@ class WP_MySQL_On_SQLite extends PDO {
 					null,
 					array( '42000', 1072, $driver_message )
 				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_INVALID_DEFAULT_VALUE:
+				$driver_message = sprintf( "Invalid default value for '%s'", $e->get_data()['column_name'] );
+				return $this->new_driver_exception(
+					'SQLSTATE[42000]: Syntax error or access violation: 1067 ' . $driver_message,
+					'42000',
+					null,
+					array( '42000', 1067, $driver_message )
+				);
 			case WP_SQLite_Information_Schema_Exception::TYPE_CONSTRAINT_DOES_NOT_EXIST:
 				$driver_message = sprintf( "Constraint '%s' does not exist.", $e->get_data()['name'] );
 				return $this->new_driver_exception(

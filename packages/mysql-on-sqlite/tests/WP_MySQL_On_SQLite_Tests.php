@@ -748,6 +748,68 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider invalidBitDefaultQueries
+	 */
+	public function testRejectsInvalidBitDefaultValues( string $query, string $column_name ): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_invalid_bit_default (id INT, injected BIT(1))' );
+
+		$exception = null;
+		try {
+			$this->query( $query );
+		} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+			$exception = $e;
+		}
+
+		$driver_message = sprintf( "Invalid default value for '%s'", $column_name );
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
+		$this->assertSame(
+			'SQLSTATE[42000]: Syntax error or access violation: 1067 ' . $driver_message,
+			$exception->getMessage()
+		);
+		$this->assertSame( '42000', $exception->getCode() );
+		$this->assertSame( array( '42000', 1067, $driver_message ), $exception->errorInfo );
+	}
+
+	public static function invalidBitDefaultQueries(): array {
+		$payload = "0,\n  PRIMARY KEY (`id`)\n); DROP TABLE users; --";
+
+		return array(
+			'CREATE TABLE'       => array(
+				"CREATE TABLE _tmp_created_invalid_bit_default (injected BIT(1) DEFAULT '$payload')",
+				'injected',
+			),
+			'ALTER TABLE ADD'    => array(
+				"ALTER TABLE _tmp_invalid_bit_default ADD COLUMN injected_2 BIT(1) DEFAULT '$payload'",
+				'injected_2',
+			),
+			'ALTER TABLE MODIFY' => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '$payload'",
+				'injected',
+			),
+			'empty string'       => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT ''",
+				'injected',
+			),
+			'bit-like string'    => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT 'b''0''; DROP TABLE users; -- '",
+				'injected',
+			),
+			'0b-like string'     => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '0b0''; DROP TABLE users; -- '",
+				'injected',
+			),
+			'hex-like string'    => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT 'x''05''; DROP TABLE users; -- '",
+				'injected',
+			),
+			'0x-like string'     => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '0x05; DROP TABLE users; -- '",
+				'injected',
+			),
+		);
+	}
+
 	public function testUpdateWithBitColumnDefaultValue(): void {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_bit_defaults (
