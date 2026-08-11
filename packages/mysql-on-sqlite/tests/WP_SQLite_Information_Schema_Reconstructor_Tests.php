@@ -268,6 +268,36 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
+	public function testHexadecimalDefaultValues(): void {
+		$this->engine->get_connection()->query(
+			'
+			CREATE TABLE t (
+				leading_zeroes int DEFAULT 0x00000000000000000001,
+				max_positive int DEFAULT 0x7fffffffffffffff,
+				min_negative int DEFAULT 0x8000000000000000,
+				minus_one int DEFAULT 0xffffffffffffffff
+			)
+		'
+		);
+
+		$this->reconstructor->ensure_correct_information_schema();
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					"  `leading_zeroes` int DEFAULT '1',",
+					"  `max_positive` int DEFAULT '9223372036854775807',",
+					"  `min_negative` int DEFAULT '-9223372036854775808',",
+					"  `minus_one` int DEFAULT '-1'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$result[0]->{'Create Table'}
+		);
+	}
+
 	public function testReconstructBitDefaultValuesFromMysqlDataTypesCache(): void {
 		$connection = $this->engine->get_connection();
 

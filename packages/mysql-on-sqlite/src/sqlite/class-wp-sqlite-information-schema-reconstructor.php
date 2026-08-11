@@ -574,9 +574,11 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		}
 
 		// HEX literals (numeric). E.g.: 0x1a2f, 0X1A2F
-		$value = filter_var( $no_underscore_default_value, FILTER_VALIDATE_INT, FILTER_FLAG_ALLOW_HEX );
-		if ( false !== $value ) {
-			return $value;
+		if ( 1 === preg_match( '/^0[xX][0-9a-fA-F]+$/D', $no_underscore_default_value ) ) {
+			// Convert to signed 64-bit decimal text in SQLite to avoid PHP integer size limits.
+			return (string) $this->connection->query(
+				'SELECT CAST(' . $no_underscore_default_value . ' AS TEXT)'
+			)->fetchColumn();
 		}
 
 		// BLOB literals (string). E.g.: x'1a2f', X'1A2F'
