@@ -1,5 +1,9 @@
 <?php
 
+if ( defined( 'SQLITE_DRIVER_VERSION' ) ) {
+	return;
+}
+
 /**
  * The version of the SQLite driver.
  *

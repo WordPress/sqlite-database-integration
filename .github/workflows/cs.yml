@@ -6,6 +6,7 @@ on:
     paths:
       - '**.php'
       - 'composer.json'
+      - 'packages/*/composer.json'
       - 'composer.lock'
       - '.phpcs.xml.dist'
       - 'phpcs.xml.dist'
@@ -14,6 +15,7 @@ on:
     paths:
       - '**.php'
       - 'composer.json'
+      - 'packages/*/composer.json'
       - 'composer.lock'
       - '.phpcs.xml.dist'
       - 'phpcs.xml.dist'
@@ -54,6 +56,12 @@ jobs:
       # @link https://getcomposer.org/doc/03-cli.md#validate
       - name: Validate Composer installation
         run: composer validate --no-check-all
+
+      - name: Validate Composer packages
+        run: |
+          for manifest in packages/*/composer.json; do
+            composer --working-dir="${manifest%/composer.json}" validate --strict --no-check-lock
+          done
 
       # Install dependencies and handle caching in one go.
       # @link https://github.com/marketplace/actions/install-composer-dependencies

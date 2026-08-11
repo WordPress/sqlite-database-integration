@@ -1,5 +1,9 @@
 <?php
 
+if ( defined( 'WP_MYSQL_ON_SQLITE_LOADER_PATH' ) ) {
+	return;
+}
+
 define( 'WP_MYSQL_ON_SQLITE_LOADER_PATH', __FILE__ );
 
 /**

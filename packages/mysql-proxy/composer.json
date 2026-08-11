@@ -1,19 +1,37 @@
 {
-    "name": "wordpress/mysql-proxy",
-    "type": "library",
-	"bin": [
-		"bin/wp-mysql-proxy.php"
+	"name": "wordpress/mysql-proxy",
+	"type": "library",
+	"description": "A MySQL proxy that bridges the MySQL wire protocol to PDO-compatible database drivers.",
+	"license": "GPL-2.0-or-later",
+	"repositories": [
+		{
+			"type": "path",
+			"url": "../mysql-on-sqlite"
+		}
 	],
-	"scripts": {
-		"test": "phpunit"
+	"require": {
+		"php": ">=7.2",
+		"ext-sockets": "*",
+		"composer-runtime-api": "^2.2"
 	},
-    "require-dev": {
-        "phpunit/phpunit": "^8.5",
-        "symfony/process": "^5.4"
-    },
+	"suggest": {
+		"ext-pdo": "Required by the bundled SQLite adapter.",
+		"wordpress/mysql-on-sqlite": "Provides the bundled SQLite adapter and CLI backend."
+	},
 	"autoload": {
 		"classmap": [
 			"src/"
 		]
+	},
+	"bin": [
+		"bin/wp-mysql-proxy.php"
+	],
+	"require-dev": {
+		"phpunit/phpunit": "^8.5",
+		"symfony/process": "^5.4",
+		"wordpress/mysql-on-sqlite": "*@dev"
+	},
+	"scripts": {
+		"test": "phpunit"
 	}
 }

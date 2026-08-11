@@ -4,15 +4,15 @@ use WP_MySQL_Proxy\MySQL_Proxy;
 use WP_MySQL_Proxy\Adapter\SQLite_Adapter;
 use WP_MySQL_Proxy\Logger;
 
-require_once __DIR__ . '/../vendor/autoload.php';
+require_once $_composer_autoload_path ?? __DIR__ . '/../vendor/autoload.php';
 
 // Process CLI arguments:
-$shortopts = 'h:d:p:l:';
+$shortopts = 'hd:p:l:';
 $longopts  = array( 'help', 'database:', 'port:', 'log-level:' );
 $opts      = getopt( $shortopts, $longopts );
 
 $help = <<<USAGE
-Usage: php bin/wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
+Usage: wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
 
 Options:
   -h, --help              Show this help message and exit.
@@ -42,6 +42,14 @@ if ( $port < 1 || $port > 65535 ) {
 $log_level = $opts['l'] ?? $opts['log-level'] ?? 'info';
 if ( ! in_array( $log_level, Logger::LEVELS, true ) ) {
 	fwrite( STDERR, 'Error: --log-level must be one of: ' . implode( ', ', Logger::LEVELS ) . ". Use --help for more information.\n" );
+	exit( 1 );
+}
+
+if ( ! class_exists( 'WP_MySQL_On_SQLite' ) ) {
+	fwrite(
+		STDERR,
+		"Error: The bundled CLI requires wordpress/mysql-on-sqlite. Run `composer require wordpress/mysql-on-sqlite:^3.0`.\n"
+	);
 	exit( 1 );
 }
 

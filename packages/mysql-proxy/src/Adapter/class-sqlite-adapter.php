@@ -10,16 +10,11 @@ use WP_MySQL_Proxy\MySQL_Result;
 use WP_MySQL_On_SQLite;
 use WP_MySQL_Proxy\MySQL_Protocol;
 
-require_once __DIR__ . '/../../../../wp-pdo-mysql-on-sqlite.php';
-
 class SQLite_Adapter implements Adapter {
 	/** @var WP_MySQL_On_SQLite */
 	private $sqlite_driver;
 
 	public function __construct( $sqlite_database_path ) {
-		define( 'FQDB', $sqlite_database_path );
-		define( 'FQDBDIR', dirname( FQDB ) . '/' );
-
 		$this->sqlite_driver = new WP_MySQL_On_SQLite(
 			sprintf( 'mysql-on-sqlite:path=%s;dbname=sqlite_database', str_replace( ';', ';;', $sqlite_database_path ) )
 		);

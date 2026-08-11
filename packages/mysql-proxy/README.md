@@ -13,18 +13,39 @@ against alternative database backends over the MySQL wire protocol.
 Combined with [**MySQL on SQLite**](../mysql-on-sqlite/), this allows
 MySQL-based projects to run on SQLite.
 
+## Installation
+
+Install the proxy core to use it with a custom adapter:
+
+```bash
+composer require wordpress/mysql-proxy
+```
+
+The bundled SQLite adapter and CLI also require MySQL on SQLite:
+
+```bash
+composer require wordpress/mysql-proxy wordpress/mysql-on-sqlite:^3.0
+```
+
 ## Usage
 
 ### CLI:
 
 ```bash
-$ php bin/wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
+$ ./vendor/bin/wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
 
 Options:
   -h, --help              Show this help message and exit.
   -p, --port=<port>       The port to listen on. Default: 3306
   -d, --database=<path>   The path to the SQLite database file. Default: :memory:
   -l, --log-level=<level> The log level to use. One of 'error', 'warning', 'info', 'debug'. Default: info
+```
+
+When working from a checked-out repository, Composer does not create a proxy for
+the root package's own binary. Run it directly from the package directory:
+
+```bash
+php bin/wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
 ```
 
 ### PHP:

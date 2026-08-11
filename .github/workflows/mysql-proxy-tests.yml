@@ -28,6 +28,10 @@ jobs:
           php-version: '7.4'
           coverage: none
 
+      - name: Configure monorepo package repository
+        run: composer config repositories.mysql-on-sqlite path ../mysql-on-sqlite
+        working-directory: packages/mysql-proxy
+
       - name: Install Composer dependencies
         uses: ramsey/composer-install@v3
         with:

@@ -20,6 +20,8 @@ At a glance:
 Load the package and create a connection using a `mysql-on-sqlite` DSN:
 
 ```php
+require_once __DIR__ . '/vendor/autoload.php';
+
 // Use a PDO-like constructor.
 $pdo = new WP_MySQL_On_SQLite(
 	'mysql-on-sqlite:path=/path/to/database.sqlite;dbname=app'
@@ -131,7 +133,7 @@ composer run test -- --filter testName
 ## Requirements
 
 - **PHP:** 7.2+
-- **PHP extensions:** `pdo`, `pdo_sqlite`, `pcre`
+- **PHP extensions:** `pdo`, `pdo_sqlite`
 - **SQLite:** 3.37.0+
 
 ## License

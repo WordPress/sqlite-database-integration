@@ -1,7 +1,7 @@
 <?php
 
 require_once __DIR__ . '/wp-sqlite-schema.php';
-require_once __DIR__ . '/../src/load.php';
+require_once __DIR__ . '/../vendor/autoload.php';
 
 // When on an older SQLite version, enable unsafe backward compatibility.
 $sqlite_version = ( new PDO( 'sqlite::memory:' ) )->query( 'SELECT SQLITE_VERSION();' )->fetch()[0];
