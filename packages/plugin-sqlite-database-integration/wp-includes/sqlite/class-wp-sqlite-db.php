@@ -746,6 +746,21 @@ class WP_SQLite_DB extends wpdb {
 	}
 
 	/**
+	 * Retrieves the emulated database server version number.
+	 *
+	 * This mirrors wpdb::db_version(), but must also be defined here because
+	 * WordPress 5.4 and older fetch server information directly from the MySQL
+	 * extension instead of delegating to wpdb::db_server_info().
+	 *
+	 * @see wpdb::db_version()
+	 *
+	 * @return string Version number on success, or an empty string while disconnected.
+	 */
+	public function db_version() {
+		return preg_replace( '/[^0-9.].*/', '', $this->db_server_info() );
+	}
+
+	/**
 	 * Returns the raw version string of the emulated MySQL server.
 	 *
 	 * @see wpdb::db_server_info()
