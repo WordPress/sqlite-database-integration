@@ -208,6 +208,9 @@ class WP_MySQL_On_SQLite_Statement extends PDOStatement implements IteratorAggre
 	 * @return bool         True on success, false on failure.
 	 */
 	public function execute( $params = null ): bool {
+		// The wrapped SQLite statement represents the result of MySQL emulation.
+		// Re-executing it would not repeat the original MySQL operation.
+		// TODO: Implement statement execution together with the prepare() flow.
 		throw new RuntimeException( 'Not implemented' );
 	}
 
