@@ -139,4 +139,4 @@ composer run test -- --filter testName
 ## License
 
 MySQL on SQLite is licensed under the
-[GNU General Public License v2 or later](../../LICENSE).
+[GNU General Public License v2 or later](LICENSE).

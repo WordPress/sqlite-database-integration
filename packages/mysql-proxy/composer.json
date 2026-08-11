@@ -2,13 +2,19 @@
 	"name": "wordpress/mysql-proxy",
 	"type": "library",
 	"description": "A MySQL proxy that bridges the MySQL wire protocol to PDO-compatible database drivers.",
+	"keywords": [ "database", "mysql", "pdo", "proxy", "sqlite" ],
+	"homepage": "https://github.com/wordpress/sqlite-database-integration",
 	"license": "GPL-2.0-or-later",
-	"repositories": [
+	"authors": [
 		{
-			"type": "path",
-			"url": "../mysql-on-sqlite"
+			"name": "Contributors",
+			"homepage": "https://github.com/wordpress/sqlite-database-integration/graphs/contributors"
 		}
 	],
+	"support": {
+		"issues": "https://github.com/wordpress/sqlite-database-integration/issues",
+		"source": "https://github.com/wordpress/sqlite-database-integration"
+	},
 	"require": {
 		"php": ">=7.2",
 		"ext-sockets": "*",
@@ -30,6 +36,10 @@
 		"phpunit/phpunit": "^8.5",
 		"symfony/process": "^5.4",
 		"wordpress/mysql-on-sqlite": "*@dev"
+	},
+	"config": {
+		"lock": false,
+		"sort-packages": true
 	},
 	"scripts": {
 		"test": "phpunit"

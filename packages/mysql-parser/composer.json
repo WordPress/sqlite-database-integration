@@ -2,7 +2,19 @@
 	"name": "wordpress/mysql-parser",
 	"type": "library",
 	"description": "A fast and complete MySQL parser with zero dependencies.",
+	"keywords": [ "grammar", "lexer", "mysql", "parser", "sql" ],
+	"homepage": "https://github.com/wordpress/sqlite-database-integration",
 	"license": "GPL-2.0-or-later",
+	"authors": [
+		{
+			"name": "Contributors",
+			"homepage": "https://github.com/wordpress/sqlite-database-integration/graphs/contributors"
+		}
+	],
+	"support": {
+		"issues": "https://github.com/wordpress/sqlite-database-integration/issues",
+		"source": "https://github.com/wordpress/sqlite-database-integration"
+	},
 	"require": {
 		"php": ">=7.2"
 	},
@@ -13,6 +25,10 @@
 	},
 	"require-dev": {
 		"phpunit/phpunit": "^8.5"
+	},
+	"config": {
+		"lock": false,
+		"sort-packages": true
 	},
 	"scripts": {
 		"test": "phpunit",
