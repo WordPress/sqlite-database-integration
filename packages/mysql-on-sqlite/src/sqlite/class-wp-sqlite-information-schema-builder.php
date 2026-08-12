@@ -2152,6 +2152,11 @@ class WP_SQLite_Information_Schema_Builder {
 	private function get_bit_default( string $default_value ): ?string {
 		$value = strtolower( $default_value );
 
+		// An empty string coerces to zero.
+		if ( '' === $value ) {
+			return "b'0'";
+		}
+
 		// Bit literal, e.g. b'101' or 0b101.
 		if (
 			preg_match( "/\Ab'([01]*)'\z/", $value, $matches )

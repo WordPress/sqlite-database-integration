@@ -704,6 +704,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_bit_defaults (
 				id INT DEFAULT 0,
+				empty_string BIT(1) DEFAULT '',
 				quoted_zero BIT(1) DEFAULT '0',
 				integer_five BIT(4) DEFAULT 5,
 				bit_literal_five BIT(4) DEFAULT b'0101',
@@ -718,6 +719,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertQuery( 'SHOW CREATE TABLE _tmp_bit_defaults;' );
 		$results      = $this->last_result;
 		$create_table = $results[0]->{'Create Table'};
+		$this->assertStringContainsString( "`empty_string` bit(1) DEFAULT b'0'", $create_table );
 		$this->assertStringContainsString( "`quoted_zero` bit(1) DEFAULT b'0'", $create_table );
 		$this->assertStringContainsString( "`integer_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`bit_literal_five` bit(4) DEFAULT b'101'", $create_table );
@@ -734,6 +736,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			array(
 				(object) array(
 					'id'                 => '1',
+					'empty_string'       => '0',
 					'quoted_zero'        => '0',
 					'integer_five'       => '5',
 					'bit_literal_five'   => '5',
@@ -785,10 +788,6 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			),
 			'ALTER TABLE MODIFY' => array(
 				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '$payload'",
-				'injected',
-			),
-			'empty string'       => array(
-				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT ''",
 				'injected',
 			),
 			'bit-like string'    => array(
