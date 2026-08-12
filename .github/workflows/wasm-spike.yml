@@ -3,7 +3,7 @@ name: WASM extension build
 on:
   push:
     branches:
-      - main
+      - trunk
     paths:
       - 'packages/php-ext-wp-mysql-parser/**'
       - '.github/workflows/wasm-spike.yml'

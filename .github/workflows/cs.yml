@@ -1,7 +1,7 @@
 name: CS
 
 on:
-  # Run on all relevant pushes (except to main) and on all relevant pull requests.
+  # Run on all relevant pushes and pull requests.
   push:
     paths:
       - '**.php'
@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
 
       - name: Install PHP
         uses: shivammathur/setup-php@v2
