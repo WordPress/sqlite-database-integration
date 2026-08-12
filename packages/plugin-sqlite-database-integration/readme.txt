@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath, janjakes, zieladam, berislav.grgic
 Requires at least: 6.4
 Tested up to:      7.0
 Requires PHP:      7.2
-Stable tag:        3.0.0-rc.8
+Stable tag:        3.0.0-rc.9
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              performance, database
@@ -43,6 +43,20 @@ the wpdb API, while queries are internally adapted to be compatible
 with SQLite syntax and behavior.
 
 == Changelog ==
+
+= 3.0.0-rc.9 =
+
+* Reject invalid `BIT` column defaults ([#487](https://github.com/WordPress/sqlite-database-integration/pull/487))
+* Make Composer packages installable ([#486](https://github.com/WordPress/sqlite-database-integration/pull/486))
+* Remove `INET_ATON()` WordPress dependency ([#485](https://github.com/WordPress/sqlite-database-integration/pull/485))
+* Restore database version support for older WordPress releases ([#484](https://github.com/WordPress/sqlite-database-integration/pull/484))
+* Finalize MySQL-on-SQLite 3.0 refinements ([#482](https://github.com/WordPress/sqlite-database-integration/pull/482))
+* Prefix SQLite-specific constructor options ([#481](https://github.com/WordPress/sqlite-database-integration/pull/481))
+* Unify emulated MySQL server identity ([#479](https://github.com/WordPress/sqlite-database-integration/pull/479))
+* Document the 3.0 driver API ([#477](https://github.com/WordPress/sqlite-database-integration/pull/477))
+* Expand PDO API coverage ([#471](https://github.com/WordPress/sqlite-database-integration/pull/471))
+* Refine the 3.0 API surface ([#469](https://github.com/WordPress/sqlite-database-integration/pull/469))
+* Add `ANSI_QUOTES` and SQL mode validation ([#452](https://github.com/WordPress/sqlite-database-integration/pull/452))
 
 = 3.0.0-rc.8 =
 
