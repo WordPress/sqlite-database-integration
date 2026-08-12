@@ -261,7 +261,7 @@ class MySQL_Protocol {
 			self::encode_length_encoded_int( $affected_rows ),  // (a*) Affected rows.
 			self::encode_length_encoded_int( $last_insert_id ), // (a*) Last insert ID.
 			$server_status,                                     // (v)  Server status flags.
-			$warning_count,                                     // (v)  Server status flags.
+			$warning_count                                      // (v)  Server status flags.
 		);
 		return self::build_packet( $sequence_id, $payload );
 	}
@@ -331,7 +331,7 @@ class MySQL_Protocol {
 			self::ERR_PACKET_HEADER,        // (C)  ERR packet header.
 			$error_code,                    // (v)  Error code.
 			'#' . strtoupper( $sql_state ), // (a*) SQL state.
-			$message,                       // (a*) Message.
+			$message                        // (a*) Message.
 		);
 		return self::build_packet( $sequence_id, $payload );
 	}
@@ -366,7 +366,7 @@ class MySQL_Protocol {
 			'Cvv',
 			self::EOF_PACKET_HEADER, // (C)  EOF packet header.
 			$warning_count,          // (v)  Warning count.
-			$server_status,          // (v)  Status flags.
+			$server_status           // (v)  Status flags.
 		);
 		return self::build_packet( $sequence_id, $payload );
 	}
@@ -437,7 +437,7 @@ class MySQL_Protocol {
 			str_repeat( "\0", 10 ),   // (a*) Filler. 10 bytes of 0x00.
 			$scramble2,               // (a*) Remainder of auth plugin data (scramble).
 			0,                        // (C)  Filler. Always 0x00.
-			$auth_plugin_name,        // (a*) Auth plugin name.
+			$auth_plugin_name         // (a*) Auth plugin name.
 		);
 		return self::build_packet( $sequence_id, $payload );
 	}
@@ -467,7 +467,7 @@ class MySQL_Protocol {
 	 */
 	public static function build_column_definition_packet( int $sequence_id, array $column ): string {
 		$payload = pack(
-			'a*a*a*a*a*a*a*vVCvCC',
+			'a*a*a*a*a*a*a*vVCvCv',
 			self::encode_length_encoded_string( $column['catalog'] ?? 'def' ),
 			self::encode_length_encoded_string( $column['schema'] ?? '' ),
 			self::encode_length_encoded_string( $column['table'] ?? '' ),
@@ -480,7 +480,7 @@ class MySQL_Protocol {
 			$column['type'],                                       // (C)  Type.
 			$column['flags'],                                      // (v)  Flags.
 			$column['decimals'],                                   // (C)  Decimals.
-			0,                                                     // (C)  Filler. Always 0x00.
+			0                                                      // (v)  Filler. Always 0x0000.
 		);
 		return self::build_packet( $sequence_id, $payload );
 	}
@@ -532,7 +532,7 @@ class MySQL_Protocol {
 			'VXCa*',
 			strlen( $payload ), // (VX) Payload length.
 			$sequence_id,       // (C)  Sequence ID.
-			$payload,           // (a*) Payload.
+			$payload            // (a*) Payload.
 		);
 	}
 
