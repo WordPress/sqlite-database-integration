@@ -86,7 +86,8 @@ jobs:
           CHANGELOG: ${{ steps.changelog.outputs.body }}
         run: |
           # Extract PR numbers from changelog links like [#123](...).
-          PR_NUMBERS=$(echo "$CHANGELOG" | grep -oE '\[#[0-9]+\]' | tr -d '[]#' | sort -u)
+          # A changelog without matching links has no contributors to fetch.
+          PR_NUMBERS=$(echo "$CHANGELOG" | { grep -oE '\[#[0-9]+\]' || [ "$?" -eq 1 ]; } | tr -d '[]#' | sort -u)
 
           CONTRIBUTORS=""
           if [ -n "$PR_NUMBERS" ]; then
