@@ -21,7 +21,11 @@ define( 'FQDBDIR', __DIR__ . '/../testdb' );
 // Polyfill WPDB globals.
 $GLOBALS['table_prefix'] = 'wptests_';
 $GLOBALS['wpdb']         = new class() {
-	public function set_prefix( string $prefix ): void {}
+	public $blogs;
+
+	public function set_prefix( string $prefix ): void {
+		$this->blogs = $prefix . 'blogs';
+	}
 };
 
 /**

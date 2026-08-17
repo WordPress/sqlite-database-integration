@@ -27,11 +27,13 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		}
 		if ( ! function_exists( 'is_multisite' ) ) {
 			function is_multisite() {
-				return false;
+				return $GLOBALS['wp_sqlite_is_multisite'];
 			}
 		}
 		if ( ! function_exists( 'wp_get_db_schema' ) ) {
-			function wp_get_db_schema() {
+			function wp_get_db_schema( $scope = 'all', $blog_id = null ) {
+				$GLOBALS['wp_sqlite_db_schema_calls'][] = array( $scope, $blog_id );
+
 				// Output from "wp_get_db_schema" as of WordPress 6.8.0.
 				// See: https://github.com/WordPress/wordpress-develop/blob/6.8.0/src/wp-admin/includes/schema.php#L36
 				return "CREATE TABLE wp_users ( ID bigint(20) unsigned NOT NULL auto_increment, user_login varchar(60) NOT NULL default '', user_pass varchar(255) NOT NULL default '', user_nicename varchar(50) NOT NULL default '', user_email varchar(100) NOT NULL default '', user_url varchar(100) NOT NULL default '', user_registered datetime NOT NULL default '0000-00-00 00:00:00', user_activation_key varchar(255) NOT NULL default '', user_status int(11) NOT NULL default '0', display_name varchar(250) NOT NULL default '', PRIMARY KEY (ID), KEY user_login_key (user_login), KEY user_nicename (user_nicename), KEY user_email (user_email) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_usermeta ( umeta_id bigint(20) unsigned NOT NULL auto_increment, user_id bigint(20) unsigned NOT NULL default '0', meta_key varchar(255) default NULL, meta_value longtext, PRIMARY KEY (umeta_id), KEY user_id (user_id), KEY meta_key (meta_key(191)) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_termmeta ( meta_id bigint(20) unsigned NOT NULL auto_increment, term_id bigint(20) unsigned NOT NULL default '0', meta_key varchar(255) default NULL, meta_value longtext, PRIMARY KEY (meta_id), KEY term_id (term_id), KEY meta_key (meta_key(191)) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_terms ( term_id bigint(20) unsigned NOT NULL auto_increment, name varchar(200) NOT NULL default '', slug varchar(200) NOT NULL default '', term_group bigint(10) NOT NULL default 0, PRIMARY KEY (term_id), KEY slug (slug(191)), KEY name (name(191)) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_term_taxonomy ( term_taxonomy_id bigint(20) unsigned NOT NULL auto_increment, term_id bigint(20) unsigned NOT NULL default 0, taxonomy varchar(32) NOT NULL default '', description longtext NOT NULL, parent bigint(20) unsigned NOT NULL default 0, count bigint(20) NOT NULL default 0, PRIMARY KEY (term_taxonomy_id), UNIQUE KEY term_id_taxonomy (term_id,taxonomy), KEY taxonomy (taxonomy) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_term_relationships ( object_id bigint(20) unsigned NOT NULL default 0, term_taxonomy_id bigint(20) unsigned NOT NULL default 0, term_order int(11) NOT NULL default 0, PRIMARY KEY (object_id,term_taxonomy_id), KEY term_taxonomy_id (term_taxonomy_id) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_commentmeta ( meta_id bigint(20) unsigned NOT NULL auto_increment, comment_id bigint(20) unsigned NOT NULL default '0', meta_key varchar(255) default NULL, meta_value longtext, PRIMARY KEY (meta_id), KEY comment_id (comment_id), KEY meta_key (meta_key(191)) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_comments ( comment_ID bigint(20) unsigned NOT NULL auto_increment, comment_post_ID bigint(20) unsigned NOT NULL default '0', comment_author tinytext NOT NULL, comment_author_email varchar(100) NOT NULL default '', comment_author_url varchar(200) NOT NULL default '', comment_author_IP varchar(100) NOT NULL default '', comment_date datetime NOT NULL default '0000-00-00 00:00:00', comment_date_gmt datetime NOT NULL default '0000-00-00 00:00:00', comment_content text NOT NULL, comment_karma int(11) NOT NULL default '0', comment_approved varchar(20) NOT NULL default '1', comment_agent varchar(255) NOT NULL default '', comment_type varchar(20) NOT NULL default 'comment', comment_parent bigint(20) unsigned NOT NULL default '0', user_id bigint(20) unsigned NOT NULL default '0', PRIMARY KEY (comment_ID), KEY comment_post_ID (comment_post_ID), KEY comment_approved_date_gmt (comment_approved,comment_date_gmt), KEY comment_date_gmt (comment_date_gmt), KEY comment_parent (comment_parent), KEY comment_author_email (comment_author_email(10)) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_links ( link_id bigint(20) unsigned NOT NULL auto_increment, link_url varchar(255) NOT NULL default '', link_name varchar(255) NOT NULL default '', link_image varchar(255) NOT NULL default '', link_target varchar(25) NOT NULL default '', link_description varchar(255) NOT NULL default '', link_visible varchar(20) NOT NULL default 'Y', link_owner bigint(20) unsigned NOT NULL default '1', link_rating int(11) NOT NULL default '0', link_updated datetime NOT NULL default '0000-00-00 00:00:00', link_rel varchar(255) NOT NULL default '', link_notes mediumtext NOT NULL, link_rss varchar(255) NOT NULL default '', PRIMARY KEY (link_id), KEY link_visible (link_visible) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_options ( option_id bigint(20) unsigned NOT NULL auto_increment, option_name varchar(191) NOT NULL default '', option_value longtext NOT NULL, autoload varchar(20) NOT NULL default 'yes', PRIMARY KEY (option_id), UNIQUE KEY option_name (option_name), KEY autoload (autoload) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_postmeta ( meta_id bigint(20) unsigned NOT NULL auto_increment, post_id bigint(20) unsigned NOT NULL default '0', meta_key varchar(255) default NULL, meta_value longtext, PRIMARY KEY (meta_id), KEY post_id (post_id), KEY meta_key (meta_key(191)) ) DEFAULT CHARACTER SET utf8mb4; CREATE TABLE wp_posts ( ID bigint(20) unsigned NOT NULL auto_increment, post_author bigint(20) unsigned NOT NULL default '0', post_date datetime NOT NULL default '0000-00-00 00:00:00', post_date_gmt datetime NOT NULL default '0000-00-00 00:00:00', post_content longtext NOT NULL, post_title text NOT NULL, post_excerpt text NOT NULL, post_status varchar(20) NOT NULL default 'publish', comment_status varchar(20) NOT NULL default 'open', ping_status varchar(20) NOT NULL default 'open', post_password varchar(255) NOT NULL default '', post_name varchar(200) NOT NULL default '', to_ping text NOT NULL, pinged text NOT NULL, post_modified datetime NOT NULL default '0000-00-00 00:00:00', post_modified_gmt datetime NOT NULL default '0000-00-00 00:00:00', post_content_filtered longtext NOT NULL, post_parent bigint(20) unsigned NOT NULL default '0', guid varchar(255) NOT NULL default '', menu_order int(11) NOT NULL default '0', post_type varchar(20) NOT NULL default 'post', post_mime_type varchar(100) NOT NULL default '', comment_count bigint(20) NOT NULL default '0', PRIMARY KEY (ID), KEY post_name (post_name(191)), KEY type_status_date (post_type,post_status,post_date,ID), KEY post_parent (post_parent), KEY post_author (post_author) ) DEFAULT CHARACTER SET utf8mb4;";
@@ -41,25 +43,78 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 
 	// Before each test, we create a new database
 	public function setUp(): void {
-		$pdo_class    = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
-		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
-		$this->engine = new WP_MySQL_On_SQLite(
-			'mysql-on-sqlite:dbname=wp',
-			null,
-			null,
-			array( 'sqlite_pdo' => $this->sqlite )
-		);
-		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+		$GLOBALS['wp_sqlite_is_multisite'] = false;
 
-		$builder = new WP_SQLite_Information_Schema_Builder(
-			WP_MySQL_On_SQLite::RESERVED_PREFIX,
-			$this->engine->get_connection()
-		);
+		$this->initializeDatabase();
 
-		$this->reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
-			$this->engine,
-			$builder
+		$GLOBALS['wp_sqlite_db_schema_calls'] = array();
+	}
+
+	public function tearDown(): void {
+		$GLOBALS['wp_sqlite_is_multisite']    = false;
+		$GLOBALS['wp_sqlite_db_schema_calls'] = array();
+	}
+
+	public function testEmptyMultisiteDatabase(): void {
+		$GLOBALS['wp_sqlite_is_multisite'] = true;
+
+		$this->initializeDatabase();
+
+		$result = $this->assertQuery( 'SELECT * FROM information_schema.tables' );
+		$this->assertSame( array(), $result );
+		$this->assertSame( array(), $GLOBALS['wp_sqlite_db_schema_calls'] );
+	}
+
+	public function testSkipWpSchemaWhenNoTablesAreMissing(): void {
+		$this->engine->query( 'CREATE TABLE t ( id INTEGER )' );
+		$GLOBALS['wp_sqlite_is_multisite'] = true;
+
+		$this->reconstructor->ensure_correct_information_schema();
+
+		$this->assertSame( array(), $GLOBALS['wp_sqlite_db_schema_calls'] );
+	}
+
+	public function testReconstructTableInMultisiteWithoutBlogsTable(): void {
+		$GLOBALS['wp_sqlite_is_multisite'] = true;
+		$this->engine->get_connection()->query( 'CREATE TABLE t ( id INTEGER )' );
+
+		$this->reconstructor->ensure_correct_information_schema();
+
+		$result = $this->assertQuery( 'SELECT table_name FROM information_schema.tables WHERE table_name = "t"' );
+		$this->assertCount( 1, $result );
+		$this->assertSame(
+			array(
+				array( 'global', null ),
+				array( 'blog', null ),
+			),
+			$GLOBALS['wp_sqlite_db_schema_calls']
 		);
+	}
+
+	public function testReconstructTablesInExistingMultisite(): void {
+		$GLOBALS['wp_sqlite_is_multisite'] = true;
+		$this->engine->get_connection()->query( 'CREATE TABLE wptests_blogs ( blog_id INTEGER )' );
+		$this->engine->get_connection()->query( 'INSERT INTO wptests_blogs ( blog_id ) VALUES ( 2 )' );
+
+		$this->reconstructor->ensure_correct_information_schema();
+
+		$this->assertSame(
+			array(
+				array( 'global', null ),
+				array( 'blog', 2 ),
+			),
+			$GLOBALS['wp_sqlite_db_schema_calls']
+		);
+	}
+
+	public function testReconstructTablesInInvalidMultisite(): void {
+		$GLOBALS['wp_sqlite_is_multisite'] = true;
+		$this->engine->get_connection()->query( 'CREATE TABLE wptests_blogs ( id INTEGER )' );
+
+		$this->expectException( PDOException::class );
+		$this->expectExceptionMessage( 'no such column: blog_id' );
+
+		$this->reconstructor->ensure_correct_information_schema();
 	}
 
 	public function testReconstructTable(): void {
@@ -463,5 +518,27 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		$retval    = $statement->columnCount() > 0 ? $statement->fetchAll() : $statement->rowCount();
 		$this->assertNotFalse( $retval );
 		return $retval;
+	}
+
+	private function initializeDatabase(): void {
+		$pdo_class    = PHP_VERSION_ID >= 80400 ? Pdo\Sqlite::class : PDO::class;
+		$this->sqlite = new $pdo_class( 'sqlite::memory:' );
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'sqlite_pdo' => $this->sqlite )
+		);
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+
+		$builder = new WP_SQLite_Information_Schema_Builder(
+			WP_MySQL_On_SQLite::RESERVED_PREFIX,
+			$this->engine->get_connection()
+		);
+
+		$this->reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
+			$this->engine,
+			$builder
+		);
 	}
 }
