@@ -44,6 +44,7 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	// Before each test, we create a new database
 	public function setUp(): void {
 		$GLOBALS['wp_sqlite_is_multisite'] = false;
+		$GLOBALS['table_prefix']           = 'wptests_';
 
 		$this->initializeDatabase();
 
@@ -53,6 +54,20 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 	public function tearDown(): void {
 		$GLOBALS['wp_sqlite_is_multisite']    = false;
 		$GLOBALS['wp_sqlite_db_schema_calls'] = array();
+		$GLOBALS['table_prefix']              = 'wptests_';
+		$GLOBALS['wpdb']->blogs               = 'wptests_blogs';
+	}
+
+	public function testInvalidWpTablePrefix(): void {
+		$GLOBALS['wp_sqlite_is_multisite'] = true;
+		$GLOBALS['table_prefix']           = 'invalid-prefix';
+		$GLOBALS['wpdb']->blogs            = null;
+		$this->engine->get_connection()->query( 'CREATE TABLE t ( id INTEGER )' );
+
+		$this->expectException( Exception::class );
+		$this->expectExceptionMessage( 'Invalid database prefix' );
+
+		$this->reconstructor->ensure_correct_information_schema();
 	}
 
 	public function testEmptyMultisiteDatabase(): void {

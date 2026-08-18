@@ -203,7 +203,10 @@ class WP_SQLite_Information_Schema_Reconstructor {
 		 * the "$table_prefix" global so we can get correct table names.
 		 */
 		global $table_prefix;
-		$wpdb->set_prefix( $table_prefix );
+		$set_prefix_result = $wpdb->set_prefix( $table_prefix );
+		if ( $set_prefix_result instanceof WP_Error ) {
+			throw new Exception( $set_prefix_result->get_error_message() );
+		}
 
 		// Get schema for global tables.
 		$schema = wp_get_db_schema( 'global' );
