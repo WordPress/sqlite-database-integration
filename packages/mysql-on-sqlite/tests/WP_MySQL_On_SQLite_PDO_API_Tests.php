@@ -923,6 +923,90 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( array( 'ROLLBACK' ), array_column( $this->driver->get_last_sqlite_queries(), 'sql' ) );
 	}
 
+	public function test_standalone_write_uses_wrapper_transaction(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY, value INT)' );
+		$this->driver->query( 'INSERT INTO t VALUES (1, 1)' );
+
+		$statement = $this->driver->query( 'UPDATE t SET value = 2 WHERE id = 1' );
+		$queries   = array_column( $this->driver->get_last_sqlite_queries(), 'sql' );
+
+		$this->assertSame( 1, $statement->rowCount() );
+		$this->assertSame( 'BEGIN IMMEDIATE', $queries[0] );
+		$this->assertSame( 'COMMIT', end( $queries ) );
+	}
+
+	public function test_write_inside_savepoint_commits_on_release(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY, value INT)' );
+		$this->driver->query( 'INSERT INTO t VALUES (1, 1)' );
+
+		$this->driver->query( 'SAVEPOINT outer_transaction' );
+		$statement = $this->driver->query( 'UPDATE t SET value = 2 WHERE id = 1' );
+		$queries   = array_column( $this->driver->get_last_sqlite_queries(), 'sql' );
+
+		$this->assertSame( 1, $statement->rowCount() );
+		$this->assertNotContains( 'BEGIN IMMEDIATE', $queries );
+		$this->assertTrue( $this->driver->inTransaction() );
+
+		$this->driver->query( 'RELEASE SAVEPOINT outer_transaction' );
+
+		$this->assertFalse( $this->driver->inTransaction() );
+		$this->assertSame( '2', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
+	}
+
+	public function test_write_inside_savepoint_can_be_rolled_back(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY, value INT)' );
+		$this->driver->query( 'INSERT INTO t VALUES (1, 1)' );
+
+		$this->driver->query( 'SAVEPOINT outer_transaction' );
+		$this->driver->query( 'UPDATE t SET value = 2 WHERE id = 1' );
+		$this->driver->query( 'ROLLBACK TO SAVEPOINT outer_transaction' );
+		$this->driver->query( 'RELEASE SAVEPOINT outer_transaction' );
+
+		$this->assertFalse( $this->driver->inTransaction() );
+		$this->assertSame( '1', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
+	}
+
+	public function test_writes_inside_nested_savepoints_preserve_outer_changes(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY, value INT)' );
+		$this->driver->query( 'INSERT INTO t VALUES (1, 1)' );
+
+		$this->driver->query( 'SAVEPOINT outer_transaction' );
+		$this->driver->query( 'UPDATE t SET value = 2 WHERE id = 1' );
+		$this->driver->query( 'SAVEPOINT inner_transaction' );
+		$this->driver->query( 'UPDATE t SET value = 3 WHERE id = 1' );
+		$this->driver->query( 'ROLLBACK TO SAVEPOINT inner_transaction' );
+		$this->driver->query( 'RELEASE SAVEPOINT inner_transaction' );
+
+		$this->assertTrue( $this->driver->inTransaction() );
+		$this->assertSame( '2', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
+
+		$this->driver->query( 'RELEASE SAVEPOINT outer_transaction' );
+
+		$this->assertFalse( $this->driver->inTransaction() );
+		$this->assertSame( '2', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
+	}
+
+	public function test_failed_write_cleans_up_savepoint_transaction_state(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->driver->query( 'INSERT INTO t VALUES (1)' );
+		$this->driver->query( 'SAVEPOINT outer_transaction' );
+
+		try {
+			$this->driver->query( 'INSERT INTO t VALUES (1)' );
+			$this->fail( 'Expected the duplicate insert to fail.' );
+		} catch ( PDOException $e ) {
+			$this->assertStringContainsString( 'UNIQUE constraint failed', $e->getMessage() );
+		}
+
+		$this->assertFalse( $this->driver->inTransaction() );
+		$this->assertSame( '1', $this->driver->query( 'SELECT COUNT(*) FROM t' )->fetchColumn() );
+
+		$this->driver->query( 'INSERT INTO t VALUES (2)' );
+		$queries = array_column( $this->driver->get_last_sqlite_queries(), 'sql' );
+		$this->assertSame( 'BEGIN IMMEDIATE', $queries[0] );
+		$this->assertSame( 'COMMIT', end( $queries ) );
+	}
+
 	public function test_fetch_default(): void {
 		// Default fetch mode is PDO::FETCH_BOTH.
 		$result = $this->driver->query( "SELECT 1, 'abc', 2" );

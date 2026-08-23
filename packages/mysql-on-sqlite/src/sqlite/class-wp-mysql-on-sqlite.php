@@ -712,6 +712,20 @@ class WP_MySQL_On_SQLite extends PDO {
 	private $in_transaction = false;
 
 	/**
+	 * User savepoints active in the current transaction, from outermost to innermost.
+	 *
+	 * @var string[]
+	 */
+	private $transaction_savepoints = array();
+
+	/**
+	 * Whether the current transaction was opened by the outermost user savepoint.
+	 *
+	 * @var bool
+	 */
+	private $transaction_started_by_savepoint = false;
+
+	/**
 	 * Whether a MySQL table lock is active.
 	 *
 	 * Set to "true" when a lock is acquired using the MySQL LOCK statement.
@@ -2092,7 +2106,9 @@ class WP_MySQL_On_SQLite extends PDO {
 		 * @see self::begin_wrapper_transaction()
 		 */
 		$this->connection->query( 'BEGIN IMMEDIATE' );
-		$this->in_transaction = true;
+		$this->in_transaction                   = true;
+		$this->transaction_savepoints           = array();
+		$this->transaction_started_by_savepoint = false;
 	}
 
 	/**
@@ -2104,7 +2120,9 @@ class WP_MySQL_On_SQLite extends PDO {
 			return;
 		}
 		$this->connection->query( 'COMMIT' );
-		$this->in_transaction = false;
+		$this->in_transaction                   = false;
+		$this->transaction_savepoints           = array();
+		$this->transaction_started_by_savepoint = false;
 	}
 
 	/**
@@ -2116,7 +2134,9 @@ class WP_MySQL_On_SQLite extends PDO {
 			return;
 		}
 		$this->connection->query( 'ROLLBACK' );
-		$this->in_transaction = false;
+		$this->in_transaction                   = false;
+		$this->transaction_savepoints           = array();
+		$this->transaction_started_by_savepoint = false;
 	}
 
 	/**
@@ -2146,6 +2166,9 @@ class WP_MySQL_On_SQLite extends PDO {
 				break;
 			case 'savepointStatement':
 				$savepoint_name = $this->translate( $subnode->get_first_child_node( 'identifier' ) );
+				$savepoint_key  = null === $savepoint_name
+					? null
+					: strtolower( $this->unquote_sqlite_identifier( $savepoint_name ) );
 
 				// ROLLBACK/ROLLBACK TO SAVEPOINT <identifier>.
 				if ( WP_MySQL_Lexer::ROLLBACK_SYMBOL === $token->id ) {
@@ -2153,19 +2176,37 @@ class WP_MySQL_On_SQLite extends PDO {
 						$this->rollback_user_transaction();
 					} else {
 						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
+						$savepoint_index = $this->find_transaction_savepoint_index( $savepoint_key );
+						if ( null !== $savepoint_index ) {
+							$this->transaction_savepoints = array_slice( $this->transaction_savepoints, 0, $savepoint_index + 1 );
+						}
 					}
 					return;
 				}
 
 				// SAVEPOINT.
 				if ( WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $token->id ) {
+					$starts_transaction = ! $this->inTransaction();
 					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
+					if ( $starts_transaction ) {
+						$this->transaction_started_by_savepoint = true;
+					}
+					$this->transaction_savepoints[] = $savepoint_key;
+					$this->in_transaction           = true;
 					return;
 				}
 
 				// RELEASE SAVEPOINT.
 				if ( WP_MySQL_Lexer::RELEASE_SYMBOL === $token->id ) {
 					$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
+					$savepoint_index = $this->find_transaction_savepoint_index( $savepoint_key );
+					if ( null !== $savepoint_index ) {
+						$this->transaction_savepoints = array_slice( $this->transaction_savepoints, 0, $savepoint_index );
+					}
+					if ( $this->transaction_started_by_savepoint && empty( $this->transaction_savepoints ) ) {
+						$this->in_transaction                   = false;
+						$this->transaction_started_by_savepoint = false;
+					}
 					return;
 				}
 
@@ -2234,6 +2275,21 @@ class WP_MySQL_On_SQLite extends PDO {
 				$subnode->rule_name
 			)
 		);
+	}
+
+	/**
+	 * Find the innermost active user savepoint with the given name.
+	 *
+	 * @param  string $savepoint_name Normalized savepoint name.
+	 * @return int|null                Savepoint index, or null when not tracked.
+	 */
+	private function find_transaction_savepoint_index( string $savepoint_name ): ?int {
+		for ( $index = count( $this->transaction_savepoints ) - 1; $index >= 0; $index-- ) {
+			if ( $savepoint_name === $this->transaction_savepoints[ $index ] ) {
+				return $index;
+			}
+		}
+		return null;
 	}
 
 	/**
