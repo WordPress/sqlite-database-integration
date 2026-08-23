@@ -986,6 +986,39 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( '2', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
 	}
 
+	public function test_duplicate_savepoint_names_track_innermost_scope(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY, value INT)' );
+		$this->driver->query( 'INSERT INTO t VALUES (1, 1)' );
+
+		$this->driver->query( 'SAVEPOINT repeated' );
+		$this->driver->query( 'UPDATE t SET value = 2 WHERE id = 1' );
+		$this->driver->query( 'SAVEPOINT repeated' );
+		$this->driver->query( 'UPDATE t SET value = 3 WHERE id = 1' );
+		$this->driver->query( 'ROLLBACK TO SAVEPOINT repeated' );
+		$this->driver->query( 'RELEASE SAVEPOINT repeated' );
+
+		$this->assertTrue( $this->driver->inTransaction() );
+		$this->assertSame( '2', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
+
+		$this->driver->query( 'RELEASE SAVEPOINT repeated' );
+
+		$this->assertFalse( $this->driver->inTransaction() );
+		$this->assertSame( '2', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
+	}
+
+	public function test_quoted_savepoint_names_are_case_insensitive(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY, value INT)' );
+		$this->driver->query( 'INSERT INTO t VALUES (1, 1)' );
+
+		$this->driver->query( 'SAVEPOINT `MixedCase`' );
+		$this->driver->query( 'UPDATE t SET value = 2 WHERE id = 1' );
+		$this->driver->query( 'ROLLBACK TO SAVEPOINT `mixedcase`' );
+		$this->driver->query( 'RELEASE SAVEPOINT `MIXEDCASE`' );
+
+		$this->assertFalse( $this->driver->inTransaction() );
+		$this->assertSame( '1', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
+	}
+
 	public function test_failed_write_cleans_up_savepoint_transaction_state(): void {
 		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY)' );
 		$this->driver->query( 'INSERT INTO t VALUES (1)' );
