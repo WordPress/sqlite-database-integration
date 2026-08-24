@@ -953,6 +953,21 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( '2', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
 	}
 
+	public function test_releasing_savepoint_inside_explicit_transaction_keeps_transaction_active(): void {
+		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY, value INT)' );
+		$this->driver->query( 'INSERT INTO t VALUES (1, 1)' );
+
+		$this->driver->query( 'START TRANSACTION' );
+		$this->driver->query( 'SAVEPOINT nested_transaction' );
+		$this->driver->query( 'UPDATE t SET value = 2 WHERE id = 1' );
+		$this->driver->query( 'RELEASE SAVEPOINT nested_transaction' );
+
+		$this->assertTrue( $this->driver->inTransaction() );
+		$this->driver->query( 'ROLLBACK' );
+		$this->assertFalse( $this->driver->inTransaction() );
+		$this->assertSame( '1', $this->driver->query( 'SELECT value FROM t' )->fetchColumn() );
+	}
+
 	public function test_write_inside_savepoint_can_be_rolled_back(): void {
 		$this->driver->query( 'CREATE TABLE t (id INT PRIMARY KEY, value INT)' );
 		$this->driver->query( 'INSERT INTO t VALUES (1, 1)' );

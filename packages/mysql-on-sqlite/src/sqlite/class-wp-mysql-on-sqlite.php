@@ -712,18 +712,18 @@ class WP_MySQL_On_SQLite extends PDO {
 	private $in_transaction = false;
 
 	/**
-	 * User savepoints active in the current transaction, from outermost to innermost.
+	 * User savepoints in a transaction opened by a SAVEPOINT statement.
+	 *
+	 * On PHP < 8.4, PDO SQLite cannot detect transactions opened with raw SQL.
+	 * Tracking the savepoint stack keeps the inTransaction() polyfill accurate
+	 * when the outermost savepoint is released.
+	 *
+	 * Savepoints inside a transaction opened by BEGIN are not tracked because
+	 * releasing them cannot end the outer transaction.
 	 *
 	 * @var string[]
 	 */
-	private $transaction_savepoints = array();
-
-	/**
-	 * Whether the current transaction was opened by the outermost user savepoint.
-	 *
-	 * @var bool
-	 */
-	private $transaction_started_by_savepoint = false;
+	private $savepoint_transaction_stack = array();
 
 	/**
 	 * Whether a MySQL table lock is active.
@@ -2106,9 +2106,8 @@ class WP_MySQL_On_SQLite extends PDO {
 		 * @see self::begin_wrapper_transaction()
 		 */
 		$this->connection->query( 'BEGIN IMMEDIATE' );
-		$this->in_transaction                   = true;
-		$this->transaction_savepoints           = array();
-		$this->transaction_started_by_savepoint = false;
+		$this->in_transaction              = true;
+		$this->savepoint_transaction_stack = array();
 	}
 
 	/**
@@ -2120,9 +2119,8 @@ class WP_MySQL_On_SQLite extends PDO {
 			return;
 		}
 		$this->connection->query( 'COMMIT' );
-		$this->in_transaction                   = false;
-		$this->transaction_savepoints           = array();
-		$this->transaction_started_by_savepoint = false;
+		$this->in_transaction              = false;
+		$this->savepoint_transaction_stack = array();
 	}
 
 	/**
@@ -2134,9 +2132,8 @@ class WP_MySQL_On_SQLite extends PDO {
 			return;
 		}
 		$this->connection->query( 'ROLLBACK' );
-		$this->in_transaction                   = false;
-		$this->transaction_savepoints           = array();
-		$this->transaction_started_by_savepoint = false;
+		$this->in_transaction              = false;
+		$this->savepoint_transaction_stack = array();
 	}
 
 	/**
@@ -2178,7 +2175,7 @@ class WP_MySQL_On_SQLite extends PDO {
 						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
 						$savepoint_index = $this->find_transaction_savepoint_index( $savepoint_key );
 						if ( null !== $savepoint_index ) {
-							$this->transaction_savepoints = array_slice( $this->transaction_savepoints, 0, $savepoint_index + 1 );
+							$this->savepoint_transaction_stack = array_slice( $this->savepoint_transaction_stack, 0, $savepoint_index + 1 );
 						}
 					}
 					return;
@@ -2188,11 +2185,10 @@ class WP_MySQL_On_SQLite extends PDO {
 				if ( WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $token->id ) {
 					$starts_transaction = ! $this->inTransaction();
 					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
-					if ( $starts_transaction ) {
-						$this->transaction_started_by_savepoint = true;
+					if ( $starts_transaction || ! empty( $this->savepoint_transaction_stack ) ) {
+						$this->savepoint_transaction_stack[] = $savepoint_key;
 					}
-					$this->transaction_savepoints[] = $savepoint_key;
-					$this->in_transaction           = true;
+					$this->in_transaction = true;
 					return;
 				}
 
@@ -2201,11 +2197,10 @@ class WP_MySQL_On_SQLite extends PDO {
 					$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
 					$savepoint_index = $this->find_transaction_savepoint_index( $savepoint_key );
 					if ( null !== $savepoint_index ) {
-						$this->transaction_savepoints = array_slice( $this->transaction_savepoints, 0, $savepoint_index );
+						$this->savepoint_transaction_stack = array_slice( $this->savepoint_transaction_stack, 0, $savepoint_index );
 					}
-					if ( $this->transaction_started_by_savepoint && empty( $this->transaction_savepoints ) ) {
-						$this->in_transaction                   = false;
-						$this->transaction_started_by_savepoint = false;
+					if ( null !== $savepoint_index && empty( $this->savepoint_transaction_stack ) ) {
+						$this->in_transaction = false;
 					}
 					return;
 				}
@@ -2284,8 +2279,8 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * @return int|null                Savepoint index, or null when not tracked.
 	 */
 	private function find_transaction_savepoint_index( string $savepoint_name ): ?int {
-		for ( $index = count( $this->transaction_savepoints ) - 1; $index >= 0; $index-- ) {
-			if ( $savepoint_name === $this->transaction_savepoints[ $index ] ) {
+		for ( $index = count( $this->savepoint_transaction_stack ) - 1; $index >= 0; $index-- ) {
+			if ( $savepoint_name === $this->savepoint_transaction_stack[ $index ] ) {
 				return $index;
 			}
 		}
