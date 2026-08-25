@@ -16,6 +16,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	private const SQL_MODE_TIME_TRUNCATE_FRACTIONAL = 1 << 32;
 	private const UNKNOWN_SQL_MODE_BIT              = 1 << 33;
 
+	private const SAVEPOINT_DOES_NOT_EXIST_ERROR = 'SQLSTATE[42000]: Syntax error or access violation: 1305 SAVEPOINT %s does not exist';
+
 	/** @var WP_MySQL_On_SQLite */
 	private $engine;
 
@@ -7731,6 +7733,95 @@ END;
 		$this->assertSame( array(), (array) array_column( $result, 'id' ) );
 	}
 
+	public function testSavepointWithoutTransactionDoesNotStartTransaction(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, v INT)' );
+		$this->assertQuery( 'INSERT INTO t (id, v) VALUES (1, 1)' );
+
+		// With autocommit, each statement forms its own transaction, so a savepoint
+		// is discarded as soon as the SAVEPOINT statement completes.
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertFalse( $this->engine->inTransaction() );
+
+		// The write must succeed and be committed immediately.
+		$this->assertQuery( 'UPDATE t SET v = 2 WHERE id = 1' );
+		$this->assertFalse( $this->engine->inTransaction() );
+		$result = $this->assertQuery( 'SELECT v FROM t WHERE id = 1' );
+		$this->assertSame( '2', $result[0]->v );
+
+		// The savepoint is no longer available.
+		$this->assertQueryError(
+			'ROLLBACK TO SAVEPOINT sp1',
+			sprintf( self::SAVEPOINT_DOES_NOT_EXIST_ERROR, 'sp1' )
+		);
+	}
+
+	public function testReleaseSavepointWithoutTransaction(): void {
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQueryError(
+			'RELEASE SAVEPOINT sp1',
+			sprintf( self::SAVEPOINT_DOES_NOT_EXIST_ERROR, 'sp1' )
+		);
+	}
+
+	public function testDuplicateSavepointNameReplacesOldSavepoint(): void {
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQuery( 'SAVEPOINT sp2' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+
+		// Releasing the replacement must leave sp2 available.
+		$this->assertQuery( 'RELEASE SAVEPOINT sp1' );
+		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp2' );
+
+		// The original sp1 must remain unavailable.
+		$this->assertQueryError(
+			'ROLLBACK TO SAVEPOINT sp1',
+			sprintf( self::SAVEPOINT_DOES_NOT_EXIST_ERROR, 'sp1' )
+		);
+	}
+
+	public function testReleaseSavepointDeletesNestedSavepoints(): void {
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQuery( 'SAVEPOINT sp2' );
+		$this->assertQuery( 'RELEASE SAVEPOINT sp1' );
+		$this->assertQueryError(
+			'ROLLBACK TO SAVEPOINT sp2',
+			sprintf( self::SAVEPOINT_DOES_NOT_EXIST_ERROR, 'sp2' )
+		);
+	}
+
+	public function testRollbackToSavepointDeletesNestedSavepoints(): void {
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQuery( 'SAVEPOINT sp2' );
+		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
+		$this->assertQueryError(
+			'ROLLBACK TO SAVEPOINT sp2',
+			sprintf( self::SAVEPOINT_DOES_NOT_EXIST_ERROR, 'sp2' )
+		);
+	}
+
+	public function testCommitDeletesSavepoints(): void {
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQuery( 'COMMIT' );
+		$this->assertQueryError(
+			'ROLLBACK TO SAVEPOINT sp1',
+			sprintf( self::SAVEPOINT_DOES_NOT_EXIST_ERROR, 'sp1' )
+		);
+	}
+
+	public function testRollbackDeletesSavepoints(): void {
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQuery( 'ROLLBACK' );
+		$this->assertQueryError(
+			'ROLLBACK TO SAVEPOINT sp1',
+			sprintf( self::SAVEPOINT_DOES_NOT_EXIST_ERROR, 'sp1' )
+		);
+	}
+
 	public function testRowLeveLockingClauses() {
 		$this->assertQuery( 'CREATE TABLE t (name VARCHAR(255), value VARCHAR(255))' );
 		$this->query( "INSERT INTO t (name, value) VALUES ('test_lock', '123')" );
@@ -8011,7 +8102,7 @@ END;
 
 	public function testRollbackNonExistentTransactionSavepoint(): void {
 		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
-		$this->expectExceptionMessage( 'no such savepoint: sp1' );
+		$this->expectExceptionMessage( 'SAVEPOINT sp1 does not exist' );
 		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
 	}
 
@@ -11547,7 +11638,8 @@ END;
 		$this->assertSame( 0, $this->last_statement->columnCount() );
 		$this->assertSame( array(), $this->getLastColumnMeta() );
 
-		// SAVEPOINT
+		// SAVEPOINT (savepoints exist only within a transaction).
+		$this->assertQuery( 'START TRANSACTION' );
 		$this->assertQuery( 'SAVEPOINT s1' );
 		$this->assertSame( 0, $this->last_statement->columnCount() );
 		$this->assertSame( array(), $this->getLastColumnMeta() );
@@ -11561,6 +11653,7 @@ END;
 		$this->assertQuery( 'RELEASE SAVEPOINT s1' );
 		$this->assertSame( 0, $this->last_statement->columnCount() );
 		$this->assertSame( array(), $this->getLastColumnMeta() );
+		$this->assertQuery( 'COMMIT' );
 
 		// LOCK TABLE
 		$this->assertQuery( 'LOCK TABLES t READ' );

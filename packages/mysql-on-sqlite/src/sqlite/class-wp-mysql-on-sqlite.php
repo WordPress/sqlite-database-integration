@@ -712,18 +712,15 @@ class WP_MySQL_On_SQLite extends PDO {
 	private $in_transaction = false;
 
 	/**
-	 * User savepoints in a transaction opened by a SAVEPOINT statement.
+	 * Names of active user savepoints, outermost first.
 	 *
-	 * On PHP < 8.4, PDO SQLite cannot detect transactions opened with raw SQL.
-	 * Tracking the savepoint stack keeps the inTransaction() polyfill accurate
-	 * when the outermost savepoint is released.
-	 *
-	 * Savepoints inside a transaction opened by BEGIN are not tracked because
-	 * releasing them cannot end the outer transaction.
+	 * MySQL replaces a savepoint with the same name, while SQLite only shadows it.
+	 * Tracking normalized names prevents shadowed SQLite savepoints from becoming
+	 * visible again and supports case-insensitive lookup.
 	 *
 	 * @var string[]
 	 */
-	private $savepoint_transaction_stack = array();
+	private $savepoint_names = array();
 
 	/**
 	 * Whether a MySQL table lock is active.
@@ -2106,8 +2103,8 @@ class WP_MySQL_On_SQLite extends PDO {
 		 * @see self::begin_wrapper_transaction()
 		 */
 		$this->connection->query( 'BEGIN IMMEDIATE' );
-		$this->in_transaction              = true;
-		$this->savepoint_transaction_stack = array();
+		$this->in_transaction  = true;
+		$this->savepoint_names = array();
 	}
 
 	/**
@@ -2119,8 +2116,8 @@ class WP_MySQL_On_SQLite extends PDO {
 			return;
 		}
 		$this->connection->query( 'COMMIT' );
-		$this->in_transaction              = false;
-		$this->savepoint_transaction_stack = array();
+		$this->in_transaction  = false;
+		$this->savepoint_names = array();
 	}
 
 	/**
@@ -2132,8 +2129,8 @@ class WP_MySQL_On_SQLite extends PDO {
 			return;
 		}
 		$this->connection->query( 'ROLLBACK' );
-		$this->in_transaction              = false;
-		$this->savepoint_transaction_stack = array();
+		$this->in_transaction  = false;
+		$this->savepoint_names = array();
 	}
 
 	/**
@@ -2172,36 +2169,49 @@ class WP_MySQL_On_SQLite extends PDO {
 					if ( null === $savepoint_name ) {
 						$this->rollback_user_transaction();
 					} else {
-						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
-						$savepoint_index = $this->find_transaction_savepoint_index( $savepoint_key );
-						if ( null !== $savepoint_index ) {
-							$this->savepoint_transaction_stack = array_slice( $this->savepoint_transaction_stack, 0, $savepoint_index + 1 );
+						// ROLLBACK TO keeps the named savepoint and deletes those created after it.
+						$index = array_search( $savepoint_key, $this->savepoint_names, true );
+						if ( false === $index ) {
+							throw $this->new_savepoint_does_not_exist_exception( $savepoint_name );
 						}
+						$this->execute_sqlite_query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
+						array_splice( $this->savepoint_names, $index + 1 );
 					}
 					return;
 				}
 
 				// SAVEPOINT.
 				if ( WP_MySQL_Lexer::SAVEPOINT_SYMBOL === $token->id ) {
-					$starts_transaction = ! $this->inTransaction();
-					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
-					if ( $starts_transaction || ! empty( $this->savepoint_transaction_stack ) ) {
-						$this->savepoint_transaction_stack[] = $savepoint_key;
+					// In MySQL with autocommit enabled, a standalone savepoint is discarded
+					// immediately without starting a transaction.
+					if ( ! $this->inTransaction() ) {
+						return;
 					}
-					$this->in_transaction = true;
+					$this->execute_sqlite_query( sprintf( 'SAVEPOINT %s', $savepoint_name ) );
+
+					/*
+					 * MySQL deletes an existing savepoint when its name is reused, while
+					 * SQLite keeps it on the stack, shadowed by the new one. Drop the old
+					 * name so that it can no longer be referenced. The shadowed SQLite
+					 * savepoint is harmless; it is discarded when the transaction ends.
+					 */
+					$index = array_search( $savepoint_key, $this->savepoint_names, true );
+					if ( false !== $index ) {
+						array_splice( $this->savepoint_names, $index, 1 );
+					}
+					$this->savepoint_names[] = $savepoint_key;
 					return;
 				}
 
 				// RELEASE SAVEPOINT.
 				if ( WP_MySQL_Lexer::RELEASE_SYMBOL === $token->id ) {
+					// RELEASE deletes the named savepoint and those created after it.
+					$index = array_search( $savepoint_key, $this->savepoint_names, true );
+					if ( false === $index ) {
+						throw $this->new_savepoint_does_not_exist_exception( $savepoint_name );
+					}
 					$this->execute_sqlite_query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
-					$savepoint_index = $this->find_transaction_savepoint_index( $savepoint_key );
-					if ( null !== $savepoint_index ) {
-						$this->savepoint_transaction_stack = array_slice( $this->savepoint_transaction_stack, 0, $savepoint_index );
-					}
-					if ( null !== $savepoint_index && empty( $this->savepoint_transaction_stack ) ) {
-						$this->in_transaction = false;
-					}
+					array_splice( $this->savepoint_names, $index );
 					return;
 				}
 
@@ -2270,21 +2280,6 @@ class WP_MySQL_On_SQLite extends PDO {
 				$subnode->rule_name
 			)
 		);
-	}
-
-	/**
-	 * Find the innermost active user savepoint with the given name.
-	 *
-	 * @param  string $savepoint_name Normalized savepoint name.
-	 * @return int|null                Savepoint index, or null when not tracked.
-	 */
-	private function find_transaction_savepoint_index( string $savepoint_name ): ?int {
-		for ( $index = count( $this->savepoint_transaction_stack ) - 1; $index >= 0; $index-- ) {
-			if ( $savepoint_name === $this->savepoint_transaction_stack[ $index ] ) {
-				return $index;
-			}
-		}
-		return null;
 	}
 
 	/**
@@ -7864,6 +7859,25 @@ class WP_MySQL_On_SQLite extends PDO {
 			'42S02',
 			$previous,
 			array( '42S02', 1146, $driver_message )
+		);
+	}
+
+	/**
+	 * Create a MySQL-compatible savepoint-not-found exception.
+	 *
+	 * @param  string $savepoint_name The missing savepoint name, as an SQLite identifier.
+	 * @return WP_MySQL_On_SQLite_Exception
+	 */
+	private function new_savepoint_does_not_exist_exception( string $savepoint_name ): WP_MySQL_On_SQLite_Exception {
+		$driver_message = sprintf(
+			'SAVEPOINT %s does not exist',
+			$this->unquote_sqlite_identifier( $savepoint_name )
+		);
+		return $this->new_driver_exception(
+			'SQLSTATE[42000]: Syntax error or access violation: 1305 ' . $driver_message,
+			'42000',
+			null,
+			array( '42000', 1305, $driver_message )
 		);
 	}
 
