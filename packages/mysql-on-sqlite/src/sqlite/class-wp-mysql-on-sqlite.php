@@ -89,6 +89,12 @@ class WP_MySQL_On_SQLite extends PDO {
 	private const EMPTY_RESULT_TABLE_NAME = self::RESERVED_PREFIX . 'empty_result';
 
 	/**
+	 * Names of the internal SQLite helpers used to count changed rows.
+	 */
+	const UPDATE_COUNTER_FUNCTION_NAME = self::RESERVED_PREFIX . 'update_counter';
+	const UPDATE_COUNTER_TRIGGER_NAME  = self::RESERVED_PREFIX . 'update_counter_trigger';
+
+	/**
 	 * The name of the SQLite driver version variable.
 	 *
 	 * This internal variable is used to store the latest version of the SQLite
@@ -937,7 +943,16 @@ class WP_MySQL_On_SQLite extends PDO {
 		$this->connection->query( 'PRAGMA foreign_keys = ON' );
 
 		// Register SQLite functions.
-		$this->user_defined_functions = WP_SQLite_PDO_User_Defined_Functions::register_for( $this->connection->get_pdo() );
+		$pdo                          = $this->connection->get_pdo();
+		$this->user_defined_functions = WP_SQLite_PDO_User_Defined_Functions::register_for( $pdo );
+		$increment_affected_rows      = function (): void {
+			++$this->last_affected_rows;
+		};
+		if ( $pdo instanceof PDO\SQLite ) {
+			$pdo->createFunction( self::UPDATE_COUNTER_FUNCTION_NAME, $increment_affected_rows, 0 );
+		} else {
+			$pdo->sqliteCreateFunction( self::UPDATE_COUNTER_FUNCTION_NAME, $increment_affected_rows, 0 );
+		}
 
 		// Load MySQL grammar.
 		if ( null === self::$mysql_grammar ) {
@@ -2692,7 +2707,86 @@ class WP_MySQL_On_SQLite extends PDO {
 		);
 		$query = implode( ' ', array_filter( $parts ) );
 
-		$this->last_result_statement = $this->execute_sqlite_query( $query );
+		$update_columns = $this->get_update_column_names( $node );
+		$this->execute_counted_update( $query, $update_target_table, $update_columns );
+	}
+
+	/**
+	 * Get the names of columns assigned by an UPDATE statement.
+	 *
+	 * @param WP_Parser_Node $node The "updateStatement" AST node.
+	 * @return array<string> The assigned column names.
+	 */
+	private function get_update_column_names( WP_Parser_Node $node ): array {
+		$columns = array();
+		foreach ( $node->get_first_child_node( 'updateList' )->get_child_nodes( 'updateElement' ) as $update_element ) {
+			$column_ref       = $update_element->get_first_child_node( 'columnRef' );
+			$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
+			$columns[]        = $this->unquote_sqlite_identifier( $this->translate( end( $column_ref_parts ) ) );
+		}
+		return array_values( array_unique( $columns ) );
+	}
+
+	/**
+	 * Execute an UPDATE and count rows whose assigned values changed.
+	 *
+	 * A nested trigger that changes one of the same columns is counted because
+	 * PDO does not expose SQLite's trigger nesting depth.
+	 *
+	 * @param string        $query        The translated UPDATE query.
+	 * @param string        $table_name   The target table name.
+	 * @param array<string> $column_names The assigned column names.
+	 */
+	private function execute_counted_update( string $query, string $table_name, array $column_names ): void {
+		$this->last_affected_rows = 0;
+		$this->create_update_counter_trigger( $table_name, $column_names );
+		try {
+			$this->last_result_statement = $this->execute_sqlite_query( $query );
+		} finally {
+			$this->execute_sqlite_query(
+				sprintf( 'DROP TRIGGER IF EXISTS %s', $this->quote_sqlite_identifier( self::UPDATE_COUNTER_TRIGGER_NAME ) )
+			);
+		}
+	}
+
+	/**
+	 * Create a TEMP trigger that counts rows changed by the current UPDATE.
+	 *
+	 * @param string        $table_name   The target table name.
+	 * @param array<string> $column_names The assigned column names.
+	 */
+	private function create_update_counter_trigger( string $table_name, array $column_names ): void {
+		$quoted_columns = array_map( array( $this, 'quote_sqlite_identifier' ), $column_names );
+		$comparisons    = array_map(
+			function ( string $column ): string {
+				return sprintf(
+					'OLD.%1$s COLLATE BINARY IS NOT NEW.%1$s COLLATE BINARY',
+					$column
+				);
+			},
+			$quoted_columns
+		);
+		$table_schema   = $this->information_schema_builder->temporary_table_exists( $table_name )
+			? 'temp'
+			: 'main';
+
+		$this->execute_sqlite_query(
+			sprintf(
+				'CREATE TEMP TRIGGER %1$s
+				AFTER UPDATE OF %2$s ON %3$s.%4$s
+				FOR EACH ROW
+				WHEN %5$s
+				BEGIN
+					SELECT %6$s();
+				END',
+				$this->quote_sqlite_identifier( self::UPDATE_COUNTER_TRIGGER_NAME ),
+				implode( ', ', $quoted_columns ),
+				$this->quote_sqlite_identifier( $table_schema ),
+				$this->quote_sqlite_identifier( $table_name ),
+				implode( ' OR ', $comparisons ),
+				$this->quote_sqlite_identifier( self::UPDATE_COUNTER_FUNCTION_NAME )
+			)
+		);
 	}
 
 	/**

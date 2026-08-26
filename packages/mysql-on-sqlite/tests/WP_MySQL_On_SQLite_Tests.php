@@ -4159,14 +4159,204 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$return = $this->assertQuery(
 			"UPDATE _dates SET option_value = '2001-05-27 10:08:48'"
 		);
-		if ( 1 === $return ) {
-			$this->markTestIncomplete(
-				'SQLite UPDATE query returned 1 when no rows were changed. ' .
-				'This is a database compatibility issue – MySQL would return 0 ' .
-				'in the same scenario.'
-			);
-		}
 		$this->assertSame( 0, $return, 'UPDATE query did not return 0 when no rows were changed' );
+
+		$this->assertQuery(
+			'CREATE TABLE _nullable_updates (id INT PRIMARY KEY, value1 TEXT, value2 TEXT)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _nullable_updates (id, value1, value2) VALUES (1, NULL, NULL)'
+		);
+
+		$return = $this->assertQuery(
+			"UPDATE _nullable_updates SET value1 = NULL, value2 = 'set' WHERE id = 1"
+		);
+		$this->assertSame( 1, $return, 'UPDATE query did not return 1 when a nullable value was changed' );
+
+		$return = $this->assertQuery(
+			"UPDATE _nullable_updates SET value1 = NULL, value2 = 'set' WHERE id = 1"
+		);
+		$this->assertSame( 0, $return, 'UPDATE query did not return 0 when nullable values were unchanged' );
+	}
+
+	public function testUpdateReturnValueWithDisjunction() {
+		$this->assertQuery(
+			'CREATE TABLE _disjunctive_updates (id INT PRIMARY KEY, value INT)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _disjunctive_updates (id, value) VALUES (1, 1), (2, 1)'
+		);
+
+		$return = $this->assertQuery(
+			'UPDATE _disjunctive_updates SET value = 1 WHERE id = 1 OR id = 2'
+		);
+		$this->assertSame( 0, $return, 'UPDATE query did not return 0 when disjunctive matches were unchanged' );
+
+		$return = $this->assertQuery(
+			'UPDATE _disjunctive_updates SET value = 2 WHERE id = 1 OR id = 2'
+		);
+		$this->assertSame( 2, $return, 'UPDATE query did not return 2 when both disjunctive matches changed' );
+	}
+
+	public function testUpdateReturnValueWithCommonTableExpression() {
+		$this->assertQuery(
+			'CREATE TABLE _cte_updates (id INT PRIMARY KEY, value INT)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _cte_updates (id, value) VALUES (1, 1)'
+		);
+
+		$query  = '
+			WITH source AS (SELECT 1 AS id, 2 AS value)
+			UPDATE _cte_updates
+			SET value = (SELECT value FROM source)
+			WHERE id = (SELECT id FROM source)
+		';
+		$return = $this->assertQuery( $query );
+		$this->assertSame( 1, $return, 'CTE UPDATE query did not return 1 when one row was changed' );
+
+		$return = $this->assertQuery( $query );
+		$this->assertSame( 0, $return, 'CTE UPDATE query did not return 0 when no rows were changed' );
+	}
+
+	public function testUpdateReturnValueWithJoinedTable() {
+		$sqlite_version = $this->engine->get_sqlite_version();
+		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
+			$this->markTestSkipped(
+				sprintf( "SQLite version %s doesn't support UPDATE with FROM clause.", $sqlite_version )
+			);
+			return;
+		}
+
+		$this->assertQuery(
+			'CREATE TABLE _joined_update_targets (id INT PRIMARY KEY, value INT)'
+		);
+		$this->assertQuery(
+			'CREATE TABLE _joined_update_values (id INT, value INT)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _joined_update_targets (id, value) VALUES (1, 10), (2, 20), (3, 30)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _joined_update_values (id, value) VALUES (1, 10), (2, 25), (2, 25)'
+		);
+
+		$query  = '
+			UPDATE _joined_update_targets AS targets
+			JOIN _joined_update_values AS source ON targets.id = source.id
+			SET targets.value = source.value
+		';
+		$return = $this->assertQuery( $query );
+		$this->assertSame( 1, $return, 'Joined UPDATE query did not return 1 when one row was changed' );
+
+		$return = $this->assertQuery( $query );
+		$this->assertSame( 0, $return, 'Joined UPDATE query did not return 0 when no rows were changed' );
+
+		$this->assertQuery( 'DELETE FROM _joined_update_values' );
+		$this->assertQuery(
+			'INSERT INTO _joined_update_values (id, value) VALUES (1, 20), (1, 10)'
+		);
+		$return = $this->assertQuery( $query );
+		$result = $this->assertQuery( 'SELECT value FROM _joined_update_targets WHERE id = 1' );
+		$this->assertSame(
+			'10' === $result[0]->value ? 0 : 1,
+			$return,
+			'Joined UPDATE query did not report whether the selected source value changed the target'
+		);
+
+		$this->assertQuery(
+			'CREATE TABLE _shadowed_rowid_targets (rowid INT, id INT, value INT)'
+		);
+		$this->assertQuery(
+			'CREATE TABLE _shadowed_rowid_values (id INT, value INT)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _shadowed_rowid_targets (rowid, id, value) VALUES (7, 1, 10), (7, 2, 20)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _shadowed_rowid_values (id, value) VALUES (1, 11), (2, 21)'
+		);
+		$return = $this->assertQuery(
+			'
+				UPDATE _shadowed_rowid_targets AS targets
+				JOIN _shadowed_rowid_values AS source ON targets.id = source.id
+				SET targets.value = source.value
+			'
+		);
+		$this->assertSame( 2, $return, 'Joined UPDATE query did not count both target rows' );
+	}
+
+	public function testUpdateReturnValueWithIgnore() {
+		$this->assertQuery(
+			'CREATE TABLE _ignored_updates (id INT PRIMARY KEY, value INT UNIQUE)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _ignored_updates (id, value) VALUES (1, 1), (2, 2)'
+		);
+
+		$return = $this->assertQuery(
+			'UPDATE IGNORE _ignored_updates SET value = 2 WHERE id = 1'
+		);
+		$this->assertSame( 0, $return, 'UPDATE IGNORE query counted an ignored row' );
+
+		$return = $this->assertQuery(
+			'UPDATE IGNORE _ignored_updates SET value = 3 WHERE id = 1'
+		);
+		$this->assertSame( 1, $return, 'UPDATE IGNORE query did not count a changed row' );
+	}
+
+	public function testUpdateReturnValueForTemporaryTable() {
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE _temporary_updates (id INT PRIMARY KEY, value INT)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _temporary_updates (id, value) VALUES (1, 1)'
+		);
+
+		$return = $this->assertQuery( 'UPDATE _temporary_updates SET value = 2 WHERE id = 1' );
+		$this->assertSame( 1, $return, 'Temporary table UPDATE did not count a changed row' );
+
+		$return = $this->assertQuery( 'UPDATE _temporary_updates SET value = 2 WHERE id = 1' );
+		$this->assertSame( 0, $return, 'Temporary table UPDATE counted an unchanged row' );
+	}
+
+	public function testUpdateCounterTriggerIsRemovedAfterFailure() {
+		$this->assertQuery(
+			'CREATE TABLE _failed_updates (id INT PRIMARY KEY, value INT UNIQUE)'
+		);
+		$this->assertQuery(
+			'INSERT INTO _failed_updates (id, value) VALUES (1, 1), (2, 2)'
+		);
+
+		$this->assertQueryError(
+			'UPDATE _failed_updates SET value = 2 WHERE id = 1',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: _failed_updates.value'
+		);
+
+		$return = $this->assertQuery( 'UPDATE _failed_updates SET value = 3 WHERE id = 1' );
+		$this->assertSame( 1, $return, 'UPDATE after a failure did not count a changed row' );
+	}
+
+	public function testUpdateReturnValueUsesBinaryComparison() {
+		$this->assertQuery(
+			'CREATE TABLE _text_updates (id INT PRIMARY KEY, value VARCHAR(20))'
+		);
+		$this->assertQuery(
+			"INSERT INTO _text_updates (id, value) VALUES (1, 'lowercase')"
+		);
+
+		$return = $this->assertQuery(
+			"UPDATE _text_updates SET value = 'LOWERCASE' WHERE id = 1"
+		);
+		$this->assertSame( 1, $return, 'UPDATE query did not return 1 when only letter case changed' );
+
+		$result = $this->assertQuery( 'SELECT value FROM _text_updates WHERE id = 1' );
+		$this->assertSame( 'LOWERCASE', $result[0]->value );
+
+		$return = $this->assertQuery(
+			"UPDATE _text_updates SET value = 'LOWERCASE' WHERE id = 1"
+		);
+		$this->assertSame( 0, $return, 'UPDATE query did not return 0 when text was unchanged' );
 	}
 
 	public function testOrderByField() {

@@ -2172,6 +2172,16 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 			)
 		);
 
+		// Remove internal UPDATE affected-row counting queries.
+		$executed_queries = array_values(
+			array_filter(
+				$executed_queries,
+				function ( $query ) {
+					return ! str_contains( $query, '`_wp_sqlite_update_counter' );
+				}
+			)
+		);
+
 		// Remove "select changes()" executed after some queries.
 		if (
 			count( $executed_queries ) > 1
