@@ -103,16 +103,55 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assertFileExists( $database_path );
 	}
 
-	public function test_recovers_an_interrupted_database_path_write() {
-		$database_root = $this->create_temporary_directory_path();
+	public function test_ignores_an_interrupted_database_path_write() {
+		$database_root  = $this->create_temporary_directory_path();
+		$temporary_path = $database_root . '/.ht.0123456789abcdef0123456789abcdef.db-path.php';
 		$this->create_directory( $database_root );
-		file_put_contents( $database_root . '/.ht.db-path.php', 'interrupted write' );
+		file_put_contents( $temporary_path, 'interrupted write' );
 
 		$database_path = $this->initialize_managed_storage( $database_root );
 
 		$this->assertFileExists( $database_path );
 		$this->assertFileExists( $database_root . '/db-path.php' );
-		$this->assertFileDoesNotExist( $database_root . '/.ht.db-path.php' );
+		$this->assertFileExists( $temporary_path );
+	}
+
+	public function test_does_not_replace_a_published_database_path() {
+		$database_root = $this->create_temporary_directory_path();
+		$this->create_directory( $database_root );
+		$storage               = new WP_SQLite_Storage( $database_root );
+		$publish_database_path = Closure::bind(
+			function () {
+				$this->publish_database_path();
+			},
+			$storage,
+			WP_SQLite_Storage::class
+		);
+
+		$publish_database_path();
+		$database_path_file = $database_root . '/db-path.php';
+		$database_path      = require $database_path_file;
+		$publish_database_path();
+
+		$this->assertSame( $database_path, require $database_path_file );
+		$this->assertSame( array(), glob( $database_root . '/.ht.*.db-path.php' ) );
+	}
+
+	public function test_initializes_when_optional_filesystem_functions_are_unavailable() {
+		$database_root = $this->create_temporary_directory_path();
+		$script        = sprintf(
+			'function trailingslashit($path) { return rtrim($path, "/") . "/"; } function untrailingslashit($path) { return rtrim($path, "/"); } require %s; $storage = new WP_SQLite_Storage(%s); fwrite(STDOUT, $storage->initialize());',
+			var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-storage.php', true ),
+			var_export( $database_root, true )
+		);
+
+		list( $process, $pipes ) = $this->open_temporary_process( $script, array( '-d', 'disable_functions=flock,link' ) );
+		$process_result          = $this->close_temporary_process( $process, $pipes );
+
+		$this->assertSame( 0, $process_result['exit_code'] );
+		$this->assertSame( '', $process_result['error'] );
+		$this->assertSame( $process_result['output'], require $database_root . '/db-path.php' );
+		$this->assertFileExists( $process_result['output'] );
 	}
 
 	public function test_database_path_file_returns_path_without_direct_output() {
@@ -436,9 +475,13 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		return $this->open_temporary_process( $script );
 	}
 
-	private function open_temporary_process( $script ) {
-		$command = escapeshellarg( PHP_BINARY ) . ' -r ' . escapeshellarg( $script );
-		$process = proc_open(
+	private function open_temporary_process( $script, $arguments = array() ) {
+		$command = escapeshellarg( PHP_BINARY );
+		foreach ( $arguments as $argument ) {
+			$command .= ' ' . escapeshellarg( $argument );
+		}
+		$command .= ' -r ' . escapeshellarg( $script );
+		$process  = proc_open(
 			$command,
 			array(
 				array( 'pipe', 'r' ),
@@ -455,12 +498,14 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 	}
 
 	private function close_temporary_process( $process, $pipes ) {
+		$output = stream_get_contents( $pipes[1] );
 		fclose( $pipes[1] );
 		$error = stream_get_contents( $pipes[2] );
 		fclose( $pipes[2] );
 
 		return array(
 			'exit_code' => proc_close( $process ),
+			'output'    => $output,
 			'error'     => $error,
 		);
 	}

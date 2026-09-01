@@ -253,17 +253,26 @@ class WP_SQLite_Storage {
 			$directory_name,
 			self::DATABASE_FILENAME
 		);
-		$temporary_path         = $this->database_root . '.ht.' . self::DATABASE_PATH_FILENAME;
+		$temporary_path         = $this->database_root . $directory_name . '.' . self::DATABASE_PATH_FILENAME;
 
 		if ( false === @file_put_contents( $temporary_path, $database_path_contents ) ) {
 			throw new RuntimeException( 'Failed to write the SQLite database path file.' );
 		}
 		@chmod( $temporary_path, 0600 );
 
-		if ( ! @rename( $temporary_path, $database_path_file ) ) {
-			@unlink( $temporary_path );
-			throw new RuntimeException( 'Failed to publish the SQLite database path file.' );
+		// Avoid replacing a concurrent initializer's file when hard links are available.
+		if ( ! function_exists( 'link' ) || ! @link( $temporary_path, $database_path_file ) ) {
+			clearstatcache( true, $database_path_file );
+			if ( ! @is_file( $database_path_file ) ) {
+				// Fall back to a move when hard-link publication is unavailable.
+				if ( ! @rename( $temporary_path, $database_path_file ) ) {
+					@unlink( $temporary_path );
+					throw new RuntimeException( 'Failed to publish the SQLite database path file.' );
+				}
+			}
 		}
+
+		@unlink( $temporary_path );
 
 		// This runs before wp_opcache_invalidate() is available.
 		$opcache_restrict_api = ini_get( 'opcache.restrict_api' );
