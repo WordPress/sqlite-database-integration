@@ -86,9 +86,25 @@ class WP_SQLite_Storage {
 			}
 		}
 
-		// Initialize or repair the managed database under a lock.
+		// Initialize or repair managed storage with an advisory lock when available.
 		$this->ensure_protected_directory( $this->database_root );
 		$lock = $this->acquire_lock();
+		if ( false === $lock ) {
+			// Give a concurrent process time to finish initialization.
+			sleep( 3 );
+
+			// Reuse its database only after both the path file and database exist.
+			clearstatcache( true, $db_path_file );
+			if ( @is_file( $db_path_file ) ) {
+				$database_path = $this->read_database_path( $db_path_file );
+				clearstatcache( true, $database_path );
+				if ( @is_file( $database_path ) ) {
+					return $database_path;
+				}
+			}
+
+			// Continue without a lock when advisory locking is unavailable.
+		}
 		try {
 			// Publish a new database path.
 			if ( ! @is_file( $db_path_file ) ) {
@@ -110,7 +126,9 @@ class WP_SQLite_Storage {
 			$this->ensure_database( $database_path );
 			return $database_path;
 		} finally {
-			fclose( $lock );
+			if ( false !== $lock ) {
+				fclose( $lock );
+			}
 		}
 	}
 
@@ -237,7 +255,7 @@ class WP_SQLite_Storage {
 		);
 		$temporary_path         = $this->database_root . '.ht.' . self::DATABASE_PATH_FILENAME;
 
-		if ( false === @file_put_contents( $temporary_path, $database_path_contents, LOCK_EX ) ) {
+		if ( false === @file_put_contents( $temporary_path, $database_path_contents ) ) {
 			throw new RuntimeException( 'Failed to write the SQLite database path file.' );
 		}
 		@chmod( $temporary_path, 0600 );
@@ -297,29 +315,30 @@ class WP_SQLite_Storage {
 			return;
 		}
 
-		if ( false === @file_put_contents( $path, $contents, LOCK_EX ) ) {
+		if ( false === @file_put_contents( $path, $contents ) ) {
 			throw new RuntimeException( 'Failed to create SQLite database protection file.' );
 		}
 		@chmod( $path, 0600 );
 	}
 
 	/**
-	 * Open and acquire the database storage lock.
+	 * Open and acquire the database storage lock when available.
 	 *
-	 * @return resource Lock file handle.
+	 * @return resource|false Lock file handle, or false when locking is unavailable.
 	 */
 	private function acquire_lock() {
 		$lock_path   = $this->database_root . self::LOCK_FILENAME;
 		$lock_handle = @fopen( $lock_path, 'c' );
 		if ( false === $lock_handle ) {
-			throw new RuntimeException( 'Failed to open the SQLite database storage lock.' );
+			return false;
 		}
 		@chmod( $lock_path, 0600 );
 
-		if ( ! @flock( $lock_handle, LOCK_EX ) ) {
+		if ( ! function_exists( 'flock' ) || ! @flock( $lock_handle, LOCK_EX ) ) {
 			fclose( $lock_handle );
-			throw new RuntimeException( 'Failed to lock the SQLite database storage.' );
+			return false;
 		}
+
 		return $lock_handle;
 	}
 }

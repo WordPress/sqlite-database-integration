@@ -73,6 +73,36 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_migrates_legacy_storage_when_locking_fails() {
+		$database_root = $this->create_temporary_directory_path();
+		$legacy_path   = $database_root . '/.ht.sqlite';
+		$this->create_sqlite_database( $legacy_path );
+		$this->create_directory( $database_root . '/.ht.sqlite.lock' );
+
+		$database_path = $this->initialize_managed_storage( $database_root );
+
+		$this->assertFileDoesNotExist( $legacy_path );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
+	public function test_reuses_storage_initialized_after_locking_fails() {
+		$database_root = $this->create_temporary_directory_path();
+		$database_path = $database_root . '/.ht.0123456789abcdef0123456789abcdef/.ht.sqlite';
+		$this->create_directory( $database_root . '/.ht.sqlite.lock' );
+
+		list( $process, $pipes ) = $this->open_temporary_storage_initializer( $database_root, $database_path );
+		try {
+			$initialized_path = $this->initialize_managed_storage( $database_root );
+		} finally {
+			$process_result = $this->close_temporary_process( $process, $pipes );
+		}
+
+		$this->assertSame( 0, $process_result['exit_code'] );
+		$this->assertSame( '', $process_result['error'] );
+		$this->assertSame( $database_path, $initialized_path );
+		$this->assertFileExists( $database_path );
+	}
+
 	public function test_recovers_an_interrupted_database_path_write() {
 		$database_root = $this->create_temporary_directory_path();
 		$this->create_directory( $database_root );
@@ -261,7 +291,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		try {
 			$database_path = $this->initialize_managed_storage( $database_root );
 		} finally {
-			$process_result = $this->close_temporary_database_connection( $process, $pipes );
+			$process_result = $this->close_temporary_process( $process, $pipes );
 		}
 
 		$this->assertSame( 0, $process_result['exit_code'] );
@@ -381,10 +411,32 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 	}
 
 	private function open_temporary_database_connection( $database_path ) {
-		$script  = sprintf(
+		$script = sprintf(
 			'$connection = new PDO(%s); $connection->query("SELECT value FROM storage_test")->fetchColumn(); fwrite(STDOUT, "ready\n"); fflush(STDOUT); usleep(250000);',
 			var_export( 'sqlite:' . $database_path, true )
 		);
+
+		list( $process, $pipes ) = $this->open_temporary_process( $script );
+
+		$this->assertSame( "ready\n", fgets( $pipes[1] ) );
+
+		return array( $process, $pipes );
+	}
+
+	private function open_temporary_storage_initializer( $database_root, $database_path ) {
+		$database_path_contents = "<?php\nreturn " . var_export( $database_path, true ) . ";\n";
+		$script                 = sprintf(
+			'usleep(250000); mkdir(%s, 0700, true); touch(%s); file_put_contents(%s, %s);',
+			var_export( dirname( $database_path ), true ),
+			var_export( $database_path, true ),
+			var_export( $database_root . '/db-path.php', true ),
+			var_export( $database_path_contents, true )
+		);
+
+		return $this->open_temporary_process( $script );
+	}
+
+	private function open_temporary_process( $script ) {
 		$command = escapeshellarg( PHP_BINARY ) . ' -r ' . escapeshellarg( $script );
 		$process = proc_open(
 			$command,
@@ -398,12 +450,11 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 		$this->assertIsResource( $process );
 		fclose( $pipes[0] );
-		$this->assertSame( "ready\n", fgets( $pipes[1] ) );
 
 		return array( $process, $pipes );
 	}
 
-	private function close_temporary_database_connection( $process, $pipes ) {
+	private function close_temporary_process( $process, $pipes ) {
 		fclose( $pipes[1] );
 		$error = stream_get_contents( $pipes[2] );
 		fclose( $pipes[2] );
