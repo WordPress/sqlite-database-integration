@@ -7763,6 +7763,36 @@ END;
 		);
 	}
 
+	/**
+	 * @dataProvider missingSavepointStatements
+	 */
+	public function testMissingSavepointDoesNotRollbackTransaction( string $statement ): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'SAVEPOINT existing' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+
+		$this->assertQueryError(
+			$statement,
+			sprintf( self::SAVEPOINT_DOES_NOT_EXIST_ERROR, 'missing' )
+		);
+
+		$this->assertTrue( $this->engine->inTransaction() );
+		$this->assertSame( '1', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+
+		$this->assertQuery( 'ROLLBACK TO SAVEPOINT existing' );
+		$this->assertQuery( 'RELEASE SAVEPOINT existing' );
+		$this->assertQuery( 'COMMIT' );
+		$this->assertSame( array(), $this->assertQuery( 'SELECT id FROM t' ) );
+	}
+
+	public static function missingSavepointStatements(): array {
+		return array(
+			'ROLLBACK TO SAVEPOINT' => array( 'ROLLBACK TO SAVEPOINT missing' ),
+			'RELEASE SAVEPOINT'     => array( 'RELEASE SAVEPOINT missing' ),
+		);
+	}
+
 	public function testDuplicateSavepointNameReplacesOldSavepoint(): void {
 		$this->assertQuery( 'BEGIN' );
 		$this->assertQuery( 'SAVEPOINT sp1' );

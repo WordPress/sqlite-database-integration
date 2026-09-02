@@ -1193,11 +1193,16 @@ class WP_MySQL_On_SQLite extends PDO {
 			$this->error_info = array( '00000', null, null );
 			return $stmt;
 		} catch ( Throwable $e ) {
-			try {
-				$this->rollback_user_transaction();
-				$this->table_lock_active = false;
-			} catch ( Throwable $rollback_exception ) {
-				// Ignore rollback errors.
+			// MySQL error 1305 reports a missing savepoint without ending the transaction.
+			$preserves_transaction = $e instanceof WP_MySQL_On_SQLite_Exception
+				&& 1305 === ( $e->errorInfo[1] ?? null );
+			if ( ! $preserves_transaction ) {
+				try {
+					$this->rollback_user_transaction();
+					$this->table_lock_active = false;
+				} catch ( Throwable $rollback_exception ) {
+					// Ignore rollback errors.
+				}
 			}
 			if ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
 				$e = $this->convert_information_schema_exception( $e );
