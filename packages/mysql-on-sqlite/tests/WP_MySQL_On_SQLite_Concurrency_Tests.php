@@ -72,6 +72,19 @@ class WP_MySQL_On_SQLite_Concurrency_Tests extends TestCase {
 		$this->assertSame( 'BEGIN IMMEDIATE', $driver->get_last_sqlite_queries()[0]['sql'] );
 	}
 
+	public function testWriteQueryAfterSavepointOpensWriteTransaction(): void {
+		$driver = $this->create_in_memory_driver();
+		$driver->query( 'CREATE TABLE t (id INT, name VARCHAR(255))' );
+		$driver->query( "INSERT INTO t VALUES (1, 'Alice')" );
+
+		// A savepoint outside of a transaction must not leave a deferred SQLite
+		// transaction open, which would make the following write skip the lock.
+		$driver->query( 'SAVEPOINT sp1' );
+		$driver->query( "UPDATE t SET name = 'Carol' WHERE id = 1" );
+
+		$this->assertSame( 'BEGIN IMMEDIATE', $driver->get_last_sqlite_queries()[0]['sql'] );
+	}
+
 	public function provideWriteStatements(): array {
 		return array(
 			'INSERT'         => array( "INSERT INTO t VALUES (2, 'Bob')" ),
