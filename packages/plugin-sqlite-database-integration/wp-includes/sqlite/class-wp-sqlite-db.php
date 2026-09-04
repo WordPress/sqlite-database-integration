@@ -459,8 +459,6 @@ class WP_SQLite_DB extends wpdb {
 			return false;
 		}
 
-		$this->ensure_database_directory( FQDB );
-
 		try {
 			$options = array(
 				'sqlite_journal_mode' => defined( 'SQLITE_JOURNAL_MODE' ) ? SQLITE_JOURNAL_MODE : null,
@@ -774,54 +772,6 @@ class WP_SQLite_DB extends wpdb {
 
 		return $this->dbh->getAttribute( PDO::ATTR_SERVER_VERSION ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
 	}
-
-	/**
-	 * Make sure the SQLite database directory exists and is writable.
-	 * Create .htaccess and index.php files to prevent direct access.
-	 *
-	 * @param string $database_path The path to the SQLite database file.
-	 */
-	private function ensure_database_directory( string $database_path ) {
-		$dir = dirname( $database_path );
-
-		// Set the umask to 0000 to apply permissions exactly as specified.
-		// A non-zero umask affects new file and directory permissions.
-		$umask = umask( 0 );
-
-		// Ensure database directory.
-		if ( ! is_dir( $dir ) ) {
-			if ( ! @mkdir( $dir, 0700, true ) ) {
-				wp_die( sprintf( 'Failed to create database directory: %s', $dir ), 'Error!' );
-			}
-		}
-		if ( ! is_writable( $dir ) ) {
-			wp_die( sprintf( 'Database directory is not writable: %s', $dir ), 'Error!' );
-		}
-
-		// Ensure .htaccess file to prevent direct access.
-		$path = $dir . DIRECTORY_SEPARATOR . '.htaccess';
-		if ( ! is_file( $path ) ) {
-			$result = file_put_contents( $path, 'DENY FROM ALL', LOCK_EX );
-			if ( false === $result ) {
-				wp_die( sprintf( 'Failed to create file: %s', $path ), 'Error!' );
-			}
-			chmod( $path, 0600 );
-		}
-
-		// Ensure index.php file to prevent direct access.
-		$path = $dir . DIRECTORY_SEPARATOR . 'index.php';
-		if ( ! is_file( $path ) ) {
-			$result = file_put_contents( $path, '<?php // Silence is gold. ?>', LOCK_EX );
-			if ( false === $result ) {
-				wp_die( sprintf( 'Failed to create file: %s', $path ), 'Error!' );
-			}
-			chmod( $path, 0600 );
-		}
-
-		// Restore the original umask value.
-		umask( $umask );
-	}
-
 
 	/**
 	 * Format MySQL-on-SQLite driver error message.
