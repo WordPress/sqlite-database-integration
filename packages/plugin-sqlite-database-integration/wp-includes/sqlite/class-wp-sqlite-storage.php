@@ -6,7 +6,7 @@
  * The storage handles the path of the SQLite database:
  *   - An explicit database path is used as is.
  *   - A managed database is stored under a randomized protected path.
- *   - A database in a legacy path stays in use.
+ *   - A database in a legacy path is migrated to the managed storage.
  *
  * The storage implements a locking mechanism for initialization and maintenance.
  * Locking uses a dedicated empty SQLite database and a maintenance file:
@@ -126,7 +126,7 @@ class WP_SQLite_Storage {
 	 * Initialize the SQLite database storage.
 	 *
 	 * Uses an explicit file path or ":memory:" as configured. Otherwise, initializes
-	 * managed storage with a randomized path. A legacy database stays at its fixed path.
+	 * managed storage with a randomized path and migrates legacy databases as needed.
 	 *
 	 * @return string Absolute path to the SQLite database file, or ":memory:".
 	 * @throws RuntimeException When the storage cannot be initialized.
@@ -159,15 +159,6 @@ class WP_SQLite_Storage {
 			return $database_path;
 		}
 
-		// Keep using a legacy database at its fixed path.
-		$legacy_path = $this->database_root . self::DATABASE_FILENAME;
-		if ( ! @is_file( $legacy_path ) ) {
-			$legacy_path = $this->database_root . self::DATABASE_FILENAME . '.php';
-		}
-		if ( @is_file( $legacy_path ) ) {
-			return $legacy_path;
-		}
-
 		// Initialize or repair the managed storage under the storage lock.
 		// Preserve a lock already held by this instance for a larger operation.
 		$this->lock();
@@ -182,8 +173,17 @@ class WP_SQLite_Storage {
 				$database_path = $this->publish_database_path();
 			}
 
-			$this->ensure_database( $database_path );
-			$this->lock();
+			// Migrate legacy database paths.
+			$legacy_path = $this->database_root . self::DATABASE_FILENAME;
+			if ( ! @is_file( $legacy_path ) ) {
+				$legacy_path = $this->database_root . self::DATABASE_FILENAME . '.php';
+			}
+			if ( @is_file( $legacy_path ) ) {
+				$this->move_legacy_database( $legacy_path, $database_path );
+			} else {
+				$this->ensure_database( $database_path );
+				$this->lock();
+			}
 			return $database_path;
 		} finally {
 			if ( ! $was_locked ) {
@@ -367,6 +367,35 @@ class WP_SQLite_Storage {
 		}
 
 		return $this->database_root . $directory_name . '/' . self::DATABASE_FILENAME;
+	}
+
+	/**
+	 * Move a legacy database into a managed path.
+	 *
+	 * @param string $legacy_path   Absolute path of the legacy database file.
+	 * @param string $database_path Absolute destination path.
+	 */
+	private function move_legacy_database( string $legacy_path, string $database_path ): void {
+		$this->ensure_protected_directory( dirname( $database_path ) );
+
+		/*
+		 * Close the connection just before moving the database. SQLite considers
+		 * renaming an open database undefined, and Windows generally prevents it.
+		 * We cannot fully prevent race conditions, but this makes them unlikely.
+		 *
+		 * See: https://www.sqlite.org/howtocorrupt.html#unlink
+		 */
+		$this->database_lock_connection = null;
+		if ( ! @rename( $legacy_path, $database_path ) ) {
+			throw new RuntimeException( 'Failed to move the SQLite database file.' );
+		}
+		@chmod( $database_path, 0600 );
+
+		try {
+			$this->database_lock_connection = $this->lock_database( $database_path );
+		} catch ( Throwable $exception ) {
+			throw new RuntimeException( 'Failed to lock the migrated SQLite database.', 0, $exception );
+		}
 	}
 
 	/**

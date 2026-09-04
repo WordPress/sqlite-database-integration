@@ -432,25 +432,6 @@ class WP_SQLite_DB extends wpdb {
 			$this->init_charset();
 		}
 
-		// Migrate the database file from a legacy path, if it exists.
-		if ( ! defined( 'DB_FILE' ) && ! file_exists( FQDB ) ) {
-			$old_db_path = FQDBDIR . '.ht.sqlite.php';
-
-			if ( file_exists( $old_db_path ) ) {
-				if ( ! rename( $old_db_path, FQDB ) ) {
-					wp_die( 'Failed to rename database file.', 'Error!' );
-				}
-
-				foreach ( array( '-wal', '-shm', '-journal' ) as $suffix ) {
-					if ( file_exists( $old_db_path . $suffix ) ) {
-						if ( ! rename( $old_db_path . $suffix, FQDB . $suffix ) ) {
-							wp_die( 'Failed to rename database file.', 'Error!' );
-						}
-					}
-				}
-			}
-		}
-
 		if ( null === $this->dbname || '' === $this->dbname ) {
 			$this->bail(
 				'The database name was not set. The SQLite driver requires a database name to be set to emulate MySQL information schema tables.',

@@ -284,12 +284,12 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_keeps_using_the_current_legacy_database() {
-		$this->assert_legacy_database_is_kept( '.ht.sqlite' );
+	public function test_automatically_migrates_the_current_legacy_database() {
+		$this->assert_legacy_database_is_migrated( '.ht.sqlite' );
 	}
 
-	public function test_keeps_using_the_older_legacy_database() {
-		$this->assert_legacy_database_is_kept( '.ht.sqlite.php' );
+	public function test_automatically_migrates_the_older_legacy_database() {
+		$this->assert_legacy_database_is_migrated( '.ht.sqlite.php' );
 	}
 
 	public function test_prefers_the_current_legacy_database() {
@@ -299,9 +299,100 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->create_sqlite_database( $current_path );
 		$this->create_sqlite_database( $older_path );
 
-		$this->assertSame( $current_path, $this->initialize_managed_storage( $database_root ) );
-		$this->assertFileExists( $current_path );
+		$database_path = $this->initialize_managed_storage( $database_root );
+
+		$this->assertFileDoesNotExist( $current_path );
 		$this->assertFileExists( $older_path );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
+	public function test_waits_for_existing_wal_connections_before_migrating() {
+		$database_root = $this->create_temporary_directory();
+		$legacy_path   = $database_root . '/.ht.sqlite';
+		$this->create_wal_sqlite_database_copy( $legacy_path );
+
+		list( $process, $pipes ) = $this->open_database_connection_process( $legacy_path );
+		try {
+			$database_path = $this->initialize_managed_storage( $database_root );
+		} finally {
+			$result = $this->close_process( $process, $pipes );
+		}
+
+		$this->assertSame( 0, $result['exit_code'] );
+		$this->assertSame( '', $result['error'] );
+		$this->assertFileDoesNotExist( $legacy_path );
+		$this->assertFileDoesNotExist( $legacy_path . '-wal' );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
+	public function test_keeps_the_legacy_database_when_migration_fails() {
+		$database_root = $this->create_temporary_directory();
+		$legacy_path   = $database_root . '/.ht.sqlite';
+		$database_path = $database_root . '/.ht.secret/.ht.sqlite';
+		$this->create_sqlite_database( $legacy_path );
+		$this->assertTrue( mkdir( $database_path, 0700, true ) );
+		file_put_contents( $database_root . '/db-path.php', "<?php\nreturn " . var_export( $database_path, true ) . ";\n" );
+
+		try {
+			$this->initialize_managed_storage( $database_root );
+			$this->fail( 'The database was migrated over a directory.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'Failed to move the SQLite database file.', $exception->getMessage() );
+			$this->assertStringNotContainsString( $database_path, $exception->getMessage() );
+		}
+
+		$this->assertFileExists( $legacy_path );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $legacy_path ) );
+		$this->assertFileExists( $database_root . '/.ht.sqlite.lock' );
+
+		// The migration succeeds once the obstacle is removed.
+		$this->assertTrue( rmdir( $database_path ) );
+		$this->assertSame( $database_path, $this->initialize_managed_storage( $database_root ) );
+		$this->assertFileDoesNotExist( $legacy_path );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
+	public function test_does_not_migrate_an_invalid_legacy_database() {
+		$database_root = $this->create_temporary_directory();
+		$legacy_path   = $database_root . '/.ht.sqlite';
+		file_put_contents( $legacy_path, str_repeat( 'x', 4096 ) );
+
+		try {
+			$this->initialize_managed_storage( $database_root );
+			$this->fail( 'An invalid legacy database was migrated.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'Failed to lock the SQLite database.', $exception->getMessage() );
+		}
+
+		$this->assertSame( str_repeat( 'x', 4096 ), file_get_contents( $legacy_path ) );
+		$this->assertFileDoesNotExist( $database_root . '/db-path.php' );
+		$this->assertFileExists( $database_root . '/.ht.sqlite.lock' );
+	}
+
+	public function test_reports_when_the_migrated_database_cannot_be_locked() {
+		$database_root = $this->create_temporary_directory();
+		$legacy_path   = $database_root . '/.ht.sqlite';
+		$database_path = $database_root . '/managed/.ht.sqlite';
+		file_put_contents( $legacy_path, str_repeat( 'x', 4096 ) );
+		$storage = new WP_SQLite_Storage( $database_root );
+		$move    = Closure::bind(
+			function () use ( $legacy_path, $database_path ) {
+				$this->move_legacy_database( $legacy_path, $database_path );
+			},
+			$storage,
+			WP_SQLite_Storage::class
+		);
+
+		try {
+			$move();
+			$this->fail( 'An invalid migrated database was locked.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'Failed to lock the migrated SQLite database.', $exception->getMessage() );
+			$this->assertStringNotContainsString( $database_path, $exception->getMessage() );
+		}
+
+		$this->assertFileDoesNotExist( $legacy_path );
+		$this->assertSame( str_repeat( 'x', 4096 ), file_get_contents( $database_path ) );
 	}
 
 	public function test_locks_and_unlocks_the_storage() {
@@ -574,14 +665,21 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$storage->unlock();
 	}
 
-	private function assert_legacy_database_is_kept( $filename ) {
+	private function assert_legacy_database_is_migrated( $filename ) {
 		$database_root = $this->create_temporary_directory();
 		$legacy_path   = $database_root . '/' . $filename;
-		$this->create_sqlite_database( $legacy_path );
+		$this->create_wal_sqlite_database_copy( $legacy_path );
 
-		$this->assertSame( $legacy_path, $this->initialize_managed_storage( $database_root ) );
-		$this->assertSame( 'preserved', $this->read_sqlite_value( $legacy_path ) );
-		$this->assertFileDoesNotExist( $database_root . '/db-path.php' );
+		$database_path        = $this->initialize_managed_storage( $database_root );
+		$stored_database_path = require $database_root . '/db-path.php';
+
+		$this->assertSame( $database_path, $stored_database_path );
+		$this->assertSame( 0600, fileperms( $database_path ) & 0777 );
+		$this->assertFileDoesNotExist( $legacy_path );
+		$this->assertFileDoesNotExist( $legacy_path . '-wal' );
+		$this->assertFileExists( $database_root . '/.ht.sqlite.lock' );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+		$this->assert_protected_directory( dirname( $database_path ) );
 	}
 
 	private function assert_creates_no_files( $callback ) {
