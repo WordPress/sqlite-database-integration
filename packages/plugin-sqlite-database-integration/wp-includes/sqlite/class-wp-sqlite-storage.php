@@ -91,7 +91,14 @@ class WP_SQLite_Storage {
 	private $storage_lock_connection;
 
 	/**
-	 * Time to wait for the SQLite storage lock, in milliseconds.
+	 * Connection holding the exclusive transaction on the WordPress SQLite database.
+	 *
+	 * @var PDO|null
+	 */
+	private $database_lock_connection;
+
+	/**
+	 * Time to wait for existing database connections, in milliseconds.
 	 *
 	 * @var int
 	 */
@@ -133,9 +140,16 @@ class WP_SQLite_Storage {
 		// Never resolve a database path while storage maintenance is in progress.
 		$this->wait_until_unlocked();
 
+		// Check if we're already holding a lock.
+		$was_locked = null !== $this->storage_lock_connection;
+
 		// Explicitly configured database path.
 		if ( null !== $this->database_path ) {
 			$this->ensure_database( $this->database_path );
+			if ( $was_locked ) {
+				// If the storage was locked, ensure the database is locked as well.
+				$this->lock();
+			}
 			return $this->database_path;
 		}
 
@@ -156,7 +170,6 @@ class WP_SQLite_Storage {
 
 		// Initialize or repair the managed storage under the storage lock.
 		// Preserve a lock already held by this instance for a larger operation.
-		$keep_lock = null !== $this->storage_lock_connection;
 		$this->lock();
 		try {
 			// Another process may have completed the initialization meanwhile.
@@ -170,9 +183,10 @@ class WP_SQLite_Storage {
 			}
 
 			$this->ensure_database( $database_path );
+			$this->lock();
 			return $database_path;
 		} finally {
-			if ( ! $keep_lock ) {
+			if ( ! $was_locked ) {
 				$this->unlock();
 			}
 		}
@@ -184,27 +198,29 @@ class WP_SQLite_Storage {
 	 * The locking mechanism does the following:
 	 *   - Waits for a lock held by another process, up to the database lock timeout.
 	 *   - Marks maintenance as active so new requests wait.
+	 *   - When a database exists, also acquires an exclusive database lock.
+	 *
+	 * Existing database connections must be closed first to avoid blocking the lock.
 	 *
 	 * The lock is released when unlock() is called or the process ends.
 	 *
 	 * @throws RuntimeException When the lock cannot be acquired.
 	 */
 	public function lock(): void {
-		// Reuse a lock already held by this instance.
-		if ( null !== $this->storage_lock_connection ) {
-			return;
-		}
+		$was_locked = null !== $this->storage_lock_connection;
 
 		// Serialize maintenance through the dedicated locking database.
-		try {
-			$this->ensure_database( $this->lock_path );
-			$connection = new PDO( 'sqlite:' . $this->lock_path );
-			$connection->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
-			$connection->exec( 'PRAGMA busy_timeout = ' . $this->database_lock_timeout );
-			$connection->exec( 'BEGIN EXCLUSIVE' );
-			$this->storage_lock_connection = $connection;
-		} catch ( Throwable $exception ) {
-			throw new RuntimeException( 'Failed to acquire the SQLite storage lock.', 0, $exception );
+		if ( ! $was_locked ) {
+			try {
+				$this->ensure_database( $this->lock_path );
+				$connection = new PDO( 'sqlite:' . $this->lock_path );
+				$connection->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+				$connection->exec( 'PRAGMA busy_timeout = ' . $this->database_lock_timeout );
+				$connection->exec( 'BEGIN EXCLUSIVE' );
+				$this->storage_lock_connection = $connection;
+			} catch ( Throwable $exception ) {
+				throw new RuntimeException( 'Failed to acquire the SQLite storage lock.', 0, $exception );
+			}
 		}
 
 		try {
@@ -215,8 +231,38 @@ class WP_SQLite_Storage {
 				}
 				@chmod( $this->maintenance_path, 0600 );
 			}
+
+			// Reuse a database lock already held by this instance.
+			if ( null !== $this->database_lock_connection ) {
+				return;
+			}
+
+			// Look for an existing database so that it can be locked as well.
+			$database_path = $this->database_path;
+			if ( null === $database_path ) {
+				$database_path = $this->read_recorded_database_path();
+
+				// The managed database may still be at a legacy path.
+				if ( null === $database_path || ! @is_file( $database_path ) ) {
+					$database_path = $this->database_root . self::DATABASE_FILENAME;
+				}
+				if ( ! @is_file( $database_path ) ) {
+					$database_path = $this->database_root . self::DATABASE_FILENAME . '.php';
+				}
+			}
+
+			// Lock the existing database when found.
+			if ( @is_file( $database_path ) ) {
+				try {
+					$this->database_lock_connection = $this->lock_database( $database_path );
+				} catch ( Throwable $exception ) {
+					throw new RuntimeException( 'Failed to lock the SQLite database.', 0, $exception );
+				}
+			}
 		} catch ( Throwable $exception ) {
-			$this->unlock();
+			if ( ! $was_locked ) {
+				$this->unlock();
+			}
 			throw $exception;
 		}
 	}
@@ -225,6 +271,7 @@ class WP_SQLite_Storage {
 	 * Unlock the storage.
 	 */
 	public function unlock(): void {
+		$this->database_lock_connection = null;
 		if ( null !== $this->storage_lock_connection ) {
 			// Remove the marker before releasing the lock that protects it.
 			@unlink( $this->maintenance_path );
@@ -383,5 +430,66 @@ class WP_SQLite_Storage {
 			throw new RuntimeException( 'Failed to create SQLite database protection file.' );
 		}
 		@chmod( $path, 0600 );
+	}
+
+	/**
+	 * Acquire an exclusive transaction on an SQLite database.
+	 *
+	 * @param string $database_path Absolute database path.
+	 * @return PDO Connection holding the transaction.
+	 */
+	private function lock_database( string $database_path ): PDO {
+		// Do not silently create an empty database if the expected file is missing.
+		$pdo_options = array();
+		if ( defined( 'Pdo\Sqlite::ATTR_OPEN_FLAGS' ) ) {
+			$pdo_options[ Pdo\Sqlite::ATTR_OPEN_FLAGS ] = Pdo\Sqlite::OPEN_READWRITE;
+		} elseif ( defined( 'PDO::SQLITE_ATTR_OPEN_FLAGS' ) ) {
+			$pdo_options[ PDO::SQLITE_ATTR_OPEN_FLAGS ] = PDO::SQLITE_OPEN_READWRITE;
+		}
+
+		$connection = null;
+		$deadline   = microtime( true ) + ( $this->database_lock_timeout / 1000 );
+		do {
+			if ( microtime( true ) >= $deadline ) {
+				throw new RuntimeException( 'Failed to acquire an exclusive SQLite database lock.' );
+			}
+
+			if ( null === $connection ) {
+				$connection = new PDO( 'sqlite:' . $database_path, null, null, $pdo_options );
+				$connection->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+				$connection->exec( 'PRAGMA busy_timeout = ' . $this->database_lock_timeout );
+			}
+
+			try {
+				// Disable WAL so we can acquire a truly exclusive READ/WRITE lock.
+				$journal_mode = $connection->query( 'PRAGMA journal_mode = DELETE' )->fetchColumn();
+				if ( 'delete' === strtolower( (string) $journal_mode ) ) {
+					// Acquire exclusive lock.
+					$connection->exec( 'BEGIN EXCLUSIVE' );
+
+					// Another connection may have restored WAL before the transaction started.
+					// If that's the case, release the lock and retry in the next iteration.
+					$journal_mode = $connection->query( 'PRAGMA journal_mode' )->fetchColumn();
+					if ( 'delete' !== strtolower( (string) $journal_mode ) ) {
+						$connection->exec( 'ROLLBACK' );
+					} else {
+						// Connection lock successfully acquired.
+						return $connection;
+					}
+				}
+			} catch ( PDOException $exception ) {
+				$error_info    = $connection->errorInfo();
+				$sqlite_busy   = 5;
+				$database_busy = isset( $error_info[1] ) && ( (int) $error_info[1] & 0xff ) === $sqlite_busy;
+				if ( ! $database_busy ) {
+					throw $exception;
+				}
+
+				// Close the connection so any raw transaction is rolled back before retrying.
+				$connection = null;
+			}
+
+			usleep( 100000 ); // 100 milliseconds.
+		} while ( true );
 	}
 }

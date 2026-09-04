@@ -134,9 +134,23 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 		$this->assertFileExists( $database_path );
 		$this->assertFileExists( $database_root . '/.ht.sqlite.maintenance' );
+		$script = sprintf(
+			'$connection = new PDO(%s); $connection->exec("PRAGMA busy_timeout = 5000"); $connection->exec("BEGIN EXCLUSIVE"); echo "locked";',
+			var_export( 'sqlite:' . $database_path, true )
+		);
 
-		$storage->unlock();
+		list( $process, $pipes ) = $this->open_process( $script );
 
+		try {
+			$this->assert_process_is_running( $process );
+		} finally {
+			$storage->unlock();
+			$result = $this->close_process( $process, $pipes );
+		}
+
+		$this->assertSame( 0, $result['exit_code'] );
+		$this->assertSame( '', $result['error'] );
+		$this->assertSame( 'locked', $result['output'] );
 		$this->assertSame( $database_path, $this->initialize_managed_storage( $database_root ) );
 	}
 
@@ -427,6 +441,29 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$storage->unlock();
 	}
 
+	public function test_blocks_database_access_while_locked() {
+		$database_root = $this->create_temporary_directory();
+		$database_path = $database_root . '/database.sqlite';
+		$connection    = $this->create_sqlite_database( $database_path );
+		$this->assertSame( 'wal', $connection->query( 'PRAGMA journal_mode = WAL' )->fetchColumn() );
+		$connection = null;
+
+		$storage = new WP_SQLite_Storage( $database_root, $database_path );
+
+		$storage->lock();
+
+		try {
+			$this->read_sqlite_value( $database_path );
+			$this->fail( 'The database was readable while the storage was locked.' );
+		} catch ( PDOException $exception ) {
+			$this->assertStringContainsString( 'database is locked', $exception->getMessage() );
+		}
+
+		$storage->unlock();
+
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
 	public function test_ignores_a_legacy_database_for_an_explicit_path() {
 		$database_root = $this->create_temporary_directory();
 		$database_path = $database_root . '/database.sqlite';
@@ -441,6 +478,100 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assertSame( $database_path, $storage->initialize() );
 		$this->assertSame( 0, filesize( $database_path ) );
 		$this->assertSame( str_repeat( 'x', 4096 ), file_get_contents( $legacy_path ) );
+	}
+
+	public function test_waits_for_an_active_wal_connection() {
+		$database_root = $this->create_temporary_directory();
+		$database_path = $database_root . '/database.sqlite';
+		$this->create_wal_sqlite_database_copy( $database_path );
+		$storage = new WP_SQLite_Storage( $database_root, $database_path );
+
+		list( $process, $pipes ) = $this->open_database_connection_process( $database_path );
+		$started                 = microtime( true );
+		try {
+			$storage->lock();
+		} finally {
+			$elapsed = microtime( true ) - $started;
+			$result  = $this->close_process( $process, $pipes );
+		}
+		$storage->unlock();
+
+		$this->assertSame( 0, $result['exit_code'] );
+		$this->assertSame( '', $result['error'] );
+		$this->assertGreaterThan( 0.2, $elapsed );
+		$this->assertFileDoesNotExist( $database_path . '-wal' );
+		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+	}
+
+	public function test_does_not_lock_an_invalid_database() {
+		$database_root = $this->create_temporary_directory();
+		$database_path = $database_root . '/database.sqlite';
+		file_put_contents( $database_path, str_repeat( 'x', 4096 ) );
+
+		try {
+			$storage = new WP_SQLite_Storage( $database_root, $database_path );
+			$storage->lock();
+			$this->fail( 'An invalid database was locked.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'Failed to lock the SQLite database.', $exception->getMessage() );
+			$this->assertStringNotContainsString( $database_root, $exception->getMessage() );
+		}
+
+		$this->assertFileExists( $database_root . '/.ht.sqlite.lock' );
+		$this->assertFileDoesNotExist( $database_root . '/.ht.sqlite.maintenance' );
+	}
+
+	public function test_does_not_create_a_missing_database() {
+		if ( ! defined( 'PDO::SQLITE_ATTR_OPEN_FLAGS' ) && ! defined( 'Pdo\Sqlite::ATTR_OPEN_FLAGS' ) ) {
+			$this->markTestSkipped( 'SQLite open flags require PHP 7.3.' );
+		}
+
+		$database_root = $this->create_temporary_directory();
+		$database_path = $database_root . '/missing.sqlite';
+		$storage       = new WP_SQLite_Storage( $database_root, $database_path );
+		$lock_database = Closure::bind(
+			function () use ( $database_path ) {
+				return $this->lock_database( $database_path );
+			},
+			$storage,
+			WP_SQLite_Storage::class
+		);
+
+		try {
+			$lock_database();
+			$this->fail( 'A missing database was created.' );
+		} catch ( PDOException $exception ) {
+			$this->assertStringNotContainsString( $database_path, $exception->getMessage() );
+		}
+
+		$this->assertFileDoesNotExist( $database_path );
+	}
+
+	public function test_does_not_lock_a_busy_database() {
+		$database_root = $this->create_temporary_directory();
+		$database_path = $database_root . '/database.sqlite';
+		$connection    = $this->create_sqlite_database( $database_path );
+		$connection->beginTransaction();
+		$connection->exec( "UPDATE storage_test SET value = 'pending'" );
+		$storage = new WP_SQLite_Storage( $database_root, $database_path );
+		$this->set_storage_property( $storage, 'database_lock_timeout', 10 );
+
+		try {
+			$storage->lock();
+			$this->fail( 'A busy database was locked.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'Failed to lock the SQLite database.', $exception->getMessage() );
+		} finally {
+			$connection->rollBack();
+		}
+
+		$this->assertFileExists( $database_root . '/.ht.sqlite.lock' );
+		$this->assertFileDoesNotExist( $database_root . '/.ht.sqlite.maintenance' );
+
+		// The storage can be locked once the database is no longer busy.
+		$storage->lock();
+		$this->assertFileExists( $database_root . '/.ht.sqlite.lock' );
+		$storage->unlock();
 	}
 
 	private function assert_legacy_database_is_kept( $filename ) {
@@ -514,6 +645,18 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		return $this->open_process( $prelude . $script );
 	}
 
+	private function open_database_connection_process( $database_path ) {
+		$script = sprintf(
+			'$connection = new PDO(%s); $connection->query("SELECT value FROM storage_test")->fetchColumn(); fwrite(STDOUT, "ready\n"); fflush(STDOUT); usleep(250000);',
+			var_export( 'sqlite:' . $database_path, true )
+		);
+
+		list( $process, $pipes ) = $this->open_process( $script );
+		$this->assertSame( "ready\n", fgets( $pipes[1] ) );
+
+		return array( $process, $pipes );
+	}
+
 	private function open_process( $script ) {
 		$command = escapeshellarg( PHP_BINARY ) . ' -d display_errors=stderr -r ' . escapeshellarg( $script );
 		$process = proc_open(
@@ -557,6 +700,22 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$connection->exec( "INSERT INTO storage_test VALUES ('preserved')" );
 
 		return $connection;
+	}
+
+	private function create_wal_sqlite_database_copy( $database_path ) {
+		$source_path = $this->create_temporary_directory() . '/source.sqlite';
+
+		$connection = new PDO( 'sqlite:' . $source_path );
+		$connection->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
+		$this->assertSame( 'wal', $connection->query( 'PRAGMA journal_mode = WAL' )->fetchColumn() );
+		$connection->exec( 'PRAGMA wal_autocheckpoint = 0' );
+		$connection->exec( 'CREATE TABLE storage_test (value TEXT NOT NULL)' );
+		$connection->exec( "INSERT INTO storage_test VALUES ('preserved')" );
+
+		// Copy the WAL while the source stays open, as closing it would checkpoint.
+		$this->assertTrue( copy( $source_path, $database_path ) );
+		$this->assertTrue( copy( $source_path . '-wal', $database_path . '-wal' ) );
+		$connection = null;
 	}
 
 	private function read_sqlite_value( $database_path ) {
