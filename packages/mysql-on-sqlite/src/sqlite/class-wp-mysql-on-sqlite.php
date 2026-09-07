@@ -7371,21 +7371,24 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		// 7. Generate CREATE TABLE statement constraints, collect indexes.
+		$format_index_column = function ( $column ) {
+			$definition = $this->quote_mysql_identifier( $column['COLUMN_NAME'] );
+			if ( null !== $column['SUB_PART'] ) {
+				$definition .= sprintf( '(%d)', $column['SUB_PART'] );
+			}
+			if ( 'D' === $column['COLLATION'] ) {
+				$definition .= ' DESC';
+			}
+			return $definition;
+		};
+
 		foreach ( $grouped_constraints as $constraint ) {
 			ksort( $constraint );
 			$info = $constraint[1];
 
 			if ( 'PRIMARY' === $info['INDEX_NAME'] ) {
 				$sql  = '  PRIMARY KEY (';
-				$sql .= implode(
-					', ',
-					array_map(
-						function ( $column ) {
-							return $this->quote_mysql_identifier( $column['COLUMN_NAME'] );
-						},
-						$constraint
-					)
-				);
+				$sql .= implode( ', ', array_map( $format_index_column, $constraint ) );
 				$sql .= ')';
 			} else {
 				$is_unique = '0' === $info['NON_UNIQUE'];
@@ -7398,22 +7401,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				);
 				$sql .= $this->quote_mysql_identifier( $info['INDEX_NAME'] );
 				$sql .= ' (';
-				$sql .= implode(
-					', ',
-					array_map(
-						function ( $column ) {
-							$definition = $this->quote_mysql_identifier( $column['COLUMN_NAME'] );
-							if ( null !== $column['SUB_PART'] ) {
-								$definition .= sprintf( '(%d)', $column['SUB_PART'] );
-							}
-							if ( 'D' === $column['COLLATION'] ) {
-								$definition .= ' DESC';
-							}
-							return $definition;
-						},
-						$constraint
-					)
-				);
+				$sql .= implode( ', ', array_map( $format_index_column, $constraint ) );
 				$sql .= ')';
 			}
 

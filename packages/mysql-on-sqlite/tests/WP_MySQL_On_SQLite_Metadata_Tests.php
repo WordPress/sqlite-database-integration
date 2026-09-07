@@ -762,6 +762,37 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 	}
 
 
+	public function testShowCreateTablePrimaryKeyWithIndexPrefix(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (session_id MEDIUMTEXT NOT NULL, value INT, PRIMARY KEY (session_id(100)))'
+		);
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString(
+			'PRIMARY KEY (`session_id`(100))',
+			$result[0]->{'Create Table'}
+		);
+
+		// A composite primary key preserves the prefix only where it is defined.
+		$this->assertQuery(
+			'CREATE TABLE t2 (a VARCHAR(255) NOT NULL, b MEDIUMTEXT NOT NULL, PRIMARY KEY (a, b(50)))'
+		);
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t2' );
+		$this->assertStringContainsString(
+			'PRIMARY KEY (`a`, `b`(50))',
+			$result[0]->{'Create Table'}
+		);
+
+		// Descending key parts are preserved as well, as in MySQL 8.
+		$this->assertQuery(
+			'CREATE TABLE t3 (a INT NOT NULL, b VARCHAR(10) NOT NULL, PRIMARY KEY (a DESC, b))'
+		);
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t3' );
+		$this->assertStringContainsString(
+			'PRIMARY KEY (`a` DESC, `b`)',
+			$result[0]->{'Create Table'}
+		);
+	}
+
 	public function testCreateTableSetAutoIncrement(): void {
 		$this->assertQuery(
 			'CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT) AUTO_INCREMENT=100'
