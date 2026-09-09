@@ -48,6 +48,13 @@ class MySQL_Proxy {
 	private $adapter;
 
 	/**
+	 * The configured account verifier.
+	 *
+	 * @var MySQL_Authentication
+	 */
+	private $authentication;
+
+	/**
 	 * A map of connected clients.
 	 *
 	 * Maps client IDs to their associated socket and session instances.
@@ -68,12 +75,13 @@ class MySQL_Proxy {
 	 *
 	 * @param Adapter $adapter The adapter to use to execute MySQL queries.
 	 * @param array   $options {
-	 *     Optional. An associative array of options. Default empty array.
+	 *     An associative array of options. The account is required.
 	 *
-	 *     @type string $bind_address The IPv4 or IPv6 address to listen on. Default: 127.0.0.1
-	 *     @type int    $port      The port to listen on. Default: 3306
-	 *     @type string $log_level The log level to use. One of 'error', 'warning', 'info', 'debug'.
-	 *                             Default: 'warning'
+	 *     @type MySQL_Authentication $authentication The account clients log in with. Required.
+	 *     @type string               $bind_address   The IPv4 or IPv6 address to listen on. Default: 127.0.0.1
+	 *     @type int                  $port           The port to listen on. Default: 3306
+	 *     @type string               $log_level      The log level to use. One of 'error', 'warning', 'info', 'debug'.
+	 *                                                Default: 'warning'
 	 * }
 	 */
 	public function __construct( Adapter $adapter, $options = array() ) {
@@ -82,9 +90,15 @@ class MySQL_Proxy {
 			throw new InvalidArgumentException( 'The bind address must be a valid IPv4 or IPv6 address.' );
 		}
 
-		$this->adapter = $adapter;
-		$this->port    = $options['port'] ?? 3306;
-		$this->logger  = new Logger( $options['log_level'] ?? Logger::LEVEL_WARNING );
+		$authentication = $options['authentication'] ?? null;
+		if ( ! $authentication instanceof MySQL_Authentication ) {
+			throw new InvalidArgumentException( 'The authentication option must be a MySQL_Authentication account.' );
+		}
+
+		$this->authentication = $authentication;
+		$this->adapter        = $adapter;
+		$this->port           = $options['port'] ?? 3306;
+		$this->logger         = new Logger( $options['log_level'] ?? Logger::LEVEL_WARNING );
 	}
 
 	/**
@@ -119,7 +133,7 @@ class MySQL_Proxy {
 		$this->logger->info(
 			'MySQL proxy listening on {address}:{port}',
 			array(
-				'address' => $this->bind_address,
+				'address' => AF_INET6 === $family ? '[' . $this->bind_address . ']' : $this->bind_address,
 				'port'    => $this->port,
 			)
 		);
@@ -171,7 +185,7 @@ class MySQL_Proxy {
 
 		// Create a new session for the client.
 		$client_id                   = $this->get_client_id( $socket );
-		$session                     = new MySQL_Session( $this->adapter, $client_id );
+		$session                     = new MySQL_Session( $this->adapter, $client_id, $this->authentication );
 		$this->clients[ $client_id ] = array(
 			'socket'  => $socket,
 			'session' => $session,
@@ -180,10 +194,7 @@ class MySQL_Proxy {
 
 		// Handle the initial handshake.
 		$this->logger->info( 'Client [{client_id}]: initial handshake', array( 'client_id' => $client_id ) );
-		$handshake = $session->get_initial_handshake();
-		if ( false === @socket_write( $socket, $handshake ) ) {
-			throw $this->new_socket_error();
-		}
+		$this->write_response( $socket, $session->get_initial_handshake() );
 	}
 
 	/**
@@ -201,68 +212,64 @@ class MySQL_Proxy {
 			throw $this->new_socket_error();
 		}
 
-		// When debugging, display the data in a readable format.
-		if ( $this->logger->is_log_level_enabled( Logger::LEVEL_DEBUG ) ) {
-			$this->logger->debug(
-				'Client [{client_id}] request data: {data}',
-				array(
-					'client_id' => $client_id,
-					'data'      => $this->format_data( $data ),
-				)
-			);
-		}
+		// Do not dump request bytes: even authenticated clients can send credentials
+		// in COM_CHANGE_USER, including across multiple reads or buffered packets.
+		$session = $this->clients[ $client_id ]['session'];
 
 		// Handle client disconnection.
-		if ( false === $data || '' === $data ) {
+		if ( '' === $data ) {
 			$this->logger->info( 'Client [{client_id}]: disconnected', array( 'client_id' => $client_id ) );
 			unset( $this->clients[ $client_id ] );
 			@socket_close( $socket );
 			return;
 		}
 
-		// Process client data.
-		$this->logger->info( 'Client [{client_id}]: processing data', array( 'client_id' => $client_id ) );
-		$session  = $this->clients[ $client_id ]['session'];
-		$response = $session->receive_bytes( $data );
-		if ( $response ) {
-			$this->logger->info( 'Client [{client_id}]: writing response', array( 'client_id' => $client_id ) );
-			if ( $this->logger->is_log_level_enabled( Logger::LEVEL_DEBUG ) ) {
-				$this->logger->debug(
-					'Client [{client_id}] response data: {response}',
-					array(
-						'client_id' => $client_id,
-						'response'  => $this->format_data( $response ),
-					)
-				);
-			}
-			if ( false === @socket_write( $socket, $response ) ) {
-				throw $this->new_socket_error();
-			}
-		}
-
-		// Process buffered data.
-		while ( $session->has_buffered_data() ) {
-			$this->logger->info( 'Client [{client_id}]: processing buffered data', array( 'client_id' => $client_id ) );
+		// Process complete packets, retaining incomplete input for the next read.
+		do {
 			try {
-				$response = $session->receive_bytes( '' );
-				if ( $response ) {
-					$this->logger->info( 'Client [{client_id}]: writing response', array( 'client_id' => $client_id ) );
-					if ( $this->logger->is_log_level_enabled( Logger::LEVEL_DEBUG ) ) {
-						$this->logger->debug(
-							'Client [{client_id}] response data: {response}',
-							array(
-								'client_id' => $client_id,
-								'response'  => $this->format_data( $response ),
-							)
-						);
-						if ( false === @socket_write( $socket, $response ) ) {
-							throw $this->new_socket_error();
-						}
-					}
-				}
+				$response = $session->receive_bytes( $data );
 			} catch ( Incomplete_Input_Exception $e ) {
 				break;
 			}
+			$data = '';
+
+			try {
+				if ( null !== $response && '' !== $response ) {
+					// Do not dump response bytes: they carry the data a query returned.
+					$this->logger->info(
+						'Client [{client_id}]: writing {bytes} response bytes',
+						array(
+							'client_id' => $client_id,
+							'bytes'     => strlen( $response ),
+						)
+					);
+					$this->write_response( $socket, $response );
+				}
+			} finally {
+				if ( $session->is_closed() ) {
+					$this->logger->error( 'Client [{client_id}]: login failed, closing connection', array( 'client_id' => $client_id ) );
+					unset( $this->clients[ $client_id ] );
+					@socket_close( $socket );
+				}
+			}
+		} while ( ! $session->is_closed() && $session->has_buffered_data() );
+	}
+
+	/**
+	 * Write the complete response, including any authentication error.
+	 *
+	 * @param Socket|resource $socket   The client socket.
+	 * @param string          $response The response packets.
+	 */
+	private function write_response( $socket, string $response ): void {
+		$offset = 0;
+		$length = strlen( $response );
+		while ( $offset < $length ) {
+			$written = @socket_write( $socket, substr( $response, $offset ) );
+			if ( false === $written || 0 === $written ) {
+				throw $this->new_socket_error();
+			}
+			$offset += $written;
 		}
 	}
 
@@ -274,7 +281,7 @@ class MySQL_Proxy {
 	 */
 	private function get_client_id( $socket ): int {
 		if ( is_resource( $socket ) ) {
-			return get_resource_id( $socket );
+			return (int) $socket;
 		} else {
 			return spl_object_id( $socket );
 		}
@@ -290,26 +297,5 @@ class MySQL_Proxy {
 		$error_message = socket_strerror( $error_code );
 		@socket_clear_error();
 		return new MySQL_Proxy_Exception( sprintf( 'Socket error: %s', $error_message ) );
-	}
-
-	/**
-	 * Format MySQL protocol data for display in debug logs.
-	 *
-	 * @param string  $data The binary data to format.
-	 * @return string       The formatted data.
-	 */
-	private function format_data( string $data ): string {
-		$display = '';
-		for ( $i = 0; $i < strlen( $data ); $i++ ) {
-			$byte = ord( $data[ $i ] );
-			if ( $byte >= 32 && $byte <= 126 ) {
-				// Printable ASCII character
-				$display .= $data[ $i ];
-			} else {
-				// Non-printable, show as hex
-				$display .= sprintf( '%02x ', $byte );
-			}
-		}
-		return $display;
 	}
 }

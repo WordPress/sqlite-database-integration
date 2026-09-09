@@ -18,6 +18,7 @@
 	"require": {
 		"php": ">=7.2",
 		"ext-filter": "*",
+		"ext-hash": "*",
 		"ext-sockets": "*",
 		"composer-runtime-api": "^2.2"
 	},
