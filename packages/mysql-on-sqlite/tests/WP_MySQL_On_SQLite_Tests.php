@@ -4875,6 +4875,63 @@ QUERY
 		$this->assertCount( 2, $result ); // Should match both 'first' and 'FIRST'
 	}
 
+	/**
+	 * @dataProvider dataLikePatterns
+	 */
+	public function testLikePatternPreservesBytes( $pattern, $expected ): void {
+		$functions = new WP_SQLite_PDO_User_Defined_Functions();
+
+		$this->assertSame( $expected, $functions->_helper_like_to_glob_pattern( $pattern ) );
+	}
+
+	public function dataLikePatterns(): array {
+		return array(
+			'null'                 => array( null, null ),
+			'empty'                => array( '', '' ),
+			'raw bytes'            => array( "\xff\xfe\x80", "\xff\xfe\x80" ),
+			'escaped byte'         => array( "\\\xff", "\xff" ),
+			'truncated UTF-8'      => array( "\xe2\x82", "\xe2\x82" ),
+			'overlong UTF-8'       => array( "\xc0\xaf", "\xc0\xaf" ),
+			'surrogate'            => array( "\xed\xa0\x80", "\xed\xa0\x80" ),
+			'escaped newline'      => array( "\\\n", "\n" ),
+			'escaped CRLF'         => array( "\\\r\\\n", "\r\n" ),
+			'escaped null byte'    => array( "\\\0", "\0" ),
+			'escaped Unicode'      => array( '\\©\\🙂', '©🙂' ),
+			'wildcards with bytes' => array( "\xff%_\xfe", "\xff*?\xfe" ),
+			'escaped wildcards'    => array( "\xff\\%\\_", "\xff%_" ),
+			'escaped backslash'    => array( "\xff\\\\", "\xff\\" ),
+			'GLOB metacharacters'  => array( "\xff*?]", "\xff[*][?][]]" ),
+		);
+	}
+
+	/**
+	 * @dataProvider dataLikeBinaryPatterns
+	 */
+	public function testLikeBinaryPreservesPatternBytes( $value, $pattern, $expected ): void {
+		$query = sprintf(
+			'SELECT %s LIKE BINARY %s',
+			null === $value ? 'NULL' : $this->engine->quote( $value ),
+			null === $pattern ? 'NULL' : $this->engine->quote( $pattern )
+		);
+
+		$this->assertSame( $expected, $this->engine->query( $query )->fetchColumn() );
+	}
+
+	public function dataLikeBinaryPatterns(): array {
+		return array(
+			'raw byte'          => array( "\xff", "\xff", '1' ),
+			'escaped byte'      => array( "\xff", "\\\xff", '1' ),
+			'nonmatching text'  => array( "\xffa", "\xffb", '0' ),
+			'percent wildcard'  => array( "\xfftail", "\xff%", '1' ),
+			'underscore'        => array( "\xffx", "\xff_", '1' ),
+			'escaped wildcards' => array( "\xff%_", "\xff\\%\\_", '1' ),
+			'escaped newline'   => array( "\n", "\\\n", '1' ),
+			'escaped Unicode'   => array( '©🙂', '\\©\\🙂', '1' ),
+			'null pattern'      => array( 'x', null, null ),
+			'null value'        => array( null, 'x', null ),
+		);
+	}
+
 	public function testUniqueConstraints() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (

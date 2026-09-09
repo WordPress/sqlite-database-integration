@@ -12,7 +12,6 @@ const path = require( 'path' );
 const requiresNativeParserExtension = process.env.WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION === '1';
 
 const expectedErrors = [
-	'Tests_DB_Charset::test_invalid_characters_in_query',
 	'Tests_DB_Charset::test_set_charset_changes_the_connection_collation',
 ];
 
@@ -38,25 +37,10 @@ const expectedFailures = [
 	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #5',
 	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #6',
 	'Tests_DB_Charset::test_get_column_charset_non_mysql with data set #7',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #21',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #22',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #23',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #24',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #25',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #26',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #27',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #28',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #30',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #31',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #32',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #33',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #34',
-	'Tests_DB_Charset::test_strip_invalid_text with data set #39',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #40',
 	'Tests_DB_Charset::test_strip_invalid_text with data set #41',
 	'Tests_DB_dbDelta::test_column_type_change',
 	'Tests_DB::test_mysqli_flush_sync',
-	'Tests_DB::test_query_value_contains_invalid_chars',
 	'Tests_DB::test_replace',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #1',
 	'Tests_Menu_Walker_Nav_Menu::test_start_el_with_empty_attributes with data set #2',

@@ -4943,6 +4943,8 @@ class WP_MySQL_On_SQLite extends PDO {
 		$is_binary = isset( $tokens[1] ) && WP_MySQL_Lexer::BINARY_SYMBOL === $tokens[1]->id;
 
 		if ( true === $is_binary ) {
+			// TODO: GLOB can match different invalid UTF-8 bytes as equal.
+			// Use byte-wise matching for full LIKE BINARY compatibility.
 			$children = $node->get_children();
 			return sprintf(
 				'GLOB _helper_like_to_glob_pattern(%s)',

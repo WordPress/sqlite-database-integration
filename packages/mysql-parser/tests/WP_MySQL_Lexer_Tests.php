@@ -85,6 +85,111 @@ class WP_MySQL_Lexer_Tests extends TestCase {
 		);
 	}
 
+	public function test_ignore_space_preserves_function_name_ranges(): void {
+		// Without "(", COUNT is an identifier whose range excludes trailing whitespace.
+		$sql    = 'SELECT COUNT FROM t';
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 'IDENTIFIER', $tokens[1]->get_name(), $sql );
+		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
+		$this->assertSame( 5, $tokens[1]->length, $sql );
+		$this->assertSame( 13, $tokens[2]->start, $sql );
+
+		$sql    = "SELECT COUNT\t\n FROM t";
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 'IDENTIFIER', $tokens[1]->get_name(), $sql );
+		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
+		$this->assertSame( 5, $tokens[1]->length, $sql );
+		$this->assertSame( 15, $tokens[2]->start, $sql );
+
+		// With "(", COUNT is a function whose range still excludes the whitespace.
+		$tokens = ( new WP_MySQL_Lexer( 'SELECT COUNT (1)', 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 5, $tokens[1]->length );
+		$this->assertSame( 'COUNT', $tokens[1]->get_name() );
+		$this->assertSame( 'OPEN_PAR_SYMBOL', $tokens[2]->get_name() );
+		$this->assertSame( 13, $tokens[2]->start );
+
+		$sql    = "SELECT COUNT \t\n";
+		$tokens = ( new WP_MySQL_Lexer( $sql, 80400, array( 'IGNORE_SPACE' ) ) )->remaining_tokens();
+		$this->assertSame( 'IDENTIFIER', $tokens[1]->get_name(), $sql );
+		$this->assertSame( 'COUNT', $tokens[1]->get_value(), $sql );
+		$this->assertSame( 5, $tokens[1]->length, $sql );
+		$this->assertSame( 'END_OF_INPUT', $tokens[2]->get_name(), $sql );
+		$this->assertSame( strlen( $sql ), $tokens[2]->start, $sql );
+	}
+
+	/**
+	 * @dataProvider data_version_comments
+	 */
+	public function test_version_comments( string $sql, int $mysql_version, array $expected_bytes ): void {
+		$tokens = ( new WP_MySQL_Lexer( $sql, $mysql_version ) )->remaining_tokens();
+		$this->assertSame( 'END_MARKER', array_pop( $tokens )->get_name() );
+		$this->assertSame( 'END_OF_INPUT', array_pop( $tokens )->get_name() );
+		$this->assertSame(
+			$expected_bytes,
+			array_map(
+				static function ( WP_MySQL_Token $token ): string {
+					return $token->get_bytes();
+				},
+				$tokens
+			)
+		);
+	}
+
+	public function data_version_comments(): array {
+		$cases = array(
+			'five digits below version' => array( 'SELECT /*!80038 1 + */ 2', 80037, array( 'SELECT', '2' ) ),
+			'five digits at version'    => array( 'SELECT /*!80038 1 + */ 2', 80038, array( 'SELECT', '1', '+', '2' ) ),
+			'six digits on MySQL 5.7'   => array( 'SELECT /*!080005 + */ 1', 50744, array( 'SELECT', '5', '+', '1' ) ),
+			'six digits on MySQL 8.0'   => array( 'SELECT /*!080005 + */ 1', 80038, array( 'SELECT', '5', '+', '1' ) ),
+			'six digits before 8.1'     => array( 'SELECT /*!080005 + */ 1', 80099, array( 'SELECT', '5', '+', '1' ) ),
+			'six digits on MySQL 8.1'   => array( 'SELECT /*!080005 + */ 1', 80100, array( 'SELECT', '+', '1' ) ),
+			'six digits on MySQL 8.4'   => array( 'SELECT /*!080400 1 + */ 2', 80400, array( 'SELECT', '1', '+', '2' ) ),
+			'six digits future major'   => array( 'SELECT /*!100000 1 + */ 2', 80400, array( 'SELECT', '2' ) ),
+			'six digits at major'       => array( 'SELECT /*!100000 1 + */ 2', 100000, array( 'SELECT', '1', '+', '2' ) ),
+			'six digits without space'  => array( 'SELECT /*!080100+ */ 1', 80100, array( 'SELECT', '0', '+', '1' ) ),
+			'six digits at comment end' => array( 'SELECT /*!080100*/ + 1', 80100, array( 'SELECT', '0', '+', '1' ) ),
+			'seven digits'              => array( 'SELECT /*!0801007 + */ 1', 80100, array( 'SELECT', '07', '+', '1' ) ),
+		);
+
+		foreach ( array(
+			'space' => ' ',
+			'tab'   => "\t",
+			'LF'    => "\n",
+			'CR'    => "\r",
+			'FF'    => "\f",
+			'VT'    => "\v",
+		) as $name => $space ) {
+			$cases[ "six digits before 8.1 with $name" ]    = array(
+				"SELECT /*!080100$space+ */ 1",
+				80038,
+				array( 'SELECT', '0', '+', '1' ),
+			);
+			$cases[ "six digits at version with $name" ]    = array(
+				"SELECT /*!080100$space+ */ 1",
+				80100,
+				array( 'SELECT', '+', '1' ),
+			);
+			$cases[ "six digits above version with $name" ] = array(
+				"SELECT /*!080101$space+ */ 1",
+				80100,
+				array( 'SELECT', '1' ),
+			);
+		}
+
+		// Without five leading digits, the entire comment body remains SQL.
+		foreach ( array( 80038, 80100 ) as $version ) {
+			$cases[ "no version on $version" ] = array( 'SELECT /*! + */ 2', $version, array( 'SELECT', '+', '2' ) );
+			foreach ( array( '1', '12', '123', '1234' ) as $digits ) {
+				$cases[ "$digits as content on $version" ] = array(
+					"SELECT /*!$digits + */ 2",
+					$version,
+					array( 'SELECT', $digits, '+', '2' ),
+				);
+			}
+		}
+		return $cases;
+	}
+
 	public function test_at_name_splits_into_at_and_ident(): void {
 		$tokens = ( new WP_MySQL_Lexer( 'SELECT @var1' ) )->remaining_tokens();
 		$this->assertSame( 'AT_SIGN_SYMBOL', $tokens[1]->get_name() );

@@ -34,7 +34,9 @@ class WP_MySQL_Server_Suite_Parser_Tests extends TestCase {
 				continue;
 			}
 			++$total;
-			$tokens = ( new WP_MySQL_Lexer( $query ) )->remaining_tokens();
+
+			// Pin the MySQL version. The failure set in FAILURES_PATH depends on it.
+			$tokens = ( new WP_MySQL_Lexer( $query, 80038 ) )->remaining_tokens();
 			if ( null === $parser->parse( $tokens ) ) {
 				$failures[] = $query;
 			}

@@ -834,26 +834,39 @@ impl WpMySqlNativeLexer {
     }
 
     fn read_mysql_comment(&mut self) -> i64 {
-        self.bytes_already_read += 3;
+        // MySQL-specific comments in the following forms:
+        //   1. /*! ... */       - The content is treated as SQL.
+        //   2. /*!80400 ... */  - SQL when the server version is at least 8.4.0.
+        //   3. /*!080400 ... */ - The same version in six-digit form (MySQL 8.1+).
+        //
+        // See: https://dev.mysql.com/doc/refman/8.4/en/comments.html
+        self.bytes_already_read += 3; // Consume the '/*!'.
+
+        // Version has 5 digits (Mmmrr) or 6 digits (MMmmrr + whitespace, MySQL 8.1+).
         let digit_start = self.bytes_already_read;
-        let digit_end =
-            span_while(&self.sql, digit_start, |byte| byte.is_ascii_digit()).min(digit_start + 5);
-        let digit_count = digit_end - digit_start;
-        let is_version_comment = digit_count == 5;
-        let version = if is_version_comment {
-            std::str::from_utf8(&self.sql[digit_start..digit_end])
-                .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        let digit_count = self.sql[digit_start..]
+            .iter()
+            .take(6)
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        let mut version_length = if digit_count < 5 { 0 } else { 5 };
+        if digit_count == 6
+            && self.mysql_version >= 80100
+            && self
+                .byte_at(digit_start + 6)
+                .is_some_and(|byte| byte_in(byte, lex::WHITESPACE_MASK.as_bytes()))
+        {
+            version_length = 6;
+        }
+        let version = self.sql[digit_start..digit_start + version_length]
+            .iter()
+            .fold(0i64, |value, byte| value * 10 + i64::from(byte - b'0'));
 
         if self.mysql_version < version {
             self.read_comment_content();
             lex::COMMENT
         } else {
-            self.bytes_already_read += digit_count;
+            self.bytes_already_read += version_length;
             self.in_mysql_comment = true;
             lex::MYSQL_COMMENT_START
         }
@@ -904,12 +917,13 @@ impl WpMySqlNativeLexer {
         }
 
         if lex::is_function_token(token_type) {
+            let mut peek = self.bytes_already_read;
             if self.is_sql_mode_active(SQL_MODE_IGNORE_SPACE) {
-                self.bytes_already_read = span_while(&self.sql, self.bytes_already_read, |byte| {
+                peek = span_while(&self.sql, peek, |byte| {
                     byte_in(byte, lex::WHITESPACE_MASK.as_bytes())
                 });
             }
-            if self.byte_at(self.bytes_already_read) != Some(b'(') {
+            if self.byte_at(peek) != Some(b'(') {
                 return lex::IDENTIFIER;
             }
         }
