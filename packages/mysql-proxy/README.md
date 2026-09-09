@@ -32,10 +32,11 @@ composer require wordpress/mysql-proxy wordpress/mysql-on-sqlite:^3.0
 ### CLI:
 
 ```bash
-$ ./vendor/bin/wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
+$ ./vendor/bin/wp-mysql-proxy.php [--bind-address <address>] [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
 
 Options:
   -h, --help              Show this help message and exit.
+  --bind-address=<ip>    The IPv4 or IPv6 address to listen on. Default: 127.0.0.1
   -p, --port=<port>       The port to listen on. Default: 3306
   -d, --database=<path>   The path to the SQLite database file. Default: :memory:
   -l, --log-level=<level> The log level to use. One of 'error', 'warning', 'info', 'debug'. Default: info
@@ -45,7 +46,7 @@ When working from a checked-out repository, Composer does not create a proxy for
 the root package's own binary. Run it directly from the package directory:
 
 ```bash
-php bin/wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
+php bin/wp-mysql-proxy.php [--bind-address <address>] [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
 ```
 
 ### PHP:
@@ -61,3 +62,7 @@ $proxy = new MySQL_Proxy(
 );
 $proxy->start();
 ```
+
+The proxy listens on `127.0.0.1` by default. Set `--bind-address` (or the PHP
+`bind_address` option) to an IPv4 or IPv6 address to change the listener. Binding
+to `0.0.0.0` or `::` explicitly exposes the proxy on all interfaces of that family.

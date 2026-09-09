@@ -7,6 +7,7 @@
 
 namespace WP_MySQL_Proxy;
 
+use InvalidArgumentException;
 use Socket;
 use Throwable;
 use WP_MySQL_Proxy\Adapter\Adapter;
@@ -31,6 +32,13 @@ class MySQL_Proxy {
 	 * @var int
 	 */
 	private $port;
+
+	/**
+	 * The IP address to listen on.
+	 *
+	 * @var string
+	 */
+	private $bind_address;
 
 	/**
 	 * The adapter to use to execute queries.
@@ -62,12 +70,18 @@ class MySQL_Proxy {
 	 * @param array   $options {
 	 *     Optional. An associative array of options. Default empty array.
 	 *
+	 *     @type string $bind_address The IPv4 or IPv6 address to listen on. Default: 127.0.0.1
 	 *     @type int    $port      The port to listen on. Default: 3306
 	 *     @type string $log_level The log level to use. One of 'error', 'warning', 'info', 'debug'.
 	 *                             Default: 'warning'
 	 * }
 	 */
 	public function __construct( Adapter $adapter, $options = array() ) {
+		$this->bind_address = $options['bind_address'] ?? '127.0.0.1';
+		if ( ! is_string( $this->bind_address ) || false === filter_var( $this->bind_address, FILTER_VALIDATE_IP ) ) {
+			throw new InvalidArgumentException( 'The bind address must be a valid IPv4 or IPv6 address.' );
+		}
+
 		$this->adapter = $adapter;
 		$this->port    = $options['port'] ?? 3306;
 		$this->logger  = new Logger( $options['log_level'] ?? Logger::LEVEL_WARNING );
@@ -80,7 +94,8 @@ class MySQL_Proxy {
 	 */
 	public function start(): void {
 		// Create a socket.
-		$socket = @socket_create( AF_INET, SOCK_STREAM, SOL_TCP );
+		$family = false === strpos( $this->bind_address, ':' ) ? AF_INET : AF_INET6;
+		$socket = @socket_create( $family, SOCK_STREAM, SOL_TCP );
 		if ( false === $socket ) {
 			throw $this->new_socket_error();
 		}
@@ -92,7 +107,7 @@ class MySQL_Proxy {
 		}
 
 		// Bind the socket to a port.
-		if ( false === @socket_bind( $this->socket, '0.0.0.0', $this->port ) ) {
+		if ( false === @socket_bind( $this->socket, $this->bind_address, $this->port ) ) {
 			throw $this->new_socket_error();
 		}
 
@@ -101,7 +116,13 @@ class MySQL_Proxy {
 			throw $this->new_socket_error();
 		}
 
-		$this->logger->info( 'MySQL proxy listening on port {port}', array( 'port' => $this->port ) );
+		$this->logger->info(
+			'MySQL proxy listening on {address}:{port}',
+			array(
+				'address' => $this->bind_address,
+				'port'    => $this->port,
+			)
+		);
 
 		// Start the main proxy loop.
 		while ( true ) {

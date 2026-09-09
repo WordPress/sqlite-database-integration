@@ -8,14 +8,15 @@ require_once $_composer_autoload_path ?? __DIR__ . '/../vendor/autoload.php';
 
 // Process CLI arguments:
 $shortopts = 'hd:p:l:';
-$longopts  = array( 'help', 'database:', 'port:', 'log-level:' );
+$longopts  = array( 'help', 'database:', 'port:', 'log-level:', 'bind-address:' );
 $opts      = getopt( $shortopts, $longopts );
 
 $help = <<<USAGE
-Usage: wp-mysql-proxy.php [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
+Usage: wp-mysql-proxy.php [--bind-address <address>] [--port <port>] [--database <path/to/db.sqlite>] [--log-level <log_level>]
 
 Options:
   -h, --help              Show this help message and exit.
+  --bind-address=<ip>    The IPv4 or IPv6 address to listen on. Default: 127.0.0.1
   -p, --port=<port>       The port to listen on. Default: 3306
   -d, --database=<path>   The path to the SQLite database file. Default: :memory:
   -l, --log-level=<level> The log level to use. One of 'error', 'warning', 'info', 'debug'. Default: info
@@ -30,6 +31,13 @@ if ( isset( $opts['h'] ) || isset( $opts['help'] ) ) {
 
 // Database path.
 $db_path = $opts['d'] ?? $opts['database'] ?? ':memory:';
+
+// Bind address.
+$bind_address = $opts['bind-address'] ?? '127.0.0.1';
+if ( false === filter_var( $bind_address, FILTER_VALIDATE_IP ) ) {
+	fwrite( STDERR, "Error: --bind-address must be a valid IPv4 or IPv6 address.\n" );
+	exit( 1 );
+}
 
 // Port.
 $port = (int) ( $opts['p'] ?? $opts['port'] ?? 3306 );
@@ -57,8 +65,9 @@ if ( ! class_exists( 'WP_MySQL_On_SQLite' ) ) {
 $proxy = new MySQL_Proxy(
 	new SQLite_Adapter( $db_path ),
 	array(
-		'port'      => $port,
-		'log_level' => $log_level,
+		'bind_address' => $bind_address,
+		'port'         => $port,
+		'log_level'    => $log_level,
 	)
 );
 $proxy->start();
