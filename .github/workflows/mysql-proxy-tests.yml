@@ -12,9 +12,13 @@ permissions: {}
 
 jobs:
   test:
-    name: MySQL Proxy Tests
+    name: MySQL Proxy Tests (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.2', '8.5']
     permissions:
       contents: read # Required to clone the repo.
 
@@ -25,7 +29,8 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '7.2'
+          php-version: ${{ matrix.php }}
+          extensions: sockets, pdo_mysql, pdo_sqlite, mysqli
           coverage: none
 
       - name: Configure monorepo package repository
