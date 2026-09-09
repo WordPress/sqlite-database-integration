@@ -6,33 +6,43 @@ use WP_MySQL_Proxy\Adapter\Adapter;
 use WP_MySQL_Proxy\MySQL_Proxy;
 
 class WP_MySQL_Proxy_Options_Test extends TestCase {
-	public function test_default_bind_address_is_loopback(): void {
-		$proxy    = new MySQL_Proxy( $this->createMock( Adapter::class ) );
-		$property = new ReflectionProperty( MySQL_Proxy::class, 'bind_address' );
-		if ( PHP_VERSION_ID < 80100 ) {
-			$property->setAccessible( true );
-		}
-		$this->assertSame( '127.0.0.1', $property->getValue( $proxy ) );
-	}
-
 	/** @dataProvider bind_addresses */
-	public function test_explicit_bind_address( string $address ): void {
-		$proxy    = new MySQL_Proxy( $this->createMock( Adapter::class ), array( 'bind_address' => $address ) );
+	public function test_bind_address( array $options, string $expected ): void {
+		$proxy    = new MySQL_Proxy(
+			$this->createMock( Adapter::class ),
+			$options + array(
+				'username' => 'user',
+				'password' => 'password',
+			)
+		);
 		$property = new ReflectionProperty( MySQL_Proxy::class, 'bind_address' );
 		if ( PHP_VERSION_ID < 80100 ) {
 			$property->setAccessible( true );
 		}
-		$this->assertSame( $address, $property->getValue( $proxy ) );
+		$this->assertSame( $expected, $property->getValue( $proxy ) );
 	}
 
 	public function bind_addresses(): array {
-		return array( array( '127.0.0.1' ), array( '0.0.0.0' ), array( '::1' ), array( '::' ) );
+		return array(
+			'default'       => array( array(), '127.0.0.1' ),
+			'IPv4 loopback' => array( array( 'bind_address' => '127.0.0.1' ), '127.0.0.1' ),
+			'IPv4 all'      => array( array( 'bind_address' => '0.0.0.0' ), '0.0.0.0' ),
+			'IPv6 loopback' => array( array( 'bind_address' => '::1' ), '::1' ),
+			'IPv6 all'      => array( array( 'bind_address' => '::' ), '::' ),
+		);
 	}
 
 	/** @dataProvider invalid_bind_addresses */
 	public function test_invalid_bind_address( $address ): void {
 		$this->expectException( InvalidArgumentException::class );
-		new MySQL_Proxy( $this->createMock( Adapter::class ), array( 'bind_address' => $address ) );
+		new MySQL_Proxy(
+			$this->createMock( Adapter::class ),
+			array(
+				'bind_address' => $address,
+				'username'     => 'user',
+				'password'     => 'password',
+			)
+		);
 	}
 
 	public function invalid_bind_addresses(): array {
