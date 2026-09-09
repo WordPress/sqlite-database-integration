@@ -181,6 +181,64 @@ class WP_SQLite_Information_Schema_Reconstructor_Tests extends TestCase {
 		);
 	}
 
+	/**
+	 * @dataProvider stringifyFetchesProvider
+	 */
+	public function testStringifyFetchesDoesNotAffectReconstruction( bool $enabled ): void {
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, $enabled );
+
+		$this->engine->get_connection()->query(
+			"CREATE TABLE t (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				name TEXT NOT NULL UNIQUE,
+				note TEXT DEFAULT 'default',
+				score INTEGER
+			)"
+		);
+		$this->engine->get_connection()->query( 'CREATE INDEX t__score ON t (score)' );
+
+		$this->reconstructor->ensure_correct_information_schema();
+
+		// Use consistent result types when checking the reconstructed metadata.
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+
+		$this->assertSame(
+			array(
+				array( 'id', 'NO', null, 'auto_increment' ),
+				array( 'name', 'NO', null, '' ),
+				array( 'note', 'YES', 'default', '' ),
+				array( 'score', 'YES', null, '' ),
+			),
+			$this->engine->query(
+				"SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, EXTRA
+				FROM INFORMATION_SCHEMA.COLUMNS
+				WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't'
+				ORDER BY ORDINAL_POSITION"
+			)->fetchAll( PDO::FETCH_NUM )
+		);
+
+		$this->assertSame(
+			array(
+				array( 'PRIMARY', 'id', '0' ),
+				array( 'name', 'name', '0' ),
+				array( 'score', 'score', '1' ),
+			),
+			$this->engine->query(
+				"SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE
+				FROM INFORMATION_SCHEMA.STATISTICS
+				WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't'
+				ORDER BY COLUMN_NAME"
+			)->fetchAll( PDO::FETCH_NUM )
+		);
+	}
+
+	public function stringifyFetchesProvider(): array {
+		return array(
+			'stringification disabled' => array( false ),
+			'stringification enabled'  => array( true ),
+		);
+	}
+
 	public function testReconstructWpTable(): void {
 		// Create a WP table with any columns.
 		$this->engine->get_connection()->query( 'CREATE TABLE wp_posts ( id INTEGER )' );
