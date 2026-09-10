@@ -44,6 +44,20 @@ if ( ! extension_loaded( 'pdo_sqlite' ) ) {
 	);
 }
 
+require_once __DIR__ . '/class-wp-sqlite-storage.php';
+
+try {
+	$database_storage = new WP_SQLite_Storage();
+	$database_path    = $database_storage->initialize( defined( 'FQDB' ) ? FQDB : null );
+} catch ( Throwable $exception ) {
+	error_log( 'SQLite database error: ' . (string) $exception );
+	wp_die( esc_html( $exception->getMessage() ), 'SQLite database error' );
+}
+
+if ( ! defined( 'FQDB' ) ) {
+	define( 'FQDB', $database_path );
+}
+
 require_once __DIR__ . '/../database/load.php';
 require_once __DIR__ . '/class-wp-sqlite-db.php';
 require_once __DIR__ . '/install-functions.php';
