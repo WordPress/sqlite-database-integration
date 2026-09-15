@@ -292,51 +292,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	);
 
 	/**
-	 * A map of MySQL to SQLite date format translation.
-	 *
-	 * It maps MySQL DATE_FORMAT() formats to SQLite STRFTIME() formats.
-	 *
-	 * For MySQL formats, see:
-	 *   https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-	 *
-	 * For SQLite formats, see:
-	 *   https://www.sqlite.org/lang_datefunc.html
-	 *   https://strftime.org/
-	 */
-	private const MYSQL_DATE_FORMAT_TO_SQLITE_STRFTIME_MAP = array(
-		'%a' => '%D',
-		'%b' => '%M',
-		'%c' => '%n',
-		'%D' => '%jS',
-		'%d' => '%d',
-		'%e' => '%j',
-		'%H' => '%H',
-		'%h' => '%h',
-		'%I' => '%h',
-		'%i' => '%M',
-		'%j' => '%z',
-		'%k' => '%G',
-		'%l' => '%g',
-		'%M' => '%F',
-		'%m' => '%m',
-		'%p' => '%A',
-		'%r' => '%h:%i:%s %A',
-		'%S' => '%s',
-		'%s' => '%s',
-		'%T' => '%H:%i:%s',
-		'%U' => '%W',
-		'%u' => '%W',
-		'%V' => '%W',
-		'%v' => '%W',
-		'%W' => '%l',
-		'%w' => '%w',
-		'%X' => '%Y',
-		'%x' => '%o',
-		'%Y' => '%Y',
-		'%y' => '%y',
-	);
-
-	/**
 	 * A map of MySQL data types to implicit default values for non-strict mode.
 	 *
 	 * In MySQL, when STRICT_TRANS_TABLES and STRICT_ALL_TABLES modes are disabled,
@@ -5186,6 +5141,10 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		switch ( $name ) {
+			case 'DATE_FORMAT':
+				// QUOTE preserves the date's value and type across PDO's 32-bit integer UDF boundary.
+				// Older SQLite versions return integers from QUOTE(), so explicitly cast its result to text.
+				return 'DATE_FORMAT(CAST(QUOTE(' . $args[0] . ') AS TEXT), CAST(' . $args[1] . ' AS TEXT))';
 			case 'RAND':
 				/*
 				 * Unseeded RAND() compiles to a fast native SQLite expression.
@@ -5205,20 +5164,6 @@ class WP_MySQL_On_SQLite extends PDO {
 					return '((RANDOM() & ((1 << 53) - 1)) / ((1 << 53) * 1.0))';
 				}
 				return $this->translate_sequence( $node->get_children() );
-			case 'DATE_FORMAT':
-				list ( $date, $mysql_format ) = $args;
-
-				$format = strtr( $mysql_format, self::MYSQL_DATE_FORMAT_TO_SQLITE_STRFTIME_MAP );
-				if ( ! $format ) {
-					throw $this->new_driver_exception(
-						sprintf(
-							'Could not translate a DATE_FORMAT() format to STRFTIME format (%s)',
-							$mysql_format
-						)
-					);
-				}
-
-				return sprintf( 'STRFTIME(%s, %s)', $format, $date );
 			case 'CHAR_LENGTH':
 				// @TODO LENGTH and CHAR_LENGTH aren't always the same in MySQL for utf8 characters.
 				return 'LENGTH(' . $args[0] . ')';

@@ -2,6 +2,8 @@
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/fixtures/WP_MySQL_Date_Time_Test_Cases.php';
+
 class WP_MySQL_On_SQLite_Tests extends TestCase {
 	/**
 	 * SQL mode bit values asserted independently from the driver implementation.
@@ -3632,22 +3634,226 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertCount( 1, $results );
 	}
 
-	public function testSelectByDateFormat() {
+	/**
+	 * @dataProvider dateFormatComparisons
+	 */
+	public function testSelectByDateFormat( $format, $time ) {
 		$this->assertQuery(
 			"
 			INSERT INTO _dates (option_name, option_value)
-			VALUES ('second', '2014-10-21 00:42:29');
-		"
+			VALUES ('second', '2014-10-21 07:30:15');
+			"
 		);
 
-		// HOUR(14:08) should yield 14 in the 24 hour format
+		$format = $this->sqlite->quote( $format );
 		$this->assertQuery(
-			"
-			SELECT * FROM _dates WHERE DATE_FORMAT(option_value, '%H.%i') = 0.42
-		"
+			sprintf(
+				'SELECT * FROM _dates WHERE DATE_FORMAT(option_value, %s) = %s',
+				$format,
+				$time
+			)
 		);
 		$results = $this->last_result;
 		$this->assertCount( 1, $results );
+	}
+
+	public static function dateFormatComparisons() {
+		return array(
+			array( '%H.%i', '7.30', '07.30' ),
+			array( '%H.%i%s', '7.301500', '07.3015' ),
+			array( '0.%i', '0.30', '0.30' ),
+			array( '0.%i%s', '0.301500', '0.3015' ),
+		);
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_formats
+	 */
+	public function testDateFormat( $format, $expected ) {
+		$results = $this->assertQuery(
+			sprintf(
+				"SELECT DATE_FORMAT('2014-10-21 07:30:15.123456', %s) AS formatted",
+				$this->sqlite->quote( $format )
+			)
+		);
+
+		$this->assertSame( $expected, $results[0]->formatted );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_week_boundaries
+	 */
+	public function testDateFormatWeekBoundary( $date, $expected ) {
+		$results = $this->assertQuery(
+			sprintf(
+				"SELECT DATE_FORMAT(%s, '%%U|%%u|%%V|%%v|%%X|%%x') AS formatted",
+				$this->sqlite->quote( $date )
+			)
+		);
+
+		$this->assertSame( $expected, $results[0]->formatted );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_inputs
+	 */
+	public function testDateFormatInput( $date, $format, $expected ) {
+		if ( null === $date ) {
+			$date = 'NULL';
+		} elseif ( is_int( $date ) || is_float( $date ) ) {
+			$date = (string) $date;
+		} else {
+			$date = $this->sqlite->quote( $date );
+		}
+		$format  = null === $format ? 'NULL' : $this->sqlite->quote( $format );
+		$results = $this->assertQuery(
+			sprintf( 'SELECT DATE_FORMAT(%s, %s) AS formatted', $date, $format )
+		);
+
+		$this->assertSame( $expected, $results[0]->formatted );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_runtime_inputs
+	 */
+	public function testDateFormatRuntimeInput( $date, $expected ) {
+		// Insert through PDO SQLite so SQL literal normalization cannot mask parsing errors.
+		$statement = $this->sqlite->prepare( 'INSERT INTO _options (option_name) VALUES (?)' );
+		$statement->execute( array( $date ) );
+		$results = $this->assertQuery(
+			"SELECT DATE_FORMAT(option_name, '%Y-%m-%d %H:%i:%s.%f') AS formatted FROM _options"
+		);
+
+		$this->assertSame( $expected, $results[0]->formatted );
+	}
+
+	/**
+	 * @dataProvider dateFormatComparisons
+	 */
+	public function testDateFormatWithDynamicNumericComparison( $format, $time, $formatted ) {
+		$statement = $this->sqlite->prepare( 'INSERT INTO _options (option_name, option_value) VALUES (?, ?)' );
+		$statement->execute( array( '2014-10-21 07:30:15', $format ) );
+		$results = $this->assertQuery(
+			'SELECT DATE_FORMAT(option_name, option_value) AS formatted FROM _options WHERE DATE_FORMAT(option_name, option_value) = ' . $time
+		);
+
+		$this->assertCount( 1, $results );
+		$this->assertSame( $formatted, $results[0]->formatted );
+	}
+
+	public function testDateFormatComparisonEvaluatesDateOnce() {
+		$calls = 0;
+		$this->createSqliteFunction(
+			'next_datetime',
+			static function () use ( &$calls ) {
+				++$calls;
+				return '2014-10-21 07:30:15';
+			}
+		);
+		foreach ( array( '= 7.3', 'BETWEEN 7.2 AND 7.4', 'IN (7.2, 7.3)', 'NOT IN (7.2, 8)' ) as $comparison ) {
+			$calls   = 0;
+			$results = $this->assertQuery( "SELECT DATE_FORMAT(next_datetime(), '%H.%i') $comparison AS comparison" );
+			$this->assertSame( '1', $results[0]->comparison );
+			$this->assertSame( 1, $calls );
+		}
+	}
+
+	/**
+	 * @dataProvider numericDateFormats
+	 */
+	public function testDateFormatWithNumericInput( $date, $expected ) {
+		$result = $this->assertQuery( "SELECT DATE_FORMAT($date, '%Y-%m-%d %H:%i:%s.%f') AS formatted" );
+		$this->assertSame( $expected, $result[0]->formatted );
+
+		$this->assertQuery( 'CREATE TABLE numeric_dates (value DECIMAL(20,6))' );
+		$this->assertQuery( "INSERT INTO numeric_dates VALUES ($date)" );
+		$result = $this->assertQuery( "SELECT DATE_FORMAT(value, '%Y-%m-%d %H:%i:%s.%f') AS formatted FROM numeric_dates" );
+		$this->assertSame( $expected, $result[0]->formatted );
+	}
+
+	public static function numericDateFormats() {
+		return array(
+			array( '20141021073015', '2014-10-21 07:30:15.000000' ),
+			array( '141021073015', '2014-10-21 07:30:15.000000' ),
+			array( '20141021073015 + 0', '2014-10-21 07:30:15.000000' ),
+			array( '10000101000000', '1000-01-01 00:00:00.000000' ),
+			array( '99991231235959', '9999-12-31 23:59:59.000000' ),
+			array( '20141021', '2014-10-21 00:00:00.000000' ),
+			array( '101', '2000-01-01 00:00:00.000000' ),
+			array( '0', '0000-00-00 00:00:00.000000' ),
+			array( '-20141021073015', null ),
+			array( '100000000000000', null ),
+			array( 'NULL', null ),
+			array( '20141021073015.125', '2014-10-21 07:30:15.125000' ),
+			array( '(+(20141021073015.5))', '2014-10-21 07:30:15.500000' ),
+			array( '141021073015.125', '2014-10-21 07:30:15.125000' ),
+			array( '20141021073015.125 + 0', '2014-10-21 07:30:15.125000' ),
+			array( '00000615120000.1', '2000-06-15 12:00:00.100000' ),
+			array( '20141021.1', '2014-10-21 00:00:00.000000' ),
+			array( '101.1', '2000-01-01 00:00:00.000000' ),
+			array( '0.1', '0000-00-00 00:00:00.100000' ),
+			array( '000000000000.1', '0000-00-00 00:00:00.100000' ),
+			array( '20141231235959.5', '2014-12-31 23:59:59.500000' ),
+			array( '1.1', null ),
+			array( '-20141021073015.123456', null ),
+		);
+	}
+
+	public function testDateFormatWithIntegerColumn() {
+		$this->assertQuery( 'CREATE TABLE integer_dates (value BIGINT)' );
+		$this->assertQuery( 'INSERT INTO integer_dates VALUES (20141021073015), (141021073015), (0), (NULL)' );
+		$result = $this->assertQuery( "SELECT DATE_FORMAT(value, '%Y-%m-%d %T') AS formatted FROM integer_dates ORDER BY value" );
+		$this->assertSame(
+			array( null, '0000-00-00 00:00:00', '2014-10-21 07:30:15', '2014-10-21 07:30:15' ),
+			array_column( $result, 'formatted' )
+		);
+	}
+
+	public function testDateFormatPreservesInputTypes() {
+		$result = $this->assertQuery(
+			"SELECT
+				DATE_FORMAT(0, '%Y-%m-%d') AS numeric_zero,
+				DATE_FORMAT('0', '%Y-%m-%d') AS string_zero,
+				DATE_FORMAT(101, '%Y-%m-%d') AS numeric_date,
+				DATE_FORMAT('101', '%Y-%m-%d') AS string_date,
+				DATE_FORMAT('00000615120000', '%Y-%m-%d') AS year_zero,
+				DATE_FORMAT('2014''10''21', '%Y-%m-%d') AS quoted_date,
+				DATE_FORMAT(x'323031342D31302D3231', '%Y-%m-%d') AS binary_date,
+				DATE_FORMAT('2014-10-21', 20141021073015) AS integer_format"
+		);
+		$this->assertSame(
+			array( '0000-00-00', null, '2000-01-01', null, '0000-06-15', '2014-10-21', '2014-10-21', '20141021073015' ),
+			array_values( (array) $result[0] )
+		);
+	}
+
+	/**
+	 * @dataProvider unixTimeFormats
+	 */
+	public function testFromUnixTimeWithFormat( $timestamp, $format, $expected ) {
+		$result = $this->assertQuery( 'SELECT FROM_UNIXTIME(' . $timestamp . ', ' . $this->sqlite->quote( $format ) . ') AS formatted' );
+		$this->assertSame( $expected, $result[0]->formatted );
+	}
+
+	public static function unixTimeFormats() {
+		return array(
+			array( 0, '%Y-%m-%d %H:%i:%s.%f', '1970-01-01 00:00:00.000000' ),
+			array( 1413876615, '%W, %M %e %r', 'Tuesday, October 21 07:30:15 AM' ),
+			array( 1419811200, '%U|%u|%V|%v|%X|%x', '52|53|52|01|2014|2015' ),
+			array( 0, '%%Y %q %', '%Y q %' ),
+			array( 0, '', null ),
+		);
+	}
+
+	public function testDateFormatWithDynamicFormat() {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('2014-10-21', '%W, %M %e')"
+		);
+		$results = $this->assertQuery(
+			'SELECT DATE_FORMAT(option_name, option_value) AS formatted FROM _options'
+		);
+
+		$this->assertSame( 'Tuesday, October 21', $results[0]->formatted );
 	}
 
 	public function testInsertOnDuplicateKey() {
@@ -4008,7 +4214,52 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	}
 
 	public static function scalarComparisons() {
+		$date = "DATE_FORMAT('2014-10-21 07:30:15', '%H.%i')";
 		return array(
+			array( "$date = 7.30", '1' ),
+			array( "$date <> 7.30", '0' ),
+			array( "$date != 7.30", '0' ),
+			array( "$date < 7.31", '1' ),
+			array( "$date > 7.29", '1' ),
+			array( "$date <= 7.30", '1' ),
+			array( "$date >= 7.30", '1' ),
+			array( "7.30 = $date", '1' ),
+			array( "7.31 > $date", '1' ),
+			array( "$date = '07.30'", '1' ),
+			array( "$date = '7.30'", '0' ),
+			array( "$date = '7.3'", '0' ),
+			array( "$date = 7 + 0.3", '1' ),
+			array( "$date = -(-7.3)", '1' ),
+			array( "$date = +7.3", '1' ),
+			array( "$date = +'7.30'", '0' ),
+			array( "+$date = '7.30'", '0' ),
+			array( "($date = 7.3) = '1'", '1' ),
+			array( "$date IS NULL = '0'", '1' ),
+			array( "$date = CAST(7.3 AS DECIMAL(4,2))", '1' ),
+			array( "CAST($date AS CHAR) = 7.3", '1' ),
+			array( "(($date)) = ((7.3))", '1' ),
+			array( "$date = 7.3 = '1'", '1' ),
+			array( "$date <=> 7.3", '1' ),
+			array( "$date = NULL", null ),
+			array( "$date <=> NULL", '0' ),
+			array( "DATE_FORMAT(NULL, '%H.%i') = 7.3", null ),
+			array( "DATE_FORMAT(NULL, '%H.%i') <=> NULL", '1' ),
+			array( "DATE_FORMAT('0000-00-00', '%Y') = 0", '1' ),
+			array( "DATE_FORMAT('0000-00-00', '%M') = 0", null ),
+			array( "DATE_FORMAT('2014-10-21', '%M') = 0", '1' ),
+			array( "DATE_FORMAT('2014-10-21 07:30:15', CONCAT('%H.', '%i')) = 7.3", '1' ),
+			array( "$date BETWEEN 7.2 AND 7.4", '1' ),
+			array( "$date NOT BETWEEN 7.2 AND 7.4", '0' ),
+			array( "$date BETWEEN '7.3' AND 7.4", '1' ),
+			array( "$date BETWEEN '07.29' AND '07.31'", '1' ),
+			array( "$date BETWEEN 7.2 AND NULL", null ),
+			array( "$date IN (7.3)", '1' ),
+			array( "$date IN (7.2, 7.3)", '1' ),
+			array( "$date NOT IN (7.2, 7.3)", '0' ),
+			array( "$date IN (7.2, NULL)", null ),
+			array( "$date IN (7.3, NULL)", '1' ),
+			array( "$date IN ('7.30', '7.3')", '0' ),
+			array( "$date IN ('07.30', '7.3')", '1' ),
 			array( "'00.42' = 0.4200", '1' ),
 			array( "'1234abcd' = 1234", '1' ),
 			array( "'abcd' = 0", '1' ),
