@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/fixtures/WP_MySQL_Date_Time_Test_Cases.php';
+
 use PHPUnit\Framework\TestCase;
 
 class WP_MySQL_Date_Time_Tests extends TestCase {
@@ -155,5 +157,33 @@ class WP_MySQL_Date_Time_Tests extends TestCase {
 			array( 100000000000000.0, null ),
 			array( -20141021, null ),
 		);
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_formats
+	 */
+	public function testDateFormats( $format, $expected ) {
+		$this->assertSame( $expected, WP_MySQL_Date_Time::format( '2014-10-21 07:30:15.123456', $format ) );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_week_boundaries
+	 */
+	public function testDateFormatWeekBoundaries( $date, $expected ) {
+		$this->assertSame( $expected, WP_MySQL_Date_Time::format( $date, '%U|%u|%V|%v|%X|%x' ) );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_inputs
+	 */
+	public function testDateFormatInputs( $date, $format, $expected ) {
+		$this->assertSame( $expected, WP_MySQL_Date_Time::format( $date, $format ) );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_runtime_inputs
+	 */
+	public function testDateFormatRuntimeInputs( $date, $expected ) {
+		$this->assertSame( $expected, WP_MySQL_Date_Time::format( $date, '%Y-%m-%d %H:%i:%s.%f' ) );
 	}
 }
