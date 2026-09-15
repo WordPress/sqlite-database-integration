@@ -4290,6 +4290,10 @@ class WP_MySQL_On_SQLite extends PDO {
 					return null;
 				}
 				return $this->translate_sequence( $node->get_children() );
+			case 'boolPri':
+				return $this->translate_comparison( $node );
+			case 'predicate':
+				return $this->translate_predicate( $node );
 			case 'simpleExprBody':
 				return $this->translate_simple_expr_body( $node );
 			case 'predicateOperations':
@@ -4860,6 +4864,161 @@ class WP_MySQL_On_SQLite extends PDO {
 	}
 
 	/**
+	 * Translate comparisons, applying MySQL coercion for known operand types.
+	 *
+	 * @see https://dev.mysql.com/doc/refman/8.0/en/type-conversion.html
+	 *
+	 * @param WP_Parser_Node $node The "boolPri" AST node.
+	 * @return string The translated expression.
+	 */
+	private function translate_comparison( WP_Parser_Node $node ): string {
+		/*
+		 * [GRAMMAR]
+		 * boolPri: predicate (
+		 *   IS_SYMBOL notRule? NULL_SYMBOL
+		 *   | compOp (ALL_SYMBOL | ANY_SYMBOL) subquery
+		 *   | compOp predicate
+		 * )*
+		 */
+		if ( ! $node->has_child_node( 'compOp' ) ) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		$children  = $node->get_children();
+		$left      = $this->translate( $children[0] );
+		$left_type = $this->infer_scalar_expression_type( $children[0] );
+
+		// Evaluate "a = b = c" as "(a = b) = c". Comparisons return 1, 0, or NULL.
+		for ( $i = 1; $i < count( $children ); ++$i ) {
+			$child = $children[ $i ];
+			if ( ! $child instanceof WP_Parser_Node || 'compOp' !== $child->rule_name ) {
+				$left     .= ' ' . $this->translate( $child );
+				$left_type = 'number';
+				continue;
+			}
+
+			$right_node = $children[ ++$i ];
+			$right      = $this->translate( $right_node );
+			$right_type = $this->infer_scalar_expression_type( $right_node );
+			if (
+				( 'string' === $left_type && 'number' === $right_type )
+				|| ( 'number' === $left_type && 'string' === $right_type )
+			) {
+				$left  = 'CAST(' . $left . ' AS REAL)';
+				$right = 'CAST(' . $right . ' AS REAL)';
+			} elseif (
+				( 'string' === $left_type && 'binary' === $right_type )
+				|| ( 'binary' === $left_type && 'string' === $right_type )
+			) {
+				$left  = 'CAST(' . $left . ' AS BLOB)';
+				$right = 'CAST(' . $right . ' AS BLOB)';
+			}
+
+			/*
+			 * Translate MySQL null-safe equality operator (<=>).
+			 *
+			 * MySQL's "2 <=> TRUE" is false, but SQLite's "2 IS TRUE" is true.
+			 * Use "(2, 0) IS (TRUE, 0)" to compare values instead, retaining
+			 * NULL equality and evaluating each operand only once.
+			 */
+			if ( $child->has_child_token( WP_MySQL_Lexer::NULL_SAFE_EQUAL_OPERATOR ) ) {
+				$operator = 'IS';
+
+				// Keep row operands and subqueries unchanged, they don't need special handling.
+				$expression = $right_node;
+				while ( 1 === count( $expression->get_child_nodes() ) && ! $expression->has_child_node( 'subquery' ) ) {
+					$expression = $expression->get_first_child_node();
+				}
+
+				// Translate scalar "A <=> B" to "(A, 0) IS (B, 0)".
+				if ( 'exprList' !== $expression->rule_name && ! $expression->has_child_node( 'subquery' ) ) {
+					$left  = '(' . $left . ', 0)';
+					$right = '(' . $right . ', 0)';
+				}
+			} else {
+				$operator = $this->translate( $child );
+			}
+
+			$left      = ( $i > 2 ? '(' . $left . ')' : $left ) . ' ' . $operator . ' ' . $right;
+			$left_type = 'number';
+		}
+		return $left;
+	}
+
+	/**
+	 * Translate BETWEEN and IN comparisons, applying MySQL numeric coercion.
+	 *
+	 * @param WP_Parser_Node $node The "predicate" AST node.
+	 * @return string The translated expression.
+	 */
+	private function translate_predicate( WP_Parser_Node $node ): string {
+		/*
+		 * [GRAMMAR]
+		 * predicate: bitExpr (notRule? predicateOperations | ...)?
+		 * predicateOperations:
+		 *   IN_SYMBOL (subquery | OPEN_PAR_SYMBOL exprList CLOSE_PAR_SYMBOL)
+		 *   | BETWEEN_SYMBOL bitExpr AND_SYMBOL predicate
+		 *   | ...
+		 */
+		$operation = $node->get_first_child_node( 'predicateOperations' );
+		if ( null === $operation ) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		// Handle only BETWEEN and IN lists.
+		$list       = $operation->get_first_child_node( 'exprList' );
+		$is_between = $operation->has_child_token( WP_MySQL_Lexer::BETWEEN_SYMBOL );
+		$is_in_list = null !== $list;
+		if ( ! $is_between && ! $is_in_list ) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		$operands = array_merge(
+			array( $node->get_first_child_node( 'bitExpr' ) ),
+			$is_between ? $operation->get_child_nodes() : $list->get_child_nodes()
+		);
+
+		// Only rewrite comparisons whose operands have known string, numeric, or NULL types.
+		$types = array();
+		foreach ( $operands as $operand ) {
+			$type = $this->infer_scalar_expression_type( $operand );
+			if ( null === $type || 'binary' === $type ) {
+				// Leave unknown and binary types to the normal translation path.
+				return $this->translate_sequence( $node->get_children() );
+			}
+			$types[] = $type;
+		}
+
+		// Comparisons without both string and numeric operands need no conversion.
+		if ( ! in_array( 'string', $types, true ) || ! in_array( 'number', $types, true ) ) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		$not         = $node->has_child_node( 'notRule' );
+		$right_types = array_slice( $types, 1 );
+
+		// TODO: Support mixed-type IN lists, choosing string or numeric comparison
+		//       for each item, without evaluating any operand more than once.
+		if (
+			$is_in_list
+			&& in_array( 'string', $right_types, true )
+			&& in_array( 'number', $right_types, true )
+		) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		// All remaining cases use numeric comparison for every operand.
+		$values = array();
+		foreach ( $operands as $operand ) {
+			$values[] = 'CAST(' . $this->translate( $operand ) . ' AS REAL)';
+		}
+		$left = array_shift( $values ) . ( $not ? ' NOT' : '' );
+		return $is_between
+			? $left . ' BETWEEN ' . implode( ' AND ', $values )
+			: $left . ' IN (' . implode( ', ', $values ) . ')';
+	}
+
+	/**
 	 * Translate a MySQL CAST expression to SQLite.
 	 *
 	 * Shared by the CAST(expr AS type) and CONVERT(expr, type) forms.
@@ -5059,33 +5218,6 @@ class WP_MySQL_On_SQLite extends PDO {
 					);
 				}
 
-				/*
-				 * MySQL supports comparing strings and floats, e.g.
-				 *
-				 * > SELECT '00.42' = 0.4200
-				 * 1
-				 *
-				 * SQLite does not support that. At the same time,
-				 * WordPress likes to filter dates by comparing numeric
-				 * outputs of DATE_FORMAT() to floats, e.g.:
-				 *
-				 *     -- Filter by hour and minutes
-				 *     DATE_FORMAT(
-				 *         STR_TO_DATE('2014-10-21 00:42:29', '%Y-%m-%d %H:%i:%s'),
-				 *         '%H.%i'
-				 *     ) = 0.4200;
-				 *
-				 * Let's cast the STRFTIME() output to a float if
-				 * the date format is typically used for string
-				 * to float comparisons.
-				 *
-				 * In the future, let's update WordPress to avoid comparing
-				 * strings and floats.
-				 */
-				$cast_to_float = "'%H.%i'" === $mysql_format;
-				if ( true === $cast_to_float ) {
-					return sprintf( 'CAST(STRFTIME(%s, %s) AS FLOAT)', $format, $date );
-				}
 				return sprintf( 'STRFTIME(%s, %s)', $format, $date );
 			case 'CHAR_LENGTH':
 				// @TODO LENGTH and CHAR_LENGTH aren't always the same in MySQL for utf8 characters.
@@ -6345,6 +6477,74 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 
 			$this->last_column_meta[] = $stmt->getColumnMeta( $i );
+		}
+	}
+
+	/**
+	 * Infer the scalar type of an expression when it can be determined statically.
+	 *
+	 * Uses syntax and known function return types without consulting table metadata.
+	 * Returns NULL when the type cannot be inferred.
+	 *
+	 * @param WP_Parser_Node $node The expression AST node.
+	 * @return string|null "string", "number", "binary", "null", or NULL for an unknown type.
+	 */
+	private function infer_scalar_expression_type( WP_Parser_Node $node ): ?string {
+		$node     = $this->unnest_parenthesized_expression( $node );
+		$children = $node->get_children();
+		if ( 1 === count( $children ) && $children[0] instanceof WP_Parser_Node ) {
+			return $this->infer_scalar_expression_type( $children[0] );
+		}
+		switch ( $node->rule_name ) {
+			case 'numLiteral':
+			case 'boolLiteral':
+				return 'number';
+			case 'literal':
+				if (
+					$node->has_child_token( WP_MySQL_Lexer::HEX_NUMBER )
+					|| $node->has_child_token( WP_MySQL_Lexer::BIN_NUMBER )
+				) {
+					return 'binary';
+				}
+				return null;
+			case 'textStringLiteral':
+				return 'string';
+			case 'nullLiteral':
+				return 'null';
+			case 'functionCall':
+				$name = $this->translate( $node->get_first_child_node() );
+				$name = strtoupper( $this->unquote_sqlite_identifier( $name ) );
+				return in_array( $name, array( 'DATE_FORMAT', 'CONCAT' ), true ) ? 'string' : null;
+			case 'simpleExprBody':
+				$cast_type = $node->get_first_child_node( 'castType' );
+				if ( null !== $cast_type ) {
+					$type = $this->translate( $cast_type );
+					if ( in_array( $type, array( 'INTEGER', 'REAL' ), true ) ) {
+						return 'number';
+					}
+					if (
+						$cast_type->has_child_token( WP_MySQL_Lexer::CHAR_SYMBOL )
+						|| $cast_type->has_child_node( 'nchar' )
+					) {
+						return 'string';
+					}
+					return null;
+				}
+				if ( $node->has_child_token( WP_MySQL_Lexer::PLUS_OPERATOR ) ) {
+					return $this->infer_scalar_expression_type( $node->get_first_child_node( 'simpleExpr' ) );
+				}
+				if ( $node->has_child_token( WP_MySQL_Lexer::MINUS_OPERATOR ) ) {
+					return 'number';
+				}
+				return null;
+			case 'boolPri':
+			case 'predicate':
+				return 'number';
+			case 'bitExpr':
+				// Date arithmetic has temporal comparison rules, so leave it to its translator.
+				return null === $node->get_first_descendant_token( WP_MySQL_Lexer::INTERVAL_SYMBOL ) ? 'number' : null;
+			default:
+				return null;
 		}
 	}
 

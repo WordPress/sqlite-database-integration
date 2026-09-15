@@ -84,6 +84,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		return $this->last_result;
 	}
 
+	private function createSqliteFunction( string $name, callable $callback ): void {
+		if ( $this->sqlite instanceof Pdo\Sqlite ) {
+			$this->sqlite->createFunction( $name, $callback );
+		} else {
+			$this->sqlite->sqliteCreateFunction( $name, $callback );
+		}
+	}
+
 	private function getLastColumnMeta(): array {
 		$column_meta  = array();
 		$column_count = $this->last_statement->columnCount();
@@ -3991,12 +3999,326 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( 2, $results[0]->cnt );
 	}
 
+	/**
+	 * @dataProvider scalarComparisons
+	 */
+	public function testScalarComparison( $expression, $expected ) {
+		$results = $this->assertQuery( 'SELECT ' . $expression . ' AS comparison' );
+		$this->assertSame( $expected, $results[0]->comparison );
+	}
+
+	public static function scalarComparisons() {
+		return array(
+			array( "'00.42' = 0.4200", '1' ),
+			array( "'1234abcd' = 1234", '1' ),
+			array( "'abcd' = 0", '1' ),
+			array( "'01' = TRUE", '1' ),
+			array( "TRUE = '01'", '1' ),
+			array( "'00' = FALSE", '1' ),
+			array( "FALSE = '00'", '1' ),
+			array( "'02' = TRUE", '0' ),
+			array( "'00' IN (TRUE, FALSE)", '1' ),
+			array( "'01' BETWEEN FALSE AND TRUE", '1' ),
+			array( 'NULL = TRUE', null ),
+			array( '2 <=> (SELECT TRUE)', '0' ),
+			array( '(SELECT 2) <=> TRUE', '0' ),
+			array( '(1, NULL) <=> (1, NULL)', '1' ),
+			array( '(1, NULL) <=> (1, 0)', '0' ),
+			array( '((1, NULL)) <=> ((1, NULL))', '1' ),
+			array( '(1, NULL) <=> (SELECT 1, NULL)', '1' ),
+			array( '(SELECT 1, NULL) <=> (1, NULL)', '1' ),
+			array( '(SELECT 1, NULL) <=> (SELECT 1, NULL)', '1' ),
+			array( '(1, TRUE) <=> (1, 2)', '0' ),
+			array( '(1, NULL) <=> (1, NULL) <=> TRUE', '1' ),
+			array( 'NULL <=> (SELECT TRUE WHERE FALSE)', '1' ),
+			array( '2 <=> +TRUE', '0' ),
+			array( '-1 <=> -TRUE', '1' ),
+			array( '2 <=> TRUE', '0' ),
+			array( 'TRUE <=> 2', '0' ),
+			array( '1 <=> TRUE', '1' ),
+			array( '0 <=> FALSE', '1' ),
+			array( 'FALSE <=> 0', '1' ),
+			array( '0.5 <=> TRUE', '0' ),
+			array( '0.5 <=> FALSE', '0' ),
+			array( 'NULL <=> TRUE', '0' ),
+			array( 'NULL <=> FALSE', '0' ),
+			array( 'NULL <=> NULL', '1' ),
+			array( '2 <=> ((TRUE))', '0' ),
+			array( '2 <=> BINARY TRUE', '0' ),
+			array( '2 <=> (BINARY (TRUE))', '0' ),
+			array( '0.5 <=> BINARY FALSE', '0' ),
+			array( '1 <=> BINARY TRUE', '1' ),
+			array( '0 <=> BINARY FALSE', '1' ),
+			array( '2 <=> (TRUE COLLATE `binary`)', '0' ),
+			array( '0 <=> ((FALSE) COLLATE `binary`)', '1' ),
+			array( '2 <=> ((TRUE COLLATE `binary`) COLLATE `binary`)', '0' ),
+			array( 'NULL <=> BINARY TRUE', '0' ),
+			array( '((TRUE)) <=> 2', '0' ),
+			array( '0 <=> ((FALSE))', '1' ),
+			array( '2 <=> (TRUE + 1)', '1' ),
+			array( '1.5 <=> (TRUE + 0.5)', '1' ),
+			array( '0 <=> (TRUE AND FALSE)', '1' ),
+			array( '1 <=> (FALSE OR TRUE)', '1' ),
+			array( '2 <=> TRUE <=> FALSE', '1' ),
+			array( '(1 + 1) <=> TRUE', '0' ),
+			array( '2 <=> TRUE = FALSE', '1' ),
+			array( '2 IS TRUE', '1' ),
+			array( '0.5 IS FALSE', '0' ),
+			array( "CAST('01' AS NCHAR) = 1", '1' ),
+			array( "1 = CAST('01' AS NCHAR)", '1' ),
+			array( "CAST('01' AS NATIONAL CHAR) = 1", '1' ),
+			array( "CAST('01' AS NCHAR(2)) = 1", '1' ),
+			array( "CONVERT('01', NCHAR) = 1", '1' ),
+			array( "CAST('01' AS NCHAR) = '1'", '0' ),
+			array( 'CAST(NULL AS NCHAR) = 1', null ),
+			array( "'2' < '10'", '0' ),
+			array( "'2' < 10", '1' ),
+			array( "CONCAT('0', '7.30') = 7.3", '1' ),
+			array( 'FROM_UNIXTIME(0) = 1970', '0' ),
+			array( "7.3 IN ('07.30', '08.30')", '1' ),
+			array( "7.3 BETWEEN '07.20' AND '07.40'", '1' ),
+			array( '9007199254740992 = 9007199254740993', '0' ),
+			array( "'9007199254740992' = 9007199254740993", '1' ),
+			array( "'a' = 0x61", '1' ),
+			array( "'A' = 0x61", '0' ),
+			array( "0x61 = 'a'", '1' ),
+			array( "'a' = x'61'", '1' ),
+			array( "'7.3' = 7.3 < 2", '1' ),
+			array( "'7.3' = (7.3 < 2)", '0' ),
+			array( "'7.3' = 7.3 = '1'", '1' ),
+		);
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInOrderBy( $literal ) {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( "SELECT ID FROM _options ORDER BY $literal, ID DESC" );
+		$this->assertSame( array( '2', '1' ), array_column( $result, 'ID' ) );
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInGroupBy( $literal ) {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( "SELECT COUNT(*) AS total FROM _options GROUP BY $literal" );
+		$this->assertSame( array( '2' ), array_column( $result, 'total' ) );
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInCompoundOrderBy( $literal ) {
+		$result = $this->assertQuery( "SELECT $literal AS b, 1 AS n UNION ALL SELECT $literal, 2 ORDER BY $literal, n DESC LIMIT 1" );
+		$this->assertSame( array( '2' ), array_column( $result, 'n' ) );
+	}
+
+	public static function booleanLiterals() {
+		return array(
+			array( 'TRUE' ),
+			array( 'FALSE' ),
+			array( '(TRUE)' ),
+			array( '((FALSE))' ),
+			array( '+TRUE' ),
+			array( '-FALSE' ),
+			array( '-((+TRUE))' ),
+			array( '+((-FALSE))' ),
+			array( 'BINARY TRUE' ),
+			array( 'BINARY FALSE' ),
+		);
+	}
+
+	public function testNullSafeComparisonWithQuotedBooleanColumnNames() {
+		$this->assertQuery( 'CREATE TABLE bool_names (`true` INT, `false` INT)' );
+		$this->assertQuery( 'INSERT INTO bool_names VALUES (7, 8)' );
+		$result = $this->assertQuery( 'SELECT 7 <=> `true` AS t, 8 <=> `false` AS f, `true` <=> 7 AS lt, `false` <=> 8 AS lf FROM bool_names' );
+		$this->assertSame( '1', $result[0]->t );
+		$this->assertSame( '1', $result[0]->f );
+		$this->assertSame( '1', $result[0]->lt );
+		$this->assertSame( '1', $result[0]->lf );
+	}
+
+	/**
+	 * @dataProvider booleanComparisonOperators
+	 */
+	public function testBooleanLiteralsWithComparisonOperators( $operator, $expected ) {
+		$this->assertQuery( 'CREATE TABLE bool_names (t INT, f INT)' );
+		$this->assertQuery( 'INSERT INTO bool_names VALUES (7, 8)' );
+		$result = $this->assertQuery( "SELECT TRUE $operator 2 AS lhs, 1 $operator TRUE AS rhs, FALSE $operator 0 AS zero FROM bool_names" );
+		$this->assertSame( $expected, array( $result[0]->lhs, $result[0]->rhs, $result[0]->zero ) );
+	}
+
+	public static function booleanComparisonOperators() {
+		return array(
+			array( '=', array( '0', '1', '1' ) ),
+			array( '<=>', array( '0', '1', '1' ) ),
+			array( '<>', array( '1', '0', '0' ) ),
+			array( '!=', array( '1', '0', '0' ) ),
+			array( '<', array( '1', '0', '0' ) ),
+			array( '>', array( '0', '0', '0' ) ),
+			array( '<=', array( '1', '1', '1' ) ),
+			array( '>=', array( '0', '1', '1' ) ),
+		);
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInUpdateOrderBy( $literal ) {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$this->assertQuery( "UPDATE _options SET option_value = 'changed' ORDER BY $literal, ID DESC LIMIT 1" );
+		$result = $this->assertQuery( "SELECT ID FROM _options WHERE option_value = 'changed'" );
+		$this->assertSame( array( '2' ), array_column( $result, 'ID' ) );
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInDeleteOrderBy( $literal ) {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$this->assertQuery( "DELETE FROM _options ORDER BY $literal, ID DESC LIMIT 1" );
+		$result = $this->assertQuery( 'SELECT ID FROM _options' );
+		$this->assertSame( array( '1' ), array_column( $result, 'ID' ) );
+	}
+
+	public function testNullSafeComparisonPreservesColumnAffinity() {
+		$this->assertQuery( 'CREATE TABLE comparison_values (id INT, n INT, s VARCHAR(10))' );
+		$this->assertQuery( "INSERT INTO comparison_values VALUES (1, 1, '1'), (2, 2, '2'), (3, NULL, NULL)" );
+		$result = $this->assertQuery( "SELECT 1 <=> s AS text_rhs, '1' <=> n AS number_rhs, n <=> s AS both_columns FROM comparison_values ORDER BY id" );
+		$this->assertSame( array( '1', '0', '0' ), array_column( $result, 'text_rhs' ) );
+		$this->assertSame( array( '1', '0', '0' ), array_column( $result, 'number_rhs' ) );
+		$this->assertSame( array( '1', '1', '1' ), array_column( $result, 'both_columns' ) );
+	}
+
+	public function testNullSafeComparisonEvaluatesEachOperandOnce() {
+		$calls = 0;
+		$this->createSqliteFunction(
+			'next_boolean_operand',
+			static function ( $value ) use ( &$calls ) {
+				++$calls;
+				return $value;
+			}
+		);
+		$result = $this->assertQuery( 'SELECT next_boolean_operand(2) <=> ((TRUE)) AS result' );
+		$this->assertSame( '0', $result[0]->result );
+		$this->assertSame( 1, $calls );
+		$calls  = 0;
+		$result = $this->assertQuery( 'SELECT next_boolean_operand(NULL) <=> next_boolean_operand(NULL) AS result' );
+		$this->assertSame( '1', $result[0]->result );
+		$this->assertSame( 2, $calls );
+		$calls  = 0;
+		$result = $this->assertQuery( 'SELECT next_boolean_operand(2) <=> next_boolean_operand(1) AS result' );
+		$this->assertSame( '0', $result[0]->result );
+		$this->assertSame( 2, $calls );
+	}
+
+	public function testNullSafeComparisonPreservesSqliteCollation() {
+		$result = $this->assertQuery( "SELECT 'A' <=> ('a' COLLATE `binary`) AS case_sensitive, 'A' <=> ('a' COLLATE `nocase`) AS case_insensitive" );
+		$this->assertSame( '0', $result[0]->case_sensitive );
+		$this->assertSame( '1', $result[0]->case_insensitive );
+	}
+
+	public function testNullSafeComparisonWithAggregatesAndWindows() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( 'SELECT MAX(ID) <=> TRUE AS lhs, TRUE <=> MAX(ID) AS rhs FROM _options' );
+		$this->assertSame( '0', $result[0]->lhs );
+		$this->assertSame( '0', $result[0]->rhs );
+		$result = $this->assertQuery( 'SELECT ROW_NUMBER() OVER (ORDER BY ID) <=> TRUE AS lhs, TRUE <=> ROW_NUMBER() OVER (ORDER BY ID) AS rhs FROM _options ORDER BY ID' );
+		$this->assertSame( array( '1', '0' ), array_column( $result, 'lhs' ) );
+		$this->assertSame( array( '1', '0' ), array_column( $result, 'rhs' ) );
+	}
+
+	public function testBooleanLiteralsInDefaultsAndComparisons() {
+		$this->assertQuery( 'CREATE TABLE bool_values (id INT, value INT DEFAULT TRUE)' );
+		$this->assertQuery( 'INSERT INTO bool_values (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO bool_values VALUES (2, FALSE), (3, 2), (4, NULL)' );
+		$result = $this->assertQuery( 'SELECT value <=> TRUE AS t, value <=> FALSE AS f FROM bool_values ORDER BY id' );
+		$this->assertSame( array( '1', '0', '0', '0' ), array_column( $result, 't' ) );
+		$this->assertSame( array( '0', '1', '0', '0' ), array_column( $result, 'f' ) );
+	}
+
+	public function testBooleanLiteralPreservesOrderingExpressionsAndPositions() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( 'SELECT ID FROM _options ORDER BY FALSE, (TRUE + ID) DESC, TRUE' );
+		$this->assertSame( array( '2', '1' ), array_column( $result, 'ID' ) );
+		$result = $this->assertQuery( 'SELECT ID FROM _options ORDER BY TRUE, 1 DESC, FALSE' );
+		$this->assertSame( array( '2', '1' ), array_column( $result, 'ID' ) );
+		$result = $this->assertQuery( 'SELECT ID, COUNT(*) AS total FROM _options GROUP BY TRUE, 1, FALSE ORDER BY ID' );
+		$this->assertSame( array( '1', '1' ), array_column( $result, 'total' ) );
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS total FROM _options GROUP BY (TRUE + ID)' );
+		$this->assertSame( array( '1', '1' ), array_column( $result, 'total' ) );
+	}
+
+	public function testBooleanLiteralInWindowAndEmptyGroup() {
+		$this->assertSame( array(), $this->assertQuery( 'SELECT COUNT(*) AS total FROM _options GROUP BY FALSE' ) );
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( 'SELECT RANK() OVER (ORDER BY TRUE) AS r, COUNT(*) OVER (PARTITION BY FALSE) AS total FROM _options' );
+		$this->assertSame( array( '1', '1' ), array_column( $result, 'r' ) );
+		$this->assertSame( array( '2', '2' ), array_column( $result, 'total' ) );
+	}
+
+	/**
+	 * @dataProvider booleanTruthTests
+	 */
+	public function testBooleanTruthTest( $expression, $expected ) {
+		$result = $this->assertQuery( "SELECT $expression AS result" );
+		$this->assertSame( $expected, $result[0]->result );
+	}
+
+	public static function booleanTruthTests() {
+		return array(
+			array( '2 IS TRUE', '1' ),
+			array( '-0.5 IS TRUE', '1' ),
+			array( '0 IS FALSE', '1' ),
+			array( '0.5 IS FALSE', '0' ),
+			array( 'NULL IS TRUE', '0' ),
+			array( 'NULL IS FALSE', '0' ),
+			array( 'NULL IS NOT TRUE', '1' ),
+			array( 'NULL IS NOT FALSE', '1' ),
+			array( 'TRUE IS TRUE', '1' ),
+			array( 'FALSE IS FALSE', '1' ),
+			array( 'TRUE IS NOT FALSE AND FALSE IS NOT TRUE', '1' ),
+			array( 'NULL IS TRUE OR 2 IS TRUE', '1' ),
+		);
+	}
+
+	public function testNumericInEvaluatesEachOperandOnce() {
+		$calls = 0;
+		$this->createSqliteFunction(
+			'next_scalar',
+			static function ( $value ) use ( &$calls ) {
+				++$calls;
+				return $value;
+			}
+		);
+		$result = $this->assertQuery( "SELECT CONCAT(next_scalar('07.30')) IN (0 + next_scalar(7.2), 0 + next_scalar(7.3)) AS comparison" );
+		$this->assertSame( '1', $result[0]->comparison );
+		$this->assertSame( 3, $calls );
+	}
+
+	public function testNumericInPreservesAggregateAndWindowScopes() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('1'), ('2'), ('3')" );
+		$result = $this->assertQuery( 'SELECT CONCAT(COUNT(*)) IN (2, 3) AS comparison FROM _options' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->comparison );
+		$result = $this->assertQuery( "SELECT 3 IN (CONCAT(COUNT(*)), '4') AS comparison FROM _options" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->comparison );
+		$result = $this->assertQuery( 'SELECT CONCAT(ROW_NUMBER() OVER (ORDER BY option_name)) IN (0, 2) AS comparison FROM _options ORDER BY option_name' );
+		$this->assertSame( array( '0', '1', '0' ), array_column( $result, 'comparison' ) );
+	}
+
+	public function testNumericInWithLargeList() {
+		$list   = implode( ', ', range( 1, 300 ) );
+		$result = $this->assertQuery( "SELECT CONCAT('0300') IN ($list) AS comparison" );
+		$this->assertSame( '1', $result[0]->comparison );
+	}
+
 	public function testStringToFloatComparison() {
 		$this->assertQuery( "SELECT ('00.42' = 0.4200) as cmp;" );
 		$results = $this->last_result;
-		if ( 1 !== $results[0]->cmp ) {
-			$this->markTestSkipped( 'Comparing a string and a float returns true in MySQL. In SQLite, they\'re different. Skipping. ' );
-		}
 		$this->assertEquals( '1', $results[0]->cmp );
 
 		$this->assertQuery( "SELECT (0+'00.42' = 0.4200) as cmp;" );
