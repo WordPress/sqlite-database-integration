@@ -22,10 +22,11 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	public static function register_for( $pdo ): self {
 		$instance = new self();
 		foreach ( $instance->functions as $f => $t ) {
+			$deterministic = 'date_format' === $f;
 			if ( $pdo instanceof Pdo\Sqlite ) {
-				$pdo->createFunction( $f, array( $instance, $t ) );
+				$pdo->createFunction( $f, array( $instance, $t ), -1, $deterministic ? Pdo\Sqlite::DETERMINISTIC : 0 );
 			} else {
-				$pdo->sqliteCreateFunction( $f, array( $instance, $t ) );
+				$pdo->sqliteCreateFunction( $f, array( $instance, $t ), -1, $deterministic ? PDO::SQLITE_DETERMINISTIC : 0 );
 			}
 		}
 		return $instance;
@@ -75,6 +76,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'to_base64'                    => 'to_base64',
 		'inet_ntoa'                    => 'inet_ntoa',
 		'inet_aton'                    => 'inet_aton',
+		'date_format'                  => 'dateformat',
 		'datediff'                     => 'datediff',
 		'locate'                       => 'locate',
 		'utc_date'                     => 'utc_date',
@@ -159,7 +161,7 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		// Convert to ISO time.
 		$date = gmdate( 'Y-m-d H:i:s', $field );
 
-		return is_null( $format ) ? $date : $this->dateformat( $date, $format );
+		return is_null( $format ) ? $date : WP_MySQL_Date_Time::format( $date, $format );
 	}
 
 	/**
@@ -263,51 +265,28 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	}
 
 	/**
-	 * Method to emulate MySQL DATEFORMAT() function.
+	 * Emulate MySQL DATE_FORMAT() with a date transported as a SQLite QUOTE() result.
 	 *
-	 * @param string $date   Formatted as '0000-00-00' or datetime as '0000-00-00 00:00:00'.
-	 * @param string $format The string format.
+	 * PDO SQLite truncates integer UDF arguments to 32 bits. QUOTE() preserves
+	 * their full value and distinguishes numeric dates from date strings.
 	 *
-	 * @return string formatted according to $format
+	 * @param string      $date   The quoted date value.
+	 * @param string|null $format The MySQL format.
+	 * @return string|null The formatted date, or NULL for invalid input.
 	 */
 	public function dateformat( $date, $format ) {
-		$mysql_php_date_formats = array(
-			'%a' => 'D',
-			'%b' => 'M',
-			'%c' => 'n',
-			'%D' => 'jS',
-			'%d' => 'd',
-			'%e' => 'j',
-			'%H' => 'H',
-			'%h' => 'h',
-			'%I' => 'h',
-			'%i' => 'i',
-			'%j' => 'z',
-			'%k' => 'G',
-			'%l' => 'g',
-			'%M' => 'F',
-			'%m' => 'm',
-			'%p' => 'A',
-			'%r' => 'h:i:s A',
-			'%S' => 's',
-			'%s' => 's',
-			'%T' => 'H:i:s',
-			'%U' => 'W',
-			'%u' => 'W',
-			'%V' => 'W',
-			'%v' => 'W',
-			'%W' => 'l',
-			'%w' => 'w',
-			'%X' => 'Y',
-			'%x' => 'o',
-			'%Y' => 'Y',
-			'%y' => 'y',
-		);
-
-		$time   = strtotime( $date );
-		$format = strtr( $format, $mysql_php_date_formats );
-
-		return gmdate( $format, $time );
+		if ( 'NULL' === $date ) {
+			return null;
+		}
+		if ( "'" === $date[0] ) {
+			$date = str_replace( "''", "'", substr( $date, 1, -1 ) );
+		} elseif ( 'X' === $date[0] ) {
+			$date = hex2bin( substr( $date, 2, -1 ) );
+		} else {
+			// Valid integer dates fit exactly in a double, including on 32-bit PHP.
+			$date = is_numeric( $date ) ? (float) $date : null;
+		}
+		return WP_MySQL_Date_Time::format( $date, $format );
 	}
 
 	/**
