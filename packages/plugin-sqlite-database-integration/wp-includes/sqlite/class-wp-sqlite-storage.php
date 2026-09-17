@@ -182,6 +182,9 @@ class WP_SQLite_Storage {
 				$this->move_legacy_database( $legacy_path, $database_path );
 			} else {
 				$this->ensure_database( $database_path );
+				// The earlier lock() call only locked the storage because the database
+				// did not exist yet. Lock the new database too, so callers that already
+				// held the storage lock retain both locks after initialization.
 				$this->lock();
 			}
 			return $database_path;
