@@ -115,7 +115,7 @@ class WP_SQLite_Storage {
 		if ( '' === $database_path ) {
 			throw new RuntimeException( 'The SQLite database path is invalid.' );
 		}
-		$this->database_root      = trailingslashit( $database_root ?? FQDBDIR );
+		$this->database_root      = rtrim( $database_root ?? FQDBDIR, '/\\' ) . '/';
 		$this->database_path      = $database_path;
 		$this->database_path_file = $this->database_root . self::DATABASE_PATH_FILENAME;
 		$this->lock_path          = $this->database_root . self::LOCK_FILENAME;
@@ -429,7 +429,7 @@ class WP_SQLite_Storage {
 		if ( ! @is_dir( $directory ) ) {
 			// Create the path one directory at a time to avoid changing the process-wide umask.
 			$missing_directories = array();
-			for ( $path = untrailingslashit( $directory ); ! @is_dir( $path ); $path = dirname( $path ) ) {
+			for ( $path = rtrim( $directory, '/\\' ); ! @is_dir( $path ); $path = dirname( $path ) ) {
 				$missing_directories[] = $path;
 				if ( dirname( $path ) === $path ) {
 					break;
@@ -444,8 +444,8 @@ class WP_SQLite_Storage {
 			}
 		}
 
-		$this->ensure_file( trailingslashit( $directory ) . '.htaccess', 'DENY FROM ALL' );
-		$this->ensure_file( trailingslashit( $directory ) . 'index.php', '<?php // Silence is golden.' );
+		$this->ensure_file( rtrim( $directory, '/\\' ) . '/.htaccess', 'DENY FROM ALL' );
+		$this->ensure_file( rtrim( $directory, '/\\' ) . '/index.php', '<?php // Silence is golden.' );
 	}
 
 	/**

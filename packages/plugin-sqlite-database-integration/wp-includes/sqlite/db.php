@@ -52,6 +52,11 @@ try {
 } catch ( Throwable $exception ) {
 	error_log( 'SQLite database error: ' . (string) $exception );
 
+	// WP-CLI can load the drop-in before wp_die() dependencies are available.
+	if ( defined( 'WP_CLI' ) && WP_CLI ) {
+		WP_CLI::error( $exception->getMessage() );
+	}
+
 	// Use htmlspecialchars() with an explicit charset because esc_html() reads the
 	// blog_charset option, but the database and object cache are not initialized yet.
 	wp_die( htmlspecialchars( $exception->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8' ), 'SQLite database error', array( 'response' => 503 ) );

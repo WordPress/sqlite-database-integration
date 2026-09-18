@@ -28,7 +28,7 @@ if ( ! defined( 'DB_ENGINE' ) ) {
  */
 if ( ! defined( 'FQDBDIR' ) ) {
 	if ( defined( 'DB_DIR' ) ) {
-		define( 'FQDBDIR', trailingslashit( DB_DIR ) );
+		define( 'FQDBDIR', rtrim( DB_DIR, '/\\' ) . '/' );
 	} elseif ( defined( 'WP_CONTENT_DIR' ) ) {
 		define( 'FQDBDIR', WP_CONTENT_DIR . '/database/' );
 	} else {

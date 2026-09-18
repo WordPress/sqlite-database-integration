@@ -65,6 +65,59 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assertFileDoesNotExist( dirname( $second_path ) . '/index.php' );
 	}
 
+	/**
+	 * @dataProvider database_directory_suffixes
+	 */
+	public function test_initializes_custom_database_directory_without_wordpress_helpers( $suffix ) {
+		$database_root = $this->create_temporary_directory_path() . '/nested/database';
+		$plugin_path   = WP_CONTENT_DIR . '/plugins/sqlite-database-integration';
+		$script        = sprintf(
+			'define("DB_DIR", %s); require %s; require %s; $storage = new WP_SQLite_Storage(); echo $storage->initialize();',
+			var_export( $database_root . $suffix, true ),
+			var_export( $plugin_path . '/constants.php', true ),
+			var_export( $plugin_path . '/wp-includes/sqlite/class-wp-sqlite-storage.php', true )
+		);
+
+		$result = $this->close_process( ...$this->open_process( $script ) );
+
+		$this->assertSame( 0, $result['exit_code'], $result['error'] );
+		$this->assertSame( '', $result['error'] );
+		$this->assertSame( $result['output'], require $database_root . '/db-path.php' );
+		$this->assertFileExists( $result['output'] );
+		$this->assert_protected_directory( $database_root );
+		$this->assert_protected_directory( dirname( $result['output'] ) );
+	}
+
+	public function database_directory_suffixes() {
+		return array(
+			'no separator'  => array( '' ),
+			'forward slash' => array( '/' ),
+			'backslash'     => array( '\\' ),
+			'mixed slashes' => array( '/\\/' ),
+		);
+	}
+
+	public function test_reports_storage_errors_before_wordpress_loads_in_wp_cli() {
+		$database_root = $this->create_temporary_directory();
+		$blocked_path  = $database_root . '/blocked';
+		file_put_contents( $blocked_path, 'This file prevents creating the database directory.' );
+		$script = sprintf(
+			'define("WP_CLI", true); define("DB_ENGINE", "sqlite"); define("DB_DIR", %s);
+			class WP_CLI { public static function error($message) { fwrite(STDERR, "Error: " . $message); exit(1); } }
+			ini_set("error_log", %s); require %s;',
+			var_export( $blocked_path . '/database', true ),
+			var_export( $database_root . '/error.log', true ),
+			var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/wp-includes/sqlite/db.php', true )
+		);
+
+		$result = $this->close_process( ...$this->open_process( $script ) );
+
+		$this->assertSame( 1, $result['exit_code'] );
+		$this->assertSame( '', $result['output'] );
+		$this->assertSame( 'Error: Failed to acquire the SQLite storage lock.', $result['error'] );
+		$this->assertStringContainsString( 'SQLite database error: RuntimeException:', file_get_contents( $database_root . '/error.log' ) );
+	}
+
 	public function test_reuses_initialized_storage_with_read_only_database_root() {
 		$database_root = $this->create_temporary_directory_path();
 		$database_path = $this->initialize_managed_storage( $database_root );
@@ -735,7 +788,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 	private function open_storage_process( $database_root, $script ) {
 		$prelude = sprintf(
-			'function trailingslashit($value) { return untrailingslashit($value) . "/"; } function untrailingslashit($value) { return rtrim($value, "/\\\\"); } require %s; $storage = new WP_SQLite_Storage(%s); ',
+			'require %s; $storage = new WP_SQLite_Storage(%s); ',
 			var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-storage.php', true ),
 			var_export( $database_root, true )
 		);
