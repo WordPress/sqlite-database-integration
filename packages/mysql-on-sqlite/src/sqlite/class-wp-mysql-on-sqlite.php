@@ -6305,6 +6305,20 @@ class WP_MySQL_On_SQLite extends PDO {
 				| self::SQL_MODES['ONLY_FULL_GROUP_BY'];
 		}
 
+		if ( ( $sql_modes & self::SQL_MODES['TRADITIONAL'] ) !== 0 ) {
+			$sql_modes |= self::SQL_MODES['STRICT_TRANS_TABLES']
+				| self::SQL_MODES['STRICT_ALL_TABLES']
+				| self::SQL_MODES['NO_ZERO_IN_DATE']
+				| self::SQL_MODES['NO_ZERO_DATE']
+				| self::SQL_MODES['ERROR_FOR_DIVISION_BY_ZERO']
+				| self::SQL_MODES['NO_ENGINE_SUBSTITUTION'];
+
+			// TRADITIONAL included NO_AUTO_CREATE_USER until its removal in MySQL 8.0.11.
+			if ( ! $this->is_sql_mode_removed( 'NO_AUTO_CREATE_USER' ) ) {
+				$sql_modes |= self::SQL_MODES['NO_AUTO_CREATE_USER'];
+			}
+		}
+
 		$this->active_sql_modes = $sql_modes;
 	}
 
