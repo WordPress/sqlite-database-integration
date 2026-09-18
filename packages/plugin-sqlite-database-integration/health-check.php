@@ -33,13 +33,13 @@ function sqlite_plugin_filter_debug_data( $info ) {
 
 		$info['wp-database']['fields']['database_file'] = array(
 			'label'   => __( 'Database file', 'sqlite-database-integration' ),
-			'value'   => FQDB,
+			'value'   => DB_PATH,
 			'private' => true,
 		);
 
 		$info['wp-database']['fields']['database_size'] = array(
 			'label' => __( 'Database size', 'sqlite-database-integration' ),
-			'value' => size_format( filesize( FQDB ) ),
+			'value' => size_format( filesize( DB_PATH ) ),
 		);
 
 		unset( $info['wp-database']['fields']['extension'] );
