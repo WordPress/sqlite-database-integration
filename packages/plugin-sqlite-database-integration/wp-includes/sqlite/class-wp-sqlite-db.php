@@ -447,7 +447,7 @@ class WP_SQLite_DB extends wpdb {
 			$dbh     = new WP_MySQL_On_SQLite(
 				sprintf(
 					'mysql-on-sqlite:path=%s;dbname=%s',
-					str_replace( ';', ';;', FQDB ),
+					str_replace( ';', ';;', DB_PATH ),
 					str_replace( ';', ';;', $this->dbname )
 				),
 				null,

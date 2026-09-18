@@ -108,12 +108,12 @@ class WP_SQLite_Storage {
 	 * Create a SQLite storage manager.
 	 *
 	 * @param string|null $database_root Managed database root. Defaults to FQDBDIR.
-	 * @param string|null $database_path Explicit database path or ":memory:". Managed storage is used when null.
+	 * @param string|null $database_path Absolute database path or ":memory:". Managed storage is used when null.
 	 * @throws RuntimeException When the database path is invalid.
 	 */
 	public function __construct( ?string $database_root = null, ?string $database_path = null ) {
-		if ( '' === $database_path ) {
-			throw new RuntimeException( 'The SQLite database path is invalid.' );
+		if ( null !== $database_path && ! $this->is_valid_database_path( $database_path ) ) {
+			throw new RuntimeException( 'The SQLite database path must be an absolute filesystem path or ":memory:".' );
 		}
 		$this->database_root      = rtrim( $database_root ?? FQDBDIR, '/\\' ) . '/';
 		$this->database_path      = $database_path;
@@ -279,6 +279,32 @@ class WP_SQLite_Storage {
 			// Remove the marker before releasing the lock that protects it.
 			@unlink( $this->maintenance_path );
 			$this->storage_lock_connection = null;
+		}
+	}
+
+	/**
+	 * Validate an explicit database path.
+	 *
+	 * @param string $database_path Absolute database path or ":memory:".
+	 * @return bool Whether the database path is valid.
+	 */
+	private function is_valid_database_path( string $database_path ): bool {
+		if ( ':memory:' === $database_path ) {
+			return true;
+		}
+		if ( '' === $database_path || false !== strpos( $database_path, "\0" ) ) {
+			return false;
+		}
+
+		// Ensure the path is absolute.
+		if ( '/' === DIRECTORY_SEPARATOR ) {
+			return '/' === $database_path[0];
+		} else {
+			// Match Windows absolute path with a drive letter or UNC share.
+			return 1 === preg_match(
+				'~^(?:[a-zA-Z]:/|//[^/]+/[^/]+/)~',
+				str_replace( '\\', '/', $database_path )
+			);
 		}
 	}
 
