@@ -739,6 +739,41 @@ class WP_SQLite_DB extends wpdb {
 	}
 
 	/**
+	 * Strips any invalid characters based on value/charset pairs.
+	 *
+	 * This overrides wpdb::strip_invalid_text() to enable the parent's implementation
+	 * for SQLite when no charset is set, by temporarily using the connection charset.
+	 *
+	 * @see wpdb::strip_invalid_text()
+	 *
+	 * @param array $data Array of value arrays. Each value array has the keys 'value',
+	 *                    'charset', and 'length'. An optional 'ascii' key can be set
+	 *                    to false to avoid redundant ASCII checks.
+	 * @return array|WP_Error The $data parameter, with invalid characters removed from each value.
+	 *                        This works as a passthrough: any additional keys such as 'field' are
+	 *                        retained in each value array. If we cannot remove invalid characters,
+	 *                        a WP_Error object is returned.
+	 */
+	protected function strip_invalid_text( $data ) {
+		$original_charset = $this->charset;
+		if ( $original_charset ) {
+			return parent::strip_invalid_text( $data );
+		}
+
+		/*
+		 * Without a charset, the parent method falls back to the charset of the
+		 * mysqli connection. The emulated MySQL connection always uses utf8mb4
+		 * (see init_charset()), so we use it temporarily instead.
+		 */
+		try {
+			$this->charset = 'utf8mb4';
+			return parent::strip_invalid_text( $data );
+		} finally {
+			$this->charset = $original_charset;
+		}
+	}
+
+	/**
 	 * Method to set the class variable $col_info.
 	 *
 	 * This overrides wpdb::load_col_info(), which uses a mysql function.
