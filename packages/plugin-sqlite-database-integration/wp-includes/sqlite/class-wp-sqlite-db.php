@@ -50,7 +50,6 @@ class WP_SQLite_DB extends wpdb {
 		$GLOBALS['wpdb'] = $this;
 
 		parent::__construct( '', '', $dbname, '' );
-		$this->charset = 'utf8mb4';
 	}
 
 	/**
@@ -230,6 +229,34 @@ class WP_SQLite_DB extends wpdb {
 		$this->has_connected = false;
 
 		return true;
+	}
+
+	/**
+	 * Sets $this->charset and $this->collate.
+	 *
+	 * This extends wpdb::init_charset() to always use the utf8mb4 charset.
+	 *
+	 * SQLite stores all text as UTF-8, and the emulated MySQL connection always
+	 * uses utf8mb4 (see set_charset()). When DB_CHARSET is empty or names another
+	 * charset, the connection charset is used, together with the best compatible
+	 * collation. This way, $this->charset always describes the connection charset,
+	 * and wpdb::get_charset_collate() always specifies an explicit collation.
+	 *
+	 * @see wpdb::init_charset()
+	 */
+	public function init_charset() {
+		parent::init_charset();
+
+		// Without a connection, the charset can't be determined (see determine_charset()).
+		if ( ! $this->dbh || 'utf8mb4' === $this->charset ) {
+			return;
+		}
+
+		// Keep a configured collation only when it's compatible with utf8mb4.
+		$collate         = preg_match( '/^utf8(mb4)?_/i', (string) $this->collate ) ? $this->collate : '';
+		$charset_collate = $this->determine_charset( 'utf8mb4', $collate );
+		$this->charset   = $charset_collate['charset'];
+		$this->collate   = $charset_collate['collate'];
 	}
 
 	/**
@@ -428,6 +455,12 @@ class WP_SQLite_DB extends wpdb {
 			);
 		}
 
+		/*
+		 * Initialize the charset before connecting, as the SQLite driver may need
+		 * it while configuring the database (see the constructor). Without a
+		 * connection, the charset and collation are not resolved yet, so this is
+		 * done again after connecting, when the server capabilities are known.
+		 */
 		if ( ! isset( $this->charset ) ) {
 			$this->init_charset();
 		}
@@ -490,6 +523,10 @@ class WP_SQLite_DB extends wpdb {
 		}
 		if ( $this->last_error ) {
 			return false;
+		}
+
+		if ( ! $this->has_connected ) {
+			$this->init_charset();
 		}
 
 		$this->has_connected = true;
