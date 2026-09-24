@@ -4083,7 +4083,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		// SHOW COLLATION
 		$this->assertQuery( 'SHOW COLLATION' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '7', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertSame( '8', $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW DATABASES
 		$this->assertQuery( 'SHOW DATABASES' );

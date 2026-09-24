@@ -128,6 +128,107 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testTableCollationFromTableOptions(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (a TEXT)' );
+		$this->assertQuery( 'CREATE TABLE t2 (a TEXT COLLATE utf8mb4_bin)' );
+		$this->assertQuery( 'CREATE TABLE t3 (a TEXT) DEFAULT CHARSET=latin1' );
+		$this->assertQuery( 'CREATE TABLE t4 (a TEXT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci' );
+
+		$result = $this->assertQuery(
+			"SELECT table_name, table_collation FROM information_schema.tables WHERE table_schema = 'wp' ORDER BY table_name"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'TABLE_NAME'      => 't1',
+					'TABLE_COLLATION' => 'utf8mb4_0900_ai_ci',
+				),
+				(object) array(
+					'TABLE_NAME'      => 't2',
+					'TABLE_COLLATION' => 'utf8mb4_0900_ai_ci',
+				),
+				(object) array(
+					'TABLE_NAME'      => 't3',
+					'TABLE_COLLATION' => 'latin1_swedish_ci',
+				),
+				(object) array(
+					'TABLE_NAME'      => 't4',
+					'TABLE_COLLATION' => 'utf8mb4_unicode_520_ci',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testColumnCollationInheritedFromTable(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				a VARCHAR(10),
+				b VARCHAR(10) BINARY,
+				c VARCHAR(10) CHARACTER SET utf8mb4,
+				d VARCHAR(10) COLLATE utf8mb4_bin,
+				e INT
+			) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci'
+		);
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN f TEXT' );
+		$this->assertQuery( 'ALTER TABLE t MODIFY COLUMN e VARCHAR(10)' );
+		$this->assertQuery( 'CREATE TABLE t2 (a TEXT) DEFAULT CHARSET=latin1' );
+
+		$result = $this->assertQuery(
+			"SELECT table_name, column_name, character_set_name, collation_name
+			FROM information_schema.columns
+			WHERE table_schema = 'wp'
+			ORDER BY table_name, column_name"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'TABLE_NAME'         => 't',
+					'COLUMN_NAME'        => 'a',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_unicode_520_ci',
+				),
+				(object) array(
+					'TABLE_NAME'         => 't',
+					'COLUMN_NAME'        => 'b',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_bin',
+				),
+				(object) array(
+					'TABLE_NAME'         => 't',
+					'COLUMN_NAME'        => 'c',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_0900_ai_ci',
+				),
+				(object) array(
+					'TABLE_NAME'         => 't',
+					'COLUMN_NAME'        => 'd',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_bin',
+				),
+				(object) array(
+					'TABLE_NAME'         => 't',
+					'COLUMN_NAME'        => 'e',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_unicode_520_ci',
+				),
+				(object) array(
+					'TABLE_NAME'         => 't',
+					'COLUMN_NAME'        => 'f',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'COLLATION_NAME'     => 'utf8mb4_unicode_520_ci',
+				),
+				(object) array(
+					'TABLE_NAME'         => 't2',
+					'COLUMN_NAME'        => 'a',
+					'CHARACTER_SET_NAME' => 'latin1',
+					'COLLATION_NAME'     => 'latin1_swedish_ci',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testInfromationSchemaCollations(): void {
 		$result = $this->assertQuery( 'SELECT * FROM INFORMATION_SCHEMA.COLLATIONS ORDER BY COLLATION_NAME' );
 		$this->assertEquals(
@@ -184,6 +285,15 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 					'IS_DEFAULT'         => '',
 					'IS_COMPILED'        => 'Yes',
 					'SORTLEN'            => '1',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_unicode_520_ci',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'ID'                 => '246',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '8',
 					'PAD_ATTRIBUTE'      => 'PAD SPACE',
 				),
 				(object) array(
@@ -516,19 +626,20 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		// Simple.
 		$this->assertQuery( 'SHOW COLLATION' );
 		$actual = $this->last_result;
-		$this->assertCount( 7, $actual );
+		$this->assertCount( 8, $actual );
 		$this->assertEquals( 'binary', $actual[0]->Collation );
 		$this->assertEquals( 'utf8_bin', $actual[1]->Collation );
 		$this->assertEquals( 'utf8_general_ci', $actual[2]->Collation );
 		$this->assertEquals( 'utf8_unicode_ci', $actual[3]->Collation );
 		$this->assertEquals( 'utf8mb4_bin', $actual[4]->Collation );
 		$this->assertEquals( 'utf8mb4_unicode_ci', $actual[5]->Collation );
-		$this->assertEquals( 'utf8mb4_0900_ai_ci', $actual[6]->Collation );
+		$this->assertEquals( 'utf8mb4_unicode_520_ci', $actual[6]->Collation );
+		$this->assertEquals( 'utf8mb4_0900_ai_ci', $actual[7]->Collation );
 
 		// With LIKE clause.
 		$this->assertQuery( "SHOW COLLATION LIKE 'utf8%'" );
 		$actual = $this->last_result;
-		$this->assertCount( 6, $actual );
+		$this->assertCount( 7, $actual );
 		$this->assertEquals( 'utf8_bin', $actual[0]->Collation );
 		$this->assertEquals( 'utf8_general_ci', $actual[1]->Collation );
 		$this->assertEquals( 'utf8_unicode_ci', $actual[2]->Collation );
