@@ -12,7 +12,9 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	private const SQL_MODE_NOT_USED                 = 1 << 4;
 	private const SQL_MODE_POSTGRESQL               = 1 << 8;
 	private const SQL_MODE_ORACLE                   = 1 << 9;
+	private const SQL_MODE_ANSI                     = 1 << 18;
 	private const SQL_MODE_NO_BACKSLASH_ESCAPES     = 1 << 20;
+	private const SQL_MODE_TRADITIONAL              = 1 << 27;
 	private const SQL_MODE_TIME_TRUNCATE_FRACTIONAL = 1 << 32;
 	private const UNKNOWN_SQL_MODE_BIT              = 1 << 33;
 
@@ -3336,6 +3338,135 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			'REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI,STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION',
 			$results[0]->mode
 		);
+	}
+
+	/**
+	 * @dataProvider compositeTraditionalModeValues
+	 */
+	public function testCompositeTraditionalModeExpandsToComponentModes(
+		int $mysql_version,
+		string $value,
+		string $expected_modes
+	): void {
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array(
+				'sqlite_pdo'    => $this->sqlite,
+				'mysql_version' => $mysql_version,
+			)
+		);
+
+		$this->assertQuery( "SET sql_mode = 'ANSI'" );
+		$this->assertQuery( "SET sql_mode = $value" );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode' );
+		$this->assertSame( $expected_modes, $this->last_result[0]->mode );
+		foreach ( explode( ',', $expected_modes ) as $mode ) {
+			$this->assertTrue( $this->engine->is_sql_mode_active( $mode ), $mode );
+		}
+		$this->assertFalse( $this->engine->is_sql_mode_active( 'ANSI' ) );
+		$this->assertFalse( $this->engine->is_sql_mode_active( 'ONLY_FULL_GROUP_BY' ) );
+
+		// Reassigning the expanded value must preserve the same modes.
+		$this->assertQuery( 'SET sql_mode = @@sql_mode' );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode' );
+		$this->assertSame( $expected_modes, $this->last_result[0]->mode );
+
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'SELECT @@sql_mode AS mode' );
+		$this->assertSame( '', $this->last_result[0]->mode );
+		foreach ( explode( ',', $expected_modes ) as $mode ) {
+			$this->assertFalse( $this->engine->is_sql_mode_active( $mode ), $mode );
+		}
+	}
+
+	public static function compositeTraditionalModeValues(): array {
+		$mysql_80_modes = 'STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,TRADITIONAL,NO_ENGINE_SUBSTITUTION';
+		$mysql_57_modes = 'STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,TRADITIONAL,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+		$versions       = array(
+			50709 => $mysql_57_modes,
+			50744 => $mysql_57_modes,
+			80004 => $mysql_57_modes,
+			80011 => $mysql_80_modes,
+			80038 => $mysql_80_modes,
+			80400 => $mysql_80_modes,
+		);
+		$values         = array(
+			'name'                  => "'TRADITIONAL'",
+			'lowercase and overlap' => "'traditional,STRICT_ALL_TABLES,TRADITIONAL'",
+			'bitmap'                => (string) self::SQL_MODE_TRADITIONAL,
+		);
+		$cases          = array();
+		foreach ( $versions as $version => $expected_modes ) {
+			foreach ( $values as $name => $value ) {
+				$cases[ "$version $name" ] = array( $version, $value, $expected_modes );
+			}
+		}
+		return $cases;
+	}
+
+	public function testCompositeTraditionalModeExpandsAlongsideAnsi(): void {
+		$values = array(
+			"'TRADITIONAL,ANSI,STRICT_ALL_TABLES'",
+			self::SQL_MODE_TRADITIONAL | self::SQL_MODE_ANSI,
+		);
+		foreach ( $values as $value ) {
+			$this->assertQuery( "SET sql_mode = $value" );
+			$this->assertQuery( 'SELECT @@sql_mode AS mode' );
+			$this->assertSame(
+				'REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI,STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,TRADITIONAL,NO_ENGINE_SUBSTITUTION',
+				$this->last_result[0]->mode
+			);
+		}
+	}
+
+	/**
+	 * @dataProvider compositeTraditionalModeInvalidDates
+	 */
+	public function testCompositeTraditionalModeRejectsInvalidDates( string $value ): void {
+		$this->assertQuery( "SET sql_mode = 'TRADITIONAL'" );
+		$this->assertQuery( "INSERT INTO _dates (option_value) VALUES ('2020-01-15 00:00:00')" );
+		$this->assertQueryError(
+			"INSERT INTO _dates (option_value) VALUES ('$value')",
+			"Incorrect datetime value: '$value'"
+		);
+		$this->assertQueryError(
+			"UPDATE _dates SET option_value = '$value'",
+			"Incorrect datetime value: '$value'"
+		);
+		$this->assertQuery( 'SELECT option_value FROM _dates' );
+		$this->assertEquals( array( (object) array( 'option_value' => '2020-01-15 00:00:00' ) ), $this->last_result );
+	}
+
+	public static function compositeTraditionalModeInvalidDates(): array {
+		return array(
+			'zero date'    => array( '0000-00-00 00:00:00' ),
+			'zero month'   => array( '2020-00-15 00:00:00' ),
+			'zero day'     => array( '2020-01-00 00:00:00' ),
+			'invalid date' => array( 'not-a-date' ),
+		);
+	}
+
+	public function testCompositeTraditionalModeEnablesStrictMode(): void {
+		$this->assertQuery( 'SET sql_mode = ' . self::SQL_MODE_TRADITIONAL );
+		$this->assertQuery( 'CREATE TABLE t (id INT, value TEXT NOT NULL)' );
+		$this->assertQueryError(
+			'INSERT INTO t (id) VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value'
+		);
+		$this->assertQuery( "INSERT INTO t (id, value) VALUES (1, 'initial-value')" );
+		$this->assertQueryError(
+			'UPDATE t SET value = NULL',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.value'
+		);
+		$this->assertQuery( 'SELECT value FROM t' );
+		$this->assertSame( 'initial-value', $this->last_result[0]->value );
+
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'UPDATE t SET value = NULL' );
+		$this->assertQuery( 'SELECT value FROM t' );
+		$this->assertSame( '', $this->last_result[0]->value );
 	}
 
 	public function testCaseInsensitiveSelect() {
