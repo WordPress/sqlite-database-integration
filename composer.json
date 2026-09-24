@@ -66,7 +66,7 @@
 		],
 		"wp-test-php": [
 			"@wp-test-ensure-env @no_additional_args",
-			"rm -rf wordpress/src/wp-content/database/.ht.sqlite @no_additional_args",
+			"@wp-test-remove-database @no_additional_args",
 			"npm --prefix wordpress run test:php -- @additional_args"
 		],
 		"wp-test-sqlite-plugin-php": [
@@ -80,8 +80,11 @@
 			"npm --prefix wordpress run test:e2e -- @additional_args"
 		],
 		"wp-test-clean": [
-			"npm --prefix wordpress run env:clean",
-			"rm -rf wordpress/src/wp-content/database/.ht.sqlite"
+			"@wp-test-remove-database",
+			"npm --prefix wordpress run env:clean"
+		],
+		"wp-test-remove-database": [
+			"cd wordpress && node tools/local-env/scripts/docker.js run --rm --no-deps --entrypoint rm php -rf /var/www/src/wp-content/database"
 		]
 	}
 }
