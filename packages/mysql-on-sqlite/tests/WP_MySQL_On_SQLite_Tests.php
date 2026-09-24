@@ -2,6 +2,8 @@
 
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/fixtures/WP_MySQL_Date_Time_Test_Cases.php';
+
 class WP_MySQL_On_SQLite_Tests extends TestCase {
 	/**
 	 * SQL mode bit values asserted independently from the driver implementation.
@@ -84,6 +86,14 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			$this->last_result = $statement->rowCount();
 		}
 		return $this->last_result;
+	}
+
+	private function createSqliteFunction( string $name, callable $callback ): void {
+		if ( $this->sqlite instanceof Pdo\Sqlite ) {
+			$this->sqlite->createFunction( $name, $callback );
+		} else {
+			$this->sqlite->sqliteCreateFunction( $name, $callback );
+		}
 	}
 
 	private function getLastColumnMeta(): array {
@@ -3626,22 +3636,226 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertCount( 1, $results );
 	}
 
-	public function testSelectByDateFormat() {
+	/**
+	 * @dataProvider dateFormatComparisons
+	 */
+	public function testSelectByDateFormat( $format, $time ) {
 		$this->assertQuery(
 			"
 			INSERT INTO _dates (option_name, option_value)
-			VALUES ('second', '2014-10-21 00:42:29');
-		"
+			VALUES ('second', '2014-10-21 07:30:15');
+			"
 		);
 
-		// HOUR(14:08) should yield 14 in the 24 hour format
+		$format = $this->sqlite->quote( $format );
 		$this->assertQuery(
-			"
-			SELECT * FROM _dates WHERE DATE_FORMAT(option_value, '%H.%i') = 0.42
-		"
+			sprintf(
+				'SELECT * FROM _dates WHERE DATE_FORMAT(option_value, %s) = %s',
+				$format,
+				$time
+			)
 		);
 		$results = $this->last_result;
 		$this->assertCount( 1, $results );
+	}
+
+	public static function dateFormatComparisons() {
+		return array(
+			array( '%H.%i', '7.30', '07.30' ),
+			array( '%H.%i%s', '7.301500', '07.3015' ),
+			array( '0.%i', '0.30', '0.30' ),
+			array( '0.%i%s', '0.301500', '0.3015' ),
+		);
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_formats
+	 */
+	public function testDateFormat( $format, $expected ) {
+		$results = $this->assertQuery(
+			sprintf(
+				"SELECT DATE_FORMAT('2014-10-21 07:30:15.123456', %s) AS formatted",
+				$this->sqlite->quote( $format )
+			)
+		);
+
+		$this->assertSame( $expected, $results[0]->formatted );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_week_boundaries
+	 */
+	public function testDateFormatWeekBoundary( $date, $expected ) {
+		$results = $this->assertQuery(
+			sprintf(
+				"SELECT DATE_FORMAT(%s, '%%U|%%u|%%V|%%v|%%X|%%x') AS formatted",
+				$this->sqlite->quote( $date )
+			)
+		);
+
+		$this->assertSame( $expected, $results[0]->formatted );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_inputs
+	 */
+	public function testDateFormatInput( $date, $format, $expected ) {
+		if ( null === $date ) {
+			$date = 'NULL';
+		} elseif ( is_int( $date ) || is_float( $date ) ) {
+			$date = (string) $date;
+		} else {
+			$date = $this->sqlite->quote( $date );
+		}
+		$format  = null === $format ? 'NULL' : $this->sqlite->quote( $format );
+		$results = $this->assertQuery(
+			sprintf( 'SELECT DATE_FORMAT(%s, %s) AS formatted', $date, $format )
+		);
+
+		$this->assertSame( $expected, $results[0]->formatted );
+	}
+
+	/**
+	 * @dataProvider WP_MySQL_Date_Time_Test_Cases::date_format_runtime_inputs
+	 */
+	public function testDateFormatRuntimeInput( $date, $expected ) {
+		// Insert through PDO SQLite so SQL literal normalization cannot mask parsing errors.
+		$statement = $this->sqlite->prepare( 'INSERT INTO _options (option_name) VALUES (?)' );
+		$statement->execute( array( $date ) );
+		$results = $this->assertQuery(
+			"SELECT DATE_FORMAT(option_name, '%Y-%m-%d %H:%i:%s.%f') AS formatted FROM _options"
+		);
+
+		$this->assertSame( $expected, $results[0]->formatted );
+	}
+
+	/**
+	 * @dataProvider dateFormatComparisons
+	 */
+	public function testDateFormatWithDynamicNumericComparison( $format, $time, $formatted ) {
+		$statement = $this->sqlite->prepare( 'INSERT INTO _options (option_name, option_value) VALUES (?, ?)' );
+		$statement->execute( array( '2014-10-21 07:30:15', $format ) );
+		$results = $this->assertQuery(
+			'SELECT DATE_FORMAT(option_name, option_value) AS formatted FROM _options WHERE DATE_FORMAT(option_name, option_value) = ' . $time
+		);
+
+		$this->assertCount( 1, $results );
+		$this->assertSame( $formatted, $results[0]->formatted );
+	}
+
+	public function testDateFormatComparisonEvaluatesDateOnce() {
+		$calls = 0;
+		$this->createSqliteFunction(
+			'next_datetime',
+			static function () use ( &$calls ) {
+				++$calls;
+				return '2014-10-21 07:30:15';
+			}
+		);
+		foreach ( array( '= 7.3', 'BETWEEN 7.2 AND 7.4', 'IN (7.2, 7.3)', 'NOT IN (7.2, 8)' ) as $comparison ) {
+			$calls   = 0;
+			$results = $this->assertQuery( "SELECT DATE_FORMAT(next_datetime(), '%H.%i') $comparison AS comparison" );
+			$this->assertSame( '1', $results[0]->comparison );
+			$this->assertSame( 1, $calls );
+		}
+	}
+
+	/**
+	 * @dataProvider numericDateFormats
+	 */
+	public function testDateFormatWithNumericInput( $date, $expected ) {
+		$result = $this->assertQuery( "SELECT DATE_FORMAT($date, '%Y-%m-%d %H:%i:%s.%f') AS formatted" );
+		$this->assertSame( $expected, $result[0]->formatted );
+
+		$this->assertQuery( 'CREATE TABLE numeric_dates (value DECIMAL(20,6))' );
+		$this->assertQuery( "INSERT INTO numeric_dates VALUES ($date)" );
+		$result = $this->assertQuery( "SELECT DATE_FORMAT(value, '%Y-%m-%d %H:%i:%s.%f') AS formatted FROM numeric_dates" );
+		$this->assertSame( $expected, $result[0]->formatted );
+	}
+
+	public static function numericDateFormats() {
+		return array(
+			array( '20141021073015', '2014-10-21 07:30:15.000000' ),
+			array( '141021073015', '2014-10-21 07:30:15.000000' ),
+			array( '20141021073015 + 0', '2014-10-21 07:30:15.000000' ),
+			array( '10000101000000', '1000-01-01 00:00:00.000000' ),
+			array( '99991231235959', '9999-12-31 23:59:59.000000' ),
+			array( '20141021', '2014-10-21 00:00:00.000000' ),
+			array( '101', '2000-01-01 00:00:00.000000' ),
+			array( '0', '0000-00-00 00:00:00.000000' ),
+			array( '-20141021073015', null ),
+			array( '100000000000000', null ),
+			array( 'NULL', null ),
+			array( '20141021073015.125', '2014-10-21 07:30:15.125000' ),
+			array( '(+(20141021073015.5))', '2014-10-21 07:30:15.500000' ),
+			array( '141021073015.125', '2014-10-21 07:30:15.125000' ),
+			array( '20141021073015.125 + 0', '2014-10-21 07:30:15.125000' ),
+			array( '00000615120000.1', '2000-06-15 12:00:00.100000' ),
+			array( '20141021.1', '2014-10-21 00:00:00.000000' ),
+			array( '101.1', '2000-01-01 00:00:00.000000' ),
+			array( '0.1', '0000-00-00 00:00:00.100000' ),
+			array( '000000000000.1', '0000-00-00 00:00:00.100000' ),
+			array( '20141231235959.5', '2014-12-31 23:59:59.500000' ),
+			array( '1.1', null ),
+			array( '-20141021073015.123456', null ),
+		);
+	}
+
+	public function testDateFormatWithIntegerColumn() {
+		$this->assertQuery( 'CREATE TABLE integer_dates (value BIGINT)' );
+		$this->assertQuery( 'INSERT INTO integer_dates VALUES (20141021073015), (141021073015), (0), (NULL)' );
+		$result = $this->assertQuery( "SELECT DATE_FORMAT(value, '%Y-%m-%d %T') AS formatted FROM integer_dates ORDER BY value" );
+		$this->assertSame(
+			array( null, '0000-00-00 00:00:00', '2014-10-21 07:30:15', '2014-10-21 07:30:15' ),
+			array_column( $result, 'formatted' )
+		);
+	}
+
+	public function testDateFormatPreservesInputTypes() {
+		$result = $this->assertQuery(
+			"SELECT
+				DATE_FORMAT(0, '%Y-%m-%d') AS numeric_zero,
+				DATE_FORMAT('0', '%Y-%m-%d') AS string_zero,
+				DATE_FORMAT(101, '%Y-%m-%d') AS numeric_date,
+				DATE_FORMAT('101', '%Y-%m-%d') AS string_date,
+				DATE_FORMAT('00000615120000', '%Y-%m-%d') AS year_zero,
+				DATE_FORMAT('2014''10''21', '%Y-%m-%d') AS quoted_date,
+				DATE_FORMAT(x'323031342D31302D3231', '%Y-%m-%d') AS binary_date,
+				DATE_FORMAT('2014-10-21', 20141021073015) AS integer_format"
+		);
+		$this->assertSame(
+			array( '0000-00-00', null, '2000-01-01', null, '0000-06-15', '2014-10-21', '2014-10-21', '20141021073015' ),
+			array_values( (array) $result[0] )
+		);
+	}
+
+	/**
+	 * @dataProvider unixTimeFormats
+	 */
+	public function testFromUnixTimeWithFormat( $timestamp, $format, $expected ) {
+		$result = $this->assertQuery( 'SELECT FROM_UNIXTIME(' . $timestamp . ', ' . $this->sqlite->quote( $format ) . ') AS formatted' );
+		$this->assertSame( $expected, $result[0]->formatted );
+	}
+
+	public static function unixTimeFormats() {
+		return array(
+			array( 0, '%Y-%m-%d %H:%i:%s.%f', '1970-01-01 00:00:00.000000' ),
+			array( 1413876615, '%W, %M %e %r', 'Tuesday, October 21 07:30:15 AM' ),
+			array( 1419811200, '%U|%u|%V|%v|%X|%x', '52|53|52|01|2014|2015' ),
+			array( 0, '%%Y %q %', '%Y q %' ),
+			array( 0, '', null ),
+		);
+	}
+
+	public function testDateFormatWithDynamicFormat() {
+		$this->assertQuery(
+			"INSERT INTO _options (option_name, option_value) VALUES ('2014-10-21', '%W, %M %e')"
+		);
+		$results = $this->assertQuery(
+			'SELECT DATE_FORMAT(option_name, option_value) AS formatted FROM _options'
+		);
+
+		$this->assertSame( 'Tuesday, October 21', $results[0]->formatted );
 	}
 
 	public function testInsertOnDuplicateKey() {
@@ -3993,12 +4207,371 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( 2, $results[0]->cnt );
 	}
 
+	/**
+	 * @dataProvider scalarComparisons
+	 */
+	public function testScalarComparison( $expression, $expected ) {
+		$results = $this->assertQuery( 'SELECT ' . $expression . ' AS comparison' );
+		$this->assertSame( $expected, $results[0]->comparison );
+	}
+
+	public static function scalarComparisons() {
+		$date = "DATE_FORMAT('2014-10-21 07:30:15', '%H.%i')";
+		return array(
+			array( "$date = 7.30", '1' ),
+			array( "$date <> 7.30", '0' ),
+			array( "$date != 7.30", '0' ),
+			array( "$date < 7.31", '1' ),
+			array( "$date > 7.29", '1' ),
+			array( "$date <= 7.30", '1' ),
+			array( "$date >= 7.30", '1' ),
+			array( "7.30 = $date", '1' ),
+			array( "7.31 > $date", '1' ),
+			array( "$date = '07.30'", '1' ),
+			array( "$date = '7.30'", '0' ),
+			array( "$date = '7.3'", '0' ),
+			array( "$date = 7 + 0.3", '1' ),
+			array( "$date = -(-7.3)", '1' ),
+			array( "$date = +7.3", '1' ),
+			array( "$date = +'7.30'", '0' ),
+			array( "+$date = '7.30'", '0' ),
+			array( "($date = 7.3) = '1'", '1' ),
+			array( "$date IS NULL = '0'", '1' ),
+			array( "$date = CAST(7.3 AS DECIMAL(4,2))", '1' ),
+			array( "CAST($date AS CHAR) = 7.3", '1' ),
+			array( "(($date)) = ((7.3))", '1' ),
+			array( "$date = 7.3 = '1'", '1' ),
+			array( "$date <=> 7.3", '1' ),
+			array( "$date = NULL", null ),
+			array( "$date <=> NULL", '0' ),
+			array( "DATE_FORMAT(NULL, '%H.%i') = 7.3", null ),
+			array( "DATE_FORMAT(NULL, '%H.%i') <=> NULL", '1' ),
+			array( "DATE_FORMAT('0000-00-00', '%Y') = 0", '1' ),
+			array( "DATE_FORMAT('0000-00-00', '%M') = 0", null ),
+			array( "DATE_FORMAT('2014-10-21', '%M') = 0", '1' ),
+			array( "DATE_FORMAT('2014-10-21 07:30:15', CONCAT('%H.', '%i')) = 7.3", '1' ),
+			array( "$date BETWEEN 7.2 AND 7.4", '1' ),
+			array( "$date NOT BETWEEN 7.2 AND 7.4", '0' ),
+			array( "$date BETWEEN '7.3' AND 7.4", '1' ),
+			array( "$date BETWEEN '07.29' AND '07.31'", '1' ),
+			array( "$date BETWEEN 7.2 AND NULL", null ),
+			array( "$date IN (7.3)", '1' ),
+			array( "$date IN (7.2, 7.3)", '1' ),
+			array( "$date NOT IN (7.2, 7.3)", '0' ),
+			array( "$date IN (7.2, NULL)", null ),
+			array( "$date IN (7.3, NULL)", '1' ),
+			array( "$date IN ('7.30', '7.3')", '0' ),
+			array( "$date IN ('07.30', '7.3')", '1' ),
+			array( "'00.42' = 0.4200", '1' ),
+			array( "'1234abcd' = 1234", '1' ),
+			array( "'abcd' = 0", '1' ),
+			array( "'01' = TRUE", '1' ),
+			array( "TRUE = '01'", '1' ),
+			array( "'00' = FALSE", '1' ),
+			array( "FALSE = '00'", '1' ),
+			array( "'02' = TRUE", '0' ),
+			array( "'00' IN (TRUE, FALSE)", '1' ),
+			array( "'01' BETWEEN FALSE AND TRUE", '1' ),
+			array( 'NULL = TRUE', null ),
+			array( '2 <=> (SELECT TRUE)', '0' ),
+			array( '(SELECT 2) <=> TRUE', '0' ),
+			array( '(1, NULL) <=> (1, NULL)', '1' ),
+			array( '(1, NULL) <=> (1, 0)', '0' ),
+			array( '((1, NULL)) <=> ((1, NULL))', '1' ),
+			array( '(1, NULL) <=> (SELECT 1, NULL)', '1' ),
+			array( '(SELECT 1, NULL) <=> (1, NULL)', '1' ),
+			array( '(SELECT 1, NULL) <=> (SELECT 1, NULL)', '1' ),
+			array( '(1, TRUE) <=> (1, 2)', '0' ),
+			array( '(1, NULL) <=> (1, NULL) <=> TRUE', '1' ),
+			array( 'NULL <=> (SELECT TRUE WHERE FALSE)', '1' ),
+			array( '2 <=> +TRUE', '0' ),
+			array( '-1 <=> -TRUE', '1' ),
+			array( '2 <=> TRUE', '0' ),
+			array( 'TRUE <=> 2', '0' ),
+			array( '1 <=> TRUE', '1' ),
+			array( '0 <=> FALSE', '1' ),
+			array( 'FALSE <=> 0', '1' ),
+			array( '0.5 <=> TRUE', '0' ),
+			array( '0.5 <=> FALSE', '0' ),
+			array( 'NULL <=> TRUE', '0' ),
+			array( 'NULL <=> FALSE', '0' ),
+			array( 'NULL <=> NULL', '1' ),
+			array( '2 <=> ((TRUE))', '0' ),
+			array( '2 <=> BINARY TRUE', '0' ),
+			array( '2 <=> (BINARY (TRUE))', '0' ),
+			array( '0.5 <=> BINARY FALSE', '0' ),
+			array( '1 <=> BINARY TRUE', '1' ),
+			array( '0 <=> BINARY FALSE', '1' ),
+			array( '2 <=> (TRUE COLLATE `binary`)', '0' ),
+			array( '0 <=> ((FALSE) COLLATE `binary`)', '1' ),
+			array( '2 <=> ((TRUE COLLATE `binary`) COLLATE `binary`)', '0' ),
+			array( 'NULL <=> BINARY TRUE', '0' ),
+			array( '((TRUE)) <=> 2', '0' ),
+			array( '0 <=> ((FALSE))', '1' ),
+			array( '2 <=> (TRUE + 1)', '1' ),
+			array( '1.5 <=> (TRUE + 0.5)', '1' ),
+			array( '0 <=> (TRUE AND FALSE)', '1' ),
+			array( '1 <=> (FALSE OR TRUE)', '1' ),
+			array( '2 <=> TRUE <=> FALSE', '1' ),
+			array( '(1 + 1) <=> TRUE', '0' ),
+			array( '2 <=> TRUE = FALSE', '1' ),
+			array( '2 IS TRUE', '1' ),
+			array( '0.5 IS FALSE', '0' ),
+			array( "CAST('01' AS NCHAR) = 1", '1' ),
+			array( "1 = CAST('01' AS NCHAR)", '1' ),
+			array( "CAST('01' AS NATIONAL CHAR) = 1", '1' ),
+			array( "CAST('01' AS NCHAR(2)) = 1", '1' ),
+			array( "CONVERT('01', NCHAR) = 1", '1' ),
+			array( "CAST('01' AS NCHAR) = '1'", '0' ),
+			array( 'CAST(NULL AS NCHAR) = 1', null ),
+			array( "'2' < '10'", '0' ),
+			array( "'2' < 10", '1' ),
+			array( "CONCAT('0', '7.30') = 7.3", '1' ),
+			array( 'FROM_UNIXTIME(0) = 1970', '0' ),
+			array( "7.3 IN ('07.30', '08.30')", '1' ),
+			array( "7.3 BETWEEN '07.20' AND '07.40'", '1' ),
+			array( '9007199254740992 = 9007199254740993', '0' ),
+			array( "'9007199254740992' = 9007199254740993", '1' ),
+			array( "'a' = 0x61", '1' ),
+			array( "'A' = 0x61", '0' ),
+			array( "0x61 = 'a'", '1' ),
+			array( "'a' = x'61'", '1' ),
+			array( "'7.3' = 7.3 < 2", '1' ),
+			array( "'7.3' = (7.3 < 2)", '0' ),
+			array( "'7.3' = 7.3 = '1'", '1' ),
+		);
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInOrderBy( $literal ) {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( "SELECT ID FROM _options ORDER BY $literal, ID DESC" );
+		$this->assertSame( array( '2', '1' ), array_column( $result, 'ID' ) );
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInGroupBy( $literal ) {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( "SELECT COUNT(*) AS total FROM _options GROUP BY $literal" );
+		$this->assertSame( array( '2' ), array_column( $result, 'total' ) );
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInCompoundOrderBy( $literal ) {
+		$result = $this->assertQuery( "SELECT $literal AS b, 1 AS n UNION ALL SELECT $literal, 2 ORDER BY $literal, n DESC LIMIT 1" );
+		$this->assertSame( array( '2' ), array_column( $result, 'n' ) );
+	}
+
+	public static function booleanLiterals() {
+		return array(
+			array( 'TRUE' ),
+			array( 'FALSE' ),
+			array( '(TRUE)' ),
+			array( '((FALSE))' ),
+			array( '+TRUE' ),
+			array( '-FALSE' ),
+			array( '-((+TRUE))' ),
+			array( '+((-FALSE))' ),
+			array( 'BINARY TRUE' ),
+			array( 'BINARY FALSE' ),
+		);
+	}
+
+	public function testNullSafeComparisonWithQuotedBooleanColumnNames() {
+		$this->assertQuery( 'CREATE TABLE bool_names (`true` INT, `false` INT)' );
+		$this->assertQuery( 'INSERT INTO bool_names VALUES (7, 8)' );
+		$result = $this->assertQuery( 'SELECT 7 <=> `true` AS t, 8 <=> `false` AS f, `true` <=> 7 AS lt, `false` <=> 8 AS lf FROM bool_names' );
+		$this->assertSame( '1', $result[0]->t );
+		$this->assertSame( '1', $result[0]->f );
+		$this->assertSame( '1', $result[0]->lt );
+		$this->assertSame( '1', $result[0]->lf );
+	}
+
+	/**
+	 * @dataProvider booleanComparisonOperators
+	 */
+	public function testBooleanLiteralsWithComparisonOperators( $operator, $expected ) {
+		$this->assertQuery( 'CREATE TABLE bool_names (t INT, f INT)' );
+		$this->assertQuery( 'INSERT INTO bool_names VALUES (7, 8)' );
+		$result = $this->assertQuery( "SELECT TRUE $operator 2 AS lhs, 1 $operator TRUE AS rhs, FALSE $operator 0 AS zero FROM bool_names" );
+		$this->assertSame( $expected, array( $result[0]->lhs, $result[0]->rhs, $result[0]->zero ) );
+	}
+
+	public static function booleanComparisonOperators() {
+		return array(
+			array( '=', array( '0', '1', '1' ) ),
+			array( '<=>', array( '0', '1', '1' ) ),
+			array( '<>', array( '1', '0', '0' ) ),
+			array( '!=', array( '1', '0', '0' ) ),
+			array( '<', array( '1', '0', '0' ) ),
+			array( '>', array( '0', '0', '0' ) ),
+			array( '<=', array( '1', '1', '1' ) ),
+			array( '>=', array( '0', '1', '1' ) ),
+		);
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInUpdateOrderBy( $literal ) {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$this->assertQuery( "UPDATE _options SET option_value = 'changed' ORDER BY $literal, ID DESC LIMIT 1" );
+		$result = $this->assertQuery( "SELECT ID FROM _options WHERE option_value = 'changed'" );
+		$this->assertSame( array( '2' ), array_column( $result, 'ID' ) );
+	}
+
+	/**
+	 * @dataProvider booleanLiterals
+	 */
+	public function testBooleanLiteralInDeleteOrderBy( $literal ) {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$this->assertQuery( "DELETE FROM _options ORDER BY $literal, ID DESC LIMIT 1" );
+		$result = $this->assertQuery( 'SELECT ID FROM _options' );
+		$this->assertSame( array( '1' ), array_column( $result, 'ID' ) );
+	}
+
+	public function testNullSafeComparisonPreservesColumnAffinity() {
+		$this->assertQuery( 'CREATE TABLE comparison_values (id INT, n INT, s VARCHAR(10))' );
+		$this->assertQuery( "INSERT INTO comparison_values VALUES (1, 1, '1'), (2, 2, '2'), (3, NULL, NULL)" );
+		$result = $this->assertQuery( "SELECT 1 <=> s AS text_rhs, '1' <=> n AS number_rhs, n <=> s AS both_columns FROM comparison_values ORDER BY id" );
+		$this->assertSame( array( '1', '0', '0' ), array_column( $result, 'text_rhs' ) );
+		$this->assertSame( array( '1', '0', '0' ), array_column( $result, 'number_rhs' ) );
+		$this->assertSame( array( '1', '1', '1' ), array_column( $result, 'both_columns' ) );
+	}
+
+	public function testNullSafeComparisonEvaluatesEachOperandOnce() {
+		$calls = 0;
+		$this->createSqliteFunction(
+			'next_boolean_operand',
+			static function ( $value ) use ( &$calls ) {
+				++$calls;
+				return $value;
+			}
+		);
+		$result = $this->assertQuery( 'SELECT next_boolean_operand(2) <=> ((TRUE)) AS result' );
+		$this->assertSame( '0', $result[0]->result );
+		$this->assertSame( 1, $calls );
+		$calls  = 0;
+		$result = $this->assertQuery( 'SELECT next_boolean_operand(NULL) <=> next_boolean_operand(NULL) AS result' );
+		$this->assertSame( '1', $result[0]->result );
+		$this->assertSame( 2, $calls );
+		$calls  = 0;
+		$result = $this->assertQuery( 'SELECT next_boolean_operand(2) <=> next_boolean_operand(1) AS result' );
+		$this->assertSame( '0', $result[0]->result );
+		$this->assertSame( 2, $calls );
+	}
+
+	public function testNullSafeComparisonPreservesSqliteCollation() {
+		$result = $this->assertQuery( "SELECT 'A' <=> ('a' COLLATE `binary`) AS case_sensitive, 'A' <=> ('a' COLLATE `nocase`) AS case_insensitive" );
+		$this->assertSame( '0', $result[0]->case_sensitive );
+		$this->assertSame( '1', $result[0]->case_insensitive );
+	}
+
+	public function testNullSafeComparisonWithAggregatesAndWindows() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( 'SELECT MAX(ID) <=> TRUE AS lhs, TRUE <=> MAX(ID) AS rhs FROM _options' );
+		$this->assertSame( '0', $result[0]->lhs );
+		$this->assertSame( '0', $result[0]->rhs );
+		$result = $this->assertQuery( 'SELECT ROW_NUMBER() OVER (ORDER BY ID) <=> TRUE AS lhs, TRUE <=> ROW_NUMBER() OVER (ORDER BY ID) AS rhs FROM _options ORDER BY ID' );
+		$this->assertSame( array( '1', '0' ), array_column( $result, 'lhs' ) );
+		$this->assertSame( array( '1', '0' ), array_column( $result, 'rhs' ) );
+	}
+
+	public function testBooleanLiteralsInDefaultsAndComparisons() {
+		$this->assertQuery( 'CREATE TABLE bool_values (id INT, value INT DEFAULT TRUE)' );
+		$this->assertQuery( 'INSERT INTO bool_values (id) VALUES (1)' );
+		$this->assertQuery( 'INSERT INTO bool_values VALUES (2, FALSE), (3, 2), (4, NULL)' );
+		$result = $this->assertQuery( 'SELECT value <=> TRUE AS t, value <=> FALSE AS f FROM bool_values ORDER BY id' );
+		$this->assertSame( array( '1', '0', '0', '0' ), array_column( $result, 't' ) );
+		$this->assertSame( array( '0', '1', '0', '0' ), array_column( $result, 'f' ) );
+	}
+
+	public function testBooleanLiteralPreservesOrderingExpressionsAndPositions() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( 'SELECT ID FROM _options ORDER BY FALSE, (TRUE + ID) DESC, TRUE' );
+		$this->assertSame( array( '2', '1' ), array_column( $result, 'ID' ) );
+		$result = $this->assertQuery( 'SELECT ID FROM _options ORDER BY TRUE, 1 DESC, FALSE' );
+		$this->assertSame( array( '2', '1' ), array_column( $result, 'ID' ) );
+		$result = $this->assertQuery( 'SELECT ID, COUNT(*) AS total FROM _options GROUP BY TRUE, 1, FALSE ORDER BY ID' );
+		$this->assertSame( array( '1', '1' ), array_column( $result, 'total' ) );
+		$result = $this->assertQuery( 'SELECT COUNT(*) AS total FROM _options GROUP BY (TRUE + ID)' );
+		$this->assertSame( array( '1', '1' ), array_column( $result, 'total' ) );
+	}
+
+	public function testBooleanLiteralInWindowAndEmptyGroup() {
+		$this->assertSame( array(), $this->assertQuery( 'SELECT COUNT(*) AS total FROM _options GROUP BY FALSE' ) );
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('a'), ('b')" );
+		$result = $this->assertQuery( 'SELECT RANK() OVER (ORDER BY TRUE) AS r, COUNT(*) OVER (PARTITION BY FALSE) AS total FROM _options' );
+		$this->assertSame( array( '1', '1' ), array_column( $result, 'r' ) );
+		$this->assertSame( array( '2', '2' ), array_column( $result, 'total' ) );
+	}
+
+	/**
+	 * @dataProvider booleanTruthTests
+	 */
+	public function testBooleanTruthTest( $expression, $expected ) {
+		$result = $this->assertQuery( "SELECT $expression AS result" );
+		$this->assertSame( $expected, $result[0]->result );
+	}
+
+	public static function booleanTruthTests() {
+		return array(
+			array( '2 IS TRUE', '1' ),
+			array( '-0.5 IS TRUE', '1' ),
+			array( '0 IS FALSE', '1' ),
+			array( '0.5 IS FALSE', '0' ),
+			array( 'NULL IS TRUE', '0' ),
+			array( 'NULL IS FALSE', '0' ),
+			array( 'NULL IS NOT TRUE', '1' ),
+			array( 'NULL IS NOT FALSE', '1' ),
+			array( 'TRUE IS TRUE', '1' ),
+			array( 'FALSE IS FALSE', '1' ),
+			array( 'TRUE IS NOT FALSE AND FALSE IS NOT TRUE', '1' ),
+			array( 'NULL IS TRUE OR 2 IS TRUE', '1' ),
+		);
+	}
+
+	public function testNumericInEvaluatesEachOperandOnce() {
+		$calls = 0;
+		$this->createSqliteFunction(
+			'next_scalar',
+			static function ( $value ) use ( &$calls ) {
+				++$calls;
+				return $value;
+			}
+		);
+		$result = $this->assertQuery( "SELECT CONCAT(next_scalar('07.30')) IN (0 + next_scalar(7.2), 0 + next_scalar(7.3)) AS comparison" );
+		$this->assertSame( '1', $result[0]->comparison );
+		$this->assertSame( 3, $calls );
+	}
+
+	public function testNumericInPreservesAggregateAndWindowScopes() {
+		$this->assertQuery( "INSERT INTO _options (option_name) VALUES ('1'), ('2'), ('3')" );
+		$result = $this->assertQuery( 'SELECT CONCAT(COUNT(*)) IN (2, 3) AS comparison FROM _options' );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->comparison );
+		$result = $this->assertQuery( "SELECT 3 IN (CONCAT(COUNT(*)), '4') AS comparison FROM _options" );
+		$this->assertCount( 1, $result );
+		$this->assertSame( '1', $result[0]->comparison );
+		$result = $this->assertQuery( 'SELECT CONCAT(ROW_NUMBER() OVER (ORDER BY option_name)) IN (0, 2) AS comparison FROM _options ORDER BY option_name' );
+		$this->assertSame( array( '0', '1', '0' ), array_column( $result, 'comparison' ) );
+	}
+
+	public function testNumericInWithLargeList() {
+		$list   = implode( ', ', range( 1, 300 ) );
+		$result = $this->assertQuery( "SELECT CONCAT('0300') IN ($list) AS comparison" );
+		$this->assertSame( '1', $result[0]->comparison );
+	}
+
 	public function testStringToFloatComparison() {
 		$this->assertQuery( "SELECT ('00.42' = 0.4200) as cmp;" );
 		$results = $this->last_result;
-		if ( 1 !== $results[0]->cmp ) {
-			$this->markTestSkipped( 'Comparing a string and a float returns true in MySQL. In SQLite, they\'re different. Skipping. ' );
-		}
 		$this->assertEquals( '1', $results[0]->cmp );
 
 		$this->assertQuery( "SELECT (0+'00.42' = 0.4200) as cmp;" );

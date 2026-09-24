@@ -37,6 +37,7 @@ if ( class_exists( 'WP_MySQL_Native_Parser', false ) ) {
 } else {
 	require_once __DIR__ . '/mysql/class-wp-mysql-parser.php';
 }
+require_once __DIR__ . '/mysql/class-wp-mysql-date-time.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-connection.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-configurator.php';
 require_once __DIR__ . '/sqlite/class-wp-sqlite-driver.php';
