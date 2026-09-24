@@ -560,7 +560,10 @@ class WP_SQLite_Information_Schema_Builder {
 				$table_name,
 				$column_name,
 				$column_node,
-				$column_position
+				$column_position,
+				function () use ( $table_collation ) {
+					return $table_collation;
+				}
 			);
 
 			try {
@@ -866,7 +869,15 @@ class WP_SQLite_Information_Schema_Builder {
 			array( self::SAVED_DATABASE_NAME, $table_name )
 		)->fetchColumn();
 
-		$column_data = $this->extract_column_data( $table_name, $column_name, $node, (int) $position + 1 );
+		$column_data = $this->extract_column_data(
+			$table_name,
+			$column_name,
+			$node,
+			(int) $position + 1,
+			function () use ( $table_is_temporary, $table_name ) {
+				return $this->get_recorded_table_collation( $table_is_temporary, $table_name );
+			}
+		);
 		try {
 			$this->insert_values(
 				$this->get_table_name( $table_is_temporary, 'columns' ),
@@ -916,7 +927,15 @@ class WP_SQLite_Information_Schema_Builder {
 		string $new_column_name,
 		WP_Parser_Node $node
 	): void {
-		$column_data = $this->extract_column_data( $table_name, $new_column_name, $node, 0 );
+		$column_data = $this->extract_column_data(
+			$table_name,
+			$new_column_name,
+			$node,
+			0,
+			function () use ( $table_is_temporary, $table_name ) {
+				return $this->get_recorded_table_collation( $table_is_temporary, $table_name );
+			}
+		);
 		unset( $column_data['ordinal_position'] );
 		$this->update_values(
 			$this->get_table_name( $table_is_temporary, 'columns' ),
@@ -1499,13 +1518,21 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Analyze "columnDefinition" or "fieldDefinition" AST node and extract column data.
 	 *
-	 * @param  string         $table_name  The table name.
-	 * @param  string         $column_name The column name.
-	 * @param  WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
-	 * @param  int            $position    The ordinal position of the column in the table.
-	 * @return array                       Column data for the information schema.
+	 * @param  string         $table_name          The table name.
+	 * @param  string         $column_name         The column name.
+	 * @param  WP_Parser_Node $node                The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  int            $position            The ordinal position of the column in the table.
+	 * @param  callable       $get_table_collation Returns the default collation of the table.
+	 *                                             Called only when the column inherits it.
+	 * @return array                               Column data for the information schema.
 	 */
-	private function extract_column_data( string $table_name, string $column_name, WP_Parser_Node $node, int $position ): array {
+	private function extract_column_data(
+		string $table_name,
+		string $column_name,
+		WP_Parser_Node $node,
+		int $position,
+		callable $get_table_collation
+	): array {
 		list ( $data_type, $column_type ) = $this->get_column_data_types( $node );
 
 		$default  = $this->get_column_default( $node, $data_type, $column_name );
@@ -1514,7 +1541,7 @@ class WP_SQLite_Information_Schema_Builder {
 		$extra    = $this->get_column_extra( $node );
 		$comment  = $this->get_column_comment( $node );
 
-		list ( $charset, $collation )        = $this->get_column_charset_and_collation( $node, $data_type );
+		list ( $charset, $collation )        = $this->get_column_charset_and_collation( $node, $data_type, $get_table_collation );
 		list ( $char_length, $octet_length ) = $this->get_column_lengths( $node, $data_type, $charset );
 		list ( $precision, $scale )          = $this->get_column_numeric_attributes( $node, $data_type );
 		$datetime_precision                  = $this->get_column_datetime_precision( $node, $data_type );
@@ -2018,12 +2045,44 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @return string               The table collation as stored in information schema.
 	 */
 	private function get_table_collation( WP_Parser_Node $node ): string {
-		$collate_node = $node->get_first_descendant_node( 'collationName' );
-		if ( null === $collate_node ) {
-			// @TODO: Use default DB collation or DB_CHARSET & DB_COLLATE.
-			return 'utf8mb4_0900_ai_ci';
+		// Only table options apply; column definitions may specify their own collation.
+		$options_node = $node->get_first_descendant_node( 'createTableOptions' );
+
+		$collation_node = $options_node ? $options_node->get_first_descendant_node( 'defaultCollation' ) : null;
+		if ( null !== $collation_node ) {
+			return strtolower( $this->get_value( $collation_node->get_first_child_node( 'collationName' ) ) );
 		}
-		return strtolower( $this->get_value( $collate_node ) );
+
+		$charset_node = $options_node ? $options_node->get_first_descendant_node( 'defaultCharset' ) : null;
+		if ( null !== $charset_node ) {
+			$charset = strtolower( $this->get_value( $charset_node->get_first_child_node( 'charsetName' ) ) );
+			return $this->get_charset_default_collation( 'utf8mb3' === $charset ? 'utf8' : $charset );
+		}
+
+		// @TODO: Use the default collation of the database.
+		return 'utf8mb4_0900_ai_ci';
+	}
+
+	/**
+	 * Get the table collation that is recorded in the information schema.
+	 *
+	 * @param  bool   $table_is_temporary Whether the table is temporary.
+	 * @param  string $table_name         The table name.
+	 * @return string                     The table collation as stored in information schema.
+	 */
+	private function get_recorded_table_collation( bool $table_is_temporary, string $table_name ): string {
+		$collation = $this->connection->query(
+			'
+				SELECT table_collation
+				FROM ' . $this->connection->quote_identifier( $this->get_table_name( $table_is_temporary, 'tables' ) ) . '
+				WHERE table_schema = ?
+				AND table_name = ?
+			',
+			array( self::SAVED_DATABASE_NAME, $table_name )
+		)->fetchColumn();
+
+		// @TODO: Use the default collation of the database.
+		return false === $collation || null === $collation ? 'utf8mb4_0900_ai_ci' : $collation;
 	}
 
 	/**
@@ -2443,11 +2502,12 @@ class WP_SQLite_Information_Schema_Builder {
 	/**
 	 * Extract column charset and collation from the "columnDefinition" or "fieldDefinition" AST node.
 	 *
-	 * @param  WP_Parser_Node $node              The "columnDefinition" or "fieldDefinition" AST node.
-	 * @param  string         $data_type         The column data type as stored in information schema.
-	 * @return array{ string|null, string|null } The column charset and collation as stored in information schema.
+	 * @param  WP_Parser_Node $node                The "columnDefinition" or "fieldDefinition" AST node.
+	 * @param  string         $data_type           The column data type as stored in information schema.
+	 * @param  callable       $get_table_collation Returns the default collation of the table.
+	 * @return array{ string|null, string|null }   The column charset and collation as stored in information schema.
 	 */
-	private function get_column_charset_and_collation( WP_Parser_Node $node, string $data_type ): array {
+	private function get_column_charset_and_collation( WP_Parser_Node $node, string $data_type, callable $get_table_collation ): array {
 		if ( ! (
 			'char' === $data_type
 			|| 'varchar' === $data_type
@@ -2508,28 +2568,46 @@ class WP_SQLite_Information_Schema_Builder {
 			$collation = strtolower( $this->get_value( $collation_node ) );
 		}
 
-		// Defaults.
-		// @TODO: These are hardcoded now. We should get them from table/DB.
+		// When neither charset nor collation is set, the table defaults are used.
 		if ( null === $charset && null === $collation ) {
-			$charset = 'utf8mb4';
+			$table_collation = $get_table_collation();
+			$charset         = $this->get_collation_charset( $table_collation );
+			if ( ! $is_binary ) {
+				$collation = $table_collation;
+			}
 			// @TODO: "BINARY" (seems to change varchar to varbinary).
 			// @TODO: "DEFAULT"
 		}
 
 		// If only one of charset/collation is set, the other one is derived.
 		if ( null === $collation ) {
-			if ( $is_binary ) {
-				$collation = $charset . '_bin';
-			} elseif ( isset( self::CHARSET_DEFAULT_COLLATION_MAP[ $charset ] ) ) {
-				$collation = self::CHARSET_DEFAULT_COLLATION_MAP[ $charset ];
-			} else {
-				$collation = $charset . '_general_ci';
-			}
+			$collation = $is_binary ? $charset . '_bin' : $this->get_charset_default_collation( $charset );
 		} elseif ( null === $charset ) {
-			$charset = substr( $collation, 0, strpos( $collation, '_' ) );
+			$charset = $this->get_collation_charset( $collation );
 		}
 
 		return array( $charset, $collation );
+	}
+
+	/**
+	 * Get the default collation for a given charset.
+	 *
+	 * @param  string $charset The charset name.
+	 * @return string          The default collation of the charset.
+	 */
+	private function get_charset_default_collation( string $charset ): string {
+		return self::CHARSET_DEFAULT_COLLATION_MAP[ $charset ] ?? $charset . '_general_ci';
+	}
+
+	/**
+	 * Get the charset for a given collation.
+	 *
+	 * @param  string $collation The collation name.
+	 * @return string            The charset of the collation.
+	 */
+	private function get_collation_charset( string $collation ): string {
+		$separator_position = strpos( $collation, '_' );
+		return false === $separator_position ? $collation : substr( $collation, 0, $separator_position );
 	}
 
 	/**
