@@ -26,6 +26,8 @@ function sqlite_plugin_filter_debug_data( $info ) {
 	);
 
 	if ( 'sqlite' === $db_engine ) {
+		$database_path = defined( 'DB_PATH' ) ? DB_PATH : FQDB;
+
 		$info['wp-database']['fields']['database_version'] = array(
 			'label' => __( 'SQLite version', 'sqlite-database-integration' ),
 			'value' => $info['wp-database']['fields']['server_version'] ?? null,
@@ -33,13 +35,13 @@ function sqlite_plugin_filter_debug_data( $info ) {
 
 		$info['wp-database']['fields']['database_file'] = array(
 			'label'   => __( 'Database file', 'sqlite-database-integration' ),
-			'value'   => FQDB,
+			'value'   => $database_path,
 			'private' => true,
 		);
 
 		$info['wp-database']['fields']['database_size'] = array(
 			'label' => __( 'Database size', 'sqlite-database-integration' ),
-			'value' => size_format( filesize( FQDB ) ),
+			'value' => size_format( filesize( $database_path ) ),
 		);
 
 		unset( $info['wp-database']['fields']['extension'] );
