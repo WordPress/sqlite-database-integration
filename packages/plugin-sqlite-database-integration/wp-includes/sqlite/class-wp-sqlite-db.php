@@ -49,8 +49,10 @@ class WP_SQLite_DB extends wpdb {
 		 */
 		$GLOBALS['wpdb'] = $this;
 
+		// The SQLite driver may use the charset and collation while connecting.
+		$this->init_charset();
+
 		parent::__construct( '', '', $dbname, '' );
-		$this->charset = 'utf8mb4';
 	}
 
 	/**
@@ -233,6 +235,36 @@ class WP_SQLite_DB extends wpdb {
 	}
 
 	/**
+	 * Sets $this->charset and $this->collate.
+	 *
+	 * This overrides wpdb::init_charset(). SQLite stores all text as UTF-8, and
+	 * the emulated MySQL connection always uses utf8mb4 (see set_charset()), so
+	 * the charset is always utf8mb4, and only a UTF-8 DB_COLLATE applies.
+	 *
+	 * Unlike in wpdb, the result doesn't depend on the database connection.
+	 * This is important, as the SQLite driver may use the charset and collation
+	 * while connecting (see the constructor).
+	 *
+	 * @see wpdb::init_charset()
+	 */
+	public function init_charset() {
+		$collate = defined( 'DB_COLLATE' ) ? strtolower( (string) DB_COLLATE ) : '';
+
+		// MySQL 8.0.30 and newer name the utf8 collations "utf8mb3_*".
+		$collate = preg_replace( '/^utf8mb3_/', 'utf8_', $collate );
+
+		// Collations of other charsets don't apply to the utf8mb4 connection.
+		if ( ! preg_match( '/^utf8(mb4)?_/', $collate ) ) {
+			$collate = '';
+		}
+
+		$charset_collate = $this->resolve_charset( 'utf8mb4', $collate );
+
+		$this->charset = $charset_collate['charset'];
+		$this->collate = $charset_collate['collate'];
+	}
+
+	/**
 	 * Determines the best charset and collation to use given a charset and collation.
 	 *
 	 * For example, when able, utf8mb4 should be used instead of utf8.
@@ -254,25 +286,7 @@ class WP_SQLite_DB extends wpdb {
 			return compact( 'charset', 'collate' );
 		}
 
-		if ( 'utf8' === $charset ) {
-			$charset = 'utf8mb4';
-		}
-
-		if ( 'utf8mb4' === $charset ) {
-			// _general_ is outdated, so we can upgrade it to _unicode_, instead.
-			if ( ! $collate || 'utf8_general_ci' === $collate ) {
-				$collate = 'utf8mb4_unicode_ci';
-			} else {
-				$collate = str_replace( 'utf8_', 'utf8mb4_', $collate );
-			}
-		}
-
-		// _unicode_520_ is a better collation, we should use that when it's available.
-		if ( $this->has_cap( 'utf8mb4_520' ) && 'utf8mb4_unicode_ci' === $collate ) {
-			$collate = 'utf8mb4_unicode_520_ci';
-		}
-
-		return compact( 'charset', 'collate' );
+		return $this->resolve_charset( $charset, $collate );
 	}
 
 	/**
@@ -426,10 +440,6 @@ class WP_SQLite_DB extends wpdb {
 				'PDO injection via $GLOBALS[\'@pdo\'] is no longer supported. The existing PDO will be ignored and a new connection will be created.',
 				E_USER_WARNING
 			);
-		}
-
-		if ( ! isset( $this->charset ) ) {
-			$this->init_charset();
 		}
 
 		if ( null === $this->dbname || '' === $this->dbname ) {
@@ -762,6 +772,45 @@ class WP_SQLite_DB extends wpdb {
 		}
 
 		return $this->dbh->getAttribute( PDO::ATTR_SERVER_VERSION ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+	}
+
+	/**
+	 * Resolves the charset and collation as wpdb::determine_charset() does.
+	 *
+	 * Unlike in wpdb, this doesn't need a database connection. The emulated
+	 * MySQL server (5.7 or newer) always supports utf8mb4_unicode_520_ci.
+	 *
+	 * @see wpdb::determine_charset()
+	 *
+	 * @param string $charset The character set to check.
+	 * @param string $collate The collation to check.
+	 * @return array {
+	 *     The most appropriate character set and collation to use.
+	 *
+	 *     @type string $charset Character set.
+	 *     @type string $collate Collation.
+	 * }
+	 */
+	private function resolve_charset( $charset, $collate ) {
+		if ( 'utf8' === $charset ) {
+			$charset = 'utf8mb4';
+		}
+
+		if ( 'utf8mb4' === $charset ) {
+			// _general_ is outdated, so we can upgrade it to _unicode_, instead.
+			if ( ! $collate || 'utf8_general_ci' === $collate ) {
+				$collate = 'utf8mb4_unicode_ci';
+			} else {
+				$collate = str_replace( 'utf8_', 'utf8mb4_', $collate );
+			}
+		}
+
+		// _unicode_520_ is a better collation, we should use that when it's available.
+		if ( 'utf8mb4_unicode_ci' === $collate ) {
+			$collate = 'utf8mb4_unicode_520_ci';
+		}
+
+		return compact( 'charset', 'collate' );
 	}
 
 	/**

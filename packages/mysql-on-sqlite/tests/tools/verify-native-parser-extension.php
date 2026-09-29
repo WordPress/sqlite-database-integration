@@ -30,7 +30,9 @@ function wp_sqlite_assert_native_parser_delegate( WP_MySQL_Parser $parser, strin
 	}
 
 	$native_property = $reflection->getProperty( 'native' );
-	$native_property->setAccessible( true );
+	if ( PHP_VERSION_ID < 80100 ) {
+		$native_property->setAccessible( true );
+	}
 	if ( ! ( $native_property->getValue( $parser ) instanceof WP_MySQL_Native_Parser ) ) {
 		wp_sqlite_native_parser_verification_fail( $context );
 	}
