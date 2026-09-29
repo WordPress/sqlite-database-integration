@@ -53,7 +53,7 @@ if ( 'sqlite' === DB_ENGINE && defined( 'DB_PATH' ) ) {
  * @deprecated 3.0.0 Define DB_PATH instead of overriding FQDBDIR.
  */
 if ( ! defined( 'FQDBDIR' ) ) {
-	if ( defined( 'DB_PATH' ) && is_string( DB_PATH ) ) {
+	if ( defined( 'DB_PATH' ) && is_string( DB_PATH ) && ':memory:' !== DB_PATH ) {
 		define( 'FQDBDIR', rtrim( dirname( DB_PATH ), '/\\' ) . '/' );
 	} elseif ( defined( 'DB_DIR' ) ) {
 		define( 'FQDBDIR', rtrim( DB_DIR, '/\\' ) . '/' );

@@ -50,8 +50,9 @@ class WP_SQLite_Storage {
 
 	/**
 	 * Directory with the storage lock files and, for a secret path, the database.
+	 * Null for an in-memory database.
 	 *
-	 * @var string
+	 * @var string|null
 	 */
 	private $database_root;
 
@@ -65,21 +66,21 @@ class WP_SQLite_Storage {
 	/**
 	 * Absolute path of the database path file.
 	 *
-	 * @var string
+	 * @var string|null
 	 */
 	private $database_path_file;
 
 	/**
 	 * Absolute path of the SQLite locking database.
 	 *
-	 * @var string
+	 * @var string|null
 	 */
 	private $lock_path;
 
 	/**
 	 * Absolute path of the storage maintenance marker.
 	 *
-	 * @var string
+	 * @var string|null
 	 */
 	private $maintenance_path;
 
@@ -138,7 +139,9 @@ class WP_SQLite_Storage {
 
 		$storage                = new self();
 		$storage->database_path = $path;
-		$storage->set_database_root( ':memory:' === $path ? FQDBDIR : dirname( $path ) );
+		if ( ':memory:' !== $path ) {
+			$storage->set_database_root( dirname( $path ) );
+		}
 		return $storage;
 	}
 
@@ -230,6 +233,11 @@ class WP_SQLite_Storage {
 	 * @throws RuntimeException When the lock cannot be acquired.
 	 */
 	public function lock(): void {
+		// An in-memory database has no files to lock.
+		if ( ':memory:' === $this->database_path ) {
+			return;
+		}
+
 		$was_locked = null !== $this->storage_lock_connection;
 
 		// Serialize maintenance through the dedicated locking database.

@@ -207,7 +207,8 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 			echo json_encode(array(
 				"path" => DB_PATH,
 				"connected_path" => $wpdb->get_driver()->get_sqlite_pdo()->query("PRAGMA database_list")->fetch(PDO::FETCH_ASSOC)["file"],
-				"legacy_path" => FQDB
+				"legacy_path" => FQDB,
+				"legacy_directory" => FQDBDIR
 			));';
 
 		$result = $this->close_process( ...$this->open_dropin_process( $settings, $script ) );
@@ -219,6 +220,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assertSame( ':memory:', $data['path'] );
 		$this->assertSame( '', $data['connected_path'] );
 		$this->assertSame( ':memory:', $data['legacy_path'] );
+		$this->assertSame( $directory . '/content/database/', $data['legacy_directory'] );
 		$this->assertSame( array( '.', '..' ), scandir( $directory ) );
 	}
 
@@ -300,7 +302,8 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 	 */
 	public function test_validates_absolute_database_paths_without_wordpress_helpers( $database_path ) {
 		$script = sprintf(
-			'define("DB_PATH", %s); require %s; require %s; WP_SQLite_Storage::with_explicit_path(DB_PATH); echo FQDB;',
+			'define("ABSPATH", %s); define("DB_PATH", %s); require %s; require %s; WP_SQLite_Storage::with_explicit_path(DB_PATH); echo FQDB;',
+			var_export( ABSPATH, true ),
 			var_export( $database_path, true ),
 			var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/constants.php', true ),
 			var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-storage.php', true )
@@ -640,11 +643,18 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assert_protected_directory( dirname( $database_path ) );
 	}
 
-	public function test_initializes_an_in_memory_database_without_creating_files() {
+	public function test_uses_an_in_memory_database_without_creating_files() {
+		$script = sprintf(
+			'require %s; $storage = WP_SQLite_Storage::with_explicit_path(":memory:"); echo $storage->initialize(); $storage->lock(); $storage->unlock();',
+			var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/wp-includes/sqlite/class-wp-sqlite-storage.php', true )
+		);
+
 		$this->assert_creates_no_files(
-			function () {
-				$storage = WP_SQLite_Storage::with_explicit_path( ':memory:' );
-				$this->assertSame( ':memory:', $storage->initialize() );
+			function () use ( $script ) {
+				$result = $this->close_process( ...$this->open_process( $script ) );
+				$this->assertSame( 0, $result['exit_code'], $result['error'] );
+				$this->assertSame( '', $result['error'] );
+				$this->assertSame( ':memory:', $result['output'] );
 			}
 		);
 	}
