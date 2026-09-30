@@ -133,8 +133,13 @@ class WP_SQLite_Storage {
 	 * @throws RuntimeException When the database path is invalid.
 	 */
 	public static function with_explicit_path( string $path ): self {
-		if ( ':memory:' !== $path && ! self::is_absolute_path( $path ) ) {
-			throw new RuntimeException( 'The SQLite database path must be an absolute filesystem path or ":memory:".' );
+		if ( ':memory:' !== $path ) {
+			if ( ! self::is_absolute_path( $path ) ) {
+				throw new RuntimeException( 'The SQLite database path must be an absolute filesystem path or ":memory:".' );
+			}
+			if ( is_dir( $path ) || in_array( substr( $path, -1 ), array( '/', DIRECTORY_SEPARATOR ), true ) ) {
+				throw new RuntimeException( 'The SQLite database path must point to a file, not a directory.' );
+			}
 		}
 
 		$storage                = new self();

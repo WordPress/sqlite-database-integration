@@ -330,6 +330,40 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		if ( '\\' === DIRECTORY_SEPARATOR ) {
 			$paths['Windows drive'] = array( 'C:\\missing-directory\\database.sqlite' );
 			$paths['Windows UNC']   = array( '\\\\server\\share\\database.sqlite' );
+		} else {
+			$paths['filename ending in a backslash'] = array( $root . '/database.sqlite\\' );
+		}
+		return $paths;
+	}
+
+	/**
+	 * @dataProvider directory_database_paths
+	 */
+	public function test_rejects_directory_database_paths_without_creating_files( $suffix ) {
+		$directory = $this->create_temporary_directory();
+		$this->assertTrue( mkdir( $directory . '/existing' ) );
+
+		try {
+			WP_SQLite_Storage::with_explicit_path( $directory . $suffix );
+			$this->fail( 'A directory was accepted as a database file path.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'The SQLite database path must point to a file, not a directory.', $exception->getMessage() );
+		}
+
+		$this->assertSame( array( '.', '..', 'existing' ), scandir( $directory ) );
+		$this->assertSame( array( '.', '..' ), scandir( $directory . '/existing' ) );
+	}
+
+	public function directory_database_paths() {
+		$paths = array(
+			'existing directory'                => array( '/existing' ),
+			'existing directory with separator' => array( '/existing/' ),
+			'missing directory with separator'  => array( '/missing/' ),
+			'missing nested directory'          => array( '/missing/nested/' ),
+		);
+		if ( '\\' === DIRECTORY_SEPARATOR ) {
+			$paths['Windows existing directory'] = array( '\\existing\\' );
+			$paths['Windows missing directory']  = array( '\\missing\\' );
 		}
 		return $paths;
 	}
