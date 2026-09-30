@@ -23,7 +23,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$umask         = umask( 0777 );
 
 		try {
-			$database_path = $this->initialize_managed_storage( $database_root );
+			$database_path = $this->initialize_secret_path( $database_root );
 		} finally {
 			umask( $umask );
 		}
@@ -54,11 +54,11 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 	public function test_reuses_initialized_storage_without_repairing_protection_files() {
 		$database_root = $this->create_temporary_directory_path();
-		$first_path    = $this->initialize_managed_storage( $database_root );
+		$first_path    = $this->initialize_secret_path( $database_root );
 		$this->assertTrue( unlink( $database_root . '/.htaccess' ) );
 		$this->assertTrue( unlink( dirname( $first_path ) . '/index.php' ) );
 
-		$second_path = $this->initialize_managed_storage( $database_root );
+		$second_path = $this->initialize_secret_path( $database_root );
 
 		$this->assertSame( $first_path, $second_path );
 		$this->assertFileDoesNotExist( $database_root . '/.htaccess' );
@@ -172,7 +172,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 	public function database_file_settings() {
 		return array(
-			'managed default'       => array( array(), null ),
+			'default secret path'   => array( array(), null ),
 			'legacy directory'      => array( array( 'DB_DIR' => 'legacy-directory' ), null ),
 			'legacy storage root'   => array( array( 'FQDBDIR' => 'legacy-root' ), null ),
 			'legacy filename'       => array( array( 'DB_FILE' => 'legacy.sqlite' ), 'content/database/legacy.sqlite' ),
@@ -474,11 +474,11 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 	public function test_reuses_initialized_storage_with_read_only_database_root() {
 		$database_root = $this->create_temporary_directory_path();
-		$database_path = $this->initialize_managed_storage( $database_root );
+		$database_path = $this->initialize_secret_path( $database_root );
 		$this->assertTrue( chmod( $database_root, 0500 ) );
 
 		try {
-			$this->assertSame( $database_path, $this->initialize_managed_storage( $database_root ) );
+			$this->assertSame( $database_path, $this->initialize_secret_path( $database_root ) );
 		} finally {
 			$this->assertTrue( chmod( $database_root, 0700 ) );
 		}
@@ -486,11 +486,11 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 	public function test_skips_the_inactive_locking_database() {
 		$database_root = $this->create_temporary_directory_path();
-		$database_path = $this->initialize_managed_storage( $database_root );
+		$database_path = $this->initialize_secret_path( $database_root );
 		// Opening this invalid database would make initialization fail.
 		file_put_contents( $database_root . '/.ht.sqlite.lock', str_repeat( 'x', 4096 ) );
 
-		$this->assertSame( $database_path, $this->initialize_managed_storage( $database_root ) );
+		$this->assertSame( $database_path, $this->initialize_secret_path( $database_root ) );
 	}
 
 	public function test_initializes_one_database_for_concurrent_requests() {
@@ -516,7 +516,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 	public function test_waits_for_storage_maintenance_before_initializing() {
 		$database_root = $this->create_temporary_directory_path();
-		$database_path = $this->initialize_managed_storage( $database_root );
+		$database_path = $this->initialize_secret_path( $database_root );
 		$storage       = WP_SQLite_Storage::with_secret_path( $database_root );
 		$storage->lock();
 
@@ -558,16 +558,16 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assertSame( 0, $result['exit_code'] );
 		$this->assertSame( '', $result['error'] );
 		$this->assertSame( 'locked', $result['output'] );
-		$this->assertSame( $database_path, $this->initialize_managed_storage( $database_root ) );
+		$this->assertSame( $database_path, $this->initialize_secret_path( $database_root ) );
 	}
 
 	public function test_follows_a_moved_database_directory() {
 		$original_root = $this->create_temporary_directory_path();
 		$moved_root    = $this->create_temporary_directory_path();
-		$original_path = $this->initialize_managed_storage( $original_root );
+		$original_path = $this->initialize_secret_path( $original_root );
 		$this->assertTrue( rename( $original_root, $moved_root ) );
 
-		$moved_path = $this->initialize_managed_storage( $moved_root );
+		$moved_path = $this->initialize_secret_path( $moved_root );
 
 		$this->assertSame( $moved_root . substr( $original_path, strlen( $original_root ) ), $moved_path );
 		$this->assertFileExists( $moved_path );
@@ -578,7 +578,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$database_root = $this->create_temporary_directory();
 		file_put_contents( $database_root . '/tmp.db-path.php', 'interrupted write' );
 
-		$database_path = $this->initialize_managed_storage( $database_root );
+		$database_path = $this->initialize_secret_path( $database_root );
 
 		$this->assertFileExists( $database_path );
 		$this->assertFileExists( $database_root . '/db-path.php' );
@@ -590,7 +590,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		file_put_contents( $database_root . '/db-path.php', "<?php\nreturn array();\n" );
 
 		try {
-			$this->initialize_managed_storage( $database_root );
+			$this->initialize_secret_path( $database_root );
 			$this->fail( 'An invalid database path file was accepted.' );
 		} catch ( RuntimeException $exception ) {
 			$this->assertStringContainsString( 'database path file is invalid', $exception->getMessage() );
@@ -603,7 +603,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		file_put_contents( $database_root . '/db-path.php', "<?php\nreturn (;\n" );
 
 		try {
-			$this->initialize_managed_storage( $database_root );
+			$this->initialize_secret_path( $database_root );
 			$this->fail( 'An unreadable database path file was loaded.' );
 		} catch ( RuntimeException $exception ) {
 			$this->assertSame( 'Failed to read the SQLite database path file.', $exception->getMessage() );
@@ -619,7 +619,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 			"<?php\nreturn __DIR__ . '/.ht.0123456789abcdef0123456789abcdef/.ht.sqlite';\n"
 		);
 
-		$this->assertSame( $database_path, $this->initialize_managed_storage( $database_root ) );
+		$this->assertSame( $database_path, $this->initialize_secret_path( $database_root ) );
 		$this->assertFileExists( $database_path );
 		$this->assertSame( 0600, fileperms( $database_path ) & 0777 );
 		$this->assert_protected_directory( $database_root );
@@ -729,7 +729,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->create_sqlite_database( $current_path );
 		$this->create_sqlite_database( $older_path );
 
-		$database_path = $this->initialize_managed_storage( $database_root );
+		$database_path = $this->initialize_secret_path( $database_root );
 
 		$this->assertFileDoesNotExist( $current_path );
 		$this->assertFileExists( $older_path );
@@ -743,7 +743,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 		list( $process, $pipes ) = $this->open_database_connection_process( $legacy_path );
 		try {
-			$database_path = $this->initialize_managed_storage( $database_root );
+			$database_path = $this->initialize_secret_path( $database_root );
 		} finally {
 			$result = $this->close_process( $process, $pipes );
 		}
@@ -764,7 +764,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		file_put_contents( $database_root . '/db-path.php', "<?php\nreturn " . var_export( $database_path, true ) . ";\n" );
 
 		try {
-			$this->initialize_managed_storage( $database_root );
+			$this->initialize_secret_path( $database_root );
 			$this->fail( 'The database was migrated over a directory.' );
 		} catch ( RuntimeException $exception ) {
 			$this->assertSame( 'Failed to move the SQLite database file.', $exception->getMessage() );
@@ -777,7 +777,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 		// The migration succeeds once the obstacle is removed.
 		$this->assertTrue( rmdir( $database_path ) );
-		$this->assertSame( $database_path, $this->initialize_managed_storage( $database_root ) );
+		$this->assertSame( $database_path, $this->initialize_secret_path( $database_root ) );
 		$this->assertFileDoesNotExist( $legacy_path );
 		$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
 	}
@@ -788,7 +788,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		file_put_contents( $legacy_path, str_repeat( 'x', 4096 ) );
 
 		try {
-			$this->initialize_managed_storage( $database_root );
+			$this->initialize_secret_path( $database_root );
 			$this->fail( 'An invalid legacy database was migrated.' );
 		} catch ( RuntimeException $exception ) {
 			$this->assertSame( 'Failed to lock the SQLite database.', $exception->getMessage() );
@@ -802,7 +802,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 	public function test_reports_when_the_migrated_database_cannot_be_locked() {
 		$database_root = $this->create_temporary_directory();
 		$legacy_path   = $database_root . '/.ht.sqlite';
-		$database_path = $database_root . '/managed/.ht.sqlite';
+		$database_path = $database_root . '/secret/.ht.sqlite';
 		file_put_contents( $legacy_path, str_repeat( 'x', 4096 ) );
 		$storage = WP_SQLite_Storage::with_secret_path( $database_root );
 		$move    = Closure::bind(
@@ -910,13 +910,13 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 
 	public function test_clears_a_stale_marker_without_a_locking_database() {
 		$database_root = $this->create_temporary_directory();
-		$database_path = $this->initialize_managed_storage( $database_root );
+		$database_path = $this->initialize_secret_path( $database_root );
 		$this->assertTrue( unlink( $database_root . '/.ht.sqlite.lock' ) );
 		file_put_contents( $database_root . '/.ht.sqlite.maintenance', '' );
 		$umask = umask( 0000 );
 
 		try {
-			$this->assertSame( $database_path, $this->initialize_managed_storage( $database_root ) );
+			$this->assertSame( $database_path, $this->initialize_secret_path( $database_root ) );
 		} finally {
 			umask( $umask );
 		}
@@ -1100,7 +1100,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$legacy_path   = $database_root . '/' . $filename;
 		$this->create_wal_sqlite_database_copy( $legacy_path );
 
-		$database_path        = $this->initialize_managed_storage( $database_root );
+		$database_path        = $this->initialize_secret_path( $database_root );
 		$stored_database_path = require $database_root . '/db-path.php';
 
 		$this->assertSame( $database_path, $stored_database_path );
@@ -1127,7 +1127,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assertSame( array( '.', '..' ), scandir( $working_directory ) );
 	}
 
-	private function initialize_managed_storage( $database_root ) {
+	private function initialize_secret_path( $database_root ) {
 		$storage = WP_SQLite_Storage::with_secret_path( $database_root );
 
 		return $storage->initialize();

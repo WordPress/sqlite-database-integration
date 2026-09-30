@@ -67,8 +67,8 @@ if ( ! defined( 'FQDBDIR' ) ) {
 /**
  * FQDB is the absolute path to the SQLite database file.
  *
- * Defaults to DB_PATH, or FQDBDIR combined with DB_FILE. For managed storage,
- * the drop-in defines FQDB after resolving the randomized database path.
+ * Defaults to DB_PATH, or FQDBDIR combined with DB_FILE. Otherwise, the drop-in
+ * defines FQDB after resolving the secret database path.
  * Must not be configured together with DB_PATH.
  *
  * @deprecated 3.0.0 Define DB_PATH instead of overriding FQDB.

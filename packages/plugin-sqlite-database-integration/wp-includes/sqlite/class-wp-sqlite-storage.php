@@ -5,8 +5,8 @@
  *
  * The storage handles the path of the SQLite database:
  *   - An explicit database path is used as is.
- *   - A managed database is stored under a randomized protected path.
- *   - A database in a legacy path is migrated to the managed storage.
+ *   - A database with a secret path is stored in a randomized protected directory.
+ *   - A database in a legacy path is migrated to a secret path.
  *
  * The storage implements a locking mechanism for initialization and maintenance.
  * Locking uses a dedicated empty SQLite database and a maintenance file:
@@ -49,7 +49,7 @@ class WP_SQLite_Storage {
 	private const TOKEN_BYTE_LENGTH = 16;
 
 	/**
-	 * Directory with the storage lock files and, for managed storage, the database.
+	 * Directory with the storage lock files and, for a secret path, the database.
 	 *
 	 * @var string
 	 */
@@ -146,7 +146,7 @@ class WP_SQLite_Storage {
 	 * Initialize the SQLite database storage.
 	 *
 	 * Uses an explicit file path or ":memory:" as configured. Otherwise, initializes
-	 * managed storage with a randomized path and migrates legacy databases as needed.
+	 * a secret randomized path and migrates legacy databases as needed.
 	 *
 	 * @return string Absolute path to the SQLite database file, or ":memory:".
 	 * @throws RuntimeException When the storage cannot be initialized.
@@ -173,13 +173,13 @@ class WP_SQLite_Storage {
 			return $this->database_path;
 		}
 
-		// Initialized managed database path.
+		// Initialized secret database path.
 		$database_path = $this->read_recorded_database_path();
 		if ( null !== $database_path && @is_file( $database_path ) ) {
 			return $database_path;
 		}
 
-		// Initialize or repair the managed storage under the storage lock.
+		// Initialize or repair the secret path under the storage lock.
 		// Preserve a lock already held by this instance for a larger operation.
 		$this->lock();
 		try {
@@ -265,7 +265,7 @@ class WP_SQLite_Storage {
 			if ( null === $database_path ) {
 				$database_path = $this->read_recorded_database_path();
 
-				// The managed database may still be at a legacy path.
+				// The database may still be at a legacy path.
 				if ( null === $database_path || ! @is_file( $database_path ) ) {
 					$database_path = $this->database_root . self::DATABASE_FILENAME;
 				}
@@ -433,7 +433,7 @@ class WP_SQLite_Storage {
 	}
 
 	/**
-	 * Move a legacy database into a managed path.
+	 * Move a legacy database into a secret path.
 	 *
 	 * @param string $legacy_path   Absolute path of the legacy database file.
 	 * @param string $database_path Absolute destination path.
