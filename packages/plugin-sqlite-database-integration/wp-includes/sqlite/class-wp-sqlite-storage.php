@@ -5,8 +5,8 @@
  *
  * The storage handles the path of the SQLite database:
  *   - An explicit database path is used as is.
- *   - A managed database is stored under a randomized protected path.
- *   - A database in a legacy path is migrated to the managed storage.
+ *   - A database with a secret path is stored in a randomized protected directory.
+ *   - A database in a legacy path is migrated to a secret path.
  *
  * The storage implements a locking mechanism for initialization and maintenance.
  * Locking uses a dedicated empty SQLite database and a maintenance file:
@@ -49,9 +49,10 @@ class WP_SQLite_Storage {
 	private const TOKEN_BYTE_LENGTH = 16;
 
 	/**
-	 * Managed database root directory.
+	 * Directory with the storage lock files and, for a secret path, the database.
+	 * Null for an in-memory database.
 	 *
-	 * @var string
+	 * @var string|null
 	 */
 	private $database_root;
 
@@ -65,21 +66,21 @@ class WP_SQLite_Storage {
 	/**
 	 * Absolute path of the database path file.
 	 *
-	 * @var string
+	 * @var string|null
 	 */
 	private $database_path_file;
 
 	/**
 	 * Absolute path of the SQLite locking database.
 	 *
-	 * @var string
+	 * @var string|null
 	 */
 	private $lock_path;
 
 	/**
 	 * Absolute path of the storage maintenance marker.
 	 *
-	 * @var string
+	 * @var string|null
 	 */
 	private $maintenance_path;
 
@@ -105,28 +106,55 @@ class WP_SQLite_Storage {
 	private $database_lock_timeout = 10000;
 
 	/**
-	 * Create a SQLite storage manager.
+	 * Create a storage manager for a database with a secret path.
 	 *
-	 * @param string|null $database_root Managed database root. Defaults to FQDBDIR.
-	 * @param string|null $database_path Explicit database path or ":memory:". Managed storage is used when null.
+	 * The database is stored in a randomized directory inside the root directory.
+	 * Legacy databases in the root directory are migrated to it.
+	 *
+	 * @param string $root Root directory of the database storage.
+	 * @return self The storage manager.
+	 * @throws RuntimeException When the root directory is not an absolute path.
+	 */
+	public static function with_secret_path( string $root ): self {
+		if ( ! self::is_absolute_path( $root ) ) {
+			throw new RuntimeException( 'The SQLite database directory must be an absolute filesystem path.' );
+		}
+
+		$storage = new self();
+		$storage->set_database_root( $root );
+		return $storage;
+	}
+
+	/**
+	 * Create a storage manager for an explicit database path.
+	 *
+	 * @param string $path Absolute database path or ":memory:".
+	 * @return self The storage manager.
 	 * @throws RuntimeException When the database path is invalid.
 	 */
-	public function __construct( ?string $database_root = null, ?string $database_path = null ) {
-		if ( '' === $database_path ) {
-			throw new RuntimeException( 'The SQLite database path is invalid.' );
+	public static function with_explicit_path( string $path ): self {
+		if ( ':memory:' !== $path ) {
+			if ( ! self::is_absolute_path( $path ) ) {
+				throw new RuntimeException( 'The SQLite database path must be an absolute filesystem path or ":memory:".' );
+			}
+			if ( is_dir( $path ) || in_array( substr( $path, -1 ), array( '/', DIRECTORY_SEPARATOR ), true ) ) {
+				throw new RuntimeException( 'The SQLite database path must point to a file, not a directory.' );
+			}
 		}
-		$this->database_root      = rtrim( $database_root ?? FQDBDIR, '/\\' ) . '/';
-		$this->database_path      = $database_path;
-		$this->database_path_file = $this->database_root . self::DATABASE_PATH_FILENAME;
-		$this->lock_path          = $this->database_root . self::LOCK_FILENAME;
-		$this->maintenance_path   = $this->database_root . self::MAINTENANCE_FILENAME;
+
+		$storage                = new self();
+		$storage->database_path = $path;
+		if ( ':memory:' !== $path ) {
+			$storage->set_database_root( dirname( $path ) );
+		}
+		return $storage;
 	}
 
 	/**
 	 * Initialize the SQLite database storage.
 	 *
 	 * Uses an explicit file path or ":memory:" as configured. Otherwise, initializes
-	 * managed storage with a randomized path and migrates legacy databases as needed.
+	 * a secret randomized path and migrates legacy databases as needed.
 	 *
 	 * @return string Absolute path to the SQLite database file, or ":memory:".
 	 * @throws RuntimeException When the storage cannot be initialized.
@@ -153,13 +181,13 @@ class WP_SQLite_Storage {
 			return $this->database_path;
 		}
 
-		// Initialized managed database path.
+		// Initialized secret database path.
 		$database_path = $this->read_recorded_database_path();
 		if ( null !== $database_path && @is_file( $database_path ) ) {
 			return $database_path;
 		}
 
-		// Initialize or repair the managed storage under the storage lock.
+		// Initialize or repair the secret path under the storage lock.
 		// Preserve a lock already held by this instance for a larger operation.
 		$this->lock();
 		try {
@@ -210,6 +238,11 @@ class WP_SQLite_Storage {
 	 * @throws RuntimeException When the lock cannot be acquired.
 	 */
 	public function lock(): void {
+		// An in-memory database has no files to lock.
+		if ( ':memory:' === $this->database_path ) {
+			return;
+		}
+
 		$was_locked = null !== $this->storage_lock_connection;
 
 		// Serialize maintenance through the dedicated locking database.
@@ -245,7 +278,7 @@ class WP_SQLite_Storage {
 			if ( null === $database_path ) {
 				$database_path = $this->read_recorded_database_path();
 
-				// The managed database may still be at a legacy path.
+				// The database may still be at a legacy path.
 				if ( null === $database_path || ! @is_file( $database_path ) ) {
 					$database_path = $this->database_root . self::DATABASE_FILENAME;
 				}
@@ -279,6 +312,46 @@ class WP_SQLite_Storage {
 			// Remove the marker before releasing the lock that protects it.
 			@unlink( $this->maintenance_path );
 			$this->storage_lock_connection = null;
+		}
+	}
+
+	/**
+	 * Create a storage manager. Use with_secret_path() or with_explicit_path().
+	 */
+	private function __construct() {
+	}
+
+	/**
+	 * Set the storage root directory and the paths derived from it.
+	 *
+	 * @param string $database_root Storage root directory.
+	 */
+	private function set_database_root( string $database_root ): void {
+		$this->database_root      = rtrim( $database_root, '/\\' ) . '/';
+		$this->database_path_file = $this->database_root . self::DATABASE_PATH_FILENAME;
+		$this->lock_path          = $this->database_root . self::LOCK_FILENAME;
+		$this->maintenance_path   = $this->database_root . self::MAINTENANCE_FILENAME;
+	}
+
+	/**
+	 * Check whether a path is an absolute filesystem path.
+	 *
+	 * @param string $path Filesystem path.
+	 * @return bool Whether the path is absolute.
+	 */
+	private static function is_absolute_path( string $path ): bool {
+		if ( '' === $path || false !== strpos( $path, "\0" ) ) {
+			return false;
+		}
+
+		if ( '/' === DIRECTORY_SEPARATOR ) {
+			return '/' === $path[0];
+		} else {
+			// Match Windows absolute path with a drive letter or UNC share.
+			return 1 === preg_match(
+				'~^(?:[a-zA-Z]:/|//[^/]+/[^/]+/)~',
+				str_replace( '\\', '/', $path )
+			);
 		}
 	}
 
@@ -373,7 +446,7 @@ class WP_SQLite_Storage {
 	}
 
 	/**
-	 * Move a legacy database into a managed path.
+	 * Move a legacy database into a secret path.
 	 *
 	 * @param string $legacy_path   Absolute path of the legacy database file.
 	 * @param string $database_path Absolute destination path.
