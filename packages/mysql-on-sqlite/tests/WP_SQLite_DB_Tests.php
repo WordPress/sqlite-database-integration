@@ -162,4 +162,62 @@ class WP_SQLite_DB_Tests extends TestCase {
 		$this->expectExceptionMessage( 'Cannot escape data without an active database connection.' );
 		$wpdb->_real_escape( 'value' );
 	}
+
+	/**
+	 * Each data set runs in a separate process to define its own constants.
+	 *
+	 * @dataProvider dataCharsetConstants
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function testInitCharset( array $constants, string $expected_collate ): void {
+		foreach ( $constants as $name => $value ) {
+			define( $name, $value );
+		}
+
+		$wpdb = new class() extends WP_SQLite_DB {
+			public $charset;
+			public $collate;
+
+			public function __construct() {}
+		};
+		$wpdb->init_charset();
+
+		$this->assertSame( 'utf8mb4', $wpdb->charset );
+		$this->assertSame( $expected_collate, $wpdb->collate );
+	}
+
+	public static function dataCharsetConstants(): array {
+		return array(
+			'no constants'              => array( array(), 'utf8mb4_unicode_520_ci' ),
+			'empty collation'           => array( array( 'DB_COLLATE' => '' ), 'utf8mb4_unicode_520_ci' ),
+			'null collation'            => array( array( 'DB_COLLATE' => null ), 'utf8mb4_unicode_520_ci' ),
+			'utf8 charset'              => array(
+				array(
+					'DB_CHARSET' => 'utf8',
+					'DB_COLLATE' => '',
+				),
+				'utf8mb4_unicode_520_ci',
+			),
+			'non-UTF-8 charset'         => array(
+				array(
+					'DB_CHARSET' => 'latin1',
+					'DB_COLLATE' => 'latin1_swedish_ci',
+				),
+				'utf8mb4_unicode_520_ci',
+			),
+			'non-UTF-8 collation'       => array( array( 'DB_COLLATE' => 'latin1_swedish_ci' ), 'utf8mb4_unicode_520_ci' ),
+			'charset as collation'      => array( array( 'DB_COLLATE' => 'utf8mb4' ), 'utf8mb4_unicode_520_ci' ),
+			'utf8_general_ci'           => array( array( 'DB_COLLATE' => 'utf8_general_ci' ), 'utf8mb4_unicode_520_ci' ),
+			'utf8_unicode_ci'           => array( array( 'DB_COLLATE' => 'utf8_unicode_ci' ), 'utf8mb4_unicode_520_ci' ),
+			'utf8_bin'                  => array( array( 'DB_COLLATE' => 'utf8_bin' ), 'utf8mb4_bin' ),
+			'utf8_swedish_ci'           => array( array( 'DB_COLLATE' => 'utf8_swedish_ci' ), 'utf8mb4_swedish_ci' ),
+			'utf8mb3_general_ci'        => array( array( 'DB_COLLATE' => 'utf8mb3_general_ci' ), 'utf8mb4_unicode_520_ci' ),
+			'utf8mb3_bin'               => array( array( 'DB_COLLATE' => 'utf8mb3_bin' ), 'utf8mb4_bin' ),
+			'utf8mb4_unicode_ci'        => array( array( 'DB_COLLATE' => 'utf8mb4_unicode_ci' ), 'utf8mb4_unicode_520_ci' ),
+			'utf8mb4_general_ci'        => array( array( 'DB_COLLATE' => 'utf8mb4_general_ci' ), 'utf8mb4_general_ci' ),
+			'utf8mb4_0900_ai_ci'        => array( array( 'DB_COLLATE' => 'utf8mb4_0900_ai_ci' ), 'utf8mb4_0900_ai_ci' ),
+			'uppercase UTF-8 collation' => array( array( 'DB_COLLATE' => 'UTF8_BIN' ), 'utf8mb4_bin' ),
+		);
+	}
 }

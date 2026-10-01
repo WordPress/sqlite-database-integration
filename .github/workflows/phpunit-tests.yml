@@ -170,16 +170,24 @@ jobs:
         run: cargo build --release
         working-directory: packages/php-ext-wp-mysql-parser
 
+      # Load the extension via an INI file, so that it also applies to child
+      # processes, such as PHPUnit tests that run in a separate process.
+      - name: Enable parser extension
+        if: matrix.extension
+        run: |
+          echo "extension=$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so" \
+            | sudo tee "$(php -r 'echo PHP_CONFIG_FILE_SCAN_DIR;')/wp-mysql-parser.ini"
+
       - name: Verify native parser extension
         if: matrix.extension
-        run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so" tests/tools/verify-native-parser-extension.php
+        run: php tests/tools/verify-native-parser-extension.php
         working-directory: packages/mysql-on-sqlite
 
       - name: Run PHPUnit suite with parser extension
         if: matrix.extension
         env:
           WP_SQLITE_REQUIRE_NATIVE_PARSER_EXTENSION: '1'
-        run: php -d extension="$GITHUB_WORKSPACE/packages/php-ext-wp-mysql-parser/target/release/libwp_mysql_parser.so" ./vendor/bin/phpunit -c ./phpunit.xml.dist
+        run: php ./vendor/bin/phpunit -c ./phpunit.xml.dist
         working-directory: packages/mysql-on-sqlite
 
       - name: Run PHPUnit suite
