@@ -930,6 +930,120 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( '2007-01-02 13:29:17', $result[0]->output );
 	}
 
+	public function testDateAddFunctionWithNegativeAndComputedIntervals() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT DATE_ADD('2024-01-01 10:00:00', INTERVAL -5 HOUR) as output"
+		);
+		$this->assertEquals( '2024-01-01 05:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_SUB('2024-01-01 10:00:00', INTERVAL -5 HOUR) as output"
+		);
+		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_SUB('2024-01-01 10:00:00', INTERVAL 2 * 3 HOUR) as output"
+		);
+		$this->assertEquals( '2024-01-01 04:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_ADD('2024-01-01 10:00:00', INTERVAL 1 week) as output"
+		);
+		$this->assertEquals( '2024-01-08 10:00:00', $result[0]->output );
+	}
+
+	public function testIntervalArithmetic() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' - INTERVAL 5 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 05:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 5 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
+
+		// The interval can also come first.
+		$result = $this->assertQuery(
+			"SELECT INTERVAL 5 HOUR + '2024-01-01 10:00:00' as output"
+		);
+		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
+
+		// Intervals chain from left to right.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 5 HOUR + INTERVAL 1 DAY as output"
+		);
+		$this->assertEquals( '2024-01-02 15:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 DAY - INTERVAL 5 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-02 05:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 WEEK as output"
+		);
+		$this->assertEquals( '2024-01-08 10:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 hour as output"
+		);
+		$this->assertEquals( '2024-01-01 11:00:00', $result[0]->output );
+
+		// The value is an expression, and may be negative or a string.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' - INTERVAL 2 * 3 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 04:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL -5 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 05:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL '5' HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
+
+		// NULL on either side yields NULL.
+		$result = $this->assertQuery( 'SELECT NULL + INTERVAL 1 DAY as output' );
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL NULL DAY as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// The case from the original report.
+		$result = $this->assertQuery(
+			"SELECT DATE('2024-01-01 10:00:00' - INTERVAL 5 HOUR) as output"
+		);
+		$this->assertEquals( '2024-01-01', $result[0]->output );
+	}
+
+	public function testIntervalArithmeticOnColumns() {
+		$this->assertQuery( 'CREATE TABLE _events (id INT, occurred_at DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _events VALUES (1, '2024-01-01 10:00:00'), (2, '2024-01-03 10:00:00'), (3, NULL)"
+		);
+
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			'SELECT id, occurred_at - INTERVAL 1 DAY as output FROM _events ORDER BY id'
+		);
+		$this->assertEquals( '2023-12-31 10:00:00', $result[0]->output );
+		$this->assertEquals( '2024-01-02 10:00:00', $result[1]->output );
+		$this->assertNull( $result[2]->output );
+
+		$result = $this->assertQuery(
+			"SELECT id FROM _events WHERE occurred_at > '2024-01-02 00:00:00' - INTERVAL 1 DAY ORDER BY id"
+		);
+		$this->assertEquals( array( 1, 2 ), array_map( 'intval', array_column( $result, 'id' ) ) );
+	}
+
 	public function testLeftFunction1Char() {
 		$result = $this->assertQuery(
 			'SELECT LEFT("abc", 1) as output'
@@ -13133,7 +13247,7 @@ END;
 		$result = $this->sqlite->query( 'PRAGMA table_info(t)' )->fetchAll();
 		$this->assertSame( null, $result[0]['dflt_value'] );
 		$this->assertSame( '1 + 2', $result[1]['dflt_value'] );
-		$this->assertSame( "DATETIME(CURRENT_TIMESTAMP, '+' || 1 || ' YEAR')", $result[2]['dflt_value'] );
+		$this->assertSame( "DATETIME(CURRENT_TIMESTAMP, (1) || ' YEAR')", $result[2]['dflt_value'] );
 		$this->assertSame( "('a' || 'b')", $result[3]['dflt_value'] );
 	}
 

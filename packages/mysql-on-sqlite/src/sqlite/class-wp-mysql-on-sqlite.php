@@ -4341,6 +4341,8 @@ class WP_MySQL_On_SQLite extends PDO {
 					return null;
 				}
 				return $this->translate_sequence( $node->get_children() );
+			case 'bitExpr':
+				return $this->translate_bit_expr( $node );
 			case 'simpleExprBody':
 				return $this->translate_simple_expr_body( $node );
 			case 'predicateOperations':
@@ -4907,7 +4909,68 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 		}
 
+		// Translate "INTERVAL n unit + expr", the prefix form of date arithmetic.
+		if ( null !== $token && WP_MySQL_Lexer::INTERVAL_SYMBOL === $token->id ) {
+			$nodes = $node->get_child_nodes();
+			return $this->translate_interval_arithmetic(
+				$this->translate( $nodes[2] ),
+				false,
+				$nodes[0],
+				$nodes[1]
+			);
+		}
+
 		return $this->translate_sequence( $node->get_children() );
+	}
+
+	/**
+	 * Translate a "bitExpr" AST node.
+	 *
+	 * Date arithmetic is the only "bitExpr" form that SQLite cannot run as
+	 * written: "expr + INTERVAL n unit" and "expr - INTERVAL n unit". Each
+	 * interval is folded into the expression on its left, so a chain such as
+	 * "expr + INTERVAL 5 HOUR + INTERVAL 1 DAY" becomes nested DATETIME() calls
+	 * applied in the same order as in MySQL.
+	 *
+	 * @param  WP_Parser_Node $node       The "bitExpr" AST node.
+	 * @return string|null                The translated value.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
+	 */
+	private function translate_bit_expr( WP_Parser_Node $node ): ?string {
+		if ( ! $node->has_child_token( WP_MySQL_Lexer::INTERVAL_SYMBOL ) ) {
+			return $this->translate_sequence( $node->get_children() );
+		}
+
+		$children = $node->get_children();
+		$count    = count( $children );
+		$parts    = array();
+		for ( $i = 0; $i < $count; $i++ ) {
+			$child = $children[ $i ];
+			if (
+				$child instanceof WP_Parser_Token
+				&& ( WP_MySQL_Lexer::PLUS_OPERATOR === $child->id || WP_MySQL_Lexer::MINUS_OPERATOR === $child->id )
+				&& isset( $children[ $i + 1 ] )
+				&& $children[ $i + 1 ] instanceof WP_Parser_Token
+				&& WP_MySQL_Lexer::INTERVAL_SYMBOL === $children[ $i + 1 ]->id
+			) {
+				$parts = array(
+					$this->translate_interval_arithmetic(
+						implode( ' ', $parts ),
+						WP_MySQL_Lexer::MINUS_OPERATOR === $child->id,
+						$children[ $i + 2 ],
+						$children[ $i + 3 ]
+					),
+				);
+				$i    += 3;
+				continue;
+			}
+
+			$translated = $this->translate( $child );
+			if ( null !== $translated ) {
+				$parts[] = $translated;
+			}
+		}
+		return implode( ' ', $parts );
 	}
 
 	/**
@@ -5034,18 +5097,11 @@ class WP_MySQL_On_SQLite extends PDO {
 			case WP_MySQL_Lexer::DATE_ADD_SYMBOL:
 			case WP_MySQL_Lexer::DATE_SUB_SYMBOL:
 				$nodes = $node->get_child_nodes();
-				$value = $this->translate( $nodes[1] );
-				$unit  = $this->translate( $nodes[2] );
-				if ( 'WEEK' === $unit ) {
-					$unit  = 'DAY';
-					$value = 7 * $value;
-				}
-				return sprintf(
-					"DATETIME(%s, '%s' || %s || ' %s')",
+				return $this->translate_interval_arithmetic(
 					$this->translate( $nodes[0] ),
-					WP_MySQL_Lexer::DATE_SUB_SYMBOL === $child->id ? '-' : '+',
-					$value,
-					$unit
+					WP_MySQL_Lexer::DATE_SUB_SYMBOL === $child->id,
+					$nodes[1],
+					$nodes[2]
 				);
 			case WP_MySQL_Lexer::LEFT_SYMBOL:
 				$nodes = $node->get_child_nodes();
@@ -5057,6 +5113,40 @@ class WP_MySQL_On_SQLite extends PDO {
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate MySQL date arithmetic to a SQLite DATETIME() call.
+	 *
+	 * SQLite reads the modifier as text, and "||" binds tighter than "*", so
+	 * the value is parenthesized before the unit is appended. Subtraction
+	 * negates the value instead of prefixing "-", which keeps a negative
+	 * interval such as "INTERVAL -5 HOUR" valid: SQLite rejects "+-5 HOUR".
+	 * A WEEK interval becomes seven days, as SQLite has no week modifier.
+	 *
+	 * @param  string         $expr     The translated date expression.
+	 * @param  bool           $subtract Whether the interval is subtracted.
+	 * @param  WP_Parser_Node $value    The interval value expression node.
+	 * @param  WP_Parser_Node $interval The "interval" AST node holding the unit.
+	 * @return string                   The translated value.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
+	 */
+	private function translate_interval_arithmetic(
+		string $expr,
+		bool $subtract,
+		WP_Parser_Node $value,
+		WP_Parser_Node $interval
+	): string {
+		$value_sql = sprintf( '(%s)', $this->translate( $value ) );
+		$unit      = strtoupper( $this->translate( $interval ) );
+		if ( 'WEEK' === $unit ) {
+			$value_sql = sprintf( '(%s * 7)', $value_sql );
+			$unit      = 'DAY';
+		}
+		if ( $subtract ) {
+			$value_sql = '-' . $value_sql;
+		}
+		return sprintf( "DATETIME(%s, %s || ' %s')", $expr, $value_sql, $unit );
 	}
 
 	/**
