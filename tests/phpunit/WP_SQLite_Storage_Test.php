@@ -166,7 +166,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		if ( isset( $settings['DB_PATH'] ) ) {
 			$this->assertFileExists( dirname( $data['path'] ) . '/.ht.sqlite.lock' );
 			$this->assertFileDoesNotExist( $settings['WP_CONTENT_DIR'] );
-			$this->assertSame( dirname( $data['path'] ) . '/', $data['legacy_directory'] );
+			$this->assertSame( $settings['FQDBDIR'] ?? dirname( $data['path'] ) . '/', $data['legacy_directory'] );
 		}
 	}
 
@@ -194,10 +194,59 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 				'legacy.sqlite',
 			),
 			'explicit path'         => array( array( 'DB_PATH' => 'private/database;name.sqlite' ), 'private/database;name.sqlite' ),
+			'matching DB_DIR'       => array(
+				array(
+					'DB_PATH' => 'database.sqlite',
+					'DB_DIR'  => '',
+				),
+				'database.sqlite',
+			),
+			'matching DB_FILE'      => array(
+				array(
+					'DB_PATH' => 'database.sqlite',
+					'DB_FILE' => 'database.sqlite',
+				),
+				'database.sqlite',
+			),
+			'matching FQDBDIR'      => array(
+				array(
+					'DB_PATH' => 'database.sqlite',
+					'FQDBDIR' => '',
+				),
+				'database.sqlite',
+			),
+			'matching FQDB'         => array(
+				array(
+					'DB_PATH' => 'database.sqlite',
+					'FQDB'    => 'database.sqlite',
+				),
+				'database.sqlite',
+			),
+			'all matching'          => array(
+				array(
+					'DB_PATH' => 'private/database.sqlite',
+					'DB_DIR'  => 'private',
+					'DB_FILE' => 'database.sqlite',
+					'FQDBDIR' => 'private/',
+					'FQDB'    => 'private/database.sqlite',
+				),
+				'private/database.sqlite',
+			),
+			'trailing separators'   => array(
+				array(
+					'DB_PATH' => 'private/database.sqlite',
+					'DB_DIR'  => 'private///',
+					'FQDBDIR' => 'private///',
+				),
+				'private/database.sqlite',
+			),
 		);
 	}
 
-	public function test_dropin_uses_in_memory_db_path() {
+	/**
+	 * @dataProvider in_memory_database_settings
+	 */
+	public function test_dropin_uses_in_memory_db_path( $legacy_settings ) {
 		$directory = $this->create_temporary_directory();
 		$settings  = array(
 			'DB_PATH'        => ':memory:',
@@ -211,7 +260,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 				"legacy_directory" => FQDBDIR
 			));';
 
-		$result = $this->close_process( ...$this->open_dropin_process( $settings, $script ) );
+		$result = $this->close_process( ...$this->open_dropin_process( $settings + $legacy_settings, $script ) );
 
 		$this->assertSame( 0, $result['exit_code'], $result['error'] );
 		$this->assertSame( '', $result['error'] );
@@ -224,77 +273,222 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		$this->assertSame( array( '.', '..' ), scandir( $directory ) );
 	}
 
+	public function in_memory_database_settings() {
+		return array(
+			'DB_PATH only'  => array( array() ),
+			'matching FQDB' => array( array( 'FQDB' => ':memory:' ) ),
+		);
+	}
+
 	/**
-	 * @dataProvider mixed_database_file_settings
+	 * @dataProvider conflicting_database_file_settings
 	 */
-	public function test_rejects_db_path_with_predefined_legacy_constants( $settings ) {
+	public function test_warns_about_conflicting_legacy_constants_and_uses_db_path( $settings, $conflicting_constants ) {
 		$settings += array( 'DB_PATH' => 'database.sqlite' );
 		foreach ( array( 'constants.php', 'wp-includes/sqlite/db.php' ) as $entrypoint ) {
-			$directory = $this->create_temporary_directory();
-			$this->create_sqlite_database( $directory . '/database.sqlite' );
+			$directory         = $this->create_temporary_directory();
+			$resolved_settings = array(
+				'DB_ENGINE'      => 'sqlite',
+				'WP_CONTENT_DIR' => $directory . '/content',
+			);
 			$this->create_sqlite_database( $directory . '/legacy.sqlite' );
-			$script = 'define("WP_CLI", true); define("DB_ENGINE", "sqlite");';
 			foreach ( $settings as $name => $value ) {
-				$path    = 'DB_FILE' === $name || ':memory:' === $value ? $value : $directory . '/' . $value;
-				$script .= 'define(' . var_export( $name, true ) . ', ' . var_export( $path, true ) . ');';
+				$resolved_settings[ $name ] = ! is_string( $value ) || 'DB_FILE' === $name || ':memory:' === $value ? $value : $directory . '/' . $value;
 			}
-			$script .= sprintf(
-				'class WP_CLI { public static function error($message) { fwrite(STDERR, "Error: " . $message); exit(1); } }
-				chdir(%s); ini_set("error_log", "error.log");
-				try { require %s; } catch (RuntimeException $exception) { fwrite(STDERR, "Exception: " . $exception->getMessage()); exit(1); }',
-				var_export( $directory, true ),
-				var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/' . $entrypoint, true )
-			);
+			$database_path = $resolved_settings['DB_PATH'];
+			if ( ':memory:' !== $database_path ) {
+				if ( ! is_dir( dirname( $database_path ) ) ) {
+					$this->assertTrue( mkdir( dirname( $database_path ), 0700, true ) );
+				}
+				$this->create_sqlite_database( $database_path );
+			}
+			$files_before  = scandir( $directory );
+			$before_dropin = '$table_prefix = "wp_"; $warnings = array(); set_error_handler(function($severity, $message) use (&$warnings) {
+				$warnings[] = array($severity, $message); return true;
+			});';
+			$script        = 'echo json_encode(array(
+				"warnings" => $warnings,
+				"path" => DB_PATH,
+				"connected_path" => isset($wpdb) ? $wpdb->get_driver()->get_sqlite_pdo()->query("PRAGMA database_list")->fetch(PDO::FETCH_ASSOC)["file"] : null
+			));';
+			if ( 'constants.php' === $entrypoint ) {
+				$prelude = sprintf(
+					'foreach (%s as $name => $value) { define($name, $value); } require %s;',
+					var_export( $resolved_settings, true ),
+					var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/constants.php', true )
+				);
+				$result  = $this->close_process( ...$this->open_process( $before_dropin . $prelude . $script ) );
+			} else {
+				$result = $this->close_process( ...$this->open_dropin_process( $resolved_settings, $script, $before_dropin ) );
+			}
 
-			$result = $this->close_process( ...$this->open_process( $script ) );
-			$prefix = 'constants.php' === $entrypoint ? 'Exception: ' : 'Error: ';
-			$this->assertSame( 1, $result['exit_code'] );
-			$this->assertSame( '', $result['output'] );
-			$this->assertSame( $prefix . 'DB_PATH cannot be combined with DB_DIR, DB_FILE, FQDBDIR, or FQDB. Remove the legacy definitions.', $result['error'] );
-			$this->assertSame( 'preserved', $this->read_sqlite_value( $directory . '/database.sqlite' ) );
+			$this->assertSame( 0, $result['exit_code'], $result['error'] );
+			$this->assertSame( '', $result['error'] );
+			$data = json_decode( $result['output'], true );
+			$this->assertIsArray( $data );
+			$expected_warnings = array();
+			foreach ( (array) $conflicting_constants as $name ) {
+				if ( in_array( $name, array( 'DB_DIR', 'FQDBDIR' ), true ) && is_array( $resolved_settings[ $name ] ) ) {
+					$expected_warnings[] = array( PHP_VERSION_ID < 80000 ? E_NOTICE : E_WARNING, 'Array to string conversion' );
+				}
+				$expected_warnings[] = array( E_USER_WARNING, $name . ' conflicts with DB_PATH.' );
+			}
+			$this->assertSame( $expected_warnings, $data['warnings'] );
+			$this->assertSame( $database_path, $data['path'] );
+			if ( 'constants.php' !== $entrypoint ) {
+				$this->assertSame( ':memory:' === $database_path ? '' : realpath( $database_path ), $data['connected_path'] );
+			}
+			if ( ':memory:' !== $database_path ) {
+				$this->assertSame( 'preserved', $this->read_sqlite_value( $database_path ) );
+			}
 			$this->assertSame( 'preserved', $this->read_sqlite_value( $directory . '/legacy.sqlite' ) );
-			$this->assertSame(
-				'constants.php' === $entrypoint
-					? array( '.', '..', 'database.sqlite', 'legacy.sqlite' )
-					: array( '.', '..', 'database.sqlite', 'error.log', 'legacy.sqlite' ),
-				scandir( $directory )
-			);
+			$this->assertFileDoesNotExist( $resolved_settings['WP_CONTENT_DIR'] );
+			if ( 'constants.php' === $entrypoint || ':memory:' === $database_path ) {
+				$this->assertSame( $files_before, scandir( $directory ) );
+			}
 		}
 	}
 
-	public function mixed_database_file_settings() {
-		return array(
-			'different DB_DIR'   => array( array( 'DB_DIR' => 'legacy/' ) ),
-			'matching DB_DIR'    => array( array( 'DB_DIR' => '' ) ),
-			'different DB_FILE'  => array( array( 'DB_FILE' => 'legacy.sqlite' ) ),
-			'matching DB_FILE'   => array( array( 'DB_FILE' => 'database.sqlite' ) ),
-			'different FQDBDIR'  => array( array( 'FQDBDIR' => 'legacy/' ) ),
-			'matching FQDBDIR'   => array( array( 'FQDBDIR' => '' ) ),
-			'different FQDB'     => array( array( 'FQDB' => 'legacy.sqlite' ) ),
-			'matching FQDB'      => array( array( 'FQDB' => 'database.sqlite' ) ),
-			'all different'      => array(
+	public function conflicting_database_file_settings() {
+		$settings = array(
+			'different DB_DIR'  => array( array( 'DB_DIR' => 'legacy/' ), 'DB_DIR' ),
+			'different DB_FILE' => array( array( 'DB_FILE' => 'legacy.sqlite' ), 'DB_FILE' ),
+			'different FQDBDIR' => array( array( 'FQDBDIR' => 'legacy/' ), 'FQDBDIR' ),
+			'different FQDB'    => array( array( 'FQDB' => 'legacy.sqlite' ), 'FQDB' ),
+			'directory prefix'  => array(
+				array(
+					'DB_PATH' => 'private/database.sqlite',
+					'DB_DIR'  => 'private-other',
+				),
+				'DB_DIR',
+			),
+			'all different'     => array(
 				array(
 					'DB_DIR'  => 'legacy/',
 					'DB_FILE' => 'legacy.sqlite',
 					'FQDB'    => 'legacy.sqlite',
 					'FQDBDIR' => 'legacy/',
 				),
-			),
-			'all matching'       => array(
-				array(
-					'DB_DIR'  => '',
-					'DB_FILE' => 'database.sqlite',
-					'FQDB'    => 'database.sqlite',
-					'FQDBDIR' => '',
-				),
-			),
-			'in-memory database' => array(
-				array(
-					'DB_PATH' => ':memory:',
-					'FQDB'    => ':memory:',
-				),
+				array( 'DB_DIR', 'DB_FILE', 'FQDBDIR', 'FQDB' ),
 			),
 		);
+		foreach ( array( 'DB_DIR', 'DB_FILE', 'FQDBDIR', 'FQDB' ) as $name ) {
+			$settings[ 'in-memory with ' . $name ] = array(
+				array(
+					'DB_PATH' => ':memory:',
+					$name     => 'database.sqlite',
+				),
+				$name,
+			);
+			foreach ( array( null, false, 123, array() ) as $value ) {
+				$settings[ $name . ' with ' . gettype( $value ) ] = array( array( $name => $value ), $name );
+			}
+		}
+		$settings['in-memory with invalid DB_DIR'] = array(
+			array(
+				'DB_PATH' => ':memory:',
+				'DB_DIR'  => array(),
+			),
+			'DB_DIR',
+		);
+		return $settings;
+	}
+
+	/**
+	 * @dataProvider database_constant_path_comparisons
+	 */
+	public function test_compares_database_constants_without_creating_files( $settings, $expected_warning ) {
+		$script = sprintf(
+			'define("DB_ENGINE", "sqlite"); foreach (%s as $name => $value) { define($name, $value); }
+			set_error_handler(function($severity, $message) {
+				if (E_USER_WARNING !== $severity) { return false; } echo $message; return true;
+			}); require %s;',
+			var_export( $settings, true ),
+			var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/constants.php', true )
+		);
+		$this->assert_creates_no_files(
+			function () use ( $script, $expected_warning ) {
+				$result = $this->close_process( ...$this->open_process( $script ) );
+				$this->assertSame( 0, $result['exit_code'], $result['error'] );
+				$this->assertSame( '', $result['error'] );
+				$this->assertSame( $expected_warning, $result['output'] );
+			}
+		);
+	}
+
+	public function database_constant_path_comparisons() {
+		$root  = '/' === DIRECTORY_SEPARATOR ? '/' : 'C:/';
+		$cases = array(
+			'root directory'                => array(
+				array(
+					'DB_PATH' => $root . 'database.sqlite',
+					'DB_DIR'  => $root,
+				),
+				'',
+			),
+			'root with trailing separators' => array(
+				array(
+					'DB_PATH' => $root . 'database.sqlite',
+					'FQDBDIR' => $root . '//',
+				),
+				'',
+			),
+			'empty directory'               => array(
+				array(
+					'DB_PATH' => $root . 'database.sqlite',
+					'DB_DIR'  => '',
+				),
+				'/' === DIRECTORY_SEPARATOR ? '' : 'DB_DIR conflicts with DB_PATH.',
+			),
+			'missing directory'             => array(
+				array(
+					'DB_PATH' => $root . 'missing/database.sqlite',
+					'DB_DIR'  => $root . 'missing/',
+					'FQDB'    => $root . 'missing/database.sqlite',
+				),
+				'',
+			),
+		);
+		if ( '\\' === DIRECTORY_SEPARATOR ) {
+			$cases['different Windows separators'] = array(
+				array(
+					'DB_PATH' => 'C:\\missing\\database.sqlite',
+					'DB_DIR'  => 'C:/missing/',
+					'FQDB'    => 'C:/missing/database.sqlite',
+				),
+				'DB_DIR conflicts with DB_PATH.FQDB conflicts with DB_PATH.',
+			);
+			$cases['Windows drive separator']      = array(
+				array(
+					'DB_PATH' => 'C:/database.sqlite',
+					'DB_DIR'  => 'C:',
+				),
+				'',
+			);
+			$cases['different UNC separators']     = array(
+				array(
+					'DB_PATH' => '\\\\server\\share\\database.sqlite',
+					'FQDBDIR' => '//server/share/',
+				),
+				'FQDBDIR conflicts with DB_PATH.',
+			);
+		} else {
+			$cases['Unix backslash is not a separator'] = array(
+				array(
+					'DB_PATH' => '/missing/database.sqlite',
+					'DB_DIR'  => '/missing\\',
+				),
+				'DB_DIR conflicts with DB_PATH.',
+			);
+			$cases['Unix path bytes']                   = array(
+				array(
+					'DB_PATH' => "/missing/data;quo'te-ž.sqlite ",
+					'DB_FILE' => "data;quo'te-ž.sqlite ",
+				),
+				'',
+			);
+		}
+		return $cases;
 	}
 
 	/**
@@ -1217,7 +1411,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 		return $this->open_process( $prelude . $script );
 	}
 
-	private function open_dropin_process( $settings, $script ) {
+	private function open_dropin_process( $settings, $script, $before_dropin = '' ) {
 		$settings += array(
 			'ABSPATH'   => ABSPATH,
 			'WPINC'     => WPINC,
@@ -1237,7 +1431,7 @@ class WP_SQLite_Storage_Test extends WP_UnitTestCase {
 			var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/wp-includes/sqlite/db.php', true )
 		);
 
-		return $this->open_process( $prelude . $script );
+		return $this->open_process( $before_dropin . $prelude . $script );
 	}
 
 	private function open_database_connection_process( $database_path ) {
