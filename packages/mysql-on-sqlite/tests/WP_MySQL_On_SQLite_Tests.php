@@ -12927,6 +12927,105 @@ END;
 		);
 	}
 
+	/**
+	 * @dataProvider ifFunctionConditions
+	 */
+	public function testIfFunctionConditions( string $condition, string $expected ): void {
+		$result = $this->assertQuery( "SELECT IF($condition, 'yes', 'no') AS result" );
+		$this->assertSame( $expected, $result[0]->result );
+	}
+
+	public function ifFunctionConditions(): array {
+		return array(
+			'null'                    => array( 'NULL', 'no' ),
+			'true'                    => array( 'TRUE', 'yes' ),
+			'false'                   => array( 'FALSE', 'no' ),
+			'true comparison'         => array( '1 = 1', 'yes' ),
+			'false comparison'        => array( '1 = 2', 'no' ),
+			'string comparison'       => array( "'a' = 'a'", 'yes' ),
+			'null comparison'         => array( '1 = NULL', 'no' ),
+			'zero'                    => array( '0', 'no' ),
+			'one'                     => array( '1', 'yes' ),
+			'positive integer'        => array( '2', 'yes' ),
+			'negative integer'        => array( '-1', 'yes' ),
+			'positive fraction'       => array( '0.5', 'yes' ),
+			'negative fraction'       => array( '-0.5', 'yes' ),
+			'zero fraction'           => array( '0.0', 'no' ),
+			'empty string'            => array( "''", 'no' ),
+			'whitespace'              => array( "'  '", 'no' ),
+			'nonnumeric string'       => array( "'abc'", 'no' ),
+			'zero string'             => array( "'0'", 'no' ),
+			'zero fraction string'    => array( "'0.0'", 'no' ),
+			'one string'              => array( "'1'", 'yes' ),
+			'positive string'         => array( "'2'", 'yes' ),
+			'negative string'         => array( "'-2'", 'yes' ),
+			'fraction string'         => array( "'0.5'", 'yes' ),
+			'numeric prefix'          => array( "'2abc'", 'yes' ),
+			'zero prefix'             => array( "'0abc'", 'no' ),
+			'nonnumeric prefix'       => array( "'abc2'", 'no' ),
+			'fraction prefix'         => array( "'0.5abc'", 'yes' ),
+			'leading whitespace'      => array( "'  -2abc'", 'yes' ),
+			'scientific notation'     => array( "'1e-10'", 'yes' ),
+			'computed condition'      => array( 'ABS(-1)', 'yes' ),
+			'parenthesized condition' => array( '(1 + 2) > 2', 'yes' ),
+			'subquery condition'      => array( '(SELECT 1)', 'yes' ),
+		);
+	}
+
+	/**
+	 * @dataProvider ifFunctionResults
+	 */
+	public function testIfFunctionResults( string $expression, ?string $expected ): void {
+		$result = $this->assertQuery( "SELECT $expression AS result" );
+		$this->assertSame( $expected, $result[0]->result );
+	}
+
+	public function ifFunctionResults(): array {
+		return array(
+			'null true branch'  => array( "IF(1, NULL, 'no')", null ),
+			'null false branch' => array( "IF(0, 'yes', NULL)", null ),
+			'null branches'     => array( 'IF(1, NULL, NULL)', null ),
+			'integer result'    => array( 'IF(1, 2, 3)', '2' ),
+			'large integer'     => array( 'IF(1, 9223372036854775807, 0)', '9223372036854775807' ),
+			'fraction result'   => array( 'IF(0, 0.5, 1.5)', '1.5' ),
+			'nul byte'          => array( "IF(1, 'a\\0b', 'no')", "a\0b" ),
+			'nested calls'      => array( "IF(IF(1, 1, 0), IF(0, 'no', 'yes'), 'no')", 'yes' ),
+			'arithmetic'        => array( '2 * IF(1, 3 + 4, 5) + 1', '15' ),
+		);
+	}
+
+	public function testIfFunctionEvaluatesOnlyTheSelectedBranch(): void {
+		$calls    = array();
+		$callback = static function ( $value ) use ( &$calls ) {
+			$calls[] = $value;
+			return $value;
+		};
+		if ( $this->sqlite instanceof Pdo\Sqlite ) {
+			$this->sqlite->createFunction( 'if_test_probe', $callback, 1 );
+		} else {
+			$this->sqlite->sqliteCreateFunction( 'if_test_probe', $callback, 1 );
+		}
+
+		$result = $this->assertQuery( 'SELECT IF(if_test_probe(1), if_test_probe(2), if_test_probe(3)) AS result' );
+		$this->assertSame( '2', $result[0]->result );
+		$this->assertSame( array( 1, 2 ), $calls );
+
+		$calls  = array();
+		$result = $this->assertQuery( 'SELECT IF(if_test_probe(0), if_test_probe(2), if_test_probe(3)) AS result' );
+		$this->assertSame( '3', $result[0]->result );
+		$this->assertSame( array( 0, 3 ), $calls );
+	}
+
+	public function testIfFunctionInInsertSelect(): void {
+		$this->assertQuery( 'CREATE TABLE source (id INT, post_type VARCHAR(20))' );
+		$this->assertQuery( "INSERT INTO source VALUES (0, 'page'), (1, 'product')" );
+		$this->assertQuery( 'CREATE TABLE target (id INT, post_type VARCHAR(20))' );
+		$this->assertQuery( "INSERT INTO target SELECT id, IF(id > 0, post_type, 'post') FROM source" );
+
+		$result = $this->assertQuery( 'SELECT post_type FROM target ORDER BY id' );
+		$this->assertSame( array( 'post', 'product' ), array_column( $result, 'post_type' ) );
+	}
+
 	public function testVersionFunction(): void {
 		$result = $this->query( 'SELECT VERSION()' );
 		$this->assertSame( '8.0.38-mysql-on-sqlite-' . SQLITE_DRIVER_VERSION, $result[0]->{'VERSION()'} );

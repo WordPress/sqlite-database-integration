@@ -5021,6 +5021,15 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		switch ( $child->id ) {
+			case WP_MySQL_Lexer::IF_SYMBOL:
+				// CASE also supports SQLite versions before IIF() was added in 3.32.0.
+				$nodes = $node->get_child_nodes();
+				return sprintf(
+					'CASE WHEN %s THEN %s ELSE %s END',
+					$this->translate( $nodes[0] ),
+					$this->translate( $nodes[1] ),
+					$this->translate( $nodes[2] )
+				);
 			case WP_MySQL_Lexer::DATABASE_SYMBOL:
 				return $this->quote_sqlite_value( $this->db_name );
 			case WP_MySQL_Lexer::CURRENT_TIMESTAMP_SYMBOL:
