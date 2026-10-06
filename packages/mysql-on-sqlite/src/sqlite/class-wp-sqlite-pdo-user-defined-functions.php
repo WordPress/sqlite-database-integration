@@ -60,7 +60,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 		'localtime'                    => 'now',
 		'localtimestamp'               => 'now',
 		'isnull'                       => 'isnull',
-		'if'                           => '_if',
 		'regexp'                       => 'regexp',
 		'field'                        => 'field',
 		'log'                          => 'log',
@@ -563,21 +562,6 @@ class WP_SQLite_PDO_User_Defined_Functions {
 	 */
 	public function isnull( $field ) {
 		return is_null( $field );
-	}
-
-	/**
-	 * Method to emulate MySQL IF() function.
-	 *
-	 * As 'IF' is a reserved word for PHP, function name must be changed.
-	 *
-	 * @param mixed $expression The statement to be evaluated as true or false.
-	 * @param mixed $truthy     Statement or value returned if $expression is true.
-	 * @param mixed $falsy      Statement or value returned if $expression is false.
-	 *
-	 * @return mixed
-	 */
-	public function _if( $expression, $truthy, $falsy ) {
-		return ( true === $expression ) ? $truthy : $falsy;
 	}
 
 	/**
