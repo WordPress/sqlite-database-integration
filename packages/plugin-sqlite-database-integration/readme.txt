@@ -9,7 +9,7 @@ License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              sqlite, database
 
-Run WordPress on SQLite instead of MySQL or MariaDB.
+Run WordPress on SQLite.
 
 == Description ==
 
@@ -47,6 +47,31 @@ Yes, but keep reliable backups and make sure SQLite is a good fit for your site'
 No. Enabling SQLite starts a fresh WordPress installation in a separate database. Your existing MySQL or MariaDB database remains unchanged, but its content is not copied to SQLite.
 
 Disabling the plugin reconnects WordPress to the previous database. Content created while using SQLite is not transferred back.
+
+= Where is the SQLite database stored? =
+
+By default, the SQLite database is stored in a **randomized path** under `WP_CONTENT_DIR . '/database'`. The full path is recorded in `db-path.php` and exposed by the `DB_PATH` constant at runtime.
+
+For example:
+
+1. Database path: `WP_CONTENT_DIR . '/database/.ht.020a33c5d9e5407e8e93b43e55abf62e/.ht.sqlite'`
+2. Recorded in: `WP_CONTENT_DIR . '/database/db-path.php'` as `return __DIR__ . '/...';`
+3. Exposed by: `DB_PATH`
+
+The random path makes the database location difficult to guess when it is not otherwise protected. We recommend setting `DB_PATH` to an **explicit, protected path** outside the web root that your web server does not expose.
+
+Integrations should always read `DB_PATH` after WordPress loads instead of assuming a fixed database path.
+
+= How can I configure the database location? =
+
+To properly **secure the SQLite database**, define the `DB_PATH` constant to an **explicit path** that is protected from public web access. An explicit `DB_PATH` value is used as-is without randomization. Define it in `wp-config.php`:
+
+    // Use protected DB path that is not exposed by the web server.
+    define( 'DB_PATH', '/private/wordpress/database.sqlite' );
+
+**Caution:** An explicit `DB_PATH` must point to a **protected** location that your web server does not expose. Store the database outside the web root and make sure it's protected.
+
+The value of `DB_PATH` must be an absolute path to the SQLite database file, or `:memory:` for an in-memory SQLite database. The database directory must be writable by PHP. Changing `DB_PATH` selects a different database without moving an existing one.
 
 = What does the plugin require? =
 

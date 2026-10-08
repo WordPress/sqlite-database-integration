@@ -14,7 +14,7 @@ It is a monorepo that includes the following components:
 - **MySQL parser** — An exhaustive MySQL parser with multi-version support.
 - [**MySQL on SQLite**](packages/mysql-on-sqlite/) — A MySQL emulation layer on top of SQLite with a PDO-compatible API.
 - [**MySQL proxy**](packages/mysql-proxy/) — A MySQL binary protocol implementation to support MySQL-based projects beyond PHP.
-- **WordPress plugin** — A plugin that adds SQLite support to WordPress.
+- [**WordPress plugin**](packages/plugin-sqlite-database-integration/) — A plugin that adds SQLite support to WordPress.
 - **Test suites** — A set of extensive test suites to cover MySQL syntax and functionality.
 
 The monorepo packages are placed under the `packages` directory.
