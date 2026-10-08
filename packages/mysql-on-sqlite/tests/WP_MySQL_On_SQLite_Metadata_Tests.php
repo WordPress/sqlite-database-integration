@@ -187,6 +187,15 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 					'PAD_ATTRIBUTE'      => 'PAD SPACE',
 				),
 				(object) array(
+					'COLLATION_NAME'     => 'utf8mb4_unicode_520_ci',
+					'CHARACTER_SET_NAME' => 'utf8mb4',
+					'ID'                 => '246',
+					'IS_DEFAULT'         => '',
+					'IS_COMPILED'        => 'Yes',
+					'SORTLEN'            => '8',
+					'PAD_ATTRIBUTE'      => 'PAD SPACE',
+				),
+				(object) array(
 					'COLLATION_NAME'     => 'utf8mb4_unicode_ci',
 					'CHARACTER_SET_NAME' => 'utf8mb4',
 					'ID'                 => '224',
@@ -516,19 +525,20 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		// Simple.
 		$this->assertQuery( 'SHOW COLLATION' );
 		$actual = $this->last_result;
-		$this->assertCount( 7, $actual );
+		$this->assertCount( 8, $actual );
 		$this->assertEquals( 'binary', $actual[0]->Collation );
 		$this->assertEquals( 'utf8_bin', $actual[1]->Collation );
 		$this->assertEquals( 'utf8_general_ci', $actual[2]->Collation );
 		$this->assertEquals( 'utf8_unicode_ci', $actual[3]->Collation );
 		$this->assertEquals( 'utf8mb4_bin', $actual[4]->Collation );
 		$this->assertEquals( 'utf8mb4_unicode_ci', $actual[5]->Collation );
-		$this->assertEquals( 'utf8mb4_0900_ai_ci', $actual[6]->Collation );
+		$this->assertEquals( 'utf8mb4_unicode_520_ci', $actual[6]->Collation );
+		$this->assertEquals( 'utf8mb4_0900_ai_ci', $actual[7]->Collation );
 
 		// With LIKE clause.
 		$this->assertQuery( "SHOW COLLATION LIKE 'utf8%'" );
 		$actual = $this->last_result;
-		$this->assertCount( 6, $actual );
+		$this->assertCount( 7, $actual );
 		$this->assertEquals( 'utf8_bin', $actual[0]->Collation );
 		$this->assertEquals( 'utf8_general_ci', $actual[1]->Collation );
 		$this->assertEquals( 'utf8_unicode_ci', $actual[2]->Collation );
