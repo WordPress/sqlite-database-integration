@@ -27,6 +27,7 @@ rm "$PLUGIN_DIR/wp-includes/database"
 cp -R "$DIR/packages/mysql-on-sqlite/src" "$PLUGIN_DIR/wp-includes/database"
 
 # Remove dev-only files.
+rm -f "$PLUGIN_DIR/README.md"
 rm -rf "$PLUGIN_DIR/composer.json"
 rm -rf "$PLUGIN_DIR/vendor"
 rm -rf "$PLUGIN_DIR/node_modules"
