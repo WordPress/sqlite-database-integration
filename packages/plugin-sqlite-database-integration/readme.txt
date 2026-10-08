@@ -93,12 +93,46 @@ Yes. The plugin replaces the default MySQL-based database layer with an SQLite-b
 
 = 3.1.0 =
 
-* Document SQLite database storage and `DB_PATH` ([#520](https://github.com/WordPress/sqlite-database-integration/pull/520))
-* Fix `utf8mb4_0900_ai_ci` collation in tables created by WordPress ([#514](https://github.com/WordPress/sqlite-database-integration/pull/514))
-* Support composite `TRADITIONAL` SQL mode ([#509](https://github.com/WordPress/sqlite-database-integration/pull/509))
-* Fix `IF()` condition evaluation ([#518](https://github.com/WordPress/sqlite-database-integration/pull/518))
-* Support `DB_PATH` as the primary database path constant ([#512](https://github.com/WordPress/sqlite-database-integration/pull/512))
-* Add randomized SQLite database storage ([#502](https://github.com/WordPress/sqlite-database-integration/pull/502))
+**SQLite Database Integration 3.1 is here! 🎉**
+
+This release improves **database storage and configuration** and fixes several MySQL compatibility issues.
+
+**What's new**
+
+Version 3.1 improves how WordPress sites store, locate, and protect their SQLite databases. It also fixes SQL behavior and export compatibility:
+
+* **Randomized database paths:** The default database location is now a randomized directory under `wp-content/database/`, recorded in `wp-content/database/db-path.php`. ([#502](https://github.com/WordPress/sqlite-database-integration/pull/502))
+* **`DB_PATH`:** Configure the database with one full-path constant, also available at runtime for integrations. ([#512](https://github.com/WordPress/sqlite-database-integration/pull/512))
+* **SQL compatibility:** Fix `IF()` condition evaluation and make `TRADITIONAL` enable its component SQL modes. ([#518](https://github.com/WordPress/sqlite-database-integration/pull/518), [#509](https://github.com/WordPress/sqlite-database-integration/pull/509))
+* **WordPress table collations:** Default to `utf8mb4_unicode_520_ci` for new tables created with WordPress's charset settings, improving exports to MariaDB. Existing tables keep their recorded collation. ([#514](https://github.com/WordPress/sqlite-database-integration/pull/514))
+* **Documentation:** A new plugin README and expanded FAQ explain database storage and secure configuration. ([#520](https://github.com/WordPress/sqlite-database-integration/pull/520))
+
+For more information about database paths and secure configuration, read the [database storage guide](https://github.com/WordPress/sqlite-database-integration/blob/trunk/packages/plugin-sqlite-database-integration/README.md#database-storage).
+
+**Upgrading to 3.1**
+
+Upgrading an existing SQLite site is straightforward:
+
+1. **Back up** your SQLite database.
+2. **Update the plugin** to version 3.1.
+
+Existing `.ht.sqlite` and `.ht.sqlite.php` databases move to the randomized layout automatically unless a database file path is explicitly configured.
+
+To properly **secure the database**, set `DB_PATH` in `wp-config.php` to an absolute file path outside the web root that your web server does not expose. Its directory must be writable by PHP. Changing `DB_PATH` does not move an existing database.
+
+**Breaking changes**
+
+Review these changes if you use custom database settings or integrations:
+
+* **Database paths:** Default database files now move to randomized paths under `wp-content/database/`. Explicitly configured file paths stay unchanged. Integrations, including backup and migration tools, must read `DB_PATH` after WordPress loads instead of assuming a fixed filename.
+* **Legacy constants:** `DB_DIR` and `DB_FILE` are now deprecated. They and the previously deprecated `FQDB` and `FQDBDIR` remain supported, but `DB_PATH` takes precedence. Conflicting values trigger warnings.
+* **Absolute paths:** Relative database file and directory paths are now rejected. `:memory:` remains available for in-memory databases.
+
+**Thank you**
+
+Thank you to everyone who contributed, tested, and helped update integrations.
+
+**Changes since 3.0.2:** [`v3.0.2...v3.1.0`](https://github.com/WordPress/sqlite-database-integration/compare/v3.0.2...v3.1.0)
 
 = 3.0.2 =
 
