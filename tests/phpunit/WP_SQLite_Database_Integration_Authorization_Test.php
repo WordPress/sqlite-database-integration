@@ -770,7 +770,7 @@ class WP_SQLite_Database_Integration_Authorization_Test extends WP_UnitTestCase 
 		sqlite_integration_admin_screen();
 		$output = ob_get_clean();
 
-		$this->assertStringContainsString( 'SQLite is enabled.', $output );
+		$this->assertStringContainsString( 'SQLite is active', $output );
 		$this->assertStringContainsString( esc_url( self_admin_url( 'plugins.php' ) ), $output );
 	}
 
