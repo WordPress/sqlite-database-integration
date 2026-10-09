@@ -1,0 +1,283 @@
+.settings_page_sqlite-integration #wpcontent,
+.settings_page_sqlite-integration.auto-fold #wpcontent {
+	padding: 0;
+}
+
+.settings_page_sqlite-integration .notice {
+	margin: 25px 20px 15px;
+}
+
+.sqlite-integration {
+	margin: 0;
+}
+
+.sqlite-integration .sqlite-header {
+	padding: 8px 20px 0;
+	text-align: center;
+	background: #fff;
+	border-bottom: 1px solid #dcdcde;
+}
+
+.sqlite-integration .sqlite-header h1 {
+	font-weight: 600;
+	margin: 0 0.8rem 1rem;
+	padding: 9px 0 4px;
+	font-size: 23px;
+	line-height: 1.3;
+}
+
+.sqlite-integration .sqlite-intro {
+	margin: 0 0 1rem;
+	color: #50575e;
+}
+
+.sqlite-integration .sqlite-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 0 2rem;
+}
+
+.sqlite-integration .sqlite-tab {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	padding: 0.5rem 1rem 1rem;
+	color: inherit;
+	text-decoration: none;
+}
+
+.sqlite-integration .sqlite-tab:focus {
+	color: #1d2327;
+	outline: 1px solid #787c82;
+	box-shadow: none;
+}
+
+.sqlite-integration .sqlite-tab[aria-current="page"] {
+	box-shadow: inset 0 -3px var(--wp-admin-theme-color, #2271b1);
+	font-weight: 600;
+}
+
+.sqlite-integration .sqlite-content {
+	max-width: 740px;
+	margin: 24px auto;
+	padding: 0 20px;
+}
+
+.sqlite-integration .dashicons {
+	width: 18px;
+	height: 18px;
+	font-size: 18px;
+	flex-shrink: 0;
+}
+
+.sqlite-integration .sqlite-warning {
+	color: #996800;
+}
+
+.sqlite-integration .sqlite-success {
+	color: #008a20;
+}
+
+.sqlite-integration .sqlite-box,
+.sqlite-integration .sqlite-help {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	margin-bottom: 22px;
+}
+
+.sqlite-integration .sqlite-box > h2 {
+	font-size: 16px;
+	line-height: 1.5;
+	margin: 0;
+	padding: 18px 20px;
+	border-bottom: 1px solid #c3c4c7;
+}
+
+.sqlite-integration .sqlite-data {
+	margin: 0;
+}
+
+.sqlite-integration .sqlite-help > div {
+	padding: 0 20px 12px;
+}
+
+.sqlite-integration .sqlite-data > div {
+	display: grid;
+	grid-template-columns: 120px minmax(0, 1fr);
+	gap: 20px;
+	padding: 20px;
+}
+
+.sqlite-integration .sqlite-data > div + div {
+	border-top: 1px solid #c3c4c7;
+}
+
+.sqlite-integration .sqlite-data dt {
+	font-weight: 600;
+}
+
+.sqlite-integration .sqlite-data dd {
+	min-width: 0;
+	margin: 0;
+}
+
+.sqlite-integration .sqlite-data p {
+	margin: 0 0 10px;
+}
+
+.sqlite-integration .sqlite-data p:last-child {
+	margin-bottom: 0;
+}
+
+.sqlite-integration .sqlite-data .description {
+	margin-top: 10px;
+	font-size: 12px;
+	font-style: normal;
+}
+
+.sqlite-integration .sqlite-status {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.sqlite-integration .sqlite-status-dot {
+	width: 8px;
+	height: 8px;
+	margin-top: 6px;
+	border-radius: 50%;
+	background: #008a20;
+	flex-shrink: 0;
+}
+
+.sqlite-integration .sqlite-path summary {
+	cursor: pointer;
+	list-style: none;
+}
+
+.sqlite-integration .sqlite-path summary::-webkit-details-marker {
+	display: none;
+}
+
+.sqlite-integration .sqlite-path-hidden {
+	margin-inline-end: 12px;
+	color: #50575e;
+}
+
+.sqlite-integration .sqlite-show-path,
+.sqlite-integration .sqlite-hide-path {
+	color: #2271b1;
+	text-decoration: underline;
+}
+
+.sqlite-integration .sqlite-hide-path,
+.sqlite-integration .sqlite-path[open] .sqlite-path-hidden,
+.sqlite-integration .sqlite-path[open] .sqlite-show-path,
+.sqlite-integration [hidden] {
+	display: none;
+}
+
+.sqlite-integration .sqlite-path[open] .sqlite-hide-path {
+	display: inline;
+}
+
+.sqlite-integration .sqlite-path pre {
+	margin: 12px 0;
+	padding: 10px;
+	background: #f0f0f1;
+	white-space: nowrap;
+	overflow-x: auto;
+	direction: ltr;
+	text-align: left;
+}
+
+.sqlite-integration .sqlite-path code,
+.sqlite-integration .sqlite-instructions pre code {
+	padding: 0;
+	margin: 0;
+	background: transparent;
+}
+
+/* Keep the live region rendered so that screen readers announce new messages. */
+.sqlite-integration .sqlite-copy-status {
+	display: block;
+}
+
+.sqlite-integration .sqlite-copy-status:not(:empty) {
+	margin-top: 8px;
+}
+
+.sqlite-integration .sqlite-box-footer {
+	padding: 14px 20px;
+	margin: 0;
+	border-top: 1px solid #c3c4c7;
+	font-size: 12px;
+	color: #50575e;
+}
+
+.sqlite-integration .sqlite-instructions {
+	padding: 8px 20px 20px;
+}
+
+.sqlite-integration .sqlite-instructions h3 {
+	margin-top: 24px;
+}
+
+.sqlite-integration .sqlite-instructions pre {
+	padding: 12px;
+	background: #f0f0f1;
+	white-space: pre;
+	overflow-x: auto;
+	direction: ltr;
+	text-align: left;
+}
+
+.sqlite-integration .sqlite-instructions li + li {
+	margin-top: 8px;
+}
+
+.sqlite-integration .sqlite-manage {
+	margin-top: 28px;
+}
+
+.sqlite-integration .sqlite-help summary {
+	padding: 16px 20px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.sqlite-integration .sqlite-installation .notice {
+	margin-inline: 0;
+}
+
+@media (pointer: coarse) {
+
+	.sqlite-integration .sqlite-path summary {
+		display: flex;
+		align-items: center;
+		min-height: 44px;
+	}
+}
+
+@media (max-width: 600px) {
+
+	.sqlite-integration .sqlite-header {
+		padding-inline: 12px;
+	}
+
+	.sqlite-integration .sqlite-tabs {
+		gap: 0;
+	}
+
+	.sqlite-integration .sqlite-content {
+		margin: 16px auto;
+		padding: 0 12px;
+	}
+
+	.sqlite-integration .sqlite-data > div {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 10px;
+	}
+}
