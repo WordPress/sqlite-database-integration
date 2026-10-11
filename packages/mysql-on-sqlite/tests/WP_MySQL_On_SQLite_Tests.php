@@ -4433,6 +4433,33 @@ QUERY
 		);
 	}
 
+	public function testCreateTemporaryTableIfNotExistsAsFirstTemporaryTable(): void {
+		// No temporary table exists in this session yet.
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS t (ID INTEGER, name TEXT)'
+		);
+		$this->assertQuery( "INSERT INTO t (ID, name) VALUES (1, 'a')" );
+
+		// A repeated statement is a no-op and keeps the existing data,
+		// also when the table name is cased differently.
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS t (ID INTEGER, name TEXT)'
+		);
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS T (ID INTEGER, name TEXT)'
+		);
+		$result = $this->assertQuery( 'SELECT ID, name FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'ID'   => '1',
+					'name' => 'a',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testTranslatesComplexDelete() {
 		$this->sqlite->query(
 			"CREATE TABLE wptests_dummy (
