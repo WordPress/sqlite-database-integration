@@ -5842,6 +5842,37 @@ QUERY
 		);
 	}
 
+	public function testTemporaryTableIsFoundWithoutStringifiedFetches(): void {
+		// PDO SQLite returns native types unless fetches are stringified.
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, false );
+
+		// Create a standard and a temporary table with the same name.
+		$this->assertQuery( 'CREATE TABLE t (a INT)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t (b INT)' );
+
+		// ALTER TABLE will use the temporary table.
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN c INT' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertEquals( 'b', $result[0]->Field );
+		$this->assertEquals( 'c', $result[1]->Field );
+
+		// The standard table is unchanged.
+		$this->assertQuery( 'DROP TEMPORARY TABLE t' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'a', $result[0]->Field );
+	}
+
+	public function testTemporaryTableIsFoundByDifferentlyCasedName(): void {
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t (a INT)' );
+
+		// ALTER TABLE will use the temporary table.
+		$this->assertQuery( 'ALTER TABLE T ADD COLUMN b INT' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM T' );
+		$this->assertEquals( 'a', $result[0]->Field );
+		$this->assertEquals( 'b', $result[1]->Field );
+	}
+
 	public function testTemporaryTableHasPriorityOverStandardTable(): void {
 		// Create a standard and a temporary table with the same name.
 		$this->assertQuery( 'CREATE TABLE t (a INT, INDEX ia(a))' );

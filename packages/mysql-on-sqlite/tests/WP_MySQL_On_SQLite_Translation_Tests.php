@@ -2157,7 +2157,7 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 			array_filter(
 				$executed_queries,
 				function ( $query ) {
-					return "SELECT 1 FROM sqlite_temp_master WHERE type = 'table' AND name = ?" !== $query;
+					return "SELECT 1 FROM sqlite_temp_master WHERE type = 'table' AND name = ? COLLATE NOCASE" !== $query;
 				}
 			)
 		);
