@@ -4186,6 +4186,24 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testFoundRowsWithoutSqlCalcFoundRowsAboveNine(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)' );
+		for ( $i = 1; $i <= 10; $i++ ) {
+			$this->assertQuery( "CREATE TABLE t$i (id INT)" );
+		}
+
+		// SELECT
+		$this->assertQuery( 'SELECT * FROM t' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '12', $result[0]->{'FOUND_ROWS()'} );
+
+		// SHOW TABLES ("_dates", "_options", "t", and "t1" to "t10")
+		$this->assertQuery( 'SHOW TABLES' );
+		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
+		$this->assertSame( '13', $result[0]->{'FOUND_ROWS()'} );
+	}
+
 	public function testFoundRowsWithoutSqlCalcFoundRows(): void {
 		$this->assertQuery( 'DROP TABLE _dates' );
 		$this->assertQuery( 'DROP TABLE _options' );
