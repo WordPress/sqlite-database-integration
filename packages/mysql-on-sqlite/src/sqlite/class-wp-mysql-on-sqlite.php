@@ -1210,16 +1210,18 @@ class WP_MySQL_On_SQLite extends PDO {
 			$this->error_info = array( '00000', null, null );
 			return $stmt;
 		} catch ( Throwable $e ) {
-			// MySQL error 1305 reports a missing savepoint without ending the transaction.
-			$preserves_transaction = $e instanceof WP_MySQL_On_SQLite_Exception
-				&& 1305 === ( $e->errorInfo[1] ?? null );
-			if ( ! $preserves_transaction ) {
-				try {
-					$this->rollback_user_transaction();
+			/*
+			 * Undo the failed statement. Like MySQL, keep an active user
+			 * transaction open, so the caller can decide whether to commit
+			 * or roll back the rest of it.
+			 */
+			try {
+				$this->rollback_wrapper_transaction();
+				if ( ! $this->inTransaction() ) {
 					$this->table_lock_active = false;
-				} catch ( Throwable $rollback_exception ) {
-					// Ignore rollback errors.
 				}
+			} catch ( Throwable $rollback_exception ) {
+				// Ignore rollback errors.
 			}
 			if ( $e instanceof WP_SQLite_Information_Schema_Exception ) {
 				$e = $this->convert_information_schema_exception( $e );
@@ -2103,6 +2105,47 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 		$this->wrapper_transaction_type = null;
 		$this->in_transaction           = $in_transaction;
+	}
+
+	/**
+	 * Roll back a wrapper transaction.
+	 *
+	 * This undoes all changes of a failed statement. When the wrapper is
+	 * a savepoint, the user transaction around it stays active.
+	 */
+	private function rollback_wrapper_transaction(): void {
+		if ( null === $this->wrapper_transaction_type ) {
+			return;
+		}
+
+		try {
+			if ( 'savepoint' === $this->wrapper_transaction_type ) {
+				$savepoint_name = $this->get_internal_savepoint_name( 'wrapper' );
+				$this->connection->query( sprintf( 'ROLLBACK TO SAVEPOINT %s', $savepoint_name ) );
+				$this->connection->query( sprintf( 'RELEASE SAVEPOINT %s', $savepoint_name ) );
+			} else {
+				$this->connection->query( 'ROLLBACK' );
+				$this->in_transaction  = false;
+				$this->savepoint_names = array();
+			}
+		} catch ( PDOException $e ) {
+			/*
+			 * Some SQLite errors roll back the whole transaction automatically,
+			 * which also removes the savepoint. In that case, or if the rollback
+			 * fails for any other reason, end the transaction.
+			 *
+			 * @see https://www.sqlite.org/lang_transaction.html#response_to_errors_within_a_transaction
+			 */
+			try {
+				$this->connection->query( 'ROLLBACK' );
+			} catch ( PDOException $rollback_exception ) {
+				// The transaction was already rolled back.
+			}
+			$this->in_transaction  = false;
+			$this->savepoint_names = array();
+		} finally {
+			$this->wrapper_transaction_type = null;
+		}
 	}
 
 	/**
