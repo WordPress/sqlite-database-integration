@@ -5062,6 +5062,23 @@ QUERY
 		);
 	}
 
+	public function testUniqueKeysWithoutStringifiedFetches(): void {
+		// PDO SQLite returns native types unless fetches are stringified.
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, false );
+
+		$this->assertQuery( 'CREATE TABLE t (id INT, email VARCHAR(50), UNIQUE KEY ue (email))' );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( 'UNIQUE KEY `ue` (`email`)', $result[0]->{'Create Table'} );
+
+		// The unique key is kept when ALTER TABLE recreates the table.
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN name TEXT' );
+		$this->assertQuery( "INSERT INTO t (id, email) VALUES (1, 'a@example.com')" );
+
+		$this->expectException( 'WP_MySQL_On_SQLite_Exception' );
+		$this->expectExceptionMessage( 'UNIQUE constraint failed: t.email' );
+		$this->assertQuery( "INSERT INTO t (id, email) VALUES (2, 'a@example.com')" );
+	}
+
 	public function testUniqueConstraints() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
