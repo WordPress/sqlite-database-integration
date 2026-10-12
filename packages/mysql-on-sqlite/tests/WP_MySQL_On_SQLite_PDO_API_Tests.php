@@ -888,6 +888,29 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertTrue( $result );
 	}
 
+	public function test_rollback_statement_as_first_transaction_on_connection(): void {
+		// The first empty result set on the connection is created in the transaction.
+		$this->driver->exec( 'START TRANSACTION' );
+		$this->driver->exec( 'ROLLBACK' );
+		$this->assertFalse( $this->driver->inTransaction() );
+
+		// Statements with empty result sets keep working after the rollback.
+		$this->driver->exec( 'START TRANSACTION' );
+		$this->driver->exec( 'CREATE TABLE t (id INT)' );
+		$this->driver->exec( 'ROLLBACK' );
+		$this->assertSame( 0, $this->driver->exec( 'CREATE TABLE t (id INT)' ) );
+	}
+
+	public function test_rollback_method_as_first_transaction_on_connection(): void {
+		// The first empty result set on the connection is created in the transaction.
+		$this->driver->beginTransaction();
+		$this->driver->exec( 'CREATE TABLE t (id INT)' );
+		$this->assertTrue( $this->driver->rollBack() );
+
+		// Statements with empty result sets keep working after the rollback.
+		$this->assertSame( 0, $this->driver->exec( 'CREATE TABLE t (id INT)' ) );
+	}
+
 	public function test_rollback_no_active_transaction(): void {
 		$this->expectException( PDOException::class );
 		$this->expectExceptionMessage( 'There is no active transaction' );

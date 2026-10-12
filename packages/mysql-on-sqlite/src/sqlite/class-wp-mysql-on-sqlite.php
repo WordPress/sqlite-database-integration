@@ -7747,21 +7747,28 @@ class WP_MySQL_On_SQLite extends PDO {
 			 * lock. Writing to a connection-private TEMP table uses the temp
 			 * database, which has no shared lock, so it never contends.
 			 */
-			if ( ! $this->empty_result_table_ready ) {
-				$pdo->exec(
-					sprintf(
-						'CREATE TEMP TABLE IF NOT EXISTS %s ( placeholder_for_empty_insert )',
-						$this->quote_sqlite_identifier( self::EMPTY_RESULT_TABLE_NAME )
-					)
-				);
-				$this->empty_result_table_ready = true;
-			}
-			return $pdo->query(
-				sprintf(
-					'INSERT INTO %s ( placeholder_for_empty_insert ) SELECT NULL WHERE FALSE',
-					$this->quote_sqlite_identifier( self::EMPTY_RESULT_TABLE_NAME )
-				)
+			$empty_insert = sprintf(
+				'INSERT INTO %s ( placeholder_for_empty_insert ) SELECT NULL WHERE FALSE',
+				$this->quote_sqlite_identifier( self::EMPTY_RESULT_TABLE_NAME )
 			);
+			if ( ! $this->empty_result_table_ready ) {
+				$this->create_empty_result_table();
+			}
+			try {
+				return $pdo->query( $empty_insert );
+			} catch ( PDOException $e ) {
+				/*
+				 * Even though we keep track of whether the table was already
+				 * created, the tracked information may be incorrect when the
+				 * table was created in a transaction that was later rolled back.
+				 * In that case, let's create the table again, and try again.
+				 */
+				if ( ! str_contains( $e->getMessage(), 'no such table' ) ) {
+					throw $e;
+				}
+				$this->create_empty_result_table();
+				return $pdo->query( $empty_insert );
+			}
 		}
 
 		/*
@@ -7813,6 +7820,20 @@ class WP_MySQL_On_SQLite extends PDO {
 			$query .= ')';
 		}
 		return $pdo->query( $query );
+	}
+
+	/**
+	 * Create the TEMP table backing empty result sets on this connection.
+	 * See create_result_statement_from_data().
+	 */
+	private function create_empty_result_table(): void {
+		$this->connection->get_pdo()->exec(
+			sprintf(
+				'CREATE TEMP TABLE IF NOT EXISTS %s ( placeholder_for_empty_insert )',
+				$this->quote_sqlite_identifier( self::EMPTY_RESULT_TABLE_NAME )
+			)
+		);
+		$this->empty_result_table_ready = true;
 	}
 
 	/**
