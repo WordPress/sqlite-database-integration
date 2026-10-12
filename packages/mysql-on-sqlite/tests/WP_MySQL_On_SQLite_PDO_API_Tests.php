@@ -888,6 +888,22 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertTrue( $result );
 	}
 
+	public function test_failed_query_keeps_transaction_active(): void {
+		$this->driver->exec( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->driver->beginTransaction();
+		$this->driver->exec( 'INSERT INTO t VALUES (1)' );
+		try {
+			$this->driver->exec( 'INSERT INTO t VALUES (1)' );
+			$this->fail( 'An exception was expected, but none was thrown.' );
+		} catch ( PDOException $e ) {
+			$this->assertSame( '23000', $e->getCode() );
+		}
+
+		$this->assertTrue( $this->driver->inTransaction() );
+		$this->assertTrue( $this->driver->commit() );
+		$this->assertSame( array( '1' ), $this->driver->query( 'SELECT id FROM t' )->fetchAll( PDO::FETCH_COLUMN ) );
+	}
+
 	public function test_rollback_no_active_transaction(): void {
 		$this->expectException( PDOException::class );
 		$this->expectExceptionMessage( 'There is no active transaction' );
