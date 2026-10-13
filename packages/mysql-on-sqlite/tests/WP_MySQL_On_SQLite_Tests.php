@@ -4476,6 +4476,25 @@ QUERY
 		$this->assertEquals( 'a', $result[0]->Field );
 	}
 
+	public function testDropTemporaryTableIfExistsAsFirstTemporaryTable(): void {
+		// No temporary table exists in this session yet.
+		$this->assertQuery( 'DROP TEMPORARY TABLE IF EXISTS t' );
+
+		// A standard table with the same name is not dropped.
+		$this->assertQuery( 'CREATE TABLE t (a INT)' );
+		$this->assertQuery( 'DROP TEMPORARY TABLE IF EXISTS t' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'a', $result[0]->Field );
+	}
+
+	public function testDropTemporaryTableAsFirstTemporaryTable(): void {
+		// No temporary table exists in this session yet.
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->expectExceptionMessage( "Table 'temp.t' doesn't exist" );
+		$this->assertQuery( 'DROP TEMPORARY TABLE t' );
+	}
+
 	public function testTranslatesComplexDelete() {
 		$this->sqlite->query(
 			"CREATE TABLE wptests_dummy (
