@@ -1,8 +1,10 @@
 <?php
 
 require_once WP_CONTENT_DIR . '/plugins/sqlite-database-integration/load.php';
+require_once __DIR__ . '/WP_SQLite_Dropin_Test_Helpers.php';
 
 class WP_SQLite_Storage_Health_Test extends WP_UnitTestCase {
+	use WP_SQLite_Dropin_Test_Helpers;
 
 	private $directory;
 	private $document_root;
@@ -403,6 +405,115 @@ class WP_SQLite_Storage_Health_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Copy path', $html );
 		$this->assertStringContainsString( 'View protection status', $html );
 		$this->assertStringNotContainsString( 'id="sqlite-database-protection"', $html );
+		$this->assertStringNotContainsString( 'Install SQLite database', $html );
+	}
+
+	public function test_setup_warns_about_the_location_without_blocking_installation() {
+		$html = $this->render_installation_without_dropin( 'public', true );
+
+		$this->assertStringContainsString( 'Requirements met', $html );
+		$this->assertStringContainsString( 'The planned database location may be publicly accessible.', $html );
+		$this->assertStringContainsString( 'is not copied to SQLite', $html );
+		$this->assertStringContainsString(
+			esc_url( add_query_arg( 'tab', 'protection', sqlite_plugin_get_admin_page_url() ) ),
+			$html
+		);
+		$this->assertStringContainsString(
+			esc_url( wp_nonce_url( add_query_arg( 'confirm-install', '1', sqlite_plugin_get_admin_page_url() ), 'sqlite-install' ) ),
+			$html
+		);
+		$this->assertStringNotContainsString( esc_html( DB_PATH ), $html );
+		$this->assertSame( is_multisite(), false !== strpos( $html, 'This change affects every site in the network.' ) );
+	}
+
+	public function test_setup_blocks_installation_with_an_invalid_location() {
+		$html = $this->render_installation_without_dropin( 'unknown', false );
+
+		$this->assertStringContainsString( 'Requirements not met', $html );
+		$this->assertStringContainsString( 'the configured database location is not valid. Set <code>DB_PATH</code> to the full path of a database file.', $html );
+		$this->assertStringContainsString( 'Database location unavailable', $html );
+		$this->assertStringNotContainsString( 'Requirements met', $html );
+		$this->assertStringNotContainsString( 'confirm-install', $html );
+		$this->assertStringNotContainsString( 'Install SQLite database', $html );
+	}
+
+	public function test_setup_blocks_installation_with_an_unwritable_location() {
+		$html = $this->render_installation_without_dropin( 'outside', false );
+
+		$this->assertStringContainsString( 'Requirements not met', $html );
+		$this->assertStringContainsString( 'PHP cannot create or write the database in the configured location.', $html );
+		$this->assertStringContainsString( 'Outside known public roots', $html );
+		$this->assertStringNotContainsString( 'Requirements met', $html );
+		$this->assertStringNotContainsString( 'confirm-install', $html );
+		$this->assertStringNotContainsString( 'Install SQLite database', $html );
+	}
+
+	public function test_setup_blocks_installation_with_another_dropin() {
+		// Setup runs before the SQLite drop-in loads, so it treats any existing drop-in as another one.
+		ob_start();
+		sqlite_plugin_render_installation( 'public', true );
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'Requirements not met', $html );
+		$this->assertStringContainsString( 'a different <code>' . basename( WP_CONTENT_DIR ) . '/db.php</code> drop-in already exists', $html );
+		$this->assertStringNotContainsString( 'confirm-install', $html );
+	}
+
+	/**
+	 * @dataProvider database_writability
+	 */
+	public function test_checks_that_the_database_location_is_writable_without_creating_files( $settings, $expected ) {
+		$this->assertNotFalse( file_put_contents( $this->directory . '/file', '' ) );
+
+		$output = $this->run_isolated( $settings, 'var_export( sqlite_plugin_is_database_location_writable() );' );
+
+		$this->assertSame( var_export( $expected, true ), $output );
+		$this->assertSame( array( '.', '..', 'file' ), scandir( $this->directory ) );
+	}
+
+	public function database_writability() {
+		return array(
+			'default storage'         => array( array(), true ),
+			'explicit path'           => array( array( 'DB_PATH' => '{root}/private/site.db' ), true ),
+			'in-memory database'      => array( array( 'DB_PATH' => ':memory:' ), true ),
+			'explicit path in a file' => array( array( 'DB_PATH' => '{root}/file/site.db' ), false ),
+			'secret path in a file'   => array( array( 'DB_DIR' => '{root}/file/database' ), false ),
+			'invalid location'        => array( array( 'DB_PATH' => '{root}/private/' ), false ),
+		);
+	}
+
+	/**
+	 * @dataProvider uninstallable_database_paths
+	 */
+	public function test_install_request_returns_to_settings_when_the_database_cannot_be_created( $database_path ) {
+		// A stale install link still has a valid nonce. Installing the drop-in would fail on missing WordPress files.
+		$this->assertNotFalse( file_put_contents( $this->directory . '/file', '' ) );
+
+		$output = $this->run_isolated(
+			array( 'DB_PATH' => $database_path ),
+			'function add_action() {} function add_filter() {} function is_multisite() { return false; }'
+			. 'function current_user_can() { return true; } function check_admin_referer() { return 1; }'
+			. 'function admin_url( $path = "" ) { return "https://example.com/wp-admin/" . $path; }'
+			. 'function wp_safe_redirect( $location ) { echo $location; return true; }'
+			. '$_GET = array( "page" => "sqlite-integration", "confirm-install" => "1" );'
+			. sprintf(
+				'require %s; require %s; require %s;',
+				var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/capabilities.php', true ),
+				var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/admin-page.php', true ),
+				var_export( WP_CONTENT_DIR . '/plugins/sqlite-database-integration/activate.php', true )
+			)
+			. 'sqlite_activation(); echo "The install request was not rejected.";'
+		);
+
+		$this->assertSame( 'https://example.com/wp-admin/options-general.php?page=sqlite-integration', $output );
+		$this->assertSame( array( '.', '..', 'file' ), scandir( $this->directory ) );
+	}
+
+	public function uninstallable_database_paths() {
+		return array(
+			'invalid location'    => array( '{root}/private/' ),
+			'unwritable location' => array( '{root}/file/site.db' ),
+		);
 	}
 
 	public function test_outside_location_has_a_limited_positive_result() {
@@ -535,6 +646,16 @@ class WP_SQLite_Storage_Health_Test extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'Copy path', $html );
 	}
 
+	public function test_unloaded_database_shows_no_size_or_path() {
+		ob_start();
+		sqlite_plugin_render_database_details( null );
+		$html = ob_get_clean();
+		$this->assertSame( 2, substr_count( $html, 'Not available' ) );
+		$this->assertStringNotContainsString( 'Includes the database and its supporting files.', $html );
+		$this->assertStringNotContainsString( 'sqlite-path', $html );
+		$this->assertStringNotContainsString( 'Copy path', $html );
+	}
+
 	public function test_assets_load_only_on_the_settings_screen() {
 		sqlite_plugin_enqueue_admin_assets( 'index.php' );
 		$this->assertFalse( wp_style_is( 'sqlite-integration-admin', 'enqueued' ) );
@@ -609,6 +730,19 @@ class WP_SQLite_Storage_Health_Test extends WP_UnitTestCase {
 		fclose( $pipes[2] );
 		$this->assertSame( 0, proc_close( $process ), $error . $output );
 		return $output;
+	}
+
+	/**
+	 * Render setup as it appears before the SQLite drop-in is installed.
+	 */
+	private function render_installation_without_dropin( $status, $is_writable ) {
+		return $this->run_without_dropin(
+			function () use ( $status, $is_writable ) {
+				ob_start();
+				sqlite_plugin_render_installation( $status, $is_writable );
+				return ob_get_clean();
+			}
+		);
 	}
 
 	private function set_management_user() {

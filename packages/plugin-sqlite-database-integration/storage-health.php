@@ -28,13 +28,8 @@ function sqlite_plugin_get_database_location_warning() {
  * @return string Location status: public, outside, memory, or unknown.
  */
 function sqlite_plugin_get_database_location_status() {
-	// The drop-in loads the storage only after SQLite is set up.
-	if ( ! class_exists( 'WP_SQLite_Storage', false ) ) {
-		require_once __DIR__ . '/wp-includes/sqlite/class-wp-sqlite-storage.php';
-	}
-
 	list( $path, $is_secret_root ) = sqlite_plugin_get_database_location();
-	if ( ! sqlite_plugin_is_valid_database_location( $path, $is_secret_root ) ) {
+	if ( null === sqlite_plugin_get_database_storage( $path, $is_secret_root ) ) {
 		return 'unknown';
 	}
 	if ( ':memory:' === $path ) {
@@ -80,14 +75,14 @@ function sqlite_plugin_get_database_location_status() {
 }
 
 /**
- * Read the active path, or the planned legacy/default location before setup.
+ * Check whether the drop-in can create and write the database at the configured location.
  *
  * @access private
- * @return mixed Configured path, which may be invalid.
+ * @return bool Whether the location is valid and writable.
  */
-function sqlite_plugin_get_database_path() {
-	list( $path ) = sqlite_plugin_get_database_location();
-	return $path;
+function sqlite_plugin_is_database_location_writable() {
+	$storage = sqlite_plugin_get_database_storage( ...sqlite_plugin_get_database_location() );
+	return null !== $storage && $storage->is_writable();
 }
 
 /**
@@ -121,27 +116,27 @@ function sqlite_plugin_get_database_location() {
 }
 
 /**
- * Check whether the drop-in accepts a database location.
+ * Create a storage manager for a location without initializing the storage.
  *
  * @access private
  * @param mixed $path           Configured path.
  * @param bool  $is_secret_root Whether the path is the directory of a secret path.
- * @return bool Whether the drop-in can use the location.
+ * @return WP_SQLite_Storage|null Storage manager, or null when the drop-in rejects the location.
  */
-function sqlite_plugin_is_valid_database_location( $path, $is_secret_root ) {
+function sqlite_plugin_get_database_storage( $path, $is_secret_root ) {
 	if ( ! is_string( $path ) ) {
-		return false;
+		return null;
+	}
+
+	// The drop-in loads the storage only after SQLite is set up.
+	if ( ! class_exists( 'WP_SQLite_Storage', false ) ) {
+		require_once __DIR__ . '/wp-includes/sqlite/class-wp-sqlite-storage.php';
 	}
 	try {
-		if ( $is_secret_root ) {
-			WP_SQLite_Storage::with_secret_path( $path );
-		} else {
-			WP_SQLite_Storage::with_explicit_path( $path );
-		}
+		return $is_secret_root ? WP_SQLite_Storage::with_secret_path( $path ) : WP_SQLite_Storage::with_explicit_path( $path );
 	} catch ( RuntimeException $exception ) {
-		return false;
+		return null;
 	}
-	return true;
 }
 
 /**
