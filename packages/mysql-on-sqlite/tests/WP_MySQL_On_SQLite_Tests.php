@@ -5842,7 +5842,31 @@ QUERY
 		);
 	}
 
-	public function testTemporaryTableHasPriorityOverStandardTable(): void {
+	public function testTemporaryTableIsFoundByDifferentlyCasedName(): void {
+		// Create a standard and a temporary table with the same name.
+		$this->assertQuery( 'CREATE TABLE t (a INT)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t (b INT)' );
+
+		// ALTER TABLE will use the temporary table.
+		$this->assertQuery( 'ALTER TABLE T ADD COLUMN c INT' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM T' );
+		$this->assertCount( 2, $result );
+		$this->assertEquals( 'b', $result[0]->Field );
+		$this->assertEquals( 'c', $result[1]->Field );
+
+		// DROP TABLE will remove the temporary table and keep the standard table.
+		$this->assertQuery( 'DROP TABLE T' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM T' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'a', $result[0]->Field );
+	}
+
+	/**
+	 * @dataProvider stringifyFetchesProvider
+	 */
+	public function testTemporaryTableHasPriorityOverStandardTable( bool $stringify_fetches ): void {
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, $stringify_fetches );
+
 		// Create a standard and a temporary table with the same name.
 		$this->assertQuery( 'CREATE TABLE t (a INT, INDEX ia(a))' );
 		$this->assertQuery( 'CREATE TEMPORARY TABLE t (b INT, INDEX ib(b))' );
@@ -5883,6 +5907,7 @@ QUERY
 		// First DROP TABLE removes the temporary table.
 		$this->assertQuery( 'DROP TABLE t' );
 		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
 		$this->assertEquals( 'a', $result[0]->Field );
 
 		// Second DROP TABLE removes the standard table.
@@ -5890,6 +5915,38 @@ QUERY
 		$this->expectExceptionMessage( "Table 'wp.t' doesn't exist" );
 		$this->assertQuery( 'DROP TABLE t' );
 		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+	}
+
+	public function stringifyFetchesProvider(): array {
+		return array(
+			'stringification disabled' => array( false ),
+			'stringification enabled'  => array( true ),
+		);
+	}
+
+	public function testTemporaryTableNamedLikeInformationSchemaTable(): void {
+		// Create a standard table and temporary tables named like information schema tables.
+		$this->assertQuery( 'CREATE TABLE t (a INT, INDEX ia(a))' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE tables (b INT)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE COLUMNS (b INT)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE Statistics (b INT, INDEX ib(b))' );
+
+		// The information schema shows the standard table only.
+		$table_names = "('t', 'tables', 'columns', 'statistics')";
+
+		$result = $this->assertQuery( "SELECT table_name FROM information_schema.tables WHERE table_name IN $table_names" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 't', $result[0]->TABLE_NAME );
+
+		$result = $this->assertQuery( "SELECT table_name, column_name FROM information_schema.columns WHERE table_name IN $table_names" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 't', $result[0]->TABLE_NAME );
+		$this->assertEquals( 'a', $result[0]->COLUMN_NAME );
+
+		$result = $this->assertQuery( "SELECT table_name, index_name FROM information_schema.statistics WHERE table_name IN $table_names" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 't', $result[0]->TABLE_NAME );
+		$this->assertEquals( 'ia', $result[0]->INDEX_NAME );
 	}
 
 	public function testStrictSqlModeNullWithoutDefault(): void {

@@ -381,12 +381,16 @@ class WP_SQLite_Information_Schema_Builder {
 		/*
 		 * We could search in the "{$this->temporary_table_prefix}tables" table,
 		 * but it may not exist yet, so using "sqlite_temp_master" is simpler.
+		 *
+		 * The name is matched case-insensitively, as it is in the information
+		 * schema tables. The fetched value is not compared to a string, because
+		 * PDO SQLite returns native types when fetches are not stringified.
 		 */
 		$stmt = $this->connection->query(
-			"SELECT 1 FROM sqlite_temp_master WHERE type = 'table' AND name = ?",
+			"SELECT 1 FROM sqlite_temp_master WHERE type = 'table' AND name = ? COLLATE NOCASE",
 			array( $table_name )
 		);
-		return $stmt->fetchColumn() === '1';
+		return false !== $stmt->fetchColumn();
 	}
 
 	/**

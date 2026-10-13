@@ -5466,8 +5466,8 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 			}
 
-			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
-			$sqlite_table_name  = $this->information_schema_builder->get_table_name( $table_is_temporary, $table_name );
+			// Temporary tables are not listed in the information schema.
+			$sqlite_table_name = $this->information_schema_builder->get_table_name( false, $table_name );
 
 			// We need to fetch the SQLite column information, because the information
 			// schema tables don't contain records for the information schema itself.
