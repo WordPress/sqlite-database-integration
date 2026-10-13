@@ -5842,38 +5842,31 @@ QUERY
 		);
 	}
 
-	public function testTemporaryTableIsFoundWithoutStringifiedFetches(): void {
-		// PDO SQLite returns native types unless fetches are stringified.
-		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, false );
-
+	public function testTemporaryTableIsFoundByDifferentlyCasedName(): void {
 		// Create a standard and a temporary table with the same name.
 		$this->assertQuery( 'CREATE TABLE t (a INT)' );
 		$this->assertQuery( 'CREATE TEMPORARY TABLE t (b INT)' );
 
 		// ALTER TABLE will use the temporary table.
-		$this->assertQuery( 'ALTER TABLE t ADD COLUMN c INT' );
-		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertQuery( 'ALTER TABLE T ADD COLUMN c INT' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM T' );
+		$this->assertCount( 2, $result );
 		$this->assertEquals( 'b', $result[0]->Field );
 		$this->assertEquals( 'c', $result[1]->Field );
 
-		// The standard table is unchanged.
-		$this->assertQuery( 'DROP TEMPORARY TABLE t' );
-		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		// DROP TABLE will remove the temporary table and keep the standard table.
+		$this->assertQuery( 'DROP TABLE T' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM T' );
 		$this->assertCount( 1, $result );
 		$this->assertEquals( 'a', $result[0]->Field );
 	}
 
-	public function testTemporaryTableIsFoundByDifferentlyCasedName(): void {
-		$this->assertQuery( 'CREATE TEMPORARY TABLE t (a INT)' );
+	/**
+	 * @dataProvider stringifyFetchesProvider
+	 */
+	public function testTemporaryTableHasPriorityOverStandardTable( bool $stringify_fetches ): void {
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, $stringify_fetches );
 
-		// ALTER TABLE will use the temporary table.
-		$this->assertQuery( 'ALTER TABLE T ADD COLUMN b INT' );
-		$result = $this->assertQuery( 'SHOW COLUMNS FROM T' );
-		$this->assertEquals( 'a', $result[0]->Field );
-		$this->assertEquals( 'b', $result[1]->Field );
-	}
-
-	public function testTemporaryTableHasPriorityOverStandardTable(): void {
 		// Create a standard and a temporary table with the same name.
 		$this->assertQuery( 'CREATE TABLE t (a INT, INDEX ia(a))' );
 		$this->assertQuery( 'CREATE TEMPORARY TABLE t (b INT, INDEX ib(b))' );
@@ -5914,6 +5907,7 @@ QUERY
 		// First DROP TABLE removes the temporary table.
 		$this->assertQuery( 'DROP TABLE t' );
 		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
 		$this->assertEquals( 'a', $result[0]->Field );
 
 		// Second DROP TABLE removes the standard table.
@@ -5921,6 +5915,13 @@ QUERY
 		$this->expectExceptionMessage( "Table 'wp.t' doesn't exist" );
 		$this->assertQuery( 'DROP TABLE t' );
 		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+	}
+
+	public function stringifyFetchesProvider(): array {
+		return array(
+			'stringification disabled' => array( false ),
+			'stringification enabled'  => array( true ),
+		);
 	}
 
 	public function testTemporaryTableNamedLikeInformationSchemaTable(): void {
