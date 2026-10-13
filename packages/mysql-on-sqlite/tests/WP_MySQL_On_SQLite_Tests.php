@@ -4433,6 +4433,68 @@ QUERY
 		);
 	}
 
+	public function testCreateTemporaryTableIfNotExistsAsFirstTemporaryTable(): void {
+		// No temporary table exists in this session yet.
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS t (ID INTEGER, name TEXT)'
+		);
+		$this->assertQuery( "INSERT INTO t (ID, name) VALUES (1, 'a')" );
+
+		// A repeated statement is a no-op and keeps the existing data,
+		// also when the table name is cased differently.
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS t (ID INTEGER, name TEXT)'
+		);
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE IF NOT EXISTS T (ID INTEGER, name TEXT)'
+		);
+		$result = $this->assertQuery( 'SELECT ID, name FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'ID'   => '1',
+					'name' => 'a',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testCreateTemporaryTableIfNotExistsWithStandardTableOfSameName(): void {
+		$this->assertQuery( 'CREATE TABLE t (a INT)' );
+
+		// The standard table doesn't prevent creating the temporary table.
+		$this->assertQuery( 'CREATE TEMPORARY TABLE IF NOT EXISTS t (b INT)' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'b', $result[0]->Field );
+
+		// The standard table is unchanged.
+		$this->assertQuery( 'DROP TEMPORARY TABLE t' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'a', $result[0]->Field );
+	}
+
+	public function testDropTemporaryTableIfExistsAsFirstTemporaryTable(): void {
+		// No temporary table exists in this session yet.
+		$this->assertQuery( 'DROP TEMPORARY TABLE IF EXISTS t' );
+
+		// A standard table with the same name is not dropped.
+		$this->assertQuery( 'CREATE TABLE t (a INT)' );
+		$this->assertQuery( 'DROP TEMPORARY TABLE IF EXISTS t' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'a', $result[0]->Field );
+	}
+
+	public function testDropTemporaryTableAsFirstTemporaryTable(): void {
+		// No temporary table exists in this session yet.
+		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
+		$this->expectExceptionMessage( "Table 'temp.t' doesn't exist" );
+		$this->assertQuery( 'DROP TEMPORARY TABLE t' );
+	}
+
 	public function testTranslatesComplexDelete() {
 		$this->sqlite->query(
 			"CREATE TABLE wptests_dummy (

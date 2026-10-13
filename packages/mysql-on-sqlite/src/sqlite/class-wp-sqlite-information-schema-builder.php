@@ -781,7 +781,16 @@ class WP_SQLite_Information_Schema_Builder {
 		$table_refs = $child_node->get_first_child_node( 'tableRefList' )->get_child_nodes();
 		foreach ( $table_refs as $table_ref ) {
 			$table_name         = $this->get_table_name_from_node( $table_ref );
-			$table_is_temporary = $has_temporary_keyword || $this->temporary_table_exists( $table_name );
+			$table_is_temporary = $this->temporary_table_exists( $table_name );
+
+			/*
+			 * DROP TEMPORARY TABLE drops only temporary tables. When there is no
+			 * such table, there is nothing to record. The temporary information
+			 * schema tables may not even exist yet.
+			 */
+			if ( $has_temporary_keyword && ! $table_is_temporary ) {
+				continue;
+			}
 
 			$this->delete_values(
 				$this->get_table_name( $table_is_temporary, 'tables' ),
