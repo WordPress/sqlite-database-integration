@@ -5923,6 +5923,31 @@ QUERY
 		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
 	}
 
+	public function testTemporaryTableNamedLikeInformationSchemaTable(): void {
+		// Create a standard table and temporary tables named like information schema tables.
+		$this->assertQuery( 'CREATE TABLE t (a INT, INDEX ia(a))' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE tables (b INT)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE COLUMNS (b INT)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE Statistics (b INT, INDEX ib(b))' );
+
+		// The information schema shows the standard table only.
+		$table_names = "('t', 'tables', 'columns', 'statistics')";
+
+		$result = $this->assertQuery( "SELECT table_name FROM information_schema.tables WHERE table_name IN $table_names" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 't', $result[0]->TABLE_NAME );
+
+		$result = $this->assertQuery( "SELECT table_name, column_name FROM information_schema.columns WHERE table_name IN $table_names" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 't', $result[0]->TABLE_NAME );
+		$this->assertEquals( 'a', $result[0]->COLUMN_NAME );
+
+		$result = $this->assertQuery( "SELECT table_name, index_name FROM information_schema.statistics WHERE table_name IN $table_names" );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 't', $result[0]->TABLE_NAME );
+		$this->assertEquals( 'ia', $result[0]->INDEX_NAME );
+	}
+
 	public function testStrictSqlModeNullWithoutDefault(): void {
 		$this->assertQuery( "SET SESSION sql_mode = 'STRICT_ALL_TABLES'" );
 
