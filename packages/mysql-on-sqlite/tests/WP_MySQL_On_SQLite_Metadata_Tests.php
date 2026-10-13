@@ -1943,6 +1943,27 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testInformationSchemaForeignKeysReferencingDifferentlyCasedColumns(): void {
+		$this->assertQuery( 'CREATE TABLE t1 (id INT, name VARCHAR(255), PRIMARY KEY (id, name))' );
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				name VARCHAR(255),
+				FOREIGN KEY (id, name) REFERENCES t1 (ID, Name)
+			)'
+		);
+
+		$result = $this->assertQuery( "SELECT unique_constraint_name FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'UNIQUE_CONSTRAINT_NAME' => 'PRIMARY',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testInformationSchemaAlterTableAddForeignKeys(): void {
 		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT)' );
