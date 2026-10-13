@@ -1806,6 +1806,11 @@ class WP_SQLite_Information_Schema_Builder {
 		// Find which index includes referenced column names as a prefix.
 		$unique_constraint_name = null;
 		foreach ( $index_columns_map as $index_name => $index_columns ) {
+			// An index with fewer columns than the reference can't have them as a prefix.
+			if ( count( $index_columns ) < count( $reference_parts ) ) {
+				continue;
+			}
+
 			$is_prefix = true;
 			foreach ( $reference_parts as $i => $reference_part ) {
 				if ( $index_columns[ $i ] !== $this->get_value( $reference_part ) ) {
