@@ -71,55 +71,147 @@ function sqlite_integration_admin_screen() {
 			<?php if ( 'protection' === $tab ) : ?>
 				<?php sqlite_plugin_render_protection_status( $status ); ?>
 				<?php sqlite_plugin_render_protection_instructions(); ?>
+			<?php elseif ( ! $active ) : ?>
+				<?php sqlite_plugin_render_installation( $status ); ?>
 			<?php else : ?>
 				<?php $location = sqlite_plugin_get_database_location_details( $status ); ?>
 				<section class="sqlite-box" aria-labelledby="sqlite-status-heading">
 					<h2 id="sqlite-status-heading"><?php esc_html_e( 'Database status', 'sqlite-database-integration' ); ?></h2>
 					<dl class="sqlite-data">
 						<div><dt><?php esc_html_e( 'Integration', 'sqlite-database-integration' ); ?></dt><dd class="sqlite-status">
-							<?php if ( $active ) : ?>
-								<span class="sqlite-status-dot" aria-hidden="true"></span><?php esc_html_e( 'SQLite is active', 'sqlite-database-integration' ); ?>
-							<?php else : ?>
-								<?php esc_html_e( 'SQLite is not active', 'sqlite-database-integration' ); ?>
-							<?php endif; ?>
+							<span class="sqlite-status-dot" aria-hidden="true"></span><?php esc_html_e( 'SQLite is active', 'sqlite-database-integration' ); ?>
 						</dd></div>
-						<?php if ( $active ) : ?>
-							<?php sqlite_plugin_render_database_details( sqlite_plugin_get_database_path() ); ?>
-						<?php endif; ?>
+						<?php sqlite_plugin_render_database_details( defined( 'DB_PATH' ) ? DB_PATH : null ); ?>
 						<div><dt><?php esc_html_e( 'Protection', 'sqlite-database-integration' ); ?></dt><dd>
-							<p class="sqlite-status"><span class="dashicons <?php echo esc_attr( $location['icon'] ); ?>" aria-hidden="true"></span><strong><?php echo esc_html( $location['label'] ); ?></strong></p>
+							<?php sqlite_plugin_render_status_label( $location['icon'], $location['label'] ); ?>
 							<p><?php echo esc_html( $location['summary'] ); ?></p>
 							<p><a href="<?php echo esc_url( add_query_arg( 'tab', 'protection', $url ) ); ?>"><?php esc_html_e( 'View protection status', 'sqlite-database-integration' ); ?></a></p>
 						</dd></div>
 					</dl>
 				</section>
-				<?php if ( $active ) : ?>
-					<section class="sqlite-manage">
-						<h2><?php esc_html_e( 'Manage the integration', 'sqlite-database-integration' ); ?></h2>
-						<p><?php esc_html_e( 'Switching to MySQL does not copy your SQLite content.', 'sqlite-database-integration' ); ?></p>
-						<details class="sqlite-help"><summary><?php esc_html_e( 'How to switch to MySQL', 'sqlite-database-integration' ); ?></summary><div>
-							<p><?php esc_html_e( 'Back up your database. Prepare your MySQL database and configuration, and migrate any content you want to keep before switching.', 'sqlite-database-integration' ); ?></p>
-							<p>
-							<?php
-							printf(
-								/* translators: 1: Plugins page URL, 2: Drop-in file path relative to the content directory. */
-								wp_kses_post( __( 'When ready, <a href="%1$s">deactivate the plugin</a> to remove the SQLite drop-in, or manually remove %2$s. Verify that your content loads correctly from MySQL.', 'sqlite-database-integration' ) ),
-								esc_url( self_admin_url( 'plugins.php' ) ),
-								'<code>' . esc_html( basename( WP_CONTENT_DIR ) . '/db.php' ) . '</code>'
-							);
-							?>
-							</p>
-							<?php if ( is_multisite() ) : ?>
-								<p><?php esc_html_e( 'This change affects every site in the network.', 'sqlite-database-integration' ); ?></p>
-							<?php endif; ?>
-						</div></details>
-					</section>
-				<?php else : ?>
-					<?php sqlite_plugin_render_installation(); ?>
-				<?php endif; ?>
+				<section class="sqlite-manage">
+					<h2><?php esc_html_e( 'Manage the integration', 'sqlite-database-integration' ); ?></h2>
+					<p><?php esc_html_e( 'Switching to MySQL does not copy your SQLite content.', 'sqlite-database-integration' ); ?></p>
+					<details class="sqlite-help"><summary><?php esc_html_e( 'How to switch to MySQL', 'sqlite-database-integration' ); ?></summary><div>
+						<p><?php esc_html_e( 'Back up your database. Prepare your MySQL database and configuration, and migrate any content you want to keep before switching.', 'sqlite-database-integration' ); ?></p>
+						<p>
+						<?php
+						printf(
+							/* translators: 1: Plugins page URL, 2: Drop-in file path relative to the content directory. */
+							wp_kses_post( __( 'When ready, <a href="%1$s">deactivate the plugin</a> to remove the SQLite drop-in, or manually remove %2$s. Verify that your content loads correctly from MySQL.', 'sqlite-database-integration' ) ),
+							esc_url( self_admin_url( 'plugins.php' ) ),
+							'<code>' . esc_html( basename( WP_CONTENT_DIR ) . '/db.php' ) . '</code>'
+						);
+						?>
+						</p>
+						<?php if ( is_multisite() ) : ?>
+							<p><?php esc_html_e( 'This change affects every site in the network.', 'sqlite-database-integration' ); ?></p>
+						<?php endif; ?>
+					</div></details>
+				</section>
 			<?php endif; ?>
 		</div>
 	</div>
+	<?php
+}
+
+/**
+ * Render setup while preserving installation requirements and drop-in support.
+ *
+ * @access private
+ * @param string $status Location status.
+ */
+function sqlite_plugin_render_installation( $status ) {
+	$db_dropin_path = WP_CONTENT_DIR . '/db.php';
+	$location       = sqlite_plugin_get_database_location_details( $status );
+
+	/*
+	 * When an existing "db.php" drop-in is detected, let's check if it's a known
+	 * plugin that we can continue supporting even when we override the drop-in.
+	 */
+	$override_db_dropin = false;
+	if ( file_exists( $db_dropin_path ) && ! defined( 'SQLITE_DB_DROPIN_VERSION' ) ) {
+		// Check for the Query Monitor plugin.
+		// When "QM_DB" exists, it must have been loaded via the "db.php" file.
+		if ( class_exists( 'QM_DB', false ) ) {
+			$override_db_dropin = true;
+		}
+	}
+
+	$requirements_error = '';
+	if ( ! extension_loaded( 'pdo_sqlite' ) ) {
+		$requirements_error = __( 'We detected that the PDO SQLite driver is missing from your server (the pdo_sqlite extension is not loaded). Please make sure that SQLite is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' );
+	} elseif ( file_exists( $db_dropin_path ) && ! defined( 'SQLITE_DB_DROPIN_VERSION' ) && ! $override_db_dropin ) {
+		$requirements_error = sprintf(
+			/* translators: %s: db.php drop-in path. */
+			__( 'SQLite cannot be set up because a different %s drop-in already exists.', 'sqlite-database-integration' ),
+			'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
+		);
+	} elseif ( ! is_writable( WP_CONTENT_DIR ) ) {
+		$requirements_error = sprintf(
+			/* translators: %s: WordPress content directory. */
+			__( 'SQLite cannot be set up because the %s directory is not writable.', 'sqlite-database-integration' ),
+			'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '</code>'
+		);
+	} elseif ( 'unknown' === $status ) {
+		// The drop-in rejects such a path and fails every request after the installation.
+		$requirements_error = __( 'SQLite cannot be set up because the configured database location is not an absolute filesystem path.', 'sqlite-database-integration' );
+	}
+	?>
+	<section class="sqlite-box" aria-labelledby="sqlite-setup-heading">
+		<header class="sqlite-setup-header">
+			<div class="sqlite-setup-heading">
+				<h2 id="sqlite-setup-heading"><?php esc_html_e( 'Set up SQLite', 'sqlite-database-integration' ); ?></h2>
+				<span class="sqlite-status sqlite-inactive"><span class="sqlite-status-dot" aria-hidden="true"></span><?php esc_html_e( 'Not active', 'sqlite-database-integration' ); ?></span>
+			</div>
+			<p><?php esc_html_e( 'Use SQLite for a new WordPress installation.', 'sqlite-database-integration' ); ?></p>
+		</header>
+		<dl class="sqlite-data">
+			<div><dt><?php esc_html_e( 'Server requirements', 'sqlite-database-integration' ); ?></dt><dd>
+				<?php if ( $requirements_error ) : ?>
+					<?php sqlite_plugin_render_status_label( 'dashicons-warning sqlite-error', __( 'Requirements not met', 'sqlite-database-integration' ) ); ?>
+					<p><?php echo wp_kses_post( $requirements_error ); ?></p>
+				<?php else : ?>
+					<?php sqlite_plugin_render_status_label( 'dashicons-yes-alt sqlite-success', __( 'Requirements met', 'sqlite-database-integration' ) ); ?>
+					<p><?php esc_html_e( 'PHP supports SQLite and the WordPress content directory is writable.', 'sqlite-database-integration' ); ?></p>
+				<?php endif; ?>
+			</dd></div>
+			<div><dt><?php esc_html_e( 'Database location', 'sqlite-database-integration' ); ?></dt><dd>
+				<?php sqlite_plugin_render_status_label( $location['icon'], $location['label'] ); ?>
+				<p><?php echo 'public' === $status ? esc_html__( 'The planned database location may be publicly accessible.', 'sqlite-database-integration' ) : esc_html( $location['summary'] ); ?></p>
+				<p><a href="<?php echo esc_url( add_query_arg( 'tab', 'protection', sqlite_plugin_get_admin_page_url() ) ); ?>"><?php esc_html_e( 'How to protect your database', 'sqlite-database-integration' ); ?></a></p>
+			</dd></div>
+		</dl>
+		<?php if ( ! $requirements_error ) : ?>
+			<div class="sqlite-setup-next">
+				<h3><?php esc_html_e( 'This starts a fresh WordPress site', 'sqlite-database-integration' ); ?></h3>
+				<p><?php esc_html_e( 'Your current content stays in your existing database and is not copied to SQLite. You can return to your previous site by deactivating the plugin. Back up your current site before proceeding.', 'sqlite-database-integration' ); ?></p>
+				<?php if ( is_multisite() ) : ?>
+					<p><?php esc_html_e( 'This change affects every site in the network.', 'sqlite-database-integration' ); ?></p>
+				<?php endif; ?>
+
+				<?php if ( $override_db_dropin ) : ?>
+					<p>
+						<strong>NOTE:</strong>
+						<?php
+						printf(
+							/* translators: %s: db.php drop-in path */
+							esc_html__( 'We’ve detected an existing database drop-in file at %s, created by the Query Monitor plugin.', 'sqlite-database-integration' ),
+							'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
+						);
+						?>
+						<?php esc_html_e( 'To enable SQLite support, this file will need to be replaced.', 'sqlite-database-integration' ); ?>
+						<?php esc_html_e( 'The Query Monitor plugin will continue to function correctly after the change. You can safely proceed with the installation.', 'sqlite-database-integration' ); ?>
+					</p>
+				<?php endif; ?>
+
+				<div class="sqlite-setup-actions">
+					<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( add_query_arg( 'confirm-install', '1', sqlite_plugin_get_admin_page_url() ), 'sqlite-install' ) ); ?>"><?php esc_html_e( 'Install SQLite database', 'sqlite-database-integration' ); ?></a>
+					<span class="description"><?php esc_html_e( 'Next: WordPress setup', 'sqlite-database-integration' ); ?></span>
+				</div>
+			</div>
+		<?php endif; ?>
+	</section>
 	<?php
 }
 
@@ -135,7 +227,7 @@ function sqlite_plugin_render_protection_status( $status ) {
 	<section class="sqlite-box" aria-labelledby="sqlite-protection-heading">
 		<h2 id="sqlite-protection-heading"><?php esc_html_e( 'Protection status', 'sqlite-database-integration' ); ?></h2>
 		<dl class="sqlite-data"><div><dt><?php esc_html_e( 'Database location', 'sqlite-database-integration' ); ?></dt><dd>
-			<p class="sqlite-status"><span class="dashicons <?php echo esc_attr( $location['icon'] ); ?>" aria-hidden="true"></span><strong><?php echo esc_html( $location['label'] ); ?></strong></p>
+			<?php sqlite_plugin_render_status_label( $location['icon'], $location['label'] ); ?>
 			<?php echo wp_kses_post( wpautop( $location['description'] ) ); ?>
 		</dd></div></dl>
 		<?php if ( 'memory' !== $status ) : ?>
@@ -186,13 +278,26 @@ function sqlite_plugin_get_database_location_details( $status ) {
 }
 
 /**
+ * Render a status label with an icon.
+ *
+ * @access private
+ * @param string $icon  Icon classes.
+ * @param string $label Status label.
+ */
+function sqlite_plugin_render_status_label( $icon, $label ) {
+	?>
+	<p class="sqlite-status"><span class="dashicons <?php echo esc_attr( $icon ); ?>" aria-hidden="true"></span><strong><?php echo esc_html( $label ); ?></strong></p>
+	<?php
+}
+
+/**
  * Display the active database size and an initially hidden filesystem path.
  *
  * @access private
- * @param string $path Active database path, or ":memory:".
+ * @param mixed $path Active database path, ":memory:", or null when SQLite is not loaded.
  */
 function sqlite_plugin_render_database_details( $path ) {
-	$size = sqlite_plugin_get_database_size( $path );
+	$size = is_string( $path ) ? sqlite_plugin_get_database_size( $path ) : null;
 	?>
 	<div><dt><?php esc_html_e( 'Database size', 'sqlite-database-integration' ); ?></dt><dd>
 		<?php echo null === $size ? esc_html__( 'Not available', 'sqlite-database-integration' ) : esc_html( size_format( $size, 1 ) ); ?>
@@ -201,7 +306,9 @@ function sqlite_plugin_render_database_details( $path ) {
 		<?php endif; ?>
 	</dd></div>
 	<div><dt><?php esc_html_e( 'Database location', 'sqlite-database-integration' ); ?></dt><dd>
-		<?php if ( ':memory:' === $path ) : ?>
+		<?php if ( ! is_string( $path ) ) : ?>
+			<?php esc_html_e( 'Not available', 'sqlite-database-integration' ); ?>
+		<?php elseif ( ':memory:' === $path ) : ?>
 			<?php esc_html_e( 'In memory', 'sqlite-database-integration' ); ?>
 		<?php else : ?>
 			<details class="sqlite-path">
@@ -270,87 +377,6 @@ function sqlite_plugin_render_protection_instructions() {
 			<h3><?php esc_html_e( 'If a private location is unavailable', 'sqlite-database-integration' ); ?></h3>
 			<p><?php esc_html_e( 'Ask your hosting provider to block web access to the entire database folder, including journal files, storage metadata, and backups, and disable directory listings. The required rules depend on your web server. Ask them to verify that the folder is protected on every website that serves it.', 'sqlite-database-integration' ); ?></p>
 		</div>
-	</section>
-	<?php
-}
-
-/**
- * Preserve the installation requirements and drop-in replacement flow.
- *
- * @access private
- */
-function sqlite_plugin_render_installation() {
-	$db_dropin_path = WP_CONTENT_DIR . '/db.php';
-
-	/*
-	 * When an existing "db.php" drop-in is detected, let's check if it's a known
-	 * plugin that we can continue supporting even when we override the drop-in.
-	 */
-	$override_db_dropin = false;
-	if ( file_exists( $db_dropin_path ) && ! defined( 'SQLITE_DB_DROPIN_VERSION' ) ) {
-		// Check for the Query Monitor plugin.
-		// When "QM_DB" exists, it must have been loaded via the "db.php" file.
-		if ( class_exists( 'QM_DB', false ) ) {
-			$override_db_dropin = true;
-		}
-	}
-
-	?>
-	<section class="sqlite-installation">
-		<?php if ( ! extension_loaded( 'pdo_sqlite' ) ) : ?>
-			<div class="notice notice-error inline">
-				<p><?php esc_html_e( 'We detected that the PDO SQLite driver is missing from your server (the pdo_sqlite extension is not loaded). Please make sure that SQLite is enabled in your PHP installation before proceeding.', 'sqlite-database-integration' ); ?></p>
-			</div>
-		<?php elseif ( file_exists( $db_dropin_path ) && ! defined( 'SQLITE_DB_DROPIN_VERSION' ) && ! $override_db_dropin ) : ?>
-			<div class="notice notice-error inline">
-				<p>
-					<?php
-					printf(
-						/* translators: %s: db.php drop-in path */
-						esc_html__( 'SQLite cannot be set up because a different %s drop-in already exists.', 'sqlite-database-integration' ),
-						'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
-					);
-					?>
-				</p>
-			</div>
-		<?php elseif ( ! is_writable( WP_CONTENT_DIR ) ) : ?>
-			<div class="notice notice-error inline">
-				<p>
-					<?php
-					printf(
-						/* translators: %s: db.php drop-in path */
-						esc_html__( 'SQLite cannot be set up because the %s directory is not writable.', 'sqlite-database-integration' ),
-						'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '</code>'
-					);
-					?>
-				</p>
-			</div>
-		<?php else : ?>
-			<div class="notice notice-success inline">
-				<p><?php esc_html_e( 'The required PHP extension and file permissions are available. Before installing, choose a database location that your web server does not expose.', 'sqlite-database-integration' ); ?></p>
-			</div>
-			<h2><?php esc_html_e( 'Important note', 'sqlite-database-integration' ); ?></h2>
-			<p><?php esc_html_e( 'This plugin will switch to a separate database and install WordPress in it. You will need to reconfigure your site, and start with a fresh site. Disabling the plugin you will get back to your previous MySQL database, with all your previous data intact.', 'sqlite-database-integration' ); ?></p>
-
-			<?php if ( $override_db_dropin ) : ?>
-				<p>
-					<strong>NOTE:</strong>
-					<?php
-					printf(
-						/* translators: %s: db.php drop-in path */
-						esc_html__( 'We’ve detected an existing database drop-in file at %s, created by the Query Monitor plugin.', 'sqlite-database-integration' ),
-						'<code>' . esc_html( basename( WP_CONTENT_DIR ) ) . '/db.php</code>'
-					);
-					?>
-					<?php esc_html_e( 'To enable SQLite support, this file will need to be replaced.', 'sqlite-database-integration' ); ?>
-					<?php esc_html_e( 'The Query Monitor plugin will continue to function correctly after the change. You can safely proceed with the installation.', 'sqlite-database-integration' ); ?>
-				</p>
-			<?php endif; ?>
-
-			<p><?php esc_html_e( 'By clicking the button below, you will be redirected to the WordPress installation screen to setup your new database', 'sqlite-database-integration' ); ?></p>
-
-			<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( add_query_arg( 'confirm-install', '1', sqlite_plugin_get_admin_page_url() ), 'sqlite-install' ) ); ?>"><?php esc_html_e( 'Install SQLite database', 'sqlite-database-integration' ); ?></a>
-		<?php endif; ?>
 	</section>
 	<?php
 }

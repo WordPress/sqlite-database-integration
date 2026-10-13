@@ -313,6 +313,40 @@ class WP_SQLite_Storage_Health_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Copy path', $html );
 		$this->assertStringContainsString( 'View protection status', $html );
 		$this->assertStringNotContainsString( 'id="sqlite-database-protection"', $html );
+		$this->assertStringNotContainsString( 'Install SQLite database', $html );
+	}
+
+	public function test_setup_warns_about_the_location_without_blocking_installation() {
+		ob_start();
+		sqlite_plugin_render_installation( 'public' );
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'Requirements met', $html );
+		$this->assertStringContainsString( 'The planned database location may be publicly accessible.', $html );
+		$this->assertStringContainsString( 'is not copied to SQLite', $html );
+		$this->assertStringContainsString(
+			esc_url( add_query_arg( 'tab', 'protection', sqlite_plugin_get_admin_page_url() ) ),
+			$html
+		);
+		$this->assertStringContainsString(
+			esc_url( wp_nonce_url( add_query_arg( 'confirm-install', '1', sqlite_plugin_get_admin_page_url() ), 'sqlite-install' ) ),
+			$html
+		);
+		$this->assertStringNotContainsString( esc_html( DB_PATH ), $html );
+		$this->assertSame( is_multisite(), false !== strpos( $html, 'This change affects every site in the network.' ) );
+	}
+
+	public function test_setup_blocks_installation_with_an_invalid_location() {
+		ob_start();
+		sqlite_plugin_render_installation( 'unknown' );
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'Requirements not met', $html );
+		$this->assertStringContainsString( 'the configured database location is not an absolute filesystem path', $html );
+		$this->assertStringContainsString( 'Database location unavailable', $html );
+		$this->assertStringNotContainsString( 'Requirements met', $html );
+		$this->assertStringNotContainsString( 'confirm-install', $html );
+		$this->assertStringNotContainsString( 'Install SQLite database', $html );
 	}
 
 	public function test_outside_location_has_a_limited_positive_result() {
@@ -394,6 +428,16 @@ class WP_SQLite_Storage_Health_Test extends WP_UnitTestCase {
 		$html = ob_get_clean();
 		$this->assertStringContainsString( 'In memory', $html );
 		$this->assertStringContainsString( 'Not available', $html );
+		$this->assertStringNotContainsString( 'Copy path', $html );
+	}
+
+	public function test_unloaded_database_shows_no_size_or_path() {
+		ob_start();
+		sqlite_plugin_render_database_details( null );
+		$html = ob_get_clean();
+		$this->assertSame( 2, substr_count( $html, 'Not available' ) );
+		$this->assertStringNotContainsString( 'Includes the database and its supporting files.', $html );
+		$this->assertStringNotContainsString( 'sqlite-path', $html );
 		$this->assertStringNotContainsString( 'Copy path', $html );
 	}
 

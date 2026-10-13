@@ -80,6 +80,10 @@
 	color: #008a20;
 }
 
+.sqlite-integration .sqlite-error {
+	color: #d63638;
+}
+
 .sqlite-integration .sqlite-box,
 .sqlite-integration .sqlite-help {
 	background: #fff;
@@ -121,6 +125,10 @@
 .sqlite-integration .sqlite-data dd {
 	min-width: 0;
 	margin: 0;
+}
+
+.sqlite-integration .sqlite-setup-header p {
+	margin: 8px 0 0;
 }
 
 .sqlite-integration .sqlite-data p {
@@ -248,8 +256,48 @@
 	cursor: pointer;
 }
 
-.sqlite-integration .sqlite-installation .notice {
-	margin-inline: 0;
+.sqlite-integration .sqlite-setup-header {
+	padding: 20px;
+	border-bottom: 1px solid #c3c4c7;
+}
+
+.sqlite-integration .sqlite-setup-heading {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.sqlite-integration .sqlite-setup-heading h2 {
+	margin: 0;
+	font-size: 16px;
+	line-height: 1.5;
+}
+
+.sqlite-integration .sqlite-inactive {
+	color: #50575e;
+}
+
+.sqlite-integration .sqlite-inactive .sqlite-status-dot {
+	background: #787c82;
+}
+
+.sqlite-integration .sqlite-setup-next {
+	padding: 20px;
+	border-top: 1px solid #c3c4c7;
+}
+
+.sqlite-integration .sqlite-setup-next h3 {
+	margin-top: 0;
+}
+
+.sqlite-integration .sqlite-setup-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	margin-top: 20px;
 }
 
 @media (pointer: coarse) {
