@@ -4460,6 +4460,22 @@ QUERY
 		);
 	}
 
+	public function testCreateTemporaryTableIfNotExistsWithStandardTableOfSameName(): void {
+		$this->assertQuery( 'CREATE TABLE t (a INT)' );
+
+		// The standard table doesn't prevent creating the temporary table.
+		$this->assertQuery( 'CREATE TEMPORARY TABLE IF NOT EXISTS t (b INT)' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'b', $result[0]->Field );
+
+		// The standard table is unchanged.
+		$this->assertQuery( 'DROP TEMPORARY TABLE t' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertCount( 1, $result );
+		$this->assertEquals( 'a', $result[0]->Field );
+	}
+
 	public function testTranslatesComplexDelete() {
 		$this->sqlite->query(
 			"CREATE TABLE wptests_dummy (
