@@ -2925,14 +2925,22 @@ class WP_MySQL_On_SQLite extends PDO {
 
 		// Handle IF NOT EXISTS.
 		if ( $subnode->has_child_node( 'ifNotExists' ) ) {
-			$tables_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'tables' );
-			$table_exists = $this->execute_sqlite_query(
-				sprintf(
-					'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ?',
-					$this->quote_sqlite_identifier( $tables_table )
-				),
-				array( $this->get_saved_db_name(), $table_name )
-			)->fetchColumn();
+			if ( $table_is_temporary ) {
+				/*
+				 * The temporary information schema tables are created with the
+				 * first temporary table of a session, so they may not exist yet.
+				 */
+				$table_exists = $this->information_schema_builder->temporary_table_exists( $table_name );
+			} else {
+				$tables_table = $this->information_schema_builder->get_table_name( false, 'tables' );
+				$table_exists = $this->execute_sqlite_query(
+					sprintf(
+						'SELECT 1 FROM %s WHERE table_schema = ? AND table_name = ?',
+						$this->quote_sqlite_identifier( $tables_table )
+					),
+					array( $this->get_saved_db_name(), $table_name )
+				)->fetchColumn();
+			}
 
 			if ( $table_exists ) {
 				$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
@@ -5466,8 +5474,8 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 			}
 
-			$table_is_temporary = $this->information_schema_builder->temporary_table_exists( $table_name );
-			$sqlite_table_name  = $this->information_schema_builder->get_table_name( $table_is_temporary, $table_name );
+			// Temporary tables are not listed in the information schema.
+			$sqlite_table_name = $this->information_schema_builder->get_table_name( false, $table_name );
 
 			// We need to fetch the SQLite column information, because the information
 			// schema tables don't contain records for the information schema itself.

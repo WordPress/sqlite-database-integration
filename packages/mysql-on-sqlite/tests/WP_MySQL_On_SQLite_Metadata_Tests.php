@@ -1914,6 +1914,35 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		);
 	}
 
+	public function testInformationSchemaForeignKeysReferencingShorterUniqueKey(): void {
+		// The referenced table also has a unique key with fewer columns than the reference.
+		$this->assertQuery(
+			'CREATE TABLE t1 (
+				id INT,
+				name VARCHAR(255),
+				UNIQUE KEY u_id (id),
+				UNIQUE KEY u_id_name (id, name)
+			)'
+		);
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				id INT,
+				name VARCHAR(255),
+				FOREIGN KEY (id, name) REFERENCES t1 (id, name)
+			)'
+		);
+
+		$result = $this->assertQuery( "SELECT unique_constraint_name FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'UNIQUE_CONSTRAINT_NAME' => 'u_id_name',
+				),
+			),
+			$result
+		);
+	}
+
 	public function testInformationSchemaAlterTableAddForeignKeys(): void {
 		$this->assertQuery( 'CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(255))' );
 		$this->assertQuery( 'CREATE TABLE t2 (id INT)' );
