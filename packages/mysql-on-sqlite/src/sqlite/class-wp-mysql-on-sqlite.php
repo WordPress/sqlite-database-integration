@@ -5646,7 +5646,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		// 7. If foreign key constraints were enabled, verify and enable them.
-		if ( '1' === $pragma_foreign_keys ) {
+		if ( 1 === (int) $pragma_foreign_keys ) {
 			$this->execute_sqlite_query( 'PRAGMA foreign_key_check' );
 			$this->execute_sqlite_query( 'PRAGMA foreign_keys = ON' );
 		}
@@ -7138,7 +7138,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 				$rows[] = sprintf( '  PRIMARY KEY (%s)', implode( ', ', $column_list ) );
 			} else {
-				$is_unique = '0' === $info['NON_UNIQUE'];
+				$is_unique = 0 === (int) $info['NON_UNIQUE'];
 
 				// Prefix the original index name with the table name.
 				// This is to avoid conflicting index names in SQLite.
@@ -7424,7 +7424,7 @@ class WP_MySQL_On_SQLite extends PDO {
 				$sql .= implode( ', ', array_map( $format_index_column, $constraint ) );
 				$sql .= ')';
 			} else {
-				$is_unique = '0' === $info['NON_UNIQUE'];
+				$is_unique = 0 === (int) $info['NON_UNIQUE'];
 
 				$sql  = sprintf(
 					'  %s%s%sKEY ',
