@@ -884,7 +884,11 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
-	public function testAlterTableAddColumn(): void {
+	/**
+	 * @dataProvider stringifyFetchesProvider
+	 */
+	public function testAlterTableAddColumn( bool $stringify_fetches ): void {
+		$this->driver->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, $stringify_fetches );
 		$this->driver->query( 'CREATE TABLE t (id INT)' );
 		$this->assertQuery(
 			array(
@@ -912,6 +916,13 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 				"SELECT * FROM `_wp_sqlite_mysql_information_schema_referential_constraints` WHERE constraint_schema = 'sqlite_database' AND table_name = 't' ORDER BY constraint_name",
 				"SELECT tc.*, cc.check_clause FROM `_wp_sqlite_mysql_information_schema_table_constraints` tc JOIN `_wp_sqlite_mysql_information_schema_check_constraints` cc ON cc.constraint_name = tc.constraint_name WHERE tc.constraint_schema = 'sqlite_database' AND tc.table_name = 't' ORDER BY tc.constraint_name",
 			)
+		);
+	}
+
+	public function stringifyFetchesProvider(): array {
+		return array(
+			'stringification disabled' => array( false ),
+			'stringification enabled'  => array( true ),
 		);
 	}
 

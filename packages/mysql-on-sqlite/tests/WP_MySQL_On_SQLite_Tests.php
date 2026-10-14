@@ -5124,9 +5124,11 @@ QUERY
 		);
 	}
 
-	public function testUniqueKeysWithoutStringifiedFetches(): void {
-		// PDO SQLite returns native types unless fetches are stringified.
-		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, false );
+	/**
+	 * @dataProvider stringifyFetchesProvider
+	 */
+	public function testStringifyFetchesDoesNotAffectUniqueKeys( bool $stringify_fetches ): void {
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, $stringify_fetches );
 
 		$this->assertQuery( 'CREATE TABLE t (id INT, email VARCHAR(50), UNIQUE KEY ue (email))' );
 		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
