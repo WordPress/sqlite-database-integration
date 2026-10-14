@@ -4186,79 +4186,87 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
-	public function testFoundRowsWithoutSqlCalcFoundRows(): void {
+	/**
+	 * @dataProvider stringifyFetchesProvider
+	 */
+	public function testFoundRowsWithoutSqlCalcFoundRows( bool $stringify_fetches ): void {
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, $stringify_fetches );
+
 		$this->assertQuery( 'DROP TABLE _dates' );
 		$this->assertQuery( 'DROP TABLE _options' );
 
 		// CREATE TABLE
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, value TEXT, INDEX idx_value (value))' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '0', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 0, $result[0]->{'FOUND_ROWS()'} );
 
 		// INSERT
-		$this->assertQuery( 'INSERT INTO t (id) VALUES (1), (2), (3)' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '0', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 0, $result[0]->{'FOUND_ROWS()'} );
 
 		// SELECT
 		$this->assertQuery( 'SELECT * FROM t' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '3', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 12, $result[0]->{'FOUND_ROWS()'} );
 
 		// DESCRIBE
 		$this->assertQuery( 'DESCRIBE t' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 2, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW COLLATION
 		$this->assertQuery( 'SHOW COLLATION' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '8', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 8, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW DATABASES
 		$this->assertQuery( 'SHOW DATABASES' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 2, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW COLUMNS
 		$this->assertQuery( 'SHOW COLUMNS FROM t' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 2, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW CREATE TABLE
 		$this->assertQuery( 'SHOW CREATE TABLE t' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '1', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 1, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW CREATE TABLE with non-existent table
 		$this->assertQuery( 'SHOW CREATE TABLE non_existent_table' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '0', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 0, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW INDEX
 		$this->assertQuery( 'SHOW INDEX FROM t' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 2, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW GRANTS
 		$this->assertQuery( 'SHOW GRANTS' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '1', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 1, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW TABLE STATUS
 		$r      = $this->assertQuery( 'SHOW TABLE STATUS' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '1', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 1, $result[0]->{'FOUND_ROWS()'} );
 
-		// SHOW TABLES
+		// SHOW TABLES (with a two-digit count)
+		for ( $i = 1; $i <= 10; $i++ ) {
+			$this->assertQuery( "CREATE TABLE t$i (id INT)" );
+		}
 		$this->assertQuery( 'SHOW TABLES' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '1', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 11, $result[0]->{'FOUND_ROWS()'} );
 
 		// SHOW VARIABLES
 		$this->assertQuery( 'SHOW VARIABLES' );
 		$result = $this->assertQuery( 'SELECT FOUND_ROWS()' );
-		$this->assertSame( '2', $result[0]->{'FOUND_ROWS()'} );
+		$this->assertEquals( 2, $result[0]->{'FOUND_ROWS()'} );
 	}
 
 	public function testComplexSelectBasedOnDates() {

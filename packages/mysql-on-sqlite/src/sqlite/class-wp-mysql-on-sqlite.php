@@ -5169,12 +5169,12 @@ class WP_MySQL_On_SQLite extends PDO {
 				} elseif ( is_string( $found_rows ) ) {
 					return (int) $this->execute_sqlite_query(
 						sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows )
-					)->fetchColumn()[0];
+					)->fetchColumn();
 				} elseif ( is_array( $found_rows ) && isset( $found_rows[0] ) ) {
 					return (int) $this->execute_sqlite_query(
 						sprintf( 'SELECT COUNT(*) FROM (%s)', $found_rows[0] ),
 						$found_rows[1] ?? array()
-					)->fetchColumn()[0];
+					)->fetchColumn();
 				} else {
 					return 0;
 				}
