@@ -8058,6 +8058,79 @@ END;
 		$this->assertSame( array(), (array) array_column( $result, 'id' ) );
 	}
 
+	public function testFailedStatementKeepsTransactionActive(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+
+		// A failed write and a failed read keep the transaction active.
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.id'
+		);
+		$this->assertTrue( $this->engine->inTransaction() );
+		$this->assertQueryError(
+			'SELECT * FROM missing_table',
+			"SQLSTATE[42S02]: Base table or view not found: 1146 Table 'missing_table' doesn't exist"
+		);
+		$this->assertTrue( $this->engine->inTransaction() );
+
+		$this->assertQuery( 'INSERT INTO t VALUES (2)' );
+		$this->assertQuery( 'COMMIT' );
+		$result = $this->assertQuery( 'SELECT id FROM t ORDER BY id' );
+		$this->assertSame( array( '1', '2' ), array_column( $result, 'id' ) );
+	}
+
+	public function testFailedStatementIsRolledBackInTransaction(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+
+		// The first row of the failed statement is not kept.
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (2), (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.id'
+		);
+
+		$this->assertQuery( 'COMMIT' );
+		$result = $this->assertQuery( 'SELECT id FROM t ORDER BY id' );
+		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
+	}
+
+	public function testRollbackToSavepointAfterFailedStatement(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'BEGIN' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQuery( 'SAVEPOINT sp1' );
+		$this->assertQuery( 'INSERT INTO t VALUES (2)' );
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.id'
+		);
+
+		// The savepoint still exists after the failed statement.
+		$this->assertQuery( 'ROLLBACK TO SAVEPOINT sp1' );
+		$this->assertQuery( 'COMMIT' );
+		$result = $this->assertQuery( 'SELECT id FROM t ORDER BY id' );
+		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
+	}
+
+	public function testFailedStatementKeepsTableLock(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY)' );
+		$this->assertQuery( 'LOCK TABLES t WRITE' );
+		$this->assertQuery( 'INSERT INTO t VALUES (1)' );
+		$this->assertQueryError(
+			'INSERT INTO t VALUES (1)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 UNIQUE constraint failed: t.id'
+		);
+
+		// UNLOCK TABLES keeps the rows written before the failed statement.
+		$this->assertQuery( 'UNLOCK TABLES' );
+		$this->assertFalse( $this->engine->inTransaction() );
+		$result = $this->assertQuery( 'SELECT id FROM t' );
+		$this->assertSame( array( '1' ), array_column( $result, 'id' ) );
+	}
+
 	public function testSavepointWithoutTransactionDoesNotStartTransaction(): void {
 		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY, v INT)' );
 		$this->assertQuery( 'INSERT INTO t (id, v) VALUES (1, 1)' );
