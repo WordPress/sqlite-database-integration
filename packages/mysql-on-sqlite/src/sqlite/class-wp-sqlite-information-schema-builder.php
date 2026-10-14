@@ -1823,7 +1823,7 @@ class WP_SQLite_Information_Schema_Builder {
 			// Column names are case-insensitive in MySQL.
 			$is_prefix = true;
 			foreach ( $reference_parts as $i => $reference_part ) {
-				if ( strtolower( $index_columns[ $i ] ) !== strtolower( $this->get_value( $reference_part ) ) ) {
+				if ( 0 !== strcasecmp( $index_columns[ $i ], $this->get_value( $reference_part ) ) ) {
 					$is_prefix = false;
 					break;
 				}

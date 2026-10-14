@@ -1943,21 +1943,47 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		);
 	}
 
-	public function testInformationSchemaForeignKeysReferencingDifferentlyCasedColumns(): void {
-		$this->assertQuery( 'CREATE TABLE t1 (id INT, name VARCHAR(255), PRIMARY KEY (id, name))' );
+	public function testInformationSchemaForeignKeysReferencingColumnsInDifferentLetterCase(): void {
 		$this->assertQuery(
-			'CREATE TABLE t2 (
-				id INT,
-				name VARCHAR(255),
-				FOREIGN KEY (id, name) REFERENCES t1 (ID, Name)
+			'CREATE TABLE t1 (
+				id INT PRIMARY KEY,
+				code INT,
+				a INT NOT NULL,
+				b INT NOT NULL,
+				UNIQUE KEY u_code (code),
+				UNIQUE KEY u_a_b (a, b)
 			)'
 		);
+		$this->assertQuery(
+			'CREATE TABLE t2 (
+				t1_id INT,
+				x INT,
+				y INT,
+				FOREIGN KEY (t1_id) REFERENCES t1 (ID),
+				FOREIGN KEY (x, y) REFERENCES t1 (A, b)
+			)'
+		);
+		$this->assertQuery( 'ALTER TABLE t2 ADD COLUMN z INT, ADD CONSTRAINT fk_z FOREIGN KEY (z) REFERENCES t1 (CoDe)' );
 
-		$result = $this->assertQuery( "SELECT unique_constraint_name FROM information_schema.referential_constraints WHERE table_name = 't2'" );
+		$result = $this->assertQuery(
+			"SELECT constraint_name, unique_constraint_name
+			FROM information_schema.referential_constraints
+			WHERE table_name = 't2'
+			ORDER BY constraint_name"
+		);
 		$this->assertEquals(
 			array(
 				(object) array(
+					'CONSTRAINT_NAME'        => 'fk_z',
+					'UNIQUE_CONSTRAINT_NAME' => 'u_code',
+				),
+				(object) array(
+					'CONSTRAINT_NAME'        => 't2_ibfk_1',
 					'UNIQUE_CONSTRAINT_NAME' => 'PRIMARY',
+				),
+				(object) array(
+					'CONSTRAINT_NAME'        => 't2_ibfk_2',
+					'UNIQUE_CONSTRAINT_NAME' => 'u_a_b',
 				),
 			),
 			$result
