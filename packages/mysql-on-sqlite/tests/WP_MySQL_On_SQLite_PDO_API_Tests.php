@@ -529,6 +529,59 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( array( '00000', null, null ), $stmt->errorInfo() );
 	}
 
+	public function test_empty_result_statement(): void {
+		// The row count of a previous write must not leak into the empty result.
+		$this->driver->exec( 'CREATE TABLE t (id INT)' );
+		$this->driver->exec( 'INSERT INTO t VALUES (1), (2), (3)' );
+		$stmt = $this->driver->query( 'SET @a = 1' );
+
+		// Check the error state and iteration first, as fetching resets the error state.
+		$this->assertSame( '00000', $stmt->errorCode() );
+		$this->assertSame( array( '00000', null, null ), $stmt->errorInfo() );
+		$this->assertSame( array(), iterator_to_array( $stmt ) );
+
+		$this->assertSame( 0, $stmt->columnCount() );
+		$this->assertSame( 0, $stmt->rowCount() );
+		$this->assertFalse( $stmt->getColumnMeta( 0 ) );
+
+		$fetch_modes = array(
+			PDO::FETCH_BOTH,
+			PDO::FETCH_NUM,
+			PDO::FETCH_ASSOC,
+			PDO::FETCH_NAMED,
+			PDO::FETCH_OBJ,
+			PDO::FETCH_COLUMN,
+			PDO::FETCH_KEY_PAIR,
+		);
+		foreach ( $fetch_modes as $mode ) {
+			$this->assertFalse( $stmt->fetch( $mode ) );
+			$this->assertSame( array(), $stmt->fetchAll( $mode ) );
+		}
+		$this->assertFalse( $stmt->fetchColumn() );
+		$this->assertFalse( $stmt->fetchObject() );
+		$this->assertSame( array(), $stmt->fetchAll( PDO::FETCH_GROUP | PDO::FETCH_ASSOC ) );
+		$this->assertSame( array(), $stmt->fetchAll( PDO::FETCH_UNIQUE | PDO::FETCH_ASSOC ) );
+		$this->assertSame( array(), $stmt->fetchAll( PDO::FETCH_CLASS, stdClass::class ) );
+
+		$this->assertTrue( $stmt->setFetchMode( PDO::FETCH_CLASS, stdClass::class ) );
+		$this->assertFalse( $stmt->fetch() );
+
+		$value = 'unchanged';
+		$this->assertTrue( $stmt->bindColumn( 1, $value ) );
+		$this->assertFalse( $stmt->fetch( PDO::FETCH_BOUND ) );
+		$this->assertSame( 'unchanged', $value );
+
+		$this->assertTrue( $stmt->closeCursor() );
+		$this->assertFalse( $stmt->fetch() );
+
+		// Holding an unread statement must not block a commit or a schema change.
+		$stmt = $this->driver->query( 'SET @a = 1' );
+		$this->driver->exec( 'START TRANSACTION' );
+		$this->driver->exec( 'INSERT INTO t VALUES (4)' );
+		$this->assertSame( 0, $this->driver->exec( 'COMMIT' ) );
+		$this->assertSame( 0, $this->driver->exec( 'DROP TABLE t' ) );
+	}
+
 	public function test_statement_iteration(): void {
 		$stmt = $this->driver->query( 'SELECT 1 AS value UNION ALL SELECT 2', PDO::FETCH_ASSOC );
 
@@ -925,6 +978,29 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->driver->beginTransaction();
 		$result = $this->driver->rollBack();
 		$this->assertTrue( $result );
+	}
+
+	public function test_rollback_statement_as_first_transaction_on_connection(): void {
+		// Roll back the first transaction on the connection.
+		$this->driver->exec( 'START TRANSACTION' );
+		$this->driver->exec( 'ROLLBACK' );
+		$this->assertFalse( $this->driver->inTransaction() );
+
+		// Statements with empty result sets keep working after the rollback.
+		$this->driver->exec( 'START TRANSACTION' );
+		$this->driver->exec( 'CREATE TABLE t (id INT)' );
+		$this->driver->exec( 'ROLLBACK' );
+		$this->assertSame( 0, $this->driver->exec( 'CREATE TABLE t (id INT)' ) );
+	}
+
+	public function test_rollback_method_as_first_transaction_on_connection(): void {
+		// Roll back the first transaction on the connection.
+		$this->driver->beginTransaction();
+		$this->driver->exec( 'CREATE TABLE t (id INT)' );
+		$this->assertTrue( $this->driver->rollBack() );
+
+		// Statements with empty result sets keep working after the rollback.
+		$this->assertSame( 0, $this->driver->exec( 'CREATE TABLE t (id INT)' ) );
 	}
 
 	public function test_rollback_no_active_transaction(): void {
