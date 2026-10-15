@@ -1145,8 +1145,8 @@ class WP_MySQL_On_SQLite extends PDO {
 			 * [GRAMMAR]
 			 * simpleStatement: selectStatement | showStatement | utilityStatement | ...
 			 */
-			if ( null !== $child_node && $child_node->has_child_node() ) {
-				$statement_node = $child_node->get_first_child_node();
+			$statement_node = null !== $child_node ? $child_node->get_first_child_node() : null;
+			if ( null !== $statement_node ) {
 				if (
 					'selectStatement' === $statement_node->rule_name
 					|| 'showStatement' === $statement_node->rule_name
@@ -1180,11 +1180,25 @@ class WP_MySQL_On_SQLite extends PDO {
 				$this->last_result_statement = $this->create_result_statement_from_data( array(), array() );
 			}
 
+			/*
+			 * PDO SQLite reports affected rows only for INSERT, UPDATE, and DELETE.
+			 * For other statements, it can report the row count of the last write,
+			 * including the driver's internal writes. Use 0 for them instead.
+			 *
+			 * [GRAMMAR]
+			 * simpleStatement: insertStatement | replaceStatement | updateStatement | deleteStatement | ...
+			 */
+			$reports_affected_rows = null !== $statement_node && in_array(
+				$statement_node->rule_name,
+				array( 'insertStatement', 'replaceStatement', 'updateStatement', 'deleteStatement' ),
+				true
+			);
+
 			$stmt = new WP_MySQL_On_SQLite_Statement(
 				$this->last_result_statement,
 				$query,
 				$this->create_column_meta_resolver( $this->last_column_meta ),
-				$this->last_affected_rows
+				$reports_affected_rows ? $this->last_affected_rows : 0
 			);
 			if ( null !== $fetch_mode ) {
 				$stmt->setFetchMode( $fetch_mode, ...$fetch_mode_args );
