@@ -62,6 +62,8 @@
 
 	<rule ref="WordPress.DB.RestrictedClasses.mysql__PDO">
 		<exclude-pattern>/packages/mysql-on-sqlite/src/sqlite/*\.php</exclude-pattern>
+		<!-- The plugin links to the same driver source. -->
+		<exclude-pattern>/packages/plugin-sqlite-database-integration/wp-includes/database/sqlite/*\.php</exclude-pattern>
 		<exclude-pattern>/tests/*</exclude-pattern>
 	</rule>
 

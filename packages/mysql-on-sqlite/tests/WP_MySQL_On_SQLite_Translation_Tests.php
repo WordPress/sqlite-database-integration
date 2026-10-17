@@ -134,6 +134,21 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testMixedInListsRemainUncoerced(): void {
+		$this->assertQuery(
+			"SELECT '07.30' IN ( '7.3' , 0 ) AS `comparison`",
+			"SELECT '07.30' IN ('7.3', 0) AS comparison"
+		);
+		$this->assertQuery(
+			"SELECT '07.30' NOT IN ( 0 , '7.3' , NULL ) AS `comparison`",
+			"SELECT '07.30' NOT IN (0, '7.3', NULL) AS comparison"
+		);
+		$this->assertQuery(
+			"SELECT 9007199254740993 IN ( 9007199254740992 , 'no' ) AS `comparison`",
+			"SELECT 9007199254740993 IN (9007199254740992, 'no') AS comparison"
+		);
+	}
+
 	public function testBinary(): void {
 		// "BINARY expr" on the left side of comparison
 		$this->assertQuery(
