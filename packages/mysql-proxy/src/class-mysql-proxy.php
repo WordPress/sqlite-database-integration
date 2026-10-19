@@ -234,7 +234,7 @@ class MySQL_Proxy {
 
 		// Create a new session for the client.
 		$client_id                   = $this->get_client_id( $socket );
-		$session                     = new MySQL_Session( $this->adapter, $client_id, $this->authentication );
+		$session                     = new MySQL_Session( $this->adapter, $client_id, $this->authentication, $this->logger );
 		$this->clients[ $client_id ] = array(
 			'socket'         => $socket,
 			'session'        => $session,
