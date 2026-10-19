@@ -294,6 +294,32 @@ class WP_MySQL_Session_Authentication_Test extends TestCase {
 		$this->assertFalse( $session->has_buffered_data() );
 	}
 
+	public function test_oversized_login_packet_is_denied(): void {
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->never() )->method( 'handle_query' );
+		$session = new MySQL_Session( $adapter, 1, $this->account() );
+		$session->get_initial_handshake();
+		$header = substr( pack( 'V', MySQL_Session::MAX_UNAUTHENTICATED_PACKET_SIZE + 1 ), 0, 3 ) . chr( 1 );
+		$this->assert_denied( $session, $session->receive_bytes( $header . str_repeat( 'A', 4096 ) ) );
+		$this->assertFalse( $session->has_buffered_data() );
+	}
+
+	public function test_large_packet_is_buffered_after_authentication(): void {
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->never() )->method( 'handle_query' );
+		$session   = new MySQL_Session( $adapter, 1, $this->account() );
+		$challenge = MySQL_Test_Client::challenge( $session->get_initial_handshake() );
+		$session->receive_bytes( MySQL_Test_Client::handshake_response( $challenge ) );
+		$this->assertTrue( $session->is_authenticated() );
+		$header = substr( pack( 'V', MySQL_Session::MAX_UNAUTHENTICATED_PACKET_SIZE + 1 ), 0, 3 ) . chr( 0 );
+		try {
+			$session->receive_bytes( $header . str_repeat( 'A', 4096 ) );
+			$this->fail( 'An incomplete packet must wait for more input.' );
+		} catch ( Incomplete_Input_Exception $e ) {
+			$this->assertFalse( $session->is_closed() );
+		}
+	}
+
 	/** @dataProvider invalid_packets */
 	public function test_invalid_packet_is_denied( string $payload, int $sequence ): void {
 		$adapter = $this->createMock( Adapter::class );
