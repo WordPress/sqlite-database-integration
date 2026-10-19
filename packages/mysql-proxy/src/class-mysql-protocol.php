@@ -306,18 +306,21 @@ class MySQL_Protocol {
 	 *
 	 * @see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_err_packet.html
 	 *
-	 * @param  int    $sequence_id The sequence ID of the packet.
-	 * @param  int    $error_code  The error code.
-	 * @param  string $sql_state   The SQLSTATE value.
-	 * @param  string $message     The error message.
-	 * @return string              The ERR packet.
+	 * @param  int         $sequence_id The sequence ID of the packet.
+	 * @param  int         $error_code  The error code.
+	 * @param  string|null $sql_state   The SQLSTATE value, or null to omit it, as MySQL does
+	 *                                  before the client has sent its capabilities.
+	 * @param  string      $message     The error message.
+	 * @return string                   The ERR packet.
 	 */
 	public static function build_err_packet(
 		int $sequence_id,
 		int $error_code,
-		string $sql_state,
+		?string $sql_state,
 		string $message
 	): string {
+		$state = null === $sql_state ? '' : '#' . strtoupper( $sql_state );
+
 		/**
 		 * Assemble the ERR packet payload.
 		 *
@@ -331,10 +334,10 @@ class MySQL_Protocol {
 		 */
 		$payload = pack(
 			'Cva*a*',
-			self::ERR_PACKET_HEADER,        // (C)  ERR packet header.
-			$error_code,                    // (v)  Error code.
-			'#' . strtoupper( $sql_state ), // (a*) SQL state.
-			$message                        // (a*) Message.
+			self::ERR_PACKET_HEADER, // (C)  ERR packet header.
+			$error_code,             // (v)  Error code.
+			$state,                  // (a*) SQL state marker and SQL state, if any.
+			$message                 // (a*) Message.
 		);
 		return self::build_packet( $sequence_id, $payload );
 	}
