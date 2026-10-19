@@ -1735,6 +1735,15 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testIntervalArithmeticInParentheses(): void {
+		// TODO: With LALR(1), also test these expressions without parentheses.
+		// Parentheses prevent the parser from treating this as a prefix interval.
+		$this->assertQuery(
+			"SELECT ( DATETIME('2024-01-01', (1) || ' DAY') ) + 0 AS `a`",
+			"SELECT ('2024-01-01' + INTERVAL 1 DAY) + 0 AS a"
+		);
+	}
+
 	public function testIndexHints(): void {
 		// USE INDEX
 		$this->assertQuery(

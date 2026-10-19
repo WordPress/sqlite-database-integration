@@ -967,12 +967,6 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
 
-		// The interval can also come first.
-		$result = $this->assertQuery(
-			"SELECT INTERVAL 5 HOUR + '2024-01-01 10:00:00' as output"
-		);
-		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
-
 		// Intervals chain from left to right.
 		$result = $this->assertQuery(
 			"SELECT '2024-01-01 10:00:00' + INTERVAL 5 HOUR + INTERVAL 1 DAY as output"
@@ -1044,6 +1038,36 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			"SELECT id FROM _events WHERE occurred_at > '2024-01-02 00:00:00' - INTERVAL 1 DAY ORDER BY id"
 		);
 		$this->assertEquals( array( 1, 2 ), array_map( 'intval', array_column( $result, 'id' ) ) );
+
+		// Conditions after the interval are not part of it.
+		$this->assertQuery(
+			"DELETE FROM _events WHERE occurred_at < '2024-01-03 00:00:00' - INTERVAL 1 DAY AND id = 99"
+		);
+		$result = $this->assertQuery( 'SELECT COUNT(*) as count FROM _events' );
+		$this->assertEquals( 3, $result[0]->count );
+	}
+
+	public function testIntervalArithmeticPrefixForm() {
+		// TODO: With LALR(1), assert MySQL results instead of expecting errors.
+		// Keep the DELETE regression check to verify that unrelated rows survive.
+		$this->assertQuery( 'CREATE TABLE _events (id INT, occurred_at DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _events VALUES (1, '2024-01-01 10:00:00'), (2, '2024-01-03 10:00:00')"
+		);
+
+		$error = 'MySQL query not supported. Cause: INTERVAL n unit followed by "+"; use "(expr + INTERVAL n unit)" instead';
+		$this->assertQueryError( "SELECT INTERVAL 5 HOUR + '2024-01-01 10:00:00'", $error );
+		$this->assertQueryError(
+			"DELETE FROM _events WHERE INTERVAL 30 DAY + occurred_at < '2025-01-01' AND id = 99",
+			$error
+		);
+
+		// The parser treats a suffix interval followed by "+" as a prefix interval.
+		$this->assertQueryError( "SELECT '2024-01-01 10:00:00' + INTERVAL 1 DAY + 0", $error );
+		$this->assertQueryError( "SELECT '2024-01-01 10:00:00' - INTERVAL 1 DAY + 0", $error );
+
+		$result = $this->assertQuery( 'SELECT COUNT(*) as count FROM _events' );
+		$this->assertEquals( 2, $result[0]->count );
 	}
 
 	public function testLeftFunction1Char() {

@@ -4917,14 +4917,16 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 		}
 
-		// Translate "INTERVAL n unit + expr", the prefix form of date arithmetic.
+		/*
+		 * Reject "INTERVAL n unit + expr": the parser includes following AND, OR,
+		 * and XOR conditions in "expr", unlike MySQL. It also reads
+		 * "expr + INTERVAL 1 DAY + x" as "expr + (INTERVAL 1 DAY + x)".
+		 *
+		 * TODO: Support prefix intervals after switching to the LALR(1) parser.
+		 */
 		if ( null !== $token && WP_MySQL_Lexer::INTERVAL_SYMBOL === $token->id ) {
-			$nodes = $node->get_child_nodes();
-			return $this->translate_interval_arithmetic(
-				$this->translate( $nodes[2] ),
-				false,
-				$nodes[0],
-				$nodes[1]
+			throw $this->new_not_supported_exception(
+				'INTERVAL n unit followed by "+"; use "(expr + INTERVAL n unit)" instead'
 			);
 		}
 
