@@ -82,6 +82,7 @@ class WP_SQLite_Configurator {
 			$this->ensure_global_variables_table();
 			$this->schema_builder->ensure_information_schema_tables();
 			$this->schema_reconstructor->ensure_correct_information_schema();
+			$this->schema_builder->normalize_temporal_zero_defaults();
 			$this->save_current_driver_version();
 			$this->ensure_database_data();
 		} catch ( Throwable $e ) {

@@ -414,6 +414,46 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
+	 * Normalize numeric zero defaults of temporal columns in the information schema.
+	 *
+	 * Older driver versions stored defaults such as "DEFAULT 0" of a TIMESTAMP
+	 * column verbatim. MySQL stores them as a canonical zero value, such as
+	 * "0000-00-00 00:00:00", and "SHOW CREATE TABLE" must emit that value for
+	 * the output to be accepted by MySQL in strict SQL mode.
+	 */
+	public function normalize_temporal_zero_defaults(): void {
+		$columns_table = $this->connection->quote_identifier( $this->get_table_name( false, 'columns' ) );
+		$columns       = $this->connection->query(
+			sprintf(
+				"SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, COLUMN_DEFAULT
+				FROM %s
+				WHERE DATA_TYPE IN ('date', 'time', 'datetime', 'timestamp', 'year')
+				AND COLUMN_DEFAULT IS NOT NULL",
+				$columns_table
+			)
+		)->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
+
+		foreach ( $columns as $column ) {
+			$default = $this->get_temporal_zero_default(
+				(string) $column['COLUMN_DEFAULT'],
+				$column['DATA_TYPE'],
+				$column['COLUMN_TYPE']
+			);
+			if ( null === $default || $default === $column['COLUMN_DEFAULT'] ) {
+				continue;
+			}
+
+			$this->connection->query(
+				sprintf(
+					'UPDATE %s SET COLUMN_DEFAULT = ? WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+					$columns_table
+				),
+				array( $default, $column['TABLE_SCHEMA'], $column['TABLE_NAME'], $column['COLUMN_NAME'] )
+			);
+		}
+	}
+
+	/**
 	 * Get the definition and data of a computed information schema table.
 	 *
 	 * Some information schema tables can be computed on the fly when they are
@@ -1028,7 +1068,7 @@ class WP_SQLite_Information_Schema_Builder {
 	): void {
 		$columns_table = $this->get_table_name( $table_is_temporary, 'columns' );
 		$column        = $this->connection->query(
-			'SELECT DATA_TYPE, IS_NULLABLE, EXTRA FROM ' . $this->connection->quote_identifier( $columns_table ) . '
+			'SELECT DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, EXTRA FROM ' . $this->connection->quote_identifier( $columns_table ) . '
 			WHERE table_schema = ? AND table_name = ? AND column_name = ?',
 			array( self::SAVED_DATABASE_NAME, $table_name, $column_name )
 		)->fetch( PDO::FETCH_ASSOC );
@@ -1053,8 +1093,8 @@ class WP_SQLite_Information_Schema_Builder {
 			$expression = $node->get_first_child_node( 'exprWithParentheses' );
 			$literal    = $expression ? $this->get_parenthesized_default_literal( $expression ) : null;
 			$default    = $literal
-				? $this->get_literal_default( $literal, $column['DATA_TYPE'], $column_name )
-				: $this->get_default_value( $node, $column['DATA_TYPE'], $column_name );
+				? $this->get_literal_default( $literal, $column['DATA_TYPE'], $column_name, $column['COLUMN_TYPE'] )
+				: $this->get_default_value( $node, $column['DATA_TYPE'], $column_name, $column['COLUMN_TYPE'] );
 			if ( null === $default && 'NO' === $column['IS_NULLABLE'] ) {
 				throw WP_SQLite_Information_Schema_Exception::invalid_default_value( $column_name );
 			}
@@ -1628,7 +1668,7 @@ class WP_SQLite_Information_Schema_Builder {
 	private function extract_column_data( string $table_name, string $column_name, WP_Parser_Node $node, int $position ): array {
 		list ( $data_type, $column_type ) = $this->get_column_data_types( $node );
 
-		$default  = $this->get_column_default( $node, $data_type, $column_name );
+		$default  = $this->get_column_default( $node, $data_type, $column_name, $column_type );
 		$nullable = $this->get_column_nullable( $node );
 		$key      = $this->get_column_key( $node );
 		$extra    = $this->get_column_extra( $node );
@@ -2173,9 +2213,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param  WP_Parser_Node $node        The "columnDefinition" or "fieldDefinition" AST node.
 	 * @param  string         $data_type   The column data type as stored in information schema.
 	 * @param  string         $column_name The column name.
+	 * @param  string         $column_type The column type as stored in information schema.
 	 * @return string|null                 The column default as stored in information schema.
 	 */
-	private function get_column_default( WP_Parser_Node $node, string $data_type, string $column_name ): ?string {
+	private function get_column_default( WP_Parser_Node $node, string $data_type, string $column_name, string $column_type ): ?string {
 		$default_attr = null;
 		foreach ( $node->get_descendant_nodes( 'columnAttribute' ) as $attr ) {
 			if ( $attr->has_child_token( WP_MySQL_Lexer::DEFAULT_SYMBOL ) ) {
@@ -2186,7 +2227,7 @@ class WP_SQLite_Information_Schema_Builder {
 		if ( null === $default_attr ) {
 			return null;
 		}
-		return $this->get_default_value( $default_attr, $data_type, $column_name );
+		return $this->get_default_value( $default_attr, $data_type, $column_name, $column_type );
 	}
 
 	/**
@@ -2195,9 +2236,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param  WP_Parser_Node $node        The "columnAttribute" or "alterListItem" AST node.
 	 * @param  string         $data_type   The column data type as stored in information schema.
 	 * @param  string         $column_name The column name.
+	 * @param  string         $column_type The column type as stored in information schema.
 	 * @return string|null                 The default value as stored in information schema.
 	 */
-	private function get_default_value( WP_Parser_Node $node, string $data_type, string $column_name ): ?string {
+	private function get_default_value( WP_Parser_Node $node, string $data_type, string $column_name, string $column_type ): ?string {
 		/*
 		 * [GRAMMAR]
 		 * columnAttribute:
@@ -2227,9 +2269,9 @@ class WP_SQLite_Information_Schema_Builder {
 				// A signed number, such as "-5", has no "literal" child node.
 				// Like MySQL, drop the unary plus, e.g., "+5" becomes "5".
 				$number = ltrim( $this->get_value( $signed_literal ), '+' );
-				return $this->normalize_literal_default( $number, $data_type, $column_name );
+				return $this->normalize_literal_default( $number, $data_type, $column_name, $column_type );
 			}
-			return $this->get_literal_default( $literal, $data_type, $column_name );
+			return $this->get_literal_default( $literal, $data_type, $column_name, $column_type );
 		}
 
 		// DEFAULT (expression) - MySQL 8.0.13+ supports exprWithParentheses
@@ -2247,9 +2289,10 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param  WP_Parser_Node $literal     The "literal" AST node.
 	 * @param  string         $data_type   The column data type as stored in information schema.
 	 * @param  string         $column_name The column name.
+	 * @param  string         $column_type The column type as stored in information schema.
 	 * @return string|null                 The default value as stored in information schema.
 	 */
-	private function get_literal_default( WP_Parser_Node $literal, string $data_type, string $column_name ): ?string {
+	private function get_literal_default( WP_Parser_Node $literal, string $data_type, string $column_name, string $column_type ): ?string {
 		// DEFAULT NULL
 		if ( $literal->has_child_node( 'nullLiteral' ) ) {
 			return null;
@@ -2262,7 +2305,7 @@ class WP_SQLite_Information_Schema_Builder {
 			return 'bit' === $data_type ? "b'{$bool_value}'" : $bool_value;
 		}
 
-		return $this->normalize_literal_default( $this->get_value( $literal ), $data_type, $column_name );
+		return $this->normalize_literal_default( $this->get_value( $literal ), $data_type, $column_name, $column_type );
 	}
 
 	/**
@@ -2271,9 +2314,16 @@ class WP_SQLite_Information_Schema_Builder {
 	 * @param  string $default_value The literal default value.
 	 * @param  string $data_type     The column data type as stored in information schema.
 	 * @param  string $column_name   The column name.
+	 * @param  string $column_type   The column type as stored in information schema.
 	 * @return string                The default value as stored in information schema.
 	 */
-	private function normalize_literal_default( string $default_value, string $data_type, string $column_name ): string {
+	private function normalize_literal_default( string $default_value, string $data_type, string $column_name, string $column_type ): string {
+		// Numeric zero temporal defaults, such as "DEFAULT 0" of a DATETIME column.
+		$zero_default = $this->get_temporal_zero_default( $default_value, $data_type, $column_type );
+		if ( null !== $zero_default ) {
+			return $zero_default;
+		}
+
 		if ( 'bit' === $data_type ) {
 			/*
 			 * @TODO: Validate and normalize defaults from their AST and the full
@@ -2287,8 +2337,9 @@ class WP_SQLite_Information_Schema_Builder {
 		}
 
 		/*
-		 * @TODO: Non-BIT literal defaults are currently stored verbatim. To
-		 * match MySQL, they should be normalized. For example:
+		 * @TODO: Other non-BIT literal defaults (apart from numeric zero temporal
+		 * defaults handled above) are currently stored verbatim. To match MySQL,
+		 * they should be normalized. For example:
 		 *  - BINARY/VARBINARY defaults stored as 0x hex literals.
 		 *  - Hex and bit literals coerced to raw bytes for text columns and to
 		 *    their decimal value for numeric columns.
@@ -2296,6 +2347,45 @@ class WP_SQLite_Information_Schema_Builder {
 		 *  - Numeric defaults normalized, e.g. 1.0 to 1 or 1e3 to 1000.
 		 */
 		return $default_value;
+	}
+
+	/**
+	 * Normalize a numeric zero default of a temporal column to its MySQL zero value.
+	 *
+	 * MySQL stores "DEFAULT 0" of a DATETIME column as "0000-00-00 00:00:00",
+	 * and it rejects the quoted form "DEFAULT '0'" in strict SQL mode. Other
+	 * temporal defaults are not handled here.
+	 *
+	 * @param  string      $default_value The default value.
+	 * @param  string      $data_type     The column data type as stored in information schema.
+	 * @param  string      $column_type   The column type as stored in information schema.
+	 * @return string|null                The zero value, or null when the default is not a numeric zero
+	 *                                    or the column is not a temporal column.
+	 */
+	private function get_temporal_zero_default( string $default_value, string $data_type, string $column_type ): ?string {
+		if ( ! preg_match( '/\A[+-]?(?:0+(?:\.0*)?|\.0+)\z/', $default_value ) ) {
+			return null;
+		}
+
+		// Fractional seconds precision, e.g., "datetime(3)".
+		$fraction = '';
+		if ( preg_match( '/\((\d+)\)/', $column_type, $matches ) && (int) $matches[1] > 0 ) {
+			$fraction = '.' . str_repeat( '0', (int) $matches[1] );
+		}
+
+		switch ( $data_type ) {
+			case 'date':
+				return '0000-00-00';
+			case 'year':
+				return '0000';
+			case 'time':
+				return '00:00:00' . $fraction;
+			case 'datetime':
+			case 'timestamp':
+				return '0000-00-00 00:00:00' . $fraction;
+			default:
+				return null;
+		}
 	}
 
 	/**

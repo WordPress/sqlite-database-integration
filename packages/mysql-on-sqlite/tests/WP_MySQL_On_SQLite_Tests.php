@@ -6333,6 +6333,146 @@ QUERY
 		);
 	}
 
+	public function testShowCreateTableWithTemporalZeroDefaults(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				col_timestamp TIMESTAMP NOT NULL DEFAULT 0,
+				col_datetime DATETIME NOT NULL DEFAULT 0,
+				col_date DATE NOT NULL DEFAULT 0,
+				col_time TIME NOT NULL DEFAULT 0,
+				col_year YEAR NOT NULL DEFAULT 0,
+				col_datetime_fsp DATETIME(3) NOT NULL DEFAULT 0,
+				col_timestamp_fsp TIMESTAMP(6) NOT NULL DEFAULT 0,
+				col_time_fsp TIME(2) NOT NULL DEFAULT 0,
+				col_decimal_zero DATETIME NOT NULL DEFAULT 0.0,
+				col_negative_zero DATETIME NOT NULL DEFAULT -0,
+				col_positive_zero DATETIME NOT NULL DEFAULT +0,
+				col_padded_zero DATETIME NOT NULL DEFAULT 00,
+				col_int INT NOT NULL DEFAULT 0
+			)'
+		);
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					"  `col_timestamp` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_datetime` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_date` date NOT NULL DEFAULT '0000-00-00',",
+					"  `col_time` time NOT NULL DEFAULT '00:00:00',",
+					"  `col_year` year NOT NULL DEFAULT '0000',",
+					"  `col_datetime_fsp` datetime(3) NOT NULL DEFAULT '0000-00-00 00:00:00.000',",
+					"  `col_timestamp_fsp` timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000',",
+					"  `col_time_fsp` time(2) NOT NULL DEFAULT '00:00:00.00',",
+					"  `col_decimal_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_negative_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_positive_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_padded_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_int` int NOT NULL DEFAULT '0'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery(
+			"SELECT column_name, column_default FROM information_schema.columns WHERE table_name = '_tmp_table' AND column_name IN ('col_timestamp', 'col_date', 'col_time_fsp') ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME'    => 'col_timestamp',
+					'COLUMN_DEFAULT' => '0000-00-00 00:00:00',
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'col_date',
+					'COLUMN_DEFAULT' => '0000-00-00',
+				),
+				(object) array(
+					'COLUMN_NAME'    => 'col_time_fsp',
+					'COLUMN_DEFAULT' => '00:00:00.00',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testInsertUsesTemporalZeroDefaults(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id INT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT 0,
+				updated_on DATE NOT NULL DEFAULT 0
+			)'
+		);
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT created_at, updated_on FROM _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'created_at' => '0000-00-00 00:00:00',
+					'updated_on' => '0000-00-00',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testAlterTableWithTemporalZeroDefaults(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT NOT NULL, modified_at DATETIME NOT NULL)' );
+		$this->assertQuery( 'ALTER TABLE _tmp_table ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT 0' );
+		$this->assertQuery( 'ALTER TABLE _tmp_table MODIFY COLUMN modified_at DATETIME NOT NULL DEFAULT 0' );
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					'  `id` int NOT NULL,',
+					"  `modified_at` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+	}
+
+	public function testConfigurationNormalizesStoredTemporalZeroDefaults(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT 0, label VARCHAR(20) NOT NULL DEFAULT 0)' );
+
+		// Simulate a database configured by an older driver version that
+		// stored numeric zero temporal defaults verbatim.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name = '_tmp_table'" );
+		$this->sqlite->exec( "UPDATE _wp_sqlite_global_variables SET value = '0.0.0' WHERE name = '_wp_sqlite_driver_version'" );
+
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'sqlite_pdo' => $this->sqlite )
+		);
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					"  `id` int NOT NULL DEFAULT '0',",
+					"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `label` varchar(20) NOT NULL DEFAULT '0'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+	}
+
 	public function testShowCreateTableWithEmptyDatetimeDefault() {
 		$this->assertQuery(
 			"CREATE TABLE _tmp_table (
