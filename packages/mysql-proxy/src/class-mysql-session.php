@@ -12,11 +12,21 @@ class MySQL_Session {
 	/**
 	 * Reasons the session closes a connection.
 	 */
-	const CLOSE_LOGIN_FAILED = 'login failed';
-	const CLOSE_CLIENT_QUIT  = 'client quit';
+	const CLOSE_LOGIN_FAILED     = 'login failed';
+	const CLOSE_CLIENT_QUIT      = 'client quit';
+	const CLOSE_PACKET_TOO_LARGE = 'packet too large';
 
 	/**
-	 * Largest packet accepted before the client is authenticated.
+	 * Largest message accepted from an authenticated client.
+	 *
+	 * This is the "max_allowed_packet" equivalent, at the 16 MB default of MySQL
+	 * clients rather than the 64 MB server default. It bounds the memory a single
+	 * connection can hold, because a split message is assembled in memory.
+	 */
+	const MAX_MESSAGE_SIZE = 16777216;
+
+	/**
+	 * Largest message accepted before the client is authenticated.
 	 *
 	 * A login packet carries a username, a challenge response, a database name,
 	 * and connection attributes, so it stays well below MySQL's own 16 KB
@@ -226,41 +236,15 @@ class MySQL_Session {
 		// Append new data to the existing buffer.
 		$this->buffer .= $data;
 
-		// Check if we have enough data for a packet header.
-		if ( strlen( $this->buffer ) < 4 ) {
-			throw new Incomplete_Input_Exception( 'Incomplete packet header, need more bytes' );
+		// Read one message, which the client may have split across packets.
+		$received_sequence_id = null;
+		$payload              = $this->read_message( $received_sequence_id );
+		if ( null === $payload ) {
+			return $this->reject_oversized_message();
 		}
-
-		// Parse packet header.
-		$payload_length       = unpack( 'V', substr( $this->buffer, 0, 3 ) . "\x00" )[1];
-		$received_sequence_id = ord( $this->buffer[3] );
-		$this->packet_id      = $received_sequence_id + 1;
-
-		// Never buffer a large packet for a client that has not logged in yet.
-		if ( ! $this->is_authenticated && $payload_length > self::MAX_UNAUTHENTICATED_PACKET_SIZE ) {
-			return $this->reject_authentication();
-		}
-
-		// Check if we have the complete packet.
-		$packet_length = 4 + $payload_length;
-		if ( strlen( $this->buffer ) < $packet_length ) {
-			throw new Incomplete_Input_Exception(
-				sprintf(
-					'Incomplete packet payload, have %d bytes, but need %d bytes',
-					strlen( $this->buffer ),
-					$packet_length
-				)
-			);
-		}
-
-		// Extract the packet payload.
-		$payload = substr( $this->buffer, 4, $payload_length );
-
-		// Remove the whole packet from the buffer.
-		$this->buffer = substr( $this->buffer, $packet_length );
 
 		/*
-		 * Process the packet.
+		 * Process the message.
 		 *
 		 * Depending on the lifecycle phase, handle authentication or a command.
 		 *
@@ -297,6 +281,83 @@ class MySQL_Session {
 					sprintf( 'Unsupported command: %d', $command )
 				);
 		}
+	}
+
+	/**
+	 * Read one client message from the buffer, joining packets the client split.
+	 *
+	 * The message is removed from the buffer only once it is complete, so an
+	 * incomplete message stays buffered for the next read.
+	 *
+	 * @param  int|null $first_sequence_id Receives the sequence ID of the first packet.
+	 * @return string|null                 The message payload, or null if it is too large.
+	 * @throws Incomplete_Input_Exception  When more data is needed to complete the message.
+	 */
+	private function read_message( ?int &$first_sequence_id ): ?string {
+		$limit   = $this->is_authenticated ? self::MAX_MESSAGE_SIZE : self::MAX_UNAUTHENTICATED_PACKET_SIZE;
+		$offset  = 0;
+		$payload = '';
+
+		while ( true ) {
+			// Check if we have enough data for a packet header.
+			if ( strlen( $this->buffer ) < $offset + 4 ) {
+				throw new Incomplete_Input_Exception( 'Incomplete packet header, need more bytes' );
+			}
+
+			// Parse the packet header. A response continues the client's sequence.
+			$payload_length    = unpack( 'V', substr( $this->buffer, $offset, 3 ) . "\x00" )[1];
+			$sequence_id       = ord( $this->buffer[ $offset + 3 ] );
+			$first_sequence_id = $first_sequence_id ?? $sequence_id;
+			$this->packet_id   = $sequence_id + 1;
+
+			// Refuse the message before buffering more than the limit allows.
+			if ( strlen( $payload ) + $payload_length > $limit ) {
+				return null;
+			}
+
+			// Check if we have the complete packet.
+			$packet_length = 4 + $payload_length;
+			if ( strlen( $this->buffer ) < $offset + $packet_length ) {
+				throw new Incomplete_Input_Exception(
+					sprintf(
+						'Incomplete packet payload, have %d bytes, but need %d bytes',
+						strlen( $this->buffer ) - $offset,
+						$packet_length
+					)
+				);
+			}
+
+			$payload .= substr( $this->buffer, $offset + 4, $payload_length );
+			$offset  += $packet_length;
+
+			// A full payload means the message continues in the next packet.
+			// See https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html.
+			if ( MySQL_Protocol::MAX_PACKET_LENGTH !== $payload_length ) {
+				break;
+			}
+		}
+
+		// Remove the whole message from the buffer.
+		$this->buffer = substr( $this->buffer, $offset );
+		return $payload;
+	}
+
+	/**
+	 * Refuse a message larger than this session accepts.
+	 *
+	 * @return string The error packet.
+	 */
+	private function reject_oversized_message(): string {
+		if ( ! $this->is_authenticated ) {
+			return $this->reject_authentication();
+		}
+		$this->close( self::CLOSE_PACKET_TOO_LARGE );
+		return MySQL_Protocol::build_err_packet(
+			$this->packet_id++,
+			1153,
+			'08S01',
+			"Got a packet bigger than 'max_allowed_packet' bytes"
+		);
 	}
 
 	/**
