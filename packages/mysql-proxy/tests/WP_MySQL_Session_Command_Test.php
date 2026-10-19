@@ -3,6 +3,7 @@
 use PHPUnit\Framework\TestCase;
 use WP_MySQL_Proxy\Adapter\Adapter;
 use WP_MySQL_Proxy\Incomplete_Input_Exception;
+use WP_MySQL_Proxy\Logger;
 use WP_MySQL_Proxy\MySQL_Authentication;
 use WP_MySQL_Proxy\MySQL_Protocol;
 use WP_MySQL_Proxy\MySQL_Result;
@@ -24,6 +25,53 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 			array( 'my db', 'USE `my db`' ),
 			array( 'a`; DROP TABLE wp_users', 'USE `a``; DROP TABLE wp_users`' ),
 		);
+	}
+
+	/** @dataProvider init_db_failures */
+	public function test_init_db_reports_an_unknown_database( bool $throws ): void {
+		$adapter     = $this->createMock( Adapter::class );
+		$expectation = $adapter->expects( $this->once() )->method( 'handle_query' )->with( 'USE `missing`' );
+		if ( $throws ) {
+			$expectation->willThrowException( new RuntimeException( 'Private adapter error' ) );
+		} else {
+			$expectation->willReturn( MySQL_Result::from_error( 'HY000', 1105, 'Private adapter error' ) );
+		}
+
+		// The adapter's reason goes to the log, not to the client.
+		$logger = $this->createMock( Logger::class );
+		$logger->expects( $this->once() )->method( $throws ? 'error' : 'warning' )->with(
+			$this->anything(),
+			$this->callback(
+				function ( array $context ): bool {
+					return 'Private adapter error' === $context['error'];
+				}
+			)
+		);
+
+		$session  = $this->authenticated_session( $adapter, $logger );
+		$response = $session->receive_bytes( MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_INIT_DB ) . 'missing' ) );
+		$this->assertSame( 0xff, ord( $response[4] ) );
+		$this->assertSame( 1049, unpack( 'v', substr( $response, 5, 2 ) )[1] );
+		$this->assertSame( "#42000Unknown database 'missing'", substr( $response, 7 ) );
+		$this->assertFalse( $session->is_closed(), 'Unlike the login, a failed COM_INIT_DB keeps the connection.' );
+	}
+
+	public function init_db_failures(): array {
+		return array(
+			'adapter error'  => array( false ),
+			'adapter throws' => array( true ),
+		);
+	}
+
+	public function test_init_db_refuses_an_empty_name(): void {
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->never() )->method( 'handle_query' );
+		$session  = $this->authenticated_session( $adapter );
+		$response = $session->receive_bytes( MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_INIT_DB ) ) );
+		$this->assertSame( 0xff, ord( $response[4] ) );
+		$this->assertSame( 1046, unpack( 'v', substr( $response, 5, 2 ) )[1] );
+		$this->assertSame( '#3D000No database selected', substr( $response, 7 ) );
+		$this->assertFalse( $session->is_closed() );
 	}
 
 	public function test_split_message_is_assembled(): void {
@@ -140,8 +188,8 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 		$this->assertSame( MySQL_Session::CLOSE_LOGIN_FAILED, $session->get_close_reason() );
 	}
 
-	private function authenticated_session( Adapter $adapter ): MySQL_Session {
-		$session   = new MySQL_Session( $adapter, 1, new MySQL_Authentication( 'user', 'password' ) );
+	private function authenticated_session( Adapter $adapter, ?Logger $logger = null ): MySQL_Session {
+		$session   = new MySQL_Session( $adapter, 1, new MySQL_Authentication( 'user', 'password' ), $logger );
 		$challenge = MySQL_Test_Client::challenge( $session->get_initial_handshake() );
 		$session->receive_bytes( MySQL_Test_Client::handshake_response( $challenge ) );
 		$this->assertTrue( $session->is_authenticated() );

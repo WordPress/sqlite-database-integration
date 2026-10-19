@@ -56,7 +56,7 @@ class WP_MySQL_Proxy_CLI_Test extends WP_MySQL_Proxy_Test {
 		$process->run();
 
 		$this->assertEquals( 1, $process->getExitCode() );
-		$this->assertStringContainsString( "Unknown database: 'unknown_database'", $process->getErrorOutput() );
+		$this->assertStringContainsString( "ERROR 1049 (42000): Unknown database 'unknown_database'", $process->getErrorOutput() );
 	}
 
 	public function test_query(): void {
