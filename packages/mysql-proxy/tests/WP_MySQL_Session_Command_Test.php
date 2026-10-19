@@ -83,6 +83,22 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 		$this->assertFalse( $session->has_buffered_data() );
 	}
 
+	public function test_internal_error_is_not_sent_to_the_client(): void {
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->once() )->method( 'handle_query' )->willThrowException(
+			new RuntimeException( 'Private detail from /srv/secret/path.php' )
+		);
+		$session = $this->authenticated_session( $adapter );
+
+		// The detail goes to the log, which the test runner shows on stderr.
+		$response = $session->receive_bytes( MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_QUERY ) . 'SELECT 1' ) );
+
+		$this->assertSame( 0xff, ord( $response[4] ) );
+		$this->assertSame( 1105, unpack( 'v', substr( $response, 5, 2 ) )[1] );
+		$this->assertSame( 'Unknown error', substr( $response, 13 ) );
+		$this->assertStringNotContainsString( '/srv/secret/path.php', $response );
+	}
+
 	public function test_result_without_an_insert_id_is_an_ok_packet(): void {
 		$adapter = $this->createMock( Adapter::class );
 		$adapter->expects( $this->once() )->method( 'handle_query' )->willReturn( new MySQL_Result() );

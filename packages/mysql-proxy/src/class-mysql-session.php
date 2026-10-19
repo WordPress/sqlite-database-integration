@@ -125,6 +125,13 @@ class MySQL_Session {
 	private $close_reason;
 
 	/**
+	 * Logger instance.
+	 *
+	 * @var Logger
+	 */
+	private $logger;
+
+	/**
 	 * Packet sequence ID.
 	 *
 	 * @var int
@@ -143,12 +150,14 @@ class MySQL_Session {
 	 *
 	 * @param Adapter              $adapter        The MySQL query adapter instance.
 	 * @param int                  $connection_id  The connection ID.
-	 * @param MySQL_Authentication  $authentication The configured account verifier.
+	 * @param MySQL_Authentication $authentication The configured account verifier.
+	 * @param Logger|null          $logger         The logger for internal errors. Default: a new logger.
 	 */
-	public function __construct( Adapter $adapter, int $connection_id, MySQL_Authentication $authentication ) {
+	public function __construct( Adapter $adapter, int $connection_id, MySQL_Authentication $authentication, ?Logger $logger = null ) {
 		$this->authentication = $authentication;
 		$this->adapter        = $adapter;
 		$this->connection_id  = $connection_id;
+		$this->logger         = $logger ?? new Logger();
 		$this->packet_id      = 0;
 
 		// Like MySQL's generate_user_salt(), use 7-bit characters other than NUL and '$'.
@@ -580,12 +589,15 @@ class MySQL_Session {
 				$result->last_insert_id
 			);
 		} catch ( Throwable $e ) {
-			return MySQL_Protocol::build_err_packet(
-				$this->packet_id++,
-				0,
-				'HY000',
-				'Unknown error: ' . $e->getMessage()
+			// Keep internal details, such as file paths, out of the client's error.
+			$this->logger->error(
+				'Client [{client_id}]: internal error: {error}',
+				array(
+					'client_id' => $this->connection_id,
+					'error'     => $e->getMessage(),
+				)
 			);
+			return MySQL_Protocol::build_err_packet( $this->packet_id++, 1105, 'HY000', 'Unknown error' );
 		}
 	}
 

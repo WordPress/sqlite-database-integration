@@ -2,10 +2,10 @@
 
 namespace WP_MySQL_Proxy\Adapter;
 
+use Error;
 use PDO;
 use PDOException;
 use PDOStatement;
-use Throwable;
 use WP_MySQL_Proxy\MySQL_Result;
 use WP_MySQL_On_SQLite;
 use WP_MySQL_Proxy\MySQL_Protocol;
@@ -39,12 +39,13 @@ class SQLite_Adapter implements Adapter {
 				$columns = $this->computeColumnInfo( $statement );
 			}
 			return MySQL_Result::from_data( $affected_rows, $last_insert_id, $columns, $rows ?? array() );
-		} catch ( Throwable $e ) {
-			$error_info = $e->errorInfo ?? null; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
-			if ( $e instanceof PDOException && $error_info ) {
-				return MySQL_Result::from_error( $error_info[0], $error_info[1], $error_info[2] );
+		} catch ( PDOException $e ) {
+			// Only query errors reach the client. The session logs internal errors instead.
+			$error_info = $e->errorInfo; // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+			if ( ! $error_info || $this->is_internal_error( $e ) ) {
+				throw $e;
 			}
-			return MySQL_Result::from_error( 'HY000', 1105, $e->getMessage() ?? 'Unknown error' );
+			return MySQL_Result::from_error( $error_info[0], $error_info[1], $error_info[2] );
 		}
 	}
 
@@ -100,5 +101,23 @@ class SQLite_Adapter implements Adapter {
 			);
 		}
 		return $columns;
+	}
+
+	/**
+	 * Whether a query exception is a PHP error that the driver reported as a query error.
+	 *
+	 * A PHP error is a bug, not a query error, and its message can contain server
+	 * file paths.
+	 *
+	 * @param  PDOException $e The query exception.
+	 * @return bool
+	 */
+	private function is_internal_error( PDOException $e ): bool {
+		for ( $cause = $e->getPrevious(); null !== $cause; $cause = $cause->getPrevious() ) {
+			if ( $cause instanceof Error ) {
+				return true;
+			}
+		}
+		return false;
 	}
 }
