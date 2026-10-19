@@ -74,11 +74,17 @@ class WP_MySQL_Proxy_Command_Test extends TestCase {
 		$this->assertStringContainsString( 'Connections are not encrypted (no TLS).', $process->getErrorOutput() );
 	}
 
-	public function test_unknown_options_do_not_expose_their_values(): void {
-		$process = $this->cli( array( '--password=private_password' ), '' );
+	/** @dataProvider password_arguments */
+	public function test_unknown_options_do_not_expose_their_values( string $argument ): void {
+		$process = $this->cli( array( $argument ), '' );
 		$process->run();
 		$this->assertSame( 1, $process->getExitCode() );
 		$this->assertStringNotContainsString( 'private_password', $process->getErrorOutput() );
+	}
+
+	public function password_arguments(): array {
+		// The MySQL client reads -p as a password, so the proxy must not take it as a port.
+		return array( array( '--password=private_password' ), array( '-pprivate_password' ) );
 	}
 
 	public function test_grouped_short_options(): void {
@@ -99,10 +105,10 @@ class WP_MySQL_Proxy_Command_Test extends TestCase {
 				$args = array( '--user', 'user', '--port', (string) $port );
 				break;
 			case 'short-attached':
-				$args = array( '-uuser', '-p' . $port, '-linfo', '-d:memory:' );
+				$args = array( '-uuser', '-P' . $port, '-linfo', '-d:memory:' );
 				break;
 			default:
-				$args = array( '-u', 'user', '-p', (string) $port, '-l', 'info', '-d', ':memory:' );
+				$args = array( '-u', 'user', '-P', (string) $port, '-l', 'info', '-d', ':memory:' );
 		}
 		$args[]   = '--auth-plugin=' . MySQL_Test_Client::auth_plugin();
 		$password = 'environment-password';
