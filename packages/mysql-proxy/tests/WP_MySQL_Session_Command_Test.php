@@ -2,6 +2,7 @@
 
 use PHPUnit\Framework\TestCase;
 use WP_MySQL_Proxy\Adapter\Adapter;
+use WP_MySQL_Proxy\Incomplete_Input_Exception;
 use WP_MySQL_Proxy\MySQL_Authentication;
 use WP_MySQL_Proxy\MySQL_Protocol;
 use WP_MySQL_Proxy\MySQL_Result;
@@ -23,6 +24,63 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 			array( 'my db', 'USE `my db`' ),
 			array( 'a`; DROP TABLE wp_users', 'USE `a``; DROP TABLE wp_users`' ),
 		);
+	}
+
+	public function test_split_message_is_assembled(): void {
+		ini_set( 'memory_limit', '512M' );
+		$queries = array();
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->once() )->method( 'handle_query' )->willReturnCallback(
+			function ( string $query ) use ( &$queries ): MySQL_Result {
+				$queries[] = $query;
+				return MySQL_Result::from_data( 0, 0, array(), array() );
+			}
+		);
+		$session = $this->authenticated_session( $adapter );
+
+		// A packet with a full payload continues in the next packet.
+		$prefix = chr( MySQL_Protocol::COM_QUERY ) . 'SELECT 1 -- ';
+		$packet = MySQL_Protocol::build_packet( 0, $prefix . str_repeat( 'x', MySQL_Session::MAX_PACKET_PAYLOAD - strlen( $prefix ) ) );
+		try {
+			$session->receive_bytes( $packet );
+			$this->fail( 'A split message must wait for the next packet.' );
+		} catch ( Incomplete_Input_Exception $e ) {
+			$this->assertSame( array(), $queries, 'The first packet must not run on its own.' );
+		}
+		unset( $packet );
+
+		// The limit allows one more byte, which is MySQL's own 16 MB boundary.
+		$response = $session->receive_bytes( MySQL_Protocol::build_packet( 1, '1' ) );
+		$this->assertSame( 0, ord( $response[4] ) );
+		$this->assertSame( 2, ord( $response[3] ), 'The response continues the client sequence.' );
+		$this->assertCount( 1, $queries );
+		$this->assertSame( MySQL_Session::MAX_MESSAGE_SIZE - 1, strlen( $queries[0] ) );
+		$this->assertStringEndsWith( 'xx1', $queries[0] );
+		$this->assertFalse( $session->is_closed() );
+	}
+
+	public function test_oversized_message_is_refused(): void {
+		ini_set( 'memory_limit', '512M' );
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->never() )->method( 'handle_query' );
+		$session = $this->authenticated_session( $adapter );
+
+		$packet = MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_QUERY ) . str_repeat( 'x', MySQL_Session::MAX_PACKET_PAYLOAD - 1 ) );
+		try {
+			$session->receive_bytes( $packet );
+			$this->fail( 'A split message must wait for the next packet.' );
+		} catch ( Incomplete_Input_Exception $e ) {
+			$this->assertFalse( $session->is_closed() );
+		}
+		unset( $packet );
+
+		// One byte past the limit, which is checked before the payload is buffered.
+		$response = $session->receive_bytes( MySQL_Protocol::build_packet( 1, '12' ) );
+		$this->assertSame( 0xff, ord( $response[4] ) );
+		$this->assertSame( 1153, unpack( 'v', substr( $response, 5, 2 ) )[1] );
+		$this->assertSame( '#08S01', substr( $response, 7, 6 ) );
+		$this->assertSame( MySQL_Session::CLOSE_PACKET_TOO_LARGE, $session->get_close_reason() );
+		$this->assertFalse( $session->has_buffered_data() );
 	}
 
 	public function test_quit_closes_the_session(): void {
