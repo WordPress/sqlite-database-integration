@@ -20,6 +20,13 @@ use WP_MySQL_Proxy\Adapter\Adapter;
  */
 class MySQL_Proxy {
 	/**
+	 * Seconds a client may stay connected without completing a login.
+	 *
+	 * This matches the default MySQL "connect_timeout".
+	 */
+	const LOGIN_TIMEOUT = 10;
+
+	/**
 	 * The socket to listen on.
 	 *
 	 * @var Socket|resource
@@ -59,7 +66,7 @@ class MySQL_Proxy {
 	 *
 	 * Maps client IDs to their associated socket and session instances.
 	 *
-	 * @var array<int, array{socket: Socket|resource, session: MySQL_Session}>
+	 * @var array<int, array{socket: Socket|resource, session: MySQL_Session, login_deadline: int}>
 	 */
 	private $clients = array();
 
@@ -141,11 +148,14 @@ class MySQL_Proxy {
 		// Start the main proxy loop.
 		while ( true ) {
 			try {
-				// Wait for activity on any socket.
+				// Drop clients that connected but never completed a login.
+				$this->close_timed_out_logins();
+
+				// Wait for activity on any socket, waking up for the next login deadline.
 				$read     = array_merge( array( $this->socket ), array_column( $this->clients, 'socket' ) );
 				$write    = null;
 				$except   = null;
-				$activity = @socket_select( $read, $write, $except, null );
+				$activity = @socket_select( $read, $write, $except, $this->get_select_timeout() );
 				if ( false === $activity ) {
 					throw $this->new_socket_error();
 				}
@@ -172,6 +182,36 @@ class MySQL_Proxy {
 	}
 
 	/**
+	 * Close connections that have not logged in before their deadline.
+	 */
+	private function close_timed_out_logins(): void {
+		foreach ( $this->clients as $client_id => $client ) {
+			if ( $client['session']->is_authenticated() || $client['login_deadline'] > time() ) {
+				continue;
+			}
+			$this->logger->error( 'Client [{client_id}]: login timed out, closing connection', array( 'client_id' => $client_id ) );
+			unset( $this->clients[ $client_id ] );
+			@socket_close( $client['socket'] );
+		}
+	}
+
+	/**
+	 * Get the seconds to wait for socket activity.
+	 *
+	 * @return int|null The seconds until the next login deadline, or null to wait indefinitely.
+	 */
+	private function get_select_timeout(): ?int {
+		$deadline = null;
+		foreach ( $this->clients as $client ) {
+			if ( $client['session']->is_authenticated() ) {
+				continue;
+			}
+			$deadline = null === $deadline ? $client['login_deadline'] : min( $deadline, $client['login_deadline'] );
+		}
+		return null === $deadline ? null : max( 0, $deadline - time() );
+	}
+
+	/**
 	 * Handle a new MySQL client connection.
 	 */
 	private function handle_new_client(): void {
@@ -187,8 +227,9 @@ class MySQL_Proxy {
 		$client_id                   = $this->get_client_id( $socket );
 		$session                     = new MySQL_Session( $this->adapter, $client_id, $this->authentication );
 		$this->clients[ $client_id ] = array(
-			'socket'  => $socket,
-			'session' => $session,
+			'socket'         => $socket,
+			'session'        => $session,
+			'login_deadline' => time() + self::LOGIN_TIMEOUT,
 		);
 		$this->logger->info( 'Client [{client_id}]: connected', array( 'client_id' => $client_id ) );
 

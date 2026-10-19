@@ -10,6 +10,15 @@ use WP_MySQL_Proxy\Adapter\Adapter;
  */
 class MySQL_Session {
 	/**
+	 * Largest packet accepted before the client is authenticated.
+	 *
+	 * A login packet carries a username, a challenge response, a database name,
+	 * and connection attributes, so it stays well below MySQL's own 16 KB
+	 * network buffer. Anything larger is a malformed or hostile login.
+	 */
+	const MAX_UNAUTHENTICATED_PACKET_SIZE = 16384;
+
+	/**
 	 * Client capabilities that are supported by the server.
 	 */
 	const CAPABILITIES = (
@@ -211,6 +220,11 @@ class MySQL_Session {
 		$payload_length       = unpack( 'V', substr( $this->buffer, 0, 3 ) . "\x00" )[1];
 		$received_sequence_id = ord( $this->buffer[3] );
 		$this->packet_id      = $received_sequence_id + 1;
+
+		// Never buffer a large packet for a client that has not logged in yet.
+		if ( ! $this->is_authenticated && $payload_length > self::MAX_UNAUTHENTICATED_PACKET_SIZE ) {
+			return $this->reject_authentication();
+		}
 
 		// Check if we have the complete packet.
 		$packet_length = 4 + $payload_length;
