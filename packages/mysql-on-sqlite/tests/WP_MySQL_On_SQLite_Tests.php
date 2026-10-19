@@ -1091,6 +1091,64 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testIntervalArithmeticUnits() {
+		$this->assertQuery( 'CREATE TABLE _events (id INT, occurred_at DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _events VALUES (1, '2024-01-01 10:00:00'), (2, '2024-01-03 10:00:00'), (3, NULL)"
+		);
+
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 QUARTER as output"
+		);
+		$this->assertEquals( '2024-04-01 10:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 2 * 2 QUARTER as output"
+		);
+		$this->assertEquals( '2025-01-01 10:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_SUB('2024-01-01 10:00:00', INTERVAL -2 QUARTER) as output"
+		);
+		$this->assertEquals( '2024-07-01 10:00:00', $result[0]->output );
+
+		// The SQL_TSI_* units are synonyms for the plain units.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 SQL_TSI_HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 11:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' - INTERVAL 1 SQL_TSI_QUARTER as output"
+		);
+		$this->assertEquals( '2023-10-01 10:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_ADD('2024-01-01 10:00:00', INTERVAL 2 SQL_TSI_WEEK) as output"
+		);
+		$this->assertEquals( '2024-01-15 10:00:00', $result[0]->output );
+
+		$this->assertQuery( 'UPDATE _events SET occurred_at = occurred_at + INTERVAL 1 QUARTER' );
+		$result = $this->assertQuery( 'SELECT occurred_at FROM _events ORDER BY id' );
+		$this->assertEquals( '2024-04-01 10:00:00', $result[0]->occurred_at );
+		$this->assertEquals( '2024-04-03 10:00:00', $result[1]->occurred_at );
+		$this->assertNull( $result[2]->occurred_at );
+	}
+
+	public function testIntervalArithmeticWithUnsupportedUnits() {
+		// SQLite DATETIME() drops fractional seconds.
+		$this->assertQueryError(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 MICROSECOND",
+			'MySQL query not supported. Cause: INTERVAL unit: MICROSECOND'
+		);
+
+		$this->assertQueryError(
+			"SELECT DATE_ADD('2024-01-01 10:00:00', INTERVAL '1:30' HOUR_MINUTE)",
+			'MySQL query not supported. Cause: INTERVAL unit: HOUR_MINUTE'
+		);
+	}
+
 	public function testLeftFunction1Char() {
 		$result = $this->assertQuery(
 			'SELECT LEFT("abc", 1) as output'

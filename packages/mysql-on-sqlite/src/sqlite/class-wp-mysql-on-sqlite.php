@@ -331,6 +331,23 @@ class WP_MySQL_On_SQLite extends PDO {
 	);
 
 	/**
+	 * Map MySQL INTERVAL units to SQLite units and value multipliers.
+	 *
+	 * MICROSECOND is excluded because DATETIME() drops fractional seconds.
+	 * Composite units, such as HOUR_MINUTE, are not supported.
+	 */
+	private const INTERVAL_UNIT_MAP = array(
+		WP_MySQL_Lexer::SECOND_SYMBOL  => array( 'SECOND', 1 ),
+		WP_MySQL_Lexer::MINUTE_SYMBOL  => array( 'MINUTE', 1 ),
+		WP_MySQL_Lexer::HOUR_SYMBOL    => array( 'HOUR', 1 ),
+		WP_MySQL_Lexer::DAY_SYMBOL     => array( 'DAY', 1 ),
+		WP_MySQL_Lexer::WEEK_SYMBOL    => array( 'DAY', 7 ),
+		WP_MySQL_Lexer::MONTH_SYMBOL   => array( 'MONTH', 1 ),
+		WP_MySQL_Lexer::QUARTER_SYMBOL => array( 'MONTH', 3 ),
+		WP_MySQL_Lexer::YEAR_SYMBOL    => array( 'YEAR', 1 ),
+	);
+
+	/**
 	 * A map of MySQL data types to implicit default values for non-strict mode.
 	 *
 	 * In MySQL, when STRICT_TRANS_TABLES and STRICT_ALL_TABLES modes are disabled,
@@ -5151,7 +5168,7 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * Parenthesize the value before appending the unit: SQLite evaluates "||"
 	 * before "*". Negate the value for subtraction so negative intervals work
 	 * without invalid sign combinations such as "+-5 HOUR".
-	 * A WEEK interval becomes seven days, as SQLite has no week modifier.
+	 * Convert units where needed, e.g., WEEK to 7 days.
 	 *
 	 * @param  string         $expr     The translated date expression.
 	 * @param  bool           $subtract Whether the interval is subtracted.
@@ -5166,11 +5183,19 @@ class WP_MySQL_On_SQLite extends PDO {
 		WP_Parser_Node $value,
 		WP_Parser_Node $interval
 	): string {
+		// Token IDs also cover unit synonyms, e.g., SQL_TSI_HOUR.
+		$unit_token = $interval->get_first_descendant_token();
+		if ( ! isset( self::INTERVAL_UNIT_MAP[ $unit_token->id ] ) ) {
+			throw $this->new_not_supported_exception(
+				sprintf( 'INTERVAL unit: %s', $unit_token->get_value() )
+			);
+		}
+
+		list( $unit, $multiplier ) = self::INTERVAL_UNIT_MAP[ $unit_token->id ];
+
 		$value_sql = sprintf( '(%s)', $this->translate( $value ) );
-		$unit      = strtoupper( $this->translate( $interval ) );
-		if ( 'WEEK' === $unit ) {
-			$value_sql = sprintf( '(%s * 7)', $value_sql );
-			$unit      = 'DAY';
+		if ( 1 !== $multiplier ) {
+			$value_sql = sprintf( '(%s * %d)', $value_sql, $multiplier );
 		}
 		if ( $subtract ) {
 			$value_sql = '-' . $value_sql;
