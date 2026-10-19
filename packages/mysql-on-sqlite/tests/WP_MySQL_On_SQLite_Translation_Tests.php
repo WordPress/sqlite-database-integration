@@ -1742,6 +1742,12 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 			"SELECT ( DATETIME('2024-01-01', (1) || ' DAY') ) + 0 AS `a`",
 			"SELECT ('2024-01-01' + INTERVAL 1 DAY) + 0 AS a"
 		);
+
+		// Parentheses make the interval apply to the whole expression.
+		$this->assertQuery(
+			"SELECT DATETIME(( 1 + '2024-01-01' ), (1) || ' DAY') AS `a`",
+			"SELECT (1 + '2024-01-01') + INTERVAL 1 DAY AS a"
+		);
 	}
 
 	public function testIndexHints(): void {

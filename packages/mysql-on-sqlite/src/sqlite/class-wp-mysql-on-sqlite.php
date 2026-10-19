@@ -4936,51 +4936,62 @@ class WP_MySQL_On_SQLite extends PDO {
 	/**
 	 * Translate a "bitExpr" AST node.
 	 *
-	 * Date arithmetic is the only "bitExpr" form that SQLite cannot run as
-	 * written: "expr + INTERVAL n unit" and "expr - INTERVAL n unit". Each
-	 * interval is folded into the expression on its left, so a chain such as
-	 * "expr + INTERVAL 5 HOUR + INTERVAL 1 DAY" becomes nested DATETIME() calls
-	 * applied in the same order as in MySQL.
+	 * Translate interval additions and subtractions to nested DATETIME() calls,
+	 * applying each interval from left to right, as MySQL does.
+	 *
+	 * TODO: After switching to LALR(1), use the tree's operator grouping
+	 * and remove the loop over this parser's flat interval sequence.
 	 *
 	 * @param  WP_Parser_Node $node       The "bitExpr" AST node.
 	 * @return string|null                The translated value.
 	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
 	 */
 	private function translate_bit_expr( WP_Parser_Node $node ): ?string {
-		if ( ! $node->has_child_token( WP_MySQL_Lexer::INTERVAL_SYMBOL ) ) {
-			return $this->translate_sequence( $node->get_children() );
-		}
-
+		/*
+		 * The first child is an expression. Each interval adds four children:
+		 * operator, INTERVAL, value, unit. A final "op bitExpr" may follow.
+		 */
 		$children = $node->get_children();
 		$count    = count( $children );
-		$parts    = array();
-		for ( $i = 0; $i < $count; $i++ ) {
-			$child = $children[ $i ];
-			if (
-				$child instanceof WP_Parser_Token
-				&& ( WP_MySQL_Lexer::PLUS_OPERATOR === $child->id || WP_MySQL_Lexer::MINUS_OPERATOR === $child->id )
-				&& isset( $children[ $i + 1 ] )
-				&& $children[ $i + 1 ] instanceof WP_Parser_Token
-				&& WP_MySQL_Lexer::INTERVAL_SYMBOL === $children[ $i + 1 ]->id
-			) {
-				$parts = array(
-					$this->translate_interval_arithmetic(
-						implode( ' ', $parts ),
-						WP_MySQL_Lexer::MINUS_OPERATOR === $child->id,
-						$children[ $i + 2 ],
-						$children[ $i + 3 ]
-					),
-				);
-				$i    += 3;
-				continue;
-			}
-
-			$translated = $this->translate( $child );
-			if ( null !== $translated ) {
-				$parts[] = $translated;
-			}
+		$sql      = $this->translate( $children[0] );
+		$i        = 1;
+		while (
+			isset( $children[ $i + 1 ] )
+			&& $children[ $i + 1 ] instanceof WP_Parser_Token
+			&& WP_MySQL_Lexer::INTERVAL_SYMBOL === $children[ $i + 1 ]->id
+		) {
+			$sql = $this->translate_interval_arithmetic(
+				$sql,
+				WP_MySQL_Lexer::MINUS_OPERATOR === $children[ $i ]->id,
+				$children[ $i + 2 ],
+				$children[ $i + 3 ]
+			);
+			$i  += 4;
 		}
-		return implode( ' ', $parts );
+
+		if ( $i === $count ) {
+			return $sql;
+		}
+
+		/*
+		 * The parser groups "a + b + INTERVAL 1 DAY" as "a + (b + INTERVAL 1 DAY)".
+		 * MySQL applies the interval to "a + b". Reject this form to avoid
+		 * applying the interval to only part of the expression. For simplicity,
+		 * also reject operators that bind less tightly than "+", such as "|".
+		 *
+		 * TODO: Remove this guard and support mixed arithmetic with LALR(1).
+		 */
+		$operator = $children[ $i ];
+		$operand  = $children[ $i + 1 ];
+		if ( $operand->has_child_token( WP_MySQL_Lexer::INTERVAL_SYMBOL ) ) {
+			throw $this->new_not_supported_exception(
+				sprintf(
+					'INTERVAL after the "%s" operator; add parentheses to make the grouping explicit',
+					$operator->get_value()
+				)
+			);
+		}
+		return sprintf( '%s %s %s', $sql, $this->translate( $operator ), $this->translate( $operand ) );
 	}
 
 	/**

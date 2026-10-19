@@ -1070,6 +1070,27 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( 2, $result[0]->count );
 	}
 
+	public function testIntervalArithmeticOnPartialOperand() {
+		// TODO: With LALR(1), replace these rejection tests with MySQL result checks.
+		// The parser applies the interval to the date alone.
+		// MySQL applies it to the sum, so reject the unparenthesized expression.
+		$this->assertQueryError(
+			"SELECT 1 + '2024-01-01' + INTERVAL 1 DAY",
+			'MySQL query not supported. Cause: INTERVAL after the "+" operator; add parentheses to make the grouping explicit'
+		);
+
+		$this->assertQueryError(
+			"SELECT 2 * '2024-01-01' - INTERVAL 1 DAY",
+			'MySQL query not supported. Cause: INTERVAL after the "*" operator; add parentheses to make the grouping explicit'
+		);
+
+		// MySQL groups "|" like the parser, but it is rejected for simplicity.
+		$this->assertQueryError(
+			"SELECT 0 | '2024-01-01' + INTERVAL 1 DAY",
+			'MySQL query not supported. Cause: INTERVAL after the "|" operator; add parentheses to make the grouping explicit'
+		);
+	}
+
 	public function testLeftFunction1Char() {
 		$result = $this->assertQuery(
 			'SELECT LEFT("abc", 1) as output'
