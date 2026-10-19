@@ -25,6 +25,28 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 		);
 	}
 
+	public function test_quit_closes_the_session(): void {
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->never() )->method( 'handle_query' );
+		$session = $this->authenticated_session( $adapter );
+
+		// A pipelined command after COM_QUIT must not run.
+		$quit  = MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_QUIT ) );
+		$query = MySQL_Protocol::build_packet( 1, chr( MySQL_Protocol::COM_QUERY ) . 'DELETE FROM wp_users' );
+		$this->assertSame( '', $session->receive_bytes( $quit . $query ) );
+		$this->assertTrue( $session->is_closed() );
+		$this->assertSame( MySQL_Session::CLOSE_CLIENT_QUIT, $session->get_close_reason() );
+		$this->assertFalse( $session->has_buffered_data() );
+		$this->assertNull( $session->receive_bytes( $query ) );
+	}
+
+	public function test_failed_login_reports_its_close_reason(): void {
+		$session = new MySQL_Session( $this->createMock( Adapter::class ), 1, new MySQL_Authentication( 'user', 'password' ) );
+		$session->get_initial_handshake();
+		$session->receive_bytes( MySQL_Protocol::build_packet( 1, str_repeat( "\0", 40 ) ) );
+		$this->assertSame( MySQL_Session::CLOSE_LOGIN_FAILED, $session->get_close_reason() );
+	}
+
 	private function authenticated_session( Adapter $adapter ): MySQL_Session {
 		$session   = new MySQL_Session( $adapter, 1, new MySQL_Authentication( 'user', 'password' ) );
 		$challenge = MySQL_Test_Client::challenge( $session->get_initial_handshake() );
