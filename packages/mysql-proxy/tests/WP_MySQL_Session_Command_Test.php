@@ -83,6 +83,16 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 		$this->assertFalse( $session->has_buffered_data() );
 	}
 
+	public function test_empty_command_packet_is_refused(): void {
+		$adapter = $this->createMock( Adapter::class );
+		$adapter->expects( $this->never() )->method( 'handle_query' );
+		$session  = $this->authenticated_session( $adapter );
+		$response = $session->receive_bytes( MySQL_Protocol::build_packet( 0, '' ) );
+		$this->assertSame( 0xff, ord( $response[4] ) );
+		$this->assertSame( 1835, unpack( 'v', substr( $response, 5, 2 ) )[1] );
+		$this->assertSame( MySQL_Session::CLOSE_MALFORMED_PACKET, $session->get_close_reason() );
+	}
+
 	public function test_quit_closes_the_session(): void {
 		$adapter = $this->createMock( Adapter::class );
 		$adapter->expects( $this->never() )->method( 'handle_query' );

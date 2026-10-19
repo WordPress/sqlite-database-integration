@@ -15,6 +15,7 @@ class MySQL_Session {
 	const CLOSE_LOGIN_FAILED     = 'login failed';
 	const CLOSE_CLIENT_QUIT      = 'client quit';
 	const CLOSE_PACKET_TOO_LARGE = 'packet too large';
+	const CLOSE_MALFORMED_PACKET = 'malformed packet';
 
 	/**
 	 * Largest payload a single packet can carry.
@@ -265,7 +266,12 @@ class MySQL_Session {
 			return $this->process_authentication( $payload );
 		}
 
-		// Command phase.
+		// Command phase. Like MySQL, refuse a packet that carries no command.
+		if ( '' === $payload ) {
+			$this->close( self::CLOSE_MALFORMED_PACKET );
+			return MySQL_Protocol::build_err_packet( $this->packet_id++, 1835, 'HY000', 'Malformed communication packet' );
+		}
+
 		$command = ord( $payload[0] );
 		switch ( $command ) {
 			case MySQL_Protocol::COM_QUIT:
