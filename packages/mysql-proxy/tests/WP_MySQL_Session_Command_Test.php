@@ -26,6 +26,30 @@ class WP_MySQL_Session_Command_Test extends TestCase {
 		);
 	}
 
+	/** @dataProvider init_db_failures */
+	public function test_init_db_reports_an_unknown_database( bool $throws ): void {
+		$adapter     = $this->createMock( Adapter::class );
+		$expectation = $adapter->expects( $this->once() )->method( 'handle_query' )->with( 'USE `missing`' );
+		if ( $throws ) {
+			$expectation->willThrowException( new RuntimeException( 'Private adapter error' ) );
+		} else {
+			$expectation->willReturn( MySQL_Result::from_error( 'HY000', 1105, 'Private adapter error' ) );
+		}
+		$session  = $this->authenticated_session( $adapter );
+		$response = $session->receive_bytes( MySQL_Protocol::build_packet( 0, chr( MySQL_Protocol::COM_INIT_DB ) . 'missing' ) );
+		$this->assertSame( 0xff, ord( $response[4] ) );
+		$this->assertSame( 1049, unpack( 'v', substr( $response, 5, 2 ) )[1] );
+		$this->assertSame( "#42000Unknown database: 'missing'", substr( $response, 7 ) );
+		$this->assertFalse( $session->is_closed(), 'Unlike the login, a failed COM_INIT_DB keeps the connection.' );
+	}
+
+	public function init_db_failures(): array {
+		return array(
+			'adapter error'  => array( false ),
+			'adapter throws' => array( true ),
+		);
+	}
+
 	public function test_split_message_is_assembled(): void {
 		ini_set( 'memory_limit', '512M' );
 		$queries = array();

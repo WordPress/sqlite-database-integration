@@ -288,7 +288,8 @@ class MySQL_Session {
 				$this->close( self::CLOSE_CLIENT_QUIT );
 				return '';
 			case MySQL_Protocol::COM_INIT_DB:
-				return $this->process_query( $this->build_use_query( substr( $payload, 1 ) ) );
+				return $this->use_database( substr( $payload, 1 ) )
+					?? MySQL_Protocol::build_ok_packet( $this->packet_id++, $this->status_flags );
 			case MySQL_Protocol::COM_QUERY:
 				return $this->process_query( substr( $payload, 1 ) );
 			case MySQL_Protocol::COM_PING:
@@ -484,20 +485,10 @@ class MySQL_Session {
 
 		// No adapter calls are allowed until the credentials have been verified.
 		if ( '' !== $database ) {
-			try {
-				$result = $this->adapter->handle_query( $this->build_use_query( $database ) );
-				$failed = (bool) $result->error_info;
-			} catch ( Throwable $e ) {
-				$failed = true;
-			}
-			if ( $failed ) {
+			$error = $this->use_database( $database );
+			if ( null !== $error ) {
 				$this->close( self::CLOSE_LOGIN_FAILED );
-				return MySQL_Protocol::build_err_packet(
-					$this->packet_id++,
-					1049,
-					'42000',
-					sprintf( "Unknown database: '%s'", $database )
-				);
+				return $error;
 			}
 		}
 
@@ -535,13 +526,31 @@ class MySQL_Session {
 	}
 
 	/**
-	 * Build a USE statement for a client-supplied database name.
+	 * Select a client-supplied database, for COM_INIT_DB and the login.
+	 *
+	 * The name is quoted as an identifier. Like MySQL, any failure is reported
+	 * as an unknown database.
 	 *
 	 * @param  string $database The database name.
-	 * @return string           The USE statement with a quoted identifier.
+	 * @return string|null      The error packet, or null when the database is selected.
 	 */
-	private function build_use_query( string $database ): string {
-		return 'USE `' . str_replace( '`', '``', $database ) . '`';
+	private function use_database( string $database ): ?string {
+		try {
+			$result = $this->adapter->handle_query( 'USE `' . str_replace( '`', '``', $database ) . '`' );
+			$failed = (bool) $result->error_info;
+		} catch ( Throwable $e ) {
+			$this->log_internal_error( $e );
+			$failed = true;
+		}
+		if ( ! $failed ) {
+			return null;
+		}
+		return MySQL_Protocol::build_err_packet(
+			$this->packet_id++,
+			1049,
+			'42000',
+			sprintf( "Unknown database: '%s'", $database )
+		);
 	}
 
 	/**
@@ -580,16 +589,26 @@ class MySQL_Session {
 				$result->last_insert_id
 			);
 		} catch ( Throwable $e ) {
-			// Keep internal details, such as file paths, out of the client's error.
-			$this->logger->error(
-				'Client [{client_id}]: internal error: {error}',
-				array(
-					'client_id' => $this->connection_id,
-					'error'     => $e->getMessage(),
-				)
-			);
+			$this->log_internal_error( $e );
 			return MySQL_Protocol::build_err_packet( $this->packet_id++, 1105, 'HY000', 'Unknown error' );
 		}
+	}
+
+	/**
+	 * Log an internal error, which must not reach the client.
+	 *
+	 * Its message can contain internal details, such as file paths.
+	 *
+	 * @param Throwable $error The internal error.
+	 */
+	private function log_internal_error( Throwable $error ): void {
+		$this->logger->error(
+			'Client [{client_id}]: internal error: {error}',
+			array(
+				'client_id' => $this->connection_id,
+				'error'     => $error->getMessage(),
+			)
+		);
 	}
 
 	/**
