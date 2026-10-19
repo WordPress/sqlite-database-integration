@@ -27,6 +27,13 @@ class MySQL_Proxy {
 	const LOGIN_TIMEOUT = 10;
 
 	/**
+	 * Seconds a logged-in client may stay connected without sending anything.
+	 *
+	 * This matches the default MySQL "wait_timeout".
+	 */
+	const IDLE_TIMEOUT = 28800;
+
+	/**
 	 * Number of client connections served at once.
 	 *
 	 * This matches the default MySQL "max_connections".
@@ -73,7 +80,7 @@ class MySQL_Proxy {
 	 *
 	 * Maps client IDs to their associated socket and session instances.
 	 *
-	 * @var array<int, array{socket: Socket|resource, session: MySQL_Session, login_deadline: int}>
+	 * @var array<int, array{socket: Socket|resource, session: MySQL_Session, deadline: int}>
 	 */
 	private $clients = array();
 
@@ -164,10 +171,10 @@ class MySQL_Proxy {
 		// Start the main proxy loop.
 		while ( true ) {
 			try {
-				// Drop clients that connected but never completed a login.
-				$this->close_timed_out_logins();
+				// Drop clients that never completed a login or stayed idle too long.
+				$this->close_timed_out_clients();
 
-				// Wait for activity on any socket, waking up for the next login deadline.
+				// Wait for activity on any socket, waking up for the next deadline.
 				$read     = array_merge( array( $this->socket ), array_column( $this->clients, 'socket' ) );
 				$write    = null;
 				$except   = null;
@@ -198,14 +205,22 @@ class MySQL_Proxy {
 	}
 
 	/**
-	 * Close connections that have not logged in before their deadline.
+	 * Close connections past their deadline.
+	 *
+	 * A client must log in within LOGIN_TIMEOUT, and a logged-in client must
+	 * send something within IDLE_TIMEOUT of its last request.
 	 */
-	private function close_timed_out_logins(): void {
+	private function close_timed_out_clients(): void {
 		foreach ( $this->clients as $client_id => $client ) {
-			if ( $client['session']->is_authenticated() || $client['login_deadline'] > time() ) {
+			if ( $client['deadline'] > time() ) {
 				continue;
 			}
-			$this->logger->error( 'Client [{client_id}]: login timed out, closing connection', array( 'client_id' => $client_id ) );
+			$context = array( 'client_id' => $client_id );
+			if ( $client['session']->is_authenticated() ) {
+				$this->logger->info( 'Client [{client_id}]: idle for too long, closing connection', $context );
+			} else {
+				$this->logger->error( 'Client [{client_id}]: login timed out, closing connection', $context );
+			}
 			unset( $this->clients[ $client_id ] );
 			@socket_close( $client['socket'] );
 		}
@@ -214,17 +229,13 @@ class MySQL_Proxy {
 	/**
 	 * Get the seconds to wait for socket activity.
 	 *
-	 * @return int|null The seconds until the next login deadline, or null to wait indefinitely.
+	 * @return int|null The seconds until the next deadline, or null to wait indefinitely.
 	 */
 	private function get_select_timeout(): ?int {
-		$deadline = null;
-		foreach ( $this->clients as $client ) {
-			if ( $client['session']->is_authenticated() ) {
-				continue;
-			}
-			$deadline = null === $deadline ? $client['login_deadline'] : min( $deadline, $client['login_deadline'] );
+		if ( array() === $this->clients ) {
+			return null;
 		}
-		return null === $deadline ? null : max( 0, $deadline - time() );
+		return max( 0, min( array_column( $this->clients, 'deadline' ) ) - time() );
 	}
 
 	/**
@@ -257,9 +268,9 @@ class MySQL_Proxy {
 		$client_id                   = $this->get_client_id( $socket );
 		$session                     = new MySQL_Session( $this->adapter, $client_id, $this->authentication, $this->logger );
 		$this->clients[ $client_id ] = array(
-			'socket'         => $socket,
-			'session'        => $session,
-			'login_deadline' => time() + self::LOGIN_TIMEOUT,
+			'socket'   => $socket,
+			'session'  => $session,
+			'deadline' => time() + self::LOGIN_TIMEOUT,
 		);
 		$this->logger->info( 'Client [{client_id}]: connected', array( 'client_id' => $client_id ) );
 
@@ -324,6 +335,11 @@ class MySQL_Proxy {
 				}
 			}
 		} while ( ! $session->is_closed() && $session->has_buffered_data() );
+
+		// Restart the idle clock. Before login, data must not extend the login deadline.
+		if ( isset( $this->clients[ $client_id ] ) && $session->is_authenticated() ) {
+			$this->clients[ $client_id ]['deadline'] = time() + self::IDLE_TIMEOUT;
+		}
 	}
 
 	/**
