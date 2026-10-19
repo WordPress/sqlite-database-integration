@@ -12,7 +12,7 @@ require_once $_composer_autoload_path ?? __DIR__ . '/../vendor/autoload.php';
 $aliases = array(
 	'h' => 'help',
 	'd' => 'database',
-	'p' => 'port',
+	'P' => 'port',
 	'l' => 'log-level',
 	'u' => 'user',
 );
@@ -72,7 +72,7 @@ Options:
                           caching_sha2_password or mysql_native_password.
                           Use the latter only for clients that need it.
                           Default: caching_sha2_password
-  -p, --port=<port>       The port to listen on. Default: 3306
+  -P, --port=<port>       The port to listen on. Default: 3306
   -d, --database=<path>   The path to the SQLite database file. Default: :memory:
   -l, --log-level=<level> The log level to use. One of 'error', 'warning', 'info', 'debug'. Default: info
 
