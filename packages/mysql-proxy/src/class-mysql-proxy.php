@@ -27,6 +27,13 @@ class MySQL_Proxy {
 	const LOGIN_TIMEOUT = 10;
 
 	/**
+	 * Number of client connections served at once.
+	 *
+	 * This matches the default MySQL "max_connections".
+	 */
+	const MAX_CONNECTIONS = 151;
+
+	/**
 	 * The socket to listen on.
 	 *
 	 * @var Socket|resource
@@ -230,6 +237,20 @@ class MySQL_Proxy {
 		$socket = @socket_accept( $this->socket );
 		if ( false === $socket ) {
 			throw $this->new_socket_error();
+		}
+
+		// Refuse the connection while the proxy is full, as MySQL does.
+		if ( count( $this->clients ) >= self::MAX_CONNECTIONS ) {
+			$this->logger->error(
+				'Refusing a new client: {count} connections are already open',
+				array( 'count' => count( $this->clients ) )
+			);
+			try {
+				$this->write_response( $socket, MySQL_Protocol::build_err_packet( 0, 1040, '08004', 'Too many connections' ) );
+			} finally {
+				@socket_close( $socket );
+			}
+			return;
 		}
 
 		// Create a new session for the client.
