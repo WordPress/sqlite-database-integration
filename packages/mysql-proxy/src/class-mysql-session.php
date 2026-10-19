@@ -264,7 +264,7 @@ class MySQL_Session {
 			case MySQL_Protocol::COM_QUIT:
 				return '';
 			case MySQL_Protocol::COM_INIT_DB:
-				return $this->process_query( 'USE ' . substr( $payload, 1 ) );
+				return $this->process_query( $this->build_use_query( substr( $payload, 1 ) ) );
 			case MySQL_Protocol::COM_QUERY:
 				return $this->process_query( substr( $payload, 1 ) );
 			case MySQL_Protocol::COM_PING:
@@ -385,7 +385,7 @@ class MySQL_Session {
 		// No adapter calls are allowed until the credentials have been verified.
 		if ( '' !== $database ) {
 			try {
-				$result = $this->adapter->handle_query( 'USE `' . str_replace( '`', '``', $database ) . '`' );
+				$result = $this->adapter->handle_query( $this->build_use_query( $database ) );
 				$failed = (bool) $result->error_info;
 			} catch ( Throwable $e ) {
 				$failed = true;
@@ -424,6 +424,16 @@ class MySQL_Session {
 		$this->buffer                 = '';
 		$this->pending_authentication = null;
 		return MySQL_Protocol::build_err_packet( $this->packet_id++, 1045, '28000', 'Access denied' );
+	}
+
+	/**
+	 * Build a USE statement for a client-supplied database name.
+	 *
+	 * @param  string $database The database name.
+	 * @return string           The USE statement with a quoted identifier.
+	 */
+	private function build_use_query( string $database ): string {
+		return 'USE `' . str_replace( '`', '``', $database ) . '`';
 	}
 
 	/**
