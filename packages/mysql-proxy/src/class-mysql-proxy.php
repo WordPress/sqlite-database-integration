@@ -297,12 +297,31 @@ class MySQL_Proxy {
 				}
 			} finally {
 				if ( $session->is_closed() ) {
-					$this->logger->error( 'Client [{client_id}]: login failed, closing connection', array( 'client_id' => $client_id ) );
+					$this->log_closed_session( $client_id, $session->get_close_reason() );
 					unset( $this->clients[ $client_id ] );
 					@socket_close( $socket );
 				}
 			}
 		} while ( ! $session->is_closed() && $session->has_buffered_data() );
+	}
+
+	/**
+	 * Log why a session stopped serving its connection.
+	 *
+	 * @param int    $client_id The numeric ID of the client.
+	 * @param string $reason    One of the MySQL_Session CLOSE_* reasons.
+	 */
+	private function log_closed_session( int $client_id, string $reason ): void {
+		$message = 'Client [{client_id}]: {reason}, closing connection';
+		$context = array(
+			'client_id' => $client_id,
+			'reason'    => $reason,
+		);
+		if ( MySQL_Session::CLOSE_CLIENT_QUIT === $reason ) {
+			$this->logger->info( $message, $context );
+		} else {
+			$this->logger->error( $message, $context );
+		}
 	}
 
 	/**

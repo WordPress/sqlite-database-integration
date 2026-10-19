@@ -10,6 +10,12 @@ use WP_MySQL_Proxy\Adapter\Adapter;
  */
 class MySQL_Session {
 	/**
+	 * Reasons the session closes a connection.
+	 */
+	const CLOSE_LOGIN_FAILED = 'login failed';
+	const CLOSE_CLIENT_QUIT  = 'client quit';
+
+	/**
 	 * Largest packet accepted before the client is authenticated.
 	 *
 	 * A login packet carries a username, a challenge response, a database name,
@@ -101,11 +107,11 @@ class MySQL_Session {
 	private $pending_authentication;
 
 	/**
-	 * Whether the connection must be closed.
+	 * Why the connection must be closed, or null while it stays open.
 	 *
-	 * @var bool
+	 * @var string|null
 	 */
-	private $is_closed = false;
+	private $close_reason;
 
 	/**
 	 * Packet sequence ID.
@@ -153,7 +159,16 @@ class MySQL_Session {
 	 * @return bool
 	 */
 	public function is_closed(): bool {
-		return $this->is_closed;
+		return null !== $this->close_reason;
+	}
+
+	/**
+	 * Why the connection is closing.
+	 *
+	 * @return string|null One of the CLOSE_* reasons, or null while it stays open.
+	 */
+	public function get_close_reason(): ?string {
+		return $this->close_reason;
 	}
 
 	/**
@@ -201,7 +216,7 @@ class MySQL_Session {
 	 * @throws Incomplete_Input_Exception When more data is needed to complete a packet.
 	 */
 	public function receive_bytes( string $data ): ?string {
-		if ( $this->is_closed ) {
+		if ( $this->is_closed() ) {
 			return null;
 		}
 
@@ -262,6 +277,8 @@ class MySQL_Session {
 		$command = ord( $payload[0] );
 		switch ( $command ) {
 			case MySQL_Protocol::COM_QUIT:
+				// MySQL closes the connection itself, without a response.
+				$this->close( self::CLOSE_CLIENT_QUIT );
 				return '';
 			case MySQL_Protocol::COM_INIT_DB:
 				return $this->process_query( $this->build_use_query( substr( $payload, 1 ) ) );
@@ -391,8 +408,7 @@ class MySQL_Session {
 				$failed = true;
 			}
 			if ( $failed ) {
-				$this->is_closed = true;
-				$this->buffer    = '';
+				$this->close( self::CLOSE_LOGIN_FAILED );
 				return MySQL_Protocol::build_err_packet(
 					$this->packet_id++,
 					1049,
@@ -420,10 +436,19 @@ class MySQL_Session {
 	 * @return string The access denied packet.
 	 */
 	private function reject_authentication(): string {
-		$this->is_closed              = true;
+		$this->close( self::CLOSE_LOGIN_FAILED );
+		return MySQL_Protocol::build_err_packet( $this->packet_id++, 1045, '28000', 'Access denied' );
+	}
+
+	/**
+	 * Stop serving this connection and discard any pipelined commands.
+	 *
+	 * @param string $reason One of the CLOSE_* reasons.
+	 */
+	private function close( string $reason ): void {
+		$this->close_reason           = $reason;
 		$this->buffer                 = '';
 		$this->pending_authentication = null;
-		return MySQL_Protocol::build_err_packet( $this->packet_id++, 1045, '28000', 'Access denied' );
 	}
 
 	/**
