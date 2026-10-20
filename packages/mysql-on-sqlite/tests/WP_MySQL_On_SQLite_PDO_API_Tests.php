@@ -904,6 +904,25 @@ class WP_MySQL_On_SQLite_PDO_API_Tests extends TestCase {
 		$this->assertSame( array( '1' ), $this->driver->query( 'SELECT id FROM t' )->fetchAll( PDO::FETCH_COLUMN ) );
 	}
 
+	public function test_failed_commit_rolls_back_transaction(): void {
+		$this->driver->exec( 'CREATE TABLE p (id INT PRIMARY KEY)' );
+		$this->driver->exec( 'CREATE TABLE c (id INT PRIMARY KEY, p_id INT, FOREIGN KEY (p_id) REFERENCES p (id))' );
+		$this->driver->beginTransaction();
+
+		// Make the commit fail by deferring a foreign key check to it.
+		$this->driver->get_sqlite_pdo()->exec( 'PRAGMA defer_foreign_keys = ON' );
+		$this->driver->exec( 'INSERT INTO c VALUES (1, 1)' );
+		try {
+			$this->driver->commit();
+			$this->fail( 'An exception was expected, but none was thrown.' );
+		} catch ( PDOException $e ) {
+			$this->assertStringContainsString( 'FOREIGN KEY constraint failed', $e->getMessage() );
+		}
+
+		$this->assertFalse( $this->driver->inTransaction() );
+		$this->assertSame( array(), $this->driver->query( 'SELECT id FROM c' )->fetchAll( PDO::FETCH_COLUMN ) );
+	}
+
 	public function test_rollback_no_active_transaction(): void {
 		$this->expectException( PDOException::class );
 		$this->expectExceptionMessage( 'There is no active transaction' );
