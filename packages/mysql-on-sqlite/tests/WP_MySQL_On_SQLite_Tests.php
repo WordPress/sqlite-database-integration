@@ -6426,6 +6426,39 @@ QUERY
 		);
 	}
 
+	public function testConfigurationRepairsStoredDatetimePrecision(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (col_date DATE, col_time TIME(2), col_datetime DATETIME, col_timestamp TIMESTAMP(6) NULL)' );
+
+		// Older driver versions stored a zero precision for all temporal columns.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET datetime_precision = 0 WHERE data_type IN ('time', 'datetime', 'timestamp')" );
+		$this->reconnectAfterDriverUpgrade();
+
+		$this->assertQuery(
+			"SELECT column_name, datetime_precision FROM information_schema.columns WHERE table_name = '_tmp_table' ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME'        => 'col_date',
+					'DATETIME_PRECISION' => null,
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_time',
+					'DATETIME_PRECISION' => '2',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_datetime',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_timestamp',
+					'DATETIME_PRECISION' => '6',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	public function testShowCreateTableWithTemporalZeroDefaults(): void {
 		$this->assertQuery(
 			'CREATE TABLE _tmp_table (

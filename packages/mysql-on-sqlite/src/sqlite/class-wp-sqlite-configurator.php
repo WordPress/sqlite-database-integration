@@ -97,6 +97,7 @@ class WP_SQLite_Configurator {
 			$this->schema_reconstructor->ensure_correct_information_schema();
 			$this->save_current_driver_version();
 			$this->ensure_database_data();
+			$this->ensure_correct_datetime_precision();
 			$this->ensure_temporal_zero_defaults();
 			$this->driver->execute_sqlite_query( 'COMMIT' );
 		} catch ( Throwable $e ) {
@@ -322,6 +323,26 @@ class WP_SQLite_Configurator {
 	}
 
 	/**
+	 * Ensure that the information schema stores correct DATETIME_PRECISION values.
+	 *
+	 * Older versions stored 0 regardless of fractional seconds precision.
+	 * The correct value is read from the column type, such as "datetime(3)".
+	 */
+	private function ensure_correct_datetime_precision(): void {
+		// CAST() reads the leading integer, e.g., "3)" as 3, or returns 0 when there is none.
+		$this->driver->execute_sqlite_query(
+			sprintf(
+				"UPDATE %s
+				SET DATETIME_PRECISION = CAST(SUBSTR(COLUMN_TYPE, INSTR(COLUMN_TYPE, '(') + 1) AS INTEGER)
+				WHERE DATA_TYPE IN ('time', 'datetime', 'timestamp')",
+				$this->driver->get_connection()->quote_identifier(
+					$this->schema_builder->get_table_name( false, 'columns' )
+				)
+			)
+		);
+	}
+
+	/**
 	 * Ensure that temporal columns store numeric zero defaults as zero values.
 	 *
 	 * Older driver versions stored defaults such as "DEFAULT 0" of a TIMESTAMP
@@ -332,21 +353,10 @@ class WP_SQLite_Configurator {
 			$this->schema_builder->get_table_name( false, 'columns' )
 		);
 
-		/*
-		 * Older driver versions stored a DATETIME_PRECISION of 0, so the precision
-		 * is read from the column type, such as "datetime(3)". CAST() reads the
-		 * leading integer, e.g., "3)" as 3, or returns 0 when there is none.
-		 */
-
 		// Read SQLite defaults; reconstructed metadata may already be normalized.
 		$columns = $this->driver->execute_sqlite_query(
 			sprintf(
-				"SELECT
-					c.TABLE_NAME,
-					c.COLUMN_NAME,
-					c.DATA_TYPE,
-					CAST(SUBSTR(c.COLUMN_TYPE, INSTR(c.COLUMN_TYPE, '(') + 1) AS INTEGER) AS DATETIME_PRECISION,
-					p.dflt_value
+				"SELECT c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.DATETIME_PRECISION, p.dflt_value
 				FROM %s AS c
 				JOIN pragma_table_info(c.TABLE_NAME, 'main') AS p ON c.COLUMN_NAME = p.name
 				WHERE c.TABLE_SCHEMA = ?
