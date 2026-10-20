@@ -1047,6 +1047,58 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( 3, $result[0]->count );
 	}
 
+	public function testIntervalArithmeticOnDates() {
+		// Expected values were taken from MySQL 8.4.
+		// Adding only date units to a date returns a date.
+		$result = $this->assertQuery( "SELECT '2024-01-01' + INTERVAL 1 DAY as output" );
+		$this->assertEquals( '2024-01-02', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT '2024-01-01' + INTERVAL 1 DAY + INTERVAL 1 MONTH as output" );
+		$this->assertEquals( '2024-02-02', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT '2024-01-01' - INTERVAL 1 YEAR as output" );
+		$this->assertEquals( '2023-01-01', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT DATE_ADD('2024-01-01', INTERVAL 1 WEEK) as output" );
+		$this->assertEquals( '2024-01-08', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT DATE_SUB('2024-01-01', INTERVAL 1 QUARTER) as output" );
+		$this->assertEquals( '2023-10-01', $result[0]->output );
+
+		// Time units and datetime inputs return a datetime.
+		$result = $this->assertQuery( "SELECT '2024-01-01' + INTERVAL 30 SECOND as output" );
+		$this->assertEquals( '2024-01-01 00:00:30', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT '2024-01-01' + INTERVAL 1 DAY - INTERVAL 1 HOUR as output" );
+		$this->assertEquals( '2024-01-01 23:00:00', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT '2024-01-01 00:00:00' + INTERVAL 1 DAY as output" );
+		$this->assertEquals( '2024-01-02 00:00:00', $result[0]->output );
+
+		$this->assertQuery( 'CREATE TABLE _events (id INT, d DATE, dt DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _events VALUES (1, '2024-01-01', '2024-01-01 00:00:00'), (2, '2024-01-02', '2024-01-02 00:00:00'), (3, '2024-01-03', '2024-01-03 00:00:00')"
+		);
+
+		$result = $this->assertQuery(
+			'SELECT d + INTERVAL 1 DAY as date_output, dt + INTERVAL 1 DAY as datetime_output, d + INTERVAL 1 HOUR as hour_output FROM _events WHERE id = 1'
+		);
+		$this->assertEquals( '2024-01-02', $result[0]->date_output );
+		$this->assertEquals( '2024-01-02 00:00:00', $result[0]->datetime_output );
+		$this->assertEquals( '2024-01-01 01:00:00', $result[0]->hour_output );
+
+		// Comparisons with dates match the same rows as in MySQL.
+		$result = $this->assertQuery( "SELECT id FROM _events WHERE d = '2024-01-03' - INTERVAL 1 DAY" );
+		$this->assertEquals( array( 2 ), array_map( 'intval', array_column( $result, 'id' ) ) );
+
+		$result = $this->assertQuery( "SELECT COUNT(*) as count FROM _events WHERE DATE_ADD(d, INTERVAL 7 DAY) = '2024-01-08'" );
+		$this->assertEquals( 1, $result[0]->count );
+
+		$this->assertQuery( "DELETE FROM _events WHERE d < '2024-01-03' - INTERVAL 1 DAY" );
+		$result = $this->assertQuery( 'SELECT id FROM _events ORDER BY id' );
+		$this->assertEquals( array( 2, 3 ), array_map( 'intval', array_column( $result, 'id' ) ) );
+	}
+
 	public function testIntervalArithmeticPrefixForm() {
 		// TODO: With LALR(1), assert MySQL results instead of expecting errors.
 		// Keep the DELETE regression check to verify that unrelated rows survive.
@@ -13725,7 +13777,10 @@ END;
 		$result = $this->sqlite->query( 'PRAGMA table_info(t)' )->fetchAll();
 		$this->assertSame( null, $result[0]['dflt_value'] );
 		$this->assertSame( '1 + 2', $result[1]['dflt_value'] );
-		$this->assertSame( "DATETIME(CURRENT_TIMESTAMP, (1) || ' YEAR')", $result[2]['dflt_value'] );
+		$this->assertSame(
+			"CASE WHEN LENGTH(CURRENT_TIMESTAMP) = 10 THEN DATE(CURRENT_TIMESTAMP, (1) || ' YEAR') ELSE DATETIME(CURRENT_TIMESTAMP, (1) || ' YEAR') END",
+			$result[2]['dflt_value']
+		);
 		$this->assertSame( "('a' || 'b')", $result[3]['dflt_value'] );
 	}
 
