@@ -97,6 +97,28 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		return $column_meta;
 	}
 
+	/**
+	 * Reconnect as if the database was configured by an older driver version,
+	 * so that the new connection configures the database again.
+	 */
+	private function reconnectAfterDriverUpgrade(): void {
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '0.0.0' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+
+		$this->engine = new WP_MySQL_On_SQLite(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'sqlite_pdo' => $this->sqlite )
+		);
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+	}
+
 	public function testRegexp() {
 		$this->assertQuery(
 			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
@@ -6584,35 +6606,331 @@ QUERY
 	}
 
 	public function testConfigurationNormalizesStoredTemporalZeroDefaults(): void {
-		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT 0, label VARCHAR(20) NOT NULL DEFAULT 0)' );
-
-		// Simulate a database configured by an older driver version that
-		// stored numeric zero temporal defaults verbatim.
-		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name = '_tmp_table'" );
-		$this->sqlite->exec( "UPDATE _wp_sqlite_global_variables SET value = '0.0.0' WHERE name = '_wp_sqlite_driver_version'" );
-
-		$this->engine = new WP_MySQL_On_SQLite(
-			'mysql-on-sqlite:dbname=wp',
-			null,
-			null,
-			array( 'sqlite_pdo' => $this->sqlite )
+		$this->assertQuery(
+			"CREATE TABLE _tmp_table (
+				id INT NOT NULL DEFAULT 0,
+				created_at TIMESTAMP NOT NULL DEFAULT 0,
+				created_at_fsp DATETIME(3) NOT NULL DEFAULT 0,
+				updated_on DATE NOT NULL DEFAULT 0,
+				duration TIME(2) NOT NULL DEFAULT 0,
+				year_number YEAR NOT NULL DEFAULT 0,
+				year_string YEAR NOT NULL DEFAULT '0',
+				expression DATETIME NOT NULL DEFAULT (0),
+				label VARCHAR(20) NOT NULL DEFAULT 0
+			)"
 		);
-		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 
+		// Store the defaults verbatim and a zero precision, as older driver versions
+		// did, and apply them to the SQLite table. Then, insert a row with them.
+		$this->sqlite->exec(
+			"UPDATE _wp_sqlite_mysql_information_schema_columns
+			SET
+				column_default = '0',
+				datetime_precision = CASE WHEN datetime_precision IS NULL THEN NULL ELSE 0 END
+			WHERE table_name = '_tmp_table'"
+		);
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+
+		$this->reconnectAfterDriverUpgrade();
+
+		// YEAR and expression defaults are not normalized.
+		$expected_create_table = implode(
+			"\n",
+			array(
+				'CREATE TABLE `_tmp_table` (',
+				"  `id` int NOT NULL DEFAULT '0',",
+				"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
+				"  `created_at_fsp` datetime(3) NOT NULL DEFAULT '0000-00-00 00:00:00.000',",
+				"  `updated_on` date NOT NULL DEFAULT '0000-00-00',",
+				"  `duration` time(2) NOT NULL DEFAULT '00:00:00.00',",
+				"  `year_number` year NOT NULL DEFAULT '0',",
+				"  `year_string` year NOT NULL DEFAULT '0',",
+				'  `expression` datetime NOT NULL DEFAULT (0),',
+				"  `label` varchar(20) NOT NULL DEFAULT '0'",
+				') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+			)
+		);
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame( $expected_create_table, $this->last_result[0]->{'Create Table'} );
+
+		// New rows get the normalized defaults in both strict and non-strict SQL
+		// mode. The existing row keeps its values.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (3)' );
+		$this->assertQuery( 'SELECT id, created_at, created_at_fsp, updated_on, duration FROM _tmp_table ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'             => '1',
+					'created_at'     => '0',
+					'created_at_fsp' => '0',
+					'updated_on'     => '0',
+					'duration'       => '0',
+				),
+				(object) array(
+					'id'             => '2',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+					'duration'       => '00:00:00.00',
+				),
+				(object) array(
+					'id'             => '3',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+					'duration'       => '00:00:00.00',
+				),
+			),
+			$this->last_result
+		);
+
+		// Configuring the database again changes nothing.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame( $expected_create_table, $this->last_result[0]->{'Create Table'} );
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM _tmp_table' );
+		$this->assertSame( '3', $this->last_result[0]->count );
+	}
+
+	public function testConfigurationNormalizesStoredTemporalZeroDefaultsOfReferencedTable(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_parent (id INT PRIMARY KEY, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
+		$this->assertQuery( 'CREATE TABLE _tmp_cascade (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES _tmp_parent (id) ON DELETE CASCADE)' );
+		$this->assertQuery( 'CREATE TABLE _tmp_no_action (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES _tmp_parent (id))' );
+
+		// Store the default verbatim, as older driver versions did, and apply it to the SQLite table.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name = '_tmp_parent' AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_parent' );
+
+		$this->assertQuery( 'INSERT INTO _tmp_parent (id) VALUES (1), (2)' );
+		$this->assertQuery( 'INSERT INTO _tmp_cascade (id, parent_id) VALUES (1, 1), (2, 2)' );
+		$this->assertQuery( 'INSERT INTO _tmp_no_action (id, parent_id) VALUES (1, 1)' );
+
+		// Recreating the parent table must not trigger the foreign key actions.
+		$this->reconnectAfterDriverUpgrade();
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_parent' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_parent` (',
+					'  `id` int NOT NULL,',
+					"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					'  PRIMARY KEY (`id`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+		$this->assertQuery( 'SELECT id, parent_id FROM _tmp_cascade ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'        => '1',
+					'parent_id' => '1',
+				),
+				(object) array(
+					'id'        => '2',
+					'parent_id' => '2',
+				),
+			),
+			$this->last_result
+		);
+		$this->assertQuery( 'SELECT COUNT(*) AS count FROM _tmp_no_action' );
+		$this->assertSame( '1', $this->last_result[0]->count );
+
+		// Foreign keys are enforced again.
+		$this->assertQueryError(
+			'DELETE FROM _tmp_parent WHERE id = 1',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 FOREIGN KEY constraint failed'
+		);
+		$this->assertQuery( 'DELETE FROM _tmp_parent WHERE id = 2' );
+		$this->assertQuery( 'SELECT id FROM _tmp_cascade' );
+		$this->assertEquals( array( (object) array( 'id' => '1' ) ), $this->last_result );
+	}
+
+	public function testConfigurationNormalizesTemporalZeroDefaultsOfReconstructedTable(): void {
+		// A table created by the legacy SQLite driver, with no information schema data.
+		$this->sqlite->exec(
+			'CREATE TABLE _mysql_data_types_cache (
+				`table` TEXT NOT NULL,
+				`column_or_index` TEXT NOT NULL,
+				`mysql_type` TEXT NOT NULL,
+				PRIMARY KEY(`table`, `column_or_index`)
+			)'
+		);
+		$this->sqlite->exec(
+			"INSERT INTO _mysql_data_types_cache VALUES
+				('_tmp_table', 'id', 'int'),
+				('_tmp_table', 'created_at', 'timestamp'),
+				('_tmp_table', 'created_at_fsp', 'datetime(3)'),
+				('_tmp_table', 'updated_on', 'date'),
+				('_tmp_table', 'year_number', 'year'),
+				('_tmp_table', 'year_string', 'year'),
+				('_tmp_double_quoted', 'id', 'int'),
+				('_tmp_double_quoted', 'created_at', 'timestamp')"
+		);
+		$this->sqlite->exec(
+			"CREATE TABLE _tmp_table (
+				id INTEGER,
+				created_at TEXT NOT NULL DEFAULT 0,
+				created_at_fsp TEXT NOT NULL DEFAULT 0,
+				updated_on TEXT NOT NULL DEFAULT '0',
+				year_number TEXT NOT NULL DEFAULT 0,
+				year_string TEXT NOT NULL DEFAULT '0'
+			)"
+		);
+		$this->sqlite->exec( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+
+		// A double-quoted SQLite default is a string as well.
+		$this->sqlite->exec( 'CREATE TABLE _tmp_double_quoted (id INTEGER, created_at TEXT NOT NULL DEFAULT "0")' );
+
+		// The information schema is reconstructed, and then the defaults are normalized.
+		// A string zero of a YEAR column, such as '0', is not normalized.
+		$this->reconnectAfterDriverUpgrade();
 		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
 		$this->assertSame(
 			implode(
 				"\n",
 				array(
 					'CREATE TABLE `_tmp_table` (',
-					"  `id` int NOT NULL DEFAULT '0',",
+					'  `id` int DEFAULT NULL,',
 					"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',",
-					"  `label` varchar(20) NOT NULL DEFAULT '0'",
+					"  `created_at_fsp` datetime(3) NOT NULL DEFAULT '0000-00-00 00:00:00.000',",
+					"  `updated_on` date NOT NULL DEFAULT '0000-00-00',",
+					"  `year_number` year NOT NULL DEFAULT '0000',",
+					"  `year_string` year NOT NULL DEFAULT '0'",
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
 			$this->last_result[0]->{'Create Table'}
 		);
+
+		// New rows get the normalized defaults. The existing row keeps its values.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
+		$this->assertQuery( 'SELECT * FROM _tmp_table ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'             => '1',
+					'created_at'     => '0',
+					'created_at_fsp' => '0',
+					'updated_on'     => '0',
+					'year_number'    => '0',
+					'year_string'    => '0',
+				),
+				(object) array(
+					'id'             => '2',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+					'year_number'    => '0000',
+					'year_string'    => '0',
+				),
+			),
+			$this->last_result
+		);
+
+		$this->assertQuery( 'INSERT INTO _tmp_double_quoted (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT created_at FROM _tmp_double_quoted' );
+		$this->assertSame( '0000-00-00 00:00:00', $this->last_result[0]->created_at );
+	}
+
+	public function testConfigurationRollsBackWhenRecreatingTableFails(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_recreated (id INT, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
+		$this->assertQuery( 'CREATE TABLE _tmp_failing (id INT, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
+		$this->assertQuery( 'INSERT INTO _tmp_failing (id) VALUES (NULL)' );
+
+		// Store the defaults verbatim, as older driver versions did, and apply them to the SQLite tables.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name IN ('_tmp_recreated', '_tmp_failing') AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_recreated, _tmp_failing' );
+
+		// Make recreating the second table fail, as its data doesn't match the information schema.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET is_nullable = 'NO' WHERE table_name = '_tmp_failing' AND column_name = 'id'" );
+
+		$sqlite_schema_query = "SELECT sql FROM sqlite_master WHERE name IN ('_tmp_recreated', '_tmp_failing') ORDER BY name";
+		$sqlite_schema       = $this->sqlite->query( $sqlite_schema_query )->fetchAll( PDO::FETCH_COLUMN );
+
+		$exception = null;
+		try {
+			$this->reconnectAfterDriverUpgrade();
+		} catch ( Throwable $e ) {
+			$exception = $e;
+		}
+		$this->assertInstanceOf( WP_MySQL_On_SQLite_Exception::class, $exception );
+		$this->assertStringContainsString( 'Failed to recreate table "_tmp_failing"', $exception->getMessage() );
+		$this->assertStringContainsString( 'NOT NULL constraint failed', $exception->getMessage() );
+
+		// All configuration changes are rolled back, including the recreated table.
+		$this->assertSame( '0.0.0', $this->engine->get_saved_driver_version() );
+		$this->assertSame( $sqlite_schema, $this->sqlite->query( $sqlite_schema_query )->fetchAll( PDO::FETCH_COLUMN ) );
+		$this->assertQuery( "SELECT table_name, column_default FROM information_schema.columns WHERE column_name = 'created_at' ORDER BY table_name" );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'TABLE_NAME'     => '_tmp_failing',
+					'COLUMN_DEFAULT' => '0',
+				),
+				(object) array(
+					'TABLE_NAME'     => '_tmp_recreated',
+					'COLUMN_DEFAULT' => '0',
+				),
+			),
+			$this->last_result
+		);
+
+		// Foreign keys are enabled again.
+		$this->assertSame( 1, (int) $this->sqlite->query( 'PRAGMA foreign_keys' )->fetchColumn() );
+	}
+
+	public function testConfigurationKeepsTransactionOfSharedConnection(): void {
+		// The configuration can't start its transaction within an active one.
+		$this->sqlite->beginTransaction();
+		$this->sqlite->exec( "INSERT INTO _options (option_name, option_value) VALUES ('name', 'value')" );
+		$error = '';
+		try {
+			$this->reconnectAfterDriverUpgrade();
+		} catch ( Throwable $e ) {
+			$error = $e->getMessage();
+		}
+		$this->assertStringContainsString( 'cannot start a transaction within a transaction', $error );
+
+		// The failed configuration must not roll back the active transaction.
+		$this->assertTrue( $this->sqlite->inTransaction() );
+		$this->assertSame( 1, (int) $this->sqlite->query( "SELECT COUNT(*) FROM _options WHERE option_name = 'name'" )->fetchColumn() );
+		$this->sqlite->rollBack();
+	}
+
+	public function testConfigurationRecreatesTablesWithDriverSubclass(): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
+
+		// Store the default verbatim, as older driver versions did, and apply it to the SQLite table.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name = '_tmp_table' AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+
+		// Configure the database again, using a driver subclass.
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '0.0.0' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+		$this->engine = new class(
+			'mysql-on-sqlite:dbname=wp',
+			null,
+			null,
+			array( 'sqlite_pdo' => $this->sqlite )
+		) extends WP_MySQL_On_SQLite {};
+		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
+
+		// The table was recreated, so new rows get the normalized default.
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$this->assertQuery( 'SELECT created_at FROM _tmp_table' );
+		$this->assertSame( '0000-00-00 00:00:00', $this->last_result[0]->created_at );
 	}
 
 	public function testShowCreateTableWithEmptyDatetimeDefault() {

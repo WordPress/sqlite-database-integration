@@ -425,46 +425,6 @@ class WP_SQLite_Information_Schema_Builder {
 	}
 
 	/**
-	 * Normalize numeric zero defaults of temporal columns in the information schema.
-	 *
-	 * Older driver versions stored defaults such as "DEFAULT 0" of a TIMESTAMP
-	 * column verbatim. MySQL stores them as a canonical zero value, such as
-	 * "0000-00-00 00:00:00", and "SHOW CREATE TABLE" must emit that value for
-	 * the output to be accepted by MySQL in strict SQL mode.
-	 */
-	public function normalize_temporal_zero_defaults(): void {
-		$columns_table = $this->connection->quote_identifier( $this->get_table_name( false, 'columns' ) );
-		$columns       = $this->connection->query(
-			sprintf(
-				"SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, DATETIME_PRECISION, COLUMN_DEFAULT
-				FROM %s
-				WHERE DATA_TYPE IN ('date', 'time', 'datetime', 'timestamp', 'year')
-				AND COLUMN_DEFAULT IS NOT NULL",
-				$columns_table
-			)
-		)->fetchAll( PDO::FETCH_ASSOC ); // phpcs:ignore WordPress.DB.RestrictedClasses.mysql__PDO
-
-		foreach ( $columns as $column ) {
-			$default = $this->get_temporal_zero_value(
-				$column['DATA_TYPE'],
-				$column['COLUMN_DEFAULT'],
-				null === $column['DATETIME_PRECISION'] ? null : (int) $column['DATETIME_PRECISION']
-			);
-			if ( null === $default || $default === $column['COLUMN_DEFAULT'] ) {
-				continue;
-			}
-
-			$this->connection->query(
-				sprintf(
-					'UPDATE %s SET COLUMN_DEFAULT = ? WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
-					$columns_table
-				),
-				array( $default, $column['TABLE_SCHEMA'], $column['TABLE_NAME'], $column['COLUMN_NAME'] )
-			);
-		}
-	}
-
-	/**
 	 * Get the definition and data of a computed information schema table.
 	 *
 	 * Some information schema tables can be computed on the fly when they are

@@ -75,21 +75,45 @@ class WP_SQLite_Configurator {
 	 * SQLite driver version and attempt to repair any configuration corruption.
 	 */
 	public function configure_database(): void {
-		// Use an EXCLUSIVE transaction to prevent multiple connections
-		// from attempting to configure the database at the same time.
-		$this->driver->execute_sqlite_query( 'BEGIN EXCLUSIVE TRANSACTION' );
+		/*
+		 * In SQLite, disabling foreign keys inside a transaction is a no-op.
+		 * We need to disable them here, because some configuration operations
+		 * may expect them disabled, e.g., to avoid triggering cascades.
+		 *
+		 * See:
+		 *   https://www.sqlite.org/lang_altertable.html#making_other_kinds_of_table_schema_changes
+		 */
+		$foreign_keys = $this->driver->execute_sqlite_query( 'PRAGMA foreign_keys' )->fetchColumn();
+		$this->driver->execute_sqlite_query( 'PRAGMA foreign_keys = OFF' );
+		$transaction_started = false;
 		try {
+			// Use an EXCLUSIVE transaction to prevent multiple connections
+			// from attempting to configure the database at the same time.
+			$this->driver->execute_sqlite_query( 'BEGIN EXCLUSIVE TRANSACTION' );
+			$transaction_started = true;
+			$this->set_driver_in_transaction( true );
 			$this->ensure_global_variables_table();
 			$this->schema_builder->ensure_information_schema_tables();
 			$this->schema_reconstructor->ensure_correct_information_schema();
-			$this->schema_builder->normalize_temporal_zero_defaults();
 			$this->save_current_driver_version();
 			$this->ensure_database_data();
+			$this->ensure_temporal_zero_defaults();
+			$this->driver->execute_sqlite_query( 'COMMIT' );
 		} catch ( Throwable $e ) {
-			$this->driver->execute_sqlite_query( 'ROLLBACK' );
+			// Roll back only the transaction started here, unless a failed
+			// MySQL query already rolled it back in the driver.
+			if ( $transaction_started && $this->driver->inTransaction() ) {
+				$this->driver->execute_sqlite_query( 'ROLLBACK' );
+			}
 			throw $e;
+		} finally {
+			if ( $transaction_started ) {
+				$this->set_driver_in_transaction( false );
+			}
+			if ( 1 === (int) $foreign_keys ) {
+				$this->driver->execute_sqlite_query( 'PRAGMA foreign_keys = ON' );
+			}
 		}
-		$this->driver->execute_sqlite_query( 'COMMIT' );
 	}
 
 	/**
@@ -254,6 +278,29 @@ class WP_SQLite_Configurator {
 	}
 
 	/**
+	 * Ensure that the driver knows that we started or ended an SQLite transaction.
+	 *
+	 * This is a workaround for PHP < 8.4, where PDO::inTransaction() doesn't
+	 * reflect transaction state started via a query, such as "BEGIN EXCLUSIVE".
+	 *
+	 * @see WP_MySQL_On_SQLite::inTransaction()
+	 *
+	 * @param bool $in_transaction Whether the driver is in a transaction.
+	 */
+	private function set_driver_in_transaction( bool $in_transaction ): void {
+		if ( PHP_VERSION_ID >= 80400 ) {
+			return;
+		}
+
+		// Bind the closure to the driver class, so that it can access the private
+		// property even when the driver is an instance of a subclass.
+		$set_in_transaction = function () use ( $in_transaction ): void {
+			$this->in_transaction = $in_transaction;
+		};
+		Closure::bind( $set_in_transaction, $this->driver, WP_MySQL_On_SQLite::class )();
+	}
+
+	/**
 	 * Save the current SQLite driver version.
 	 *
 	 * This method saves the current SQLite driver version to the database.
@@ -272,5 +319,98 @@ class WP_SQLite_Configurator {
 				SQLITE_DRIVER_VERSION,
 			)
 		);
+	}
+
+	/**
+	 * Ensure that temporal columns store numeric zero defaults as zero values.
+	 *
+	 * Older driver versions stored defaults such as "DEFAULT 0" of a TIMESTAMP
+	 * column verbatim, while MySQL stores them as a zero date/time value.
+	 */
+	private function ensure_temporal_zero_defaults(): void {
+		$columns_table = $this->driver->get_connection()->quote_identifier(
+			$this->schema_builder->get_table_name( false, 'columns' )
+		);
+
+		/*
+		 * Older driver versions stored a DATETIME_PRECISION of 0, so the precision
+		 * is read from the column type, such as "datetime(3)". CAST() reads the
+		 * leading integer, e.g., "3)" as 3, or returns 0 when there is none.
+		 */
+
+		// Read SQLite defaults; reconstructed metadata may already be normalized.
+		$columns = $this->driver->execute_sqlite_query(
+			sprintf(
+				"SELECT
+					c.TABLE_NAME,
+					c.COLUMN_NAME,
+					c.DATA_TYPE,
+					CAST(SUBSTR(c.COLUMN_TYPE, INSTR(c.COLUMN_TYPE, '(') + 1) AS INTEGER) AS DATETIME_PRECISION,
+					p.dflt_value
+				FROM %s AS c
+				JOIN pragma_table_info(c.TABLE_NAME, 'main') AS p ON c.COLUMN_NAME = p.name
+				WHERE c.TABLE_SCHEMA = ?
+				AND c.DATA_TYPE IN ('date', 'time', 'datetime', 'timestamp', 'year')
+				AND c.EXTRA NOT LIKE '%%DEFAULT_GENERATED%%'
+				AND p.dflt_value IS NOT NULL",
+				$columns_table
+			),
+			array( WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		// Normalize numeric zeros, such as 0, '0', '-0.0', or '0e0'.
+		$table_columns = array();
+		foreach ( $columns as $column ) {
+			// SQLite returns the default as an SQL literal, e.g., 0, '0', or "0".
+			$default   = $column['dflt_value'];
+			$is_string = in_array( $default[0], array( "'", '"', '`' ), true );
+			if ( $is_string ) {
+				$default = substr( $default, 1, -1 );
+			}
+			if ( ! is_numeric( $default ) || 0.0 !== (float) $default ) {
+				continue;
+			}
+
+			// A string zero of a YEAR column, such as '0', can be the year 2000.
+			if ( $is_string && 'year' === $column['DATA_TYPE'] ) {
+				continue;
+			}
+
+			$zero_value = WP_SQLite_Information_Schema_Builder::TEMPORAL_ZERO_VALUE_MAP[ $column['DATA_TYPE'] ];
+			$precision  = (int) $column['DATETIME_PRECISION'];
+			if ( $precision > 0 ) {
+				$zero_value .= '.' . str_repeat( '0', $precision );
+			}
+
+			$table_columns[ $column['TABLE_NAME'] ][] = array(
+				'name'       => $column['COLUMN_NAME'],
+				'zero_value' => $zero_value,
+			);
+		}
+
+		foreach ( $table_columns as $table_name => $repaired_columns ) {
+			$alter_list = array();
+			foreach ( $repaired_columns as $column ) {
+				$alter_list[] = sprintf(
+					'ALTER COLUMN `%s` SET DEFAULT %s',
+					str_replace( '`', '``', $column['name'] ),
+					$this->driver->quote( $column['zero_value'] )
+				);
+			}
+
+			// ALTER TABLE stores the new defaults, and it recreates the table to apply them.
+			try {
+				$this->driver->query(
+					sprintf( 'ALTER TABLE `%s` %s', str_replace( '`', '``', $table_name ), implode( ', ', $alter_list ) )
+				);
+			} catch ( WP_MySQL_On_SQLite_Exception $e ) {
+				throw new WP_MySQL_On_SQLite_Exception(
+					$this->driver,
+					sprintf( 'Failed to recreate table "%s": %s', $table_name, $e->getMessage() ),
+					$e->getCode(),
+					$e
+				);
+			}
+		}
 	}
 }
