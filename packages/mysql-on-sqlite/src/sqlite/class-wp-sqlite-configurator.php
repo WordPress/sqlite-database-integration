@@ -92,13 +92,16 @@ class WP_SQLite_Configurator {
 			$this->driver->execute_sqlite_query( 'BEGIN EXCLUSIVE TRANSACTION' );
 			$transaction_started = true;
 			$this->set_driver_in_transaction( true );
+
+			// Read the saved version within the transaction, before it's updated.
+			$saved_version = $this->driver->get_saved_driver_version();
+
 			$this->ensure_global_variables_table();
 			$this->schema_builder->ensure_information_schema_tables();
 			$this->schema_reconstructor->ensure_correct_information_schema();
-			$this->save_current_driver_version();
 			$this->ensure_database_data();
-			$this->ensure_correct_datetime_precision();
-			$this->ensure_temporal_zero_defaults();
+			$this->run_migrations( $saved_version );
+			$this->save_current_driver_version();
 			$this->driver->execute_sqlite_query( 'COMMIT' );
 		} catch ( Throwable $e ) {
 			// Roll back only the transaction started here, unless a failed
@@ -323,12 +326,28 @@ class WP_SQLite_Configurator {
 	}
 
 	/**
-	 * Ensure that the information schema stores correct DATETIME_PRECISION values.
+	 * Migrate data stored by older driver versions.
+	 *
+	 * This is used when a new driver version needs to change some existing data.
+	 * Migrations can be version-gated so that they don't rerun on every update.
+	 *
+	 * @param string $saved_version The driver version that last configured the database.
+	 */
+	private function run_migrations( string $saved_version ): void {
+		// Fix temporal precision and zero defaults stored by versions <= 3.1.1.
+		if ( version_compare( $saved_version, '3.1.1', '<=' ) ) {
+			$this->migrate_datetime_precision();
+			$this->migrate_temporal_zero_defaults();
+		}
+	}
+
+	/**
+	 * Migrate DATETIME_PRECISION values stored by older driver versions.
 	 *
 	 * Older versions stored 0 regardless of fractional seconds precision.
 	 * The correct value is read from the column type, such as "datetime(3)".
 	 */
-	private function ensure_correct_datetime_precision(): void {
+	private function migrate_datetime_precision(): void {
 		// CAST() reads the leading integer, e.g., "3)" as 3, or returns 0 when there is none.
 		$this->driver->execute_sqlite_query(
 			sprintf(
@@ -343,12 +362,12 @@ class WP_SQLite_Configurator {
 	}
 
 	/**
-	 * Ensure that temporal columns store numeric zero defaults as zero values.
+	 * Migrate zero defaults of temporal columns stored by older driver versions.
 	 *
 	 * Older driver versions stored defaults such as "DEFAULT 0" of a TIMESTAMP
 	 * column verbatim, while MySQL stores them as a zero date/time value.
 	 */
-	private function ensure_temporal_zero_defaults(): void {
+	private function migrate_temporal_zero_defaults(): void {
 		$columns_table = $this->driver->get_connection()->quote_identifier(
 			$this->schema_builder->get_table_name( false, 'columns' )
 		);
@@ -368,7 +387,7 @@ class WP_SQLite_Configurator {
 			array( WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
-		// Normalize numeric zeros, such as 0, '0', '-0.0', or '0e0'.
+		// Normalize zeros, such as 0, '0', -0.0, or 0e0.
 		$table_columns = array();
 		foreach ( $columns as $column ) {
 			// SQLite returns the default as an SQL literal, e.g., 0, '0', or "0".

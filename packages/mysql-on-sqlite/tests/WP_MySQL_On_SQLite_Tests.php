@@ -6728,6 +6728,58 @@ QUERY
 		$this->assertSame( '3', $this->last_result[0]->count );
 	}
 
+	/**
+	 * @dataProvider migrationDriverVersions
+	 */
+	public function testConfigurationRunsMigrationsOnlyForOlderDriverVersions(
+		string $saved_version,
+		string $expected_default,
+		string $expected_precision
+	): void {
+		// Store the default verbatim and a zero precision, as older driver versions
+		// did, and apply them to the SQLite table.
+		$this->assertQuery( 'CREATE TABLE _tmp_table (created_at DATETIME(3) NOT NULL DEFAULT 0)' );
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0', datetime_precision = 0 WHERE table_name = '_tmp_table'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+
+		// Configure the database as if it was last configured by the given driver version.
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '%s' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				$saved_version,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+		$configurator = new WP_SQLite_Configurator(
+			$this->engine,
+			new WP_SQLite_Information_Schema_Builder( WP_MySQL_On_SQLite::RESERVED_PREFIX, $this->engine->get_connection() )
+		);
+		$configurator->configure_database();
+
+		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
+		$this->assertSame(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `_tmp_table` (',
+					"  `created_at` datetime(3) NOT NULL DEFAULT '$expected_default'",
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+		$this->assertQuery( "SELECT datetime_precision FROM information_schema.columns WHERE table_name = '_tmp_table'" );
+		$this->assertSame( $expected_precision, $this->last_result[0]->DATETIME_PRECISION );
+	}
+
+	public static function migrationDriverVersions(): array {
+		return array(
+			'migrated from 3.1.1'     => array( '3.1.1', '0000-00-00 00:00:00.000', '3' ),
+			'not migrated from 3.1.2' => array( '3.1.2', '0', '0' ),
+		);
+	}
+
 	public function testConfigurationNormalizesStoredTemporalZeroDefaultsOfReferencedTable(): void {
 		$this->assertQuery( 'CREATE TABLE _tmp_parent (id INT PRIMARY KEY, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
 		$this->assertQuery( 'CREATE TABLE _tmp_cascade (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES _tmp_parent (id) ON DELETE CASCADE)' );
