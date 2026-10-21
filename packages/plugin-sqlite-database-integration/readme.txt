@@ -4,7 +4,7 @@ Contributors:      wordpressdotorg, aristath, janjakes, zieladam, berislav.grgic
 Requires at least: 6.4
 Tested up to:      7.1
 Requires PHP:      7.2
-Stable tag:        3.1.0
+Stable tag:        3.1.1
 License:           GPLv2 or later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Tags:              sqlite, database
@@ -90,6 +90,17 @@ Contributions are welcome through the [SQLite Database Integration repository on
 Yes. The plugin replaces the default MySQL-based database layer with an SQLite-backed implementation. WordPress continues to use the `wpdb` API, while queries are internally adapted to SQLite syntax and behavior.
 
 == Changelog ==
+
+= 3.1.1 =
+
+* Support date arithmetic with `INTERVAL` operators ([#539](https://github.com/WordPress/sqlite-database-integration/pull/539))
+* Fix `ROLLBACK` as the first transaction of a connection ([#537](https://github.com/WordPress/sqlite-database-integration/pull/537))
+* Fix matching a foreign key reference to a unique key with a different case ([#534](https://github.com/WordPress/sqlite-database-integration/pull/534))
+* Fix `FOUND_ROWS()` without `SQL_CALC_FOUND_ROWS` ([#533](https://github.com/WordPress/sqlite-database-integration/pull/533))
+* Fix unique keys and foreign key restore without stringified fetches ([#532](https://github.com/WordPress/sqlite-database-integration/pull/532))
+* Fix `CREATE TEMPORARY TABLE IF NOT EXISTS` and `DROP TEMPORARY TABLE` as the first temporary table ([#524](https://github.com/WordPress/sqlite-database-integration/pull/524))
+* Fix a warning for a foreign key referencing a table with a shorter unique key ([#523](https://github.com/WordPress/sqlite-database-integration/pull/523))
+* Fix temporary table lookup without stringified fetches and with a different case ([#522](https://github.com/WordPress/sqlite-database-integration/pull/522))
 
 = 3.1.0 =
 
