@@ -365,10 +365,12 @@ class WP_SQLite_Configurator {
 	 * Migrate zero defaults of temporal columns stored by older driver versions.
 	 *
 	 * Older driver versions stored defaults such as "DEFAULT 0" of a TIMESTAMP
-	 * column verbatim, while MySQL stores them as a zero date/time value.
+	 * column verbatim, while MySQL stores them as a zero date/time value. Rows
+	 * that got such a default store it as well, so they get the zero value too.
 	 */
 	private function migrate_temporal_zero_defaults(): void {
-		$columns_table = $this->driver->get_connection()->quote_identifier(
+		$connection    = $this->driver->get_connection();
+		$columns_table = $connection->quote_identifier(
 			$this->schema_builder->get_table_name( false, 'columns' )
 		);
 
@@ -412,14 +414,43 @@ class WP_SQLite_Configurator {
 			}
 
 			$table_columns[ $column['TABLE_NAME'] ][] = array(
-				'name'       => $column['COLUMN_NAME'],
-				'zero_value' => $zero_value,
+				'name'        => $column['COLUMN_NAME'],
+				'zero_value'  => $zero_value,
+				'old_default' => $default,
+				'is_string'   => $is_string,
 			);
 		}
 
 		foreach ( $table_columns as $table_name => $repaired_columns ) {
+			// Disable driver triggers during row repair. The table rebuild restores them.
+			$triggers = $this->driver->execute_sqlite_query(
+				"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? COLLATE NOCASE",
+				array( $table_name )
+			)->fetchAll( PDO::FETCH_COLUMN );
+			foreach ( $triggers as $trigger ) {
+				$this->driver->execute_sqlite_query(
+					sprintf( 'DROP TRIGGER %s', $connection->quote_identifier( $trigger ) )
+				);
+			}
+
 			$alter_list = array();
 			foreach ( $repaired_columns as $column ) {
+				// Preserve numeric and string types so comparisons apply the same
+				// SQLite conversion as when the defaults were stored.
+				$quoted_column = $connection->quote_identifier( $column['name'] );
+				$this->driver->execute_sqlite_query(
+					sprintf(
+						'UPDATE %s SET %s = ? WHERE %s = %s',
+						$connection->quote_identifier( $table_name ),
+						$quoted_column,
+						$quoted_column,
+						$column['is_string'] ? '?' : $column['old_default']
+					),
+					$column['is_string']
+						? array( $column['zero_value'], $column['old_default'] )
+						: array( $column['zero_value'] )
+				);
+
 				$alter_list[] = sprintf(
 					'ALTER COLUMN `%s` SET DEFAULT %s',
 					str_replace( '`', '``', $column['name'] ),

@@ -6654,7 +6654,8 @@ QUERY
 		);
 
 		// Store the defaults verbatim and a zero precision, as older driver versions
-		// did, and apply them to the SQLite table. Then, insert a row with them.
+		// did, and apply them to the SQLite table. Then, insert a row with them, and
+		// a row with other values.
 		$this->sqlite->exec(
 			"UPDATE _wp_sqlite_mysql_information_schema_columns
 			SET
@@ -6664,6 +6665,10 @@ QUERY
 		);
 		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
 		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
+		$this->assertQuery(
+			"INSERT INTO _tmp_table (id, created_at, created_at_fsp, updated_on, duration)
+			VALUES (2, '2020-01-02 03:04:05', '2020-01-02 03:04:05', '2020-01-02', '01:02:03')"
+		);
 
 		$this->reconnectAfterDriverUpgrade();
 
@@ -6687,34 +6692,54 @@ QUERY
 		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
 		$this->assertSame( $expected_create_table, $this->last_result[0]->{'Create Table'} );
 
-		// New rows get the normalized defaults in both strict and non-strict SQL
-		// mode. The existing row keeps its values.
-		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
-		$this->assertQuery( "SET sql_mode = ''" );
+		// The existing row with the old defaults gets the zero values, while the
+		// other existing row is unchanged. New rows get the normalized defaults
+		// in both strict and non-strict SQL mode.
 		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (3)' );
-		$this->assertQuery( 'SELECT id, created_at, created_at_fsp, updated_on, duration FROM _tmp_table ORDER BY id' );
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (4)' );
+		$expected_rows_query = 'SELECT id, created_at, created_at_fsp, updated_on, duration FROM _tmp_table ORDER BY id';
+		$expected_rows       = array(
+			(object) array(
+				'id'             => '1',
+				'created_at'     => '0000-00-00 00:00:00',
+				'created_at_fsp' => '0000-00-00 00:00:00.000',
+				'updated_on'     => '0000-00-00',
+				'duration'       => '00:00:00.00',
+			),
+			(object) array(
+				'id'             => '2',
+				'created_at'     => '2020-01-02 03:04:05',
+				'created_at_fsp' => '2020-01-02 03:04:05',
+				'updated_on'     => '2020-01-02',
+				'duration'       => '01:02:03',
+			),
+			(object) array(
+				'id'             => '3',
+				'created_at'     => '0000-00-00 00:00:00',
+				'created_at_fsp' => '0000-00-00 00:00:00.000',
+				'updated_on'     => '0000-00-00',
+				'duration'       => '00:00:00.00',
+			),
+			(object) array(
+				'id'             => '4',
+				'created_at'     => '0000-00-00 00:00:00',
+				'created_at_fsp' => '0000-00-00 00:00:00.000',
+				'updated_on'     => '0000-00-00',
+				'duration'       => '00:00:00.00',
+			),
+		);
+		$this->assertQuery( $expected_rows_query );
+		$this->assertEquals( $expected_rows, $this->last_result );
+
+		// The existing row keeps the YEAR and expression values, as their defaults are not normalized.
+		$this->assertQuery( 'SELECT year_number, year_string, expression FROM _tmp_table WHERE id = 1' );
 		$this->assertEquals(
 			array(
 				(object) array(
-					'id'             => '1',
-					'created_at'     => '0',
-					'created_at_fsp' => '0',
-					'updated_on'     => '0',
-					'duration'       => '0',
-				),
-				(object) array(
-					'id'             => '2',
-					'created_at'     => '0000-00-00 00:00:00',
-					'created_at_fsp' => '0000-00-00 00:00:00.000',
-					'updated_on'     => '0000-00-00',
-					'duration'       => '00:00:00.00',
-				),
-				(object) array(
-					'id'             => '3',
-					'created_at'     => '0000-00-00 00:00:00',
-					'created_at_fsp' => '0000-00-00 00:00:00.000',
-					'updated_on'     => '0000-00-00',
-					'duration'       => '00:00:00.00',
+					'year_number' => '0',
+					'year_string' => '0',
+					'expression'  => '0',
 				),
 			),
 			$this->last_result
@@ -6724,8 +6749,41 @@ QUERY
 		$this->reconnectAfterDriverUpgrade();
 		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
 		$this->assertSame( $expected_create_table, $this->last_result[0]->{'Create Table'} );
-		$this->assertQuery( 'SELECT COUNT(*) AS count FROM _tmp_table' );
-		$this->assertSame( '3', $this->last_result[0]->count );
+		$this->assertQuery( $expected_rows_query );
+		$this->assertEquals( $expected_rows, $this->last_result );
+	}
+
+	public function testConfigurationNormalizesStoredTemporalZeroValuesWithoutRunningTriggers(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id INT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT 0,
+				updated_at TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+
+		// Store the default verbatim, as older driver versions did, and apply it to the SQLite table.
+		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET column_default = '0' WHERE table_name = '_tmp_table' AND column_name = 'created_at'" );
+		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
+		$this->assertQuery( "INSERT INTO _tmp_table (id, updated_at) VALUES (1, '2020-01-02 03:04:05')" );
+
+		// Updating the stored zero doesn't run the ON UPDATE CURRENT_TIMESTAMP trigger.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertQuery( 'SELECT created_at, updated_at FROM _tmp_table' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'created_at' => '0000-00-00 00:00:00',
+					'updated_at' => '2020-01-02 03:04:05',
+				),
+			),
+			$this->last_result
+		);
+
+		// The recreated table has the trigger again.
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 2' );
+		$this->assertQuery( 'SELECT updated_at FROM _tmp_table' );
+		$this->assertNotSame( '2020-01-02 03:04:05', $this->last_result[0]->updated_at );
 	}
 
 	/**
@@ -6856,7 +6914,10 @@ QUERY
 				('_tmp_table', 'year_number', 'year'),
 				('_tmp_table', 'year_string', 'year'),
 				('_tmp_double_quoted', 'id', 'int'),
-				('_tmp_double_quoted', 'created_at', 'timestamp')"
+				('_tmp_double_quoted', 'created_at', 'timestamp'),
+				('_tmp_number_forms', 'id', 'int'),
+				('_tmp_number_forms', 'negative_zero', 'datetime'),
+				('_tmp_number_forms', 'decimal_zero', 'datetime')"
 		);
 		$this->sqlite->exec(
 			"CREATE TABLE _tmp_table (
@@ -6872,6 +6933,11 @@ QUERY
 
 		// A double-quoted SQLite default is a string as well.
 		$this->sqlite->exec( 'CREATE TABLE _tmp_double_quoted (id INTEGER, created_at TEXT NOT NULL DEFAULT "0")' );
+		$this->sqlite->exec( 'INSERT INTO _tmp_double_quoted (id) VALUES (1)' );
+
+		// Rows store numeric defaults as converted by the column affinity, e.g., -0 as '0'.
+		$this->sqlite->exec( 'CREATE TABLE _tmp_number_forms (id INTEGER, negative_zero TEXT NOT NULL DEFAULT -0, decimal_zero TEXT NOT NULL DEFAULT 0.0)' );
+		$this->sqlite->exec( 'INSERT INTO _tmp_number_forms (id) VALUES (1)' );
 
 		// The information schema is reconstructed, and then the defaults are normalized.
 		// A string zero of a YEAR column, such as '0', is not normalized.
@@ -6894,17 +6960,18 @@ QUERY
 			$this->last_result[0]->{'Create Table'}
 		);
 
-		// New rows get the normalized defaults. The existing row keeps its values.
+		// The existing row gets the zero values, except for the YEAR string zero.
+		// New rows get the normalized defaults.
 		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
 		$this->assertQuery( 'SELECT * FROM _tmp_table ORDER BY id' );
 		$this->assertEquals(
 			array(
 				(object) array(
 					'id'             => '1',
-					'created_at'     => '0',
-					'created_at_fsp' => '0',
-					'updated_on'     => '0',
-					'year_number'    => '0',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+					'year_number'    => '0000',
 					'year_string'    => '0',
 				),
 				(object) array(
@@ -6919,9 +6986,32 @@ QUERY
 			$this->last_result
 		);
 
-		$this->assertQuery( 'INSERT INTO _tmp_double_quoted (id) VALUES (1)' );
-		$this->assertQuery( 'SELECT created_at FROM _tmp_double_quoted' );
-		$this->assertSame( '0000-00-00 00:00:00', $this->last_result[0]->created_at );
+		$this->assertQuery( 'INSERT INTO _tmp_double_quoted (id) VALUES (2)' );
+		$this->assertQuery( 'SELECT id, created_at FROM _tmp_double_quoted ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'         => '1',
+					'created_at' => '0000-00-00 00:00:00',
+				),
+				(object) array(
+					'id'         => '2',
+					'created_at' => '0000-00-00 00:00:00',
+				),
+			),
+			$this->last_result
+		);
+
+		$this->assertQuery( 'SELECT negative_zero, decimal_zero FROM _tmp_number_forms' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'negative_zero' => '0000-00-00 00:00:00',
+					'decimal_zero'  => '0000-00-00 00:00:00',
+				),
+			),
+			$this->last_result
+		);
 	}
 
 	public function testConfigurationRollsBackWhenRecreatingTableFails(): void {
