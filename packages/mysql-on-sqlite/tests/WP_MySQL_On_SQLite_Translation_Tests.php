@@ -1735,6 +1735,34 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testIntervalArithmeticInParentheses(): void {
+		// TODO: With LALR(1), also test these expressions without parentheses.
+		// Parentheses prevent the parser from treating this as a prefix interval.
+		$this->assertQuery(
+			"SELECT ( DATETIME('2024-01-01', (1) || ' HOUR') ) + 0 AS `a`",
+			"SELECT ('2024-01-01' + INTERVAL 1 HOUR) + 0 AS a"
+		);
+
+		// Parentheses make the interval apply to the whole expression.
+		$this->assertQuery(
+			"SELECT DATETIME(( 1 + '2024-01-01' ), (1) || ' HOUR') AS `a`",
+			"SELECT (1 + '2024-01-01') + INTERVAL 1 HOUR AS a"
+		);
+	}
+
+	public function testIntervalArithmeticChains(): void {
+		// Only date units return a date for date inputs, which have 10 characters.
+		$this->assertQuery(
+			"SELECT CASE WHEN LENGTH('2024-01-01') = 10 THEN DATE('2024-01-01', (1) || ' DAY', -(2) || ' MONTH') ELSE DATETIME('2024-01-01', (1) || ' DAY', -(2) || ' MONTH') END AS `a`",
+			"SELECT '2024-01-01' + INTERVAL 1 DAY - INTERVAL 2 MONTH AS a"
+		);
+
+		$this->assertQuery(
+			"SELECT DATETIME('2024-01-01', (1) || ' DAY', (2) || ' HOUR') AS `a`",
+			"SELECT '2024-01-01' + INTERVAL 1 DAY + INTERVAL 2 HOUR AS a"
+		);
+	}
+
 	public function testIndexHints(): void {
 		// USE INDEX
 		$this->assertQuery(

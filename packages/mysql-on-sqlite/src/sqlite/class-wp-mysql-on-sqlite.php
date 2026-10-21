@@ -331,6 +331,23 @@ class WP_MySQL_On_SQLite extends PDO {
 	);
 
 	/**
+	 * Map MySQL INTERVAL units to SQLite units and value multipliers.
+	 *
+	 * MICROSECOND is excluded because DATETIME() drops fractional seconds.
+	 * Composite units, such as HOUR_MINUTE, are not supported.
+	 */
+	private const INTERVAL_UNIT_MAP = array(
+		WP_MySQL_Lexer::SECOND_SYMBOL  => array( 'SECOND', 1 ),
+		WP_MySQL_Lexer::MINUTE_SYMBOL  => array( 'MINUTE', 1 ),
+		WP_MySQL_Lexer::HOUR_SYMBOL    => array( 'HOUR', 1 ),
+		WP_MySQL_Lexer::DAY_SYMBOL     => array( 'DAY', 1 ),
+		WP_MySQL_Lexer::WEEK_SYMBOL    => array( 'DAY', 7 ),
+		WP_MySQL_Lexer::MONTH_SYMBOL   => array( 'MONTH', 1 ),
+		WP_MySQL_Lexer::QUARTER_SYMBOL => array( 'MONTH', 3 ),
+		WP_MySQL_Lexer::YEAR_SYMBOL    => array( 'YEAR', 1 ),
+	);
+
+	/**
 	 * A map of MySQL data types to implicit default values for non-strict mode.
 	 *
 	 * In MySQL, when STRICT_TRANS_TABLES and STRICT_ALL_TABLES modes are disabled,
@@ -4349,6 +4366,8 @@ class WP_MySQL_On_SQLite extends PDO {
 					return null;
 				}
 				return $this->translate_sequence( $node->get_children() );
+			case 'bitExpr':
+				return $this->translate_bit_expr( $node );
 			case 'simpleExprBody':
 				return $this->translate_simple_expr_body( $node );
 			case 'predicateOperations':
@@ -4915,7 +4934,84 @@ class WP_MySQL_On_SQLite extends PDO {
 			}
 		}
 
+		/*
+		 * Reject "INTERVAL n unit + expr": the parser includes following AND, OR,
+		 * and XOR conditions in "expr", unlike MySQL. It also reads
+		 * "expr + INTERVAL 1 DAY + x" as "expr + (INTERVAL 1 DAY + x)".
+		 *
+		 * TODO: Support prefix intervals after switching to the LALR(1) parser.
+		 */
+		if ( null !== $token && WP_MySQL_Lexer::INTERVAL_SYMBOL === $token->id ) {
+			throw $this->new_not_supported_exception(
+				'INTERVAL n unit followed by "+"; use "(expr + INTERVAL n unit)" instead'
+			);
+		}
+
 		return $this->translate_sequence( $node->get_children() );
+	}
+
+	/**
+	 * Translate a "bitExpr" AST node.
+	 *
+	 * Translate interval additions and subtractions to a single date function
+	 * call, applying each interval from left to right, as MySQL does.
+	 *
+	 * TODO: After switching to LALR(1), use the tree's operator grouping
+	 * and remove the loop over this parser's flat interval sequence.
+	 *
+	 * @param  WP_Parser_Node $node       The "bitExpr" AST node.
+	 * @return string|null                The translated value.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
+	 */
+	private function translate_bit_expr( WP_Parser_Node $node ): ?string {
+		/*
+		 * The first child is an expression. Each interval adds four children:
+		 * operator, INTERVAL, value, unit. A final "op bitExpr" may follow.
+		 */
+		$children  = $node->get_children();
+		$count     = count( $children );
+		$sql       = $this->translate( $children[0] );
+		$intervals = array();
+		$i         = 1;
+		while (
+			isset( $children[ $i + 1 ] )
+			&& $children[ $i + 1 ] instanceof WP_Parser_Token
+			&& WP_MySQL_Lexer::INTERVAL_SYMBOL === $children[ $i + 1 ]->id
+		) {
+			$intervals[] = array(
+				WP_MySQL_Lexer::MINUS_OPERATOR === $children[ $i ]->id,
+				$children[ $i + 2 ],
+				$children[ $i + 3 ],
+			);
+			$i          += 4;
+		}
+		if ( count( $intervals ) > 0 ) {
+			$sql = $this->translate_interval_arithmetic( $sql, $intervals );
+		}
+
+		if ( $i === $count ) {
+			return $sql;
+		}
+
+		/*
+		 * The parser groups "a + b + INTERVAL 1 DAY" as "a + (b + INTERVAL 1 DAY)".
+		 * MySQL applies the interval to "a + b". Reject this form to avoid
+		 * applying the interval to only part of the expression. For simplicity,
+		 * also reject operators that bind less tightly than "+", such as "|".
+		 *
+		 * TODO: Remove this guard and support mixed arithmetic with LALR(1).
+		 */
+		$operator = $children[ $i ];
+		$operand  = $children[ $i + 1 ];
+		if ( $operand->has_child_token( WP_MySQL_Lexer::INTERVAL_SYMBOL ) ) {
+			throw $this->new_not_supported_exception(
+				sprintf(
+					'INTERVAL after the "%s" operator; add parentheses to make the grouping explicit',
+					$operator->get_value()
+				)
+			);
+		}
+		return sprintf( '%s %s %s', $sql, $this->translate( $operator ), $this->translate( $operand ) );
 	}
 
 	/**
@@ -5051,18 +5147,9 @@ class WP_MySQL_On_SQLite extends PDO {
 			case WP_MySQL_Lexer::DATE_ADD_SYMBOL:
 			case WP_MySQL_Lexer::DATE_SUB_SYMBOL:
 				$nodes = $node->get_child_nodes();
-				$value = $this->translate( $nodes[1] );
-				$unit  = $this->translate( $nodes[2] );
-				if ( 'WEEK' === $unit ) {
-					$unit  = 'DAY';
-					$value = 7 * $value;
-				}
-				return sprintf(
-					"DATETIME(%s, '%s' || %s || ' %s')",
+				return $this->translate_interval_arithmetic(
 					$this->translate( $nodes[0] ),
-					WP_MySQL_Lexer::DATE_SUB_SYMBOL === $child->id ? '-' : '+',
-					$value,
-					$unit
+					array( array( WP_MySQL_Lexer::DATE_SUB_SYMBOL === $child->id, $nodes[1], $nodes[2] ) )
 				);
 			case WP_MySQL_Lexer::LEFT_SYMBOL:
 				$nodes = $node->get_child_nodes();
@@ -5074,6 +5161,62 @@ class WP_MySQL_On_SQLite extends PDO {
 			default:
 				return $this->translate_sequence( $node->get_children() );
 		}
+	}
+
+	/**
+	 * Translate MySQL date arithmetic to a SQLite DATE() or DATETIME() call.
+	 *
+	 * Each interval becomes a modifier, and SQLite applies them from left to right.
+	 * Parenthesize the value before appending the unit: SQLite evaluates "||"
+	 * before "*". Negate the value for subtraction so negative intervals work
+	 * without invalid sign combinations such as "+-5 HOUR".
+	 * Convert units where needed, e.g., WEEK to 7 days.
+	 *
+	 * MySQL returns a date when it adds only date units to a date. The driver
+	 * stores dates as 10-character strings, so use DATE() for such inputs.
+	 *
+	 * @param  string $expr      The translated date expression.
+	 * @param  array  $intervals List of intervals, each as an array of:
+	 *                           - bool           Whether the interval is subtracted.
+	 *                           - WP_Parser_Node The interval value expression node.
+	 *                           - WP_Parser_Node The "interval" AST node holding the unit.
+	 * @return string            The translated value.
+	 * @throws WP_MySQL_On_SQLite_Exception When the translation fails.
+	 */
+	private function translate_interval_arithmetic( string $expr, array $intervals ): string {
+		$modifiers  = array();
+		$date_units = true;
+		foreach ( $intervals as list( $subtract, $value, $interval ) ) {
+			// Token IDs also cover unit synonyms, e.g., SQL_TSI_HOUR.
+			$unit_token = $interval->get_first_descendant_token();
+			if ( ! isset( self::INTERVAL_UNIT_MAP[ $unit_token->id ] ) ) {
+				throw $this->new_not_supported_exception(
+					sprintf( 'INTERVAL unit: %s', $unit_token->get_value() )
+				);
+			}
+
+			list( $unit, $multiplier ) = self::INTERVAL_UNIT_MAP[ $unit_token->id ];
+
+			$value_sql = sprintf( '(%s)', $this->translate( $value ) );
+			if ( 1 !== $multiplier ) {
+				$value_sql = sprintf( '(%s * %d)', $value_sql, $multiplier );
+			}
+			if ( $subtract ) {
+				$value_sql = '-' . $value_sql;
+			}
+			$modifiers[] = sprintf( "%s || ' %s'", $value_sql, $unit );
+			$date_units  = $date_units && in_array( $unit, array( 'DAY', 'MONTH', 'YEAR' ), true );
+		}
+
+		$modifiers_sql = implode( ', ', $modifiers );
+		if ( ! $date_units ) {
+			return sprintf( 'DATETIME(%s, %s)', $expr, $modifiers_sql );
+		}
+		return sprintf(
+			'CASE WHEN LENGTH(%1$s) = 10 THEN DATE(%1$s, %2$s) ELSE DATETIME(%1$s, %2$s) END',
+			$expr,
+			$modifiers_sql
+		);
 	}
 
 	/**

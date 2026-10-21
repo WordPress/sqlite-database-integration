@@ -932,6 +932,275 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertEquals( '2007-01-02 13:29:17', $result[0]->output );
 	}
 
+	public function testDateAddFunctionWithNegativeAndComputedIntervals() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT DATE_ADD('2024-01-01 10:00:00', INTERVAL -5 HOUR) as output"
+		);
+		$this->assertEquals( '2024-01-01 05:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_SUB('2024-01-01 10:00:00', INTERVAL -5 HOUR) as output"
+		);
+		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_SUB('2024-01-01 10:00:00', INTERVAL 2 * 3 HOUR) as output"
+		);
+		$this->assertEquals( '2024-01-01 04:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_ADD('2024-01-01 10:00:00', INTERVAL 1 week) as output"
+		);
+		$this->assertEquals( '2024-01-08 10:00:00', $result[0]->output );
+	}
+
+	public function testIntervalArithmetic() {
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' - INTERVAL 5 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 05:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 5 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
+
+		// Intervals chain from left to right.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 5 HOUR + INTERVAL 1 DAY as output"
+		);
+		$this->assertEquals( '2024-01-02 15:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 DAY - INTERVAL 5 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-02 05:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 WEEK as output"
+		);
+		$this->assertEquals( '2024-01-08 10:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 hour as output"
+		);
+		$this->assertEquals( '2024-01-01 11:00:00', $result[0]->output );
+
+		// The value is an expression, and may be negative or a string.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' - INTERVAL 2 * 3 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 04:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL -5 HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 05:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL '5' HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 15:00:00', $result[0]->output );
+
+		// NULL on either side yields NULL.
+		$result = $this->assertQuery( 'SELECT NULL + INTERVAL 1 DAY as output' );
+		$this->assertNull( $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL NULL DAY as output"
+		);
+		$this->assertNull( $result[0]->output );
+
+		// The case from the original report.
+		$result = $this->assertQuery(
+			"SELECT DATE('2024-01-01 10:00:00' - INTERVAL 5 HOUR) as output"
+		);
+		$this->assertEquals( '2024-01-01', $result[0]->output );
+	}
+
+	public function testIntervalArithmeticOnColumns() {
+		$this->assertQuery( 'CREATE TABLE _events (id INT, occurred_at DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _events VALUES (1, '2024-01-01 10:00:00'), (2, '2024-01-03 10:00:00'), (3, NULL)"
+		);
+
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			'SELECT id, occurred_at - INTERVAL 1 DAY as output FROM _events ORDER BY id'
+		);
+		$this->assertEquals( '2023-12-31 10:00:00', $result[0]->output );
+		$this->assertEquals( '2024-01-02 10:00:00', $result[1]->output );
+		$this->assertNull( $result[2]->output );
+
+		$result = $this->assertQuery(
+			"SELECT id FROM _events WHERE occurred_at > '2024-01-02 00:00:00' - INTERVAL 1 DAY ORDER BY id"
+		);
+		$this->assertEquals( array( 1, 2 ), array_map( 'intval', array_column( $result, 'id' ) ) );
+
+		// Conditions after the interval are not part of it.
+		$this->assertQuery(
+			"DELETE FROM _events WHERE occurred_at < '2024-01-03 00:00:00' - INTERVAL 1 DAY AND id = 99"
+		);
+		$result = $this->assertQuery( 'SELECT COUNT(*) as count FROM _events' );
+		$this->assertEquals( 3, $result[0]->count );
+	}
+
+	public function testIntervalArithmeticOnDates() {
+		// Expected values were taken from MySQL 8.4.
+		// Adding only date units to a date returns a date.
+		$result = $this->assertQuery( "SELECT '2024-01-01' + INTERVAL 1 DAY as output" );
+		$this->assertEquals( '2024-01-02', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT '2024-01-01' + INTERVAL 1 DAY + INTERVAL 1 MONTH as output" );
+		$this->assertEquals( '2024-02-02', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT '2024-01-01' - INTERVAL 1 YEAR as output" );
+		$this->assertEquals( '2023-01-01', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT DATE_ADD('2024-01-01', INTERVAL 1 WEEK) as output" );
+		$this->assertEquals( '2024-01-08', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT DATE_SUB('2024-01-01', INTERVAL 1 QUARTER) as output" );
+		$this->assertEquals( '2023-10-01', $result[0]->output );
+
+		// Time units and datetime inputs return a datetime.
+		$result = $this->assertQuery( "SELECT '2024-01-01' + INTERVAL 30 SECOND as output" );
+		$this->assertEquals( '2024-01-01 00:00:30', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT '2024-01-01' + INTERVAL 1 DAY - INTERVAL 1 HOUR as output" );
+		$this->assertEquals( '2024-01-01 23:00:00', $result[0]->output );
+
+		$result = $this->assertQuery( "SELECT '2024-01-01 00:00:00' + INTERVAL 1 DAY as output" );
+		$this->assertEquals( '2024-01-02 00:00:00', $result[0]->output );
+
+		$this->assertQuery( 'CREATE TABLE _events (id INT, d DATE, dt DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _events VALUES (1, '2024-01-01', '2024-01-01 00:00:00'), (2, '2024-01-02', '2024-01-02 00:00:00'), (3, '2024-01-03', '2024-01-03 00:00:00')"
+		);
+
+		$result = $this->assertQuery(
+			'SELECT d + INTERVAL 1 DAY as date_output, dt + INTERVAL 1 DAY as datetime_output, d + INTERVAL 1 HOUR as hour_output FROM _events WHERE id = 1'
+		);
+		$this->assertEquals( '2024-01-02', $result[0]->date_output );
+		$this->assertEquals( '2024-01-02 00:00:00', $result[0]->datetime_output );
+		$this->assertEquals( '2024-01-01 01:00:00', $result[0]->hour_output );
+
+		// Comparisons with dates match the same rows as in MySQL.
+		$result = $this->assertQuery( "SELECT id FROM _events WHERE d = '2024-01-03' - INTERVAL 1 DAY" );
+		$this->assertEquals( array( 2 ), array_map( 'intval', array_column( $result, 'id' ) ) );
+
+		$result = $this->assertQuery( "SELECT COUNT(*) as count FROM _events WHERE DATE_ADD(d, INTERVAL 7 DAY) = '2024-01-08'" );
+		$this->assertEquals( 1, $result[0]->count );
+
+		$this->assertQuery( "DELETE FROM _events WHERE d < '2024-01-03' - INTERVAL 1 DAY" );
+		$result = $this->assertQuery( 'SELECT id FROM _events ORDER BY id' );
+		$this->assertEquals( array( 2, 3 ), array_map( 'intval', array_column( $result, 'id' ) ) );
+	}
+
+	public function testIntervalArithmeticPrefixForm() {
+		// TODO: With LALR(1), assert MySQL results instead of expecting errors.
+		// Keep the DELETE regression check to verify that unrelated rows survive.
+		$this->assertQuery( 'CREATE TABLE _events (id INT, occurred_at DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _events VALUES (1, '2024-01-01 10:00:00'), (2, '2024-01-03 10:00:00')"
+		);
+
+		$error = 'MySQL query not supported. Cause: INTERVAL n unit followed by "+"; use "(expr + INTERVAL n unit)" instead';
+		$this->assertQueryError( "SELECT INTERVAL 5 HOUR + '2024-01-01 10:00:00'", $error );
+		$this->assertQueryError(
+			"DELETE FROM _events WHERE INTERVAL 30 DAY + occurred_at < '2025-01-01' AND id = 99",
+			$error
+		);
+
+		// The parser treats a suffix interval followed by "+" as a prefix interval.
+		$this->assertQueryError( "SELECT '2024-01-01 10:00:00' + INTERVAL 1 DAY + 0", $error );
+		$this->assertQueryError( "SELECT '2024-01-01 10:00:00' - INTERVAL 1 DAY + 0", $error );
+
+		$result = $this->assertQuery( 'SELECT COUNT(*) as count FROM _events' );
+		$this->assertEquals( 2, $result[0]->count );
+	}
+
+	public function testIntervalArithmeticOnPartialOperand() {
+		// TODO: With LALR(1), replace these rejection tests with MySQL result checks.
+		// The parser applies the interval to the date alone.
+		// MySQL applies it to the sum, so reject the unparenthesized expression.
+		$this->assertQueryError(
+			"SELECT 1 + '2024-01-01' + INTERVAL 1 DAY",
+			'MySQL query not supported. Cause: INTERVAL after the "+" operator; add parentheses to make the grouping explicit'
+		);
+
+		$this->assertQueryError(
+			"SELECT 2 * '2024-01-01' - INTERVAL 1 DAY",
+			'MySQL query not supported. Cause: INTERVAL after the "*" operator; add parentheses to make the grouping explicit'
+		);
+
+		// MySQL groups "|" like the parser, but it is rejected for simplicity.
+		$this->assertQueryError(
+			"SELECT 0 | '2024-01-01' + INTERVAL 1 DAY",
+			'MySQL query not supported. Cause: INTERVAL after the "|" operator; add parentheses to make the grouping explicit'
+		);
+	}
+
+	public function testIntervalArithmeticUnits() {
+		$this->assertQuery( 'CREATE TABLE _events (id INT, occurred_at DATETIME)' );
+		$this->assertQuery(
+			"INSERT INTO _events VALUES (1, '2024-01-01 10:00:00'), (2, '2024-01-03 10:00:00'), (3, NULL)"
+		);
+
+		// Expected values were taken from MySQL 8.4.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 QUARTER as output"
+		);
+		$this->assertEquals( '2024-04-01 10:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 2 * 2 QUARTER as output"
+		);
+		$this->assertEquals( '2025-01-01 10:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_SUB('2024-01-01 10:00:00', INTERVAL -2 QUARTER) as output"
+		);
+		$this->assertEquals( '2024-07-01 10:00:00', $result[0]->output );
+
+		// The SQL_TSI_* units are synonyms for the plain units.
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 SQL_TSI_HOUR as output"
+		);
+		$this->assertEquals( '2024-01-01 11:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT '2024-01-01 10:00:00' - INTERVAL 1 SQL_TSI_QUARTER as output"
+		);
+		$this->assertEquals( '2023-10-01 10:00:00', $result[0]->output );
+
+		$result = $this->assertQuery(
+			"SELECT DATE_ADD('2024-01-01 10:00:00', INTERVAL 2 SQL_TSI_WEEK) as output"
+		);
+		$this->assertEquals( '2024-01-15 10:00:00', $result[0]->output );
+
+		$this->assertQuery( 'UPDATE _events SET occurred_at = occurred_at + INTERVAL 1 QUARTER' );
+		$result = $this->assertQuery( 'SELECT occurred_at FROM _events ORDER BY id' );
+		$this->assertEquals( '2024-04-01 10:00:00', $result[0]->occurred_at );
+		$this->assertEquals( '2024-04-03 10:00:00', $result[1]->occurred_at );
+		$this->assertNull( $result[2]->occurred_at );
+	}
+
+	public function testIntervalArithmeticWithUnsupportedUnits() {
+		// SQLite DATETIME() drops fractional seconds.
+		$this->assertQueryError(
+			"SELECT '2024-01-01 10:00:00' + INTERVAL 1 MICROSECOND",
+			'MySQL query not supported. Cause: INTERVAL unit: MICROSECOND'
+		);
+
+		$this->assertQueryError(
+			"SELECT DATE_ADD('2024-01-01 10:00:00', INTERVAL '1:30' HOUR_MINUTE)",
+			'MySQL query not supported. Cause: INTERVAL unit: HOUR_MINUTE'
+		);
+	}
+
 	public function testLeftFunction1Char() {
 		$result = $this->assertQuery(
 			'SELECT LEFT("abc", 1) as output'
@@ -13508,7 +13777,10 @@ END;
 		$result = $this->sqlite->query( 'PRAGMA table_info(t)' )->fetchAll();
 		$this->assertSame( null, $result[0]['dflt_value'] );
 		$this->assertSame( '1 + 2', $result[1]['dflt_value'] );
-		$this->assertSame( "DATETIME(CURRENT_TIMESTAMP, '+' || 1 || ' YEAR')", $result[2]['dflt_value'] );
+		$this->assertSame(
+			"CASE WHEN LENGTH(CURRENT_TIMESTAMP) = 10 THEN DATE(CURRENT_TIMESTAMP, (1) || ' YEAR') ELSE DATETIME(CURRENT_TIMESTAMP, (1) || ' YEAR') END",
+			$result[2]['dflt_value']
+		);
 		$this->assertSame( "('a' || 'b')", $result[3]['dflt_value'] );
 	}
 
