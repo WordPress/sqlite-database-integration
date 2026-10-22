@@ -145,18 +145,22 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 	 *
 	 * @param string $table  The table name.
 	 * @param string $column The column name.
+	 * @param bool   $legacy Whether to use the legacy driver's trigger name.
 	 */
-	private function createOnUpdateTrigger( string $table, string $column ): void {
+	private function createOnUpdateTrigger( string $table, string $column, bool $legacy = false ): void {
+		$connection   = $this->engine->get_connection();
+		$trigger_name = $legacy ? "__{$table}_{$column}_on_update__" : "_wp_sqlite_{$table}_{$column}_on_update";
 		$this->sqlite->exec(
 			sprintf(
-				'CREATE TRIGGER `_wp_sqlite_%1$s_%2$s_on_update`
-				AFTER UPDATE ON `%1$s`
+				'CREATE TRIGGER %1$s
+				AFTER UPDATE ON %2$s
 				FOR EACH ROW
 				BEGIN
-					UPDATE `%1$s` SET `%2$s` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
+					UPDATE %2$s SET %3$s = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
 				END',
-				$table,
-				$column
+				$connection->quote_identifier( $trigger_name ),
+				$connection->quote_identifier( $table ),
+				$connection->quote_identifier( $column )
 			)
 		);
 	}
@@ -7294,6 +7298,222 @@ QUERY
 		);
 	}
 
+	public function testConfigurationDropsOnUpdateCurrentTimestampTriggers(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id INT PRIMARY KEY,
+				n INT,
+				updated_at TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO _tmp_table VALUES
+				(1, 1, '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00')"
+		);
+
+		// Create the trigger, as older driver versions did, and a user trigger.
+		$this->createOnUpdateTrigger( '_tmp_table', 'updated_at' );
+		$this->sqlite->exec( 'CREATE TRIGGER `_tmp_table_updated_at_on_update` AFTER UPDATE ON `_tmp_table` BEGIN SELECT 1; END' );
+
+		// Only the driver trigger is dropped.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertSame(
+			array( '_tmp_table_updated_at_on_update' ),
+			$this->sqlite->query( "SELECT name FROM sqlite_master WHERE type = 'trigger'" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		// UPDATE emulates ON UPDATE CURRENT_TIMESTAMP as MySQL does.
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertQuery( 'UPDATE _tmp_table SET n = 2 WHERE id = 1' );
+		$this->assertQuery( 'UPDATE _tmp_table SET n = 1 WHERE id = 2' );
+		$this->assertSame(
+			array( $now, '2000-01-01 00:00:00' ),
+			$this->getOnUpdateTimestamps( 'SELECT updated_at FROM _tmp_table ORDER BY id', $now )
+		);
+	}
+
+	/**
+	 * @dataProvider onUpdateTriggerMigrationDriverVersions
+	 */
+	public function testConfigurationDropsOnUpdateCurrentTimestampTriggersOnlyForOlderDriverVersions(
+		string $saved_version,
+		array $expected_triggers,
+		bool $legacy = false
+	): void {
+		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT, updated_at TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP)' );
+		$this->createOnUpdateTrigger( '_tmp_table', 'updated_at', $legacy );
+
+		// Configure the database as if it was last configured by the given driver version.
+		$this->sqlite->exec(
+			sprintf(
+				"UPDATE %s SET value = '%s' WHERE name = '%s'",
+				WP_MySQL_On_SQLite::GLOBAL_VARIABLES_TABLE_NAME,
+				$saved_version,
+				WP_MySQL_On_SQLite::DRIVER_VERSION_VARIABLE_NAME
+			)
+		);
+		$configurator = new WP_SQLite_Configurator(
+			$this->engine,
+			new WP_SQLite_Information_Schema_Builder( WP_MySQL_On_SQLite::RESERVED_PREFIX, $this->engine->get_connection() )
+		);
+		$configurator->configure_database();
+
+		$this->assertSame(
+			$expected_triggers,
+			$this->sqlite->query( "SELECT name FROM sqlite_master WHERE type = 'trigger'" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+	}
+
+	public static function onUpdateTriggerMigrationDriverVersions(): array {
+		return array(
+			'migrated from 3.1.1'     => array( '3.1.1', array() ),
+			'not migrated from 3.1.2' => array( '3.1.2', array( '_wp_sqlite__tmp_table_updated_at_on_update' ) ),
+			'legacy from 3.1.1'       => array( '3.1.1', array(), true ),
+			'legacy from 3.1.2'       => array( '3.1.2', array( '___tmp_table_updated_at_on_update__' ), true ),
+		);
+	}
+
+	/**
+	 * @dataProvider legacyOnUpdateTriggerMigrations
+	 */
+	public function testConfigurationMigratesLegacyOnUpdateTriggers( bool $already_reconstructed, string $rebuild_query ): void {
+		// Reproduce the table, type cache, and triggers created by the legacy driver.
+		$this->sqlite->exec(
+			'CREATE TABLE _mysql_data_types_cache (
+				`table` TEXT NOT NULL,
+				`column_or_index` TEXT NOT NULL,
+				`mysql_type` TEXT NOT NULL,
+				PRIMARY KEY (`table`, `column_or_index`)
+			)'
+		);
+		$this->sqlite->exec(
+			"INSERT INTO _mysql_data_types_cache VALUES
+				('legacy_timestamps', 'id', 'int'),
+				('legacy_timestamps', 'n', 'int'),
+				('legacy_timestamps', 'zero_default', 'timestamp'),
+				('legacy_timestamps', 'generated_default', 'datetime'),
+				('legacy_timestamps', 'nullable', 'timestamp')"
+		);
+		$this->sqlite->exec(
+			'CREATE TABLE legacy_timestamps (
+				id INTEGER PRIMARY KEY,
+				n INTEGER,
+				zero_default TEXT NOT NULL DEFAULT 0,
+				generated_default TEXT DEFAULT CURRENT_TIMESTAMP,
+				nullable TEXT
+			)'
+		);
+		foreach ( range( 1, 5 ) as $id ) {
+			$this->sqlite->exec(
+				"INSERT INTO legacy_timestamps VALUES ($id, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00', '2000-01-01 00:00:00')"
+			);
+		}
+		$this->sqlite->exec( 'UPDATE legacy_timestamps SET zero_default = 0 WHERE id = 5' );
+		foreach ( array( 'zero_default', 'generated_default', 'nullable' ) as $column ) {
+			$this->createOnUpdateTrigger( 'legacy_timestamps', $column, true );
+		}
+
+		if ( $already_reconstructed ) {
+			// Earlier AST versions reconstructed the table but missed ON UPDATE metadata.
+			$reconstructor = new WP_SQLite_Information_Schema_Reconstructor(
+				$this->engine,
+				new WP_SQLite_Information_Schema_Builder( WP_MySQL_On_SQLite::RESERVED_PREFIX, $this->engine->get_connection() )
+			);
+			$reconstructor->ensure_correct_information_schema();
+		}
+
+		// Recover ON UPDATE before the zero-default migration rebuilds the table.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertQuery( 'SELECT zero_default, generated_default, nullable FROM legacy_timestamps WHERE id = 5' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'zero_default'      => '0000-00-00 00:00:00',
+					'generated_default' => '2000-01-01 00:00:00',
+					'nullable'          => '2000-01-01 00:00:00',
+				),
+			),
+			$this->last_result
+		);
+		$this->assertSame(
+			array(),
+			$this->sqlite->query( "SELECT name FROM sqlite_master WHERE type = 'trigger'" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+
+		// Repeated configuration must preserve other EXTRA flags without duplicating ON UPDATE.
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertQuery( "SELECT extra FROM information_schema.columns WHERE table_name = 'legacy_timestamps' AND column_name != 'id' AND column_name != 'n' ORDER BY ordinal_position" );
+		$this->assertSame(
+			array( 'on update CURRENT_TIMESTAMP', 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', 'on update CURRENT_TIMESTAMP' ),
+			array_column( $this->last_result, 'EXTRA' )
+		);
+
+		if ( '' !== $rebuild_query ) {
+			$this->assertQuery( $rebuild_query );
+		}
+		$this->assertQuery( 'SHOW CREATE TABLE legacy_timestamps' );
+		$this->assertSame( 3, substr_count( $this->last_result[0]->{'Create Table'}, 'ON UPDATE CURRENT_TIMESTAMP' ) );
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertQuery( 'UPDATE legacy_timestamps SET n = 2 WHERE id IN (1, 5)' );
+		$this->assertQuery( 'UPDATE legacy_timestamps SET n = n WHERE id = 2' );
+		$this->assertQuery( 'UPDATE legacy_timestamps SET n = 2, zero_default = zero_default, generated_default = generated_default, nullable = nullable WHERE id = 3' );
+		$this->assertQuery( "UPDATE legacy_timestamps SET zero_default = '2001-01-01 00:00:00', generated_default = '2001-01-01 00:00:00', nullable = '2001-01-01 00:00:00' WHERE id = 4" );
+		foreach ( array( 'zero_default', 'generated_default', 'nullable' ) as $column ) {
+			$this->assertSame(
+				array( $now, '2000-01-01 00:00:00', '2000-01-01 00:00:00', '2001-01-01 00:00:00', $now ),
+				$this->getOnUpdateTimestamps( "SELECT $column FROM legacy_timestamps ORDER BY id", $now )
+			);
+		}
+	}
+
+	public static function legacyOnUpdateTriggerMigrations(): array {
+		$cases = array();
+		foreach ( array( false, true ) as $already_reconstructed ) {
+			foreach ( array( '', 'ALTER TABLE legacy_timestamps ADD COLUMN note TEXT', 'OPTIMIZE TABLE legacy_timestamps', 'REPAIR TABLE legacy_timestamps' ) as $query ) {
+				$name           = ( $already_reconstructed ? 'existing metadata: ' : 'reconstructed metadata: ' ) . $query;
+				$cases[ $name ] = array( $already_reconstructed, $query );
+			}
+		}
+		return $cases;
+	}
+
+	public function testConfigurationMigratesLegacyOnUpdateTriggersWithQuotedNames(): void {
+		$table         = 'Legacy_`"table';
+		$column        = 'Updated_`"at';
+		$connection    = $this->engine->get_connection();
+		$quoted_table  = $connection->quote_identifier( $table );
+		$quoted_column = $connection->quote_identifier( $column );
+		$this->assertQuery( "CREATE TABLE $quoted_table (id INT, $quoted_column TIMESTAMP NULL)" );
+		$this->assertQuery( "INSERT INTO $quoted_table VALUES (1, '2000-01-01 00:00:00')" );
+		$this->createOnUpdateTrigger( strtoupper( $table ), strtoupper( $column ), true );
+		$this->createOnUpdateTrigger( $table, $column );
+
+		// Similar names and a matching name on a different table are user triggers.
+		$this->sqlite->exec( "CREATE TRIGGER `__legacy_user_on_update__suffix` AFTER UPDATE ON $quoted_table BEGIN SELECT 1; END" );
+		$this->assertQuery( 'CREATE TABLE other_table (updated_at TIMESTAMP NULL)' );
+		$this->sqlite->exec( "CREATE TRIGGER `__other_table_updated_at_on_update__` AFTER UPDATE ON $quoted_table BEGIN SELECT 1; END" );
+
+		// A temporary trigger with the same name must not hide the main trigger.
+		$temp_trigger = $connection->quote_identifier( '__' . strtoupper( $table ) . '_' . strtoupper( $column ) . '_on_update__' );
+		$this->sqlite->exec( "CREATE TEMP TRIGGER $temp_trigger AFTER UPDATE ON $quoted_table BEGIN SELECT 1; END" );
+		$this->reconnectAfterDriverUpgrade();
+		$this->assertSame(
+			array( '__legacy_user_on_update__suffix', '__other_table_updated_at_on_update__' ),
+			$this->sqlite->query( "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name" )->fetchAll( PDO::FETCH_COLUMN )
+		);
+		$this->assertSame( '1', (string) $this->sqlite->query( "SELECT COUNT(*) FROM sqlite_temp_master WHERE type = 'trigger'" )->fetchColumn() );
+		$this->assertQuery( "SELECT extra FROM information_schema.columns WHERE table_name = 'other_table'" );
+		$this->assertSame( '', $this->last_result[0]->EXTRA );
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertQuery( "UPDATE $quoted_table SET id = 2" );
+		$this->assertSame( array( $now ), $this->getOnUpdateTimestamps( "SELECT $quoted_column FROM $quoted_table", $now ) );
+		$this->assertQuery( "UPDATE $quoted_table SET $quoted_column = '2001-01-01 00:00:00'" );
+		$this->assertSame( array( '2001-01-01 00:00:00' ), $this->getOnUpdateTimestamps( "SELECT $quoted_column FROM $quoted_table", $now ) );
+	}
+
 	public function testConfigurationNormalizesStoredTemporalZeroDefaultsOfReferencedTable(): void {
 		$this->assertQuery( 'CREATE TABLE _tmp_parent (id INT PRIMARY KEY, created_at TIMESTAMP NOT NULL DEFAULT 0)' );
 		$this->assertQuery( 'CREATE TABLE _tmp_cascade (id INT PRIMARY KEY, parent_id INT, FOREIGN KEY (parent_id) REFERENCES _tmp_parent (id) ON DELETE CASCADE)' );
@@ -7482,7 +7702,9 @@ QUERY
 		// Make recreating the second table fail, as its data doesn't match the information schema.
 		$this->sqlite->exec( "UPDATE _wp_sqlite_mysql_information_schema_columns SET is_nullable = 'NO' WHERE table_name = '_tmp_failing' AND column_name = 'id'" );
 
-		$sqlite_schema_query = "SELECT sql FROM sqlite_master WHERE name IN ('_tmp_recreated', '_tmp_failing') ORDER BY name";
+		// Trigger removal and recovered ON UPDATE metadata must also roll back.
+		$this->createOnUpdateTrigger( '_tmp_recreated', 'created_at', true );
+		$sqlite_schema_query = "SELECT sql FROM sqlite_master WHERE tbl_name IN ('_tmp_recreated', '_tmp_failing') ORDER BY name";
 		$sqlite_schema       = $this->sqlite->query( $sqlite_schema_query )->fetchAll( PDO::FETCH_COLUMN );
 
 		$exception = null;
@@ -7498,16 +7720,18 @@ QUERY
 		// All configuration changes are rolled back, including the recreated table.
 		$this->assertSame( '0.0.0', $this->engine->get_saved_driver_version() );
 		$this->assertSame( $sqlite_schema, $this->sqlite->query( $sqlite_schema_query )->fetchAll( PDO::FETCH_COLUMN ) );
-		$this->assertQuery( "SELECT table_name, column_default FROM information_schema.columns WHERE column_name = 'created_at' ORDER BY table_name" );
+		$this->assertQuery( "SELECT table_name, column_default, extra FROM information_schema.columns WHERE column_name = 'created_at' ORDER BY table_name" );
 		$this->assertEquals(
 			array(
 				(object) array(
 					'TABLE_NAME'     => '_tmp_failing',
 					'COLUMN_DEFAULT' => '0',
+					'EXTRA'          => '',
 				),
 				(object) array(
 					'TABLE_NAME'     => '_tmp_recreated',
 					'COLUMN_DEFAULT' => '0',
+					'EXTRA'          => '',
 				),
 			),
 			$this->last_result
