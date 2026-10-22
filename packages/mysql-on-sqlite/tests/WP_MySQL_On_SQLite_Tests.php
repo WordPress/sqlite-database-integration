@@ -6333,6 +6333,77 @@ QUERY
 		);
 	}
 
+	public function testInformationSchemaColumnsDatetimePrecision(): void {
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				col_date DATE,
+				col_time TIME,
+				col_time_fsp TIME(2),
+				col_datetime DATETIME,
+				col_datetime_fsp DATETIME(3),
+				col_timestamp TIMESTAMP NULL,
+				col_timestamp_fsp TIMESTAMP(6) NULL,
+				col_generated DATETIME AS (CAST(\'2020-01-01\' AS DATETIME(6))),
+				col_expression_default DATETIME DEFAULT (CAST(\'2020-01-01\' AS DATETIME(6))),
+				col_year YEAR,
+				col_int INT
+			)'
+		);
+
+		$this->assertQuery(
+			"SELECT column_name, datetime_precision FROM information_schema.columns WHERE table_name = '_tmp_table' ORDER BY ordinal_position"
+		);
+		$this->assertEquals(
+			array(
+				(object) array(
+					'COLUMN_NAME'        => 'col_date',
+					'DATETIME_PRECISION' => null,
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_time',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_time_fsp',
+					'DATETIME_PRECISION' => '2',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_datetime',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_datetime_fsp',
+					'DATETIME_PRECISION' => '3',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_timestamp',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_timestamp_fsp',
+					'DATETIME_PRECISION' => '6',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_generated',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_expression_default',
+					'DATETIME_PRECISION' => '0',
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_year',
+					'DATETIME_PRECISION' => null,
+				),
+				(object) array(
+					'COLUMN_NAME'        => 'col_int',
+					'DATETIME_PRECISION' => null,
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	public function testShowCreateTableWithTemporalZeroDefaults(): void {
 		$this->assertQuery(
 			'CREATE TABLE _tmp_table (
@@ -6345,10 +6416,21 @@ QUERY
 				col_timestamp_fsp TIMESTAMP(6) NOT NULL DEFAULT 0,
 				col_time_fsp TIME(2) NOT NULL DEFAULT 0,
 				col_decimal_zero DATETIME NOT NULL DEFAULT 0.0,
+				col_fraction_zero DATETIME NOT NULL DEFAULT .0,
+				col_exponent_zero DATETIME NOT NULL DEFAULT 0e0,
 				col_negative_zero DATETIME NOT NULL DEFAULT -0,
 				col_positive_zero DATETIME NOT NULL DEFAULT +0,
 				col_padded_zero DATETIME NOT NULL DEFAULT 00,
-				col_int INT NOT NULL DEFAULT 0
+				col_false DATETIME NOT NULL DEFAULT FALSE,
+				col_check DATETIME NOT NULL DEFAULT 0 CHECK (col_check < CAST(\'9999-12-31\' AS DATETIME(3))),
+				col_string_zero DATETIME NOT NULL DEFAULT \'0\',
+				col_time_string_zero TIME NOT NULL DEFAULT \'00\',
+				col_year_false YEAR NOT NULL DEFAULT FALSE,
+				col_year_string_zero YEAR NOT NULL DEFAULT \'0\',
+				col_year_string_double_zero YEAR NOT NULL DEFAULT \'00\',
+				col_expression DATETIME NOT NULL DEFAULT (0),
+				col_int INT NOT NULL DEFAULT 0,
+				col_varchar VARCHAR(10) NOT NULL DEFAULT \'0\'
 			)'
 		);
 
@@ -6367,10 +6449,22 @@ QUERY
 					"  `col_timestamp_fsp` timestamp(6) NOT NULL DEFAULT '0000-00-00 00:00:00.000000',",
 					"  `col_time_fsp` time(2) NOT NULL DEFAULT '00:00:00.00',",
 					"  `col_decimal_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_fraction_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_exponent_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
 					"  `col_negative_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
 					"  `col_positive_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
 					"  `col_padded_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
-					"  `col_int` int NOT NULL DEFAULT '0'",
+					"  `col_false` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_check` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_string_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `col_time_string_zero` time NOT NULL DEFAULT '00:00:00',",
+					"  `col_year_false` year NOT NULL DEFAULT '0000',",
+					"  `col_year_string_zero` year NOT NULL DEFAULT '0',",
+					"  `col_year_string_double_zero` year NOT NULL DEFAULT '00',",
+					'  `col_expression` datetime NOT NULL DEFAULT (0),',
+					"  `col_int` int NOT NULL DEFAULT '0',",
+					"  `col_varchar` varchar(10) NOT NULL DEFAULT '0',",
+					"  CONSTRAINT `_tmp_table_chk_1` CHECK (col_check < CAST('9999-12-31' AS DATETIME(3)))",
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
 			),
@@ -6404,16 +6498,32 @@ QUERY
 			'CREATE TABLE _tmp_table (
 				id INT NOT NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT 0,
-				updated_on DATE NOT NULL DEFAULT 0
+				created_at_fsp DATETIME(3) NOT NULL DEFAULT 0,
+				updated_on DATE NOT NULL DEFAULT FALSE
 			)'
 		);
+
+		// Strict SQL mode.
 		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
-		$this->assertQuery( 'SELECT created_at, updated_on FROM _tmp_table' );
+
+		// Non-strict SQL mode.
+		$this->assertQuery( "SET sql_mode = ''" );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
+
+		$this->assertQuery( 'SELECT * FROM _tmp_table ORDER BY id' );
 		$this->assertEquals(
 			array(
 				(object) array(
-					'created_at' => '0000-00-00 00:00:00',
-					'updated_on' => '0000-00-00',
+					'id'             => '1',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
+				),
+				(object) array(
+					'id'             => '2',
+					'created_at'     => '0000-00-00 00:00:00',
+					'created_at_fsp' => '0000-00-00 00:00:00.000',
+					'updated_on'     => '0000-00-00',
 				),
 			),
 			$this->last_result
@@ -6421,9 +6531,33 @@ QUERY
 	}
 
 	public function testAlterTableWithTemporalZeroDefaults(): void {
-		$this->assertQuery( 'CREATE TABLE _tmp_table (id INT NOT NULL, modified_at DATETIME NOT NULL)' );
+		$this->assertQuery(
+			'CREATE TABLE _tmp_table (
+				id INT NOT NULL,
+				modified_at DATETIME NOT NULL,
+				published_at DATETIME(3) NOT NULL,
+				updated_on DATE NOT NULL,
+				duration TIME(2) NOT NULL,
+				year_number YEAR NOT NULL,
+				year_string YEAR NOT NULL,
+				parenthesized_zero DATETIME NOT NULL,
+				false_value DATETIME NOT NULL,
+				string_zero TIME NOT NULL
+			)'
+		);
 		$this->assertQuery( 'ALTER TABLE _tmp_table ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT 0' );
 		$this->assertQuery( 'ALTER TABLE _tmp_table MODIFY COLUMN modified_at DATETIME NOT NULL DEFAULT 0' );
+		$this->assertQuery(
+			"ALTER TABLE _tmp_table
+				ALTER COLUMN published_at SET DEFAULT 0,
+				ALTER COLUMN updated_on SET DEFAULT 0,
+				ALTER COLUMN duration SET DEFAULT 0,
+				ALTER COLUMN year_number SET DEFAULT 0,
+				ALTER COLUMN year_string SET DEFAULT '0',
+				ALTER COLUMN parenthesized_zero SET DEFAULT (0),
+				ALTER COLUMN false_value SET DEFAULT FALSE,
+				ALTER COLUMN string_zero SET DEFAULT '0'"
+		);
 
 		$this->assertQuery( 'SHOW CREATE TABLE _tmp_table' );
 		$this->assertSame(
@@ -6433,6 +6567,14 @@ QUERY
 					'CREATE TABLE `_tmp_table` (',
 					'  `id` int NOT NULL,',
 					"  `modified_at` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `published_at` datetime(3) NOT NULL DEFAULT '0000-00-00 00:00:00.000',",
+					"  `updated_on` date NOT NULL DEFAULT '0000-00-00',",
+					"  `duration` time(2) NOT NULL DEFAULT '00:00:00.00',",
+					"  `year_number` year NOT NULL DEFAULT '0000',",
+					"  `year_string` year NOT NULL DEFAULT '0',",
+					"  `parenthesized_zero` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `false_value` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',",
+					"  `string_zero` time NOT NULL DEFAULT '00:00:00',",
 					"  `created_at` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00'",
 					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
 				)
