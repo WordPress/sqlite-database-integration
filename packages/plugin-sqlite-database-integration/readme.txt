@@ -73,6 +73,17 @@ To properly **secure the SQLite database**, define the `DB_PATH` constant to an 
 
 The value of `DB_PATH` must be an absolute path to the SQLite database file, or `:memory:` for an in-memory SQLite database. The database directory must be writable by PHP. Changing `DB_PATH` selects a different database without moving an existing one.
 
+= How can I configure the SQLite busy timeout? =
+
+SQLite allows only one writer at a time. When a write query cannot start because another connection holds the write lock, SQLite waits up to the busy timeout before failing with a "database is locked" error. The default timeout is 10 seconds.
+
+To change the timeout, define the `SQLITE_BUSY_TIMEOUT` constant in `wp-config.php` with a value in whole seconds:
+
+    // Wait up to 30 seconds for the write lock before failing.
+    define( 'SQLITE_BUSY_TIMEOUT', 30 );
+
+Set it to `0` to fail immediately instead of waiting.
+
 = What does the plugin require? =
 
 In addition to the WordPress and PHP versions listed above, the plugin requires the PDO SQLite PHP extension and SQLite 3.37.0 or newer. The setup screen also needs write access to the `wp-content` directory and will detect conflicting database drop-ins.
