@@ -2413,7 +2413,7 @@ class WP_MySQL_On_SQLite_Metadata_Tests extends TestCase {
 		$this->expectException( WP_MySQL_On_SQLite_Exception::class );
 		$this->expectExceptionMessage( "SQLSTATE[HY000]: General error: 3940 Constraint 'cnst' does not exist." );
 		$this->expectExceptionCode( 'HY000' );
-		$this->assertQuery( 'ALTER TABLE t2 DROP CONSTRAINT cnst' );
+		$this->assertQuery( 'ALTER TABLE t1 DROP CONSTRAINT cnst' );
 	}
 
 	public function testInformationSchemaAlterTableDropConstraintWithAmbiguousName(): void {

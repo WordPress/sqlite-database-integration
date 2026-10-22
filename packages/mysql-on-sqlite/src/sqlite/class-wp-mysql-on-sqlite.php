@@ -3012,6 +3012,10 @@ class WP_MySQL_On_SQLite extends PDO {
 			array( $this->get_saved_db_name( $database ), $table_name )
 		)->fetchAll( PDO::FETCH_ASSOC );
 
+		if ( 0 === count( $column_names ) ) {
+			throw $this->new_table_not_found_exception( sprintf( '%s.%s', $database, $table_name ) );
+		}
+
 		// Track column renames and removals.
 		$column_map = array_combine(
 			array_column( $column_names, 'COLUMN_NAME_LOWERCASE' ),
@@ -8109,6 +8113,14 @@ class WP_MySQL_On_SQLite extends PDO {
 					'42S21',
 					null,
 					array( '42S21', 1060, $driver_message )
+				);
+			case WP_SQLite_Information_Schema_Exception::TYPE_COLUMN_NOT_FOUND:
+				$driver_message = sprintf( "Unknown column '%s' in '%s'", $e->get_data()['column_name'], $e->get_data()['table_name'] );
+				return $this->new_driver_exception(
+					'SQLSTATE[42S22]: Column not found: 1054 ' . $driver_message,
+					'42S22',
+					null,
+					array( '42S22', 1054, $driver_message )
 				);
 			case WP_SQLite_Information_Schema_Exception::TYPE_DUPLICATE_KEY_NAME:
 				$driver_message = sprintf( "Duplicate key name '%s'", $e->get_data()['key_name'] );

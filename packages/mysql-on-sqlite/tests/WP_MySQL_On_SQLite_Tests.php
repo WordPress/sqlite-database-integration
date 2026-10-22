@@ -711,6 +711,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				empty_string BIT(1) DEFAULT '',
 				quoted_zero BIT(1) DEFAULT '0',
 				integer_five BIT(4) DEFAULT 5,
+				signed_five BIT(4) DEFAULT +5,
 				bit_literal_five BIT(4) DEFAULT b'0101',
 				binary_number_five BIT(4) DEFAULT 0b0101,
 				hex_literal_five BIT(4) DEFAULT x'05',
@@ -726,6 +727,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->assertStringContainsString( "`empty_string` bit(1) DEFAULT b'0'", $create_table );
 		$this->assertStringContainsString( "`quoted_zero` bit(1) DEFAULT b'0'", $create_table );
 		$this->assertStringContainsString( "`integer_five` bit(4) DEFAULT b'101'", $create_table );
+		$this->assertStringContainsString( "`signed_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`bit_literal_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`binary_number_five` bit(4) DEFAULT b'101'", $create_table );
 		$this->assertStringContainsString( "`hex_literal_five` bit(4) DEFAULT b'101'", $create_table );
@@ -743,6 +745,7 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 					'empty_string'       => '0',
 					'quoted_zero'        => '0',
 					'integer_five'       => '5',
+					'signed_five'        => '5',
 					'bit_literal_five'   => '5',
 					'binary_number_five' => '5',
 					'hex_literal_five'   => '5',
@@ -794,6 +797,10 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '$payload'",
 				'injected',
 			),
+			'ALTER COLUMN'       => array(
+				"ALTER TABLE _tmp_invalid_bit_default ALTER COLUMN injected SET DEFAULT '$payload'",
+				'injected',
+			),
 			'bit-like string'    => array(
 				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT 'b''0''; DROP TABLE users; -- '",
 				'injected',
@@ -808,6 +815,42 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			),
 			'0x-like string'     => array(
 				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '0x05; DROP TABLE users; -- '",
+				'injected',
+			),
+			'negative number'    => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT -1',
+				'injected',
+			),
+			'negative string'    => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '-1'",
+				'injected',
+			),
+			'negative SET'       => array(
+				'ALTER TABLE _tmp_invalid_bit_default ALTER COLUMN injected SET DEFAULT -1',
+				'injected',
+			),
+			'CREATE fraction'    => array(
+				'CREATE TABLE _tmp_created_invalid_bit_default (injected BIT(1) DEFAULT -0.1)',
+				'injected',
+			),
+			'ADD fraction'       => array(
+				'ALTER TABLE _tmp_invalid_bit_default ADD COLUMN injected_2 BIT(1) DEFAULT -0.1',
+				'injected_2',
+			),
+			'negative fraction'  => array(
+				'ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT -0.1',
+				'injected',
+			),
+			'fraction string'    => array(
+				"ALTER TABLE _tmp_invalid_bit_default MODIFY COLUMN injected BIT(1) DEFAULT '-0.1'",
+				'injected',
+			),
+			'fraction SET'       => array(
+				'ALTER TABLE _tmp_invalid_bit_default ALTER COLUMN injected SET DEFAULT -0.1',
+				'injected',
+			),
+			'SET fraction text'  => array(
+				"ALTER TABLE _tmp_invalid_bit_default ALTER COLUMN injected SET DEFAULT '-0.1'",
 				'injected',
 			),
 		);
@@ -2543,6 +2586,358 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 				'key'   => '1',
 			),
 			$result[0]
+		);
+	}
+
+	/**
+	 * @dataProvider alterColumnDefaultTableVariants
+	 */
+	public function testAlterColumnDefaults( string $temporary, string $column_keyword ): void {
+		$this->assertQuery( "CREATE $temporary TABLE t (id INT, n INT NOT NULL DEFAULT 1, v VARCHAR(10) DEFAULT 'x')" );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( "ALTER TABLE t ALTER $column_keyword n SET DEFAULT 5" );
+		$this->assertQuery( "ALTER TABLE t ALTER $column_keyword v DROP DEFAULT" );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2)' );
+
+		$result = $this->assertQuery( 'SELECT * FROM t ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id' => '1',
+					'n'  => '1',
+					'v'  => 'x',
+				),
+				(object) array(
+					'id' => '2',
+					'n'  => '5',
+					'v'  => null,
+				),
+			),
+			$result
+		);
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( "`n` int NOT NULL DEFAULT '5'", $result[0]->{'Create Table'} );
+		$this->assertStringContainsString( '`v` varchar(10) DEFAULT NULL', $result[0]->{'Create Table'} );
+
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertSame( '5', $result[1]->Default );
+		$this->assertNull( $result[2]->Default );
+
+		$this->assertQuery( "ALTER TABLE t ALTER $column_keyword n DROP DEFAULT" );
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( "`n` int NOT NULL,\n", $result[0]->{'Create Table'} );
+		$this->assertQueryError(
+			'INSERT INTO t (id) VALUES (3)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 NOT NULL constraint failed: t.n'
+		);
+	}
+
+	public static function alterColumnDefaultTableVariants(): array {
+		return array(
+			'permanent with COLUMN'    => array( '', 'COLUMN' ),
+			'permanent without COLUMN' => array( '', '' ),
+			'temporary with COLUMN'    => array( 'TEMPORARY', 'COLUMN' ),
+			'temporary without COLUMN' => array( 'TEMPORARY', '' ),
+		);
+	}
+
+	/**
+	 * @dataProvider alterColumnDefaultValues
+	 */
+	public function testAlterColumnDefaultValues(
+		string $type,
+		string $default_clause,
+		?string $stored_default,
+		?string $inserted_value,
+		string $shown_default,
+		string $extra = ''
+	): void {
+		$this->assertQuery( "CREATE TABLE t (id INT, value $type COMMENT 'keep')" );
+		$metadata_query = "SELECT * FROM information_schema.columns WHERE table_schema = 'wp' AND table_name = 't' AND column_name = 'value'";
+		$original       = $this->assertQuery( $metadata_query )[0];
+
+		$this->assertQuery( "ALTER TABLE t ALTER COLUMN value SET DEFAULT $default_clause" );
+		$expected                 = clone $original;
+		$expected->COLUMN_DEFAULT = $stored_default;
+		$expected->EXTRA          = $extra;
+		$this->assertEquals( array( $expected ), $this->assertQuery( $metadata_query ) );
+
+		$result = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertStringContainsString( "`value` $type DEFAULT $shown_default COMMENT 'keep'", $result[0]->{'Create Table'} );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT value FROM t WHERE id = 1' );
+		$this->assertSame( $inserted_value, $result[0]->value );
+
+		$this->assertQuery( 'ALTER TABLE t ALTER value DROP DEFAULT' );
+		$this->assertEquals( array( $original ), $this->assertQuery( $metadata_query ) );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2)' );
+		$result = $this->assertQuery( 'SELECT value FROM t ORDER BY id' );
+		$this->assertSame( $inserted_value, $result[0]->value );
+		$this->assertNull( $result[1]->value );
+	}
+
+	public static function alterColumnDefaultValues(): array {
+		return array(
+			'integer'            => array( 'int', '5', '5', '5', "'5'" ),
+			'wrapped integer'    => array( 'int', '((+5))', '5', '5', "'5'" ),
+			'negative integer'   => array( 'int', '-5', '-5', '-5', "'-5'" ),
+			'positive integer'   => array( 'int', '+5', '5', '5', "'5'" ),
+			'decimal'            => array( 'decimal(5,2)', '-1.25', '-1.25', '-1.25', "'-1.25'" ),
+			'true'               => array( 'int', 'TRUE', '1', '1', "'1'" ),
+			'false'              => array( 'int', 'FALSE', '0', '0', "'0'" ),
+			'null'               => array( 'int', 'NULL', null, null, 'NULL' ),
+			'empty string'       => array( 'varchar(50)', "''", '', '', "''" ),
+			'quoted string'      => array( 'varchar(50)', "'it''s a test'", "it's a test", "it's a test", "'it''s a test'" ),
+			'unicode string'     => array( 'varchar(50)', "'Příliš 🙂'", 'Příliš 🙂', 'Příliš 🙂', "'Příliš 🙂'" ),
+			'bit number'         => array( 'bit(4)', '5', "b'101'", '5', "b'101'" ),
+			'bit signed number'  => array( 'bit(4)', '+5', "b'101'", '5', "b'101'" ),
+			'bit literal'        => array( 'bit(4)', "b'0101'", "b'101'", '5', "b'101'" ),
+			'bit hex literal'    => array( 'bit(4)', "x'05'", "b'101'", '5', "b'101'" ),
+			'bit true'           => array( 'bit(4)', 'TRUE', "b'1'", '1', "b'1'" ),
+			'bit false'          => array( 'bit(4)', 'FALSE', "b'0'", '0', "b'0'" ),
+			'datetime'           => array( 'datetime', "'2026-10-22 12:34:56'", '2026-10-22 12:34:56', '2026-10-22 12:34:56', "'2026-10-22 12:34:56'" ),
+			'numeric expression' => array( 'int', '(1 + 2)', '1 + 2', '3', '(1 + 2)', 'DEFAULT_GENERATED' ),
+			'string expression'  => array( 'varchar(50)', "(CONCAT('a', 'b'))", "CONCAT('a' , 'b')", 'ab', "(CONCAT('a' , 'b'))", 'DEFAULT_GENERATED' ),
+		);
+	}
+
+	public function testAlterColumnDefaultReplacesExpressionAndPreservesExtra(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)' );
+		$this->assertQuery( "ALTER TABLE t ALTER value SET DEFAULT '2000-01-01 00:00:00'" );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertSame( '2000-01-01 00:00:00', $result[1]->Default );
+		$this->assertSame( 'on update CURRENT_TIMESTAMP', $result[1]->Extra );
+
+		$this->assertQuery( 'ALTER TABLE t ALTER value SET DEFAULT (NOW())' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertSame( 'NOW()', $result[1]->Default );
+		$this->assertSame( 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', $result[1]->Extra );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT value FROM t' );
+		$this->assertRegExp( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $result[0]->value );
+		$this->assertQuery( 'ALTER TABLE t ALTER value DROP DEFAULT' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertNull( $result[1]->Default );
+		$this->assertSame( 'on update CURRENT_TIMESTAMP', $result[1]->Extra );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2)' );
+		$result = $this->assertQuery( 'SELECT value FROM t WHERE id = 2' );
+		$this->assertNull( $result[0]->value );
+		$this->assertQuery( 'UPDATE t SET id = 3 WHERE id = 2' );
+		$result = $this->assertQuery( 'SELECT value FROM t WHERE id = 3' );
+		$this->assertRegExp( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $result[0]->value );
+	}
+
+	public function testAlterColumnDefaultsWithMultipleActions(): void {
+		$this->assertQuery( "CREATE TABLE t (id INT, n INT DEFAULT 1, v VARCHAR(10) DEFAULT 'x')" );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertQuery( 'ALTER TABLE t ALTER COLUMN N SET DEFAULT 5, ALTER v DROP DEFAULT, ALTER id SET VISIBLE, ADD added INT DEFAULT 9' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2)' );
+		$result = $this->assertQuery( 'SELECT * FROM t ORDER BY id' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id'    => '1',
+					'n'     => '1',
+					'v'     => 'x',
+					'added' => '9',
+				),
+				(object) array(
+					'id'    => '2',
+					'n'     => '5',
+					'v'     => null,
+					'added' => '9',
+				),
+			),
+			$result
+		);
+	}
+
+	public function testAlterColumnDefaultsOnShadowingTemporaryTable(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value INT DEFAULT 1)' );
+		$this->assertQuery( 'CREATE TEMPORARY TABLE t (id INT, value INT DEFAULT 2)' );
+		$this->assertQuery( 'ALTER TABLE t ALTER value SET DEFAULT 3' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT value FROM t' );
+		$this->assertSame( '3', $result[0]->value );
+		$this->assertQuery( 'DROP TEMPORARY TABLE t' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT value FROM t' );
+		$this->assertSame( '1', $result[0]->value );
+	}
+
+	public function testAlterColumnDefaultWithQuotedIdentifiers(): void {
+		$this->assertQuery( 'CREATE TABLE `table``name` (`column``name` INT DEFAULT 1, id INT)' );
+		$this->assertQuery( 'ALTER TABLE `table``name` ALTER `column``name` SET DEFAULT NULL' );
+		$this->assertQuery( 'INSERT INTO `table``name` (id) VALUES (1)' );
+		$result = $this->assertQuery( 'SELECT * FROM `table``name`' );
+		$this->assertNull( $result[0]->{'column`name'} );
+
+		$this->assertQuery( 'ALTER TABLE `table``name` ALTER `column``name` SET DEFAULT (1 + 2)' );
+		$this->assertQuery( 'ALTER TABLE `table``name` ALTER `column``name` SET DEFAULT (3 + 4)' );
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM `table``name`' );
+		$this->assertSame( '3 + 4', $result[0]->Default );
+		$this->assertSame( 'DEFAULT_GENERATED', $result[0]->Extra );
+		$this->assertQuery( 'INSERT INTO `table``name` (id) VALUES (2)' );
+		$result = $this->assertQuery( 'SELECT * FROM `table``name` WHERE `column``name` IS NOT NULL' );
+		$this->assertSame( '7', $result[0]->{'column`name'} );
+	}
+
+	/**
+	 * @dataProvider alterColumnDefaultNullValues
+	 */
+	public function testAlterColumnDefaultRejectsNullOnNotNullColumn( string $default_clause ): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value INT NOT NULL DEFAULT 1)' );
+		$original = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertQueryError(
+			"ALTER TABLE t ALTER id SET DEFAULT 5, ALTER value SET DEFAULT $default_clause",
+			"SQLSTATE[42000]: Syntax error or access violation: 1067 Invalid default value for 'value'"
+		);
+		$this->assertEquals( $original, $this->assertQuery( 'SHOW CREATE TABLE t' ) );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$this->assertSame( '1', $this->assertQuery( 'SELECT value FROM t' )[0]->value );
+
+		$this->assertQuery( "ALTER TABLE t ALTER id SET DEFAULT $default_clause" );
+		$this->assertNull( $this->assertQuery( 'SHOW COLUMNS FROM t' )[0]->Default );
+	}
+
+	public static function alterColumnDefaultNullValues(): array {
+		return array( array( 'NULL' ), array( '(NULL)' ), array( '((NULL))' ), array( '(+NULL)' ) );
+	}
+
+	/**
+	 * @dataProvider alterAutoIncrementDefaultValues
+	 */
+	public function testAlterColumnDefaultOnAutoIncrementColumn( string $default_clause, bool $valid ): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT, value INT DEFAULT 1)' );
+		if ( $valid ) {
+			$this->assertQuery( "ALTER TABLE t ALTER id SET DEFAULT $default_clause, ALTER value SET DEFAULT 5" );
+		} else {
+			$this->assertQueryError(
+				"ALTER TABLE t ALTER value SET DEFAULT 5, ALTER id SET DEFAULT $default_clause",
+				"SQLSTATE[42000]: Syntax error or access violation: 1067 Invalid default value for 'id'"
+			);
+		}
+		$columns = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertNull( $columns[0]->Default );
+		$this->assertSame( 'auto_increment', $columns[0]->Extra );
+		$this->assertSame( $valid ? '5' : '1', $columns[1]->Default );
+		$create_table = $this->assertQuery( 'SHOW CREATE TABLE t' )[0]->{'Create Table'};
+		$this->assertStringContainsString( "`id` int NOT NULL AUTO_INCREMENT,\n", $create_table );
+
+		// Unlike MySQL, the driver ignores an accepted default and generates an ID.
+		$this->assertQuery( 'INSERT INTO t (value) VALUES (1)' );
+		$this->assertSame( '1', $this->assertQuery( 'SELECT id FROM t' )[0]->id );
+
+		// Unlike MySQL in strict mode, the driver doesn't reject an omitted ID after DROP DEFAULT.
+		$this->assertQuery( 'ALTER TABLE t ALTER id DROP DEFAULT' );
+		$this->assertQuery( 'INSERT INTO t (value) VALUES (1)' );
+		$this->assertSame( '2', $this->assertQuery( 'SELECT MAX(id) AS id FROM t' )[0]->id );
+	}
+
+	public static function alterAutoIncrementDefaultValues(): array {
+		return array(
+			'literal'               => array( '10', true ),
+			'parenthesized literal' => array( '(10)', true ),
+			'nested literal'        => array( '((10))', true ),
+			'unary plus'            => array( '(+10)', true ),
+			'numeric string'        => array( "'10'", true ),
+			'null'                  => array( 'NULL', false ),
+			'parenthesized null'    => array( '(NULL)', false ),
+			'expression'            => array( '(1 + 2)', false ),
+		);
+	}
+
+	public function testAlterColumnDefaultRollsBackInvalidDefault(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value BIT(4) DEFAULT 1)' );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (1)' );
+		$original = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertQueryError(
+			"ALTER TABLE t ALTER id SET DEFAULT 5, ALTER value SET DEFAULT 'invalid'",
+			"SQLSTATE[42000]: Syntax error or access violation: 1067 Invalid default value for 'value'"
+		);
+		$this->assertEquals( $original, $this->assertQuery( 'SHOW CREATE TABLE t' ) );
+		$this->assertQuery( 'INSERT INTO t (id) VALUES (2)' );
+		$result = $this->assertQuery( 'SELECT value FROM t ORDER BY id' );
+		$this->assertEquals( array( (object) array( 'value' => '1' ), (object) array( 'value' => '1' ) ), $result );
+	}
+
+	/**
+	 * @dataProvider alterMissingColumnDefaultActions
+	 */
+	public function testAlterMissingTableDefault( string $action ): void {
+		$error = "SQLSTATE[42S02]: Base table or view not found: 1146 Table 'wp.missing' doesn't exist";
+		foreach ( array( 'missing', '`wp`.`missing`' ) as $table ) {
+			$this->assertQueryError( "ALTER TABLE $table ALTER id $action", $error );
+			$this->assertSame( array( '42S02', 1146, "Table 'wp.missing' doesn't exist" ), $this->engine->errorInfo() );
+		}
+
+		$this->assertQuery( 'CREATE TEMPORARY TABLE missing (id INT DEFAULT 1)' );
+		$this->assertQuery( "ALTER TABLE missing ALTER id $action" );
+		$this->assertQuery( 'DROP TEMPORARY TABLE missing' );
+		$this->assertQueryError( "ALTER TABLE missing ALTER id $action", $error );
+	}
+
+	/**
+	 * @dataProvider alterMissingColumnDefaultActions
+	 */
+	public function testAlterMissingColumnDefault( string $action ): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT DEFAULT 1)' );
+		$this->assertQueryError(
+			"ALTER TABLE t ALTER id SET DEFAULT 5, ALTER missing $action",
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'missing' in 't'"
+		);
+		$result = $this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertSame( '1', $result[0]->Default );
+	}
+
+	public static function alterMissingColumnDefaultActions(): array {
+		return array(
+			array( 'SET DEFAULT 1' ),
+			array( 'DROP DEFAULT' ),
+		);
+	}
+
+	/**
+	 * @dataProvider alterColumnDefaultWithOtherColumnActions
+	 */
+	public function testAlterColumnDefaultWithOtherColumnActions( string $actions, string $column_name, ?string $expected_default ): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value INT DEFAULT 1)' );
+		$this->assertQuery( 'ALTER TABLE t ' . $actions );
+		$defaults = array_column( $this->assertQuery( 'SHOW COLUMNS FROM t' ), 'Default', 'Field' );
+		$this->assertSame( $expected_default, $defaults[ $column_name ] );
+	}
+
+	public static function alterColumnDefaultWithOtherColumnActions(): array {
+		// The actions are applied in order. MySQL rejects these statements with error 1054.
+		return array(
+			'added column'       => array( 'ADD added INT, ALTER added SET DEFAULT 5', 'added', '5' ),
+			'modified column'    => array( 'MODIFY value INT DEFAULT 2, ALTER value SET DEFAULT 5', 'value', '5' ),
+			'later modification' => array( 'ALTER value SET DEFAULT 5, MODIFY value INT DEFAULT 2', 'value', '2' ),
+			'new column name'    => array( 'CHANGE value renamed INT, ALTER renamed SET DEFAULT 5', 'renamed', '5' ),
+			'repeated default'   => array( 'ALTER value SET DEFAULT 5, ALTER VALUE SET DEFAULT 6', 'value', '6' ),
+			'later drop default' => array( 'ALTER value SET DEFAULT 5, ALTER value DROP DEFAULT', 'value', null ),
+			'visibility change'  => array( 'ALTER value SET INVISIBLE, ALTER value SET DEFAULT 5', 'value', '5' ),
+		);
+	}
+
+	/**
+	 * @dataProvider alterColumnDefaultOnRemovedColumnActions
+	 */
+	public function testAlterColumnDefaultOnRemovedColumn( string $actions ): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT, value INT DEFAULT 1)' );
+		$original = $this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertQueryError(
+			'ALTER TABLE t ' . $actions,
+			"SQLSTATE[42S22]: Column not found: 1054 Unknown column 'value' in 't'"
+		);
+		$this->assertEquals( $original, $this->assertQuery( 'SHOW CREATE TABLE t' ) );
+	}
+
+	public static function alterColumnDefaultOnRemovedColumnActions(): array {
+		return array(
+			'renamed column' => array( 'CHANGE value renamed INT, ALTER value SET DEFAULT 5' ),
+			'dropped column' => array( 'DROP value, ALTER value SET DEFAULT 5' ),
 		);
 	}
 
