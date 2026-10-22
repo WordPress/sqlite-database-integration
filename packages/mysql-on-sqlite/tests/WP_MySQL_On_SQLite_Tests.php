@@ -1778,6 +1778,193 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 	}
 
+	public function testAlterTableAddColumnList(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		// ADD (...) syntax.
+		$this->assertQuery( "ALTER TABLE t ADD (a INT, b VARCHAR(10) NOT NULL DEFAULT 'x')" );
+
+		// ADD COLUMN (...) syntax.
+		$this->assertQuery( 'ALTER TABLE t ADD COLUMN (c INT)' );
+
+		$this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'a',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'b',
+					'Type'    => 'varchar(10)',
+					'Null'    => 'NO',
+					'Key'     => '',
+					'Default' => 'x',
+					'Extra'   => '',
+				),
+				(object) array(
+					'Field'   => 'c',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$this->last_result
+		);
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  `a` int DEFAULT NULL,',
+					"  `b` varchar(10) NOT NULL DEFAULT 'x',",
+					'  `c` int DEFAULT NULL',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		$this->assertQuery( 'INSERT INTO t (id, a, c) VALUES (1, 2, 3)' );
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id' => '1',
+					'a'  => '2',
+					'b'  => 'x',
+					'c'  => '3',
+				),
+			),
+			$this->last_result
+		);
+	}
+
+	public function testAlterTableAddColumnListWithConstraints(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+		$this->assertQuery(
+			'ALTER TABLE t ADD (
+				a INT AUTO_INCREMENT PRIMARY KEY,
+				b INT UNIQUE,
+				INDEX idx_c (c),
+				c INT,
+				CONSTRAINT chk_c CHECK (c > 0)
+			)'
+		);
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `id` int DEFAULT NULL,',
+					'  `a` int NOT NULL AUTO_INCREMENT,',
+					'  `b` int DEFAULT NULL,',
+					'  `c` int DEFAULT NULL,',
+					'  PRIMARY KEY (`a`),',
+					'  UNIQUE KEY `b` (`b`),',
+					'  KEY `idx_c` (`c`),',
+					'  CONSTRAINT `chk_c` CHECK (c > 0)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+
+		// Insert valid data.
+		$this->assertQuery( 'INSERT INTO t (c) VALUES (1)' );
+		$this->assertQuery( 'SELECT * FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'id' => null,
+					'a'  => '1',
+					'b'  => null,
+					'c'  => '1',
+				),
+			),
+			$this->last_result
+		);
+
+		// Insert invalid data.
+		$this->assertQueryError(
+			'INSERT INTO t (c) VALUES (0)',
+			'SQLSTATE[23000]: Integrity constraint violation: 19 CHECK constraint failed: chk_c'
+		);
+	}
+
+	public function testAlterTableAddIndexList(): void {
+		$this->assertQuery( 'CREATE TABLE t (a INT, b INT)' );
+		$this->assertQuery( 'ALTER TABLE t ADD (INDEX idx_a (a), UNIQUE KEY uk_b (b))' );
+
+		$this->assertQuery( 'SHOW CREATE TABLE t' );
+		$this->assertEquals(
+			implode(
+				"\n",
+				array(
+					'CREATE TABLE `t` (',
+					'  `a` int DEFAULT NULL,',
+					'  `b` int DEFAULT NULL,',
+					'  UNIQUE KEY `uk_b` (`b`),',
+					'  KEY `idx_a` (`a`)',
+					') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+				)
+			),
+			$this->last_result[0]->{'Create Table'}
+		);
+	}
+
+	public function testAlterTableAddColumnListErrors(): void {
+		$this->assertQuery( 'CREATE TABLE t (id INT)' );
+
+		$this->assertQueryError(
+			'ALTER TABLE t ADD (a INT, id INT)',
+			"SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name 'id'"
+		);
+		$this->assertQueryError(
+			'ALTER TABLE t ADD (a INT, a INT)',
+			"SQLSTATE[42S21]: Column already exists: 1060 Duplicate column name 'a'"
+		);
+		$this->assertQueryError(
+			'ALTER TABLE t ADD (a INT, INDEX (b))',
+			"SQLSTATE[42000]: Syntax error or access violation: 1072 Key column 'b' doesn't exist in table"
+		);
+
+		// The table is unchanged.
+		$this->assertQuery( 'SHOW COLUMNS FROM t' );
+		$this->assertEquals(
+			array(
+				(object) array(
+					'Field'   => 'id',
+					'Type'    => 'int',
+					'Null'    => 'YES',
+					'Key'     => '',
+					'Default' => null,
+					'Extra'   => '',
+				),
+			),
+			$this->last_result
+		);
+	}
+
 	public function testColumnWithOnUpdate() {
 		// CREATE TABLE with ON UPDATE
 		$this->assertQuery(
