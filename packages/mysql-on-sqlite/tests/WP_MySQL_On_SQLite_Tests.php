@@ -119,6 +119,48 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		$this->engine->setAttribute( PDO::ATTR_STRINGIFY_FETCHES, true );
 	}
 
+	/**
+	 * Fetch a timestamp column, replacing values set by the tested updates with $now.
+	 *
+	 * Values between $now and the time of this call are replaced, so a timestamp
+	 * that is too old or in the future still fails the assertion.
+	 *
+	 * @param  string $query A query that selects a single timestamp column.
+	 * @param  string $now   The time before the tested updates, in UTC.
+	 * @return array         The column values.
+	 */
+	private function getOnUpdateTimestamps( string $query, string $now ): array {
+		$after = gmdate( 'Y-m-d H:i:s' );
+		return array_map(
+			function ( $row ) use ( $now, $after ) {
+				$value = current( (array) $row );
+				return null !== $value && $value >= $now && $value <= $after ? $now : $value;
+			},
+			$this->assertQuery( $query )
+		);
+	}
+
+	/**
+	 * Create an ON UPDATE CURRENT_TIMESTAMP trigger, as driver versions <= 3.1.1 did.
+	 *
+	 * @param string $table  The table name.
+	 * @param string $column The column name.
+	 */
+	private function createOnUpdateTrigger( string $table, string $column ): void {
+		$this->sqlite->exec(
+			sprintf(
+				'CREATE TRIGGER `_wp_sqlite_%1$s_%2$s_on_update`
+				AFTER UPDATE ON `%1$s`
+				FOR EACH ROW
+				BEGIN
+					UPDATE `%1$s` SET `%2$s` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
+				END',
+				$table,
+				$column
+			)
+		);
+	}
+
 	public function testRegexp() {
 		$this->assertQuery(
 			"INSERT INTO _options (option_name, option_value) VALUES ('rss_0123456789abcdef0123456789abcdef', '1');"
@@ -1909,47 +1951,9 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			$results
 		);
 
-		// assert ON UPDATE triggers
+		// ON UPDATE is emulated in UPDATE statements, without triggers
 		$results = $this->assertQuery( "SELECT * FROM sqlite_master WHERE type = 'trigger'" );
-		$this->assertEquals(
-			array(
-				(object) array(
-					'type'     => 'trigger',
-					'name'     => '_wp_sqlite__tmp_table_created_at_on_update',
-					'tbl_name' => '_tmp_table',
-					'rootpage' => '0',
-					'sql'      => implode(
-						"\n\t\t\t\t",
-						array(
-							'CREATE TRIGGER `_wp_sqlite__tmp_table_created_at_on_update`',
-							'AFTER UPDATE ON `_tmp_table`',
-							'FOR EACH ROW',
-							'BEGIN',
-							'  UPDATE `_tmp_table` SET `created_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;',
-							'END',
-						)
-					),
-				),
-				(object) array(
-					'type'     => 'trigger',
-					'name'     => '_wp_sqlite__tmp_table_updated_at_on_update',
-					'tbl_name' => '_tmp_table',
-					'rootpage' => '0',
-					'sql'      => implode(
-						"\n\t\t\t\t",
-						array(
-							'CREATE TRIGGER `_wp_sqlite__tmp_table_updated_at_on_update`',
-							'AFTER UPDATE ON `_tmp_table`',
-							'FOR EACH ROW',
-							'BEGIN',
-							'  UPDATE `_tmp_table` SET `updated_at` = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;',
-							'END',
-						)
-					),
-				),
-			),
-			$results
-		);
+		$this->assertEquals( array(), $results );
 
 		// on INSERT, no timestamps are expected
 		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
@@ -1999,10 +2003,6 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 			),
 			$results
 		);
-
-		// assert ON UPDATE triggers are removed
-		$results = $this->assertQuery( "SELECT * FROM sqlite_master WHERE type = 'trigger'" );
-		$this->assertEquals( array(), $results );
 
 		// now, no timestamps are expected
 		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (10)' );
@@ -2065,8 +2065,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 
 		// no ON UPDATE is set
 		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (1)' );
-		$this->assertQuery( 'UPDATE _tmp_table SET id = 1 WHERE id = 1' );
-		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 1' );
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 2 WHERE id = 1' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 2' );
 		$this->assertNull( $result[0]->created_at );
 
 		// CHANGE COLUMN to add ON UPDATE
@@ -2097,8 +2097,8 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 
 		// now, ON UPDATE SHOULD BE SET
-		$this->assertQuery( 'UPDATE _tmp_table SET id = 1 WHERE id = 1' );
-		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 1' );
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 3 WHERE id = 2' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 3' );
 		$this->assertRegExp( '/\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d/', $result[0]->created_at );
 
 		// change column to remove ON UPDATE
@@ -2129,10 +2129,459 @@ class WP_MySQL_On_SQLite_Tests extends TestCase {
 		);
 
 		// now, no timestamp is expected
-		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (2)' );
-		$this->assertQuery( 'UPDATE _tmp_table SET id = 2 WHERE id = 2' );
-		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 2' );
+		$this->assertQuery( 'INSERT INTO _tmp_table (id) VALUES (4)' );
+		$this->assertQuery( 'UPDATE _tmp_table SET id = 5 WHERE id = 4' );
+		$result = $this->assertQuery( 'SELECT * FROM _tmp_table WHERE id = 5' );
 		$this->assertNull( $result[0]->created_at );
+	}
+
+	public function testOnUpdateCurrentTimestamp(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				s VARCHAR(20),
+				ts TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, 'a', '2000-01-01 00:00:00'),
+				(2, 1, 'a', '2000-01-01 00:00:00'),
+				(3, 1, 'a', '2000-01-01 00:00:00'),
+				(4, 1, 'a', '2000-01-01 00:00:00'),
+				(5, 1, 'a', '2000-01-01 00:00:00'),
+				(6, 1, 'a', '2000-01-01 00:00:00'),
+				(7, 1, 'a', '2000-01-01 00:00:00'),
+				(8, 1, 'a', '2000-01-01 00:00:00'),
+				(9, 1, 'a', '2000-01-01 00:00:00'),
+				(10, 1, 'a', '2000-01-01 00:00:00')"
+		);
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+
+		// A changed value sets the current timestamp.
+		$this->assertQuery( 'UPDATE t SET n = 2 WHERE id = 1' );
+
+		// An explicit value is saved.
+		$this->assertQuery( "UPDATE t SET ts = '2001-01-01 00:00:00' WHERE id = 2" );
+
+		// An update that changes nothing keeps the timestamp.
+		$this->assertQuery( 'UPDATE t SET n = n WHERE id = 3' );
+
+		// A value that is equal after type casting is not a change.
+		$this->assertQuery( "UPDATE t SET n = '1' WHERE id = 4" );
+
+		// Assigning the current timestamp prevents the automatic update.
+		$this->assertQuery( 'UPDATE t SET n = 2, ts = ts WHERE id = 5' );
+
+		// Assigning DEFAULT prevents the automatic update.
+		$this->assertQuery( 'UPDATE t SET n = 2, ts = DEFAULT WHERE id = 6' );
+
+		// A case-only change is a change.
+		$this->assertQuery( "UPDATE t SET s = 'A' WHERE id = 7" );
+
+		// A trailing space is a change.
+		$this->assertQuery( "UPDATE t SET s = 'a ' WHERE id = 8" );
+
+		// An unchanged string is not a change.
+		$this->assertQuery( "UPDATE t SET s = 'a' WHERE id = 9" );
+
+		// An explicit MySQL collation doesn't hide a case-only change.
+		$this->assertQuery( "UPDATE t SET s = 'A' COLLATE utf8mb4_general_ci WHERE id = 10" );
+
+		$this->assertSame(
+			array(
+				$now,
+				'2001-01-01 00:00:00',
+				'2000-01-01 00:00:00',
+				'2000-01-01 00:00:00',
+				'2000-01-01 00:00:00',
+				null,
+				$now,
+				$now,
+				'2000-01-01 00:00:00',
+				$now,
+			),
+			$this->getOnUpdateTimestamps( 'SELECT ts FROM t ORDER BY id', $now )
+		);
+	}
+
+	/**
+	 * @dataProvider onUpdateRandomAssignments
+	 */
+	public function testOnUpdateCurrentTimestampWithRandomAssignments( string $query ): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts1 TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP,
+				ts2 DATETIME NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(3, 0, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(4, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00')"
+		);
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertQuery( $query );
+
+		// MySQL's first four RAND(1) >= 0.5 values are 0, 1, 0, and 0.
+		$this->assertSame( array( '0', '1', '0', '0' ), array_column( $this->assertQuery( 'SELECT n FROM t ORDER BY id' ), 'n' ) );
+		$expected = array( $now, '2000-01-01 00:00:00', '2000-01-01 00:00:00', $now );
+		$this->assertSame( $expected, $this->getOnUpdateTimestamps( 'SELECT ts1 FROM t ORDER BY id', $now ) );
+		$this->assertSame( $expected, $this->getOnUpdateTimestamps( 'SELECT ts2 FROM t ORDER BY id', $now ) );
+	}
+
+	public static function onUpdateRandomAssignments(): array {
+		return array(
+			'update'                  => array( 'UPDATE t SET n = RAND(1) >= 0.5' ),
+			'on duplicate key update' => array(
+				'INSERT INTO t (id, n) VALUES (1, 0), (2, 0), (3, 0), (4, 0)
+				ON DUPLICATE KEY UPDATE n = RAND(1) >= 0.5',
+			),
+		);
+	}
+
+	/**
+	 * @dataProvider onUpdateCountedAssignments
+	 */
+	public function testOnUpdateCurrentTimestampEvaluatesAssignmentsOnce( string $query ): void {
+		if ( str_contains( $query, 'JOIN' ) && version_compare( $this->engine->get_sqlite_version(), '3.33.0', '<' ) ) {
+			$this->markTestSkipped( 'SQLite versions before 3.33.0 do not support UPDATE with FROM.' );
+		}
+
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts1 TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP,
+				ts2 DATETIME NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(2, 2, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(3, 3, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(4, 4, '2000-01-01 00:00:00', '2000-01-01 00:00:00')"
+		);
+		$this->assertQuery( 'CREATE TABLE t2 (id INT, n INT)' );
+		$this->assertQuery( 'INSERT INTO t2 VALUES (1, 1), (2, 2), (3, 3)' );
+
+		$calls    = array();
+		$callback = static function ( $value ) use ( &$calls ) {
+			$calls[] = $value;
+			return 1 === $value ? 2 : $value;
+		};
+		if ( $this->sqlite instanceof Pdo\Sqlite ) {
+			$this->sqlite->createFunction( 'on_update_test_probe', $callback, 1 );
+		} else {
+			$this->sqlite->sqliteCreateFunction( 'on_update_test_probe', $callback, 1 );
+		}
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertQuery( $query );
+		$this->assertSame( array( 1, 2, 3 ), $calls );
+		$this->assertSame( array( '2', '2', '3', '4' ), array_column( $this->assertQuery( 'SELECT n FROM t WHERE id <= 4 ORDER BY id' ), 'n' ) );
+		$expected = array( $now, '2000-01-01 00:00:00', '2000-01-01 00:00:00', '2000-01-01 00:00:00' );
+		$this->assertSame( $expected, $this->getOnUpdateTimestamps( 'SELECT ts1 FROM t WHERE id <= 4 ORDER BY id', $now ) );
+		$this->assertSame( $expected, $this->getOnUpdateTimestamps( 'SELECT ts2 FROM t WHERE id <= 4 ORDER BY id', $now ) );
+	}
+
+	public static function onUpdateCountedAssignments(): array {
+		return array(
+			'update'                  => array( 'UPDATE t SET n = on_update_test_probe(n) WHERE id < 4' ),
+			'alias'                   => array( 'UPDATE t AS a SET a.n = on_update_test_probe(a.n) WHERE a.id < 4' ),
+			'limit'                   => array( 'UPDATE t SET n = on_update_test_probe(n) ORDER BY id LIMIT 3' ),
+			'join'                    => array( 'UPDATE t AS a JOIN t2 AS b ON a.id = b.id SET a.n = on_update_test_probe(b.n)' ),
+			'on duplicate key update' => array(
+				'INSERT INTO t (id, n) VALUES (1, 1), (2, 2), (3, 3), (5, 5)
+				ON DUPLICATE KEY UPDATE n = on_update_test_probe(VALUES(n))',
+			),
+			'scalar subquery'         => array( 'UPDATE t SET n = (SELECT on_update_test_probe(n)) WHERE id < 4' ),
+		);
+	}
+
+	public function testOnUpdateCurrentTimestampWithMultipleColumns(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts1 TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP,
+				ts2 DATETIME NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(3, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(4, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(5, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00')"
+		);
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+
+		// A changed value updates both columns.
+		$this->assertQuery( 'UPDATE t SET n = 2 WHERE id = 1' );
+
+		// A changed ON UPDATE column updates the other one.
+		$this->assertQuery( "UPDATE t SET ts1 = '2001-01-01 00:00:00' WHERE id = 2" );
+
+		// An unchanged ON UPDATE column doesn't update the other one.
+		$this->assertQuery( "UPDATE t SET ts1 = '2000-01-01 00:00:00' WHERE id = 3" );
+		$this->assertQuery( 'UPDATE t SET ts1 = ts1 WHERE id = 4' );
+
+		// A self-assignment prevents only the assigned column update.
+		$this->assertQuery( 'UPDATE t SET n = 2, ts1 = ts1 WHERE id = 5' );
+
+		$this->assertSame(
+			array(
+				$now,
+				'2001-01-01 00:00:00',
+				'2000-01-01 00:00:00',
+				'2000-01-01 00:00:00',
+				'2000-01-01 00:00:00',
+			),
+			$this->getOnUpdateTimestamps( 'SELECT ts1 FROM t ORDER BY id', $now )
+		);
+		$this->assertSame(
+			array( $now, $now, '2000-01-01 00:00:00', '2000-01-01 00:00:00', $now ),
+			$this->getOnUpdateTimestamps( 'SELECT ts2 FROM t ORDER BY id', $now )
+		);
+	}
+
+	public function testOnUpdateCurrentTimestampWithOnDuplicateKeyUpdate(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00'),
+				(3, 1, '2000-01-01 00:00:00'),
+				(4, 1, '2000-01-01 00:00:00')"
+		);
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+
+		// A changed value sets the current timestamp.
+		$this->assertQuery( 'INSERT INTO t (id, n) VALUES (1, 2) ON DUPLICATE KEY UPDATE n = VALUES(n)' );
+
+		// An update that changes nothing keeps the timestamp.
+		$this->assertQuery( 'INSERT INTO t (id, n) VALUES (2, 1) ON DUPLICATE KEY UPDATE n = VALUES(n)' );
+
+		// An explicit value is saved.
+		$this->assertQuery( "INSERT INTO t VALUES (3, 2, '2001-01-01 00:00:00') ON DUPLICATE KEY UPDATE n = VALUES(n), ts = VALUES(ts)" );
+
+		// A self-assignment prevents the automatic update.
+		$this->assertQuery( 'INSERT INTO t (id, n) VALUES (4, 2) ON DUPLICATE KEY UPDATE n = VALUES(n), ts = ts' );
+
+		// A new row doesn't get the current timestamp.
+		$this->assertQuery( 'INSERT INTO t (id, n) VALUES (5, 1) ON DUPLICATE KEY UPDATE n = VALUES(n)' );
+
+		$this->assertSame(
+			array(
+				$now,
+				'2000-01-01 00:00:00',
+				'2001-01-01 00:00:00',
+				'2000-01-01 00:00:00',
+				null,
+			),
+			$this->getOnUpdateTimestamps( 'SELECT ts FROM t ORDER BY id', $now )
+		);
+	}
+
+	public function testOnUpdateCurrentTimestampWithDefaultValues(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts1 TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				ts2 TIMESTAMP NULL DEFAULT (NOW()) ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00', '2000-01-01 00:00:00')"
+		);
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+
+		// A changed value sets the current timestamp.
+		$this->assertQuery( 'UPDATE t SET n = 2 WHERE id = 1' );
+
+		// An update that changes nothing keeps the timestamps.
+		$this->assertQuery( 'UPDATE t SET n = 1 WHERE id = 2' );
+
+		$this->assertSame(
+			array( $now, '2000-01-01 00:00:00' ),
+			$this->getOnUpdateTimestamps( 'SELECT ts1 FROM t ORDER BY id', $now )
+		);
+		$this->assertSame(
+			array( $now, '2000-01-01 00:00:00' ),
+			$this->getOnUpdateTimestamps( 'SELECT ts2 FROM t ORDER BY id', $now )
+		);
+	}
+
+	public function testOnUpdateCurrentTimestampWithAlterColumnDefault(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts DATETIME NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00'),
+				(3, 1, '2000-01-01 00:00:00'),
+				(4, 1, '2000-01-01 00:00:00')"
+		);
+
+		// An expression default adds DEFAULT_GENERATED to EXTRA.
+		$this->assertQuery( 'ALTER TABLE t ALTER COLUMN ts SET DEFAULT (NOW())' );
+		$this->assertQuery( "SELECT extra FROM information_schema.columns WHERE table_name = 't' AND column_name = 'ts'" );
+		$this->assertSame( 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP', $this->last_result[0]->EXTRA );
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertQuery( 'UPDATE t SET n = 2 WHERE id = 1' );
+		$this->assertQuery( 'UPDATE t SET n = 1 WHERE id = 2' );
+
+		$this->assertQuery( 'ALTER TABLE t ALTER COLUMN ts DROP DEFAULT' );
+		$this->assertQuery( "SELECT extra FROM information_schema.columns WHERE table_name = 't' AND column_name = 'ts'" );
+		$this->assertSame( 'on update CURRENT_TIMESTAMP', $this->last_result[0]->EXTRA );
+
+		$this->assertQuery( 'UPDATE t SET n = 2 WHERE id = 3' );
+		$this->assertQuery( 'UPDATE t SET n = 1 WHERE id = 4' );
+
+		$this->assertSame(
+			array( $now, '2000-01-01 00:00:00', $now, '2000-01-01 00:00:00' ),
+			$this->getOnUpdateTimestamps( 'SELECT ts FROM t ORDER BY id', $now )
+		);
+	}
+
+	public function testOnUpdateCurrentTimestampInTemporaryTable(): void {
+		$this->assertQuery(
+			'CREATE TEMPORARY TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00')"
+		);
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertQuery( 'UPDATE t SET n = 2 WHERE id = 1' );
+		$this->assertQuery( 'UPDATE t SET n = 1 WHERE id = 2' );
+
+		$this->assertSame(
+			array( $now, '2000-01-01 00:00:00' ),
+			$this->getOnUpdateTimestamps( 'SELECT ts FROM t ORDER BY id', $now )
+		);
+	}
+
+	public function testOnUpdateCurrentTimestampWithTableAlias(): void {
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00')"
+		);
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertQuery( 'UPDATE t AS a SET a.n = 2 WHERE a.id = 1' );
+		$this->assertQuery( 'UPDATE t AS a SET n = a.n WHERE a.id = 2' );
+
+		$this->assertSame(
+			array( $now, '2000-01-01 00:00:00' ),
+			$this->getOnUpdateTimestamps( 'SELECT ts FROM t ORDER BY id', $now )
+		);
+	}
+
+	public function testOnUpdateCurrentTimestampWithJoinedTables(): void {
+		$sqlite_version = $this->engine->get_sqlite_version();
+		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
+			$this->markTestSkipped(
+				sprintf( "SQLite version %s doesn't support UPDATE with FROM clause.", $sqlite_version )
+			);
+			return;
+		}
+
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT,
+				ts TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery( 'CREATE TABLE t2 (id INT PRIMARY KEY, n INT, ts TIMESTAMP NULL)' );
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 1, '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00'),
+				(3, 1, '2000-01-01 00:00:00'),
+				(4, 1, '2000-01-01 00:00:00')"
+		);
+		$this->assertQuery( 'INSERT INTO t2 VALUES (1, 5, NULL), (2, 1, NULL), (3, 5, NULL), (4, 1, NULL)' );
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+
+		// Columns with the same names in both tables must not be ambiguous.
+		$this->assertQuery( 'UPDATE t JOIN t2 ON t.id = t2.id SET t.n = t2.n WHERE t.id <= 2' );
+		$this->assertQuery( 'UPDATE t AS a JOIN t2 AS b ON a.id = b.id SET a.n = b.n WHERE a.id > 2' );
+
+		$this->assertSame(
+			array( $now, '2000-01-01 00:00:00', $now, '2000-01-01 00:00:00' ),
+			$this->getOnUpdateTimestamps( 'SELECT ts FROM t ORDER BY id', $now )
+		);
+	}
+
+	public function testOnUpdateCurrentTimestampWithImplicitDefault(): void {
+		$this->assertQuery( "SET SESSION sql_mode = ''" );
+		$this->assertQuery(
+			'CREATE TABLE t (
+				id INT PRIMARY KEY,
+				n INT NOT NULL,
+				ts TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
+			)'
+		);
+		$this->assertQuery(
+			"INSERT INTO t VALUES
+				(1, 0, '2000-01-01 00:00:00'),
+				(2, 1, '2000-01-01 00:00:00')"
+		);
+
+		$now = gmdate( 'Y-m-d H:i:s' );
+
+		// In non-strict mode, NULL is saved as an IMPLICIT DEFAULT value of 0.
+		$this->assertQuery( 'UPDATE t SET n = NULL' );
+
+		$this->assertSame(
+			array( '2000-01-01 00:00:00', $now ),
+			$this->getOnUpdateTimestamps( 'SELECT ts FROM t ORDER BY id', $now )
+		);
 	}
 
 	public function testAlterTableWithColumnFirstAndAfter() {
@@ -6767,6 +7216,9 @@ QUERY
 		$this->assertQuery( 'OPTIMIZE TABLE _tmp_table' );
 		$this->assertQuery( "INSERT INTO _tmp_table (id, updated_at) VALUES (1, '2020-01-02 03:04:05')" );
 
+		// Create the ON UPDATE CURRENT_TIMESTAMP trigger, as older driver versions did.
+		$this->createOnUpdateTrigger( '_tmp_table', 'updated_at' );
+
 		// Updating the stored zero doesn't run the ON UPDATE CURRENT_TIMESTAMP trigger.
 		$this->reconnectAfterDriverUpgrade();
 		$this->assertQuery( 'SELECT created_at, updated_at FROM _tmp_table' );
@@ -6780,7 +7232,11 @@ QUERY
 			$this->last_result
 		);
 
-		// The recreated table has the trigger again.
+		// The recreated table has no trigger, and UPDATE emulates ON UPDATE CURRENT_TIMESTAMP.
+		$this->assertSame(
+			array(),
+			$this->sqlite->query( "SELECT name FROM sqlite_master WHERE type = 'trigger'" )->fetchAll( PDO::FETCH_COLUMN )
+		);
 		$this->assertQuery( 'UPDATE _tmp_table SET id = 2' );
 		$this->assertQuery( 'SELECT updated_at FROM _tmp_table' );
 		$this->assertNotSame( '2020-01-02 03:04:05', $this->last_result[0]->updated_at );

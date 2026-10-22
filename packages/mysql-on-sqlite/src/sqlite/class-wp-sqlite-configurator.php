@@ -422,7 +422,7 @@ class WP_SQLite_Configurator {
 		}
 
 		foreach ( $table_columns as $table_name => $repaired_columns ) {
-			// Disable driver triggers during row repair. The table rebuild restores them.
+			// Drop triggers, so they don't run during row repair. The table rebuild drops them anyway.
 			$triggers = $this->driver->execute_sqlite_query(
 				"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? COLLATE NOCASE",
 				array( $table_name )
