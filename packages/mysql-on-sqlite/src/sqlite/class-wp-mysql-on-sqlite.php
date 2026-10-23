@@ -5727,22 +5727,37 @@ class WP_MySQL_On_SQLite extends PDO {
 		string $table_name,
 		?array $column_map = null
 	): void {
+		$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
+		$column_types  = $this->execute_sqlite_query(
+			sprintf(
+				'SELECT COLUMN_NAME, DATA_TYPE FROM %s WHERE table_schema = ? AND table_name = ?',
+				$this->quote_sqlite_identifier( $columns_table )
+			),
+			array( $this->get_saved_db_name(), $table_name )
+		)->fetchAll( PDO::FETCH_KEY_PAIR );
+
 		if ( null === $column_map ) {
-			$columns_table = $this->information_schema_builder->get_table_name( $table_is_temporary, 'columns' );
-			$column_names  = $this->execute_sqlite_query(
-				sprintf(
-					'SELECT COLUMN_NAME FROM %s WHERE table_schema = ? AND table_name = ?',
-					$this->quote_sqlite_identifier( $columns_table )
-				),
-				array( $this->get_saved_db_name(), $table_name )
-			)->fetchAll( PDO::FETCH_COLUMN );
-			$column_map    = array_combine( $column_names, $column_names );
+			$column_names = array_keys( $column_types );
+			$column_map   = array_combine( $column_names, $column_names );
 		}
+		$column_types = array_change_key_case( $column_types, CASE_LOWER );
 
 		// Preserve ROWIDs.
 		// This also addresses a special case when all original columns are dropped
 		// and there is nothing to copy. We'll always have at least the ROWID column.
 		$column_map = array( 'rowid' => 'rowid' ) + $column_map;
+
+		$select_list = array();
+		foreach ( $column_map as $old_name => $new_name ) {
+			$value       = $this->quote_sqlite_identifier( $old_name );
+			$mysql_type  = $column_types[ strtolower( $new_name ) ] ?? '';
+			$sqlite_type = self::DATA_TYPE_STRING_MAP[ $mysql_type ] ?? null;
+			// Legacy tables may store text and binary values with a different storage class.
+			if ( 'TEXT' === $sqlite_type || 'BLOB' === $sqlite_type ) {
+				$value = sprintf( 'CAST(%s AS %s)', $value, $sqlite_type );
+			}
+			$select_list[] = $value;
+		}
 
 		/*
 		 * See:
@@ -5771,10 +5786,7 @@ class WP_MySQL_On_SQLite extends PDO {
 					', ',
 					array_map( array( $this, 'quote_sqlite_identifier' ), $column_map )
 				),
-				implode(
-					', ',
-					array_map( array( $this, 'quote_sqlite_identifier' ), array_keys( $column_map ) )
-				),
+				implode( ', ', $select_list ),
 				$quoted_table_name
 			)
 		);
