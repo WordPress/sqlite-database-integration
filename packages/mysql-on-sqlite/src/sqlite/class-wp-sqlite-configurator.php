@@ -334,10 +334,61 @@ class WP_SQLite_Configurator {
 	 * @param string $saved_version The driver version that last configured the database.
 	 */
 	private function run_migrations( string $saved_version ): void {
+		// Drop ON UPDATE CURRENT_TIMESTAMP triggers created by versions <= 3.1.1.
+		// Run this before other migrations would drop them by table rebuilds.
+		if ( version_compare( $saved_version, '3.1.1', '<=' ) ) {
+			$this->migrate_on_update_triggers();
+		}
+
 		// Fix temporal precision and zero defaults stored by versions <= 3.1.1.
 		if ( version_compare( $saved_version, '3.1.1', '<=' ) ) {
 			$this->migrate_datetime_precision();
 			$this->migrate_temporal_zero_defaults();
+		}
+	}
+
+	/**
+	 * Migrate ON UPDATE CURRENT_TIMESTAMP triggers to column metadata.
+	 *
+	 * Handles old ON UPDATE triggers with the following name formats:
+	 *
+	 *   1. Versions 3.0.0 to 3.1.1: "_wp_sqlite_{table}_{column}_on_update"
+	 *   2. Versions before 3.0.0: "__{table}_{column}_on_update__"
+	 */
+	private function migrate_on_update_triggers(): void {
+		$connection    = $this->driver->get_connection();
+		$columns_table = $connection->quote_identifier( $this->schema_builder->get_table_name( false, 'columns' ) );
+		$columns       = $this->driver->execute_sqlite_query(
+			sprintf(
+				"SELECT c.TABLE_NAME, c.COLUMN_NAME, c.EXTRA, t.name AS TRIGGER_NAME
+				FROM %s AS c
+				JOIN main.sqlite_master AS t ON t.type = 'trigger'
+				AND t.tbl_name = c.TABLE_NAME COLLATE NOCASE
+				AND (
+					t.name = '__' || c.TABLE_NAME || '_' || c.COLUMN_NAME || '_on_update__' COLLATE NOCASE
+					OR t.name = ? || c.TABLE_NAME || '_' || c.COLUMN_NAME || '_on_update' COLLATE NOCASE
+				)
+				WHERE c.TABLE_SCHEMA = ?",
+				$columns_table
+			),
+			array( WP_MySQL_On_SQLite::RESERVED_PREFIX, WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME )
+		)->fetchAll( PDO::FETCH_ASSOC );
+
+		foreach ( $columns as $column ) {
+			if ( ! str_contains( $column['EXTRA'], 'on update CURRENT_TIMESTAMP' ) ) {
+				$this->driver->execute_sqlite_query(
+					sprintf( 'UPDATE %s SET EXTRA = ? WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?', $columns_table ),
+					array(
+						trim( $column['EXTRA'] . ' on update CURRENT_TIMESTAMP' ),
+						WP_SQLite_Information_Schema_Builder::SAVED_DATABASE_NAME,
+						$column['TABLE_NAME'],
+						$column['COLUMN_NAME'],
+					)
+				);
+			}
+			$this->driver->execute_sqlite_query(
+				sprintf( 'DROP TRIGGER main.%s', $connection->quote_identifier( $column['TRIGGER_NAME'] ) )
+			);
 		}
 	}
 
@@ -422,7 +473,7 @@ class WP_SQLite_Configurator {
 		}
 
 		foreach ( $table_columns as $table_name => $repaired_columns ) {
-			// Disable driver triggers during row repair. The table rebuild restores them.
+			// Drop triggers, so they don't run during row repair. The table rebuild drops them anyway.
 			$triggers = $this->driver->execute_sqlite_query(
 				"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? COLLATE NOCASE",
 				array( $table_name )

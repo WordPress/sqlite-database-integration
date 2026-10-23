@@ -2724,7 +2724,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		}
 
 		// Translate UPDATE list, applying relevant type casting and IMPLICIT DEFAULT values.
-		$update_list = $this->translate_update_list( $update_target_table, $node );
+		$update_list = $this->translate_update_list( $update_target_table, $node, $update_target );
 
 		// Translate WHERE, ORDER BY, and LIMIT clauses.
 		if ( $where_subquery ) {
@@ -6275,11 +6275,19 @@ class WP_MySQL_On_SQLite extends PDO {
 	 * For more information about IMPLICIT DEFAULT values in MySQL, see:
 	 *   https://dev.mysql.com/doc/refman/8.4/en/data-type-defaults.html#data-type-defaults-implicit
 	 *
+	 * Additionally, this method emulates "ON UPDATE CURRENT_TIMESTAMP" columns.
+	 * In MySQL, such a column is set to the current timestamp when any other
+	 * column in the row changes, unless the statement assigns it explicitly.
+	 *
+	 * For more information about ON UPDATE CURRENT_TIMESTAMP in MySQL, see:
+	 *   https://dev.mysql.com/doc/refman/8.4/en/timestamp-initialization.html
+	 *
 	 * @param  string         $table_name  The name of the target table.
 	 * @param  WP_Parser_Node $parent_node The "updateList" AST node parent node.
+	 * @param  string|null    $table_alias Optional. The target table alias. Defaults to the table name.
 	 * @return string                      The translated UPDATE list.
 	 */
-	private function translate_update_list( string $table_name, WP_Parser_Node $parent_node ): string {
+	private function translate_update_list( string $table_name, WP_Parser_Node $parent_node, ?string $table_alias = null ): string {
 		$node = $parent_node->get_first_child_node( 'updateList' );
 
 		// This method is always used with the main database.
@@ -6296,7 +6304,7 @@ class WP_MySQL_On_SQLite extends PDO {
 		$columns_table = $this->information_schema_builder->get_table_name( $is_temporary, 'columns' );
 		$columns       = $this->execute_sqlite_query(
 			'
-				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, data_type, column_default
+				SELECT LOWER(column_name) AS COLUMN_NAME, is_nullable, data_type, column_default, extra
 				FROM ' . $this->quote_sqlite_identifier( $columns_table ) . '
 				WHERE table_schema = ?
 				AND table_name = ?
@@ -6312,7 +6320,8 @@ class WP_MySQL_On_SQLite extends PDO {
 		$column_map = array_combine( array_column( $columns, 'COLUMN_NAME' ), $columns );
 
 		// Translate the UPDATE list, emulating IMPLICIT DEFAULTs for NULL values.
-		$fragment = '';
+		$fragment        = '';
+		$assigned_values = array();
 		foreach ( $node->get_child_nodes() as $i => $update_element ) {
 			$column_ref       = $update_element->get_first_child_node( 'columnRef' );
 			$column_ref_parts = $column_ref->get_descendant_nodes( 'identifier' );
@@ -6364,8 +6373,80 @@ class WP_MySQL_On_SQLite extends PDO {
 			$fragment .= $this->translate( end( $column_ref_parts ) );
 			$fragment .= ' = ';
 			$fragment .= $value;
+
+			$assigned_values[ strtolower( $column_name ) ] = $value;
 		}
-		return $fragment;
+
+		// Collect unassigned ON UPDATE CURRENT_TIMESTAMP columns for automatic updates.
+		$on_update_columns = array();
+		foreach ( $column_map as $column_name => $column_info ) {
+			if (
+				isset( $assigned_values[ $column_name ] )
+				|| ! str_contains( $column_info['EXTRA'], 'on update CURRENT_TIMESTAMP' )
+			) {
+				continue;
+			}
+
+			$on_update_columns[] = $this->quote_sqlite_identifier( $column_name );
+		}
+		if ( 0 === count( $on_update_columns ) ) {
+			return $fragment;
+		}
+
+		/*
+		 * Emulate ON UPDATE CURRENT_TIMESTAMP for columns that are not assigned.
+		 *
+		 * Evaluate assigned expressions once per row and reuse their values to
+		 * detect changes and determine whether to use the current timestamp.
+		 *
+		 * With "updated_at ... ON UPDATE CURRENT_TIMESTAMP", this MySQL query:
+		 *
+		 *   UPDATE items SET score = FLOOR(RAND(1) * 10);
+		 *
+		 * Becomes the following SQLite query (simplified):
+		 *
+		 *   UPDATE items SET (score, updated_at) = (
+		 *     SELECT
+		 *       score,
+		 *       CASE WHEN items.score IS NOT score THEN CURRENT_TIMESTAMP ELSE items.updated_at END
+		 *     FROM (SELECT FLOOR(RAND(1) * 10) AS score)
+		 *   );
+		 *
+		 * Here, items.score is the stored value and score is the new value.
+		 * The inner SELECT has no FROM clause, so SQLite cannot flatten it
+		 * and repeat the assigned expressions when checking for changes.
+		 * See: https://www.sqlite.org/optoverview.html#flattening
+		 */
+		$quoted_table      = $this->quote_sqlite_identifier( $table_alias ?? $table_name );
+		$assigned_columns  = array();
+		$value_expressions = array();
+		$changes           = array();
+		foreach ( $assigned_values as $column_name => $value ) {
+			$quoted_column       = $this->quote_sqlite_identifier( $column_name );
+			$assigned_columns[]  = $quoted_column;
+			$value_expressions[] = sprintf( '(%s) COLLATE BINARY AS %s', $value, $quoted_column );
+
+			// Compare row data using binary collation, qualifying the old values.
+			$changes[] = sprintf( '%s.%s IS NOT %s COLLATE BINARY', $quoted_table, $quoted_column, $quoted_column );
+		}
+		$is_row_changed = implode( ' OR ', $changes );
+		$row_values     = $assigned_columns;
+		foreach ( $on_update_columns as $quoted_column ) {
+			$assigned_columns[] = $quoted_column;
+			$row_values[]       = sprintf(
+				'CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE %s.%s END',
+				$is_row_changed,
+				$quoted_table,
+				$quoted_column
+			);
+		}
+
+		return sprintf(
+			'(%s) = (SELECT %s FROM (SELECT %s))',
+			implode( ', ', $assigned_columns ),
+			implode( ', ', $row_values ),
+			implode( ', ', $value_expressions )
+		);
 	}
 
 	/**
@@ -7159,7 +7240,6 @@ class WP_MySQL_On_SQLite extends PDO {
 
 		// 6. Generate CREATE TABLE statement columns.
 		$rows              = array();
-		$on_update_queries = array();
 		$has_autoincrement = false;
 		foreach ( $column_info as $column ) {
 			$query  = '  ';
@@ -7230,13 +7310,6 @@ class WP_MySQL_On_SQLite extends PDO {
 				}
 			}
 			$rows[] = $query;
-
-			if ( 'on update CURRENT_TIMESTAMP' === $column['EXTRA'] ) {
-				$on_update_queries[] = $this->get_column_on_update_trigger_query(
-					$table_name,
-					$column['COLUMN_NAME']
-				);
-			}
 		}
 
 		// 6. Generate CREATE TABLE statement constraints, collect indexes.
@@ -7372,7 +7445,7 @@ class WP_MySQL_On_SQLite extends PDO {
 			$create_table_query .= ' STRICT';
 		}
 
-		return array_merge( array( $create_table_query ), $create_index_queries, $on_update_queries );
+		return array_merge( array( $create_table_query ), $create_index_queries );
 	}
 
 	/**
@@ -7703,36 +7776,6 @@ class WP_MySQL_On_SQLite extends PDO {
 	 */
 	private function get_internal_savepoint_name( string $name ): string {
 		return sprintf( '%ssavepoint_%s', self::RESERVED_PREFIX, $name );
-	}
-
-	/**
-	 * Get an SQLite query to emulate MySQL "ON UPDATE CURRENT_TIMESTAMP".
-	 *
-	 * In SQLite, "ON UPDATE CURRENT_TIMESTAMP" is not supported. We need to
-	 * create a trigger to emulate this behavior.
-	 *
-	 * @param string $table  The table name.
-	 * @param string $column The column name.
-	 */
-	private function get_column_on_update_trigger_query( string $table, string $column ): string {
-		// The trigger wouldn't work for virtual and "WITHOUT ROWID" tables,
-		// but currently that can't happen as we're not creating such tables.
-		// See: https://www.sqlite.org/rowidtable.html
-		$trigger_name = self::RESERVED_PREFIX . "{$table}_{$column}_on_update";
-		return sprintf(
-			'
-				CREATE TRIGGER %s
-				AFTER UPDATE ON %s
-				FOR EACH ROW
-				BEGIN
-				  UPDATE %s SET %s = CURRENT_TIMESTAMP WHERE rowid = NEW.rowid;
-				END
-			',
-			$this->quote_sqlite_identifier( $trigger_name ),
-			$this->quote_sqlite_identifier( $table ),
-			$this->quote_sqlite_identifier( $table ),
-			$this->quote_sqlite_identifier( $column )
-		);
 	}
 
 	/**

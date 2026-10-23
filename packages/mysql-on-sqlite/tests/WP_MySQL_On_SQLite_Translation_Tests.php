@@ -415,6 +415,21 @@ class WP_MySQL_On_SQLite_Translation_Tests extends TestCase {
 		);
 	}
 
+	public function testUpdateWithOnUpdateCurrentTimestamp(): void {
+		$this->driver->query( 'CREATE TABLE t (c1 INT, c2 INT, ts TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP)' );
+
+		$this->assertQuery(
+			'UPDATE `t` SET (`c1`, `c2`, `ts`) = (SELECT `c1`, `c2`, CASE WHEN `t`.`c1` IS NOT `c1` COLLATE BINARY OR `t`.`c2` IS NOT `c2` COLLATE BINARY THEN CURRENT_TIMESTAMP ELSE `t`.`ts` END FROM (SELECT (1) COLLATE BINARY AS `c1`, (2) COLLATE BINARY AS `c2`))',
+			'UPDATE t SET c1 = 1, c2 = 2'
+		);
+
+		// UPDATE with a table alias.
+		$this->assertQuery(
+			'UPDATE `t` AS `a` SET (`c1`, `ts`) = (SELECT `c1`, CASE WHEN `a`.`c1` IS NOT `c1` COLLATE BINARY THEN CURRENT_TIMESTAMP ELSE `a`.`ts` END FROM (SELECT (1) COLLATE BINARY AS `c1`))',
+			'UPDATE t AS a SET a.c1 = 1'
+		);
+	}
+
 	public function testUpdateJoinWithDerivedTablePreservesTargetAlias(): void {
 		$sqlite_version = $this->driver->get_sqlite_version();
 		if ( version_compare( $sqlite_version, '3.33.0', '<' ) ) {
